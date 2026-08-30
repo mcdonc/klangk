@@ -2,9 +2,16 @@
   pkgs,
   config,
   lib,
+  inputs,
   ...
 }:
 let
+  # Flutter 3.47 from unstable (#2869): the pinned 26.05 channel ships
+  # 3.41.9, too old for mcp_toolkit (>= 3.44) that the flutter-mcp-toolkit
+  # integration (#2868) depends on. Pulled as a self-contained closure
+  # (flutter + its dart SDK); the rest of the toolchain stays on 26.05.
+  flutterUnstable =
+    inputs.nixpkgs-unstable.legacyPackages.${pkgs.stdenv.hostPlatform.system}.flutter;
   # klangkd binds a UDS and owns the Caddy reverse proxy as a child
   # (#1396, #1642); the old two-process layout (uvicorn + scripts/nginx.sh)
   # is collapsed into this single entry. Dev config lives in klangkd.yaml
@@ -101,7 +108,7 @@ in
       coreutils # GNU du -b + stat -f -c %T (macOS BSD lacks both)
       docker-client
       expect
-      flutter
+      flutterUnstable
       git # "error: Failed to find git" during devenv:git-hooks:install
       gzip
       gnutar

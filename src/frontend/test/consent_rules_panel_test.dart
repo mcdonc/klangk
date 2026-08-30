@@ -304,6 +304,35 @@ void main() {
       svc.dispose();
     });
 
+    testWidgets('revoke prompt for a denied rule says deny', (
+      tester,
+    ) async {
+      final ch = _FakeChannel();
+      final svc = _serviceWithChannel(ch);
+      svc.connect();
+      await tester.pumpWidget(_wrap(ConsentRulesPanel(service: svc)));
+      ch.serverSend(
+        _rulesFrame(
+          denied: [_ruleJson(id: 'v4', host: 'd.io', decision: 'denied')],
+        ),
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('revoke-v4')));
+      await tester.pump();
+      await tester.pump();
+      expect(
+        find.textContaining('Remove the deny rule for d.io:443'),
+        findsOneWidget,
+      );
+      await tester.tap(find.widgetWithText(FilledButton, 'Revoke'));
+      await tester.pump();
+      expect(jsonDecode(ch.sent.last as String), {
+        'type': 'revoke',
+        'request_id': 'v4',
+      });
+      svc.dispose();
+    });
+
     testWidgets('cancel does not send a revoke', (tester) async {
       final ch = _FakeChannel();
       final svc = _serviceWithChannel(ch);

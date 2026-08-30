@@ -1189,6 +1189,12 @@ stop)`) and a `server: stop at 23:00 (in 1h 12m)` status line in the
 
 ### Changed
 
+- **The devenv Flutter toolchain is now 3.47.0 (#2869).** Flutter (and its
+  Dart SDK) come from a pinned `nixpkgs-unstable` input while the rest of
+  the toolchain stays on `nixos-26.05`. Contributors get Flutter 3.47 /
+  Dart 3.13, clearing the Flutter >= 3.44 requirement for the
+  flutter-mcp-toolkit integration (#2868).
+
 - **Host image base is `python:3.14-slim` (#2844).** The host and FIPS
   host container images now run CPython 3.14 (digest-pinned, OpenSSL
   3.5). Workspaces are unaffected; operators should rebuild the host

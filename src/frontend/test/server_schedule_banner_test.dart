@@ -86,6 +86,20 @@ void main() {
     expect(RegExp(r'\b1h \d+m\b').hasMatch(text), isTrue);
   });
 
+  testWidgets('a past-due action shows happening now', (tester) async {
+    final fireAt = DateTime.now().toUtc().subtract(const Duration(seconds: 10));
+    await tester.pumpWidget(
+      _wrap(
+        _clientWithSchedules([
+          {'action': 'stop', 'fire_at': fireAt.toIso8601String()},
+        ]),
+      ),
+    );
+    await tester.pump();
+    final text = tester.widget<Text>(find.byType(Text).first).data!;
+    expect(text, contains('server stop happening now'));
+  });
+
   testWidgets('picks the soonest when several are pending', (tester) async {
     final later = DateTime.now().toUtc().add(const Duration(hours: 5));
     final sooner = DateTime.now().toUtc().add(const Duration(minutes: 10));
