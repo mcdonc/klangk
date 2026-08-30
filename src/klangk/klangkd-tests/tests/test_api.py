@@ -7612,6 +7612,88 @@ class TestFileRoutes:
         finally:
             self._cleanup(ws_id)
 
+    async def test_read_denied_without_files_download(
+        self, client, user, app_state
+    ):
+        """`files` alone no longer grants the text reader either (#2713)
+        — browsing still works, `/files/content` does not."""
+        headers = await _auth_headers(client)
+        ws_id = await self._create_workspace(client, headers)
+        try:
+            other = await self._member_headers_with_perms(
+                app_state, client, ws_id, ["view", "terminal", "files"]
+            )
+            with patch.object(
+                _mock_pod,
+                "exec_container",
+                new_callable=AsyncMock,
+                return_value=(0, "regular file\t11", ""),
+            ):
+                resp = await client.get(
+                    f"/api/v1/workspaces/{ws_id}/files?path=/home/klangk",
+                    headers=other,
+                )
+                assert resp.status_code == 200
+                resp = await client.get(
+                    f"/api/v1/workspaces/{ws_id}/files/content"
+                    "?path=/home/klangk/read.txt",
+                    headers=other,
+                )
+            assert resp.status_code == 403
+        finally:
+            self._cleanup(ws_id)
+
+    async def test_read_allowed_with_files_download(
+        self, client, user, app_state
+    ):
+        headers = await _auth_headers(client)
+        ws_id = await self._create_workspace(client, headers)
+        try:
+            other = await self._member_headers_with_perms(
+                app_state,
+                client,
+                ws_id,
+                ["view", "terminal", "files", "files-download"],
+            )
+            with patch.object(
+                _mock_pod,
+                "exec_container",
+                new_callable=AsyncMock,
+                side_effect=[
+                    (0, "regular file\t11", ""),  # stat
+                    (0, "read me", ""),  # cat
+                ],
+            ):
+                resp = await client.get(
+                    f"/api/v1/workspaces/{ws_id}/files/content"
+                    "?path=/home/klangk/read.txt",
+                    headers=other,
+                )
+            assert resp.status_code == 200
+            assert resp.json()["content"] == "read me"
+        finally:
+            self._cleanup(ws_id)
+
+    async def test_read_files_download_alone_insufficient(
+        self, client, user, app_state
+    ):
+        """`files-download` without `files` grants nothing (#2713): the
+        text reader requires both, mirroring the download route."""
+        headers = await _auth_headers(client)
+        ws_id = await self._create_workspace(client, headers)
+        try:
+            other = await self._member_headers_with_perms(
+                app_state, client, ws_id, ["files-download"]
+            )
+            resp = await client.get(
+                f"/api/v1/workspaces/{ws_id}/files/content"
+                "?path=/home/klangk/read.txt",
+                headers=other,
+            )
+            assert resp.status_code == 403
+        finally:
+            self._cleanup(ws_id)
+
     async def test_upload_denied_without_files_write(
         self, client, user, app_state
     ):

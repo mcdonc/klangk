@@ -55,10 +55,12 @@ class FileViewerPanel extends StatefulWidget {
   final FileRendererRegistry? registry;
 
   /// Whether the user holds the `files-download` permission. When false,
-  /// download affordances are hidden and raw-byte fetches fail fast
-  /// (#2705) — the viewer itself keeps working for text via
-  /// `/files/content`. Required (no default) so a construction site can
-  /// never accidentally fail open to download.
+  /// download affordances are hidden and every content fetch fails fast
+  /// (#2705, #2713) — the text reader (`/files/content`) and the binary
+  /// byte path (`/files/download`) are both gated by that permission, so
+  /// the file list stays browsable but no file body can be read.
+  /// Required (no default) so a construction site can never accidentally
+  /// fail open to download.
   final bool canDownload;
 
   /// Whether the user holds the `files-write` permission. When false,
@@ -247,6 +249,11 @@ class FileViewerPanelState extends State<FileViewerPanel> {
   /// Reads a file's decoded text via the `/files/content` endpoint. Injected
   /// into [RenderableFile.readText] for the renderer to call lazily.
   Future<String> _readFileText(String path) async {
+    if (!widget.canDownload) {
+      // The `files-download` permission is absent (#2713) — the text
+      // reader endpoint is gated like the download endpoint.
+      throw Exception('Download not permitted');
+    }
     final response = await _client.get(
       Uri.parse(
         '$_baseUrl/api/v1/workspaces/${widget.workspaceId}/files/content?path=${Uri.encodeComponent(path)}',

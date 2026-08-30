@@ -100,8 +100,8 @@ When a workspace is created, the owner gets a `(Allow, user:{id}, *)` ACE on `/w
 | `view`           | Can see the workspace exists                                                                                                    |
 | `monitor`        | Can observe health/status: `GET /workspaces/{id}/status` and the `container_status` / `service_health` WebSocket frames (#2783) |
 | `terminal`       | Can open a terminal / exec commands                                                                                             |
-| `files`          | Can browse/read files                                                                                                           |
-| `files-download` | Can download raw bytes via `/files/download` (needs `files` too)                                                                |
+| `files`          | Can browse file listings (metadata); reading file bodies additionally needs `files-download`                                    |
+| `files-download` | Can fetch file bytes: `/files/download` (raw stream/tar) and `/files/content` (text reader) — needs `files` too                 |
 | `files-write`    | Can mutate files: upload, rename, delete (needs `files` too)                                                                    |
 | `exec-and-sync`  | Can run one-shot commands (`klangk exec`) and sync (`klangk sync`) against the workspace                                        |
 | `edit`           | Can change workspace settings (name, image, command, mounts, env)                                                               |
@@ -110,26 +110,31 @@ When a workspace is created, the owner gets a `(Allow, user:{id}, *)` ACE on `/w
 | `export`         | Can export the workspace as a `.tar.gz` archive (#2707)                                                                         |
 | `*`              | All of the above                                                                                                                |
 
-Withholding `files-download` keeps the in-app file viewer working for text
-files (read via `/files/content`) but hides every download affordance and
-returns 403 from `/files/download`. Binary renderers (image, PDF, video,
-spreadsheet) fetch raw bytes through the download endpoint, so they cannot
-render without it.
+Withholding `files-download` hides every download affordance and returns
+403 from both byte-moving endpoints: `/files/download` (raw stream or
+tar.gz) and `/files/content` (the viewer's text reader, #2713). The file
+list itself keeps working — names, sizes, and mtimes stay visible — but
+no file body can be read: text renderers show a permission-denied state
+and binary renderers (image, PDF, video, spreadsheet), which fetch raw
+bytes through the download endpoint, cannot render.
 
 Withholding `files-write` disables every mutating route — upload
 (`/files/upload`), rename (`/files/rename`), and delete (`DELETE
-/files`) — so a `files`-only member can browse and read but not modify
-the workspace. In the file viewer the matching affordances disappear: no
+/files`) — so a `files`-only member can browse listings but not read
+file bodies or modify the workspace. In the file viewer the matching affordances disappear: no
 drag-and-drop zone or upload hints, no Rename/Delete in the context menu,
 and text-editor renderers go read-only (their Save uploads through that
 endpoint).
 
-Note the limit of the download gate: it blocks byte-perfect, unbounded export
-(any file size, whole directories as tar.gz), **not** content access.
-`files` alone still lets a member read any file up to 1 MB via
-`/files/content` — text files intact, binary files mostly (the bytes are
-decoded lossily). To cut a member off from workspace content entirely,
-withhold `files` as well.
+The download gate covers every files endpoint that moves file bytes
+out of the workspace — byte-perfect, unbounded export (any file size,
+whole directories as tar.gz) via `/files/download`, and lossy text
+reads (up to 1 MB per file) via `/files/content`. A member with `files`
+but not
+`files-download` can browse listings and metadata only. To grant viewing
+without bulk export there is no longer a middle setting: grant both
+`files` + `files-download` (viewer fully works) or withhold `files`
+(browsing itself is denied).
 
 `export` is a workspace permission checked on `/workspaces/{id}`: the owner's wildcard ACE and the seeded `owners-<id>` role group both cover it, so owners can export their own workspaces without any extra grant, and a **Deny** `export` ACE for **Everyone** on the workspace resource (positioned ahead of the wildcards) revokes it per workspace. Admins do **not** get export implicitly — they must be an owner or hold an explicit grant. See [Export & Import](../features/export-import.md#export).
 

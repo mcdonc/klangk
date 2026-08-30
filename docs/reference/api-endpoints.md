@@ -717,8 +717,9 @@ No request body.
 Read the contents of a file inside the workspace container. Requires a
 running container (returns 409 if stopped).
 
-**Auth:** JWT required. User must have `files` permission on
-`/workspaces/{id}`. Query param: `path` (absolute container path).
+**Auth:** JWT required. User must have both `files` and `files-download`
+permissions on `/workspaces/{id}` (#2713). Query param: `path` (absolute
+container path).
 
 No request body.
 

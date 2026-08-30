@@ -263,6 +263,17 @@ sync` report a clear permission-denied error.
   or `127.0.0.1` with a port and no userinfo; anything else falls back to
   the web flow.
 
+- **`/files/content` now requires `files-download` (#2713).** The file
+  viewer's text-reader endpoint
+  (`GET /api/v1/workspaces/{id}/files/content`) is gated by the
+  `files-download` permission like `/files/download` (#2705), closing
+  the remaining scripted bulk-read avenue for members with `files`
+  alone. Operators who relied on text viewing without download must
+  also grant `files-download` (or withhold `files` entirely). The web
+  file viewer degrades gracefully: listings and metadata stay visible
+  and the content pane reports the denial. See
+  [ACLs](../reference/acl.md).
+
 ### Added
 
 - **`fmtk` — flutter-mcp-toolkit CLI in the devenv shell (#2868).** Agents
@@ -339,8 +350,9 @@ create`/`edit --classification-banner`, and the create/edit UIs; the
   roles) grant both permissions; a schema migration mirrors existing
   `files` grants so current behavior is unchanged. Without the
   permission the file viewer hides its download affordances and binary
-  renderers (image, PDF, video, spreadsheet) cannot fetch bytes — text
-  viewing still works. The CLI/TUI expose no file-download affordances.
+  renderers (image, PDF, video, spreadsheet) cannot fetch bytes — and
+  since #2713 the text reader (`/files/content`) requires the
+  permission too. The CLI/TUI expose no file-download affordances.
 
 - **`KLANGKD_WORKSPACE_CREATED_HOOK` (#2762).** New customize-dir hook:
   a deployment-local Python file (point the env var at it, like

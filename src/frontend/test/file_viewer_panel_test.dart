@@ -1977,6 +1977,120 @@ void main() {
     });
   });
 
+  group('FileViewerPanel content permission (#2713)', () {
+    Future<_MockWsClient> pump(
+      WidgetTester tester, {
+      bool canDownload = false,
+      GlobalKey<FileViewerPanelState>? key,
+    }) async {
+      testHttpClientOverride = MockClient((request) async {
+        if (request.url.path.contains('/files/content')) {
+          return http.Response(
+            jsonEncode({'content': 'print("hi")'}),
+            200,
+          );
+        }
+        if (request.url.path.contains('/files')) {
+          return http.Response(
+            jsonEncode([
+              {
+                'name': 'notes.py',
+                'path': '/home/tester/notes.py',
+                'is_dir': false,
+                'size': 42,
+              },
+            ]),
+            200,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+      final client = _MockWsClient();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 800,
+              height: 600,
+              child: buildPanel(
+                wsClient: client,
+                key: key,
+                canDownload: canDownload,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      return client;
+    }
+
+    testWidgets('file list still renders when permission absent',
+        (tester) async {
+      final client = await pump(tester);
+
+      // Metadata (name + size) stays visible — only file bodies are gated.
+      expect(find.text('notes.py'), findsOneWidget);
+      expect(find.textContaining('42 bytes'), findsOneWidget);
+      client.close();
+    });
+
+    testWidgets('content pane shows permission-denied state', (tester) async {
+      final client = await pump(tester);
+
+      await tester.tap(find.text('notes.py'));
+      await tester.pumpAndSettle();
+
+      // The text fetch fails fast; the renderer surfaces the reason. The
+      // filename header (metadata) is still visible alongside it.
+      expect(
+        find.textContaining('Download not permitted'),
+        findsOneWidget,
+      );
+      expect(find.text('notes.py'), findsOneWidget);
+
+      // Closing the viewer returns to the intact file list.
+      await tester.tap(find.byIcon(Icons.arrow_back));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('42 bytes'), findsOneWidget);
+      client.close();
+    });
+
+    testWidgets('text read succeeds when permitted', (tester) async {
+      final key = GlobalKey<FileViewerPanelState>();
+      final client = await pump(tester, canDownload: true, key: key);
+
+      await tester.tap(find.text('notes.py'));
+      await tester.pumpAndSettle();
+
+      // The viewer renders without a denial (the code renderer draws
+      // through HighlightView spans, so assert on the loader + the
+      // absence of the error state instead of raw text).
+      expect(find.textContaining('Failed to load file'), findsNothing);
+      final content =
+          await key.currentState!.readFileTextForTest('/home/tester/notes.py');
+      expect(content, 'print("hi")');
+      client.close();
+    });
+
+    testWidgets('text fetch fails fast with a clear error', (tester) async {
+      final key = GlobalKey<FileViewerPanelState>();
+      final client = await pump(tester, key: key);
+
+      await expectLater(
+        key.currentState!.readFileTextForTest('/home/tester/notes.py'),
+        throwsA(
+          isA<Exception>().having(
+            (e) => e.toString(),
+            'message',
+            contains('Download not permitted'),
+          ),
+        ),
+      );
+      client.close();
+    });
+  });
+
   group('FileViewerPanel write permission (#2705)', () {
     Future<_MockWsClient> pump(
       WidgetTester tester, {

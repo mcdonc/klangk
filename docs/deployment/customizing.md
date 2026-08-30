@@ -217,7 +217,7 @@ Both sync and async hook functions are supported. ACL rewrites require the `asyn
 
 **Failure semantics: log-and-continue.** The hook is a mutation extension point, not a gate — if it raises, the workspace still exists and the create response is returned normally. Errors are logged as a WARNING with the hook source, workspace id, and the exception, so partial effects stay visible. A missing hook file or a missing/uncallable `on_workspace_created` export _is_ a startup failure (same as a broken login hook).
 
-The sample hook's example: force every new workspace to `egress_mode: static`, and keep the coders/collaborators role groups' `files` grant while dropping `files-download` and `files-write` for a browse-without-download posture. Adapt it to your deployment's stance.
+The sample hook's example: force every new workspace to `egress_mode: static`, and keep the coders/collaborators role groups' `files` grant while dropping `files-download` and `files-write` for a browse-only posture (listings and metadata stay visible; no file body can be read or downloaded). Adapt it to your deployment's stance.
 
 ### OIDC Authentication
 

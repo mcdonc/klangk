@@ -66,11 +66,13 @@ async def on_workspace_created(workspace, actor):
     workspace["egress_mode"] = "static"
 
     # --- Example 2: ACL rewrite ---------------------------------------
-    # Browse-without-download posture: keep the coders and collaborators
-    # groups' ``files`` grant (browse/read in the file viewer) but drop
-    # ``files-download`` and ``files-write`` (edit/uncomment to match your
-    # deployment's stance). Entries whose ``principal`` is the group name
-    # identify the role groups — they are named ``<role>-<workspace id>``.
+    # Browse-only posture: keep the coders and collaborators groups'
+    # ``files`` grant (browse listings in the file viewer) but drop
+    # ``files-download`` and ``files-write`` — without ``files-download``
+    # no file body can be read or downloaded (edit/uncomment to match
+    # your deployment's stance). Entries whose ``principal`` is the
+    # group name identify the role groups — they are named
+    # ``<role>-<workspace id>``.
     entries = await workspace.acl_entries()
     kept = [
         entry
