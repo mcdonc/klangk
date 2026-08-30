@@ -3,10 +3,12 @@ import 'package:flutter/material.dart';
 /// Password-visibility ("eye") toggle for an [InputDecoration] suffixIcon.
 ///
 /// Deliberately skipped by Tab traversal (#2893): tabbing through a form
-/// moves only between input fields — the eye stays mouse-clickable and
-/// reachable via directional/programmatic focus, it is just not a tab stop.
-/// The skip must live on the [IconButton]'s own [FocusNode]: a skipping
-/// ancestor does not exclude the button's internal node from traversal.
+/// moves only between input fields. The eye is mouse/touch-only — Tab and
+/// Shift+Tab skip it, and arrow keys cannot reach it (inside a text field
+/// they move the caret) — though screen-reader semantics navigation still
+/// finds it. The skip must live on the [IconButton]'s own [FocusNode]: a
+/// skipping ancestor does not exclude the button's internal node from
+/// traversal.
 class KObscureToggle extends StatefulWidget {
   const KObscureToggle({
     super.key,

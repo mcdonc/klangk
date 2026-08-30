@@ -81,6 +81,26 @@ void main() {
       expect(focusInEye(), isFalse);
     });
 
+    testWidgets('Tab from the previous field enters the password field',
+        (tester) async {
+      // The filed repro was email -> Tab -> eye (#2893). Pin the forward
+      // direction too: focus must move straight into the password input,
+      // never the toggle.
+      await tester.pumpWidget(buildForm(
+        suffix: KObscureToggle(obscured: true, onToggle: () {}),
+      ));
+      await tester.pump();
+      first.requestFocus();
+      await tester.pump();
+      expect(first.hasFocus, isTrue);
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.pump();
+
+      expect(pw.hasFocus, isTrue);
+      expect(focusInEye(), isFalse);
+    });
+
     testWidgets('control: a plain suffix IconButton IS a tab stop',
         (tester) async {
       // Guards the skip test above: proves this harness detects a
