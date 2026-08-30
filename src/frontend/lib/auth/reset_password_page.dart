@@ -1,10 +1,13 @@
 import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
+
 import 'auth_service.dart';
 import '../utils/page_title.dart';
 import '../widgets/klangk_logo.dart';
+import '../widgets/obscure_toggle.dart';
 
 class ResetPasswordPage extends StatefulWidget {
   final String token;
@@ -91,9 +94,12 @@ class _ResetPasswordPageState extends State<ResetPasswordPage> {
                 children: [
                   const KlangkLogo(height: 80),
                   const SizedBox(height: 24),
-                  Text('Missing reset token.',
-                      style: TextStyle(
-                          color: Theme.of(context).colorScheme.error)),
+                  Text(
+                    'Missing reset token.',
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
                   const SizedBox(height: 16),
                   TextButton(
                     onPressed: () => context.go('/login'),
@@ -130,12 +136,11 @@ class _ResetPasswordPageState extends State<ResetPasswordPage> {
                     decoration: InputDecoration(
                       labelText: 'New Password',
                       border: const OutlineInputBorder(),
-                      suffixIcon: IconButton(
-                        icon: Icon(_obscurePassword
-                            ? Icons.visibility_off
-                            : Icons.visibility),
-                        onPressed: () => setState(
-                            () => _obscurePassword = !_obscurePassword),
+                      suffixIcon: KObscureToggle(
+                        obscured: _obscurePassword,
+                        onToggle: () => setState(
+                          () => _obscurePassword = !_obscurePassword,
+                        ),
                       ),
                     ),
                     obscureText: _obscurePassword,
@@ -153,12 +158,11 @@ class _ResetPasswordPageState extends State<ResetPasswordPage> {
                     decoration: InputDecoration(
                       labelText: 'Confirm Password',
                       border: const OutlineInputBorder(),
-                      suffixIcon: IconButton(
-                        icon: Icon(_obscurePassword
-                            ? Icons.visibility_off
-                            : Icons.visibility),
-                        onPressed: () => setState(
-                            () => _obscurePassword = !_obscurePassword),
+                      suffixIcon: KObscureToggle(
+                        obscured: _obscurePassword,
+                        onToggle: () => setState(
+                          () => _obscurePassword = !_obscurePassword,
+                        ),
                       ),
                     ),
                     obscureText: _obscurePassword,
@@ -172,9 +176,12 @@ class _ResetPasswordPageState extends State<ResetPasswordPage> {
                   ),
                   if (_error != null) ...[
                     const SizedBox(height: 16),
-                    Text(_error!,
-                        style: TextStyle(
-                            color: Theme.of(context).colorScheme.error)),
+                    Text(
+                      _error!,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                      ),
+                    ),
                   ],
                   const SizedBox(height: 24),
                   SizedBox(

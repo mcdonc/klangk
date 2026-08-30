@@ -1,15 +1,19 @@
 // coverage:ignore-file
 import 'dart:async';
 import 'dart:convert';
+
 // ignore: unused_import
 import '../theme/colors.dart';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+
 import '../auth/auth_service.dart';
 import '../auth/password_policy.dart';
 import '../widgets/acl_editor.dart';
 import '../widgets/app_bar_actions.dart';
 import '../widgets/app_bar_title.dart';
+import '../widgets/obscure_toggle.dart';
 import '../widgets/skeuo_tab.dart';
 import '../utils/validators.dart';
 import 'server_schedule_panel.dart';
@@ -66,8 +70,10 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
       if (value == _usersQuery) return;
       _usersQuery = value;
       _usersQueryDebounce?.cancel();
-      _usersQueryDebounce =
-          Timer(const Duration(milliseconds: 300), () => _loadUsers(page: 1));
+      _usersQueryDebounce = Timer(
+        const Duration(milliseconds: 300),
+        () => _loadUsers(page: 1),
+      );
     });
     _loadUsers();
   }
@@ -137,9 +143,7 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     final auth = context.read<AuthService>();
     final result = await showDialog<Map<String, dynamic>>(
       context: context,
-      builder: (ctx) => _AddUserDialog(
-        passwordPolicy: auth.passwordPolicy,
-      ),
+      builder: (ctx) => _AddUserDialog(passwordPolicy: auth.passwordPolicy),
     );
     if (result == null) return;
 
@@ -266,16 +270,12 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
           '$count $word and all their data:';
     }
 
-    final children = <Widget>[
-      Text(summary),
-    ];
+    final children = <Widget>[Text(summary)];
 
     // List the names (capped at 100 by the fetch; scrollable so a long
     // list doesn't blow out the dialog).
     if (!fetchFailed && count > 0) {
-      children.add(
-        const SizedBox(height: 12),
-      );
+      children.add(const SizedBox(height: 12));
       children.add(
         ConstrainedBox(
           constraints: const BoxConstraints(maxHeight: 240),
@@ -620,8 +620,10 @@ class _GroupsTabState extends State<_GroupsTab> {
       if (value == _groupsQuery) return;
       _groupsQuery = value;
       _groupsQueryDebounce?.cancel();
-      _groupsQueryDebounce =
-          Timer(const Duration(milliseconds: 300), () => _loadGroups(page: 1));
+      _groupsQueryDebounce = Timer(
+        const Duration(milliseconds: 300),
+        () => _loadGroups(page: 1),
+      );
     });
     _loadGroups();
   }
@@ -857,10 +859,7 @@ class _GroupsTabState extends State<_GroupsTab> {
         children: [
           _AdminListToolbar(
             key: const ValueKey('admin-groups-toolbar'),
-            columns: const [
-              ('Name', 'name'),
-              ('Created', 'created'),
-            ],
+            columns: const [('Name', 'name'), ('Created', 'created')],
             sort: _groupsSort,
             order: _groupsOrder,
             onChangeSort: _changeGroupsSort,
@@ -916,9 +915,7 @@ class _ManageMembersDialogState extends State<_ManageMembersDialog> {
     final membersResp = await auth.authGet(
       '/api/v1/admin/groups/$_groupId/members',
     );
-    final usersResp = await auth.authGet(
-      '/api/v1/admin/users?page_size=200',
-    );
+    final usersResp = await auth.authGet('/api/v1/admin/users?page_size=200');
     if (!mounted) return;
     if (membersResp.statusCode != 200 || usersResp.statusCode != 200) {
       setState(() => _loading = false);
@@ -940,9 +937,7 @@ class _ManageMembersDialogState extends State<_ManageMembersDialog> {
       body: jsonEncode({'user_id': userId}),
     );
     if (resp.statusCode == 200) {
-      final r = await auth.authGet(
-        '/api/v1/admin/groups/$_groupId/members',
-      );
+      final r = await auth.authGet('/api/v1/admin/groups/$_groupId/members');
       if (r.statusCode == 200 && mounted) {
         setState(() {
           _members = List<Map<String, dynamic>>.from(jsonDecode(r.body));
@@ -1081,7 +1076,9 @@ class _InvitationsTabState extends State<_InvitationsTab> {
       _invitationsQuery = value;
       _invitationsQueryDebounce?.cancel();
       _invitationsQueryDebounce = Timer(
-          const Duration(milliseconds: 300), () => _loadInvitations(page: 1));
+        const Duration(milliseconds: 300),
+        () => _loadInvitations(page: 1),
+      );
     });
     _loadInvitations();
   }
@@ -1105,9 +1102,7 @@ class _InvitationsTabState extends State<_InvitationsTab> {
           '&sort=${Uri.encodeQueryComponent(_invitationsSort)}'
           '&order=${Uri.encodeQueryComponent(_invitationsOrder)}'
           '${q.isNotEmpty ? '&q=${Uri.encodeQueryComponent(q)}' : ''}';
-      final resp = await auth.authGet(
-        '/api/v1/admin/invitations?$query',
-      );
+      final resp = await auth.authGet('/api/v1/admin/invitations?$query');
       if (resp.statusCode == 200) {
         final data = jsonDecode(resp.body) as Map<String, dynamic>;
         if (mounted) {
@@ -1140,9 +1135,8 @@ class _InvitationsTabState extends State<_InvitationsTab> {
     if (resp.statusCode == 200) {
       _loadInvitations(page: 1);
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Invitation sent to $email')));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Invitation sent to $email')));
       }
     } else {
       if (mounted) {
@@ -1431,11 +1425,9 @@ class _AddUserDialogState extends State<_AddUserDialog> {
                   // and surface a violation as soon as it's typed.
                   helperText: policy.helperText,
                   errorText: policyError,
-                  suffixIcon: IconButton(
-                    icon: Icon(_obscurePassword
-                        ? Icons.visibility_off
-                        : Icons.visibility),
-                    onPressed: () =>
+                  suffixIcon: KObscureToggle(
+                    obscured: _obscurePassword,
+                    onToggle: () =>
                         setState(() => _obscurePassword = !_obscurePassword),
                   ),
                 ),
@@ -1453,11 +1445,9 @@ class _AddUserDialogState extends State<_AddUserDialog> {
                   border: const OutlineInputBorder(),
                   errorText:
                       passwordsMismatch ? 'Passwords do not match' : null,
-                  suffixIcon: IconButton(
-                    icon: Icon(_obscureConfirm
-                        ? Icons.visibility_off
-                        : Icons.visibility),
-                    onPressed: () =>
+                  suffixIcon: KObscureToggle(
+                    obscured: _obscureConfirm,
+                    onToggle: () =>
                         setState(() => _obscureConfirm = !_obscureConfirm),
                   ),
                 ),
@@ -1603,11 +1593,9 @@ class _EditUserDialogState extends State<_EditUserDialog> {
                 helperText: settingPassword ? policy.helperText : null,
                 errorText: policyError,
                 border: const OutlineInputBorder(),
-                suffixIcon: IconButton(
-                  icon: Icon(_obscurePassword
-                      ? Icons.visibility_off
-                      : Icons.visibility),
-                  onPressed: () =>
+                suffixIcon: KObscureToggle(
+                  obscured: _obscurePassword,
+                  onToggle: () =>
                       setState(() => _obscurePassword = !_obscurePassword),
                 ),
               ),
@@ -1628,11 +1616,9 @@ class _EditUserDialogState extends State<_EditUserDialog> {
                   border: const OutlineInputBorder(),
                   errorText:
                       passwordsMismatch ? 'Passwords do not match' : null,
-                  suffixIcon: IconButton(
-                    icon: Icon(_obscureConfirm
-                        ? Icons.visibility_off
-                        : Icons.visibility),
-                    onPressed: () =>
+                  suffixIcon: KObscureToggle(
+                    obscured: _obscureConfirm,
+                    onToggle: () =>
                         setState(() => _obscureConfirm = !_obscureConfirm),
                   ),
                 ),
@@ -1746,10 +1732,7 @@ class _UserAvatar extends StatelessWidget {
   final String initial;
   final String email;
 
-  const _UserAvatar({
-    required this.initial,
-    required this.email,
-  });
+  const _UserAvatar({required this.initial, required this.email});
 
   @override
   Widget build(BuildContext context) {

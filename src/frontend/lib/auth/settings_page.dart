@@ -1,13 +1,17 @@
 import 'dart:convert';
+
 // ignore: unused_import
 import '../theme/colors.dart';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+
 import 'auth_service.dart';
 import '../utils/page_title.dart';
 import '../utils/validators.dart';
 import '../widgets/app_bar_actions.dart';
 import '../widgets/app_bar_title.dart';
+import '../widgets/obscure_toggle.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -49,9 +53,7 @@ class _SettingsPageState extends State<SettingsPage> {
     return Scaffold(
       appBar: AppBar(
         title: const AppBarTitle(title: 'Settings'),
-        actions: const [
-          AppBarActions(),
-        ],
+        actions: const [AppBarActions()],
       ),
       body: Center(
         child: SingleChildScrollView(
@@ -63,22 +65,31 @@ class _SettingsPageState extends State<SettingsPage> {
               children: [
                 Row(
                   children: [
-                    const Icon(Icons.account_circle,
-                        size: 28, color: KColors.textSecondary),
+                    const Icon(
+                      Icons.account_circle,
+                      size: 28,
+                      color: KColors.textSecondary,
+                    ),
                     const SizedBox(width: 12),
-                    Text(email,
-                        style: const TextStyle(
-                            fontSize: 20,
-                            fontWeight: FontWeight.w700,
-                            color: KColors.textSecondary)),
+                    Text(
+                      email,
+                      style: const TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w700,
+                        color: KColors.textSecondary,
+                      ),
+                    ),
                     if (_currentHandle != null &&
                         _currentHandle!.isNotEmpty) ...[
                       const SizedBox(width: 12),
-                      Text('@$_currentHandle',
-                          style: const TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w500,
-                              color: KColors.textSecondary)),
+                      Text(
+                        '@$_currentHandle',
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w500,
+                          color: KColors.textSecondary,
+                        ),
+                      ),
                     ],
                   ],
                 ),
@@ -195,15 +206,21 @@ class _PasswordSectionState extends State<_PasswordSection> {
         children: [
           Row(
             children: [
-              const Icon(Icons.lock_outline,
-                  size: 18, color: KColors.textSecondary),
+              const Icon(
+                Icons.lock_outline,
+                size: 18,
+                color: KColors.textSecondary,
+              ),
               const SizedBox(width: 8),
-              Text('Change Password',
-                  style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w700,
-                      color: KColors.textSecondary,
-                      letterSpacing: 0.3)),
+              Text(
+                'Change Password',
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                  color: KColors.textSecondary,
+                  letterSpacing: 0.3,
+                ),
+              ),
             ],
           ),
           const SizedBox(height: 16),
@@ -215,10 +232,9 @@ class _PasswordSectionState extends State<_PasswordSection> {
               floatingLabelStyle: TextStyle(color: KColors.textSecondary),
               floatingLabelBehavior: FloatingLabelBehavior.always,
               border: const OutlineInputBorder(),
-              suffixIcon: IconButton(
-                icon: Icon(
-                    _obscureCurrent ? Icons.visibility_off : Icons.visibility),
-                onPressed: () =>
+              suffixIcon: KObscureToggle(
+                obscured: _obscureCurrent,
+                onToggle: () =>
                     setState(() => _obscureCurrent = !_obscureCurrent),
               ),
             ),
@@ -234,10 +250,9 @@ class _PasswordSectionState extends State<_PasswordSection> {
               floatingLabelStyle: TextStyle(color: KColors.textSecondary),
               floatingLabelBehavior: FloatingLabelBehavior.always,
               border: const OutlineInputBorder(),
-              suffixIcon: IconButton(
-                icon:
-                    Icon(_obscureNew ? Icons.visibility_off : Icons.visibility),
-                onPressed: () => setState(() => _obscureNew = !_obscureNew),
+              suffixIcon: KObscureToggle(
+                obscured: _obscureNew,
+                onToggle: () => setState(() => _obscureNew = !_obscureNew),
               ),
             ),
             obscureText: _obscureNew,
@@ -258,10 +273,9 @@ class _PasswordSectionState extends State<_PasswordSection> {
               floatingLabelStyle: TextStyle(color: KColors.textSecondary),
               floatingLabelBehavior: FloatingLabelBehavior.always,
               border: const OutlineInputBorder(),
-              suffixIcon: IconButton(
-                icon:
-                    Icon(_obscureNew ? Icons.visibility_off : Icons.visibility),
-                onPressed: () => setState(() => _obscureNew = !_obscureNew),
+              suffixIcon: KObscureToggle(
+                obscured: _obscureNew,
+                onToggle: () => setState(() => _obscureNew = !_obscureNew),
               ),
             ),
             obscureText: _obscureNew,
@@ -407,15 +421,21 @@ class _HandleSectionState extends State<_HandleSection> {
         children: [
           Row(
             children: [
-              const Icon(Icons.alternate_email,
-                  size: 18, color: KColors.textSecondary),
+              const Icon(
+                Icons.alternate_email,
+                size: 18,
+                color: KColors.textSecondary,
+              ),
               const SizedBox(width: 8),
-              Text('Change Handle',
-                  style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w700,
-                      color: KColors.textSecondary,
-                      letterSpacing: 0.3)),
+              Text(
+                'Change Handle',
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                  color: KColors.textSecondary,
+                  letterSpacing: 0.3,
+                ),
+              ),
             ],
           ),
           if (widget.currentHandle != null) ...[
@@ -454,10 +474,9 @@ class _HandleSectionState extends State<_HandleSection> {
               floatingLabelStyle: TextStyle(color: KColors.textSecondary),
               floatingLabelBehavior: FloatingLabelBehavior.always,
               border: const OutlineInputBorder(),
-              suffixIcon: IconButton(
-                icon: Icon(
-                    _obscurePassword ? Icons.visibility_off : Icons.visibility),
-                onPressed: () =>
+              suffixIcon: KObscureToggle(
+                obscured: _obscurePassword,
+                onToggle: () =>
                     setState(() => _obscurePassword = !_obscurePassword),
               ),
             ),
@@ -569,15 +588,21 @@ class _EmailSectionState extends State<_EmailSection> {
         children: [
           Row(
             children: [
-              const Icon(Icons.email_outlined,
-                  size: 18, color: KColors.textSecondary),
+              const Icon(
+                Icons.email_outlined,
+                size: 18,
+                color: KColors.textSecondary,
+              ),
               const SizedBox(width: 8),
-              Text('Change Email',
-                  style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w700,
-                      color: KColors.textSecondary,
-                      letterSpacing: 0.3)),
+              Text(
+                'Change Email',
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                  color: KColors.textSecondary,
+                  letterSpacing: 0.3,
+                ),
+              ),
             ],
           ),
           const SizedBox(height: 16),
@@ -607,10 +632,9 @@ class _EmailSectionState extends State<_EmailSection> {
               floatingLabelStyle: TextStyle(color: KColors.textSecondary),
               floatingLabelBehavior: FloatingLabelBehavior.always,
               border: const OutlineInputBorder(),
-              suffixIcon: IconButton(
-                icon: Icon(
-                    _obscurePassword ? Icons.visibility_off : Icons.visibility),
-                onPressed: () =>
+              suffixIcon: KObscureToggle(
+                obscured: _obscurePassword,
+                onToggle: () =>
                     setState(() => _obscurePassword = !_obscurePassword),
               ),
             ),
