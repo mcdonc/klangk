@@ -13,6 +13,7 @@ from fastapi import HTTPException, Request
 from pydantic import BaseModel
 
 from .. import auth
+from ..settings import parse_bool_setting
 
 logger = logging.getLogger(__name__)
 
@@ -95,13 +96,11 @@ def autostart_allowed(app) -> bool:
     """Whether per-workspace auto-start is permitted (KLANGKD_ALLOW_AUTOSTART).
 
     Read off the frozen ``app.state.settings`` rather than re-resolving the
-    env at call time (#1516).
+    env at call time (#1516). Parsed via the shared :func:`parse_bool_setting`
+    so this read and the boot-time gate in
+    ``workspaces.auto_start_workspaces`` agree (#2796).
     """
-    return app.state.settings.allow_autostart.strip().lower() in (
-        "1",
-        "true",
-        "yes",
-    )
+    return parse_bool_setting(app.state.settings.allow_autostart)
 
 
 class WorkspaceAclEntry(BaseModel):

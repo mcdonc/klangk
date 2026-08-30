@@ -11,6 +11,7 @@ from pathlib import Path
 
 from . import container, model
 from .container.spec import SHARED_HOME, SHARED_HOME_NAME
+from .settings import parse_bool_setting
 
 logger = logging.getLogger(__name__)
 
@@ -719,10 +720,12 @@ class Workspaces:
     async def auto_start_workspaces(self) -> int:
         """Start containers for all workspaces with auto_start enabled.
 
-        Skipped entirely if ``KLANGKD_ALLOW_AUTOSTART`` is not set.
+        Skipped entirely if ``KLANGKD_ALLOW_AUTOSTART`` is not enabled
+        (parsed via the shared :func:`parse_bool_setting`, so this gate and
+        ``api._common.autostart_allowed`` agree — #2796).
         Returns the number of containers started.
         """
-        if not self.app.state.settings.allow_autostart:
+        if not parse_bool_setting(self.app.state.settings.allow_autostart):
             return 0
 
         # Start-refusal check (#2527): a draining node suppresses boot

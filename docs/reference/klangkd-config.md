@@ -132,7 +132,7 @@ image_name: klangk-workspace
 image_pull_policy: missing
 data_dir: /var/lib/klangk/data
 port_range_start: 9000
-allow_sudo: "true"
+allow_sudo: true
 
 # --- OIDC (inline) ---
 oidc_providers:
@@ -149,7 +149,7 @@ smtp_port: 587
 smtp_user: klangk@example.com
 smtp_password: "file:/run/secrets/smtp-pw"
 smtp_from: noreply@example.com
-smtp_use_tls: "true"
+smtp_use_tls: true
 
 # --- Branding ---
 product_name: "My Platform"

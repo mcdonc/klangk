@@ -297,6 +297,22 @@ def _coerce_setting_float(
     return value
 
 
+def parse_bool_setting(value: str | None) -> bool:
+    """Truthiness shared by the str-typed boolean settings (#2796).
+
+    Several settings (``allow_sudo``, ``allow_autostart``, ...) are
+    str-typed for env-var fidelity but consumed as booleans; every
+    consumer matches the same truthy forms (``1`` / ``true`` / ``yes``,
+    case-insensitive, whitespace-tolerant). Centralizing the parse keeps
+    the reads identical — the #2796 unification of
+    ``api._common.autostart_allowed`` and the boot auto-start gate in
+    ``workspaces.auto_start_workspaces``, which previously used plain
+    string truthiness (so ``allow_autostart: "false"`` read as
+    *enabled* there).
+    """
+    return (value or "").strip().lower() in ("1", "true", "yes")
+
+
 def _coerce_podman_size(v, name: str) -> str | None:
     """Validate a podman size-string (``2g``/``512mb``/``1024``) or None.
 
@@ -1595,16 +1611,30 @@ class KlangkSettings(BaseSettings):
             default=cls.model_fields[info.field_name].default,
         )
 
-    @field_validator("smtp_use_tls", mode="before")
+    @field_validator(
+        "allow_sudo",
+        "allow_autostart",
+        "disable_registration",
+        "disable_invites",
+        "disable_tmux",
+        "prevent_insecure_jwt_secret",
+        "allow_insecure_no_auth",
+        "reject_proxy_headers",
+        "smtp_use_tls",
+        mode="before",
+    )
     @classmethod
-    def _coerce_smtp_use_tls(cls, v):
-        """Accept a native YAML bool for the tls toggle (#2603).
+    def _coerce_bool_string_fields(cls, v):
+        """Accept a native YAML bool for the str-typed boolean settings
+        (#2796, generalizing the #2603 ``smtp_use_tls`` one-off).
 
-        The field stays str-typed (consumers match "1"/"true"/"yes"
-        case-insensitively), but ``smtp-use-tls: true`` in YAML parses as
-        a bool and used to fail validation. Translate the two bools to
-        their canonical strings; everything else passes through to the
-        consumers' own matching.
+        These fields stay str-typed — env vars are always strings, and
+        ``file:``/``cmd:`` indirection plus the consumers' own matching
+        ("1"/"true"/"yes" case-insensitively, see
+        :func:`parse_bool_setting`) keep working — but a bare
+        ``allow_sudo: true`` in YAML parses as a bool and used to fail
+        validation. Translate the two bools to their canonical strings;
+        everything else (strings, ``None``) passes through unchanged.
         """
         if v is True:
             return "true"

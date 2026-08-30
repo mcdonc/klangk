@@ -14,6 +14,7 @@ from _helpers import make_settings
 from klangk.settings import (
     KlangkSettings,
     _resolve_indirection,
+    parse_bool_setting,
     resolve_dynamic_config,
 )
 
@@ -1765,6 +1766,101 @@ class TestNumericSettingCoercion:
         else:
             s = make_settings({"KLANGKD_SMTP_USE_TLS": value})
             assert s.smtp_use_tls == value
+
+
+class TestBoolStringSettingCoercion:
+    """Str-typed boolean settings accept native YAML bools (#2796).
+
+    The boolean sibling of the #2603 numeric coercion: fields stay
+    str-typed (env vars are always strings; consumers match
+    "1"/"true"/"yes" via parse_bool_setting), but a bare
+    ``allow_sudo: true`` in YAML parses as a bool and used to fail
+    validation with ``Input should be a valid string``.
+    """
+
+    FIELDS = [
+        "allow_sudo",
+        "allow_autostart",
+        "disable_registration",
+        "disable_invites",
+        "disable_tmux",
+        "prevent_insecure_jwt_secret",
+        "allow_insecure_no_auth",
+        "reject_proxy_headers",
+        "smtp_use_tls",
+    ]
+
+    @pytest.mark.parametrize("field", FIELDS)
+    @pytest.mark.parametrize("value", [True, False])
+    def test_yaml_native_bool(self, field, value, tmp_path):
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(f"{field}: {str(value).lower()}\n")
+        s = make_settings({}, config_file=str(cfg))
+        assert getattr(s, field) == str(value).lower()
+
+    @pytest.mark.parametrize(
+        "field,value",
+        [(f, v) for f in FIELDS for v in ("1", "yes", "no", "", "TRUE")],
+    )
+    def test_env_strings_unchanged(self, field, value):
+        s = make_settings({f"KLANGKD_{field.upper()}": value})
+        assert getattr(s, field) == value
+
+    def test_yaml_quoted_strings_unchanged(self, tmp_path):
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(
+            'allow_sudo: "yes"\n'
+            "disable_registration: '1'\n"
+            'smtp_use_tls: "false"\n'
+        )
+        s = make_settings({}, config_file=str(cfg))
+        assert s.allow_sudo == "yes"
+        assert s.disable_registration == "1"
+        assert s.smtp_use_tls == "false"
+
+    def test_file_indirection_still_works(self, tmp_path):
+        secret = tmp_path / "flag"
+        secret.write_text("1\n")
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(f"allow_sudo: file:{secret}\n")
+        s = make_settings({}, config_file=str(cfg))
+        assert s.allow_sudo == "1"
+
+    def test_unset_keeps_defaults(self):
+        s = make_settings({})
+        assert s.allow_sudo == "true"
+        assert s.allow_autostart == ""
+        assert s.disable_registration == ""
+        assert s.disable_invites == ""
+        assert s.disable_tmux == ""
+        assert s.prevent_insecure_jwt_secret == ""
+        assert s.allow_insecure_no_auth == ""
+        assert s.reject_proxy_headers is None
+        assert s.smtp_use_tls == "true"
+
+
+class TestParseBoolSetting:
+    """The shared truthiness parse for str-typed boolean settings
+    (#2796) — the single definition both allow_autostart reads (the
+    /config surface and the boot auto-start gate) point at."""
+
+    @pytest.mark.parametrize(
+        "value,expected",
+        [
+            ("1", True),
+            ("true", True),
+            ("yes", True),
+            ("TRUE", True),
+            (" Yes ", True),
+            ("0", False),
+            ("false", False),
+            ("no", False),
+            ("", False),
+            (None, False),
+        ],
+    )
+    def test_parse(self, value, expected):
+        assert parse_bool_setting(value) is expected
 
 
 class TestPasswordRequireCounts:

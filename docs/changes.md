@@ -265,6 +265,13 @@ sync` report a clear permission-denied error.
 
 ### Added
 
+- **Native YAML booleans for string-typed boolean settings (#2796).**
+  `allow_sudo`, `allow_autostart`, `disable_registration`,
+  `disable_invites`, `disable_tmux`, `prevent_insecure_jwt_secret`,
+  `allow_insecure_no_auth`, and `reject_proxy_headers` now accept a bare
+  `true`/`false` in the YAML config file (previously rejected at boot unless
+  quoted). Env vars and quoted strings behave exactly as before.
+
 - **`fmtk` — flutter-mcp-toolkit CLI in the devenv shell (#2868).** Agents
   can inspect and drive a debug run of the frontend (semantic snapshots,
   widget refs, taps/typing, hot reload, app logs) via the pinned
@@ -1531,6 +1538,13 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   custom `features.yaml` if present.
 
 ### Fixed
+
+- **Boot auto-start no longer ignores a disabled `allow_autostart`
+  (#2796).** `KLANGKD_ALLOW_AUTOSTART=false` (any non-truthy non-empty
+  string) previously read as _enabled_ on the boot path — workspaces with
+  auto-start were started at daemon boot even though every other surface
+  (including `/api/v1/config`) reported auto-start off. The boot gate now
+  parses the value the same way.
 
 - **Files tab: a directory listing failure no longer renders as an
   empty directory (#2766).** Listing an unreadable directory (e.g. a

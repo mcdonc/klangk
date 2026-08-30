@@ -526,6 +526,28 @@ class TestAutoStartWorkspaces:
         result = await app_state.state.workspaces.auto_start_workspaces()
         assert result == 0
 
+    async def test_returns_zero_when_disabled_by_string(self, user, app_state):
+        # "false" is a non-empty string, so the pre-#2796 plain-truthiness
+        # gate read it as *enabled*; the gate now parses it like
+        # api._common.autostart_allowed does.
+        registry = app_state.state.container_registry
+        await app_state.state.workspaces.create_workspace(
+            user["id"], "auto-ws", auto_start=True
+        )
+        with patch.object(
+            app_state.state.settings, "allow_autostart", "false"
+        ):
+            with patch.object(
+                registry,
+                "start_container",
+                new_callable=AsyncMock,
+            ) as mock_start:
+                result = (
+                    await app_state.state.workspaces.auto_start_workspaces()
+                )
+        assert result == 0
+        mock_start.assert_not_awaited()
+
     async def test_starts_auto_start_workspaces(self, user, app_state):
         registry = app_state.state.container_registry
         ws1 = await app_state.state.workspaces.create_workspace(
