@@ -65,6 +65,33 @@ class _FakeSink extends Fake implements WebSocketSink {
 }
 
 void main() {
+  group('WsError value semantics (#2891)', () {
+    test('equality and hashCode follow message + code', () {
+      const a = WsError(message: 'Permission denied', code: 'forbidden');
+      const b = WsError(message: 'Permission denied', code: 'forbidden');
+      const c = WsError(message: 'Permission denied');
+      const d = WsError(message: 'Workspace not found', code: 'not_found');
+
+      expect(a, b);
+      expect(a, isNot(c));
+      expect(a, isNot(d));
+      // Same hash for equal values (used as set/map keys).
+      expect({a}.contains(b), isTrue);
+      expect(a.hashCode, b.hashCode);
+    });
+
+    test('toString carries the code when present', () {
+      expect(
+        const WsError(message: 'Permission denied').toString(),
+        'Permission denied',
+      );
+      expect(
+        const WsError(message: 'Permission denied', code: 'forbidden')
+            .toString(),
+        'Permission denied (code: forbidden)',
+      );
+    });
+  });
   setUp(() {
     testBaseUrlOverride = 'http://localhost:8997';
     SharedPreferences.setMockInitialValues({});
