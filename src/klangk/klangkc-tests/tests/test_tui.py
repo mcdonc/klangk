@@ -14196,11 +14196,15 @@ class TestAppBranchGaps2834:
                 await app.workers.wait_for_complete()
                 # From the login screen (no MainScreen mounted).
                 assert isinstance(app.screen, LoginScreen)
+                # Capture (not schedule) the logout worker and run it to
+                # completion inline: awaiting the screen state alone is
+                # vacuous here (LoginScreen is already up), and a raced
+                # worker can outlive the coverage flush.
+                captured = []
+                app.run_worker = lambda fn, **kw: captured.append(fn)
                 app.do_logout()
-                for _ in range(50):
-                    if isinstance(app.screen, LoginScreen):
-                        break
-                    await asyncio.sleep(0.02)
+                await captured[0]()
+                await pilot.pause()
                 assert isinstance(app.screen, LoginScreen)
 
     async def test_pop_above_top_screen_removes_nothing(self):
@@ -14805,11 +14809,14 @@ class TestFinalBranchGaps2834:
                 # MainScreen exists (477 arc).
                 assert isinstance(app.screen, LoginScreen)
                 app._session_expired_screen = None
+                # Run the expiry worker inline (see do_logout test: a
+                # raced worker can outlive the coverage flush).
+                captured = []
+                app.run_worker = lambda fn, **kw: captured.append(fn)
                 app.confirm_session_expired()
-                for _ in range(50):
-                    if not app._expiring:
-                        break
-                    await asyncio.sleep(0.02)
+                await captured[0]()
+                await pilot.pause()
+                assert app._expiring is False
                 assert isinstance(app.screen, LoginScreen)
 
     async def test_detail_on_mount_with_selected_indexes(self):

@@ -76,11 +76,10 @@ line-length = 79
 # relative to the CWD, not the pytest rootdir, so the repo-root
 # pyproject's copy of this section is what the documented from-root
 # invocations read; this local copy keeps CWD-here runs identical.
-# Keep in sync with the root pyproject.toml (#2834). See there for why
-# branch coverage needs the C tracer + greenlet concurrency on 3.13.
+# Keep in sync with the root pyproject.toml (#2834). The sysmon core
+# (pinned in the conftests) needs no concurrency option.
 [tool.coverage.run]
 branch = true
-concurrency = ["greenlet", "thread"]
 
 [tool.hatch.version]
 source = "vcs"

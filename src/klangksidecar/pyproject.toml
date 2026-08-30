@@ -38,13 +38,6 @@ test = [
     "pytest-xdist>=3.0.0",
     "pytest-timeout>=2.3.0",
     "pytest-cov>=6.0.0",
-    # Not used by the sidecar itself: the shared [tool.coverage.run] in
-    # the repo-root pyproject.toml (which every from-root pytest-cov run
-    # reads, CWD-relative) sets concurrency=["greenlet", "thread"] for
-    # the klangk suite, and coverage refuses to start with a greenlet
-    # concurrency it can't import. Test-only; the sidecar image installs
-    # no [test] extra (#2834).
-    "greenlet>=3.1",
 ]
 
 # Coverage gate (#2834): branch coverage at 100%, mirroring the klangk

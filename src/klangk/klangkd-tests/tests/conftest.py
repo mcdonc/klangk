@@ -3,12 +3,12 @@
 import os
 import sys
 
-# No COVERAGE_CORE pin: branch coverage (#2834) requires the C tracer
-# core (Python 3.13's sys.monitoring has no branch events, so sysmon
-# can't measure branches and falls back with a warning that
-# filterwarnings=error turns fatal). Greenlet-executed code is tracked
-# via concurrency=["greenlet", "thread"] in the repo-root pyproject's
-# [tool.coverage.run] instead — see there for the full rationale.
+# Must be set before coverage.py initialises in each xdist worker. The
+# sysmon core measures branches on Python 3.14 (sys.monitoring gained
+# BRANCH_LEFT/RIGHT) and tracks greenlet-executed code natively
+# (#456/#1393) — and runs the branch gate ~40% faster than the C tracer.
+# No ``concurrency`` option anywhere: sysmon does not support it.
+os.environ.setdefault("COVERAGE_CORE", "sysmon")
 
 import types
 

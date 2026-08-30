@@ -1,12 +1,14 @@
 """CLI unit test configuration."""
 
+import os
+
 import pytest
 
-# No COVERAGE_CORE pin: branch coverage (#2834) requires the C tracer
-# core (Python 3.13's sys.monitoring has no branch events, so sysmon
-# can't measure branches and falls back with a warning that
-# filterwarnings=error turns fatal). See the repo-root pyproject's
-# [tool.coverage.run] for the full rationale.
+# Use the sysmon coverage engine — mirrors the server suite's conftest
+# (src/klangk/klangkd-tests/tests/conftest.py) so coverage is tracked
+# correctly across xdist workers (#1526). On the 3.14 toolchain it also
+# measures the branch gate (#2834) and tracks greenlets natively.
+os.environ.setdefault("COVERAGE_CORE", "sysmon")
 
 
 @pytest.fixture(autouse=True)

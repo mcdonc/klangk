@@ -1097,7 +1097,6 @@ nfqueue = [
     { name = "netfilterqueue" },
 ]
 test = [
-    { name = "greenlet" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
@@ -1108,7 +1107,6 @@ test = [
 [package.metadata]
 requires-dist = [
     { name = "dnspython", specifier = ">=2.7,<3" },
-    { name = "greenlet", marker = "extra == 'test'", specifier = ">=3.1" },
     { name = "netfilterqueue", marker = "extra == 'nfqueue'" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8.0.0" },
     { name = "pytest-asyncio", marker = "extra == 'test'", specifier = ">=0.24.0" },

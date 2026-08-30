@@ -45,22 +45,22 @@ devenv --quiet -O dotenv.enable:bool false shell -- flutter test --coverage
 
 `-n auto` (pytest-xdist) is **not optional** for the Python suite — it's how
 CI runs it, and it is the difference between a real and a bogus coverage
-number. Greenlet-executed code (SQLAlchemy's async engine) is tracked via
-`concurrency = ["greenlet", "thread"]` in the repo-root pyproject's
-`[tool.coverage.run]`; without `-n` (a single-process run) that tracking
-under-counts and you'll see a false ~93% total with heavy files like
-`api/auth.py` reported at ~55%. Run with `-n auto` and coverage matches CI
-(100%, every module). Don't try to "reproduce" a coverage drop from a
-single-process run — re-run with `-n auto` first.
+number. The conftests pin `COVERAGE_CORE=sysmon` (the toolchain is Python
+3.14, #2844): sys.monitoring measures branches there and tracks
+greenlet-executed code (SQLAlchemy's async engine) natively; without `-n`
+(a single-process run) that tracking under-counts and you'll see a false
+~93% total with heavy files like `api/auth.py` reported at ~55%. Run with
+`-n auto` and coverage matches CI (100%, every module). Don't try to
+"reproduce" a coverage drop from a single-process run — re-run with
+`-n auto` first.
 
 The 100% gate is **full branch coverage** (`--cov-branch`, #2834): every
 branch outcome must be exercised, not just every line — an `if` needs both
 its true and false outcomes tested (or a `# pragma: no branch` comment with
-a justification for structurally unreachable arms). The conftests no
-longer pin `COVERAGE_CORE=sysmon`: Python 3.13's `sys.monitoring` cannot
-measure branches, so the gate uses the C tracer plus the greenlet
-concurrency config above. The gate is enforced on the `klangk` and
-`klangksidecar` packages; a new code path — or a new branch outcome —
+a justification for structurally unreachable arms). No `concurrency`
+option in the coverage config: sysmon does not support it, and on 3.14 it
+is not needed. The gate is enforced on the `klangk` and `klangksidecar`
+packages; a new code path — or a new branch outcome —
 with no test will fail the build.
 
 ### Rapid iteration: use the `testmon` task
@@ -141,7 +141,7 @@ that instantiates app/framework components directly.
 
 The harness exists to provide the setup production code depends on: the
 autouse fixtures stub background workers and fake the HTTP/WS backends; the
-repo-root `[tool.coverage.run]` carries the greenlet concurrency config;
+conftests pin `COVERAGE_CORE=sysmon` for greenlet-safe branch coverage;
 `run_test()` owns the textual event
 loop. A standalone script skips all of that, so it either **hangs** (commonly:
 `run_test()` context-exit waits forever for a real on-mount worker making real
