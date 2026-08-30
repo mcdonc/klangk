@@ -99,7 +99,10 @@ named by your user ID, so switching tabs is instant.
 - Click **+** to create a new terminal tab (tmux window)
 - Click a tab to switch to it
 - Click **✕** on a tab to close it (only shown when more than one tab exists)
-- Right-click a tab to open a context menu with **Rename** and **Share/Unshare**
+- Right-click a tab to open a context menu with **Rename** and
+  **Share/Unshare** (the Share entry and the broadcast-icon toggle are
+  hidden for members without the `share-terminals` permission — see
+  [Role permissions](#role-permissions) below)
 
 ### Renaming tabs
 
@@ -128,6 +131,12 @@ Right-click a tab and select **Share**. The tab gains a broadcast icon
 indicating it is now shared. Other workspace members see the shared
 tab appear in their tab bar.
 
+Sharing requires the `share-terminals` permission on the workspace —
+owners and collaborators have it by default, coders and spectators do
+not. A member without the permission sees no Share action (the context
+menu shows only Rename, and the broadcast icon is absent), and the
+server rejects the request if one is sent anyway.
+
 [![Tab with broadcast icon indicating it is shared](../assets/terminal-sharing/04-shared-tab-with-icon.png)](../assets/terminal-sharing/04-shared-tab-with-icon.png)
 
 To unshare, either:
@@ -143,8 +152,11 @@ you are now seeing the same terminal session as the owner.
 
 [![Collaborator's view showing a shared terminal from another user](../assets/terminal-sharing/08-collaborator-view.png)](../assets/terminal-sharing/08-collaborator-view.png)
 
-Depending on your role, you may be able to type (read-write) or only
-watch (read-only). A lock icon indicates read-only access.
+Joining requires the `spectate-on-shared-terminals` permission (every
+role has it by default). Depending on your role, you may be able to
+type (read-write) or only watch (read-only); read-write needs
+`code-in-shared-terminals` or `share-terminals`. A lock icon indicates
+read-only access.
 
 ### Viewer tracking
 
@@ -162,7 +174,7 @@ handles of all current viewers.
 | ------------------------------ | ------ | ------ | ------------- | ---------- |
 | `terminal`                     | \*     | yes    | yes           | yes        |
 | `code-in-isolation`            | \*     | yes    | yes           |            |
-| `share-terminals`              | \*     |        |               |            |
+| `share-terminals`              | \*     |        | yes           |            |
 | `code-in-shared-terminals`     | \*     |        | yes           |            |
 | `spectate-on-shared-terminals` | \*     | yes    | yes           | yes        |
 | `files`                        | \*     | yes    | yes           |            |
@@ -170,11 +182,16 @@ handles of all current viewers.
 
 \* Owners have the wildcard (`*`) permission which implies all permissions.
 
+The table shows each seeded role's default grants; permissions can be
+tuned per workspace in the ACL editor. Sharing is enforced server-side —
+without `share-terminals` the share/unshare commands are rejected — and
+so is joining, via `spectate-on-shared-terminals`.
+
 - **Owners** can share/unshare tabs, type in shared terminals, and rename tabs.
 - **Coders** can watch shared terminals (read-only) but cannot share their own
   tabs or type in others' shared terminals. They have full isolated terminal
   and file access.
-- **Collaborators** can type in shared terminals but cannot share their own tabs.
-  They have full isolated terminal and file access.
+- **Collaborators** can share/unshare their own tabs and type in shared
+  terminals. They have full isolated terminal and file access.
 - **Spectators** can watch shared terminals in read-only mode. They cannot start
   isolated terminals or access files.

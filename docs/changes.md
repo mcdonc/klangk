@@ -184,6 +184,20 @@ exec`, and the rsync transport `klangk sync` and `klangk sandbox`
   `code-in-isolation` must add `exec-and-sync` explicitly to keep
   one-shot exec working for those principals. `klangk exec`/`klangk
 sync` report a clear permission-denied error.
+
+- **Terminal sharing is permission-gated (#2709).** Promoting a
+  terminal tab to shared — and joining another member's shared
+  terminal — crosses user boundaries (every member with spectate
+  access can read the owner's terminal output), so both stay behind
+  workspace permissions: `share-terminals` for share/unshare (owners
+  and collaborators by default) and `spectate-on-shared-terminals`
+  for joining (all roles); a joiner without `code-in-shared-terminals`
+  or `share-terminals` joins read-only. The browser hides the Share
+  action (context-menu entry and broadcast-icon toggle) for members
+  lacking the permission and the server rejects the commands; private,
+  unshared terminals are unaffected. Revoke the permissions per
+  workspace in the ACL editor to stop a member sharing their own tabs
+  or watching others'.
 - **Workspace export is gated on the workspace, not admin (#2707).**
   `GET /api/v1/workspaces/{id}/export` (and `klangk export`) now
   requires the `export` permission on `/workspaces/{id}` instead of the

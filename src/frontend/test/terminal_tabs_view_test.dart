@@ -375,6 +375,34 @@ void main() {
       expect(find.text('Share'), findsOneWidget);
     });
 
+    testWidgets('context menu hides Share without share-terminals permission',
+        (tester) async {
+      final client = _MockWsClient();
+      client._userId = 'user-1';
+      client._windows = [
+        {'id': 'w1', 'name': 'bash', 'index': 0, 'active': true},
+      ];
+      client._shared = [];
+      await tester.pumpWidget(_build(
+        client,
+        // Every permission except share-terminals (#2709).
+        hasPerm: (p) => p != 'share-terminals',
+      ));
+
+      final tabFinder = find.text('bash');
+      final center = tester.getCenter(tabFinder);
+      await tester.tapAt(center, buttons: 2);
+      await tester.pumpAndSettle();
+
+      // Rename stays; Share is hidden for members lacking the permission.
+      expect(find.text('Rename'), findsOneWidget);
+      expect(find.text('Share'), findsNothing);
+
+      // No broadcast-icon toggle either.
+      expect(find.byIcon(Icons.share_outlined), findsNothing);
+      expect(find.byIcon(Icons.cell_tower), findsNothing);
+    });
+
     testWidgets('context menu share action calls toggle', (tester) async {
       final client = _MockWsClient();
       client._userId = 'user-1';
