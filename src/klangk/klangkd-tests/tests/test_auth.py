@@ -1687,6 +1687,20 @@ class TestRecordActivity:
         row = await a.app.state.model.users.get_user_by_id(user["id"])
         assert row["last_activity_at"] is not None
 
+    async def test_forget_user_drops_stamp(self, user, db):
+        """#2914: forget_user prunes the throttle entry so deleted users
+        don't linger in activity_stamps for the process lifetime."""
+        a = _auth()
+        await a.record_activity(user["id"])
+        assert user["id"] in a.activity_stamps
+        a.forget_user(user["id"])
+        assert user["id"] not in a.activity_stamps
+        # Forgetting an id with no entry is a no-op.
+        a.forget_user("never-seen")
+        # After forgetting, the next call writes immediately again.
+        await a.record_activity(user["id"])
+        assert user["id"] in a.activity_stamps
+
 
 class TestRefreshBranchGaps2834:
     """#2834 branch gate: the expired-token path without a jti claim."""

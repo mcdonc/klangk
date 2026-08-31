@@ -346,6 +346,10 @@ async def delete_user(
     # Archive workspace data before deletion
     await app.state.workspaces.archive_user_data(user_id, user["email"])
     deleted = await app.state.model.users.delete_user(user_id)
+    # Prune the per-user activity-throttle stamp (#2914): placed before
+    # the not-deleted race check so even a lost race (user already gone)
+    # does not leave a stale entry behind.
+    app.state.auth.forget_user(user_id)
     if not deleted:  # pragma: no cover — race between get and delete
         raise HTTPException(status_code=404, detail="User not found")
     return {"status": "deleted"}

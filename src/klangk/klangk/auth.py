@@ -726,6 +726,16 @@ class Auth:
         self.activity_stamps[user_id] = now
         await self.app.state.model.users.record_activity(user_id)
 
+    def forget_user(self, user_id: str) -> None:
+        """Drop the user's activity-throttle stamp (#2914).
+
+        Called from the user-delete path so ``activity_stamps`` does not
+        retain ids of deleted users for the process lifetime. A stale
+        stamp only suppresses one throttled ``last_activity_at`` write,
+        so a user deleted mid-interval loses nothing.
+        """
+        self.activity_stamps.pop(user_id, None)
+
     def decode_token(self, token: str, *, allow_expired: bool = False) -> dict:
         options = {"verify_exp": False} if allow_expired else {}
         return jwt.decode(

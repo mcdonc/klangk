@@ -8673,6 +8673,31 @@ class TestAdminEndpoints:
         emails = [u["email"] for u in resp.json()["users"]]
         assert "testuser@example.com" not in emails
 
+    async def test_delete_user_prunes_activity_stamp(
+        self, client, app, admin_user, user, registry
+    ):
+        """#2914: the delete path drops the user's activity-throttle
+        stamp so Auth.activity_stamps retains no deleted-user ids."""
+        app.state.auth.activity_stamps[user["id"]] = 123.0
+        headers = await self._admin_headers(client)
+        with (
+            patch.object(
+                registry,
+                "stop_user_containers",
+                new_callable=AsyncMock,
+            ),
+            patch.object(
+                app.state.workspaces,
+                "archive_user_data",
+                new_callable=AsyncMock,
+            ),
+        ):
+            resp = await client.delete(
+                f"/api/v1/admin/users/{user['id']}", headers=headers
+            )
+        assert resp.status_code == 200
+        assert user["id"] not in app.state.auth.activity_stamps
+
     async def test_delete_self_forbidden(self, client, admin_user):
         headers = await self._admin_headers(client)
         resp = await client.delete(
