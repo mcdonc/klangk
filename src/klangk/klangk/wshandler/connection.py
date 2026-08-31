@@ -11,14 +11,13 @@ from ..exceptions import NodeDrainingError, WorkspaceCapacityError
 from ..terminal import TerminalSession
 from ..podman import ExecSession, PodmanError
 from .safe_websocket import SafeWebSocket, WS_ERRORS
-from .helpers import (
+from .support import (
     send_error,
     send_event,
     format_idle_timeout,
     format_container_info,
-    get_shared_terminals,
 )
-from .session import WorkspaceSession
+from .session import WorkspaceSession, get_shared_terminals
 from .controllers import (
     SshAgentForwarder,
     ExecController,

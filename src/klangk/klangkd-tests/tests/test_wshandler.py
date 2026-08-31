@@ -33,7 +33,7 @@ from klangk.exceptions import (
 from klangk.podman import PodmanError
 from _helpers import make_settings
 from klangk.wshandler import (
-    constants as _ws_constants,
+    support as _ws_support,
     controllers as _ws_controllers,
 )
 from klangk.wshandler import (
@@ -655,7 +655,7 @@ class TestHandleTerminalInput:
         conn.container_id = "cid"
         registry.track_activity("cid", "ws")
 
-        big_data = "x" * (_ws_constants.MAX_INPUT_SIZE + 1)
+        big_data = "x" * (_ws_support.MAX_INPUT_SIZE + 1)
         await conn.handle_terminal_input({"data": big_data})
         t.write.assert_not_awaited()
         registry.states.pop("ws", None)
@@ -3035,7 +3035,7 @@ class TestExecHandlers:
         conn.container_id = "cid"
         conn.exec_session = session
         big_data = base64.b64encode(
-            b"x" * (_ws_constants.MAX_INPUT_SIZE + 1)
+            b"x" * (_ws_support.MAX_INPUT_SIZE + 1)
         ).decode()
         await conn.handle_exec_input({"data": big_data})
         session.write.assert_not_awaited()
@@ -3354,7 +3354,7 @@ class TestExecController:
         session.is_alive = True
         ctrl.session = session
         big = base64.b64encode(
-            b"x" * (_ws_constants.MAX_INPUT_SIZE + 1)
+            b"x" * (_ws_support.MAX_INPUT_SIZE + 1)
         ).decode()
         with patch.object(registry, "record_activity"):
             await ctrl.input({"data": big})
@@ -5723,7 +5723,7 @@ class TestWsDebugLogging:
     async def test_recv_logged_when_debug(self, user, monkeypatch, app_state):
         app_state = _make_app_state()
 
-        monkeypatch.setattr(wshandler, "WS_DEBUG", True)
+        monkeypatch.setattr(wshandler.support, "WS_DEBUG", True)
         token = _auth().create_token(user["id"], user["email"])
         websocket = _mock_raw_sock(query_params={"token": token})
         websocket.receive_text = AsyncMock(
@@ -5736,7 +5736,7 @@ class TestWsDebugLogging:
         websocket.accept.assert_awaited_once()
 
     def test_send_error_logged_when_debug(self, monkeypatch):
-        monkeypatch.setattr(wshandler, "WS_DEBUG", True)
+        monkeypatch.setattr(wshandler.support, "WS_DEBUG", True)
         sock = _mock_sock()
         send_error(sock, "test error")
         sock.send_json.assert_called_once()
@@ -5770,7 +5770,7 @@ class TestWsDebugLogging:
 
 class TestLogWsMsg:
     def test_terminal_output_truncated(self):
-        with patch.object(_ws_constants, "WS_DEBUG", True):
+        with patch.object(_ws_support, "WS_DEBUG", True):
             log_ws_msg(
                 "RECV",
                 {"type": "terminal_output", "data": "x" * 200},
@@ -5778,18 +5778,18 @@ class TestLogWsMsg:
             )
 
     def test_terminal_input_truncated(self):
-        with patch.object(_ws_constants, "WS_DEBUG", True):
+        with patch.object(_ws_support, "WS_DEBUG", True):
             log_ws_msg(
                 "SEND",
                 {"type": "terminal_input", "data": "y" * 50},
             )
 
     def test_other_message(self):
-        with patch.object(_ws_constants, "WS_DEBUG", True):
+        with patch.object(_ws_support, "WS_DEBUG", True):
             log_ws_msg("RECV", {"type": "heartbeat"})
 
     def test_other_message_with_user(self):
-        with patch.object(_ws_constants, "WS_DEBUG", True):
+        with patch.object(_ws_support, "WS_DEBUG", True):
             log_ws_msg(
                 "RECV",
                 {"cmd": "workspace_connect", "workspaceId": "ws-1"},
@@ -5797,7 +5797,7 @@ class TestLogWsMsg:
             )
 
     def test_noop_when_debug_disabled(self):
-        with patch.object(_ws_constants, "WS_DEBUG", False):
+        with patch.object(_ws_support, "WS_DEBUG", False):
             log_ws_msg("RECV", {"type": "heartbeat"})
 
 
@@ -7040,7 +7040,7 @@ class TestTerminalController:
         session.is_alive = True
         session.read_only = False
         ctrl.session = session
-        await ctrl.input({"data": "x" * (_ws_constants.MAX_INPUT_SIZE + 1)})
+        await ctrl.input({"data": "x" * (_ws_support.MAX_INPUT_SIZE + 1)})
         session.write.assert_not_awaited()
 
     async def test_input_oversized_read_only_dropped_before_regex(self):
@@ -7052,7 +7052,7 @@ class TestTerminalController:
         session.is_alive = True
         session.read_only = True
         ctrl.session = session
-        big = "\x1b[?6c" + "x" * (_ws_constants.MAX_INPUT_SIZE + 1)
+        big = "\x1b[?6c" + "x" * (_ws_support.MAX_INPUT_SIZE + 1)
         with patch(
             "klangk.wshandler.controllers.is_allowed_read_only_input"
         ) as allow:
@@ -7553,7 +7553,7 @@ class TestTerminalController:
         app_state = _make_app_state()
         sockets = app_state.state.sockets
         from klangk import model
-        from klangk.wshandler.helpers import get_shared_terminals
+        from klangk.wshandler.session import get_shared_terminals
 
         ws_session = sockets.get_or_create_session("ws-offline", app_state)
         try:
@@ -11041,7 +11041,7 @@ class TestWshandlerBranchGaps2834:
 
     async def test_refresh_user_handle_skips_other_users(self, app_state):
         # Only the renamed user's connections update; others untouched.
-        from klangk.wshandler.helpers import refresh_user_handle
+        from klangk.wshandler.support import refresh_user_handle
 
         app_state = _make_app_state()
         sockets = app_state.state.sockets

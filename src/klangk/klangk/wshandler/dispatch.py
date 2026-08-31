@@ -7,7 +7,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 
 from .. import auth
 from .safe_websocket import SafeWebSocket, SlowClientError
-from .helpers import send_error, log_ws_msg
+from .support import send_error, log_ws_msg
 from .connection import Connection
 
 logger = logging.getLogger(__name__)
