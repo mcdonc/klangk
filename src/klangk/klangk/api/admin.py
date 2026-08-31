@@ -870,17 +870,6 @@ async def replace_resource_acl(
     return await app.state.model.acl.get_acl_entries_resolved(resource)
 
 
-STATIC_RESOURCES = [
-    "/",
-    "/workspaces",
-    "/groups",
-    "/admin",
-    "/admin/users",
-    "/admin/invitations",
-    "/admin/groups",
-]
-
-
 class ServerScheduleRequest(BaseModel):
     """Body for scheduling a server stop/recycle (#2661)."""
 
@@ -946,3 +935,65 @@ async def cancel_server_schedule(
         raise HTTPException(status_code=404, detail="Schedule not found")
     await app.state.server_scheduler.notify_pending()
     return {"cancelled": schedule_id}
+
+
+# --- Container lifecycle events (#2923) ---
+
+
+async def _annotate_events(app, rows: list[dict]) -> list[dict]:
+    """Resolve workspace names and actor emails for one page of events.
+
+    Cosmetic joins bounded by the page size: a deleted workspace or a
+    purged user yields ``None`` and the client falls back to the raw id.
+    System/agent actors carry no email by construction.
+    """
+    names: dict[str, str | None] = {}
+    emails: dict[str, str | None] = {}
+    for row in rows:
+        wid = row["workspace_id"]
+        if wid not in names:
+            ws = await app.state.model.workspaces.get_workspace(wid)
+            names[wid] = ws["name"] if ws else None
+        actor_id = row["actor_id"]
+        if row["actor_type"] == "user" and actor_id not in emails:
+            user = await app.state.model.users.get_user_by_id(actor_id)
+            emails[actor_id] = user["email"] if user else None
+    return [
+        {
+            **row,
+            "workspace_name": names.get(row["workspace_id"]),
+            "actor_email": emails.get(row["actor_id"]),
+        }
+        for row in rows
+    ]
+
+
+@router.get("/admin/container-events")
+async def list_container_events(
+    request: Request,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    workspace_id: str | None = None,
+    viewer: dict = Depends(acl.has_permission("container-events")),
+):
+    """Paged container start/stop history (#2923).
+
+    Newest-first rows from the ``container_events`` audit table
+    (#2915) plus the filter-matching total, optionally narrowed to one
+    workspace. Gated on the dedicated ``container-events`` permission
+    over the URL-derived resource ``/admin/container-events``: the
+    admin group holds it through its ``/admin`` ``*`` wildcard, and a
+    non-admin gets it only via an explicit ACE on that resource —
+    read-only audit access without full admin.
+    """
+    app = request.app
+    rows = await app.state.model.container_events.list_events(
+        workspace_id, limit=limit, offset=offset
+    )
+    total = await app.state.model.container_events.count_events(workspace_id)
+    return {
+        "items": await _annotate_events(app, rows),
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }

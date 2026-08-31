@@ -29,9 +29,13 @@ from klangk import netfilter as netfilter_mod
 from klangk import oidc as oidc_mod
 from klangk import features as features_mod
 from klangk.model.container_events import (
+    CAUSE_API,
+    CAUSE_AUTO_START,
     CAUSE_DELETE,
     CAUSE_RESTART,
     CAUSE_STOP,
+    EVENT_START,
+    EVENT_STOP,
 )
 from _helpers import make_settings
 from klangk.wshandler.session import WebSocketState
@@ -14225,6 +14229,185 @@ class TestAdminServerSchedule:
             )
         assert resp.status_code == 200
         mock_notify.assert_awaited_once()
+
+
+class TestContainerEventsAPI:
+    """#2923: the paged container-events history read + its dedicated
+    ``container-events`` permission gate."""
+
+    async def _admin_headers(self, client):
+        resp = await client.post(
+            "/api/v1/auth/login",
+            json={
+                "identifier": "testadmin@example.com",
+                "password": "testpass",
+            },
+        )
+        return {"Authorization": f"Bearer {resp.json()['access_token']}"}
+
+    async def _make_workspace(self, client, headers, name):
+        resp = await client.post(
+            "/api/v1/workspaces",
+            headers=headers,
+            json={"name": name},
+        )
+        assert resp.status_code == 200, resp.text
+        return resp.json()["id"]
+
+    async def test_admin_pages_history_with_resolved_names(
+        self, client, app, admin_user
+    ):
+        headers = await self._admin_headers(client)
+        ws_id = await self._make_workspace(client, headers, "events-ws")
+        events = app.state.model.container_events
+        await events.record(
+            ws_id,
+            EVENT_START,
+            CAUSE_API,
+            actor_id=admin_user["id"],
+            container_id="cid-old",
+        )
+        await events.record(
+            ws_id,
+            EVENT_STOP,
+            CAUSE_STOP,
+            actor_id=admin_user["id"],
+            container_id="cid-new",
+            network_namespace="sidecar-1",
+        )
+        await events.record(ws_id, EVENT_START, CAUSE_AUTO_START)
+
+        resp = await client.get(
+            "/api/v1/admin/container-events", headers=headers
+        )
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+        assert data["total"] == 3
+        assert data["limit"] == 50
+        assert data["offset"] == 0
+        # Newest first: the system-caused auto-start leads.
+        assert [i["container_id"] for i in data["items"]] == [
+            None,
+            "cid-new",
+            "cid-old",
+        ]
+        newest = data["items"][0]
+        assert newest["actor_type"] == "system"
+        assert newest["actor_id"] is None
+        assert newest["actor_email"] is None
+        oldest = data["items"][2]
+        assert oldest["actor_type"] == "user"
+        assert oldest["actor_email"] == "testadmin@example.com"
+        for item in data["items"]:
+            assert item["workspace_name"] == "events-ws"
+            assert item["workspace_id"] == ws_id
+
+    async def test_workspace_filter_and_offset_paging(
+        self, client, app, admin_user
+    ):
+        headers = await self._admin_headers(client)
+        ws_a = await self._make_workspace(client, headers, "events-a")
+        ws_b = await self._make_workspace(client, headers, "events-b")
+        events = app.state.model.container_events
+        for i in range(3):
+            await events.record(
+                ws_a, EVENT_START, CAUSE_API, container_id=f"a-{i}"
+            )
+        await events.record(ws_b, EVENT_START, CAUSE_API, container_id="b-0")
+
+        resp = await client.get(
+            "/api/v1/admin/container-events",
+            headers=headers,
+            params={"workspace_id": ws_a, "limit": 2, "offset": 1},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total"] == 3  # ws_b's row is filtered out of the count
+        assert [i["container_id"] for i in data["items"]] == ["a-1", "a-0"]
+        assert data["limit"] == 2
+        assert data["offset"] == 1
+
+    async def test_deleted_workspace_and_purged_actor_fall_back_to_ids(
+        self, client, app, admin_user
+    ):
+        headers = await self._admin_headers(client)
+        events = app.state.model.container_events
+        # A workspace that no longer exists and a user row that never
+        # did: history outlives the rows it annotates.
+        await events.record(
+            "gone-ws",
+            EVENT_STOP,
+            CAUSE_DELETE,
+            actor_id="no-such-user",
+        )
+        resp = await client.get(
+            "/api/v1/admin/container-events", headers=headers
+        )
+        assert resp.status_code == 200
+        item = resp.json()["items"][0]
+        assert item["workspace_name"] is None
+        assert item["workspace_id"] == "gone-ws"
+        assert item["actor_email"] is None
+
+    async def test_bad_query_rejected(self, client, app, admin_user):
+        headers = await self._admin_headers(client)
+        for params in ({"limit": 0}, {"limit": 501}, {"offset": -1}):
+            resp = await client.get(
+                "/api/v1/admin/container-events",
+                headers=headers,
+                params=params,
+            )
+            assert resp.status_code == 422, (params, resp.text)
+
+    async def test_plain_user_forbidden(self, client, app, user):
+        headers = await _auth_headers(client)
+        resp = await client.get(
+            "/api/v1/admin/container-events", headers=headers
+        )
+        assert resp.status_code == 403
+
+    async def test_delegated_grant_reads_without_admin(
+        self, client, app, user, app_state
+    ):
+        # The whole point of the dedicated permission (#2923): hand a
+        # non-admin read-only audit access via an ACE on the resource —
+        # the more-specific path wins the ACL walk over /admin's
+        # Deny-everyone.
+        await app_state.state.model.acl.add_acl_entry(
+            "/admin/container-events",
+            0,
+            model.ACTION_ALLOW,
+            "container-events",
+            model.PRINCIPAL_USER,
+            user_id=user["id"],
+        )
+        events = app_state.state.model.container_events
+        await events.record(
+            "ws-delegated", EVENT_START, CAUSE_API, container_id="d-0"
+        )
+
+        headers = await _auth_headers(client)
+        resp = await client.get(
+            "/api/v1/admin/container-events", headers=headers
+        )
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+        assert data["total"] == 1
+        assert data["items"][0]["container_id"] == "d-0"
+
+        # /my-permissions surfaces the resource + permission so the
+        # frontend can show the tab to the delegated auditor.
+        resp = await client.get("/api/v1/my-permissions", headers=headers)
+        perms = resp.json()["permissions"]
+        assert "container-events" in perms.get("/admin/container-events", [])
+
+    async def test_admin_my_permissions_lists_resource(
+        self, client, app, admin_user
+    ):
+        headers = await self._admin_headers(client)
+        resp = await client.get("/api/v1/my-permissions", headers=headers)
+        perms = resp.json()["permissions"]
+        assert "container-events" in perms.get("/admin/container-events", [])
 
 
 class TestBranchGaps2834:

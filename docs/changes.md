@@ -317,6 +317,17 @@ sync` report a clear permission-denied error.
 
 ### Added
 
+- **Container events history API + admin Events tab (#2923).** New
+  `GET /api/v1/admin/container-events` endpoint pages through the
+  `container_events` audit table (#2915) newest-first, with an optional
+  `workspace_id` filter and a total count, and the admin section gains
+  an Events tab rendering it (when, workspace, event, actor, cause,
+  container, network namespace). Both are gated on the new dedicated
+  `container-events` permission over `/admin/container-events`: admins
+  hold it via the `/admin` wildcard, and granting it to another
+  principal on that resource delegates read-only audit access without
+  full admin.
+
 - **Container lifecycle audit trail (#2915).** Every workspace
   container start/stop is now recorded in a new `container_events`
   table with the acting principal (user, agent, or system), the cause

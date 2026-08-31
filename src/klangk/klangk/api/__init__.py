@@ -296,6 +296,7 @@ STATIC_RESOURCES = [
     "/admin/users",
     "/admin/invitations",
     "/admin/groups",
+    "/admin/container-events",
 ]
 
 ALL_PERMISSIONS = [
@@ -321,6 +322,7 @@ ALL_PERMISSIONS = [
     "admin",
     "manage_users",
     "manage_invitations",
+    "container-events",
     "*",
 ]
 

@@ -77,7 +77,7 @@ String? guardAuth({
 /// The target is permission-checked against the *current* session: an
 /// `/admin`-prefixed target (e.g. stashed by an admin's logout or expiry,
 /// then inherited by whoever logs in next on this browser) falls back to
-/// `/workspaces` unless [isAdmin] (#2670).
+/// `/workspaces` unless [canAccessAdmin] (#2670).
 ///
 /// The stash is deliberately NOT consumed here. GoRouter re-parses the
 /// *committed* location on every refreshListenable notification, and
@@ -94,12 +94,14 @@ String? guardLoggedInPublicRoute({
   required String loc,
   required Set<String> publicRoutes,
   required Set<String> featurePaths,
-  required bool isAdmin,
+  required bool canAccessAdmin,
 }) {
   if (isLoggedIn && publicRoutes.contains(loc) && !featurePaths.contains(loc)) {
     final target = pendingRedirect;
     if (target == null) return '/workspaces';
-    if (target.startsWith('/admin') && !isAdmin) return '/workspaces';
+    if (target.startsWith('/admin') && !canAccessAdmin) {
+      return '/workspaces';
+    }
     return target;
   }
   return null;
@@ -107,27 +109,28 @@ String? guardLoggedInPublicRoute({
 
 /// Admin-route gate (#2669).
 ///
-/// A logged-in non-admin on an `/admin`-prefixed route is bounced to
-/// `/workspaces` — the route is reachable by URL or a stale redirect even
-/// though the app-bar admin icon is gated, and its page is a dead end
-/// ("No admin sections available") for them.
+/// A logged-in user who cannot enter the admin section at all (see
+/// [AuthService.canAdminSection]) on an `/admin`-prefixed route is
+/// bounced to `/workspaces` — the route is reachable by URL or a stale
+/// redirect even though the app-bar admin icon is gated, and its page is
+/// a dead end ("No admin sections available") for them.
 ///
 /// Fires only for *logged-in* users: a logged-out visitor must keep the
 /// `guardAuth` flow (stash + `/login`), and `guardLoggedInPublicRoute`
 /// already rejects `/admin`-prefixed stashes for non-admins on login
 /// (#2670), so the two checks meet in the middle.
 ///
-/// Loop safety: the target `/workspaces` is not `/admin`-prefixed and no
+/// Loop safety: the target `/workspaces` is not `/admin`-refixed and no
 /// guard redirects away from it for a logged-in user, so this can never
 /// re-enter itself; the guard is pure w.r.t. its inputs, so repeated
 /// evaluations of the same committed location (GoRouter re-parses on
 /// every refreshListenable notification) all agree.
 String? guardAdminRoute({
   required bool isLoggedIn,
-  required bool isAdmin,
+  required bool canAccessAdmin,
   required String loc,
 }) {
-  if (isLoggedIn && !isAdmin && loc.startsWith('/admin')) {
+  if (isLoggedIn && !canAccessAdmin && loc.startsWith('/admin')) {
     return '/workspaces';
   }
   return null;
@@ -161,7 +164,7 @@ String? evaluateGuards({
   required String currentUri,
   required Set<String> publicRoutes,
   required Set<String> featurePaths,
-  required bool isAdmin,
+  required bool canAccessAdmin,
 }) {
   if (bannerRequired) {
     return guardBanner(bannerRequired: true, loc: loc);
@@ -178,11 +181,11 @@ String? evaluateGuards({
         loc: loc,
         publicRoutes: publicRoutes,
         featurePaths: featurePaths,
-        isAdmin: isAdmin,
+        canAccessAdmin: canAccessAdmin,
       ) ??
       guardAdminRoute(
         isLoggedIn: isLoggedIn,
-        isAdmin: isAdmin,
+        canAccessAdmin: canAccessAdmin,
         loc: loc,
       ) ??
       guardRoot(isLoggedIn: isLoggedIn, loc: loc);

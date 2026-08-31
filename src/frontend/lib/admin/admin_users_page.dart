@@ -17,6 +17,7 @@ import '../widgets/obscure_toggle.dart';
 import '../widgets/skeuo_tab.dart';
 import '../utils/system_agent.dart';
 import '../utils/validators.dart';
+import 'container_events_panel.dart';
 import 'server_schedule_panel.dart';
 
 class AdminUsersPage extends StatefulWidget {
@@ -46,6 +47,7 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
   bool _canGroups = false;
   bool _canInvitations = false;
   bool _canServer = false;
+  bool _canEvents = false;
 
   // Pending invitation count for the tab badge — updated by the
   // _InvitationsTab widget via callback.
@@ -97,6 +99,12 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     // The schedule API needs the `admin` permission on /admin (ancestors
     // included), so gate the tab on exactly that.
     _canServer = auth.hasPermission('/admin', 'admin');
+    // The events history (#2923) is gated on the dedicated
+    // `container-events` permission over /admin/container-events — admins
+    // hold it via the /admin `*` wildcard, delegated auditors via an
+    // explicit ACE on the resource.
+    _canEvents =
+        auth.hasPermission('/admin/container-events', 'container-events');
   }
 
   Future<void> _loadUsers({int page = 1}) async {
@@ -462,7 +470,13 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     if (_canGroups) types.add('groups');
     if (_canInvitations) types.add('invitations');
     if (_canServer) types.add('server');
-    if (types.isNotEmpty) types.add('acl');
+    if (_canEvents) types.add('events');
+    // The Access Control browser reads /admin/acl/tree, which needs full
+    // admin — a delegated container-events auditor (#2923) gets only the
+    // Events tab, not a dead ACL tab.
+    if (_canUsers || _canGroups || _canInvitations || _canServer) {
+      types.add('acl');
+    }
     return types;
   }
 
@@ -470,7 +484,6 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     final pendingCount = _invitationsPending;
     final tabs = <SkeuoTab>[];
     final views = <Widget>[];
-    final tabTypes = _tabTypes;
 
     void addTab({
       required String label,
@@ -523,7 +536,14 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
         view: const ServerSchedulePanel(),
       );
     }
-    if (tabTypes.isNotEmpty) {
+    if (_canEvents) {
+      addTab(
+        label: 'Events',
+        icon: Icons.history,
+        view: const ContainerEventsPanel(),
+      );
+    }
+    if (_canUsers || _canGroups || _canInvitations || _canServer) {
       addTab(
         label: 'Access Control',
         icon: Icons.security,
@@ -550,7 +570,11 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
           tooltip: 'Add user',
           child: const Icon(Icons.person_add),
         ),
-      'invitations' || 'groups' || 'server' => null, // FABs inside tabs
+      'invitations' ||
+      'groups' ||
+      'server' ||
+      'events' =>
+        null, // FABs inside tabs
       _ => null,
     };
   }
@@ -1844,6 +1868,7 @@ class _AclBrowserTabState extends State<_AclBrowserTab> {
     ('/admin/users', 'Users', Icons.people),
     ('/admin/invitations', 'Invitations', Icons.mail_outline),
     ('/admin/groups', 'Admin Groups', Icons.group),
+    ('/admin/container-events', 'Container Events', Icons.history),
   ];
 
   String _selectedResource = '/';
@@ -1963,6 +1988,10 @@ class _AclBrowserTabState extends State<_AclBrowserTab> {
                     child: AclEditor(
                       key: ValueKey(_selectedResource),
                       resource: _selectedResource,
+                      // The admin browser is where the admin-scoped
+                      // `container-events` grant is creatable (#2923);
+                      // the workspace editor keeps the curated list.
+                      permissions: AclEditorState.adminPermissions,
                     ),
                   ),
                 ),
