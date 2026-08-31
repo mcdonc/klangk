@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:klangk_frontend/admin/admin_users_page.dart';
 import 'package:klangk_frontend/admin/server_schedule_panel.dart';
 import 'package:klangk_frontend/auth/auth_service.dart';
+import 'package:klangk_frontend/utils/system_agent.dart';
 import 'package:klangk_frontend/ws/ws_client.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 
@@ -45,6 +46,16 @@ Map<String, dynamic> _user(String email, {String id = ''}) => {
       'handle': '',
       'verified': true,
       'provider': 'local',
+      'created_at': '2026-01-01T00:00:00',
+    };
+
+/// The built-in system agent row, as `GET /admin/users` serves it.
+Map<String, dynamic> _agentUser() => {
+      'id': agentUserId,
+      'email': 'klangk@example.com',
+      'handle': 'klangk',
+      'verified': true,
+      'provider': 'system',
       'created_at': '2026-01-01T00:00:00',
     };
 
@@ -1284,6 +1295,100 @@ void main() {
 
       expect(find.byType(AlertDialog), findsNothing);
       expect(deleted, isEmpty);
+    });
+  });
+
+  group('AdminUsersPage system agent row (#2892)', () {
+    testWidgets('marks the agent row and omits its edit/delete affordances',
+        (tester) async {
+      serveUsers(
+        (page, pageSize, sort, order, q) => [
+          _agentUser(),
+          _user('alice@example.com', id: 'u1'),
+        ],
+        total: 2,
+      );
+      await pumpPage(tester);
+
+      // The agent row is badged, subtitled, and avatar-marked; the
+      // ordinary user row is not.
+      expect(find.text('SYSTEM'), findsOneWidget);
+      expect(find.byIcon(Icons.smart_toy), findsOneWidget);
+      expect(find.textContaining('Built-in system agent'), findsOneWidget);
+
+      // Delete appears for the ordinary (non-self) user only.
+      expect(iconButton('Delete user'), findsOneWidget);
+
+      // Tapping the agent row opens nothing — every field the edit
+      // dialog offers is immutable on it.
+      await tester.tap(find.text('klangk@example.com'));
+      await tester.pumpAndSettle();
+      expect(find.byType(AlertDialog), findsNothing);
+
+      // Tapping the ordinary user still opens the edit dialog.
+      await tester.tap(find.text('alice@example.com'));
+      await tester.pumpAndSettle();
+      expect(find.text('Edit User'), findsOneWidget);
+      await tester.tap(find.widgetWithText(TextButton, 'Cancel'));
+      await tester.pumpAndSettle();
+      expect(find.byType(AlertDialog), findsNothing);
+    });
+
+    testWidgets('agent-only list shows no delete action at all',
+        (tester) async {
+      serveUsers(
+        (page, pageSize, sort, order, q) => [_agentUser()],
+        total: 1,
+      );
+      await pumpPage(tester);
+
+      expect(find.byTooltip('Delete user'), findsNothing);
+    });
+
+    testWidgets('manage-members picker omits the system agent', (tester) async {
+      testAuthHttpClientOverride = _mockClient((request) async {
+        final path = request.url.path;
+        if (path == '/api/v1/admin/users') {
+          return http.Response(
+            _usersEnvelope(
+              [_agentUser(), _user('carol@example.com', id: 'u-carol')],
+              total: 2,
+            ),
+            200,
+          );
+        }
+        if (path == '/api/v1/admin/groups') {
+          return http.Response(
+            _groupsEnvelope([_group('admins', id: 'g1')], total: 1),
+            200,
+          );
+        }
+        if (path == '/api/v1/admin/groups/g1/members') {
+          return http.Response(
+            jsonEncode([_user('bob@example.com', id: 'u-bob')]),
+            200,
+          );
+        }
+        if (path == '/api/v1/admin/invitations') {
+          return http.Response(emptyInvitationsEnvelope(), 200);
+        }
+        return http.Response('Not found', 404);
+      });
+
+      await pumpPage(tester);
+      await tester.tap(find.text('Groups'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('admins'));
+      await tester.pumpAndSettle();
+
+      // The add-member dropdown offers carol but never the agent (the
+      // backend rejects making it an ACL principal).
+      final dropdown = tester.widget<DropdownButton<String>>(
+        find.byType(DropdownButton<String>),
+      );
+      final values = dropdown.items!.map((item) => item.value).toList();
+      expect(values, contains('u-carol'));
+      expect(values, isNot(contains(agentUserId)));
     });
   });
 }

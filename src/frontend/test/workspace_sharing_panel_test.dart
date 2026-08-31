@@ -8,6 +8,7 @@ import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:klangk_frontend/auth/auth_service.dart';
+import 'package:klangk_frontend/utils/system_agent.dart';
 import 'package:klangk_frontend/workspace/workspace_sharing_panel.dart';
 
 /// Default JWT for a logged-in user.
@@ -284,6 +285,29 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Add to owners'), findsNothing);
     expect(requests, contains('POST /api/v1/workspaces/ws1/roles/owners'));
+  });
+
+  testWidgets('add dialog autocomplete omits the system agent (#2892)',
+      (tester) async {
+    stubHttp(
+      searchResults: [
+        {'id': agentUserId, 'email': 'klangk@example.com'},
+        {'id': 'u-new', 'email': 'newuser@example.com'},
+      ],
+    );
+    await tester.pumpWidget(buildPanel(canEditAcl: true));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Add user').first);
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'k');
+    await tester.pump(const Duration(milliseconds: 350));
+    await tester.pumpAndSettle();
+
+    // The agent can never hold a role, so the backend would only reject
+    // it — the autocomplete filters it out and offers the human hit only.
+    expect(find.text('klangk@example.com'), findsNothing);
+    expect(find.text('newuser@example.com'), findsOneWidget);
   });
 
   testWidgets('add dialog submits a typed email directly', (tester) async {

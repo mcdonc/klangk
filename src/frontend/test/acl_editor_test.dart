@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 import 'package:klangk_frontend/auth/auth_service.dart';
+import 'package:klangk_frontend/utils/system_agent.dart';
 import 'package:klangk_frontend/widgets/acl_editor.dart';
 
 /// Default JWT for a logged-in admin user.
@@ -67,6 +68,16 @@ Map<String, dynamic> _user(String email) => {
       'handle': '',
       'verified': true,
       'provider': 'local',
+      'created_at': '2026-01-01T00:00:00',
+    };
+
+/// The built-in system agent row, as `GET /admin/users` serves it.
+Map<String, dynamic> _agentUser() => {
+      'id': agentUserId,
+      'email': 'klangk@example.com',
+      'handle': 'klangk',
+      'verified': true,
+      'provider': 'system',
       'created_at': '2026-01-01T00:00:00',
     };
 
@@ -153,7 +164,7 @@ void main() {
     final principalField = find.byWidgetPredicate(
       (widget) =>
           widget is DropdownButtonFormField<int> &&
-          widget.decoration?.labelText == 'Principal Type',
+          widget.decoration.labelText == 'Principal Type',
     );
     await tester.tap(principalField);
     await tester.pumpAndSettle();
@@ -168,7 +179,7 @@ void main() {
     final groupField = find.byWidgetPredicate(
       (widget) =>
           widget is DropdownButtonFormField<String> &&
-          widget.decoration?.labelText == 'Group',
+          widget.decoration.labelText == 'Group',
     );
     await tester.tap(groupField);
     await tester.pumpAndSettle();
@@ -182,5 +193,60 @@ void main() {
     // A group that is both manual and referenced appears exactly once in
     // the menu (dedupe by id): table + menu = 2, not 3.
     expect(find.text('aa-manual-alpha'), findsNWidgets(2));
+  });
+
+  testWidgets('user picker omits the system agent (#2892)', (tester) async {
+    testAuthHttpClientOverride = MockClient((request) async {
+      final path = request.url.path;
+      if (path == '/api/v1/workspaces/ws1/acl') {
+        return http.Response(jsonEncode(_entries()), 200);
+      }
+      if (path == '/api/v1/admin/users') {
+        return http.Response(
+          jsonEncode({
+            'users': [_agentUser(), _user('alice@example.com')],
+            'page': 1,
+            'page_size': 200,
+            'total': 2,
+          }),
+          200,
+        );
+      }
+      if (path == '/api/v1/admin/groups') {
+        return http.Response(
+          jsonEncode({
+            'groups': <Map<String, dynamic>>[],
+            'page': 1,
+            'page_size': 200,
+            'total': 0,
+          }),
+          200,
+        );
+      }
+      return http.Response('Not found', 404);
+    });
+
+    await tester.pumpWidget(buildEditor());
+    await tester.pumpAndSettle();
+
+    // Open the add-entry dialog; principal type defaults to User.
+    await tester.tap(find.widgetWithIcon(TextButton, Icons.add));
+    await tester.pumpAndSettle();
+
+    final userField = find.byWidgetPredicate(
+      (widget) =>
+          widget is DropdownButtonFormField<String> &&
+          widget.decoration.labelText == 'User',
+    );
+    await tester.tap(userField);
+    await tester.pumpAndSettle();
+
+    // The agent realizes capabilities through physical access, never
+    // principalship — the backend rejects an ACE for it, so the picker
+    // must not offer it.
+    expect(find.text('klangk@example.com'), findsNothing);
+    // Alice appears twice: once in the untouched entries table, once in
+    // the open picker menu.
+    expect(find.text('alice@example.com'), findsNWidgets(2));
   });
 }

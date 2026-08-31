@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:klangk_frontend/auth/auth_service.dart';
+import 'package:klangk_frontend/utils/system_agent.dart';
 import 'package:klangk_frontend/workspace/workspace_settings_panel.dart';
 import 'package:klangk_frontend/ws/ws_client.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
@@ -2248,6 +2249,35 @@ void main() {
 
       expect(find.text('Confirm Transfer'), findsOneWidget);
       expect(find.textContaining('target@test.com'), findsOneWidget);
+    });
+
+    testWidgets('search omits the system agent (#2892)', (tester) async {
+      testAuthHttpClientOverride = _client(
+        searchResults: [
+          {'id': agentUserId, 'email': 'klangk@example.com'},
+          {'id': 'u2', 'email': 'target@test.com', 'handle': 'target'},
+        ],
+      );
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      await _scrollToAndTap(
+        tester,
+        find.widgetWithText(OutlinedButton, 'Transfer Ownership'),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.enterText(
+        find.byType(TextField).last,
+        'target',
+      );
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pumpAndSettle();
+
+      // The agent can never own a workspace — the backend would only
+      // reject the transfer — so the autocomplete filters it out.
+      expect(find.text('klangk@example.com'), findsNothing);
+      expect(find.text('target@test.com'), findsOneWidget);
     });
 
     testWidgets('confirm executes transfer successfully', (tester) async {

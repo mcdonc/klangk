@@ -15,6 +15,7 @@ import '../widgets/app_bar_actions.dart';
 import '../widgets/app_bar_title.dart';
 import '../widgets/obscure_toggle.dart';
 import '../widgets/skeuo_tab.dart';
+import '../utils/system_agent.dart';
 import '../utils/validators.dart';
 import 'server_schedule_panel.dart';
 
@@ -388,16 +389,28 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
       itemBuilder: (ctx, i) {
         final user = _users[i];
         final isSelf = user['id'] == context.read<AuthService>().userId;
-        final isSystem = user['provider'] == 'system';
+        // The system agent (#2892): its identity is fixed and the backend
+        // rejects every edit, delete, disable, and group-membership call
+        // on it, so the row is marked and none of those actions are
+        // offered.
+        final isAgent = isSystemAgent(user);
         final email = user['email'] as String? ?? '';
         final initial = email.isNotEmpty ? email[0].toUpperCase() : '?';
         return Card(
           margin: const EdgeInsets.only(bottom: 8),
           child: ListTile(
-            leading: _UserAvatar(initial: initial, email: email),
+            leading: _UserAvatar(
+              initial: initial,
+              email: email,
+              isAgent: isAgent,
+            ),
             title: Row(
               children: [
-                Text(email),
+                Flexible(child: Text(email)),
+                if (isAgent) ...[
+                  const SizedBox(width: 8),
+                  const _SystemAgentBadge(),
+                ],
                 if ((user['handle'] as String?)?.isNotEmpty == true) ...[
                   const SizedBox(width: 8),
                   Text(
@@ -410,11 +423,21 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
                 ],
               ],
             ),
-            onTap: () => _editUser(user),
+            subtitle: isAgent
+                ? const Text(
+                    'Built-in system agent — fixed identity; it cannot be '
+                    'edited, disabled, or deleted',
+                    style: TextStyle(color: KColors.textMuted, fontSize: 12),
+                  )
+                : null,
+            // The agent row is not tappable: the edit dialog's every
+            // field (email, handle, password) is fixed on it, so opening
+            // it could only ever end in a rejection.
+            onTap: isAgent ? null : () => _editUser(user),
             trailing: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                if (!isSelf && !isSystem) ...[
+                if (!isSelf && !isAgent) ...[
                   IconButton(
                     icon: const Icon(
                       Icons.delete_outline,
@@ -969,8 +992,12 @@ class _ManageMembersDialogState extends State<_ManageMembersDialog> {
     }
 
     final memberIds = _members.map((m) => m['id']).toSet();
-    final nonMembers =
-        _allUsers.where((u) => !memberIds.contains(u['id'])).toList();
+    final nonMembers = _allUsers
+        .where((u) => !memberIds.contains(u['id']))
+        // The agent can never be a group member (the backend rejects
+        // making it an ACL principal), so don't offer it (#2892).
+        .where((u) => !isSystemAgent(u))
+        .toList();
 
     return AlertDialog(
       title: Text('Members of "$_groupName"'),
@@ -1731,8 +1758,13 @@ class _InviteUserDialogState extends State<_InviteUserDialog> {
 class _UserAvatar extends StatelessWidget {
   final String initial;
   final String email;
+  final bool isAgent;
 
-  const _UserAvatar({required this.initial, required this.email});
+  const _UserAvatar({
+    required this.initial,
+    required this.email,
+    this.isAgent = false,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -1744,17 +1776,52 @@ class _UserAvatar extends StatelessWidget {
         children: [
           CircleAvatar(
             radius: 20,
-            backgroundColor: KColors.colorForString(email),
-            child: Text(
-              initial,
-              style: const TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.w600,
-                fontSize: 16,
-              ),
-            ),
+            backgroundColor:
+                isAgent ? KColors.accentAmber : KColors.colorForString(email),
+            child: isAgent
+                ? const Icon(
+                    Icons.smart_toy,
+                    color: Colors.white,
+                    size: 20,
+                  )
+                : Text(
+                    initial,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 16,
+                    ),
+                  ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Small tag marking the built-in system agent's row in the users list
+/// (#2892): its identity is fixed and the destructive/edit actions other
+/// rows get are omitted rather than offered-and-rejected.
+class _SystemAgentBadge extends StatelessWidget {
+  const _SystemAgentBadge();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: KColors.accentAmber.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: KColors.accentAmber.withValues(alpha: 0.5)),
+      ),
+      child: const Text(
+        'SYSTEM',
+        style: TextStyle(
+          fontSize: 10,
+          fontWeight: FontWeight.w700,
+          letterSpacing: 0.5,
+          color: KColors.accentAmber,
+        ),
       ),
     );
   }

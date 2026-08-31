@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../auth/auth_service.dart';
 import '../theme/colors.dart';
+import '../utils/system_agent.dart';
 import '../widgets/acl_editor.dart';
 
 /// Workspace sharing panel with role-based buckets.
@@ -171,9 +172,13 @@ class WorkspaceSharingPanelState extends State<WorkspaceSharingPanel> {
                         '/api/v1/users/search?q=${Uri.encodeQueryComponent(q.trim())}',
                       );
                       if (resp.statusCode == 200) {
-                        searchResults.value = List<Map<String, dynamic>>.from(
-                          jsonDecode(resp.body) as List,
-                        );
+                        // The agent can never hold a role (the backend
+                        // rejects making it an ACL principal), so the
+                        // autocomplete never offers it (#2892).
+                        searchResults.value = (jsonDecode(resp.body) as List)
+                            .map((e) => Map<String, dynamic>.from(e as Map))
+                            .where((r) => !isSystemAgent(r))
+                            .toList();
                       }
                     } catch (e) {
                       debugPrint(
