@@ -15,18 +15,25 @@ from klangk import consent
 FULL_WS = "aaaa1111bbbb-cccc-dddd-eeee-ffffffffffff"
 
 
-def _app(*, prune: AsyncMock | None = None):
+def _app(
+    *, prune: AsyncMock | None = None, events_prune: AsyncMock | None = None
+):
     app = types.SimpleNamespace()
     app.state = types.SimpleNamespace()
     egress_consent = types.SimpleNamespace(
         prune=prune or AsyncMock(return_value=0)
+    )
+    container_events = types.SimpleNamespace(
+        prune=events_prune or AsyncMock(return_value=0)
     )
     workspaces = AsyncMock()
     workspaces.get_workspace = AsyncMock(
         return_value={"egress_mode": "interactive"}
     )
     app.state.model = types.SimpleNamespace(
-        egress_consent=egress_consent, workspaces=workspaces
+        egress_consent=egress_consent,
+        container_events=container_events,
+        workspaces=workspaces,
     )
     app.state.consent_deciders = types.SimpleNamespace(
         has_decider=lambda workspace_id: True
@@ -152,6 +159,53 @@ class TestEgressConsentSweeper:
         app2 = _app()
         sw.reconfigure(app2)
         assert sw.app is app2
+
+
+class TestContainerEventsSweep2924:
+    """#2924: the retention sweep also prunes container_events, each
+    target independent of the other's failures."""
+
+    async def test_sweep_prunes_both_tables(self):
+        """One sweep prunes egress_consent AND container_events."""
+        app = _app()
+        sw = consent.EgressConsentSweeper(app)
+        await sw.sweep()
+        assert app.state.model.egress_consent.prune.await_count == 1
+        assert app.state.model.container_events.prune.await_count == 1
+
+    async def test_prune_counts_logged(self, caplog):
+        """A non-zero prune count is surfaced at info (operator can see the
+        table was trimmed)."""
+        import logging
+
+        app = _app(
+            prune=AsyncMock(return_value=7),
+            events_prune=AsyncMock(return_value=9),
+        )
+        sw = consent.EgressConsentSweeper(app)
+        with caplog.at_level(logging.INFO, logger="klangk.consent.egress"):
+            await sw.sweep()
+        assert "pruned 7 row(s)" in caplog.text
+        assert "pruned 9 row(s)" in caplog.text
+
+    async def test_container_events_failure_skipped_not_fatal(self):
+        """A failing container_events prune is logged and skipped, but the
+        egress_consent prune in the same sweep still ran."""
+        app = _app(
+            events_prune=AsyncMock(side_effect=RuntimeError("db locked"))
+        )
+        sw = consent.EgressConsentSweeper(app)
+        await sw.sweep()  # must not raise
+        assert app.state.model.egress_consent.prune.await_count == 1
+        assert app.state.model.container_events.prune.await_count == 1
+
+    async def test_egress_failure_still_prunes_events(self):
+        """Mirror image: egress_consent failing must not skip the
+        container_events half of the sweep."""
+        app = _app(prune=AsyncMock(side_effect=RuntimeError("boom")))
+        sw = consent.EgressConsentSweeper(app)
+        await sw.sweep()  # must not raise
+        assert app.state.model.container_events.prune.await_count == 1
 
 
 class TestEgressSweeperBranchGaps2834:

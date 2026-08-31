@@ -209,9 +209,9 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     # Slice 2 (#1449): the container registry is an owned instance, not a
     # module global. The lifespan reads app.state.container_registry.
     app.state.container_registry = container.ContainerRegistry(app)
-    # #2242/#2311: egress-consent retention sweeper — prunes the
-    # egress_consent table past the retention window / cap (#2303).
-    # Consent events themselves arrive over the sidecar WS
+    # #2242/#2311: retention sweeper — prunes the bounded tables past
+    # their retention window / cap (egress_consent, #2303; container_events,
+    # #2924). Consent events themselves arrive over the sidecar WS
     # (/ws/egress-sidecar) and are handled by the coordinator.
     app.state.consent_sweeper = consent.EgressConsentSweeper(app)
     # #2588: dormant-account sweeper — disables accounts (except the

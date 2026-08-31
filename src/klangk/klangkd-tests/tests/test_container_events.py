@@ -96,6 +96,183 @@ class TestContainerEventsModel:
         assert row["created_at"] > 0
 
 
+class TestContainerEventsPrune2924:
+    """Retention + deploy-wide row cap (#2924), mirroring the egress-consent
+    prune tests (#2303). Every row is history — no in-effect exemptions."""
+
+    RETENTION_DEFAULT = 90  # matches Settings.container_events_retention_days
+
+    async def _set_created_at(self, app_state, container_id, created_at):
+        async with app_state.state.db.transaction() as conn:
+            await conn.execute(
+                "UPDATE container_events SET created_at = ?"
+                " WHERE container_id = ?",
+                (created_at, container_id),
+            )
+
+    async def _ids(self, app_state):
+        return {
+            r["container_id"]
+            for r in await app_state.state.model.container_events.list_events()
+        }
+
+    async def test_prune_deletes_old_rows(self, app_state, db):
+        """Rows past the retention window go; fresh rows stay."""
+        import time as _time
+
+        events = app_state.state.model.container_events
+        now = _time.time()
+        old = now - (self.RETENTION_DEFAULT + 5) * 86400
+        await events.record("ws-a", EVENT_START, "api", container_id="old-1")
+        await events.record(
+            "ws-a", EVENT_STOP, CAUSE_STOP, container_id="old-2"
+        )
+        await events.record("ws-b", EVENT_START, "api", container_id="new-1")
+        for cid in ("old-1", "old-2"):
+            await self._set_created_at(app_state, cid, old)
+
+        assert await events.prune(now=now) == 2
+        assert await self._ids(app_state) == {"new-1"}
+
+    async def test_prune_fresh_rows_untouched(self, app_state, db):
+        """Rows inside the window are never candidates (also covers the
+        now=None default — wall clock, nothing old)."""
+        events = app_state.state.model.container_events
+        await events.record("ws-a", EVENT_START, "api", container_id="x")
+        assert await events.prune() == 0
+        assert await self._ids(app_state) == {"x"}
+
+    async def test_prune_disabled_when_both_zero(self, app_state, db):
+        app_state.state.settings.container_events_retention_days = 0
+        app_state.state.settings.container_events_row_cap = 0
+        events = app_state.state.model.container_events
+        await events.record("ws-a", EVENT_START, "api", container_id="x")
+        await self._set_created_at(app_state, "x", 1.0)  # ancient
+        assert await events.prune() == 0
+        assert await self._ids(app_state) == {"x"}
+
+    async def test_prune_row_cap_keeps_newest(self, app_state, db):
+        """Over the deploy-wide cap, the oldest rows go, newest stay."""
+        import time as _time
+
+        app_state.state.settings.container_events_retention_days = 0
+        app_state.state.settings.container_events_row_cap = 3
+        events = app_state.state.model.container_events
+        now = _time.time()
+        for i, cid in enumerate(["e1", "e2", "e3", "e4", "e5"]):
+            await events.record(
+                f"ws-{i % 2}", EVENT_START, "api", container_id=cid
+            )
+            await self._set_created_at(app_state, cid, now - 1000 + i * 10)
+
+        assert await events.prune(now=now) == 2
+        assert await self._ids(app_state) == {"e3", "e4", "e5"}
+        assert await events.count_events() == 3
+
+    async def test_prune_row_cap_is_deploy_wide(self, app_state, db):
+        """The cap counts rows across workspaces (an audit log bounds the
+        table, not per-workspace fairness)."""
+        import time as _time
+
+        app_state.state.settings.container_events_retention_days = 0
+        app_state.state.settings.container_events_row_cap = 2
+        events = app_state.state.model.container_events
+        now = _time.time()
+        # oldest first, interleaved across two workspaces
+        rows = [
+            ("ws-a", "c1"),
+            ("ws-b", "c2"),
+            ("ws-a", "c3"),
+            ("ws-b", "c4"),
+        ]
+        for i, (ws, cid) in enumerate(rows):
+            await events.record(ws, EVENT_START, "api", container_id=cid)
+            await self._set_created_at(app_state, cid, now - 1000 + i * 10)
+
+        assert await events.prune(now=now) == 2
+        assert await self._ids(app_state) == {"c3", "c4"}
+
+    async def test_prune_row_cap_tiebreak_highest_id(self, app_state, db):
+        """Equal created_at: the higher id is the newer (the same tie-break
+        list_events uses), so it survives the cap."""
+        import time as _time
+
+        app_state.state.settings.container_events_retention_days = 0
+        app_state.state.settings.container_events_row_cap = 1
+        events = app_state.state.model.container_events
+        ts = _time.time() - 100
+        await events.record("ws-a", EVENT_START, "api", container_id="first")
+        await events.record("ws-a", EVENT_START, "api", container_id="second")
+        await self._set_created_at(app_state, "first", ts)
+        await self._set_created_at(app_state, "second", ts)
+
+        assert await events.prune(now=ts + 1) == 1
+        assert await self._ids(app_state) == {"second"}
+
+    async def test_prune_under_cap_deletes_nothing(self, app_state, db):
+        """At or under the cap the pass is a no-op."""
+        app_state.state.settings.container_events_retention_days = 0
+        app_state.state.settings.container_events_row_cap = 5
+        events = app_state.state.model.container_events
+        await events.record("ws-a", EVENT_START, "api", container_id="x")
+        assert await events.prune() == 0
+        assert await self._ids(app_state) == {"x"}
+
+    async def test_prune_retention_zero_cap_active(self, app_state, db):
+        """Retention off, cap on: only the cap pass runs."""
+        import time as _time
+
+        app_state.state.settings.container_events_retention_days = 0
+        app_state.state.settings.container_events_row_cap = 1
+        events = app_state.state.model.container_events
+        now = _time.time()
+        ancient = now - (self.RETENTION_DEFAULT + 5) * 86400
+        await events.record("ws-a", EVENT_START, "api", container_id="ancient")
+        await events.record("ws-a", EVENT_START, "api", container_id="fresh")
+        await self._set_created_at(app_state, "ancient", ancient)
+        await self._set_created_at(app_state, "fresh", now)
+
+        # retention is off, so the ancient row survives on age grounds; the
+        # cap keeps only the newest row.
+        assert await events.prune(now=now) == 1
+        assert await self._ids(app_state) == {"fresh"}
+
+    async def test_prune_cap_zero_retention_active(self, app_state, db):
+        """Cap off, retention on: only the retention pass runs."""
+        import time as _time
+
+        app_state.state.settings.container_events_row_cap = 0
+        events = app_state.state.model.container_events
+        now = _time.time()
+        ancient = now - (self.RETENTION_DEFAULT + 5) * 86400
+        await events.record("ws-a", EVENT_START, "api", container_id="ancient")
+        await events.record("ws-a", EVENT_START, "api", container_id="fresh")
+        await self._set_created_at(app_state, "ancient", ancient)
+        await self._set_created_at(app_state, "fresh", now)
+
+        assert await events.prune(now=now) == 1
+        assert await self._ids(app_state) == {"fresh"}
+
+    async def test_prune_live_settings_read(self, app_state, db):
+        """The knobs are read live off app.state.settings (SIGHUP-reload
+        shape): flipping them between prunes re-arms the passes."""
+        import time as _time
+
+        events = app_state.state.model.container_events
+        now = _time.time()
+        ancient = now - (self.RETENTION_DEFAULT + 5) * 86400
+        await events.record("ws-a", EVENT_START, "api", container_id="ancient")
+        await self._set_created_at(app_state, "ancient", ancient)
+
+        app_state.state.settings.container_events_retention_days = 0
+        app_state.state.settings.container_events_row_cap = 0
+        assert await events.prune(now=now) == 0
+        app_state.state.settings.container_events_retention_days = (
+            self.RETENTION_DEFAULT
+        )
+        assert await events.prune(now=now) == 1
+
+
 class TestMigration:
     async def test_table_and_index_created(self, app_state, db):
         tables = await app_state.state.db.fetchall(

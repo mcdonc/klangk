@@ -1113,6 +1113,18 @@ class KlangkSettings(BaseSettings):
     # (SIGHUP reload-safe -- a reload applies on the next sweep).
     egress_consent_retention_days: int = 30
     egress_consent_row_cap: int = 2000
+    # container_events_retention_days / container_events_row_cap (#2924):
+    # bound the ``container_events`` audit table (#2915) on long-lived
+    # deploys. retention_days deletes rows older than the window; row_cap is
+    # a deploy-wide cap on total rows (per-workspace fairness matters less
+    # than a total bound for an audit log) keeping the newest when exceeded.
+    # Unlike egress consent there is no in-effect exemption -- every row is
+    # history at write time. 0 disables either knob. Swept hourly by the
+    # consent sweeper's retention pass (once at startup, so an upgrade over
+    # a bloated table trims immediately); read live (SIGHUP reload-safe --
+    # a reload applies on the next sweep).
+    container_events_retention_days: int = 90
+    container_events_row_cap: int = 10000
     # Container resource limits (#34): deploy-wide CPU / memory / PIDs caps
     # passed to every workspace container as podman --cpus / --memory /
     # --pids-limit. Ships with protective defaults (2 CPUs / 8g / 16384 PIDs,
@@ -1953,6 +1965,36 @@ class KlangkSettings(BaseSettings):
             v,
             "KLANGKD_EGRESS_CONSENT_ROW_CAP",
             default=2000,
+        )
+
+    @field_validator("container_events_retention_days", mode="before")
+    @classmethod
+    def _coerce_container_events_retention_days(cls, v):
+        """Coerce + validate ``KLANGKD_CONTAINER_EVENTS_RETENTION_DAYS``
+        (#2924).
+
+        Integer string (env) or int (YAML); ``None`` / empty -> the default.
+        Negative raises and aborts startup (a negative retention window is a
+        misconfiguration, not a "keep everything" request -- that is ``0``).
+        """
+        return _coerce_prune_int(
+            v,
+            "KLANGKD_CONTAINER_EVENTS_RETENTION_DAYS",
+            default=90,
+        )
+
+    @field_validator("container_events_row_cap", mode="before")
+    @classmethod
+    def _coerce_container_events_row_cap(cls, v):
+        """Coerce + validate ``KLANGKD_CONTAINER_EVENTS_ROW_CAP`` (#2924).
+
+        Integer string (env) or int (YAML); ``None`` / empty -> the default.
+        Negative raises and aborts startup (``0`` disables the cap).
+        """
+        return _coerce_prune_int(
+            v,
+            "KLANGKD_CONTAINER_EVENTS_ROW_CAP",
+            default=10000,
         )
 
     @field_validator(

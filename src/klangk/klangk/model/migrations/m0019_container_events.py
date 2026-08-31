@@ -14,8 +14,9 @@ Written at the lifecycle choke points — workspace rows at
 reaps), sidecar rows at ``start_network_sidecar`` creation and the
 label-based removal choke point (plus the dependent-container forced
 removals). All writes are best-effort: a failed audit write is logged,
-never fatal to the start/stop itself. Retention/bounding is a deliberate
-follow-up (#2924), so the table grows without bound for now.
+never fatal to the start/stop itself. Retention/bounding is the #2924
+prune (retention window + deploy-wide row cap, swept hourly by the
+consent sweeper).
 """
 
 from klangk.model.migrations.base import Migration
