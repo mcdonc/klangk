@@ -5894,6 +5894,10 @@ class TestSandboxCommandGuards:
 
         response = MagicMock()
         response.status_code = 4002
+        # Neutralize the arg-building preamble: CI has no
+        # co-located klangkd UDS, so server_url() would Exit
+        # before the patched exception ever fires.
+        monkeypatch.setattr(sandboxcmd.context, "ws_max_size", lambda: 2**20)
         monkeypatch.setattr(
             sandboxcmd,
             "sandbox_setup_only",
@@ -5917,6 +5921,10 @@ class TestSandboxCommandGuards:
 
         response = MagicMock()
         response.status_code = 500
+        # Neutralize the arg-building preamble: CI has no
+        # co-located klangkd UDS, so server_url() would Exit
+        # before the patched exception ever fires.
+        monkeypatch.setattr(sandboxcmd.context, "ws_max_size", lambda: 2**20)
         monkeypatch.setattr(
             sandboxcmd,
             "sandbox_setup_only",
