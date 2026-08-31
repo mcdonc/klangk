@@ -71,6 +71,11 @@ class _WorkspacePageState extends State<WorkspacePage> {
   bool _restarting = false;
   bool _disconnected = false;
 
+  /// #2891: [buildAccessRevokedView] should replace the page instead of
+  /// the plain error view — set when the page error was an access-revoked
+  /// refusal (see `onPageError`).
+  bool _accessRevoked = false;
+
   /// Tracks which shared terminal (from another user) we're viewing.
   /// null means we're on our own isolated terminal.
   Map<String, String>? _activeSharedTerminal;
@@ -306,7 +311,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
           ..hideCurrentSnackBar()
           ..showSnackBar(
             SnackBar(
-              content: Text('Restart failed: $error'),
+              content: Text('Restart failed: ${error.message}'),
               duration: const Duration(seconds: 6),
               behavior: SnackBarBehavior.floating,
             ),
@@ -349,7 +354,14 @@ class _WorkspacePageState extends State<WorkspacePage> {
         }
       },
       onPageError: (error) {
-        if (mounted) setState(() => _error = error);
+        if (!mounted) return;
+        // #2891: an access-revoked refusal (revoked share / changed ACL /
+        // deleted workspace) swaps the whole page for the access-revoked
+        // view — no restart overlay, no loop.
+        setState(() {
+          _error = error.message;
+          _accessRevoked = error.accessRevoked;
+        });
       },
     );
 
@@ -448,9 +460,15 @@ class _WorkspacePageState extends State<WorkspacePage> {
         }
       }
       // Auto-join the first shared terminal for spectators (no
-      // code-in-isolation) so they don't see a blank cursor.
+      // code-in-isolation) so they don't see a blank cursor. Gated on the
+      // spectate permission too (#2891 review): a custom ACL can grant
+      // `terminal` without `spectate-on-shared-terminals`, and an
+      // ungated auto-join would be server-denied the moment anyone
+      // shares a terminal — swapping the page for an error view with no
+      // user action at all.
       if (_activeSharedTerminal == null &&
           !_hasPerm('code-in-isolation') &&
+          _hasPerm('spectate-on-shared-terminals') &&
           wsClient.sharedTerminals.isNotEmpty) {
         final first = wsClient.sharedTerminals[0];
         final userId = first['user_id'] as String?;
@@ -554,8 +572,16 @@ class _WorkspacePageState extends State<WorkspacePage> {
 
   @override
   Widget build(BuildContext context) {
-    if (_error != null) return _buildErrorView();
-    if (_connecting) return _buildConnectingView();
+    if (_error != null) {
+      final body = _accessRevoked
+          ? buildAccessRevokedView(
+              detail: _error,
+              onBack: () => context.go('/workspaces'),
+            )
+          : _buildErrorView();
+      return _withMarking(body);
+    }
+    if (_connecting) return _withMarking(_buildConnectingView());
 
     final wsClient = context.read<WsClient>();
     final authToken = context.read<AuthService>().token;
@@ -615,6 +641,21 @@ class _WorkspacePageState extends State<WorkspacePage> {
             ),
           ),
         ),
+        MarkingBanner(text: _marking),
+      ],
+    );
+  }
+
+  /// #2768/#2894 review: the classification marking must survive every
+  /// screen state — dead-end views included (an access revocation is now
+  /// a common full-page path, exactly when classified deployments most
+  /// need the banner). Mirrors the main build's Column wrap; an empty
+  /// marking renders nothing and reserves no space.
+  Widget _withMarking(Widget child) {
+    return Column(
+      children: [
+        MarkingBanner(text: _marking),
+        Expanded(child: child),
         MarkingBanner(text: _marking),
       ],
     );

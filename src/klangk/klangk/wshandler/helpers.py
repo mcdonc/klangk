@@ -112,10 +112,11 @@ def send_error(
 ) -> None:
     """Send an error frame; *code* adds a machine-readable kind.
 
-    The optional ``code`` (e.g. ``"capacity"``, #2525) lets clients tell
-    a *class* of failure apart from other start errors without parsing
-    the message text — the WS counterpart of the API's 503. Omitted for
-    legacy callers; unknown codes are ignorable by old clients.
+    The optional ``code`` (e.g. ``"capacity"``, #2525; ``"forbidden"`` /
+    ``"not_found"``, #2891) lets clients tell a *class* of failure apart
+    from other start errors without parsing the message text — the WS
+    counterpart of the API's 503. Omitted for legacy callers; unknown
+    codes are ignorable by old clients.
     """
     msg = {"type": "error", "message": message}
     if code is not None:

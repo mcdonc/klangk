@@ -65,6 +65,33 @@ class _FakeSink extends Fake implements WebSocketSink {
 }
 
 void main() {
+  group('WsError value semantics (#2891)', () {
+    test('equality and hashCode follow message + code', () {
+      const a = WsError(message: 'Permission denied', code: 'forbidden');
+      const b = WsError(message: 'Permission denied', code: 'forbidden');
+      const c = WsError(message: 'Permission denied');
+      const d = WsError(message: 'Workspace not found', code: 'not_found');
+
+      expect(a, b);
+      expect(a, isNot(c));
+      expect(a, isNot(d));
+      // Same hash for equal values (used as set/map keys).
+      expect({a}.contains(b), isTrue);
+      expect(a.hashCode, b.hashCode);
+    });
+
+    test('toString carries the code when present', () {
+      expect(
+        const WsError(message: 'Permission denied').toString(),
+        'Permission denied',
+      );
+      expect(
+        const WsError(message: 'Permission denied', code: 'forbidden')
+            .toString(),
+        'Permission denied (code: forbidden)',
+      );
+    });
+  });
   setUp(() {
     testBaseUrlOverride = 'http://localhost:8997';
     SharedPreferences.setMockInitialValues({});
@@ -333,14 +360,15 @@ void main() {
       final client = WsClient();
       client.updateAuth(auth);
 
-      final errors = <String>[];
+      final errors = <WsError>[];
       client.errors.listen(errors.add);
 
       await client.connect();
       await Future.delayed(Duration.zero);
       expect(client.connected, isFalse);
       expect(errors.length, 1);
-      expect(errors[0], 'Connection failed. Please try again.');
+      expect(errors[0],
+          const WsError(message: 'Connection failed. Please try again.'));
       client.dispose();
     });
 
@@ -357,14 +385,15 @@ void main() {
       final client = WsClient();
       client.updateAuth(auth);
 
-      final errors = <String>[];
+      final errors = <WsError>[];
       client.errors.listen(errors.add);
 
       await client.connect();
       await Future.delayed(Duration.zero);
       expect(client.connected, isFalse);
       expect(errors.length, 1);
-      expect(errors[0], 'Session expired, please log in again');
+      expect(errors[0],
+          const WsError(message: 'Session expired, please log in again'));
       expect(client.authFailed, isTrue);
       client.dispose();
     });
@@ -587,7 +616,7 @@ void main() {
       await Future.delayed(Duration.zero);
 
       // Consume error stream to prevent unhandled errors
-      final errors = <String>[];
+      final errors = <WsError>[];
       client.errors.listen(errors.add);
 
       channels[0].serverError(Exception('network failure'));
@@ -614,7 +643,7 @@ void main() {
       });
       await Future.delayed(Duration.zero);
 
-      final errors = <String>[];
+      final errors = <WsError>[];
       client.errors.listen(errors.add);
 
       // Set close code before emitting error
@@ -1060,7 +1089,7 @@ void main() {
       });
       await Future.delayed(Duration.zero);
 
-      final errors = <String>[];
+      final errors = <WsError>[];
       client.errors.listen(errors.add);
 
       // Server closes with auth failure code
@@ -1069,7 +1098,10 @@ void main() {
 
       expect(client.reconnecting, isFalse);
       expect(client.reconnectAttempt, 0);
-      expect(errors, contains('Session expired, please log in again'));
+      expect(
+          errors,
+          contains(
+              const WsError(message: 'Session expired, please log in again')));
       expect(client.authFailed, isTrue);
 
       client.disconnect();
@@ -1090,7 +1122,7 @@ void main() {
       });
       await Future.delayed(Duration.zero);
 
-      final errors = <String>[];
+      final errors = <WsError>[];
       client.errors.listen(errors.add);
 
       // Server closes with token expired code
@@ -1099,7 +1131,10 @@ void main() {
 
       expect(client.reconnecting, isFalse);
       expect(client.reconnectAttempt, 0);
-      expect(errors, contains('Session expired, please log in again'));
+      expect(
+          errors,
+          contains(
+              const WsError(message: 'Session expired, please log in again')));
       expect(client.authFailed, isTrue);
 
       client.disconnect();
@@ -1398,34 +1433,90 @@ void main() {
     });
 
     test('receives error from server', () async {
-      final errors = <String>[];
+      final errors = <WsError>[];
       client.errors.listen(errors.add);
 
       channel.serverSend({'type': 'error', 'message': 'bad thing'});
       await Future.delayed(Duration.zero);
 
-      expect(errors, ['bad thing']);
+      expect(errors, [const WsError(message: 'bad thing')]);
     });
 
     test('error with null message sends Unknown error', () async {
-      final errors = <String>[];
+      final errors = <WsError>[];
       client.errors.listen(errors.add);
 
       channel.serverSend({'type': 'error'});
       await Future.delayed(Duration.zero);
 
-      expect(errors, ['Unknown error']);
+      expect(errors, [const WsError(message: 'Unknown error')]);
+    });
+
+    test('error code is surfaced for class-based handling (#2891)', () async {
+      final errors = <WsError>[];
+      client.errors.listen(errors.add);
+
+      // The server's access-revoked refusals carry a machine-readable
+      // code so clients can classify without parsing the message.
+      channel.serverSend({
+        'type': 'error',
+        'message': 'Permission denied',
+        'code': 'forbidden',
+      });
+      await Future.delayed(Duration.zero);
+
+      expect(errors, [
+        const WsError(message: 'Permission denied', code: 'forbidden'),
+      ]);
+      expect(errors.first.accessRevoked, isTrue);
+
+      channel.serverSend({
+        'type': 'error',
+        'message': 'Workspace not found',
+        'code': 'not_found',
+      });
+      await Future.delayed(Duration.zero);
+
+      expect(errors.last.accessRevoked, isTrue);
+    });
+
+    test('accessRevoked is code-driven only, never text-driven (#2891)',
+        () async {
+      // Sub-action denials and podman failures share the wording of a
+      // revocation; without a code they must NOT classify as one, or the
+      // page would swap to the access-revoked view on a lie.
+      const notRevoked = [
+        WsError(message: 'Permission denied'), // legacy server, no code
+        WsError(message: 'Workspace not found'),
+        WsError(message: 'exec requires the exec-and-sync permission'),
+        WsError(
+          message: 'Container restart failed: [Errno 13] permission denied',
+        ),
+      ];
+      for (final e in notRevoked) {
+        expect(e.accessRevoked, isFalse, reason: e.message);
+      }
+      expect(
+        const WsError(message: 'Permission denied', code: 'forbidden')
+            .accessRevoked,
+        isTrue,
+      );
+      expect(
+        const WsError(message: 'Workspace not found', code: 'not_found')
+            .accessRevoked,
+        isTrue,
+      );
     });
 
     test('invalid JSON produces parse error', () async {
-      final errors = <String>[];
+      final errors = <WsError>[];
       client.errors.listen(errors.add);
 
       channel._incoming.add('not json');
       await Future.delayed(Duration.zero);
 
       expect(errors.length, 1);
-      expect(errors[0], startsWith('Parse error:'));
+      expect(errors[0].message, startsWith('Parse error:'));
     });
 
     test('server close resets connected state', () async {
@@ -1495,14 +1586,14 @@ void main() {
     });
 
     test('server error emits to error stream', () async {
-      final errors = <String>[];
+      final errors = <WsError>[];
       client.errors.listen(errors.add);
 
       channel.serverError(Exception('boom'));
       await Future.delayed(Duration.zero);
 
       expect(errors.length, 1);
-      expect(errors[0], contains('WebSocket error'));
+      expect(errors[0].message, contains('WebSocket error'));
       expect(client.connected, isFalse);
     });
   });

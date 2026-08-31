@@ -8,8 +8,8 @@ import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 class _MockWsClient extends WsClient {
   final StreamController<Map<String, dynamic>> _customEventsCtrl =
       StreamController<Map<String, dynamic>>.broadcast();
-  final StreamController<String> _errorsCtrl =
-      StreamController<String>.broadcast();
+  final StreamController<WsError> _errorsCtrl =
+      StreamController<WsError>.broadcast();
   final StreamController<Map<String, dynamic>> _sharedDeletedCtrl =
       StreamController<Map<String, dynamic>>.broadcast();
   final StreamController<Map<String, dynamic>> _browserRequestsCtrl =
@@ -29,7 +29,7 @@ class _MockWsClient extends WsClient {
   Stream<Map<String, dynamic>> get customEvents => _customEventsCtrl.stream;
 
   @override
-  Stream<String> get errors => _errorsCtrl.stream;
+  Stream<WsError> get errors => _errorsCtrl.stream;
 
   @override
   Stream<Map<String, dynamic>> get sharedTerminalDeleted =>
@@ -59,7 +59,7 @@ class _MockWsClient extends WsClient {
   void emitCustomEvent(Map<String, dynamic> event) =>
       _customEventsCtrl.add(event);
 
-  void emitError(String error) => _errorsCtrl.add(error);
+  void emitError(WsError error) => _errorsCtrl.add(error);
 
   void emitSharedDeleted(Map<String, dynamic> msg) =>
       _sharedDeletedCtrl.add(msg);
@@ -221,7 +221,7 @@ void main() {
 
     test('forwards permission errors to callback', () async {
       final ws = _MockWsClient();
-      final errors = <String>[];
+      final errors = <WsError>[];
 
       final connector = WorkspaceConnector(
         wsClient: ws,
@@ -235,16 +235,32 @@ void main() {
 
       await connector.connect();
 
-      ws.emitError('Permission denied');
+      // Legacy routing for older servers without the machine-readable
+      // codes (#2891 review): refusal texts still go page-level, but are
+      // NOT classified access-revoked — the page renders the plain error
+      // view (with the real message), never the revoked view.
+      ws.emitError(const WsError(message: 'Permission denied'));
       await Future<void>.delayed(Duration.zero);
 
-      expect(errors, ['Permission denied']);
+      expect(errors, [const WsError(message: 'Permission denied')]);
+      expect(errors.first.accessRevoked, isFalse);
 
-      // Non-permission errors are ignored
-      ws.emitError('Connection timeout');
+      // A sub-action denial (legacy, code-less) is routed the same way —
+      // page-level, matching pre-#2894 behavior — and is not a
+      // revocation.
+      ws.emitError(
+        const WsError(message: 'exec requires the exec-and-sync permission'),
+      );
       await Future<void>.delayed(Duration.zero);
 
-      expect(errors, hasLength(1));
+      expect(errors, hasLength(2));
+      expect(errors.last.accessRevoked, isFalse);
+
+      // Unrelated errors are ignored
+      ws.emitError(const WsError(message: 'Connection timeout'));
+      await Future<void>.delayed(Duration.zero);
+
+      expect(errors, hasLength(2));
 
       connector.dispose();
       ws.close();
@@ -252,7 +268,7 @@ void main() {
 
     test('forwards non-permission errors to onRestartError (#2676)', () async {
       final ws = _MockWsClient();
-      final restartErrors = <String>[];
+      final restartErrors = <WsError>[];
 
       final connector = WorkspaceConnector(
         wsClient: ws,
@@ -269,13 +285,19 @@ void main() {
 
       // A refused restart (server sends an error frame instead of dropping
       // the socket) reaches the hook…
-      ws.emitError('Container restart failed: dependent containers');
+      ws.emitError(
+        const WsError(
+            message: 'Container restart failed: dependent containers'),
+      );
       await Future<void>.delayed(Duration.zero);
 
-      expect(restartErrors, ['Container restart failed: dependent containers']);
+      expect(
+        restartErrors.map((e) => e.message),
+        ['Container restart failed: dependent containers'],
+      );
 
       // …but permission errors do not (they stay on onPageError).
-      ws.emitError('Permission denied');
+      ws.emitError(const WsError(message: 'Permission denied'));
       await Future<void>.delayed(Duration.zero);
 
       expect(restartErrors, hasLength(1));
@@ -286,8 +308,8 @@ void main() {
 
     test('capacity refusals surface as page errors (#2525)', () async {
       final ws = _MockWsClient();
-      final pageErrors = <String>[];
-      final restartErrors = <String>[];
+      final pageErrors = <WsError>[];
+      final restartErrors = <WsError>[];
 
       final connector = WorkspaceConnector(
         wsClient: ws,
@@ -302,30 +324,41 @@ void main() {
 
       await connector.connect();
 
-      // A host-capacity refusal (the server's error frame carries the
-      // machine-readable code `capacity`; the stream carries the
-      // message) must reach the page-error hook — including on an
-      // initial connect where no restart is in flight — instead of
-      // being silently dropped.
+      // A host-capacity refusal must reach the page-error hook —
+      // including on an initial connect where no restart is in flight —
+      // instead of being silently dropped. Message-text fallback for
+      // older servers first, then the machine-readable code.
       ws.emitError(
-        'host at capacity: 1.2 GB available, workspace wants 9.0 GB '
-        '(memory limit 8.0 GB + 1.0 GB reserve)',
+        const WsError(
+          message: 'host at capacity: 1.2 GB available, workspace wants '
+              '9.0 GB (memory limit 8.0 GB + 1.0 GB reserve)',
+        ),
       );
       await Future<void>.delayed(Duration.zero);
 
       expect(pageErrors, hasLength(1));
-      expect(pageErrors.first, contains('host at capacity'));
+      expect(pageErrors.first.message, contains('host at capacity'));
       expect(restartErrors, isEmpty);
 
-      // Same for a per-user quota refusal.
       ws.emitError(
-        'workspace quota reached: 2 of this user\'s workspaces are '
-        'already running',
+        const WsError(message: 'host at capacity', code: 'capacity'),
       );
       await Future<void>.delayed(Duration.zero);
 
       expect(pageErrors, hasLength(2));
-      expect(pageErrors.last, contains('quota reached'));
+      expect(restartErrors, isEmpty);
+
+      // Same for a per-user quota refusal.
+      ws.emitError(
+        const WsError(
+          message: "workspace quota reached: 2 of this user's workspaces "
+              'are already running',
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      expect(pageErrors, hasLength(3));
+      expect(pageErrors.last.message, contains('quota reached'));
       expect(restartErrors, isEmpty);
 
       connector.dispose();
@@ -347,8 +380,54 @@ void main() {
 
       await connector.connect();
 
-      ws.emitError('Connection timeout');
+      ws.emitError(const WsError(message: 'Connection timeout'));
       await Future<void>.delayed(Duration.zero);
+
+      connector.dispose();
+      ws.close();
+    });
+
+    test('access-revoked refusals reach onPageError by code (#2891)', () async {
+      final ws = _MockWsClient();
+      final pageErrors = <WsError>[];
+      final restartErrors = <WsError>[];
+
+      final connector = WorkspaceConnector(
+        wsClient: ws,
+        workspaceId: 'ws-1',
+        featureRegistry: ToolPluginRegistry(),
+        onConnected: ({required connected, error}) {},
+        onContainerEvent: (_, __) {},
+        onSharedTerminalDeleted: (_) {},
+        onPageError: (e) => pageErrors.add(e),
+        onRestartError: (e) => restartErrors.add(e),
+      );
+
+      await connector.connect();
+
+      // A revoked share / changed ACL refuses workspace_connect and
+      // restart_container with the machine-readable `forbidden` code.
+      // It must reach the page-error hook (which swaps the restart
+      // overlay for the access-revoked view), never the restart hook —
+      // otherwise the container-stopped overlay with its Restart
+      // button re-appears and every press fails identically, forever.
+      ws.emitError(
+          const WsError(message: 'Permission denied', code: 'forbidden'));
+      await Future<void>.delayed(Duration.zero);
+
+      // A workspace deleted while the user was away (`not_found`) is
+      // the same dead-end.
+      ws.emitError(
+        const WsError(message: 'Workspace not found', code: 'not_found'),
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      expect(pageErrors, hasLength(2));
+      expect(pageErrors.first.code, 'forbidden');
+      expect(pageErrors.first.accessRevoked, isTrue);
+      expect(pageErrors.last.code, 'not_found');
+      expect(pageErrors.last.accessRevoked, isTrue);
+      expect(restartErrors, isEmpty);
 
       connector.dispose();
       ws.close();
