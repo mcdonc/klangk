@@ -1627,6 +1627,11 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   watcher's stop, the per-workspace tmux control-mode teardown never
   completed, leaking the host-side podman exec reader and its
   container-side tmux control client until the container stopped.
+- **Memory leak on workspace delete (#2912).** Deleting a workspace
+  (or a user, whose workspaces cascade-delete) now drops the daemon's
+  per-workspace registry entries — one start/stop lock and one stop-epoch
+  counter per workspace id ever started, previously retained for the
+  process lifetime. Found by the long-lived-process memory audit (#2911).
 
 - **`klangkd doctor` names the right package for a missing `ip` command
   (#2921).** The warning hint now says `sudo dnf install iproute` on the

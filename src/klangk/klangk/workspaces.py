@@ -499,6 +499,8 @@ class Workspaces:
             )
         except Exception:
             # Clean up the DB record and directories on port allocation failure
+            # (no registry prune needed: the workspace never started, so it
+            # holds no per-workspace lock/epoch entries).
             await self.app.state.model.workspaces.delete_workspace(
                 workspace["id"], user_id
             )
@@ -558,6 +560,14 @@ class Workspaces:
             workspace_id, user_id
         )
         if deleted:
+            # #2912: prune first — the row is already gone (the model
+            # delete is a transactional rowcount==1), and the teardowns
+            # below are best-effort: a raising destroy_workspace_nix
+            # must not leave the registry entries behind (the retry
+            # DELETE 404s, so nothing else would ever pop them).
+            self.app.state.container_registry.prune_workspace_registry_entries(
+                workspace_id
+            )
             # #2201: drop the per-workspace nix clone if nix is enabled
             # (no-op otherwise).
             await self.app.state.nix.destroy_workspace_nix(workspace_id)
