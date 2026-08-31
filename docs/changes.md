@@ -1620,6 +1620,12 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **`klangkd doctor` names the right package for a missing `ip` command
+  (#2921).** The warning hint now says `sudo dnf install iproute` on the
+  Red Hat family and `sudo apt install iproute2` elsewhere (zypper, apk,
+  pacman, brew likewise) instead of `sudo dnf install ip`, which names a
+  nonexistent package.
+
 - **Admin users list marks the system agent (#2892).** The built-in
   `klangk@example.com` user now carries a SYSTEM badge and a fixed-identity
   note instead of looking like an ordinary account, and tapping its row no

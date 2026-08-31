@@ -157,6 +157,19 @@ _PACKAGE_HINTS: dict[str, dict[str, str]] = {
         "dnf": "shadow-utils",
         "apt": "uidmap",
     },
+    # Container subnet auto-detection (`ip -4 addr show`, #2089).
+    # The binary ships as `iproute` on the Red Hat family (dnf/yum) and
+    # `iproute2` everywhere else — brew covers Linuxbrew hosts (the formula
+    # is Linux-only, but the check is Darwin-skipped anyway).
+    "ip": {
+        "dnf": "iproute",
+        "yum": "iproute",
+        "apt": "iproute2",
+        "zypper": "iproute2",
+        "apk": "iproute2",
+        "pacman": "iproute2",
+        "brew": "iproute2",
+    },
 }
 
 
@@ -558,8 +571,8 @@ def run_doctor(*, verbose: bool = False) -> DoctorReport:
             ip_result.message = (
                 "ip not found — container subnet auto-detection will fall "
                 "back to broad RFC1918 ranges (172.16/12 + 10/8). Install "
-                "iproute2 for precise detection, or set "
-                "KLANGKD_CONTAINER_SUBNETS explicitly."
+                "the iproute/iproute2 package for your distro for precise "
+                "detection, or set KLANGKD_CONTAINER_SUBNETS explicitly."
             )
         report.add(ip_result)
 
