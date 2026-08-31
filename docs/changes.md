@@ -310,9 +310,10 @@ sync` report a clear permission-denied error.
   table with the acting principal (user, agent, or system), the cause
   (api/create/ws_connect/auto_start/crash_restart | stop/restart/delete/
   crash_teardown/idle_timeout/eviction/logout/drain/shutdown), the
-  podman container
-  id, and — for egress-filtered workspaces — the network sidecar
-  container whose netns the workspace shares. Labeled workspace
+  podman container, and its role — workspace or network sidecar
+  (sidecar create/teardown lands as system-caused `sidecar_start`/
+  `sidecar_stop` rows; workspace rows carry the sidecar container id
+  as `network_namespace` for egress-filtered workspaces). Labeled
   containers stopped by the shutdown/drain orphan sweeps are
   attributed too (by their `klangk.workspace` label). Recording is
   best-effort and never fails the start/stop itself; rows accumulate

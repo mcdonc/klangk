@@ -291,7 +291,9 @@ class TestDrain:
             n = await registry.drain_all_containers()
         assert n == 1
         assert swept == ["cid-race"]
-        assert any("racing-start" in r.message for r in caplog.records)
+        assert any(
+            "leftover klangk container" in r.message for r in caplog.records
+        )
 
     async def test_drain_sweep_tolerates_podman_errors(
         self, app_state, db, caplog

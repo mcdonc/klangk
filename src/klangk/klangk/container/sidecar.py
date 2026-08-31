@@ -13,6 +13,13 @@ import os
 import time
 
 from .. import podman
+from ..model.container_events import (
+    CAUSE_SIDECAR_START,
+    CAUSE_SIDECAR_STOP,
+    EVENT_START,
+    EVENT_STOP,
+    ROLE_SIDECAR,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -269,6 +276,15 @@ class NetworkSidecarMixin:
                 name,
                 cid[:12],
             )
+            # Lifecycle audit (#2915): sidecar rows are system-caused and
+            # never carry a netns owner — the sidecar IS the owner.
+            await self.record_container_event(
+                workspace_id,
+                cid,
+                EVENT_START,
+                cause=CAUSE_SIDECAR_START,
+                container_role=ROLE_SIDECAR,
+            )
             return cid
         except podman.PodmanError as exc:
             logger.warning(
@@ -294,6 +310,18 @@ class NetworkSidecarMixin:
             exc = await self._force_remove_sidecar(workspace_id, ident)
             if exc is not None:
                 failures.append((ident, exc))
+                continue
+            # Lifecycle audit (#2915): every successful label-based
+            # sidecar removal — workspace teardown, the create path's
+            # stale-generation clear, the failure-path teardown — lands
+            # here, so this is the sidecar stop choke point.
+            await self.record_container_event(
+                workspace_id,
+                ident,
+                EVENT_STOP,
+                cause=CAUSE_SIDECAR_STOP,
+                container_role=ROLE_SIDECAR,
+            )
         return failures
 
     async def _blocked_sidecar_failures(

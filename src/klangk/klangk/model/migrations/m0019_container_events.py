@@ -28,6 +28,7 @@ async def apply(db) -> None:
             actor_id TEXT,
             cause TEXT NOT NULL,
             container_id TEXT,
+            container_role TEXT NOT NULL DEFAULT 'workspace',
             network_namespace TEXT,
             created_at REAL NOT NULL
         )

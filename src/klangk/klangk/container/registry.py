@@ -25,6 +25,8 @@ from ..model.container_events import (
     CAUSE_SHUTDOWN,
     EVENT_START,
     EVENT_STOP,
+    ROLE_SIDECAR,
+    ROLE_WORKSPACE,
 )
 from ..podman import PodmanError
 from ..ssl_trust import SSL_MOUNT_DEST as _SSL_MOUNT_DEST
@@ -857,14 +859,19 @@ class ContainerRegistry(NetworkSidecarMixin):
         cause: str,
         actor_id: str | None = None,
         network_namespace: str | None = None,
+        container_role: str = ROLE_WORKSPACE,
     ) -> None:
         """Best-effort container_events write (#2915).
 
         Auditing must never fail the start/stop path it annotates: a
         DB error is logged and swallowed. Netns defaults to the live
-        sidecar mapping when the caller didn't capture one (starts).
+        sidecar mapping when the caller didn't capture one (workspace
+        starts); sidecar rows own their netns, so theirs stays NULL.
         """
-        netns = network_namespace or self._ws_netns_owner.get(workspace_id)
+        if container_role == ROLE_WORKSPACE:
+            netns = network_namespace or self._ws_netns_owner.get(workspace_id)
+        else:
+            netns = None
         try:
             await self.app.state.model.container_events.record(
                 workspace_id,
@@ -873,6 +880,7 @@ class ContainerRegistry(NetworkSidecarMixin):
                 actor_id=actor_id,
                 container_id=container_id,
                 network_namespace=netns,
+                container_role=container_role,
             )
         except Exception as e:  # noqa: BLE001 — audit is best-effort
             logger.warning(
@@ -2127,21 +2135,38 @@ class ContainerRegistry(NetworkSidecarMixin):
             leftovers = []
         stopped = 0
         for c in leftovers:
-            cid = container_ident(c)
-            if not cid:
-                continue
-            logger.info("Drain: sweeping racing-start container %s", cid[:12])
-            # Labeled workspace containers keep their stop row (#2915
-            # review): the label says which workspace owns them even when
-            # the registry never tracked them. Sidecars / unlabeled stay
-            # unattributed.
-            if await self.stop_and_remove_container(
-                cid,
-                workspace_id=labeled_workspace_id(c),
-                cause=CAUSE_DRAIN,
-            ):
-                stopped += 1
+            stopped += await self.sweep_stop_audited(c, cause=CAUSE_DRAIN)
         return stopped
+
+    async def sweep_stop_audited(self, c: dict, *, cause: str) -> bool:
+        """Stop one sweep/orphan container, recording its audit row for
+        labeled containers of either role (#2915).
+
+        Workspace-labeled containers pass their label-resolved
+        workspace_id (stop row + #2286 sidecar teardown); sidecar-labeled
+        ones get a system-caused sidecar stop row; unlabeled containers
+        record nothing.
+        """
+        cid = container_ident(c)
+        if not cid:
+            return False
+        labels = c.get("Labels") or {}
+        if labels.get("klangk.role") == "network-sidecar":
+            ok = await self.stop_and_remove_container(cid, cause=cause)
+            ws_id = labels.get("klangk.workspace")
+            if ok and ws_id:
+                await self.record_container_event(
+                    ws_id,
+                    cid,
+                    EVENT_STOP,
+                    cause=cause,
+                    container_role=ROLE_SIDECAR,
+                )
+            return ok
+        logger.info("Sweep: stopping leftover klangk container %s", cid[:12])
+        return await self.stop_and_remove_container(
+            cid, workspace_id=labeled_workspace_id(c), cause=cause
+        )
 
     # --- Pre-warm ---
 
@@ -2325,15 +2350,12 @@ class ContainerRegistry(NetworkSidecarMixin):
                         "Removing orphaned klangk container %s",
                         cid,
                     )
-                    # Labeled workspace containers keep their stop row
-                    # (#2915 review) — a prior-session workspace stopped
-                    # at shutdown must not vanish from the audit trail.
+                    # Labeled containers keep their stop row
+                    # (#2915 review) — a prior-session workspace or its
+                    # sidecar stopped at shutdown must not vanish from the
+                    # audit trail.
                     tasks.append(
-                        self.stop_and_remove_container(
-                            cid,
-                            workspace_id=labeled_workspace_id(c),
-                            cause=CAUSE_SHUTDOWN,
-                        )
+                        self.sweep_stop_audited(c, cause=CAUSE_SHUTDOWN)
                     )
         except (
             podman.PodmanError,

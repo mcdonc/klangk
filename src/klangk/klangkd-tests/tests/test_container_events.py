@@ -474,3 +474,102 @@ class TestFailedStartBackstop:
             )
             == 0
         )
+
+
+class TestSidecarLifecycle:
+    async def test_sidecar_start_recorded(self, app_state, db, registry):
+        """A filtered workspace's sidecar create lands as a system-caused
+        sidecar_start row with no netns owner (it IS the owner)."""
+        with patch_podman(registry):
+            cid = await registry.start_network_sidecar(
+                "ws-sc", ["allow.example.com"]
+            )
+        assert cid == "new-cid"
+        row = (
+            await app_state.state.model.container_events.list_events("ws-sc")
+        )[0]
+        assert row["event"] == EVENT_START
+        assert row["cause"] == "sidecar_start"
+        assert row["container_role"] == "network-sidecar"
+        assert row["actor_type"] == ACTOR_SYSTEM
+        assert row["container_id"] == "new-cid"
+        assert row["network_namespace"] is None
+
+    async def test_sidecar_stop_recorded_via_label_removal(
+        self, app_state, db, registry
+    ):
+        """The label-based sidecar removal choke point (workspace teardown,
+        stale-generation clear, failure teardown) records sidecar_stop."""
+        sidecar = {
+            "Id": "net-cid",
+            "Labels": {
+                "klangk.workspace": "ws-sc",
+                "klangk.role": "network-sidecar",
+            },
+        }
+        with patch_podman(
+            registry, list_containers=AsyncMock(return_value=[sidecar])
+        ):
+            assert await registry._remove_network_sidecar("ws-sc") is True
+        row = (
+            await app_state.state.model.container_events.list_events("ws-sc")
+        )[0]
+        assert row["event"] == EVENT_STOP
+        assert row["cause"] == "sidecar_stop"
+        assert row["container_role"] == "network-sidecar"
+        assert row["container_id"] == "net-cid"
+        assert row["network_namespace"] is None
+
+    async def test_sidecar_role_never_inherits_netns_owner(
+        self, app_state, db, registry
+    ):
+        registry._ws_netns_owner["ws-sc"] = "sidecar-live"
+        await registry.record_container_event(
+            "ws-sc",
+            "cid-x",
+            EVENT_STOP,
+            cause="sidecar_stop",
+            container_role="network-sidecar",
+        )
+        row = (
+            await app_state.state.model.container_events.list_events("ws-sc")
+        )[0]
+        assert row["network_namespace"] is None
+
+
+class TestSweepSidecarAttribution:
+    async def test_drain_sweep_records_sidecar_stop(
+        self, app_state, db, registry
+    ):
+        leftover = {
+            "Id": "net-cid",
+            "Labels": {
+                "klangk.workspace": "ws-sc",
+                "klangk.role": "network-sidecar",
+            },
+        }
+        with patch_podman(
+            registry, list_containers=AsyncMock(return_value=[leftover])
+        ):
+            assert await registry._sweep_drain_leftovers() == 1
+        row = (
+            await app_state.state.model.container_events.list_events("ws-sc")
+        )[0]
+        assert row["event"] == EVENT_STOP
+        assert row["cause"] == CAUSE_DRAIN
+        assert row["container_role"] == "network-sidecar"
+
+    async def test_drain_sweep_unlabeled_sidecar_records_nothing(
+        self, app_state, db, registry
+    ):
+        """A sidecar without its workspace label cannot be correlated —
+        stopped (counted) but not recorded."""
+        leftover = {
+            "Id": "net-cid",
+            "Labels": {"klangk.role": "network-sidecar"},
+        }
+        with patch_podman(
+            registry, list_containers=AsyncMock(return_value=[leftover])
+        ):
+            assert await registry._sweep_drain_leftovers() == 1
+        assert await app_state.state.model.container_events.count_events() == 0

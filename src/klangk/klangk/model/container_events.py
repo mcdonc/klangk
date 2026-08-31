@@ -50,12 +50,20 @@ CAUSE_LOGOUT = "logout"  # owner logged out (stop_user_containers)
 CAUSE_CRASH_TEARDOWN = "crash_teardown"  # crash monitor removing a corpse
 CAUSE_DRAIN = "drain"  # graceful-restart / scheduled drain
 CAUSE_SHUTDOWN = "shutdown"  # klangkd shutdown orphan sweep
+CAUSE_SIDECAR_START = "sidecar_start"  # network sidecar created for a start
+CAUSE_SIDECAR_STOP = "sidecar_stop"  # network sidecar torn down
+
+# Which klangk-managed container a row describes. Workspace rows carry
+# actor attribution; sidecar rows are always system-caused (their
+# lifecycle is slaved to the workspace's).
+ROLE_WORKSPACE = "workspace"
+ROLE_SIDECAR = "network-sidecar"
 
 # Canonical column list so the read shape cannot drift from the schema
 # (a column added to the table is added here once).
 _EVENT_COLUMNS = (
     "id, workspace_id, event, actor_type, actor_id, cause,"
-    " container_id, network_namespace, created_at"
+    " container_id, container_role, network_namespace, created_at"
 )
 
 
@@ -92,18 +100,23 @@ class ContainerEventsModel:
         actor_id: str | None = None,
         container_id: str | None = None,
         network_namespace: str | None = None,
+        container_role: str = ROLE_WORKSPACE,
     ) -> None:
         """Insert one lifecycle event row.
 
         ``actor_type`` is derived from ``actor_id`` (None -> system,
         the agent identity -> agent, anything else -> user).
+        ``container_role`` distinguishes workspace containers from their
+        network sidecars; sidecar rows never carry a netns owner (they
+        ARE the netns owner).
         """
         async with self.app.state.db.transaction() as db:
             await db.execute(
                 "INSERT INTO container_events"
                 " (workspace_id, event, actor_type, actor_id, cause,"
-                "  container_id, network_namespace, created_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "  container_id, container_role, network_namespace,"
+                "  created_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     workspace_id,
                     event,
@@ -111,6 +124,7 @@ class ContainerEventsModel:
                     actor_id,
                     cause,
                     container_id,
+                    container_role,
                     network_namespace,
                     time.time(),
                 ),
