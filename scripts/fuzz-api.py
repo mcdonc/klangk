@@ -535,6 +535,16 @@ ENDPOINTS: list[tuple[str, str, dict | None, dict | None]] = [
     ("POST", f"{P}/admin/invitations", {"email": "email"}, None),
     ("DELETE", f"{P}/admin/invitations/{{invitation_id}}", None, None),
     ("POST", f"{P}/admin/invitations/{{invitation_id}}/resend", None, None),
+    # Container lifecycle events history (#2923): `limit`/`offset` page
+    # through newest-first rows, `workspace_id` narrows to one workspace;
+    # the fuzzer's out-of-range ints mostly hit the 422 paths, which is
+    # the point.
+    (
+        "GET",
+        f"{P}/admin/container-events",
+        None,
+        {"limit": "int", "offset": "int", "workspace_id": "string"},
+    ),
     # Server scheduling (#2661). `action` is "stop"|"recycle"; `at` is
     # absolute ISO-8601 and `in_seconds` a positive delay — the fuzzer's
     # generic values mostly hit the 422 paths, which is the point.
