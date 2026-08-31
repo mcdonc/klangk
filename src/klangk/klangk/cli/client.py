@@ -53,6 +53,8 @@ RESIZE_POLL_INTERVAL = 1.0  # seconds between terminal size checks
 _RETRY_BACKOFF = 2.0  # seconds, doubled each retry
 
 _WS_CONNECT_TIMEOUT = 60  # seconds to wait for container_ready
+_HEARTBEAT_INTERVAL = 60  # seconds between terminal heartbeats
+_STDIN_DRAIN_TIMEOUT = 2  # seconds to let exec stdin forwarder finish
 
 
 def query_local_ssh_agent(sock_path: str, data: bytes) -> bytes | None:
@@ -70,16 +72,16 @@ def query_local_ssh_agent(sock_path: str, data: bytes) -> bytes | None:
         header = b""
         while len(header) < 4:
             chunk = agent.recv(4 - len(header))
-            if not chunk:  # pragma: no cover
+            if not chunk:
                 break
             header += chunk
-        if len(header) < 4:  # pragma: no cover
+        if len(header) < 4:
             return None
         msg_len = struct.unpack(">I", header)[0]
         body = b""
         while len(body) < msg_len:
             chunk = agent.recv(msg_len - len(body))
-            if not chunk:  # pragma: no cover
+            if not chunk:
                 break
             body += chunk
         return header + body
@@ -971,7 +973,7 @@ async def recv_until(conn, predicate, timeout: float = 30.0):
     end = loop.time() + timeout
     while True:
         remaining = end - loop.time()
-        if remaining <= 0:  # pragma: no cover
+        if remaining <= 0:
             raise asyncio.TimeoutError
         raw = await asyncio.wait_for(conn.recv(), timeout=remaining)
         msg = json.loads(raw)
@@ -998,7 +1000,7 @@ async def recv_json_messages(ws, timeout: float):
     deadline = asyncio.get_event_loop().time() + timeout
     while True:
         remaining = deadline - asyncio.get_event_loop().time()
-        if remaining <= 0:  # pragma: no cover
+        if remaining <= 0:
             raise asyncio.TimeoutError
         raw = await asyncio.wait_for(ws.recv(), timeout=remaining)
         yield json.loads(raw)
@@ -1185,11 +1187,11 @@ async def drain_terminal_startup(
                     break
             elif msg.get("type") == "terminal_output":
                 buffered_output.append(msg.get("data", ""))
-            elif msg.get("type") == "error":  # pragma: no cover
+            elif msg.get("type") == "error":
                 raise ConnectionError(
                     f"Server error: {msg.get('message', 'unknown')}"
                 )
-    except asyncio.TimeoutError:  # pragma: no cover
+    except asyncio.TimeoutError:
         raise ConnectionError(
             "Terminal did not start within 30 seconds"
         ) from None
@@ -1312,7 +1314,13 @@ async def create_own_window(
         )
     )
     match: dict | None = None
-    async for msg in recv_json_messages(ws, 10):
+    # recv_json_messages only ends by raising (deadline), so the
+    # async-for can never complete normally — break/raise are the only
+    # exits (the arc to ``if match is None`` without a break is
+    # unreachable).
+    async for msg in recv_json_messages(  # pragma: no branch
+        ws, 10
+    ):
         if msg.get("type") == "terminal_windows":
             new_windows = msg.get("windows", [])
             match = next(
@@ -1326,7 +1334,7 @@ async def create_own_window(
             raise ConnectionError(
                 f"Failed to create window: {msg.get('message')}"
             )
-    if match is None:  # pragma: no cover
+    if match is None:
         raise ConnectionError(f"Window '{window}' not created")
     return match
 
@@ -1369,7 +1377,7 @@ async def run_terminal_session(
     """4. Put terminal in raw mode, run shell, restore.
 
     raw_mode path: tcgetattr + tty.setraw + _raw_mode_exit +
-    terminal_stop  # pragma: no cover
+    terminal_stop.
     """
     if raw_mode:
         old_settings = _raw_mode_enter()
@@ -1493,11 +1501,14 @@ class _ShellSession:
         self.stop = asyncio.Event()
         self.agent_queue: asyncio.Queue[bytes] = asyncio.Queue()
 
-    async def heartbeat_loop(self) -> None:  # pragma: no cover
-        """Send a heartbeat every 60 s until stopped."""
+    async def heartbeat_loop(self) -> None:
+        """Send a heartbeat every :data:`_HEARTBEAT_INTERVAL` s until
+        stopped."""
         while not self.stop.is_set():
             try:
-                await asyncio.wait_for(self.stop.wait(), timeout=60)
+                await asyncio.wait_for(
+                    self.stop.wait(), timeout=_HEARTBEAT_INTERVAL
+                )
                 return
             except asyncio.TimeoutError:
                 pass
@@ -1545,7 +1556,7 @@ class _ShellSession:
             except (OSError, ConnectionError) as e:
                 logger.warning("SSH agent relay: %s", e)
 
-    async def run(self) -> None:  # pragma: no cover
+    async def run(self) -> None:
         raise NotImplementedError
 
 
@@ -1610,7 +1621,7 @@ class TerminalSession(_ShellSession):
                     data = await self._extend_escape_sequence(fd, data)
                     if data is None:
                         continue
-            except (OSError, io.UnsupportedOperation):  # pragma: no cover
+            except (OSError, io.UnsupportedOperation):
                 return
             await self.ws.send(
                 json.dumps(
@@ -1647,7 +1658,7 @@ class TerminalSession(_ShellSession):
                 break
             try:
                 await self._loop.run_in_executor(None, os.read, fd, 256)
-            except OSError:  # pragma: no cover
+            except OSError:
                 break
         return None
 
@@ -1719,7 +1730,7 @@ class TerminalSession(_ShellSession):
                 await asyncio.wait_for(
                     self.stop.wait(), timeout=RESIZE_POLL_INTERVAL
                 )
-                return  # pragma: no cover
+                return
             except asyncio.TimeoutError:
                 pass
             new_cols, new_rows = get_terminal_size()
@@ -1798,14 +1809,14 @@ class ExecSession(_ShellSession):
                     None,
                     lambda: select.select([fd], [], [], 0.2)[0],
                 )
-                if not ready:  # pragma: no cover
+                if not ready:
                     continue
                 data = await self._loop.run_in_executor(
                     None, os.read, fd, 65536
                 )
                 if not data:
                     break
-                await self.ws.send(  # pragma: no cover
+                await self.ws.send(
                     json.dumps(
                         {
                             "cmd": "exec_input",
@@ -1829,7 +1840,7 @@ class ExecSession(_ShellSession):
     async def stdout_forward(self) -> None:
         while True:
             msg = await self.ws.recv()
-            if isinstance(msg, bytes):  # pragma: no cover
+            if isinstance(msg, bytes):
                 msg = msg.decode("utf-8", errors="replace")
             data = json.loads(msg)
             if data.get("type") == "exec_output":
@@ -1888,8 +1899,8 @@ class ExecSession(_ShellSession):
                 pass
         self.stop.set()
         try:
-            await asyncio.wait_for(stdin_task, timeout=2)
-        except asyncio.TimeoutError:  # pragma: no cover
+            await asyncio.wait_for(stdin_task, timeout=_STDIN_DRAIN_TIMEOUT)
+        except asyncio.TimeoutError:
             stdin_task.cancel()
             try:
                 await stdin_task
@@ -1898,7 +1909,7 @@ class ExecSession(_ShellSession):
         heartbeat_task.cancel()
         try:
             await heartbeat_task
-        except asyncio.CancelledError:  # pragma: no cover
+        except asyncio.CancelledError:
             pass
         agent_task.cancel()
         try:

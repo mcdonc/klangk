@@ -429,7 +429,7 @@ class MainScreen(StatusScreen):
             self.query_one(
                 "#sort_btn", Button
             ).label = f"sort: {self._sort_key} {arrow}"
-        except NoMatches:  # pragma: no cover
+        except NoMatches:  # pragma: no cover - not yet mounted
             pass
 
     def on_button_pressed(self, event: Button.Pressed) -> None:

@@ -1,6 +1,7 @@
 """Tests for the klangk CLI."""
 
 import asyncio
+import base64
 import json
 import os
 import sys
@@ -1054,7 +1055,7 @@ class TestOIDCCLILogin:
 
         # Start the OIDC callback server (reuse the handler from auth.py)
         # We replicate the handler here to test the actual escaping logic
-        # without needing to invoke oidc_browser_login (pragma: no cover)
+        # without needing to invoke oidc_browser_login
         import html as html_mod
 
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -5493,3 +5494,649 @@ class TestCliBranchGaps2834d:
 
             with pytest.raises(typer_mod.Exit):
                 shellcmd.shell("ws", None, None, True)
+
+
+# --- No-cover audit tests (#2910) ---------------------------------------
+# Every path below used to carry a bare ``# pragma: no cover``. Each
+# test exercises one formerly-excluded site for real so the pragma could
+# be removed; the few structurally untestable sites that remain keep
+# their pragma only with an inline justification.
+
+
+class TestQueryLocalSshAgentShortReads:
+    """_query_local_ssh_agent: agent socket closing early / truncating."""
+
+    def _run(self, *args):
+        from klangk.cli.client import query_local_ssh_agent
+
+        return query_local_ssh_agent(*args)
+
+    def test_agent_closes_before_header(self, tmp_path):
+        import socket as socket_mod
+        import threading
+
+        path = str(tmp_path / "agent.sock")
+        listener = socket_mod.socket(
+            socket_mod.AF_UNIX, socket_mod.SOCK_STREAM
+        )
+        listener.bind(path)
+        listener.listen(1)
+        accepted = threading.Event()
+
+        def server():
+            conn, _ = listener.accept()
+            accepted.set()
+            conn.recv(1024)  # drain the request so close() is a FIN, not RST
+            conn.close()  # reply with nothing
+
+        threading.Thread(target=server, daemon=True).start()
+        result = self._run(path, b"\x00\x00\x00\x05hello")
+        listener.close()
+        assert result is None
+
+    def test_agent_truncates_body(self, tmp_path):
+        import socket as socket_mod
+        import struct
+        import threading
+
+        path = str(tmp_path / "agent.sock")
+        listener = socket_mod.socket(
+            socket_mod.AF_UNIX, socket_mod.SOCK_STREAM
+        )
+        listener.bind(path)
+        listener.listen(1)
+
+        def server():
+            conn, _ = listener.accept()
+            conn.recv(1024)  # drain the request so close() is a FIN, not RST
+            conn.sendall(struct.pack(">I", 8) + b"short")  # 3 of 8 bytes
+            conn.close()
+
+        threading.Thread(target=server, daemon=True).start()
+        result = self._run(path, b"\x00\x00\x00\x05hello")
+        listener.close()
+        assert result == struct.pack(">I", 8) + b"short"
+
+
+class TestBoundedRecvTimeouts:
+    """The ``remaining <= 0`` deadline arms of the bounded recv loops."""
+
+    def test_recv_until_zero_timeout(self):
+        from klangk.cli.client import recv_until
+
+        with pytest.raises(asyncio.TimeoutError):
+            asyncio.run(recv_until(AsyncMock(), lambda m: True, 0))
+
+    def test_recv_json_messages_zero_timeout(self):
+        from klangk.cli.client import recv_json_messages
+
+        async def scenario():
+            agen = recv_json_messages(AsyncMock(), 0)
+            try:
+                await agen.__anext__()
+            finally:
+                await agen.aclose()
+
+        with pytest.raises(asyncio.TimeoutError):
+            asyncio.run(scenario())
+
+    def test_recv_until_event_zero_timeout_with_callback(self):
+        from klangk.cli.terminals import recv_until_event
+
+        with pytest.raises(asyncio.TimeoutError):
+            asyncio.run(
+                recv_until_event(AsyncMock(), 0, on_message=lambda m: None)
+            )
+
+
+class TestDrainTerminalStartupGuards:
+    """drain_terminal_startup / create_own_window error paths."""
+
+    def _frames(self, *msgs):
+        class FakeRecv:
+            def __init__(self, frames):
+                self._frames = list(frames)
+
+            async def recv(self):
+                return json.dumps(self._frames.pop(0)).encode()
+
+            async def send(self, msg):
+                pass
+
+        return FakeRecv(list(msgs))
+
+    def test_error_frame_raises(self):
+        from klangk.cli.client import drain_terminal_startup
+
+        with pytest.raises(ConnectionError, match="Server error: nope"):
+            asyncio.run(
+                drain_terminal_startup(
+                    self._frames({"type": "error", "message": "nope"}), False
+                )
+            )
+
+    def test_timeout_raises_connection_error(self):
+        from klangk.cli.client import drain_terminal_startup
+
+        class NeverStarts:
+            async def recv(self):
+                raise asyncio.TimeoutError
+
+        with pytest.raises(ConnectionError, match="did not start"):
+            asyncio.run(drain_terminal_startup(NeverStarts(), False))
+
+    def test_create_own_window_not_in_refreshed_list(self):
+        from klangk.cli.client import create_own_window
+
+        ws = self._frames(
+            {
+                "type": "terminal_windows",
+                "windows": [{"id": "1", "name": "other"}],
+            }
+        )
+        with pytest.raises(ConnectionError, match="not created"):
+            asyncio.run(create_own_window(ws, "mine", []))
+
+
+class TestShellSessionHeartbeatAndRun:
+    async def test_heartbeat_sends_until_stopped(self, monkeypatch):
+        import klangk.cli.client as client_mod
+        from klangk.cli.client import _ShellSession
+
+        monkeypatch.setattr(client_mod, "_HEARTBEAT_INTERVAL", 0.01)
+        session = _ShellSession(AsyncMock())
+
+        async def send_heartbeat_once(msg):
+            session.stop.set()
+
+        session.ws.send = AsyncMock(side_effect=send_heartbeat_once)
+        await asyncio.wait_for(session.heartbeat_loop(), 5)
+        sent = [json.loads(c.args[0]) for c in session.ws.send.await_args_list]
+        assert sent == [{"cmd": "heartbeat"}]
+
+    async def test_heartbeat_skips_send_when_stopped(self, monkeypatch):
+        """The wait_for times out *and* stop is set before the re-check:
+        the send is skipped and the loop exits without a heartbeat."""
+        import klangk.cli.client as client_mod
+        from klangk.cli.client import _ShellSession
+
+        session = _ShellSession(AsyncMock())
+        real_wait_for = asyncio.wait_for
+
+        async def stop_then_time_out(fut, timeout):
+            session.stop.set()
+            raise asyncio.TimeoutError
+
+        monkeypatch.setattr(client_mod.asyncio, "wait_for", stop_then_time_out)
+        await session.heartbeat_loop()
+        session.ws.send.assert_not_awaited()
+        monkeypatch.setattr(client_mod.asyncio, "wait_for", real_wait_for)
+
+    async def test_run_is_abstract(self):
+        from klangk.cli.client import _ShellSession
+
+        session = _ShellSession(AsyncMock())
+        with pytest.raises(NotImplementedError):
+            await session.run()
+
+
+class TestTerminalSessionPumpGuards:
+    def _session(self, **kwargs):
+        from klangk.cli.client import TerminalSession
+
+        defaults = dict(stdout=MagicMock(), server_url="http://t", token="tok")
+        defaults.update(kwargs)
+        return TerminalSession(AsyncMock(), 80, 24, **defaults)
+
+    async def test_stdin_loop_oserror_returns(self):
+        session = self._session()
+        buf = BytesIO(b"x")
+        buf.fileno = lambda: 99
+        session.stdin = buf
+
+        with (
+            patch(
+                "klangk.cli.client.select.select", return_value=([99], [], [])
+            ),
+            patch("klangk.cli.client.os.read", side_effect=OSError("fd gone")),
+        ):
+            await asyncio.wait_for(session.stdin_loop(), 5)
+        session.ws.send.assert_not_awaited()
+
+    async def test_extend_escape_drain_oserror_breaks(self):
+        session = self._session()
+        r = 77
+        reads = [b"[?1;2c", OSError("fd gone")]
+
+        def fake_read(fd, n):
+            item = reads.pop(0)
+            if isinstance(item, Exception):
+                raise item
+            return item
+
+        with (
+            patch(
+                "klangk.cli.client.select.select", return_value=([r], [], [])
+            ),
+            patch("klangk.cli.client.os.read", side_effect=fake_read),
+        ):
+            out = await asyncio.wait_for(
+                session._extend_escape_sequence(r, b"\x1b"), 5
+            )
+        assert out is None  # query response drained despite the failing fd
+
+    async def test_resize_loop_returns_when_stopped(self):
+        session = self._session()
+
+        task = asyncio.create_task(session.resize_loop())
+        await asyncio.sleep(0.05)
+        session.stop.set()
+        await asyncio.wait_for(task, 5)
+        session.ws.send.assert_not_awaited()  # no size change: no resize
+
+
+class TestExecSessionStdinStdioGuards:
+    def _fd_stdin(self, fd):
+        stdin = MagicMock()
+        stdin.fileno.return_value = fd
+        return stdin
+
+    async def test_stdin_forward_not_ready_then_input(self):
+        from klangk.cli.client import ExecSession
+
+        r, w = os.pipe()
+        try:
+            os.write(w, b"hi")
+            os.close(w)
+            session = ExecSession(
+                AsyncMock(), command=["cat"], stdin=self._fd_stdin(r)
+            )
+
+            selects = [[], [r], [r], [r]]
+
+            def fake_select(rl, wl, xl, timeout=None):
+                return (selects.pop(0), [], [])
+
+            with patch(
+                "klangk.cli.client.select.select", side_effect=fake_select
+            ):
+                await asyncio.wait_for(session.stdin_forward(), 5)
+
+            sent = [
+                json.loads(c.args[0]) for c in session.ws.send.await_args_list
+            ]
+            assert sent == [
+                {"cmd": "exec_input", "data": "aGk="},
+                {"cmd": "exec_close_stdin"},
+            ]
+        finally:
+            os.close(r)
+
+    async def test_stdout_forward_decodes_bytes_frames(self):
+        from klangk.cli.client import ExecSession
+
+        ws = AsyncMock()
+        ws.recv = AsyncMock(
+            return_value=json.dumps({"type": "exec_exit", "code": 3}).encode()
+        )
+        session = ExecSession(ws, command=["true"], stdin=None)
+        await asyncio.wait_for(session.stdout_forward(), 5)
+        assert session.exit_code == 3
+
+    async def test_run_drains_stdin_with_timeout(self, monkeypatch):
+        """stdin forwarder stuck (never ready) is cancelled after the
+        drain timeout instead of hanging exec cleanup."""
+        import klangk.cli.client as client_mod
+        from klangk.cli.client import ExecSession
+
+        import time as time_mod
+
+        monkeypatch.setattr(client_mod, "_STDIN_DRAIN_TIMEOUT", 0.05)
+        r, w = os.pipe()
+        try:
+            os.close(w)  # EOF only when read; select patched to never fire
+
+            def blocked_select(rl, wl, xl, timeout=None):
+                time_mod.sleep(0.3)  # still in flight when the drain times out
+                return ([], [], [])
+
+            session = ExecSession(
+                AsyncMock(), command=["true"], stdin=self._fd_stdin(r)
+            )
+            session.ws.recv = AsyncMock(
+                return_value=json.dumps({"type": "exec_exit", "code": 0})
+            )
+            with patch(
+                "klangk.cli.client.select.select", side_effect=blocked_select
+            ):
+                code = await asyncio.wait_for(session.run(), 10)
+            assert code == 0
+        finally:
+            os.close(r)
+
+
+class TestExecSessionTimeout:
+    async def test_exec_deadline_maps_to_124(self):
+        from klangk.cli.client import ExecSession
+
+        async def hang():
+            await asyncio.sleep(3600)
+
+        ws = AsyncMock()
+        ws.recv = AsyncMock(side_effect=hang)
+        session = ExecSession(
+            ws, command=["sleep", "10"], stdin=None, timeout=0.05
+        )
+        assert await asyncio.wait_for(session.run(), 10) == 124
+
+
+class TestMainEntryPointHandlers:
+    """cli.main(): each user-facing failure maps to SystemExit(1)."""
+
+    @pytest.mark.parametrize(
+        "exc",
+        [
+            AuthError("bad token"),
+            httpx.ConnectError("down"),
+            httpx.HTTPStatusError(
+                "500", request=MagicMock(), response=MagicMock()
+            ),
+            websockets.ConnectionClosed(None, None),
+        ],
+    )
+    def test_handler_exits_1(self, exc, monkeypatch):
+        import klangk.cli.main as main_mod
+
+        monkeypatch.setattr(main_mod, "app", MagicMock(side_effect=exc))
+        with pytest.raises(SystemExit) as caught:
+            main_mod.main()
+        assert caught.value.code == 1
+
+
+class TestExecSyncGuards:
+    def test_sync_missing_klangk_binary(self, monkeypatch, tmp_path):
+        from klangk.cli import execsync
+
+        monkeypatch.setattr(execsync.context, "require_auth", lambda: None)
+        monkeypatch.setattr(execsync.shutil, "which", lambda name: None)
+        monkeypatch.setattr(execsync.context, "err", MagicMock())
+        with pytest.raises(typer.Exit):
+            execsync.sync(MagicMock(), str(tmp_path), "ws:/work")
+
+    def test_images_http_error_exits(self, monkeypatch):
+        from klangk.cli import execsync
+
+        response = MagicMock()
+        response.json.return_value = {"detail": "denied"}
+        response.text = "denied"
+        failing = MagicMock()
+        failing.list_images.side_effect = httpx.HTTPStatusError(
+            "403", request=MagicMock(), response=response
+        )
+        monkeypatch.setattr(execsync.context, "require_auth", lambda: None)
+        monkeypatch.setattr(execsync.context, "client", lambda: failing)
+        monkeypatch.setattr(execsync.context, "err", MagicMock())
+        with pytest.raises(typer.Exit):
+            execsync.images()
+
+
+class TestSandboxCommandGuards:
+    def test_sandbox_without_token_exits(self, monkeypatch, tmp_path):
+        from klangk.cli import sandboxcmd
+
+        monkeypatch.setattr(sandboxcmd.context, "session_token", lambda: "")
+        monkeypatch.setattr(sandboxcmd.context, "err", MagicMock())
+        with pytest.raises(typer.Exit):
+            sandboxcmd.sandbox("ws", str(tmp_path))
+
+    def test_run_sandbox_setup_expired_session_exits(self, monkeypatch):
+        from klangk.cli import sandboxcmd
+
+        response = MagicMock()
+        response.status_code = 4002
+        monkeypatch.setattr(
+            sandboxcmd,
+            "sandbox_setup_only",
+            MagicMock(side_effect=websockets.InvalidStatus(response)),
+        )
+        monkeypatch.setattr(sandboxcmd.context, "err", MagicMock())
+        with pytest.raises(typer.Exit):
+            sandboxcmd.run_sandbox_setup(
+                "http://s",
+                "tok",
+                "ws",
+                "ws-id",
+                MagicMock(),
+                Path("/tmp"),
+                "handle",
+                MagicMock(),
+            )
+
+    def test_run_sandbox_setup_other_status_reraises(self, monkeypatch):
+        from klangk.cli import sandboxcmd
+
+        response = MagicMock()
+        response.status_code = 500
+        monkeypatch.setattr(
+            sandboxcmd,
+            "sandbox_setup_only",
+            MagicMock(side_effect=websockets.InvalidStatus(response)),
+        )
+        monkeypatch.setattr(sandboxcmd.context, "err", MagicMock())
+        with pytest.raises(websockets.InvalidStatus):
+            sandboxcmd.run_sandbox_setup(
+                "http://s",
+                "tok",
+                "ws",
+                "ws-id",
+                MagicMock(),
+                Path("/tmp"),
+                "handle",
+                MagicMock(),
+            )
+
+    def test_mark_setup_state_warns_on_failure(self):
+        from klangk.cli.sandboxcmd import mark_setup_state
+
+        client = MagicMock()
+        client.set_setup_state.side_effect = RuntimeError("boom")
+        asyncio.run(mark_setup_state(client, "ws", "done"))  # must not raise
+
+    def test_decide_egress_reset_config_error(self):
+        from klangk.cli.sandboxcmd import decide_egress_reset
+
+        client = MagicMock()
+        client.config.side_effect = RuntimeError("unreachable")
+        config = types.SimpleNamespace(auto_start=False)
+        reset, reason = asyncio.run(decide_egress_reset(config, client))
+        assert reset is False
+        assert reason == "no network sidecar on this server"
+
+    def test_reset_egress_and_stop_warns_on_failures(self):
+        from klangk.cli.sandboxcmd import reset_egress_and_stop
+
+        client = MagicMock()
+        client.update_workspace.side_effect = RuntimeError("no")
+        client.stop_workspace_by_id.side_effect = RuntimeError("no")
+        asyncio.run(reset_egress_and_stop(client, "ws"))  # must not raise
+
+    def test_fire_service_command_deadline_expires(self):
+        from types import SimpleNamespace
+
+        from klangk.cli.sandboxcmd import fire_service_command
+
+        config = SimpleNamespace(service_command="make dev")
+        ws = AsyncMock()
+        asyncio.run(fire_service_command(ws, config, True, timeout=0))
+        sent = [json.loads(c.args[0]) for c in ws.send.await_args_list]
+        assert sent == [{"cmd": "terminal_start", "cols": 80, "rows": 24}]
+
+
+class TestShellWorkspacePickGuards:
+    def _two_workspaces(self):
+        return [
+            types.SimpleNamespace(name="a"),
+            types.SimpleNamespace(name="b"),
+        ]
+
+    def test_empty_choice_exits(self):
+        from klangk.cli.shellcmd import resolve_shell_workspace
+
+        with patch("builtins.input", return_value="  "):
+            with pytest.raises(typer.Exit):
+                resolve_shell_workspace(MagicMock(), None)
+
+    def test_non_numeric_choice_exits_1(self):
+        from klangk.cli.shellcmd import resolve_shell_workspace
+
+        client = MagicMock()
+        client.list_workspaces.return_value = self._two_workspaces()
+        with patch("builtins.input", return_value="abc"):
+            with pytest.raises(typer.Exit) as caught:
+                resolve_shell_workspace(client, None)
+        assert caught.value.exit_code == 1
+
+
+class TestOidcBrowserLogin:
+    """The localhost-callback browser flow, driven without a browser."""
+
+    @staticmethod
+    def _token(email="user@example.com"):
+        payload = base64.urlsafe_b64encode(
+            json.dumps({"email": email}).encode()
+        ).decode()
+        return f"hdr.{payload}.sig"
+
+    def _drive_callback(self, query, capture):
+        """Patch webbrowser.open to hit the callback URL directly."""
+        import urllib.request
+        import urllib.error
+        from urllib.parse import parse_qs, urlparse
+
+        def fake_open(url):
+            capture.append(url)
+            redirect = parse_qs(urlparse(url).query)["cli_redirect"][0]
+            try:
+                urllib.request.urlopen(f"{redirect}?{query}")
+            except urllib.error.HTTPError:
+                pass  # 400 pages still land in the handler
+
+        return fake_open
+
+    def test_success_saves_credentials(self, monkeypatch):
+        from klangk.cli.auth import oidc_browser_login
+
+        capture: list[str] = []
+        monkeypatch.setattr(
+            "klangk.cli.auth.webbrowser.open",
+            self._drive_callback(f"token={self._token()}", capture),
+        )
+        state = CLIState()
+        oidc_browser_login("http://srv", "prov", state)
+        assert capture and "cli_redirect" in capture[0]
+        assert state.get_token("http://srv") == self._token()
+
+    def test_success_with_malformed_token_uses_unknown_email(
+        self, monkeypatch
+    ):
+        from klangk.cli.auth import oidc_browser_login
+
+        bad_token = "hdr.not-valid-b64!.sig"
+        monkeypatch.setattr(
+            "klangk.cli.auth.webbrowser.open",
+            self._drive_callback(f"token={bad_token}", []),
+        )
+        state = CLIState()
+        oidc_browser_login("http://srv", "prov", state)
+        assert state.get_token("http://srv") == bad_token
+
+    def test_error_callback_exits_1(self, monkeypatch):
+        from klangk.cli.auth import oidc_browser_login
+
+        monkeypatch.setattr(
+            "klangk.cli.auth.webbrowser.open",
+            self._drive_callback("error=Denied", []),
+        )
+        with pytest.raises(SystemExit):
+            oidc_browser_login("http://srv", "prov", CLIState())
+
+    def test_no_callback_times_out(self, monkeypatch):
+        import klangk.cli.auth as auth_mod
+
+        monkeypatch.setattr(
+            "klangk.cli.auth.webbrowser.open", lambda url: False
+        )
+        # A thread whose join() returns instantly: no callback ever lands.
+        monkeypatch.setattr(
+            auth_mod.threading,
+            "Thread",
+            lambda **kw: MagicMock(join=lambda timeout=None: None),
+        )
+        with pytest.raises(SystemExit):
+            auth_mod.oidc_browser_login("http://srv", "prov", CLIState())
+
+
+class TestLogLogoutCaller:
+    """/proc walk: every malformed-process arm must break, never raise."""
+
+    @staticmethod
+    def _patch_open(monkeypatch, cmdline, stat):
+        import builtins
+
+        real_open = builtins.open
+
+        def fake_open(file, *args, **kwargs):
+            name = str(file)
+            if name.endswith("/cmdline"):
+                if isinstance(cmdline, Exception):
+                    raise cmdline
+                return BytesIO(cmdline)
+            if name.endswith("/stat"):
+                if isinstance(stat, Exception):
+                    raise stat
+                return BytesIO(stat)
+            return real_open(file, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "open", fake_open)
+
+    def test_ppid_1_stops_the_walk(self, monkeypatch):
+        import klangk.cli.auth as auth_mod
+
+        monkeypatch.setattr(auth_mod.os, "getppid", lambda: 42)
+        self._patch_open(monkeypatch, b"cmd\0", b"42 (cmd) S 1 1")
+        auth_mod._log_logout_caller()  # must not raise
+
+    def test_cmdline_unreadable_stops(self, monkeypatch):
+        import klangk.cli.auth as auth_mod
+
+        monkeypatch.setattr(auth_mod.os, "getppid", lambda: 42)
+        self._patch_open(monkeypatch, OSError("gone"), b"")
+        auth_mod._log_logout_caller()
+
+    def test_stat_unreadable_stops(self, monkeypatch):
+        import klangk.cli.auth as auth_mod
+
+        monkeypatch.setattr(auth_mod.os, "getppid", lambda: 42)
+        self._patch_open(monkeypatch, b"cmd\0", OSError("gone"))
+        auth_mod._log_logout_caller()
+
+    def test_stat_malformed_stops(self, monkeypatch):
+        import klangk.cli.auth as auth_mod
+
+        monkeypatch.setattr(auth_mod.os, "getppid", lambda: 42)
+        self._patch_open(monkeypatch, b"cmd\0", b"42 (cmd) S not-a-pid")
+        auth_mod._log_logout_caller()
+
+
+class TestContextClientConstructor:
+    def test_client_builds_from_cached_state(self, monkeypatch):
+        import klangk.cli.context as context
+
+        st = CLIState()
+        st.set_credentials("http://srv", "u@x", "tok-1")
+        monkeypatch.setattr(context, "state_cache", st)
+        monkeypatch.setattr(context, "cfg_cache", CLIConfig())
+        monkeypatch.setattr(context, "server_override", None)
+        client = context.client()
+        assert client.server_url == "http://srv"
+        assert client.token == "tok-1"

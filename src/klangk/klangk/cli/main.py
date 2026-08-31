@@ -217,7 +217,7 @@ def maybe_launch_tui(ctx: typer.Context) -> None:
         raise typer.Exit(code=1)
 
 
-def main() -> None:  # pragma: no cover
+def main() -> None:
     try:
         app()
     except AuthError as exc:
@@ -234,5 +234,7 @@ def main() -> None:  # pragma: no cover
         raise SystemExit(1) from None
 
 
-if __name__ == "__main__":  # pragma: no cover
+if __name__ == "__main__":  # pragma: no cover — module-exec arm
+    # (python -m klangk.cli.main) can't run under in-process tests;
+    # the wheel's console script exercises main() directly instead.
     main()
