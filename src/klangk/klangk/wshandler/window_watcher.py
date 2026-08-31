@@ -61,7 +61,9 @@ async def _terminate_watcher_proc(proc) -> None:
 class WindowEventWatcher:
     """A long-lived ``tmux -C`` control client for one container.
 
-    :meth:`start` spawns it (idempotent); :meth:`stop` tears it down.
+    :meth:`start` spawns it (idempotent while live or in flight);
+    :meth:`stop` tears it down. A stopped watcher is single-use: a
+    later :meth:`start` never spawns (#2929).
     ``on_change`` is called synchronously from the reader task once per
     relevant event; callers debounce.
     """

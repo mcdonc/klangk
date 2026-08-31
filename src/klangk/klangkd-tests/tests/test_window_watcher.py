@@ -240,6 +240,102 @@ class TestWatcherLifecycle:
             spawn.assert_not_called()
         assert watcher._task is None and watcher._proc is None
 
+    async def test_start_race_exec_failure_resets_and_propagates(self):
+        # #2929, failure half of the race: the container dying mid-start
+        # (the issue's common trigger) makes the exec itself raise. The
+        # finally must reset _starting — a refactor moving that reset out
+        # of the finally would strand it True and permanently disable the
+        # watcher — and the exception must propagate to the fire-and-forget
+        # wrapper's logging instead of being swallowed here.
+        watcher = self._watcher()
+        exec_started = asyncio.Event()
+        release_exec = asyncio.Event()
+
+        async def failing_exec(*args, **kwargs):
+            exec_started.set()
+            await release_exec.wait()
+            raise RuntimeError("container gone")
+
+        with patch("asyncio.create_subprocess_exec", side_effect=failing_exec):
+            start_task = asyncio.create_task(watcher.start())
+            await exec_started.wait()
+            await watcher.stop()  # mid-exec: fields still unset
+            release_exec.set()
+            with pytest.raises(RuntimeError):
+                await start_task
+
+        assert watcher._starting is False
+        assert watcher._task is None and watcher._proc is None
+
+    async def test_stop_twice_is_idempotent(self):
+        # #2929: a second stop() after a full teardown must not re-cancel,
+        # re-terminate, or re-kill the (already torn-down) session.
+        watcher = self._watcher()
+        watcher._task = asyncio.ensure_future(asyncio.sleep(3600))
+        proc = MagicMock(returncode=None)
+        proc.wait = AsyncMock()
+        watcher._proc = proc
+        podman = MagicMock()
+        podman.exec_container = AsyncMock()
+        watcher.podman = podman
+        await watcher.stop()
+        await watcher.stop()
+        assert watcher._task is None and watcher._proc is None
+        proc.terminate.assert_called_once()
+        podman.exec_container.assert_awaited_once()
+
+    async def test_stop_during_racy_teardown_no_double_kill(self):
+        # #2929: a second stop() landing while the racing start() is still
+        # inside its teardown awaits must not double-terminate the client
+        # or double-kill its control session (stop() reads only fields the
+        # racy path never assigns).
+        from klangk.wshandler.window_watcher import (
+            _terminate_watcher_proc as real_terminate,
+        )
+
+        podman = MagicMock()
+        podman.exec_container = AsyncMock()
+        watcher = self._watcher(podman)
+        proc = MagicMock(returncode=None)
+        proc.wait = AsyncMock()
+        stdout = MagicMock()
+        stdout.readline = AsyncMock(return_value=b"")
+        proc.stdout = stdout
+        exec_started = asyncio.Event()
+        release_exec = asyncio.Event()
+        teardown_entered = asyncio.Event()
+        release_teardown = asyncio.Event()
+
+        async def slow_exec(*args, **kwargs):
+            exec_started.set()
+            await release_exec.wait()
+            return proc
+
+        async def slow_teardown(p):
+            teardown_entered.set()
+            await release_teardown.wait()
+            await real_terminate(p)
+
+        with (
+            patch(
+                "klangk.wshandler.window_watcher._terminate_watcher_proc",
+                slow_teardown,
+            ),
+            patch("asyncio.create_subprocess_exec", side_effect=slow_exec),
+        ):
+            start_task = asyncio.create_task(watcher.start())
+            await exec_started.wait()
+            await watcher.stop()  # mid-exec no-op; flag recorded
+            release_exec.set()
+            await teardown_entered.wait()  # start() is now tearing down
+            await watcher.stop()  # second stop during that teardown
+            release_teardown.set()
+            await start_task
+
+        assert watcher._task is None and watcher._proc is None
+        proc.terminate.assert_called_once()
+        podman.exec_container.assert_awaited_once()
+
     async def test_kill_ctrl_session_swallows_errors(self):
         watcher = self._watcher()
         watcher.podman.exec_container = AsyncMock(
