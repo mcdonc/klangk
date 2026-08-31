@@ -1,8 +1,8 @@
 """NFQUEUE consumer: consent-gate the connection SYN pending a verdict (#2324, #2329, #2450).
 
-_setup_nfq_consumer binds the queue + drives it from the event loop; _cb
+setup_nfq_consumer binds the queue + drives it from the event loop; cb
 classifies one queued SYN (cached-verdict fast path / in-session host gates /
-hand-off to _decide_and_verdict); _decide_and_verdict awaits the verdict and
+hand-off to decide_and_verdict); decide_and_verdict awaits the verdict and
 applies it. netfilterqueue is imported lazily.
 """
 
@@ -14,20 +14,20 @@ from typing import TYPE_CHECKING
 
 from . import packets, rules
 from .allowlist import (
-    _add_session_deny,
-    _add_session_host,
-    _session_host_allows_ttl,
-    _session_host_denies_ttl,
+    add_session_deny,
+    add_session_host,
+    session_host_allows_ttl,
+    session_host_denies_ttl,
 )
-from .config import CONSENT_REJECT_TTL, QUEUE_NUM, VERDICT_CACHE_TTL, _duration_ttl
+from .config import CONSENT_REJECT_TTL, QUEUE_NUM, VERDICT_CACHE_TTL, duration_ttl
 from .packets import parse_dest, parse_syn_tuple
-from .rules import _host_for
-from .state import _BG_TASKS, _INFLIGHT, _VERDICT_CACHE
+from .rules import host_for
+from .state import BG_TASKS, INFLIGHT, VERDICT_CACHE
 
 # netfilterqueue is a sidecar-only optional dep ([nfqueue] extra: it links
 # libnetfilter_queue, a C library, and may be absent in dev environments).
 # Guarded module-scope import: importing the module works everywhere, and
-# _setup_nfq_consumer reports the absence at bind time.
+# setup_nfq_consumer reports the absence at bind time.
 try:
     from netfilterqueue import NetfilterQueue
 except ImportError:  # the [nfqueue] extra is not installed
@@ -37,7 +37,7 @@ if TYPE_CHECKING:
     from .consent import SidecarConsentClient
 
 
-def _setup_nfq_consumer(client: SidecarConsentClient | None):
+def setup_nfq_consumer(client: SidecarConsentClient | None):
     """Bind the sidecar's NFQUEUE + drive it from the event loop (#2324, #2329).
 
     Consent gates the connection SYN, not the DNS query: a non-allow-listed name
@@ -48,13 +48,13 @@ def _setup_nfq_consumer(client: SidecarConsentClient | None):
 
     The queue is read on the event-loop thread via ``get_fd()`` + ``add_reader``
     (netfilterqueue is otherwise synchronous). The per-packet callback
-    (:func:`_cb`) is **non-blocking**: it retains the packet + hands the verdict
-    wait to a task (:func:`_decide_and_verdict`), so a slow verdict on one flow
+    (:func:`cb`) is **non-blocking**: it retains the packet + hands the verdict
+    wait to a task (:func:`decide_and_verdict`), so a slow verdict on one flow
     does NOT serialize others -- distinct flows are held concurrently
     (netfilterqueue supports deferred verdicts; outstanding packets count
     against the kernel queue size, and the iptables rate-limit bounds arrivals).
     netfilterqueue is optional ([nfqueue] extra). Returns the bound
-    ``NetfilterQueue`` (so :func:`_shutdown` can unbind it on SIGTERM,
+    ``NetfilterQueue`` (so :func:`shutdown` can unbind it on SIGTERM,
     #2400) or ``None`` on failure.
     """
     if NetfilterQueue is None:
@@ -62,11 +62,11 @@ def _setup_nfq_consumer(client: SidecarConsentClient | None):
         return None
     try:
         nfq = NetfilterQueue()
-        nfq.bind(QUEUE_NUM, lambda pkt: _cb(pkt, client))
+        nfq.bind(QUEUE_NUM, lambda pkt: cb(pkt, client))
         loop = asyncio.get_running_loop()
         # When the netlink socket is readable, process all pending packets on
-        # this (loop) thread; _cb then hands each off to a verdict task.
-        loop.add_reader(nfq.get_fd(), lambda: _drain(nfq))
+        # this (loop) thread; cb then hands each off to a verdict task.
+        loop.add_reader(nfq.get_fd(), lambda: drain(nfq))
         print(f"nfqueue consumer bound to queue {QUEUE_NUM}", flush=True)
         return nfq
     except Exception as exc:
@@ -74,7 +74,7 @@ def _setup_nfq_consumer(client: SidecarConsentClient | None):
         return None
 
 
-def _drain(nfq) -> None:
+def drain(nfq) -> None:
     """Process pending NFQUEUE messages (called when the socket is readable)."""
     try:
         nfq.run(block=False)
@@ -82,7 +82,7 @@ def _drain(nfq) -> None:
         pass  # a transient read failure defers to the next readability event
 
 
-def _classify_packet(payload: bytes) -> tuple[str, int, str, int] | None:
+def classify_packet(payload: bytes) -> tuple[str, int, str, int] | None:
     """``(src_ip, src_port, dst_ip, dst_port)`` for a queued packet, or None
     when unparseable. The connection-level key (src IP+port + dst IP+port) is
     what makes duration=once re-prompt every subsequent connection instead of
@@ -96,12 +96,12 @@ def _classify_packet(payload: bytes) -> tuple[str, int, str, int] | None:
     return src_ip, src_port, dst, port
 
 
-def _cb(pkt, client: SidecarConsentClient | None) -> None:
+def cb(pkt, client: SidecarConsentClient | None) -> None:
     """Classify + route one queued SYN -- non-blocking (#2324, #2329).
 
     A retransmit of an already-decided connection reuses the cached verdict
     inline (fast path). A new connection is retained + handed to
-    :func:`_decide_and_verdict` so the verdict wait doesn't block the queue's
+    :func:`decide_and_verdict` so the verdict wait doesn't block the queue's
     drain (distinct connections are held concurrently, not serialized behind
     the first).
     """
@@ -112,38 +112,38 @@ def _cb(pkt, client: SidecarConsentClient | None) -> None:
     if client is not None:
         client.bump_activity()
     payload = pkt.get_payload()
-    key = _classify_packet(payload)
+    key = classify_packet(payload)
     if key is None or client is None:
         pkt.drop()  # unparseable / pure-static (no consent configured) -> drop
         return
     src_ip, src_port, dst, port = key
     if not client.connected:
-        _fail_fast_no_consent(pkt, payload, dst, port)
+        fail_fast_no_consent(pkt, payload, dst, port)
         return
     flow = (src_ip, src_port, dst, port)
     now = time.time()
     # SYN retransmit of an already-decided connection -> reuse the verdict so
     # the kernel's retransmits (tcp_syn_retries) don't each re-prompt.
-    cached = _VERDICT_CACHE.get(flow)
+    cached = VERDICT_CACHE.get(flow)
     if cached is not None and cached[1] > now:
-        _apply_cached_verdict(pkt, cached, payload, port)
+        apply_cached_verdict(pkt, cached, payload, port)
         return
     # A SYN retransmit that arrives WHILE this connection is still held (no
     # verdict yet) must not spawn a second consent request: the in-flight task
     # resolves it, and a request per retransmit piles up duplicates that linger
     # past the first's resolution (#2345 e2e flake). Drop it -- the kernel sends
     # another retransmit once the verdict lands, and that one hits the cache.
-    if flow in _INFLIGHT:
+    if flow in INFLIGHT:
         pkt.drop()
         return
-    host = _host_for(dst)  # DNS name if resolved here, else the IP
+    host = host_for(dst)  # DNS name if resolved here, else the IP
     if _session_gate_holds(pkt, flow, payload, dst, port, host, now):
         return
     pkt.retain()  # keep the payload valid past this callback (deferred verdict)
-    _INFLIGHT.add(flow)
-    t = asyncio.create_task(_decide_and_verdict(pkt, flow, dst, port, host, client))
-    _BG_TASKS.add(t)  # strong ref so the verdict task isn't GC'd
-    t.add_done_callback(_BG_TASKS.discard)
+    INFLIGHT.add(flow)
+    t = asyncio.create_task(decide_and_verdict(pkt, flow, dst, port, host, client))
+    BG_TASKS.add(t)  # strong ref so the verdict task isn't GC'd
+    t.add_done_callback(BG_TASKS.discard)
 
 
 def _session_gate_holds(
@@ -160,23 +160,23 @@ def _session_gate_holds(
 
     An in-session host DENY covers the whole domain too (#2446): a SYN to a
     host:port the user already denied -- including a CDN-rotated or
-    resolver-cached IP that the per-IP _REJECTED rule does not cover -- is
+    resolver-cached IP that the per-IP REJECTED rule does not cover -- is
     denied fast, before prompting (the CARRYOVER-SURPRISE). Checked AFTER
     the allow gate so an in-effect allow still overrides an in-effect deny.
 
     Returns True when the SYN was handled."""
-    remaining = _session_host_allows_ttl(host, port) if port else None
+    remaining = session_host_allows_ttl(host, port) if port else None
     if remaining is not None:
         _allow_session_host(pkt, flow, dst, port, now, remaining)
         return True
-    deny_remaining = _session_host_denies_ttl(host, port) if port else None
+    deny_remaining = session_host_denies_ttl(host, port) if port else None
     if deny_remaining is not None:
-        _deny_session_host(pkt, flow, payload, dst, port, now, deny_remaining)
+        deny_session_host(pkt, flow, payload, dst, port, now, deny_remaining)
         return True
     return False
 
 
-def _fail_fast_no_consent(pkt, payload, dst: str, port: int) -> None:
+def fail_fast_no_consent(pkt, payload, dst: str, port: int) -> None:
     """Consent WS down: consent is unavailable, so fail the off-list SYN
     FAST (ECONNREFUSED) like a deny verdict -- NOT a bare drop. A bare drop
     makes the kernel retransmit the SYN for ~127s (tcp_syn_retries),
@@ -191,16 +191,16 @@ def _fail_fast_no_consent(pkt, payload, dst: str, port: int) -> None:
     deliberately: during a WS outage no connection can be consented, so
     fail-fast (ECONNREFUSED) for every off-list connect to the same
     ip:port is the intended #2308 behavior, and this path writes no
-    _VERDICT_CACHE entry, so connection-scoping would gain nothing."""
+    VERDICT_CACHE entry, so connection-scoping would gain nothing."""
     if port:
-        packets._send_rst(payload)
+        packets.send_rst(payload)
         asyncio.get_running_loop().run_in_executor(
             None, rules.reject, dst, port, CONSENT_REJECT_TTL
         )
     pkt.drop()
 
 
-def _apply_cached_verdict(pkt, cached, payload, port: int) -> None:
+def apply_cached_verdict(pkt, cached, payload, port: int) -> None:
     """A retransmit of an already-decided connection: reuse the verdict. A
     cached deny forges the eager-deny RST (a retried connect() to a denied
     flow fails fast too); TCP only (port 0 is non-TCP)."""
@@ -208,7 +208,7 @@ def _apply_cached_verdict(pkt, cached, payload, port: int) -> None:
         pkt.accept()
     else:
         if port:
-            packets._send_rst(payload)
+            packets.send_rst(payload)
         pkt.drop()
 
 
@@ -224,11 +224,11 @@ def _allow_session_host(
     allow only covered the IP resolved at decision time, so a CDN-rotated
     IP re-entered NFQUEUE and a hold timeout there fail-closed to a deny
     REJECT an in-effect allow should override."""
-    # allow() forks iptables under _LOCK -- run it off the loop thread (the
+    # allow() forks iptables under LOCK -- run it off the loop thread (the
     # file's invariant; every other allow/learn/reject call is in the
     # executor). Fire-and-forget: conntrack ESTABLISHED,RELATED carries THIS
     # connection after pkt.accept(); the ACCEPT rule only helps FUTURE
-    # connections, and the _VERDICT_CACHE write below covers retransmits.
+    # connections, and the VERDICT_CACHE write below covers retransmits.
     # Learn for the allow's remaining window (timed) or ~forever; port-scoped
     # (the consented port) -- deliberately stricter than the consent-allow
     # path's all-ports learn (allow(dst, None, ...)).
@@ -236,35 +236,35 @@ def _allow_session_host(
         None, rules.allow, dst, port, remaining, False
     )
     pkt.accept()
-    _VERDICT_CACHE[flow] = ("allow", now + VERDICT_CACHE_TTL)
+    VERDICT_CACHE[flow] = ("allow", now + VERDICT_CACHE_TTL)
     # NOTE (#2370): revoking an allow must also drop this host from
-    # _SESSION_HOST_ALLOWS and clear _VERDICT_CACHE, or a revoked allow keeps
+    # SESSION_HOST_ALLOWS and clear VERDICT_CACHE, or a revoked allow keeps
     # passing (ports_for re-allow-lists it + this cache reuses the verdict).
     # Wired with the revoke path in #2370.
 
 
-def _deny_session_host(
+def deny_session_host(
     pkt, flow, payload, dst: str, port: int, now: float, deny_remaining: float
 ) -> None:
     """An in-session host deny covers the whole domain, timed or forever
     (#2446). Forge the eager-deny RST so connect() fails fast
     (ECONNREFUSED) at once; a REJECT for the deny's remaining window
-    backstops retransmits off-loop (reject() forks iptables under _LOCK).
-    TCP only (port 0 is non-TCP). The _VERDICT_CACHE write covers
+    backstops retransmits off-loop (reject() forks iptables under LOCK).
+    TCP only (port 0 is non-TCP). The VERDICT_CACHE write covers
     retransmits of THIS flow."""
     if port:
         try:
-            packets._send_rst(payload)
+            packets.send_rst(payload)
         except Exception:
             pass
         asyncio.get_running_loop().run_in_executor(
             None, rules.reject, dst, port, deny_remaining
         )
     pkt.drop()
-    _VERDICT_CACHE[flow] = ("deny", now + VERDICT_CACHE_TTL)
+    VERDICT_CACHE[flow] = ("deny", now + VERDICT_CACHE_TTL)
 
 
-async def _decide_and_verdict(
+async def decide_and_verdict(
     pkt,
     flow: tuple[str, int, str, int],
     dst: str,
@@ -291,29 +291,29 @@ async def _decide_and_verdict(
     now = time.time()
     # Bound memory under a denied-flow flood (allowed flows get learned +
     # stop hitting NFQUEUE; only denied flows accumulate in the cache).
-    if len(_VERDICT_CACHE) > 4096:
-        _VERDICT_CACHE.clear()
-    _VERDICT_CACHE[flow] = (decision, now + VERDICT_CACHE_TTL)
+    if len(VERDICT_CACHE) > 4096:
+        VERDICT_CACHE.clear()
+    VERDICT_CACHE[flow] = (decision, now + VERDICT_CACHE_TTL)
     # Populate the in-session allow-list BEFORE the iptables fork below (which
     # yields to the executor): a SYN to a different IP of this host arriving
-    # during that yield would otherwise miss _SESSION_HOST_ALLOWS and re-prompt.
-    # Both gates (ports_for + _cb) read it (#2372). A timed allow is host-scoped
+    # during that yield would otherwise miss SESSION_HOST_ALLOWS and re-prompt.
+    # Both gates (ports_for + cb) read it (#2372). A timed allow is host-scoped
     # too (#2434): otherwise a CDN-rotated IP of a timed-allowed host re-enters
     # NFQUEUE, and a hold timeout there fail-closes to a deny REJECT an
     # in-effect allow should override -- an allow that refuses.
-    ttl = _duration_ttl(duration)
-    _remember_session_verdict(decision, host, port, ttl)
+    ttl = duration_ttl(duration)
+    remember_session_verdict(decision, host, port, ttl)
     loop = asyncio.get_running_loop()
     try:
-        await _apply_verdict(pkt, flow, dst, port, decision, ttl, loop)
+        await apply_verdict(pkt, flow, dst, port, decision, ttl, loop)
     finally:
         # Connection resolved (verdict cached) -> retransmits now hit the cache,
         # not the in-flight check. Always discard, even if the verdict raised,
         # so a stuck connection can't block the tuple forever.
-        _INFLIGHT.discard(flow)
+        INFLIGHT.discard(flow)
 
 
-def _remember_session_verdict(
+def remember_session_verdict(
     decision: str, host: str, port: int, ttl: float | None
 ) -> None:
     """Populate the in-session host memory BEFORE the iptables fork below
@@ -330,12 +330,12 @@ def _remember_session_verdict(
     if ttl is None or not port:
         return
     if decision == "allow":
-        _add_session_host(host, port, ttl)
+        add_session_host(host, port, ttl)
     elif decision == "deny":
-        _add_session_deny(host, port, ttl)
+        add_session_deny(host, port, ttl)
 
 
-async def _apply_verdict(
+async def apply_verdict(
     pkt,
     flow,
     dst: str,
@@ -346,7 +346,7 @@ async def _apply_verdict(
 ) -> None:
     """Apply the decision to the held SYN, installing the kernel rule first
     (iptables forks run in the executor so they don't block the loop thread --
-    matches the DNS path's _learn_all; the packet is retained, so verdicting
+    matches the DNS path's learn_all; the packet is retained, so verdicting
     after the await is safe)."""
     if decision == "allow":
         # `once` (ttl None) -> no learn, just this connection (reconnect
@@ -368,14 +368,14 @@ async def _apply_verdict(
     # host:port re-prompts instead of being rejected above NFQUEUE for
     # the fail-close window (#2463). A timed/forever deny stays
     # destination-scoped -- its over-deny is correct (the DB rule +
-    # _SESSION_HOST_DENIES govern re-prompting). The source port is
+    # SESSION_HOST_DENIES govern re-prompting). The source port is
     # guarded: a real TCP SYN never has src port 0 (RFC 793), so a
     # truthy flow[1] is the normal case; if it is ever 0 (a
     # non-TCP/unparseable flow), fall back to destination-scoped so a
     # future parse change can't silently re-introduce the over-deny.
     if port:
         try:
-            packets._send_rst(pkt.get_payload())
+            packets.send_rst(pkt.get_payload())
         except Exception:
             pass
         reject_ttl = ttl if ttl is not None else CONSENT_REJECT_TTL

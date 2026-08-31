@@ -1,7 +1,7 @@
 """Asyncio orchestration: the DNS recv loop + SIGTERM teardown + main() (#2450).
 
-_async_main binds the DNS socket, starts the consent client + TTL sweeper +
-NFQUEUE consumer, and runs the per-query loop; _shutdown tears it all down on
+async_main binds the DNS socket, starts the consent client + TTL sweeper +
+NFQUEUE consumer, and runs the per-query loop; shutdown tears it all down on
 SIGTERM (#2400); main is the PID-1 entry.
 """
 
@@ -15,7 +15,7 @@ from urllib.parse import urlparse
 
 from . import allowlist, config, consent, nfqueue, packets, resolve, rules
 from .config import DEBUG, HOLD_TIMEOUT, LISTEN_PORT, UPSTREAM, WORKSPACE_TOKEN_PATH
-from .state import _BG_TASKS
+from .state import BG_TASKS
 
 if TYPE_CHECKING:
     from .consent import SidecarConsentClient
@@ -25,10 +25,10 @@ if TYPE_CHECKING:
 # the server may be going away, so an unbounded close handshake could
 # re-introduce the 5s window this fix eliminates. Bounded so the whole
 # teardown fits well inside podman's `stop -t 5`.
-_SHUTDOWN_CLIENT_TIMEOUT = 2.0
+SHUTDOWN_CLIENT_TIMEOUT = 2.0
 
 
-async def _cancel_task(task: asyncio.Task | None) -> None:
+async def cancel_task(task: asyncio.Task | None) -> None:
     """Cancel a background task and swallow its end (best-effort teardown;
     process exit reaps whatever remains)."""
     if task is None:
@@ -40,7 +40,7 @@ async def _cancel_task(task: asyncio.Task | None) -> None:
         pass
 
 
-def _unbind_nfq(nfq) -> None:
+def unbind_nfq(nfq) -> None:
     """Remove the NFQUEUE reader and unbind (each best-effort)."""
     if nfq is None:
         return
@@ -54,7 +54,7 @@ def _unbind_nfq(nfq) -> None:
         pass
 
 
-def _close_quietly(sock: socket.socket) -> None:
+def close_quietly(sock: socket.socket) -> None:
     """Close a socket, swallowing errors."""
     try:
         sock.close()
@@ -62,7 +62,7 @@ def _close_quietly(sock: socket.socket) -> None:
         pass
 
 
-async def _shutdown(
+async def shutdown(
     client: SidecarConsentClient | None,
     nfq,
     sock: socket.socket,
@@ -72,10 +72,10 @@ async def _shutdown(
     """Clean teardown on SIGTERM (#2400): stop the consent client, cancel the
     TTL sweeper, unbind NFQUEUE, close the DNS socket.
 
-    The consent client's stop is bounded (:data:`_SHUTDOWN_CLIENT_TIMEOUT`) so a
+    The consent client's stop is bounded (:data:`SHUTDOWN_CLIENT_TIMEOUT`) so a
     stalled WebSocket close handshake can't re-introduce the 5s window. Best-
     effort — a failure (or the bound) in one step must not skip the rest
-    (process exit reaps whatever remains). Runs in :func:`_async_main`'s
+    (process exit reaps whatever remains). Runs in :func:`async_main`'s
     ``finally`` after the SIGTERM handler cancels the main task, so the proxy
     exits promptly instead of relying on podman's SIGKILL fallback — which a
     PID-1 sidecar always hit, because the kernel ignores default SIGTERM
@@ -84,7 +84,7 @@ async def _shutdown(
     """
     if client is not None:
         try:
-            await asyncio.wait_for(client.stop(), _SHUTDOWN_CLIENT_TIMEOUT)
+            await asyncio.wait_for(client.stop(), SHUTDOWN_CLIENT_TIMEOUT)
         except (asyncio.CancelledError, Exception):
             # CancelledError widened in (#2657): stop() awaiting its cancelled
             # _run task raises it through the wait_for, `except Exception`
@@ -92,13 +92,13 @@ async def _shutdown(
             # rest of teardown -- the exact failure mode the sweep/sampler
             # guards below already widen against.
             pass
-    await _cancel_task(sweep)
-    await _cancel_task(sampler)
-    _unbind_nfq(nfq)
-    _close_quietly(sock)
+    await cancel_task(sweep)
+    await cancel_task(sampler)
+    unbind_nfq(nfq)
+    close_quietly(sock)
 
 
-def _resolve_ws_host(consent_url: str) -> str | None:
+def resolve_ws_host(consent_url: str) -> str | None:
     """Resolve the klangkd WS host to an IP so the egress-accounting rule can
     exclude it (#2485) -- the WS is the sidecar's own persistent control socket
     and its keepalives must not self-sustain the idle timer.
@@ -126,7 +126,7 @@ def _resolve_ws_host(consent_url: str) -> str | None:
     return ip
 
 
-async def _async_main() -> None:
+async def async_main() -> None:
     """The asyncio DNS loop (#2311 half B, #2324): allow-listed + denied names
     resolve inline; a denied name in interactive mode records IP->host so its
     connection SYN is consent-gated at NFQUEUE (a separate thread).
@@ -151,47 +151,45 @@ async def _async_main() -> None:
         flush=True,
     )
     rules.check_mark()
-    _sweep = asyncio.create_task(rules._async_sweeper())
-    _BG_TASKS.add(_sweep)  # strong ref for the loop's lifetime
-    _sweep.add_done_callback(_BG_TASKS.discard)
+    _sweep = asyncio.create_task(rules.async_sweeper())
+    BG_TASKS.add(_sweep)  # strong ref for the loop's lifetime
+    _sweep.add_done_callback(BG_TASKS.discard)
     nfq = None
     _sampler: asyncio.Task | None = None
     # NFQUEUE consumer is driven by this event loop (get_fd + add_reader) so a
     # slow verdict on one SYN doesn't serialize others (#2324, #2329).
     if config.CONSENT_URL:
         packets.check_rst_socket()  # eager-deny RST forge (#2345); best-effort (NET_RAW)
-        nfq = nfqueue._setup_nfq_consumer(
-            client
-        )  # bound NFQUEUE, for _shutdown (#2400)
+        nfq = nfqueue.setup_nfq_consumer(client)  # bound NFQUEUE, for shutdown (#2400)
         # #2485: egress byte-accounting rule + the sampler that bumps the idle
         # timer on real workspace traffic (long-lived / UDP flows the #2481
         # DNS+SYN hooks miss). Best-effort; a missing rule -> flat zero counter
-        # -> sampler never bumps (falls back to #2481). _resolve_ws_host scopes
+        # -> sampler never bumps (falls back to #2481). resolve_ws_host scopes
         # the rule to exclude the sidecar's own WS so its keepalives can't
         # self-sustain the timer. Resolve + install run off-loop (gethostbyname
         # + 2 iptables forks are blocking), matching the rest of startup.
-        ws_ip = await loop.run_in_executor(None, _resolve_ws_host, config.CONSENT_URL)
+        ws_ip = await loop.run_in_executor(None, resolve_ws_host, config.CONSENT_URL)
         await loop.run_in_executor(None, rules.install_acct, ws_ip)
         _sampler = asyncio.create_task(
-            consent._activity_sampler(client, rules.acct_bytes, config.ACTIVITY_GATE_S)
+            consent.activity_sampler(client, rules.acct_bytes, config.ACTIVITY_GATE_S)
         )
-        _BG_TASKS.add(_sampler)
-        _sampler.add_done_callback(_BG_TASKS.discard)
+        BG_TASKS.add(_sampler)
+        _sampler.add_done_callback(BG_TASKS.discard)
     # The sidecar is PID 1 (entrypoint.sh execs python). The kernel suppresses
     # default terminate/stop dispositions for a PID-namespace init: a SIGTERM
     # with no handler installed is effectively ignored, so podman's `stop -t 5`
     # SIGTERM was no-op'd and EVERY removal fell back to SIGKILL after the full
     # 5s window (occasionally wedging in Stopping). Install an explicit handler
-    # that cancels this task -> _shutdown closes the WS, unbinds NFQUEUE, closes
+    # that cancels this task -> shutdown closes the WS, unbinds NFQUEUE, closes
     # the socket -> prompt exit (#2400). (SIGKILL/SIGSTOP bypass this and always
     # work, which is why podman's SIGKILL fallback eventually cleared it.)
     main_task = asyncio.current_task()
     stopping = False
 
     def _on_sigterm() -> None:
-        # Idempotent: a second SIGTERM arriving while _shutdown is mid-await
+        # Idempotent: a second SIGTERM arriving while shutdown is mid-await
         # must NOT re-cancel the main task -- that CancelledError is a
-        # BaseException, so _shutdown's `except Exception` guards don't catch
+        # BaseException, so shutdown's `except Exception` guards don't catch
         # it and teardown would be aborted (skipping nfq.unbind/sock.close).
         # The first signal cancels; subsequent ones are no-ops (SIGKILL remains
         # podman's hard backstop if teardown hangs) (#2400).
@@ -199,7 +197,7 @@ async def _async_main() -> None:
         if stopping:
             return
         stopping = True
-        # Captured from asyncio.current_task() inside _async_main, so never
+        # Captured from asyncio.current_task() inside async_main, so never
         # None -- the guard only satisfies the type-checker (a plain loop
         # callback would see None; _on_sigterm is registered from a task).
         if main_task is not None:  # pragma: no branch
@@ -217,16 +215,16 @@ async def _async_main() -> None:
                 data, addr = await loop.sock_recvfrom(s, 65535)
             except Exception:
                 continue
-            await resolve._handle_packet(s, data, addr, client)
+            await resolve.handle_packet(s, data, addr, client)
     except asyncio.CancelledError:
         if DEBUG:
             print("dns-proxy: stop signal received, shutting down", flush=True)
     finally:
-        await _shutdown(client, nfq, s, _sweep, _sampler)
+        await shutdown(client, nfq, s, _sweep, _sampler)
 
 
 def main() -> None:
     try:
-        asyncio.run(_async_main())
+        asyncio.run(async_main())
     except KeyboardInterrupt:
         pass

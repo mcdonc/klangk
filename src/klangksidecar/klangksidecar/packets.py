@@ -1,7 +1,7 @@
 """IPv4 packet parsing + forged-RST eager-deny for the NFQUEUE path (#2345, #2450).
 
 parse_dest / parse_syn_tuple unpack an IPv4 L3/L4 payload; build_rst_packet
-forges the RST the denied SYN_SENT socket accepts (ECONNREFUSED); _send_rst
+forges the RST the denied SYN_SENT socket accepts (ECONNREFUSED); send_rst
 sends it via the IP_HDRINCL raw socket opened by check_rst_socket.
 """
 
@@ -13,21 +13,21 @@ import struct
 from . import config
 
 
-def _rst_debug(msg: str) -> None:
+def rst_debug(msg: str) -> None:
     """Emit a forged-RST diagnostic line when ``KLANGKNETWORK_EGRESS_DEBUG_RST``
     is on (#2464).
 
     Centralized so the egress-smoketest diagnostic is one branch to cover, not
-    one per call site in :func:`_send_rst`. The smoketest enables the flag and
+    one per call site in :func:`send_rst`. The smoketest enables the flag and
     captures the sidecar's podman log so a fast-refuse miss (a denied
     connection timing out instead of refusing fast) shows whether each RST
     fired.
     """
-    if config._RST_DEBUG:
+    if config.RST_DEBUG:
         print(msg, flush=True)
 
 
-def _ipv4_offsets(payload: bytes) -> tuple[int, int] | None:
+def ipv4_offsets(payload: bytes) -> tuple[int, int] | None:
     """(header_offset, ihl) for the IPv4 header, or None when the payload is
     not IPv4 (bare L3 or with a 14-byte Ethernet prefix) or too short."""
     off = 0
@@ -48,7 +48,7 @@ def parse_dest(payload: bytes) -> tuple[str, int]:
     header; detect the IPv4 version nibble. Port is 0 for non-TCP/UDP. Pure
     so it can be unit-tested with synthetic bytes.
     """
-    hdr = _ipv4_offsets(payload)
+    hdr = ipv4_offsets(payload)
     if hdr is None:
         return "", 0
     off, ihl = hdr
@@ -71,7 +71,7 @@ def parse_syn_tuple(payload: bytes) -> tuple[str, int, str, int, int]:
     Pure (mirrors :func:`parse_dest`'s L3/L4 offset logic) so it can be
     unit-tested with synthetic bytes.
     """
-    hdr = _ipv4_offsets(payload)
+    hdr = ipv4_offsets(payload)
     if hdr is None:
         return "", 0, "", 0, 0
     off, ihl = hdr
@@ -88,7 +88,7 @@ def parse_syn_tuple(payload: bytes) -> tuple[str, int, str, int, int]:
     return src_ip, src_port, dst_ip, dst_port, seq
 
 
-def _ones_checksum(data: bytes) -> int:
+def ones_checksum(data: bytes) -> int:
     """RFC 1071 ones-complement checksum over ``data`` (pad odd length)."""
     if len(data) % 2:
         data = data + b"\x00"
@@ -144,7 +144,7 @@ def build_rst_packet(
         + socket.inet_aton(dst_ip)
         + struct.pack("!BBH", 0, 6, len(tcp_no_cksum))
     )
-    cksum = _ones_checksum(pseudo + tcp_no_cksum)
+    cksum = ones_checksum(pseudo + tcp_no_cksum)
     tcp_hdr = tcp_no_cksum[:16] + struct.pack("!H", cksum) + tcp_no_cksum[18:]
     return ip_hdr + tcp_hdr
 
@@ -153,8 +153,8 @@ def build_rst_packet(
 # startup (:func:`check_rst_socket`) with IP_HDRINCL so the denied host can be
 # spoofed as the RST source (the workspace's SYN_SENT socket matches the remote
 # tuple). ``None`` until then (also when consent is off or NET_RAW is absent);
-# :func:`_send_rst` then no-ops and the REJECT rule is the only fail-fast path.
-_RST_SOCK: socket.socket | None = None
+# :func:`send_rst` then no-ops and the REJECT rule is the only fail-fast path.
+RST_SOCK: socket.socket | None = None
 
 
 def check_rst_socket() -> None:
@@ -163,14 +163,14 @@ def check_rst_socket() -> None:
     Needs CAP_NET_RAW (the sidecar gets it). Best-effort: if the socket can't
     be opened, the REJECT rule remains the only fail-fast path (no behavior
     change). Logged at startup like :func:`check_mark`, and set non-blocking so
-    :func:`_send_rst` is safe to call inline on the loop thread.
+    :func:`send_rst` is safe to call inline on the loop thread.
     """
-    global _RST_SOCK
+    global RST_SOCK
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_TCP)
         s.setsockopt(socket.IPPROTO_IP, socket.IP_HDRINCL, 1)
         s.setblocking(False)
-        _RST_SOCK = s
+        RST_SOCK = s
     except OSError as exc:
         print(
             f"dns-proxy: cannot open RST socket ({exc}); eager-deny falls "
@@ -179,7 +179,7 @@ def check_rst_socket() -> None:
         )
 
 
-def _send_rst(payload: bytes) -> None:
+def send_rst(payload: bytes) -> None:
     """Forge a RST to the workspace's SYN_SENT socket so ``connect()`` gets
     ECONNREFUSED at once, independent of conntrack/retransmit timing (#2345).
 
@@ -192,13 +192,13 @@ def _send_rst(payload: bytes) -> None:
     inline on the loop thread. Swallows errors: a transient send failure just
     leaves the REJECT backstop.
     """
-    sock = _RST_SOCK
+    sock = RST_SOCK
     if sock is None:
-        _rst_debug("rst-forge: no raw socket (NET_RAW?) -- REJECT-only fast-refuse")
+        rst_debug("rst-forge: no raw socket (NET_RAW?) -- REJECT-only fast-refuse")
         return
     src_ip, src_port, dst_ip, dst_port, seq = parse_syn_tuple(payload)
     if not src_ip or not dst_port:
-        _rst_debug(f"rst-forge: unparseable tuple (src={src_ip} dst_port={dst_port})")
+        rst_debug(f"rst-forge: unparseable tuple (src={src_ip} dst_port={dst_port})")
         return
     try:
         sock.sendto(
@@ -208,9 +208,9 @@ def _send_rst(payload: bytes) -> None:
             build_rst_packet(dst_ip, dst_port, src_ip, src_port, seq),
             (src_ip, 0),
         )
-        _rst_debug(
+        rst_debug(
             f"rst-forge: sent {dst_ip}:{dst_port} -> {src_ip}:{src_port} "
             f"ack={(seq + 1) & 0xFFFFFFFF}"
         )
     except OSError as exc:
-        _rst_debug(f"rst-forge: sendto failed: {exc!r}")
+        rst_debug(f"rst-forge: sendto failed: {exc!r}")
