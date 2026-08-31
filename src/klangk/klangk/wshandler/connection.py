@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from .. import container, model
 from ..container.spec import SHARED_HOME
 from ..exceptions import NodeDrainingError, WorkspaceCapacityError
+from ..model.container_events import CAUSE_WS_CONNECT
 from ..terminal import TerminalSession
 from ..podman import ExecSession, PodmanError
 from .safe_websocket import SafeWebSocket, WS_ERRORS
@@ -298,6 +299,8 @@ class Connection:
                 egress_mode=workspace.get(
                     "egress_mode", model.EGRESS_MODE_INTERACTIVE
                 ),
+                audit_cause=CAUSE_WS_CONNECT,
+                audit_actor_id=self.user["id"],
                 per_handle_home=workspace.get("per_handle_home", True),
             )
         )

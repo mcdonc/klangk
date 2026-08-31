@@ -25,6 +25,7 @@ from ..podman import (
     SHARED_HOME as SHARED_HOME,
     SHARED_HOME_NAME as SHARED_HOME_NAME,
 )
+from ..model.container_events import CAUSE_API
 from ..ssl_trust import SSL_MOUNT_DEST as _SSL_MOUNT_DEST, ssl_env_vars
 from .basics import CONTAINER_PORT_START, DEFAULT_PORTS_PER_WORKSPACE
 
@@ -109,6 +110,13 @@ class ContainerStartSpec:
     rejected_domains: list[str] | None = None
     workspace_settings: dict | None = None
     egress_mode: str = "static"
+    # Lifecycle-audit attribution (#2915): who asked for this start and
+    # why. Traveled on the spec (the single-field extension point this
+    # class exists to provide) so every start path — API, WS connect,
+    # crash restart, boot auto-start — carries it into the choke point.
+    # ``audit_actor_id`` None means an autonomous (system) cause.
+    audit_cause: str = CAUSE_API
+    audit_actor_id: str | None = None
     # Home layout (#2169 chunk 2, #2720): True -> per-handle
     # /home/{handle} symlinks; False -> the single shared /home/klangk.
     # Traveled on the spec so ContainerState carries it for the health

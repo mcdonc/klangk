@@ -19,6 +19,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
 from .acl import ACLModel
+from .container_events import ContainerEventsModel
 from .egress_consent import EgressConsentModel
 from .server_schedules import ServerSchedulesModel
 from .ports import PortsModel
@@ -175,6 +176,7 @@ class Model:
         self.acl = ACLModel(app)
         self.workspaces = WorkspacesModel(app)
         self.egress_consent = EgressConsentModel(app)
+        self.container_events = ContainerEventsModel(app)
         self.server_schedules = ServerSchedulesModel(app)
 
     def reconfigure(self, app) -> None:
@@ -189,6 +191,7 @@ class Model:
             self.acl,
             self.workspaces,
             self.egress_consent,
+            self.container_events,
             self.server_schedules,
         ):
             sub.reconfigure(app)

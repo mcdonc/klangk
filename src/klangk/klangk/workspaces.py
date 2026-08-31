@@ -11,6 +11,7 @@ from pathlib import Path
 
 from . import container, model
 from .container.spec import SHARED_HOME, SHARED_HOME_NAME
+from .model.container_events import CAUSE_API, CAUSE_AUTO_START
 from .settings import parse_bool_setting
 
 logger = logging.getLogger(__name__)
@@ -681,7 +682,9 @@ class Workspaces:
 
     # --- lifecycle ---
 
-    async def start_workspace(self, ws: dict) -> tuple[str, str]:
+    async def start_workspace(
+        self, ws: dict, *, actor_id: str | None = None, cause: str = CAUSE_API
+    ) -> tuple[str, str]:
         """Start a container for a workspace immediately.
 
         Thin wrapper around ``self.app.state.container_registry.start_container``
@@ -693,6 +696,10 @@ class Workspaces:
         ``idle_timeout`` overrides from the settings bag are applied inside
         ``start_container`` (the single start choke point); only
         ``auto_start_workspaces`` (the boot path) pins it to 0.
+
+        ``actor_id``/``cause`` (#2915) ride the spec into the choke point's
+        container_events audit row — every caller states who asked for the
+        start and why (API user, crash monitor, boot auto-start).
 
         Returns ``(container_id, status)``.
         """
@@ -722,6 +729,8 @@ class Workspaces:
                 egress_mode=ws.get(
                     "egress_mode", model.EGRESS_MODE_INTERACTIVE
                 ),
+                audit_cause=cause,
+                audit_actor_id=actor_id,
                 per_handle_home=ws.get("per_handle_home", True),
             )
         )
@@ -762,7 +771,9 @@ class Workspaces:
             if i > 0:
                 await asyncio.sleep(random.uniform(0.5, 2.0))
             try:
-                cid, status = await self.start_workspace(ws)
+                cid, status = await self.start_workspace(
+                    ws, cause=CAUSE_AUTO_START
+                )
                 # Auto-started containers are boot services: pin them alive
                 # so they do not idle out between user connections. Only the
                 # boot path does this -- create/restart use the default idle

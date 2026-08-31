@@ -31,6 +31,12 @@ from .. import (
     wshandler,
 )
 from ..exceptions import NodeDrainingError, WorkspaceCapacityError
+from ..model.container_events import (
+    CAUSE_CREATE,
+    CAUSE_DELETE,
+    CAUSE_RESTART,
+    CAUSE_STOP,
+)
 from ..workspace_settings import (
     validate_nix_optin,
     validate_settings,
@@ -336,7 +342,7 @@ async def create_workspace(
     # start_container (see ContainerRegistry.bringup, #1244), gated on
     # setup_state so workspaces whose setup.sh hasn't run yet defer until
     # complete.
-    await _eager_start(app, body, ws)
+    await _eager_start(app, body, ws, user["id"])
 
     app.state.sockets.notify_user_workspaces_changed(user["id"])
     return ws
@@ -394,13 +400,15 @@ def _validate_create_fields(body, app) -> dict:
     }
 
 
-async def _eager_start(app, body, ws) -> None:
+async def _eager_start(app, body, ws, actor_id: str | None) -> None:
     """Eagerly start the container when the body asked for it; errors are
     logged but never fail the create."""
     if not body.auto_start:
         return
     try:
-        await app.state.workspaces.start_workspace(ws)
+        await app.state.workspaces.start_workspace(
+            ws, actor_id=actor_id, cause=CAUSE_CREATE
+        )
     except NodeDrainingError:
         # A graceful-restart drain raced the create (#2527): the
         # workspace row exists but no container may start. Not worth
@@ -739,7 +747,10 @@ async def delete_workspace(
     # stopping the container kills it either way.
     if cid:
         await app.state.container_registry.stop_and_remove_container(
-            cid, workspace_id=workspace_id
+            cid,
+            workspace_id=workspace_id,
+            cause=CAUSE_DELETE,
+            actor_id=user["id"],
         )
     await wshandler.reset_workspace_state(app.state.sockets, workspace_id)
 
@@ -794,13 +805,18 @@ async def restart_workspace(
     )
     if cid:
         await app.state.container_registry.stop_and_remove_container(
-            cid, workspace_id=workspace_id
+            cid,
+            workspace_id=workspace_id,
+            cause=CAUSE_RESTART,
+            actor_id=user["id"],
         )
     await wshandler.reset_workspace_state(app.state.sockets, workspace_id)
     # Start a fresh container; the service command fires via the
     # create choke point in start_container.
     try:
-        await app.state.workspaces.start_workspace(workspace)
+        await app.state.workspaces.start_workspace(
+            workspace, actor_id=user["id"], cause=CAUSE_RESTART
+        )
     except NodeDrainingError as exc:
         # A draining node refuses fresh starts (#2527); the stop above
         # already happened, so the workspace is simply left stopped.
@@ -847,7 +863,10 @@ async def stop_workspace(
             workspace_id, container_id=cid
         )
         await app.state.container_registry.stop_and_remove_container(
-            cid, workspace_id=workspace_id
+            cid,
+            workspace_id=workspace_id,
+            cause=CAUSE_STOP,
+            actor_id=user["id"],
         )
         # Notify live WS viewers that the container was stopped on purpose
         # so the UI shows "stopped" rather than "disconnected" (re-homed
@@ -889,7 +908,9 @@ async def start_workspace(
     if app.state.container_registry.get_state(workspace_id) is not None:
         return {"status": "already_running"}
     try:
-        await app.state.workspaces.start_workspace(workspace)
+        await app.state.workspaces.start_workspace(
+            workspace, actor_id=user["id"]
+        )
     except NodeDrainingError as exc:
         # Draining node (#2527): clear 503 so clients/CLI can distinguish
         # "temporarily disabled by a restart" from a config error.

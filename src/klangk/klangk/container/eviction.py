@@ -37,6 +37,8 @@ import asyncio
 import logging
 import platform
 
+from ..model.container_events import CAUSE_EVICTION
+
 logger = logging.getLogger(__name__)
 
 # Floor for the poll interval so a misconfigured tiny interval cannot
@@ -494,7 +496,9 @@ class MemoryPressureEvictor:
             victim.workspace_id, container_id=victim.container_id
         )
         await registry.stop_and_remove_container(
-            victim.container_id, workspace_id=victim.workspace_id
+            victim.container_id,
+            workspace_id=victim.workspace_id,
+            cause=CAUSE_EVICTION,
         )
         return True
 

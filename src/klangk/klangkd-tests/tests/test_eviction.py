@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from klangk import container
+from klangk.model.container_events import CAUSE_EVICTION
 from klangk.container.eviction import (
     MemoryPressureEvictor,
     available_fraction,
@@ -384,7 +385,9 @@ class TestEvictOne:
         # the stop (the death frame needs live registry state). The
         # notification names the dead container (#331 re-bind guard).
         killed.assert_awaited_once_with("ws-old", container_id="cid-old")
-        stopped.assert_awaited_once_with("cid-old", workspace_id="ws-old")
+        stopped.assert_awaited_once_with(
+            "cid-old", workspace_id="ws-old", cause=CAUSE_EVICTION
+        )
         assert killed.await_count == stopped.await_count == 1
 
     async def test_broadcasts_workspace_evicted_event(self):
@@ -433,7 +436,9 @@ class TestEvictOne:
         registry.stop_and_remove_container = stopped
 
         assert await evictor.evict_one(0.03) is True
-        stopped.assert_awaited_once_with("cid-idle", workspace_id="ws-idle")
+        stopped.assert_awaited_once_with(
+            "cid-idle", workspace_id="ws-idle", cause=CAUSE_EVICTION
+        )
 
     async def test_stopping_workspace_skipped(self):
         app, evictor = self._evictor()

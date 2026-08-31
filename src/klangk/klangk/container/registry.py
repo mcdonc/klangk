@@ -19,6 +19,16 @@ from .. import podman
 from .. import fips as fips_mod
 from ..exceptions import NodeDrainingError
 from ..model.workspaces import EGRESS_MODE_ALLOW, EGRESS_MODE_INTERACTIVE
+from ..model.container_events import (
+    CAUSE_DRAIN,
+    CAUSE_LOGOUT,
+    CAUSE_REAP,
+    CAUSE_SHUTDOWN,
+    EVENT_START,
+    EVENT_STOP,
+    ROLE_SIDECAR,
+    ROLE_WORKSPACE,
+)
 from ..podman import PodmanError
 from ..ssl_trust import SSL_MOUNT_DEST as _SSL_MOUNT_DEST
 from ..settings import parse_bool_setting
@@ -36,7 +46,11 @@ from .basics import (
     workspace_container_name,
     workspace_name_slug,
 )
-from .sidecar import NetworkSidecarMixin, container_ident
+from .sidecar import (
+    NetworkSidecarMixin,
+    container_ident,
+    labeled_workspace_id,
+)
 from .spec import (
     ContainerStartSpec,
     SHARED_HOME,
@@ -199,6 +213,13 @@ class ContainerRegistry(NetworkSidecarMixin):
         # best-effort network sidecar teardown on stop, so a non-filtered workspace
         # stop doesn't fire a speculative remove.
         self._ws_with_network_sidecar: set[str] = set()
+        # The live network sidecar's container id per workspace (#2915):
+        # the netns owner a filtered workspace joins via
+        # ``--network container:<id>``. Recorded on container_events rows
+        # (start: right off the bringup; stop: captured before teardown).
+        # Populated only for sidecars started by this process — a stop of
+        # a prior-session workspace records NULL for the namespace.
+        self._ws_netns_owner: dict[str, str] = {}
         # Workspaces with an expected stop in flight (#2524): the crash
         # monitor skips these so a user/idle/logout stop — which holds
         # this marker across its slow podman remove — is never misread
@@ -809,13 +830,95 @@ class ContainerRegistry(NetworkSidecarMixin):
             await self.app.state.workspaces.ensure_shared_home_dir(
                 spec.workspace_id
             )
-            result = await self.start_container_inner(spec)
+            result = await self.start_container_inner_or_audited(spec)
             bag = spec.workspace_settings or {}
             if "idle_timeout" in bag:
                 self.idle.set_workspace_idle_timeout(
                     spec.workspace_id, bag["idle_timeout"]
                 )
             return result
+
+    async def start_container_inner_or_audited(
+        self, spec: ContainerStartSpec
+    ) -> tuple[str, str]:
+        """Run the under-lock start, backstopping the audit row (#2915
+        review).
+
+        If the inner start raises *after* the container was created and
+        tracked (e.g. the bringup exec fails), the container is real and
+        running — the crash monitor can later tear it down, and a stop
+        row with no matching start row would be a lie by omission. On
+        failure a start row is recorded (best-effort) for the tracked
+        container, then the exception propagates unchanged. Failures
+        before any container exists (drain gate, admission, port
+        allocation) leave no state and record nothing — no container,
+        no start.
+        """
+        try:
+            result = await self.start_container_inner(spec)
+        except BaseException:
+            state = self.states.get(spec.workspace_id)
+            if state is not None and state.container_id:
+                await self.record_container_event(
+                    spec.workspace_id,
+                    state.container_id,
+                    EVENT_START,
+                    cause=spec.audit_cause,
+                    actor_id=spec.audit_actor_id,
+                )
+            raise
+        # Success: a real transition (created / restarted) is recorded;
+        # 'connected' attached to an already-running container and is no
+        # transition at all.
+        if result[1] != "connected":
+            await self.record_container_event(
+                spec.workspace_id,
+                result[0],
+                EVENT_START,
+                cause=spec.audit_cause,
+                actor_id=spec.audit_actor_id,
+            )
+        return result
+
+    async def record_container_event(
+        self,
+        workspace_id: str,
+        container_id: str | None,
+        event: str,
+        *,
+        cause: str,
+        actor_id: str | None = None,
+        network_namespace: str | None = None,
+        container_role: str = ROLE_WORKSPACE,
+    ) -> None:
+        """Best-effort container_events write (#2915).
+
+        Auditing must never fail the start/stop path it annotates: a
+        DB error is logged and swallowed. Netns defaults to the live
+        sidecar mapping when the caller didn't capture one (workspace
+        starts); sidecar rows own their netns, so theirs stays NULL.
+        """
+        if container_role == ROLE_WORKSPACE:
+            netns = network_namespace or self._ws_netns_owner.get(workspace_id)
+        else:
+            netns = None
+        try:
+            await self.app.state.model.container_events.record(
+                workspace_id,
+                event,
+                cause,
+                actor_id=actor_id,
+                container_id=container_id,
+                network_namespace=netns,
+                container_role=container_role,
+            )
+        except Exception as e:  # noqa: BLE001 — audit is best-effort
+            logger.warning(
+                "container_events audit write failed for %s (%s): %s",
+                workspace_id[:8],
+                event,
+                e,
+            )
 
     async def handle_existing_container(
         self,
@@ -1471,8 +1574,10 @@ class ContainerRegistry(NetworkSidecarMixin):
         create_kwargs.pop("add_hosts", None)
         create_kwargs.pop("publish", None)
         # Remember this workspace has a live network sidecar so its stop
-        # tears the network sidecar down (#2254).
+        # tears the network sidecar down (#2254), and keep its id as the
+        # netns owner for container_events attribution (#2915).
         self._ws_with_network_sidecar.add(workspace_id)
+        self._ws_netns_owner[workspace_id] = network_sidecar_id
 
     async def _create_start_shielded(
         self,
@@ -1518,6 +1623,10 @@ class ContainerRegistry(NetworkSidecarMixin):
             if workspace_id in self._ws_with_network_sidecar:
                 await self.stop_network_sidecar(workspace_id)
                 self._ws_with_network_sidecar.discard(workspace_id)
+                # The sidecar's id is no longer a live netns owner —
+                # drop it or a later stop row would name a removed
+                # sidecar (#2915 review).
+                self._ws_netns_owner.pop(workspace_id, None)
             raise
         return container_id
 
@@ -1690,7 +1799,12 @@ class ContainerRegistry(NetworkSidecarMixin):
         return container_id, "created"
 
     async def stop_and_remove_container(
-        self, container_id: str, workspace_id: str | None = None
+        self,
+        container_id: str,
+        workspace_id: str | None = None,
+        *,
+        cause: str,
+        actor_id: str | None = None,
     ) -> bool:
         """Stop and remove a container.
 
@@ -1733,8 +1847,16 @@ class ContainerRegistry(NetworkSidecarMixin):
         ``self.stopping`` for the duration so the crash monitor's sweep
         cannot misread the in-flight removal as an unexpected death, and
         any pending crash-restart for it is cancelled (#2524).
+
+        ``cause`` (required, #2915) labels the container_events audit row —
+        every caller states why it stops the container (api/stop,
+        restart, delete, idle_timeout, eviction, logout, drain, shutdown,
+        crash_teardown). ``actor_id`` is the acting principal when a user
+        (or the agent) fired the stop; None records a system actor.
         """
         ws_id = workspace_id or self._cid_to_wsid.get(container_id)
+        # Netns owner captured before teardown pops it (#2915).
+        netns = self._ws_netns_owner.get(ws_id)
         if ws_id:
             self.stopping.add(ws_id)
             # Bumped synchronously at stop ENTRY, before any await: the
@@ -1783,6 +1905,7 @@ class ContainerRegistry(NetworkSidecarMixin):
                         # session is cleaned up even if it isn't tracked in
                         # _ws_with_network_sidecar (#2286).
                         self._ws_with_network_sidecar.discard(ws_id)
+                        self._ws_netns_owner.pop(ws_id, None)
                         await self.stop_network_sidecar(ws_id)
                         self._cid_to_wsid.pop(container_id, None)
                         self.revoke_workspace_browsers(ws_id)
@@ -1801,7 +1924,16 @@ class ContainerRegistry(NetworkSidecarMixin):
             self.prune_service_session_locks(set(self._cid_to_wsid))
             # Gone via this call AND (untracked, or our registry state torn
             # down — i.e. not left alone by the rebind guard).
-            return stopped if ws_id is None else (stopped and torn_down)
+            result = stopped if ws_id is None else (stopped and torn_down)
+            await self.audit_stop(
+                ws_id,
+                container_id,
+                result,
+                cause=cause,
+                actor_id=actor_id,
+                netns=netns,
+            )
+            return result
         finally:
             if ws_id:
                 self.stopping.discard(ws_id)
@@ -1810,6 +1942,32 @@ class ContainerRegistry(NetworkSidecarMixin):
                 # removes are slow and interleave) must still cancel it.
                 # Expected deaths never restart, no matter the ordering.
                 self.crash.on_expected_stop(ws_id)
+
+    async def audit_stop(
+        self,
+        ws_id: str | None,
+        container_id: str,
+        gone: bool,
+        *,
+        cause: str,
+        actor_id: str | None,
+        netns: str | None,
+    ) -> None:
+        """Record a stop event when the container is a resolvable,
+        actually-stopped workspace (#2915).
+
+        Sweep/orphan stops without a workspace id are skipped — that
+        population includes network sidecars, which are not workspaces.
+        """
+        if ws_id and gone:
+            await self.record_container_event(
+                ws_id,
+                container_id,
+                EVENT_STOP,
+                cause=cause,
+                actor_id=actor_id,
+                network_namespace=netns,
+            )
 
     async def notify_workspace_killed(
         self,
@@ -1883,7 +2041,10 @@ class ContainerRegistry(NetworkSidecarMixin):
                     ws["id"], container_id=ws["container_id"]
                 )
                 await self.stop_and_remove_container(
-                    ws["container_id"], workspace_id=ws["id"]
+                    ws["container_id"],
+                    workspace_id=ws["id"],
+                    cause=CAUSE_LOGOUT,
+                    actor_id=user_id,
                 )
 
     def new_starts_blocked_reason(self) -> str | None:
@@ -1955,7 +2116,9 @@ class ContainerRegistry(NetworkSidecarMixin):
         "stopped on purpose" broadcast as the /stop endpoint (clients
         re-render as stopped, not disconnected)."""
         await self.notify_workspace_killed(ws_id, container_id=cid)
-        ok = await self.stop_and_remove_container(cid, workspace_id=ws_id)
+        ok = await self.stop_and_remove_container(
+            cid, workspace_id=ws_id, cause=CAUSE_DRAIN
+        )
         if not ok:
             logger.warning(
                 "Drain: workspace %s container %s not stopped "
@@ -2004,13 +2167,66 @@ class ContainerRegistry(NetworkSidecarMixin):
             leftovers = []
         stopped = 0
         for c in leftovers:
-            cid = container_ident(c)
-            if not cid:
-                continue
-            logger.info("Drain: sweeping racing-start container %s", cid[:12])
-            if await self.stop_and_remove_container(cid):
-                stopped += 1
+            stopped += await self.sweep_stop_audited(c, cause=CAUSE_DRAIN)
         return stopped
+
+    async def sweep_stop_audited(self, c: dict, *, cause: str) -> bool:
+        """Stop one sweep/orphan container, recording its audit row for
+        labeled containers of either role (#2915).
+
+        Workspace-labeled containers pass their label-resolved
+        workspace_id (stop row + #2286 sidecar teardown); sidecar-labeled
+        ones route through the label-based removal choke point
+        (:meth:`_remove_network_sidecar`) so the ``sidecar_stop`` row is
+        written exactly once — a sidecar already torn down by its
+        workspace's stop is simply absent from that listing, instead of
+        producing a second row from a 404-tolerant sweep stop (#2915
+        review). Label-less containers record nothing.
+        """
+        cid = container_ident(c)
+        if not cid:
+            return False
+        labels = c.get("Labels") or {}
+        ws_id = labels.get("klangk.workspace")
+        if labels.get("klangk.role") == "network-sidecar":
+            if not ws_id:
+                logger.info(
+                    "Sweep: stopping label-less sidecar container %s",
+                    cid[:12],
+                )
+                return await self.stop_and_remove_container(cid, cause=cause)
+            logger.info(
+                "Sweep: stopping leftover sidecar %s for %s",
+                cid[:12],
+                ws_id[:8],
+            )
+            return await self._remove_network_sidecar(ws_id)
+        logger.info("Sweep: stopping leftover klangk container %s", cid[:12])
+        return await self.stop_and_remove_container(
+            cid, workspace_id=labeled_workspace_id(c), cause=cause
+        )
+
+    async def record_reap(self, c: dict) -> None:
+        """Audit row for a reaped labeled container (#2915 review).
+
+        The boot reaps are the mass teardown an audit trail exists for:
+        after an unclean klangkd death, every reaped container's start
+        row would otherwise dangle with no matching stop. Label-less
+        containers record nothing (nothing to correlate them to).
+        """
+        labels = c.get("Labels") or {}
+        ws_id = labels.get("klangk.workspace")
+        cid = container_ident(c)
+        if not ws_id or not cid:
+            return
+        role = (
+            ROLE_SIDECAR
+            if labels.get("klangk.role") == "network-sidecar"
+            else ROLE_WORKSPACE
+        )
+        await self.record_container_event(
+            ws_id, cid, EVENT_STOP, cause=CAUSE_REAP, container_role=role
+        )
 
     # --- Pre-warm ---
 
@@ -2075,9 +2291,10 @@ class ContainerRegistry(NetworkSidecarMixin):
             if not cid:
                 continue
             logger.info("Reaping leftover container %s on startup", cid[:12])
-            await safe_remove(
+            if await safe_remove(
                 self.app.state.podman, cid, what="leftover container"
-            )
+            ):
+                await self.record_reap(c)
 
     async def reap_dead_owner_containers(self) -> None:
         """Reap managed containers whose owning klangkd is no longer running.
@@ -2153,9 +2370,10 @@ class ContainerRegistry(NetworkSidecarMixin):
                 cid[:12],
                 owner_pid,
             )
-            await safe_remove(
+            if await safe_remove(
                 self.app.state.podman, cid, what="dead-owner container"
-            )
+            ):
+                await self.record_reap(c)
 
     # --- Shutdown ---
 
@@ -2179,7 +2397,10 @@ class ContainerRegistry(NetworkSidecarMixin):
         # container teardown below.
         await self.crash.stop()
         tracked_ids = set(self._cid_to_wsid.keys())
-        tasks = [self.stop_and_remove_container(cid) for cid in tracked_ids]
+        tasks = [
+            self.stop_and_remove_container(cid, cause=CAUSE_SHUTDOWN)
+            for cid in tracked_ids
+        ]
         try:
             containers = await self.app.state.podman.list_containers(
                 f"klangk.instance={self.app.state.util.instance_id()}"
@@ -2191,7 +2412,13 @@ class ContainerRegistry(NetworkSidecarMixin):
                         "Removing orphaned klangk container %s",
                         cid,
                     )
-                    tasks.append(self.stop_and_remove_container(cid))
+                    # Labeled containers keep their stop row
+                    # (#2915 review) — a prior-session workspace or its
+                    # sidecar stopped at shutdown must not vanish from the
+                    # audit trail.
+                    tasks.append(
+                        self.sweep_stop_audited(c, cause=CAUSE_SHUTDOWN)
+                    )
         except (
             podman.PodmanError,
             OSError,

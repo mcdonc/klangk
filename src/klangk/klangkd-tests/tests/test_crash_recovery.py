@@ -19,6 +19,7 @@ from klangk.container.crash import (
     classify_death,
 )
 from klangk.wshandler.session import WebSocketState
+from klangk.model.container_events import CAUSE_API
 from _helpers import make_settings, wire_db_and_model
 
 
@@ -413,7 +414,7 @@ class TestSweep:
             # cancels crash state, but the rebind check leaves the live
             # state (bound to cid-crash) untouched.
             await reg.stop_and_remove_container(
-                "stale-cid", workspace_id="ws-crash"
+                "stale-cid", workspace_id="ws-crash", cause=CAUSE_API
             )
             parked.set()
             await sweep
@@ -703,7 +704,7 @@ class TestRestartEnabled:
         ws_row = {"id": "ws-crash", "name": "ws", "settings": {}}
         started = []
 
-        async def fake_start(ws):
+        async def fake_start(ws, **kwargs):
             started.append(ws["id"])
             return "new-cid", "created"
 
@@ -804,7 +805,7 @@ class TestRestartEnabled:
         dead_state(reg)
         calls = []
 
-        async def failing_start(ws):
+        async def failing_start(ws, **kwargs):
             calls.append(ws["id"])
             raise RuntimeError("mount source missing")
 
@@ -862,7 +863,7 @@ class TestExpectedStopsNeverRestart:
         # The user hits /stop: expected death path.
         with patch_podman_methods(app_state, INSPECT_RUNNING):
             await reg.stop_and_remove_container(
-                "cid-crash", workspace_id="ws-crash"
+                "cid-crash", workspace_id="ws-crash", cause=CAUSE_API
             )
         await asyncio.sleep(0)  # let the cancellation propagate
         assert task.cancelled()
@@ -898,7 +899,7 @@ class TestExpectedStopsNeverRestart:
         ):
             stop_task = asyncio.create_task(
                 reg.stop_and_remove_container(
-                    "cid-crash", workspace_id="ws-crash"
+                    "cid-crash", workspace_id="ws-crash", cause=CAUSE_API
                 )
             )
             await asyncio.sleep(0.005)
@@ -959,7 +960,7 @@ class TestExpectedStopsNeverRestart:
                     # The user /stop runs to completion while death
                     # handling is parked (bumps the stop epoch).
                     await reg.stop_and_remove_container(
-                        "cid-crash", workspace_id="ws-crash"
+                        "cid-crash", workspace_id="ws-crash", cause=CAUSE_API
                     )
                     teardown_parked.set()
                     await death
@@ -1001,7 +1002,7 @@ class TestExpectedStopsNeverRestart:
             await asyncio.sleep(0)  # sweep parks in the liveness listing
             # The user /stop completes fully underneath the listing.
             await reg.stop_and_remove_container(
-                "cid-crash", workspace_id="ws-crash"
+                "cid-crash", workspace_id="ws-crash", cause=CAUSE_API
             )
             parked.set()
             await sweep
@@ -1215,7 +1216,7 @@ class TestDeathFrameCarriesCause:
         monitor = reg.crash
         dead_state(reg)
 
-        async def cancellable_start(ws):
+        async def cancellable_start(ws, **kwargs):
             raise asyncio.CancelledError()
 
         with patch_podman_methods(app_state, inspect_dead()):
