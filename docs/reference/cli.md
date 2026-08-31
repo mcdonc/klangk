@@ -246,6 +246,9 @@ klangk create my-project --health-check 'curl -sf http://localhost:8080/health' 
 klangk create my-project --command 'npm run dev'  # with a service command
 klangk create my-project -c 'npm run dev'         # short form of --command
 klangk create my-project --per-handle-home       # per-member private homes (default: shared /home/klangk)
+klangk create my-project --image klangk-workspace-nix        # pick a specific image (see `klangk images`)
+klangk create my-project --cpu-limit 2.0 --memory-limit 4g --pids-limit 512  # per-workspace resource caps
+klangk create my-project --classification-banner CUI           # per-workspace classification banner
 klangk create my-project --allow github.com:443 --allow pypi.org  # with egress allowlist
 klangk create my-project --idle-timeout 0        # per-workspace idle timeout (seconds; 0 = never idle out)
 klangk edit my-project                  # interactive edit (name, image, command, health check, mounts, env, allowed domains)
@@ -266,8 +269,10 @@ klangk exec --raw my-project rsync --server ...      # raw argv, no shell (for t
 klangk monitor                                        # stream all server events you can see (scoped to your workspaces, #1714) as JSON
 klangk monitor --type service_health | jq .           # pretty-print health transitions for your workspaces
 klangk monitor --type service_health -- sh -c '[ "$KLANGK_HEALTHY" = false ] && notify-send "klangk" "$KLANGK_HEALTH_MESSAGE"'  # alert with the failure reason
+klangk consent-decide my-project     # decide a workspace's held egress requests live (egress filtering, #2310)
 klangk sync ~/src my-project:/home/klangk/src      # push files to the container — needs the exec-and-sync permission
 klangk sync my-project:/home/klangk/src ~/src       # pull files out of the container — needs the exec-and-sync permission
+klangk sync src/ my-project:/home/klangk/src --delete --exclude '.git'  # push, deleting extras, skipping .git
 klangk rm my-project                # delete a workspace
 klangk stop my-project              # stop the container for a workspace
 klangk start my-project             # start the container for a workspace
@@ -314,6 +319,27 @@ your user id, so it stays valid. See
 [Authentication § Account self-service](../features/authentication.md#account-self-service).
 
 The CLI connects to the running Klangk backend over HTTP + WebSocket — it works locally and against remote servers.
+
+## Interactive TUI
+
+Run `klangk` with no arguments on a real terminal and it launches an
+interactive TUI (in non-TTY contexts — pipes, CI — it prints help
+instead, so the command stays scriptable). The TUI is the same client
+as the subcommands, driving the server over HTTP + WebSocket:
+
+- workspace list (owned + shared) with inline filter (`/`) and sort
+  cycling (`o`)
+- `n` new workspace, `i` import, `e` edit — the create/edit forms cover
+  every workspace option (image, service command, health check, mounts,
+  env, allowed domains, egress mode, resource caps)
+- per-row actions on the highlighted workspace: `r` restart, `s` stop/start,
+  `u` duplicate, `d` delete
+- `c` switch server, `l` logout
+- `?` key cheatsheet
+
+The consent popup for interactive-mode egress filtering also lives in
+the TUI/`klangk shell` wrapper (see
+[Egress Filtering](../features/egress-filtering.md)).
 
 ## Exiting the shell
 

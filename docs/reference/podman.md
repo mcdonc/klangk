@@ -13,11 +13,12 @@ inside the devenv shell (`devenv shell`).
 
 ## Storage
 
-Klangk uses rootless podman with `--userns=keep-id` to run workspace
-containers. This maps the host user's UID into the container so files
-on bind mounts are owned correctly.
+Klangk uses rootless podman with `--userns=keep-id:uid=1000,gid=1000` (the
+`KLANGKD_USERNS` default) to run workspace containers. This maps the
+host user's UID into the container so files on bind mounts are owned
+correctly.
 
-When `--userns=keep-id` is used, podman must remap UIDs/GIDs in every
+When `--userns=keep-id...` is used, podman must remap UIDs/GIDs in every
 image layer. It does this via `storage-chown-by-maps` — a recursive
 chown of the layer tree. This is slow on first container creation
 (10-30s depending on image size) but subsequent creates reuse cached

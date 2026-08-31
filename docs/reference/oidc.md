@@ -178,4 +178,4 @@ Async hooks are also supported (`async def`). The hook script can import from `k
 - Memberships are tracked with `source='oidc_sync'` — only these are added/removed
 - Manual group memberships (`source='manual'`) are never touched
 
-**Example:** see `customize/login_hook.py` for a hook that restricts logins to invited users.
+**Example:** see `customize/custom/oidc/login_hook.py` in the klangk source tree for a hook that restricts logins to invited users.

@@ -21,7 +21,9 @@ Set `KLANGKD_CUSTOMIZE_DIR` to a single directory containing all your customizat
 
 If a subdirectory doesn't exist, that subsystem simply isn't customized — no error, no special handling needed. Deployers only populate the subdirs they care about.
 
-Default: `~/.klangk/custom` (or `/home/klangk/custom` in the container image).
+Default: `<config_dir>/custom` (→ `~/.config/klangkd/custom`; `KLANGKD_CONFIG_DIR`
+relocates the whole tree). The published host container sets it to
+`/home/klangk/custom`.
 
 ```bash
 docker run -d \

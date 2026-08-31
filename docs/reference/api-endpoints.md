@@ -1,7 +1,8 @@
 # API Endpoints
 
 All HTTP and WebSocket endpoints, alphabetized by path. All REST paths
-are under `/api/v1` except `/health`.
+are under `/api/v1` except `/health`, `/empty`, and the
+[`/llm-proxy/*`](#llm-proxy-endpoints) routes.
 
 **Auth types**:
 
@@ -343,6 +344,28 @@ No request body.
 
 ---
 
+### GET `/api/v1/admin/users/{id}/workspaces`
+
+List workspaces owned by a user (admin). Used by the admin UI to show
+what a delete-user will destroy (#1224). Returns the standard pagination
+envelope.
+
+**Auth:** JWT required. User must have `admin` permission on `/`.
+
+Query params: `limit` (1–200, default 100), `offset` (default 0).
+
+```json
+{
+  "items": [
+    /* workspace objects as in GET /api/v1/workspaces */
+  ],
+  "has_more": true,
+  "next_offset": 100
+}
+```
+
+---
+
 ### GET `/api/v1/auth/me`
 
 Get the current authenticated user's profile: their `id`, `email`, and
@@ -419,10 +442,15 @@ On failure: 401 with `X-Token-Error` header (`missing`, `expired`, or `invalid`)
 ### GET `/api/v1/config`
 
 Get public instance configuration: whether registration and invitations
-are enabled, available OIDC providers, login banner text, and feature
-frontend config.
+are enabled, available OIDC providers, login banner text, auth mode,
+and the branding / feature flags the pre-auth UI needs. An
+**authenticated** caller additionally receives the deploy-wide netfilter
+default + enabled flag (the egress perimeter is not exposed pre-auth),
+plus any feature-declared frontend config keys and `features_enable`
+when set.
 
-**Auth:** None.
+**Auth:** None (public payload; authenticated callers get a few extra
+fields).
 
 No request body.
 
@@ -430,11 +458,26 @@ No request body.
 {
   "registration_enabled": true,
   "invitations_enabled": true,
+  "product_name": "Klangk",
   "login_banner_title": "",
   "login_banner": "",
+  "login_banner_every_visit": false,
   "oidc_providers": [],
   "auth_modes": "both",
-  "instance_id": "string"
+  "instance_id": "string",
+  "allow_autostart": false,
+  "browser_delegate_enabled": true,
+  "default_per_handle_home": false,
+  "default_classification_banner": "",
+  "min_password_length": 8,
+  "password_requirements": { "upper": 0, "lower": 0, "digit": 0, "special": 0 },
+  "password_history_count": 0,
+  "logo_url": "",
+  "terms_url": "",
+  "privacy_url": "",
+  "aup_url": "",
+  "support_url": "",
+  "support_email": ""
 }
 ```
 
@@ -588,16 +631,31 @@ so `has_more`/`next_offset` reflect the filtered set.
 [
   {
     "id": "uuid",
+    "user_id": "uuid",
     "name": "my-workspace",
     "container_id": null,
+    "num_ports": 5,
     "image": null,
     "service_command": null,
+    "auto_start": false,
+    "setup_state": "complete",
+    "health_check": null,
     "mounts": null,
     "env": null,
+    "allowed_domains": null,
+    "rejected_domains": null,
+    "settings": null,
+    "egress_mode": "interactive",
+    "per_handle_home": false,
+    "classification_banner": null,
     "created_at": "2025-01-01 12:00:00"
   }
 ]
 ```
+
+The same workspace-object shape is returned by `GET /workspaces/shared`,
+`POST /workspaces`, `POST /workspaces/{id}/duplicate`, and
+`POST /workspaces/import` (shared adds `owner_email`).
 
 Paginated response (`?limit=10&offset=0`):
 
@@ -629,21 +687,9 @@ No request body.
 `?q=<substring>` (name substring). Without params returns a bare list, with
 params returns the `{ items, has_more, next_offset }` envelope.
 
-```json
-[
-  {
-    "id": "uuid",
-    "name": "shared-workspace",
-    "container_id": null,
-    "image": null,
-    "service_command": null,
-    "mounts": null,
-    "env": null,
-    "created_at": "2025-01-01 12:00:00",
-    "owner_email": "owner@example.com"
-  }
-]
-```
+Workspace objects use the same shape as
+[GET /api/v1/workspaces](#get-apiv1workspaces), plus an `owner_email`
+field.
 
 ---
 
@@ -1391,19 +1437,28 @@ text, one line. Omitted/empty = inherit the deploy-wide default
 (`KLANGKD_CLASSIFICATION_BANNER`), resolved at display time; when
 neither is set, no banner is rendered.
 
+Returns the created workspace record (the full workspace-object shape
+shown under [GET /api/v1/workspaces](#get-apiv1workspaces)).
+
+---
+
+### POST `/api/v1/workspaces/{id}/transfer`
+
+Transfer workspace ownership to another user. The new owner is added to
+the workspace's `owners` role; connected clients of both users get a
+workspaces-changed refresh. The caller must be a workspace admin (the
+owner's wildcard ACE covers it).
+
+**Auth:** JWT required. User must have `admin` permission on
+`/workspaces/{id}`.
+
 ```json
-{
-  "id": "uuid",
-  "user_id": "uuid",
-  "name": "my-workspace",
-  "image": null,
-  "service_command": null,
-  "mounts": null,
-  "env": null,
-  "num_ports": 5,
-  "created_at": "2025-01-01 12:00:00"
-}
+{ "email": "newowner@example.com" }
 ```
+
+Returns the updated workspace record. `404` if the target user does not
+exist; `409` on transfer conflicts (e.g. transferring to a member whose
+role would collide).
 
 ---
 
@@ -1415,19 +1470,8 @@ Environment variables are sanitized during import.
 **Auth:** JWT required. Multipart form upload: `file` (`.tar.gz` archive),
 optional `name` form field.
 
-```json
-{
-  "id": "uuid",
-  "user_id": "uuid",
-  "name": "my-workspace",
-  "image": null,
-  "service_command": null,
-  "mounts": null,
-  "env": null,
-  "num_ports": 5,
-  "created_at": "2025-01-01 12:00:00"
-}
-```
+Returns the created workspace record (the full workspace-object shape
+shown under [GET /api/v1/workspaces](#get-apiv1workspaces)).
 
 ---
 
@@ -1442,19 +1486,8 @@ Clone an existing workspace's configuration into a new workspace.
 { "name": "cloned-workspace" }
 ```
 
-```json
-{
-  "id": "uuid",
-  "user_id": "uuid",
-  "name": "my-workspace",
-  "image": null,
-  "service_command": null,
-  "mounts": null,
-  "env": null,
-  "num_ports": 5,
-  "created_at": "2025-01-01 12:00:00"
-}
-```
+Returns the created workspace record (the full workspace-object shape
+shown under [GET /api/v1/workspaces](#get-apiv1workspaces)).
 
 ---
 
@@ -1509,8 +1542,10 @@ Grant a group access to a workspace.
 
 ### POST `/api/v1/workspaces/{id}/members`
 
-Grant a user access to a workspace. The user receives view, terminal,
-and files permissions.
+Grant a user access to a workspace. The user receives `view`, `monitor`,
+`terminal`, `files`, `files-download`, and `files-write` permissions
+(a direct user share — the role-bucket sharing UI uses
+`POST /workspaces/{id}/roles/{role}` instead).
 
 **Auth:** JWT required. User must have `share` permission on `/workspaces/{id}`.
 
@@ -1586,8 +1621,9 @@ No request body.
 
 Return the container status for a workspace.
 
-**Auth:** JWT required. User must have `terminal` permission on
-`/workspaces/{id}`.
+**Auth:** JWT required. User must have `monitor` permission on
+`/workspaces/{id}` (#2783 — the dedicated status-observation permission,
+granted alongside `terminal` by every share path).
 
 No request body.
 
@@ -1899,6 +1935,15 @@ No request body.
 
 ---
 
+### GET `/empty`
+
+Returns an empty page. Used as a lightweight OAuth callback landing URL
+so the popup doesn't need to boot the Flutter SPA.
+
+**Auth:** None.
+
+---
+
 ### GET `/health`
 
 Readiness check. Returns OK if the server is running.
@@ -1922,6 +1967,56 @@ delegate events.
 **Auth:** JWT required via `?token=` query param.
 
 Close codes: 4001 (missing/invalid token), 4002 (expired token).
+
+---
+
+### WebSocket `/ws/consent-decider`
+
+Registers a live egress-consent decider for its connection lifetime
+(#2308, #2244) — the interactive half of egress filtering. While a
+decider is connected (and pinging inside
+`KLANGKD_CONSENT_DECIDER_TIMEOUT`), held egress requests are offered to
+it for accept/deny; the `klangk consent-decide` command drives this
+socket. Requires the `egress-consent` permission on the workspace
+(see [Egress Filtering](../features/egress-filtering.md)).
+
+**Auth:** JWT required. Optional query param: `workspace` (omit for
+deploy-wide deciding).
+
+---
+
+### WebSocket `/ws/egress-sidecar`
+
+The network sidecar's blocked-egress event channel (#2311): the sidecar
+sends blocked-egress events here and receives verdicts (hold-and-prompt
+or static deny). Also carries revoke acks (#2339). Container-side only —
+authenticated with the workspace JWT validated by the egress listener's
+`forward_auth`.
+
+**Auth:** Workspace JWT.
+
+---
+
+## LLM Proxy Endpoints
+
+Served under `/llm-proxy/` (no `/api/v1` prefix) — on the egress
+listener, gated by the proxy's workspace-JWT `forward_auth` + container
+IP ACL, so only workspace containers can reach them. See
+[LLM Proxy](../architecture/llm-proxy.md).
+
+### GET `/llm-proxy/models`
+
+List the models the LLM router knows about. In passthrough mode queries
+the upstream's `/models` endpoint (dynamic discovery); in router mode
+returns the configured model names. Response matches the OpenAI
+`/v1/models` shape.
+
+### POST `/llm-proxy/chat/completions`
+
+Proxy a chat-completions request to the configured provider(s) — standard
+OpenAI `/v1/chat/completions` body; in router mode the `model` field
+selects the provider. Streaming (`stream: true`) forwards the upstream
+SSE stream. `503` when no LLM router is configured.
 
 ---
 

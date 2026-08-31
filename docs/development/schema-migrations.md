@@ -2,7 +2,7 @@
 
 Klangk's SQLite schema evolves through **ordered, once-only migrations**:
 an append-only list in
-[`src/klangk/klangk/model/migrations.py`](https://github.com/mcdonc/klangk/blob/main/src/klangk/klangk/model/migrations.py),
+[`src/klangk/klangk/model/migrations/__init__.py`](https://github.com/mcdonc/klangk/blob/main/src/klangk/klangk/model/migrations/__init__.py),
 applied automatically at startup (`init_db`) and recorded in the
 `schema_migrations` table. If a row's id is recorded there, its migration
 never runs again.

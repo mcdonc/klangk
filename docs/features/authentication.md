@@ -66,8 +66,7 @@ See [OIDC Configuration](../reference/oidc.md) for setup instructions.
 Logged-in users can change their own **password**, **handle**, and
 **email** without an admin. All three are available from:
 
-- the web UI **Settings** page,
-- the TUI **Account** screen (press `a` from the workspace list), and
+- the web UI **Settings** page, and
 - the CLI `klangk account` group (`show`, `passwd`, `handle`, `email`).
 
 Handle and email changes require your current password to confirm; a
@@ -77,7 +76,7 @@ same way on every surface (and again, authoritatively, on the server):
 - **handle** — lowercase, `[a-z0-9._-]+`, at most 32 characters. Changing
   it affects how others see you — and, on per-handle-home workspaces,
   your terminal home directory (`/home/<handle>`, see
-  [Handles](handles.md)) — so the TUI and CLI confirm before applying it.
+  [Handles](handles.md)) — so the CLI confirms before applying it.
 - **email** — must be a well-formed address. The account is marked
   unverified and a verification email is sent to the new address; verify it
   to fully activate the change. The address must not already be in use.

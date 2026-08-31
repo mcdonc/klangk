@@ -162,7 +162,8 @@ node -e "require('crypto').createHash('md5').update('x').digest('hex')"
 # -> error:0308010C ... unsupported
 ```
 
-`KLANGKD_FIPS_MODE=1` automates this at runtime (see [#2570]): with
+`KLANGKD_FIPS_MODE=1` automates this at runtime (see
+[#2570](https://github.com/mcdonc/klangk/issues/2570)): with
 the mode on, **every workspace container is probed when klangkd starts
 or adopts it** — fresh creates at the create choke point, and
 previously-running containers on the first reconnect after a klangkd
