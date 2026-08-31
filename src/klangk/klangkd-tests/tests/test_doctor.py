@@ -127,6 +127,13 @@ class TestInstallHint:
             == "sudo apt install obscure-tool"
         )
 
+    def test_ip_maps_to_iproute2(self):
+        """The ip binary ships as the iproute2 package (#2921) — 'install ip'
+        names a nonexistent package on every major manager."""
+        assert install_hint("ip", "dnf") == "sudo dnf install iproute2"
+        assert install_hint("ip", "apt") == "sudo apt install iproute2"
+        assert install_hint("ip", "pacman") == "sudo pacman install iproute2"
+
 
 class TestCheckBinary:
     def test_missing_binary(self):

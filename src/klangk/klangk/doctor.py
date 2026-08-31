@@ -157,6 +157,17 @@ _PACKAGE_HINTS: dict[str, dict[str, str]] = {
         "dnf": "shadow-utils",
         "apt": "uidmap",
     },
+    # Container subnet auto-detection (`ip -4 addr show`, #2089).
+    # Linux-only check — same package name everywhere except brew
+    # (skipped on Darwin), where the check never runs.
+    "ip": {
+        "dnf": "iproute2",
+        "yum": "iproute2",
+        "apt": "iproute2",
+        "zypper": "iproute2",
+        "apk": "iproute2",
+        "pacman": "iproute2",
+    },
 }
 
 
