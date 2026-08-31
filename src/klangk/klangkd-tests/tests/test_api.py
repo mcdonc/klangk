@@ -14498,3 +14498,134 @@ class TestInFlightCounterBranchGaps2834:
         assert not c._idle.is_set()
         c.decrement()  # to 0: idle
         assert c._idle.is_set()
+
+
+class TestTestModeEndpoints:
+    """KLANGKD_TEST_MODE-only endpoints (registered via
+    ``api.register_test_endpoints``; the Playwright e2e suite drives
+    the same handlers remotely)."""
+
+    @pytest.fixture
+    async def tclient(self, app):
+        """The app-fixture HTTP client plus the test-mode router."""
+        from fastapi import APIRouter
+        from klangk.util import API_PREFIX
+
+        extra = APIRouter()
+        api.register_test_endpoints(extra)
+        app.include_router(extra, prefix=API_PREFIX)
+        transport = ASGITransport(app=app)
+        async with AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as c:
+            yield c
+
+    @staticmethod
+    def _reload_api():
+        """Reload klangk.api.
+
+        The module rebinds its ``auth`` attribute to the logic module
+        (klangk.auth) after importing the ``api.auth`` route submodule —
+        on reload, ``from . import auth`` would pick up that rebound
+        attribute, so point it back at the submodule first.
+        """
+        import importlib
+        import sys
+
+        api.auth = sys.modules["klangk.api.auth"]
+        return importlib.reload(api)
+
+    def test_registration_is_env_gated(self, monkeypatch):
+        """Both arms of the import-time gate (covers the branch)."""
+        monkeypatch.setenv("KLANGKD_TEST_MODE", "1")
+        reloaded = self._reload_api()
+        try:
+            paths = {getattr(r, "path", "") for r in reloaded.router.routes}
+            assert "/test/idle-timeout" in paths
+            assert "/test/set-idle-timeout" in paths
+            assert "/test/workspace-token/{workspace_id}" in paths
+            assert "/test/browsers/{workspace_id}" in paths
+        finally:
+            monkeypatch.delenv("KLANGKD_TEST_MODE")
+            self._reload_api()
+        paths = {getattr(r, "path", "") for r in api.router.routes}
+        assert "/test/idle-timeout" not in paths
+
+    async def test_idle_timeout_global_roundtrip(self, tclient, registry):
+        resp = await tclient.get("/api/v1/test/idle-timeout")
+        assert resp.status_code == 200
+        assert resp.json() == {
+            "idle_timeout_seconds": registry.idle_timeout_seconds
+        }
+
+        resp = await tclient.post(
+            "/api/v1/test/set-idle-timeout", json={"seconds": 1200}
+        )
+        assert resp.status_code == 200
+        assert resp.json() == {"idle_timeout_seconds": 1200}
+        assert registry.idle_timeout_seconds == 1200
+
+    async def test_idle_timeout_per_workspace(self, tclient, app, registry):
+        # Per-workspace overrides only apply to workspaces with live
+        # container state (unknown ids fall back to the global default).
+        from klangk.container.state import ContainerState
+
+        registry.states["ws-x"] = ContainerState("ws-x", "cid-x", app)
+
+        resp = await tclient.get(
+            "/api/v1/test/idle-timeout", params={"workspace_id": "ws-unknown"}
+        )
+        assert resp.status_code == 200
+        assert resp.json() == {
+            "idle_timeout_seconds": registry.idle_timeout_seconds
+        }
+
+        resp = await tclient.post(
+            "/api/v1/test/set-idle-timeout",
+            json={"seconds": 300, "workspace_id": "ws-x"},
+        )
+        assert resp.status_code == 200
+        assert registry.get_workspace_idle_timeout("ws-x") == 300
+        resp = await tclient.get(
+            "/api/v1/test/idle-timeout", params={"workspace_id": "ws-x"}
+        )
+        assert resp.json() == {"idle_timeout_seconds": 300}
+
+    async def test_workspace_token_roundtrip(self, tclient, app):
+        resp = await tclient.get("/api/v1/test/workspace-token/ws-token")
+        assert resp.status_code == 200
+        token = resp.json()["token"]
+        assert token
+        assert app.state.auth.decode_workspace_token(token) == "ws-token"
+
+    async def test_browsers_lists_registrations_for_workspace(
+        self, tclient, registry, sockets
+    ):
+        # Regression shape of #2909: the endpoint must read the registry's
+        # browser-route map (a dict), not the BrowserRouter collaborator.
+        owner_sock, member_sock, anon_sock, other_sock = (
+            object(),
+            object(),
+            object(),
+            object(),
+        )
+        registry.browsers.register_browser("bid-owner", "ws-b", owner_sock)
+        registry.browsers.register_browser("bid-member", "ws-b", member_sock)
+        registry.browsers.register_browser("bid-anon", "ws-b", anon_sock)
+        registry.browsers.register_browser("bid-none", "ws-b", None)
+        registry.browsers.register_browser("bid-other-ws", "ws-a", other_sock)
+        sockets.connections[owner_sock] = types.SimpleNamespace(
+            user={"email": "owner@example.com"}
+        )
+        sockets.connections[member_sock] = types.SimpleNamespace(
+            user={"email": "member@example.com"}
+        )
+
+        resp = await tclient.get("/api/v1/test/browsers/ws-b")
+        assert resp.status_code == 200
+        assert resp.json() == [
+            {"browser_id": "bid-owner", "email": "owner@example.com"},
+            {"browser_id": "bid-member", "email": "member@example.com"},
+            {"browser_id": "bid-anon", "email": None},
+            {"browser_id": "bid-none", "email": None},
+        ]

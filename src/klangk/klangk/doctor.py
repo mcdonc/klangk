@@ -178,7 +178,7 @@ def install_hint(binary: str, manager: str | None) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _run(cmd: list[str], timeout: float = 10.0) -> tuple[int, str, str]:
+def run(cmd: list[str], timeout: float = 10.0) -> tuple[int, str, str]:
     """Run a command, return (returncode, stdout, stderr)."""
     try:
         proc = subprocess.run(
@@ -212,7 +212,7 @@ def check_binary(
         )
     if not check_cmd:
         return CheckResult(name=name, ok=True, message=f"{name} ok ({path})")
-    rc, _out, err = _run(check_cmd)
+    rc, _out, err = run(check_cmd)
     if rc != 0:
         return CheckResult(
             name=name,
@@ -256,7 +256,7 @@ def check_tmux_version(manager: str | None) -> CheckResult:
             ok=True,
             message="no host tmux (reported by the tmux check above)",
         )
-    rc, out, _err = _run(["tmux", "-V"])
+    rc, out, _err = run(["tmux", "-V"])
     ver = parse_tmux_version(out) if rc == 0 else None
     label = ".".join(map(str, ver)) if ver is not None else "unknown"
     if ver is None:
@@ -298,7 +298,7 @@ def check_gnu_tar(manager: str | None) -> CheckResult:
             message="tar not found on PATH",
             hint=install_hint("tar", manager),
         )
-    rc, out, _err = _run(["tar", "--version"])
+    rc, out, _err = run(["tar", "--version"])
     if rc != 0 or "GNU" not in out:
         hint = install_hint("tar", manager)
         if manager == "brew":
@@ -327,7 +327,7 @@ def check_gnu_du(manager: str | None) -> CheckResult:
             message="du not found on PATH",
             hint=install_hint("du", manager),
         )
-    rc, _out, _err = _run(["du", "-b", "/dev/null"])
+    rc, _out, _err = run(["du", "-b", "/dev/null"])
     if rc != 0:
         hint = install_hint("du", manager)
         if manager == "brew":
@@ -348,7 +348,7 @@ def check_gnu_stat(manager: str | None) -> CheckResult:
     """Check that stat is GNU coreutils (supports ``-f -c %T`` for fstype).
 
     The nix btrfs-snapshot backend uses ``stat -f -c %T <seed>`` to verify the
-    seed path is on btrfs (``Nix._ensure_btrfs``). GNU coreutils only — BSD
+    seed path is on btrfs (``Nix.ensure_btrfs``). GNU coreutils only — BSD
     ``stat`` parses ``-f`` differently. Linux-only in ``run_doctor`` (the btrfs
     backend doesn't apply on macOS).
     """
@@ -360,7 +360,7 @@ def check_gnu_stat(manager: str | None) -> CheckResult:
             message="stat not found on PATH",
             hint=install_hint("stat", manager),
         )
-    rc, out, _err = _run(["stat", "-f", "-c", "%T", "/"])
+    rc, out, _err = run(["stat", "-f", "-c", "%T", "/"])
     if rc != 0 or not out.strip():
         return CheckResult(
             name="stat (GNU)",
@@ -459,7 +459,7 @@ def check_podman_machine() -> CheckResult:  # pragma: no cover
             ok=True,
             message="skipped on Linux (rootless podman, no VM needed)",
         )
-    rc, out, err = _run(["podman", "machine", "info"])
+    rc, out, err = run(["podman", "machine", "info"])
     if rc != 0:
         return CheckResult(
             name="podman machine",
@@ -468,7 +468,7 @@ def check_podman_machine() -> CheckResult:  # pragma: no cover
             hint="podman machine init && podman machine start",
         )
     # Check if a machine is running
-    rc2, out2, _err2 = _run(
+    rc2, out2, _err2 = run(
         ["podman", "machine", "list", "--format", "{{.Running}}"]
     )
     if rc2 == 0 and "true" in out2.lower():
@@ -493,7 +493,7 @@ def check_rootless_podman() -> CheckResult:  # pragma: no cover
             ok=False,
             message="podman not found (skipping rootless check)",
         )
-    rc, _out, err = _run(
+    rc, _out, err = run(
         ["podman", "run", "--rm", "docker.io/library/busybox:latest", "true"],
         timeout=120.0,
     )
@@ -602,7 +602,7 @@ def _append_result_line(lines: list[str], r) -> None:
         lines.append("")
 
 
-def _append_failure_block(
+def append_failure_block(
     lines: list[str], results: list, marker: str, heading: str
 ) -> None:
     """A repeated failure block with fix hints (#1968)."""
@@ -651,10 +651,10 @@ def format_report(report: DoctorReport) -> str:
     # Repeat each failure with its fix so the user doesn't have to
     # scroll back up through a long check list (#1968).
     lines.append("")
-    _append_failure_block(
+    append_failure_block(
         lines, errors, "✗", "Errors (must fix before starting klangkd):"
     )
-    _append_failure_block(
+    append_failure_block(
         lines, warnings, "⚠", "Warnings (recommended but not required):"
     )
 

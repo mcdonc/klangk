@@ -26,15 +26,15 @@ class IdleMonitor:
     def __init__(self, app) -> None:
         self.app = app
         self.cleanup_task: asyncio.Task | None = None
-        self._cleanup_wake: asyncio.Event | None = None
+        self.cleanup_wake: asyncio.Event | None = None
 
     def reconfigure(self, app) -> None:
         self.app = app
 
     def get_cleanup_wake(self) -> asyncio.Event:
-        if self._cleanup_wake is None:
-            self._cleanup_wake = asyncio.Event()
-        return self._cleanup_wake
+        if self.cleanup_wake is None:
+            self.cleanup_wake = asyncio.Event()
+        return self.cleanup_wake
 
     def on_idle_stop(self, workspace_id: str, callback) -> None:
         state = self.app.state.container_registry.states.get(workspace_id)
@@ -92,7 +92,7 @@ class IdleMonitor:
             if now - last_token_sweep >= ORPHAN_TOKEN_SWEEP_INTERVAL:
                 last_token_sweep = now
                 try:
-                    await registry._sweep_orphaned_sidecar_tokens()
+                    await registry.sweep_orphaned_sidecar_tokens()
                 except Exception as e:
                     logger.warning("Orphan sidecar-token sweep failed: %s", e)
 

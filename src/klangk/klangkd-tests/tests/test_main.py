@@ -1813,7 +1813,7 @@ class TestStartupShutdownRestart:
         with (
             patch.object(
                 lc,
-                "_reload_settings",
+                "reload_settings",
                 return_value=(None, "bad config"),
             ) as mock_reload,
             patch.object(
@@ -1836,12 +1836,12 @@ class TestStartupShutdownRestart:
         with (
             patch.object(
                 lc,
-                "_reload_settings",
+                "reload_settings",
                 return_value=(new_settings, None),
             ),
             patch.object(
                 lc,
-                "_apply_reloaded_settings",
+                "apply_reloaded_settings",
                 new_callable=AsyncMock,
                 side_effect=lambda s: order.append("apply"),
             ),
@@ -1874,7 +1874,7 @@ class TestStartupShutdownRestart:
         order = []
         with (
             patch.object(
-                lc, "_reload_settings", return_value=(new_settings, None)
+                lc, "reload_settings", return_value=(new_settings, None)
             ),
             patch.object(
                 app_state.state.sockets,
@@ -1902,7 +1902,7 @@ class TestStartupShutdownRestart:
             ) as mock_wait,
             patch.object(
                 lc,
-                "_apply_reloaded_settings",
+                "apply_reloaded_settings",
                 new_callable=AsyncMock,
                 side_effect=lambda s: order.append("apply"),
             ),
@@ -1959,7 +1959,7 @@ class TestStartupShutdownRestart:
         with (
             patch.object(
                 lc,
-                "_reload_settings",
+                "reload_settings",
                 return_value=(
                     make_settings({"KLANGKD_DEFAULT_PASSWORD": "test"}),
                     None,
@@ -1974,7 +1974,7 @@ class TestStartupShutdownRestart:
                 return_value=0,
             ),
             patch.object(
-                lc, "_apply_reloaded_settings", new_callable=AsyncMock
+                lc, "apply_reloaded_settings", new_callable=AsyncMock
             ),
             patch.object(
                 app_state.state.inflight_requests,
@@ -2045,7 +2045,7 @@ class TestStartupShutdownRestart:
         with (
             patch.object(
                 lc,
-                "_reload_settings",
+                "reload_settings",
                 return_value=(
                     make_settings({"KLANGKD_DEFAULT_PASSWORD": "test"}),
                     None,
@@ -2064,7 +2064,7 @@ class TestStartupShutdownRestart:
                 return_value=0,
             ),
             patch.object(
-                lc, "_apply_reloaded_settings", new_callable=AsyncMock
+                lc, "apply_reloaded_settings", new_callable=AsyncMock
             ),
             patch.object(lc, "runtime_shutdown", new_callable=AsyncMock),
             patch.object(lc, "startup", new_callable=AsyncMock),
@@ -2087,7 +2087,7 @@ class TestStartupShutdownRestart:
         with (
             patch.object(
                 lc,
-                "_reload_settings",
+                "reload_settings",
                 return_value=(
                     make_settings({"KLANGKD_DEFAULT_PASSWORD": "test"}),
                     None,
@@ -2127,7 +2127,7 @@ class TestStartupShutdownRestart:
         with (
             patch.object(
                 lc,
-                "_reload_settings",
+                "reload_settings",
                 return_value=(
                     make_settings({"KLANGKD_DEFAULT_PASSWORD": "test"}),
                     None,
@@ -2137,7 +2137,7 @@ class TestStartupShutdownRestart:
                 registry, "drain_all_containers", side_effect=fake_drain
             ),
             patch.object(
-                lc, "_apply_reloaded_settings", new_callable=AsyncMock
+                lc, "apply_reloaded_settings", new_callable=AsyncMock
             ) as mock_apply,
             patch.object(
                 lc, "runtime_shutdown", new_callable=AsyncMock
@@ -2164,7 +2164,7 @@ class TestStartupShutdownRestart:
         lc._recycle_lock = None
         lc.shutting_down = True
         with (
-            patch.object(lc, "_reload_settings") as mock_reload,
+            patch.object(lc, "reload_settings") as mock_reload,
             patch.object(lc, "runtime_shutdown", new_callable=AsyncMock),
         ):
             await lc.recycle_runtime()
@@ -2224,7 +2224,7 @@ class TestStartupShutdownRestart:
         registry = app_state.state.container_registry
         with (
             patch.object(
-                lc, "_reload_settings", return_value=(None, "bad config")
+                lc, "reload_settings", return_value=(None, "bad config")
             ),
             patch.object(
                 app_state.state.sockets, "notify_server_recycle"
@@ -2237,7 +2237,7 @@ class TestStartupShutdownRestart:
     def test_reload_settings_returns_new_when_valid(self, app_state):
         app_state = _make_app_state()
         lc = app_state.state.lifecycle
-        new, error = lc._reload_settings()
+        new, error = lc.reload_settings()
         assert new is not None
         assert error is None
         assert new is not app_state.state.settings
@@ -2252,7 +2252,7 @@ class TestStartupShutdownRestart:
             "reload",
             side_effect=ValueError("bad"),
         ):
-            new, error = lc._reload_settings()
+            new, error = lc.reload_settings()
         assert new is None
         assert "bad" in error
 
@@ -2296,7 +2296,7 @@ class TestStartupShutdownRestart:
         with patch.object(
             lc, "apply_pending_reseed", new_callable=AsyncMock
         ) as mock_reseed:
-            await lc._apply_reloaded_settings(new_settings)
+            await lc.apply_reloaded_settings(new_settings)
         assert app_state.state.settings is new_settings
         assert app_state.state.settings is not old_settings
         assert "ssl_trust" in called
@@ -2306,7 +2306,7 @@ class TestStartupShutdownRestart:
         mock_reseed.assert_awaited_once()
 
     async def test_apply_reloaded_settings_calls_caddy_reload(self, app_state):
-        """When the proxy watchdog is the Caddy engine, _apply_reloaded_settings
+        """When the proxy watchdog is the Caddy engine, apply_reloaded_settings
         calls its apply_pending_reload (#1559: a settings change is a fresh
         POST /load). The nginx engine has no apply_pending_reload and is skipped."""
         app_state = _make_app_state()
@@ -2325,7 +2325,7 @@ class TestStartupShutdownRestart:
 
         app_state.state.proxy_watchdog = _FakeCaddyWd()
         with patch.object(lc, "apply_pending_reseed", new_callable=AsyncMock):
-            await lc._apply_reloaded_settings(new_settings)
+            await lc.apply_reloaded_settings(new_settings)
         assert reload_calls == [1]
 
     async def test_apply_reloaded_settings_swallows_caddy_reload_failure(
@@ -2349,7 +2349,7 @@ class TestStartupShutdownRestart:
             patch.object(lc, "apply_pending_reseed", new_callable=AsyncMock),
             caplog.at_level("WARNING"),
         ):
-            await lc._apply_reloaded_settings(new_settings)  # must not raise
+            await lc.apply_reloaded_settings(new_settings)  # must not raise
         assert "caddy config reload failed" in caplog.text
 
     async def test_apply_logs_warning_when_reconfigure_fails(
@@ -2373,7 +2373,7 @@ class TestStartupShutdownRestart:
             ) as mock_reseed,
             caplog.at_level("WARNING"),
         ):
-            await lc._apply_reloaded_settings(new_settings)
+            await lc.apply_reloaded_settings(new_settings)
         assert "ssl_trust reconfigure failed" in caplog.text
         mock_oidc_reconf.assert_called_once()
         mock_reseed.assert_awaited_once()
@@ -3634,7 +3634,7 @@ class TestLiveCORSMiddleware:
 
 
 class TestRemountFrontend:
-    """Lifecycle._remount_frontend replaces the frontend mount (#1610)."""
+    """Lifecycle.remount_frontend replaces the frontend mount (#1610)."""
 
     async def test_remount_swaps_static_dir(self, tmp_path, app_state):
         lc = main.Lifecycle(app_state)
@@ -3650,7 +3650,7 @@ class TestRemountFrontend:
         main.setup_static_files(app, old_dir)
 
         new_settings = make_settings({"KLANGKD_FRONTEND_DIR": str(new_dir)})
-        lc._remount_frontend(app, new_settings)
+        lc.remount_frontend(app, new_settings)
 
         transport = ASGITransport(app=app)
         async with AsyncClient(
@@ -3675,7 +3675,7 @@ class TestRemountFrontend:
         new_settings = make_settings(
             {"KLANGKD_FRONTEND_DIR": str(tmp_path / "nonexistent")}
         )
-        lc._remount_frontend(app, new_settings)
+        lc.remount_frontend(app, new_settings)
 
         # The old mount should be gone — no routes named "frontend"
         frontend_routes = [
@@ -3692,8 +3692,8 @@ class TestRemountFrontend:
         new_settings = make_settings(
             dict(old_settings._reload_env, KLANGKD_FRONTEND_DIR=str(tmp_path))
         )
-        with patch.object(lc, "_remount_frontend") as mock_remount:
-            await lc._apply_reloaded_settings(new_settings)
+        with patch.object(lc, "remount_frontend") as mock_remount:
+            await lc.apply_reloaded_settings(new_settings)
         mock_remount.assert_called_once()
 
     async def test_apply_reloaded_settings_skips_remount_when_unchanged(
@@ -3704,8 +3704,8 @@ class TestRemountFrontend:
         old_settings = app_state.state.settings
         # Same frontend_dir → no remount
         new_settings = make_settings(dict(old_settings._reload_env))
-        with patch.object(lc, "_remount_frontend") as mock_remount:
-            await lc._apply_reloaded_settings(new_settings)
+        with patch.object(lc, "remount_frontend") as mock_remount:
+            await lc.apply_reloaded_settings(new_settings)
         mock_remount.assert_not_called()
 
 
@@ -3743,7 +3743,7 @@ class TestLifecycleBranchGaps2834:
         with (
             patch.object(
                 lc,
-                "_reload_settings",
+                "reload_settings",
                 return_value=(
                     make_settings({"KLANGKD_DEFAULT_PASSWORD": "test"}),
                     None,
@@ -3762,7 +3762,7 @@ class TestLifecycleBranchGaps2834:
                 return_value=True,
             ),
             patch.object(
-                lc, "_apply_reloaded_settings", new_callable=AsyncMock
+                lc, "apply_reloaded_settings", new_callable=AsyncMock
             ),
             patch.object(lc, "runtime_shutdown", new_callable=AsyncMock),
             patch.object(lc, "startup", side_effect=_startup_sees_shutdown),
@@ -3780,8 +3780,8 @@ class TestLifecycleBranchGaps2834:
         app_state.state.proxy_watchdog = None
         new = make_settings({"KLANGKD_DEFAULT_PASSWORD": "test"})
         remount = MagicMock()
-        with patch.object(lc, "_remount_frontend", remount):
-            await lc._apply_reloaded_settings(new)
+        with patch.object(lc, "remount_frontend", remount):
+            await lc.apply_reloaded_settings(new)
         remount.assert_not_called()
         assert app_state.state.settings is new
 

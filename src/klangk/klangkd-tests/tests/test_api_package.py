@@ -252,14 +252,14 @@ class TestSubmoduleStructure:
         assert total == EXPECTED_ROUTE_COUNT - 3 - 2
 
     def test_common_module_has_no_router(self):
-        """``_common`` holds shared helpers only — it must not define a
+        """``common`` holds shared helpers only — it must not define a
         router (doing so would suggest a route got stranded there)."""
-        assert not hasattr(api._common, "router") or api._common.router is None
+        assert not hasattr(api.common, "router") or api.common.router is None
 
     def test_shared_helpers_live_in_common(self):
         """Cross-domain helpers are centralized so both consumers import the
         same object."""
-        from klangk.api import _common
+        from klangk.api import common
 
         for name in (
             "send_email",
@@ -269,13 +269,13 @@ class TestSubmoduleStructure:
             "WorkspaceAclEntry",
             "autostart_allowed",
         ):
-            assert hasattr(_common, name), f"_common missing {name}"
+            assert hasattr(common, name), f"common missing {name}"
 
     def test_no_duplicate_module_globals(self):
         """No module-level config reads survive in the api package (#1516)."""
-        from klangk.api import _common, __init__ as api_init
+        from klangk.api import common, __init__ as api_init
 
-        assert not hasattr(_common, "FILE_UPLOAD_SIZE_MAX")
+        assert not hasattr(common, "FILE_UPLOAD_SIZE_MAX")
         for name in (
             "LOGIN_BANNER_TITLE",
             "LOGIN_BANNER",

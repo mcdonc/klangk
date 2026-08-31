@@ -41,7 +41,7 @@ from .auth import (  # noqa: F401 (test patch targets)
     login,
     logout as do_logout,
     refresh_token,
-    _UNREACHABLE,
+    UNREACHABLE,
 )
 from .client import (  # noqa: F401
     AuthError,
@@ -56,7 +56,7 @@ from .client import (  # noqa: F401
     wait_container_ready,
     ws_exec,
     ws_shell,
-    _server_mode_is_none,
+    server_mode_is_none,
 )
 from .config import (
     CLIConfig,  # noqa: F401 (test patch target)
@@ -80,13 +80,13 @@ from .shell_popup import (  # noqa: F401 (test patch targets)
 from . import context
 from .context import (  # noqa: F401
     app,
-    _cfg,
-    _cfg_cache,
-    _client,
-    _err,
-    _maybe_none_login,
-    _state,
-    _state_cache,
+    cfg,
+    cfg_cache,
+    client,
+    err,
+    maybe_none_login,
+    state,
+    state_cache,
     require_auth,
     server_url,
     ws_max_size,
@@ -118,22 +118,22 @@ from .workspaces import (  # noqa: F401
     workspace_status,
 )
 from .edit import (  # noqa: F401
-    _build_settings,
-    _parse_env_list,
-    _prompt,
+    build_settings,
+    parse_env_list,
+    prompt,
     edit,
 )
 from .shellcmd import (  # noqa: F401
-    _consent_popup_enabled,
-    _klangk_argv,
-    _popup_decider_argv,
-    _popup_inner_shell_argv,
-    _run_consent_popup,
+    consent_popup_enabled,
+    klangk_argv,
+    popup_decider_argv,
+    popup_inner_shell_argv,
+    run_consent_popup,
     resolve_forward_agent,
     shell,
 )
 from .monitor import (  # noqa: F401
-    _dispatch_monitor_event,
+    dispatch_monitor_event,
     monitor_backoff,
     monitor_connection,
     monitor,
@@ -141,13 +141,13 @@ from .monitor import (  # noqa: F401
     refresh_token_threaded,
 )
 from .sandboxcmd import (  # noqa: F401
-    _resolve_workspace_and_url,
+    resolve_workspace_and_url,
     sandbox,
     sandbox_setup,
     sandbox_setup_only,
 )
 from .terminals import (  # noqa: F401
-    _resolve_own_window,
+    resolve_own_window,
     share_terminal,
     share_workspace,
     terminal_app,
@@ -161,8 +161,8 @@ from .execsync import (  # noqa: F401  # noqa: F811
     sync,
 )
 from .admin import (  # noqa: F401
-    _admin_error,
-    _resolve_workspace_for_consent,
+    admin_error,
+    resolve_workspace_for_consent,
     admin_app,
     admin_invitations_app,
     admin_users_app,
@@ -186,17 +186,17 @@ def app_callback(
         # Single mutable cell lives in .context (#2542): write through the
         # module attribute, not a `global` here — main's binding is a
         # re-export, and rebinding it would leave context's copy stale.
-        context._server_override = context._cfg().resolve_server(server)
+        context.server_override = context.cfg().resolve_server(server)
     if ctx.invoked_subcommand is None:
-        _maybe_launch_tui(ctx)
+        maybe_launch_tui(ctx)
 
 
-def _is_interactive() -> bool:
+def is_interactive() -> bool:
     """True when stdin and stdout are both real terminals."""
     return sys.stdin.isatty() and sys.stdout.isatty()
 
 
-def _maybe_launch_tui(ctx: typer.Context) -> None:
+def maybe_launch_tui(ctx: typer.Context) -> None:
     """Launch the interactive TUI for a bare ``klangk`` invocation.
 
     Only on a real terminal: in non-TTY contexts (pipes, CI, typer's
@@ -205,15 +205,15 @@ def _maybe_launch_tui(ctx: typer.Context) -> None:
     TUI it can't drive. The TUI is imported lazily so the textual dep
     never loads on plain subcommand paths (``klangk ls`` etc.).
     """
-    if not _is_interactive():
+    if not is_interactive():
         typer.echo(ctx.get_help())
         raise typer.Exit(code=0)
     from .tui import run_tui  # allow-deferred-import (textual, ~440ms)
 
     try:
-        run_tui(server_url=context._server_override)
+        run_tui(server_url=context.server_override)
     except Exception as exc:  # surface TUI crashes, don't swallow them
-        _err.print(f"[red]TUI error:[/red] {exc}")
+        err.print(f"[red]TUI error:[/red] {exc}")
         raise typer.Exit(code=1)
 
 
@@ -221,16 +221,16 @@ def main() -> None:  # pragma: no cover
     try:
         app()
     except AuthError as exc:
-        _err.print(f"[red]{exc}[/red]")
+        err.print(f"[red]{exc}[/red]")
         raise SystemExit(1) from None
     except httpx.ConnectError:
-        _err.print("[red]Cannot connect to server[/red] — is it running?")
+        err.print("[red]Cannot connect to server[/red] — is it running?")
         raise SystemExit(1) from None
     except httpx.HTTPStatusError as exc:
-        _err.print(f"[red]{exc}[/red]")
+        err.print(f"[red]{exc}[/red]")
         raise SystemExit(1) from None
     except websockets.ConnectionClosed:
-        _err.print("\n[red]Server disconnected[/red]")
+        err.print("\n[red]Server disconnected[/red]")
         raise SystemExit(1) from None
 
 

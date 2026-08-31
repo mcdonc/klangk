@@ -24,7 +24,7 @@ module-level functions (no state object):
   :func:`klangk.main.build_app`) to re-apply the level from
   ``settings.log_level`` (``KLANGKD_LOG_LEVEL``), overriding the import-time
   defaults. Idempotent, so it is also the **SIGHUP reconfigure** path:
-  :func:`klangk.main.Lifecycle._apply_reloaded_settings` calls it right after
+  :func:`klangk.main.Lifecycle.apply_reloaded_settings` calls it right after
   the settings swap (before the subsystem loop, so warnings the loop emits use
   the new level).
 
@@ -47,7 +47,7 @@ import logging
 __all__ = ["configure", "configure_defaults"]
 
 
-def _level_to_int(value: str) -> int:
+def level_to_int(value: str) -> int:
     """Resolve a log-level string to a numeric level.
 
     Accepts a level name (case-insensitive: ``"debug"``, ``"INFO"``, ...) or
@@ -77,7 +77,7 @@ _DATEFMT = "%H:%M:%S"
 # The level applied by ``configure_defaults()`` (the pre-settings phase).
 # ``configure(settings)`` overrides it with ``settings.log_level`` once settings
 # are constructed.
-_DEFAULT_LEVEL = logging.INFO
+DEFAULT_LEVEL = logging.INFO
 
 # Third-party loggers managed centrally (logger name -> level). These are
 # libraries klangk depends on that log at their own verbosity by default and
@@ -149,7 +149,7 @@ def configure_defaults() -> None:
     Idempotent. :func:`configure` later overrides the level from
     ``KLANGKD_LOG_LEVEL``.
     """
-    _apply(_DEFAULT_LEVEL)
+    _apply(DEFAULT_LEVEL)
 
 
 def configure(settings) -> None:
@@ -160,7 +160,7 @@ def configure(settings) -> None:
     reconfigure loop) so ``KLANGKD_LOG_LEVEL`` takes effect without a process
     restart (#1587). Reads ``settings.log_level`` live; idempotent.
     """
-    _apply(_level_to_int(settings.log_level))
+    _apply(level_to_int(settings.log_level))
 
 
 # Configure sensible defaults at import so logging is formatted from the very

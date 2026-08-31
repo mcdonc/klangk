@@ -114,7 +114,7 @@ _DURATION_SECONDS = {
 }
 
 
-def _fmt_duration(secs: float) -> str:
+def fmt_duration(secs: float) -> str:
     """Compact remaining-time label: ``5m``, ``2h``, ``3d``, ``1w`` (#2335 B)."""
     s = int(secs)
     if s < 60:
@@ -146,27 +146,27 @@ _FLASH_TTL = 5.0
 # decider still self-heals if the workspace flips back to interactive (or
 # permissions are restored) mid-session instead of staying dead until the
 # shell is restarted.
-_REFUSED_RETRY_INTERVAL = 60.0
+REFUSED_RETRY_INTERVAL = 60.0
 
 # Popup-show retry (#2699 review): how many times a worker re-attempts a
 # show that targeted nothing (no outer client found — e.g. a contended tmux
 # server timing out ``list-clients``), and how long it waits between
 # attempts. Without a retry, requests that arrived during the failed
 # attempt's dedupe window would never get a popup (holds auto-deny unseen).
-_POPUP_SHOW_ATTEMPTS = 3
-_POPUP_SHOW_RETRY_DELAY = 1.0
+POPUP_SHOW_ATTEMPTS = 3
+POPUP_SHOW_RETRY_DELAY = 1.0
 
 
 # Sent as the WS handshake User-Agent so klangkd's refusal log (#2490) can
 # attribute a 403 to this client (vs a browser or anything else).
-def _user_agent() -> str:
+def user_agent() -> str:
     try:
         return f"klangk-consent-decide/{_pkg_version('klangk')}"
     except PackageNotFoundError:  # running from source, not installed
         return "klangk-consent-decide/dev"
 
 
-_USER_AGENT = _user_agent()
+USER_AGENT = user_agent()
 
 # Frame-application outcomes returned by ConsentDeciderController.apply_frame.
 ADDED = (
@@ -786,7 +786,7 @@ class ConsentDeciderApp(App):
 
     async def _rotate_token(self) -> None:
         """Refresh the JWT and adopt it when a fresh one comes back."""
-        new = await self._refresh_token()
+        new = await self.refresh_token()
         if new:
             self.token = new
 
@@ -806,9 +806,9 @@ class ConsentDeciderApp(App):
                 logger.warning(
                     "consent-decide: registration refused (403) "
                     "repeatedly; retrying every %.0fs",
-                    _REFUSED_RETRY_INTERVAL,
+                    REFUSED_RETRY_INTERVAL,
                 )
-            delay = _REFUSED_RETRY_INTERVAL
+            delay = REFUSED_RETRY_INTERVAL
         else:
             delay = self._backoff(1)
         await self._rotate_token()
@@ -833,7 +833,7 @@ class ConsentDeciderApp(App):
         refreshes the JWT and retries fast (recovering the expired-token
         case); once refusals pile up (the counter resets only on a
         successful connect) the loop backs off to a fixed slow interval
-        (:data:`_REFUSED_RETRY_INTERVAL`) instead of stopping -- bounded
+        (:data:`REFUSED_RETRY_INTERVAL`) instead of stopping -- bounded
         log spam, but the decider still self-heals if the refusal cause
         goes away mid-session (workspace flipped back to interactive,
         permissions restored).
@@ -850,7 +850,7 @@ class ConsentDeciderApp(App):
                     max_size=self.max_size,
                     path="/ws/consent-decider",
                     query={"workspace": self.workspace_id},
-                    user_agent_header=_USER_AGENT,
+                    user_agent_header=USER_AGENT,
                 ) as ws:
                     self._ws = ws
                     self._connected = True
@@ -884,7 +884,7 @@ class ConsentDeciderApp(App):
             await asyncio.sleep(self._backoff(attempt))
             self._refresh()
 
-    async def _refresh_token(self) -> str | None:
+    async def refresh_token(self) -> str | None:
         """Refresh the JWT off the event loop (the HTTP call is blocking)."""
         try:
             return await asyncio.to_thread(
@@ -956,7 +956,7 @@ class ConsentDeciderApp(App):
             self._schedule_popup_show()
         try:
             if action == ERROR:
-                self._flash(str(payload))
+                self.flash(str(payload))
             elif action == REVOKE_ACK:
                 # payload = (request_id, ok). A failed revoke (not an
                 # active verdict, wrong workspace, or the sidecar never
@@ -966,7 +966,7 @@ class ConsentDeciderApp(App):
                 # the row and the refresh re-renders the list without it.
                 _rid, ok = payload  # type: ignore[misc]
                 if not ok:
-                    self._flash("revoke failed — still in effect")
+                    self.flash("revoke failed — still in effect")
                 self._refresh()
             elif action == PAUSE_ACK:
                 # payload = (ok, until). A failed pause/unpause flashes;
@@ -974,7 +974,7 @@ class ConsentDeciderApp(App):
                 # frame the server broadcasts (no flash needed).
                 ok, _until = payload  # type: ignore[misc]
                 if not ok:
-                    self._flash("pause failed")
+                    self.flash("pause failed")
                 self._refresh()
             else:
                 self._refresh()
@@ -1053,7 +1053,7 @@ class ConsentDeciderApp(App):
         if self._connected:
             conn = "connected"
         elif self._refused:
-            conn = f"refused — retrying every {int(_REFUSED_RETRY_INTERVAL)}s"
+            conn = f"refused — retrying every {int(REFUSED_RETRY_INTERVAL)}s"
         else:
             conn = "reconnecting"
         return (
@@ -1156,7 +1156,7 @@ class ConsentDeciderApp(App):
             return
         lv.index = max(0, min(index, len(lv.children) - 1))
 
-    def _flash(self, message: str, ttl: float = _FLASH_TTL) -> None:
+    def flash(self, message: str, ttl: float = _FLASH_TTL) -> None:
         """Show a transient message in the status line for ``ttl`` seconds.
 
         The TTL survives the 1s periodic refresh (which would otherwise
@@ -1196,7 +1196,7 @@ class ConsentDeciderApp(App):
         """Send a pause (window token) or unpause (Unpaused) frame (#2332)."""
         ws = self._ws
         if ws is None:
-            self._flash("disconnected — reconnecting")
+            self.flash("disconnected — reconnecting")
             return
         dur = getattr(button, "pause_duration", None)
         # Track the user's request so the matching button stays highlighted.
@@ -1210,13 +1210,13 @@ class ConsentDeciderApp(App):
         try:
             await ws.send(make_pause(duration))
         except Exception:
-            self._flash("pause send failed — reconnecting")
+            self.flash("pause send failed — reconnecting")
 
     async def _send_unpause(self, ws) -> None:
         try:
             await ws.send(make_unpause())
         except Exception:
-            self._flash("unpause send failed — reconnecting")
+            self.flash("unpause send failed — reconnecting")
 
     def _refresh_pause_highlight(self) -> None:
         """Highlight the pause button matching the user's last request + show
@@ -1249,7 +1249,7 @@ class ConsentDeciderApp(App):
             countdown.update(
                 "paused until restart"
                 if rem is None
-                else f"paused {_fmt_duration(rem)}"
+                else f"paused {fmt_duration(rem)}"
             )
         else:
             countdown.update("")
@@ -1268,12 +1268,12 @@ class ConsentDeciderApp(App):
         # (`tilrestart`): the common case stays one keypress (#2511).
         if not self._on_queue_screen():
             return
-        self._decide(DECISION_ALLOWED)
+        self.decide(DECISION_ALLOWED)
 
     def action_deny(self) -> None:
         if not self._on_queue_screen():
             return
-        self._decide(DECISION_DENIED)
+        self.decide(DECISION_DENIED)
 
     def action_allow_duration(self) -> None:
         """``A``: allow the highlighted row with a picked duration (#2511)."""
@@ -1396,18 +1396,18 @@ class ConsentDeciderApp(App):
         ``list-clients`` timeout) must not strand requests that arrived
         during the attempt's dedupe window — without a retry they would
         sit unpopup'd until the next ADDED frame or a reconnect, and
-        auto-deny unseen. Bounded by ``_POPUP_SHOW_ATTEMPTS``; once the
+        auto-deny unseen. Bounded by ``POPUP_SHOW_ATTEMPTS``; once the
         worker ends the slot frees and the next ADDED frame schedules a
         fresh one. :meth:`_show_popup` swallows its subprocess errors;
         this guard keeps the fire-and-forget task from surfacing anything
         (an unretrieved task exception would just log noise).
         """
         try:
-            for _ in range(_POPUP_SHOW_ATTEMPTS):
+            for _ in range(POPUP_SHOW_ATTEMPTS):
                 shown = await asyncio.to_thread(self._show_popup)
                 if shown or not self.controller.pending:
                     return
-                await asyncio.sleep(_POPUP_SHOW_RETRY_DELAY)
+                await asyncio.sleep(POPUP_SHOW_RETRY_DELAY)
         except Exception:  # noqa: BLE001
             logger.exception("consent-decide popup show failed")
 
@@ -1450,7 +1450,7 @@ class ConsentDeciderApp(App):
                 logger.debug("consent-decide popup show failed")
         return bool(clients)
 
-    def _decide(self, decision: str) -> None:
+    def decide(self, decision: str) -> None:
         rid = self._focused_request_id()
         if rid is None:
             return
@@ -1459,7 +1459,7 @@ class ConsentDeciderApp(App):
     def _decide_id(self, rid: str, decision: str, duration: str) -> None:
         ws = self._ws
         if ws is None:
-            self._flash("disconnected — reconnecting")
+            self.flash("disconnected — reconnecting")
             return
         # Send on the shared loop via _send_verdict, which awaits the send and
         # flashes on failure (a dropped socket between the check and the send
@@ -1474,7 +1474,7 @@ class ConsentDeciderApp(App):
         try:
             await ws.send(make_verdict(rid, decision, duration))
         except Exception:
-            self._flash("verdict send failed — reconnecting")
+            self.flash("verdict send failed — reconnecting")
 
 
 class DurationPickerScreen(ModalScreen[None]):
@@ -1636,7 +1636,7 @@ class RulesScreen(Screen):
             return
         ws = app._ws  # type: ignore[attr-defined]
         if ws is None:
-            app._flash("disconnected — reconnecting")  # type: ignore[attr-defined]
+            app.flash("disconnected — reconnecting")  # type: ignore[attr-defined]
             return
         asyncio.create_task(self._send_revoke(app, ws, rid))
 
@@ -1644,7 +1644,7 @@ class RulesScreen(Screen):
         try:
             await ws.send(make_revoke(rid))
         except Exception:
-            app._flash("revoke send failed — reconnecting")  # type: ignore[attr-defined]
+            app.flash("revoke send failed — reconnecting")  # type: ignore[attr-defined]
 
     def _focused_rule_id(self) -> str | None:
         lv = self.query_one("#rules-list", ListView)
@@ -1811,7 +1811,7 @@ class RulesScreen(Screen):
         else:
             lines.append(
                 "  [yellow]Filtering paused "
-                f"(resumes in {_fmt_duration(rem)})[/yellow]"
+                f"(resumes in {fmt_duration(rem)})[/yellow]"
             )
         return lines
 
@@ -1844,13 +1844,13 @@ class RulesScreen(Screen):
             rem = controller.rule_remaining(rule)
             # Guard None before formatting: a timed verdict with a null
             # decided_at or an unknown duration has no countdown. Both allow
-            # and deny must degrade the same way (else _fmt_duration(None)
+            # and deny must degrade the same way (else fmt_duration(None)
             # raises TypeError on a deny) -- the parser permits these rows, so
             # rendering must too.
             if rem is None:
                 label = ""
             elif deny:
-                label = f"{_fmt_duration(rem)} left"
+                label = f"{fmt_duration(rem)} left"
             else:
-                label = f"expires in {_fmt_duration(rem)}"
+                label = f"expires in {fmt_duration(rem)}"
         return f"{escape(host)}{escape(proc)}  [dim]{escape(label)}[/dim]"

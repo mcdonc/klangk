@@ -12,8 +12,8 @@ from fastapi.responses import (
 )
 from pydantic import BaseModel
 
-from ._common import get_app_dep
-from ._common import (
+from .common import get_app_dep
+from .common import (
     require_workspace_token,
 )
 

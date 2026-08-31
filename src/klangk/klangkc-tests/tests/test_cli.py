@@ -22,7 +22,7 @@ from klangk.cli.config import (
     ServerEntry,
     ServerState,
     UserEntry,
-    _DEFAULT_WS_MAX_SIZE,
+    DEFAULT_WS_MAX_SIZE,
     ensure_config,
     seed_config,
 )
@@ -43,7 +43,7 @@ from klangk.cli.auth import refresh_token
 class TestCLIConfig:
     def test_load_empty(self, monkeypatch):
         monkeypatch.setattr(
-            "klangk.cli.config._CONFIG_PATH",
+            "klangk.cli.config.CONFIG_PATH",
             Path("/nonexistent/klangk.yaml"),
         )
         cfg = CLIConfig.load()
@@ -64,7 +64,7 @@ class TestCLIConfig:
             "  dev:\n"
             "    url: http://dev:8995\n"
         )
-        monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
+        monkeypatch.setattr("klangk.cli.config.CONFIG_PATH", config_path)
         cfg = CLIConfig.load()
         assert cfg.forward_agent is True
         assert cfg.ws_max_size == 999
@@ -79,21 +79,21 @@ class TestCLIConfig:
     def test_load_forward_agent_true(self, tmp_path, monkeypatch):
         config_path = tmp_path / "klangk.yaml"
         config_path.write_text("forward-agent: true\n")
-        monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
+        monkeypatch.setattr("klangk.cli.config.CONFIG_PATH", config_path)
         cfg = CLIConfig.load()
         assert cfg.forward_agent is True
 
     def test_load_forward_agent_false(self, tmp_path, monkeypatch):
         config_path = tmp_path / "klangk.yaml"
         config_path.write_text("forward-agent: false\n")
-        monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
+        monkeypatch.setattr("klangk.cli.config.CONFIG_PATH", config_path)
         cfg = CLIConfig.load()
         assert cfg.forward_agent is False
 
     def test_load_forward_agent_absent(self, tmp_path, monkeypatch):
         config_path = tmp_path / "klangk.yaml"
         config_path.write_text("ws-max-size: 100\n")
-        monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
+        monkeypatch.setattr("klangk.cli.config.CONFIG_PATH", config_path)
         cfg = CLIConfig.load()
         assert cfg.forward_agent is None
 
@@ -107,7 +107,7 @@ class TestCLIConfig:
             "  good:\n"
             "    url: http://good:8995\n"
         )
-        monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
+        monkeypatch.setattr("klangk.cli.config.CONFIG_PATH", config_path)
         cfg = CLIConfig.load()
         assert len(cfg.servers) == 1
         assert "good" in cfg.servers
@@ -115,7 +115,7 @@ class TestCLIConfig:
     def test_load_empty_yaml(self, tmp_path, monkeypatch):
         config_path = tmp_path / "klangk.yaml"
         config_path.write_text("")
-        monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
+        monkeypatch.setattr("klangk.cli.config.CONFIG_PATH", config_path)
         cfg = CLIConfig.load()
         assert cfg.servers == {}
 
@@ -181,7 +181,7 @@ class TestCLIConfig:
 
     def test_get_ws_max_size_default(self):
         cfg = CLIConfig()
-        assert cfg.get_ws_max_size("http://any:8995") == _DEFAULT_WS_MAX_SIZE
+        assert cfg.get_ws_max_size("http://any:8995") == DEFAULT_WS_MAX_SIZE
 
     def test_get_user_per_server(self):
         cfg = CLIConfig(
@@ -213,7 +213,7 @@ class TestCLIConfig:
             "    url: http://prod:8995\n"
             "    user: admin@prod.com\n"
         )
-        monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
+        monkeypatch.setattr("klangk.cli.config.CONFIG_PATH", config_path)
         cfg = CLIConfig.load()
         assert cfg.servers["prod"].user == "admin@prod.com"
 
@@ -222,7 +222,7 @@ class TestCLIConfig:
     def test_terminal_open_cmd_absent(self, tmp_path, monkeypatch):
         config_path = tmp_path / "klangk.yaml"
         config_path.write_text("forward-agent: true\n")
-        monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
+        monkeypatch.setattr("klangk.cli.config.CONFIG_PATH", config_path)
         monkeypatch.delenv("KLANGKC_TERMINAL_OPEN_CMD", raising=False)
         cfg = CLIConfig.load()
         assert cfg.terminal_open_cmd is None
@@ -231,7 +231,7 @@ class TestCLIConfig:
     def test_terminal_open_cmd_string_form(self, tmp_path, monkeypatch):
         config_path = tmp_path / "klangk.yaml"
         config_path.write_text('terminal-open-cmd: "konsole --hold -e"\n')
-        monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
+        monkeypatch.setattr("klangk.cli.config.CONFIG_PATH", config_path)
         monkeypatch.delenv("KLANGKC_TERMINAL_OPEN_CMD", raising=False)
         cfg = CLIConfig.load()
         assert cfg.get_terminal_open_cmd() == ["konsole", "--hold", "-e"]
@@ -241,7 +241,7 @@ class TestCLIConfig:
         config_path.write_text(
             "terminal-open-cmd:\n  - kitty\n  - --class\n  - klangk shell\n"
         )
-        monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
+        monkeypatch.setattr("klangk.cli.config.CONFIG_PATH", config_path)
         monkeypatch.delenv("KLANGKC_TERMINAL_OPEN_CMD", raising=False)
         cfg = CLIConfig.load()
         assert cfg.get_terminal_open_cmd() == [
@@ -257,20 +257,20 @@ class TestCLIConfig:
         crash of every CLIConfig.load() caller."""
         import klangk.cli.config as cfgmod
 
-        assert cfgmod._parse_terminal_open_cmd("") is None
-        assert cfgmod._parse_terminal_open_cmd("   ") is None
-        assert cfgmod._parse_terminal_open_cmd([]) is None
-        assert cfgmod._parse_terminal_open_cmd(42) is None
-        assert cfgmod._parse_terminal_open_cmd({"a": 1}) is None
-        assert cfgmod._parse_terminal_open_cmd(["a", 2]) is None
+        assert cfgmod.parse_terminal_open_cmd("") is None
+        assert cfgmod.parse_terminal_open_cmd("   ") is None
+        assert cfgmod.parse_terminal_open_cmd([]) is None
+        assert cfgmod.parse_terminal_open_cmd(42) is None
+        assert cfgmod.parse_terminal_open_cmd({"a": 1}) is None
+        assert cfgmod.parse_terminal_open_cmd(["a", 2]) is None
         # Quoted args survive shlex splitting in the string form.
-        assert cfgmod._parse_terminal_open_cmd(
+        assert cfgmod.parse_terminal_open_cmd(
             'alacritty -T "klangk shell" -e'
         ) == ["alacritty", "-T", "klangk shell", "-e"]
         # An unbalanced quote raises ValueError out of shlex.split — it
         # must degrade to None (one yaml typo must not crash every CLI
         # command that loads the config, #2686 review).
-        assert cfgmod._parse_terminal_open_cmd('konsole "-e') is None
+        assert cfgmod.parse_terminal_open_cmd('konsole "-e') is None
 
     def test_terminal_open_cmd_envvar_unbalanced_quote_no_crash(
         self, tmp_path, monkeypatch
@@ -280,7 +280,7 @@ class TestCLIConfig:
         crash screen (#2686 review)."""
         config_path = tmp_path / "klangk.yaml"
         config_path.write_text("forward-agent: true\n")
-        monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
+        monkeypatch.setattr("klangk.cli.config.CONFIG_PATH", config_path)
         monkeypatch.setenv("KLANGKC_TERMINAL_OPEN_CMD", "konsole '-e")
         cfg = CLIConfig.load()
         assert cfg.get_terminal_open_cmd() is None
@@ -288,7 +288,7 @@ class TestCLIConfig:
     def test_terminal_open_cmd_envvar_wins(self, tmp_path, monkeypatch):
         config_path = tmp_path / "klangk.yaml"
         config_path.write_text('terminal-open-cmd: "kitty"\n')
-        monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
+        monkeypatch.setattr("klangk.cli.config.CONFIG_PATH", config_path)
         monkeypatch.setenv("KLANGKC_TERMINAL_OPEN_CMD", "konsole --hold -e")
         cfg = CLIConfig.load()
         # The envvar overrides the file value.
@@ -299,7 +299,7 @@ class TestCLIConfig:
     ):
         config_path = tmp_path / "klangk.yaml"
         config_path.write_text('terminal-open-cmd: "kitty"\n')
-        monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
+        monkeypatch.setattr("klangk.cli.config.CONFIG_PATH", config_path)
         monkeypatch.setenv("KLANGKC_TERMINAL_OPEN_CMD", "   ")
         cfg = CLIConfig.load()
         assert cfg.get_terminal_open_cmd() == ["kitty"]
@@ -311,7 +311,7 @@ class TestCLIConfig:
 class TestSeedConfig:
     def test_creates_config_if_missing(self, tmp_path, monkeypatch):
         config_path = tmp_path / "klangk.yaml"
-        monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
+        monkeypatch.setattr("klangk.cli.config.CONFIG_PATH", config_path)
         seed_config("http://localhost:8995", "admin@example.com")
         assert config_path.exists()
         cfg = CLIConfig.load()
@@ -322,7 +322,7 @@ class TestSeedConfig:
     def test_does_not_overwrite_existing(self, tmp_path, monkeypatch):
         config_path = tmp_path / "klangk.yaml"
         config_path.write_text("forward-agent: true\n")
-        monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
+        monkeypatch.setattr("klangk.cli.config.CONFIG_PATH", config_path)
         seed_config("http://localhost:8995", "admin@example.com")
         # Should not have been overwritten
         assert "forward-agent" in config_path.read_text()
@@ -332,7 +332,7 @@ class TestSeedConfig:
 
     def test_creates_without_user(self, tmp_path, monkeypatch):
         config_path = tmp_path / "klangk.yaml"
-        monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
+        monkeypatch.setattr("klangk.cli.config.CONFIG_PATH", config_path)
         seed_config("https://klangk.example.com")
         cfg = CLIConfig.load()
         entry = cfg.servers.get("klangk.example.com")
@@ -342,7 +342,7 @@ class TestSeedConfig:
 
     def test_uses_hostname_as_alias(self, tmp_path, monkeypatch):
         config_path = tmp_path / "klangk.yaml"
-        monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
+        monkeypatch.setattr("klangk.cli.config.CONFIG_PATH", config_path)
         seed_config("http://myhost:9000")
         cfg = CLIConfig.load()
         assert "myhost" in cfg.servers
@@ -355,7 +355,7 @@ class TestSeedConfig:
         forward-agent: false globally or per-server; a forwarded agent can be
         abused by an untrusted host."""
         config_path = tmp_path / "klangk.yaml"
-        monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
+        monkeypatch.setattr("klangk.cli.config.CONFIG_PATH", config_path)
         seed_config("http://localhost:8995", "admin@example.com")
         text = config_path.read_text()
         # Present as an active line (on by default)...
@@ -373,7 +373,7 @@ class TestSeedConfig:
 class TestEnsureConfig:
     def test_creates_config_if_missing(self, tmp_path, monkeypatch):
         config_path = tmp_path / "sub" / "klangk.yaml"
-        monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
+        monkeypatch.setattr("klangk.cli.config.CONFIG_PATH", config_path)
         ensure_config()
         assert config_path.exists()
         text = config_path.read_text()
@@ -387,14 +387,14 @@ class TestEnsureConfig:
     def test_does_not_overwrite_existing(self, tmp_path, monkeypatch):
         config_path = tmp_path / "klangk.yaml"
         config_path.write_text("forward-agent: true\n")
-        monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
+        monkeypatch.setattr("klangk.cli.config.CONFIG_PATH", config_path)
         ensure_config()
         assert "forward-agent: true" in config_path.read_text()
 
     def test_parent_dir_created_with_0o700(self, tmp_path, monkeypatch):
         config_dir = tmp_path / "newdir"
         config_path = config_dir / "klangk.yaml"
-        monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
+        monkeypatch.setattr("klangk.cli.config.CONFIG_PATH", config_path)
         ensure_config()
         assert config_dir.stat().st_mode & 0o777 == 0o700
 
@@ -405,7 +405,7 @@ class TestEnsureConfig:
 class TestCLIState:
     def test_load_empty(self, monkeypatch):
         monkeypatch.setattr(
-            "klangk.cli.config._STATE_PATH",
+            "klangk.cli.config.STATE_PATH",
             Path("/nonexistent/klangk-state.yaml"),
         )
         state = CLIState.load()
@@ -422,7 +422,7 @@ class TestCLIState:
             "    user@example.com:\n"
             "      token: tok123\n"
         )
-        monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
+        monkeypatch.setattr("klangk.cli.config.STATE_PATH", state_path)
         state = CLIState.load()
         assert state.active_server == "http://prod:8995"
         ss = state.servers["http://prod:8995"]
@@ -432,7 +432,7 @@ class TestCLIState:
     def test_load_empty_yaml(self, tmp_path, monkeypatch):
         state_path = tmp_path / "klangk-state.yaml"
         state_path.write_text("")
-        monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
+        monkeypatch.setattr("klangk.cli.config.STATE_PATH", state_path)
         state = CLIState.load()
         assert state.active_server is None
         assert state.servers == {}
@@ -448,14 +448,14 @@ class TestCLIState:
             "      token: tok\n"
             "bad-entry: not-a-dict\n"
         )
-        monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
+        monkeypatch.setattr("klangk.cli.config.STATE_PATH", state_path)
         state = CLIState.load()
         assert len(state.servers) == 1
         assert "http://good:8995" in state.servers
 
     def test_save_roundtrip(self, tmp_path, monkeypatch):
         state_path = tmp_path / "klangk-state.yaml"
-        monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
+        monkeypatch.setattr("klangk.cli.config.STATE_PATH", state_path)
         state = CLIState()
         state.set_credentials("http://test:8995", "a@b.com", "tok")
         state.save()
@@ -466,14 +466,14 @@ class TestCLIState:
 
     def test_save_creates_parent_dirs(self, tmp_path, monkeypatch):
         state_path = tmp_path / "sub" / "dir" / "klangk-state.yaml"
-        monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
+        monkeypatch.setattr("klangk.cli.config.STATE_PATH", state_path)
         state = CLIState()
         state.save()
         assert state_path.exists()
 
     def test_save_permissions(self, tmp_path, monkeypatch):
         state_path = tmp_path / "klangk" / "klangk-state.yaml"
-        monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
+        monkeypatch.setattr("klangk.cli.config.STATE_PATH", state_path)
         state = CLIState()
         state.set_credentials("http://test:8995", "u@t.com", "secret")
         state.save()
@@ -482,7 +482,7 @@ class TestCLIState:
 
     def test_save_omits_empty_entries(self, tmp_path, monkeypatch):
         state_path = tmp_path / "klangk-state.yaml"
-        monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
+        monkeypatch.setattr("klangk.cli.config.STATE_PATH", state_path)
         state = CLIState(
             servers={
                 "http://test:8995": ServerState(),  # no users
@@ -497,7 +497,7 @@ class TestCLIState:
 
     def test_save_omits_active_server_when_none(self, tmp_path, monkeypatch):
         state_path = tmp_path / "klangk-state.yaml"
-        monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
+        monkeypatch.setattr("klangk.cli.config.STATE_PATH", state_path)
         state = CLIState()
         state.save()
         import yaml
@@ -610,7 +610,7 @@ class TestAuth:
 
     def test_login_success(self, tmp_path, monkeypatch):
         state_path = tmp_path / "klangk-state.yaml"
-        monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
+        monkeypatch.setattr("klangk.cli.config.STATE_PATH", state_path)
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"access_token": "jwt123"}
@@ -631,7 +631,7 @@ class TestAuth:
 
     def test_login_with_user_flag(self, tmp_path, monkeypatch):
         state_path = tmp_path / "klangk-state.yaml"
-        monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
+        monkeypatch.setattr("klangk.cli.config.STATE_PATH", state_path)
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"access_token": "jwt456"}
@@ -652,7 +652,7 @@ class TestAuth:
 
     def test_login_with_password_file(self, tmp_path, monkeypatch):
         state_path = tmp_path / "klangk-state.yaml"
-        monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
+        monkeypatch.setattr("klangk.cli.config.STATE_PATH", state_path)
         pw_file = tmp_path / "pw.txt"
         pw_file.write_text("file-secret\n")
         mock_resp = MagicMock()
@@ -674,7 +674,7 @@ class TestAuth:
 
     def test_login_reuses_valid_token(self, tmp_path, monkeypatch):
         state_path = tmp_path / "klangk-state.yaml"
-        monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
+        monkeypatch.setattr("klangk.cli.config.STATE_PATH", state_path)
         # Pre-populate state with an existing token
         state = CLIState()
         state.set_credentials(
@@ -698,7 +698,7 @@ class TestAuth:
 
     def test_login_network_error_falls_through(self, tmp_path, monkeypatch):
         state_path = tmp_path / "klangk-state.yaml"
-        monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
+        monkeypatch.setattr("klangk.cli.config.STATE_PATH", state_path)
         state = CLIState()
         state.set_credentials(
             "http://localhost:8995", "old@test.com", "old-token"
@@ -726,7 +726,7 @@ class TestAuth:
 
     def test_login_expired_token_prompts(self, tmp_path, monkeypatch):
         state_path = tmp_path / "klangk-state.yaml"
-        monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
+        monkeypatch.setattr("klangk.cli.config.STATE_PATH", state_path)
         state = CLIState()
         state.set_credentials(
             "http://localhost:8995", "old@test.com", "expired-token"
@@ -757,7 +757,7 @@ class TestAuth:
 
     def test_login_failure(self, tmp_path, monkeypatch):
         state_path = tmp_path / "klangk-state.yaml"
-        monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
+        monkeypatch.setattr("klangk.cli.config.STATE_PATH", state_path)
         mock_resp = MagicMock()
         mock_resp.status_code = 401
         mock_resp.json.return_value = {"detail": "Bad credentials"}
@@ -775,7 +775,7 @@ class TestAuth:
 
     def test_logout_clears_token(self, tmp_path, monkeypatch):
         state_path = tmp_path / "klangk-state.yaml"
-        monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
+        monkeypatch.setattr("klangk.cli.config.STATE_PATH", state_path)
         state = CLIState()
         state.set_credentials("http://localhost:8995", "x@y.com", "tok")
         state.save()
@@ -793,7 +793,7 @@ class TestAuth:
 
     def test_logout_swallows_server_error(self, tmp_path, monkeypatch):
         state_path = tmp_path / "klangk-state.yaml"
-        monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
+        monkeypatch.setattr("klangk.cli.config.STATE_PATH", state_path)
         state = CLIState()
         state.set_credentials("http://localhost:8995", "u@t.com", "tok")
         state.save()
@@ -807,7 +807,7 @@ class TestAuth:
 
     def test_logout_no_existing_token(self, tmp_path, monkeypatch):
         state_path = tmp_path / "klangk-state.yaml"
-        monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
+        monkeypatch.setattr("klangk.cli.config.STATE_PATH", state_path)
         state = CLIState()
         state.save()
         from klangk.cli import auth
@@ -816,7 +816,7 @@ class TestAuth:
 
     def test_logout_only_clears_target_server(self, tmp_path, monkeypatch):
         state_path = tmp_path / "klangk-state.yaml"
-        monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
+        monkeypatch.setattr("klangk.cli.config.STATE_PATH", state_path)
         state = CLIState()
         state.set_credentials("http://server1:8995", "a@a.com", "tok1")
         state.set_credentials("http://server2:8995", "b@b.com", "tok2")
@@ -851,14 +851,14 @@ class TestOIDCCLILogin:
         assert result == {"auth_modes": "both"}
 
     def test_fetch_config_unreachable(self, monkeypatch):
-        from klangk.cli.auth import _UNREACHABLE, fetch_config
+        from klangk.cli.auth import UNREACHABLE, fetch_config
 
         with patch(
             "klangk.cli.transport.httpx.request",
             side_effect=httpx.ConnectError("fail"),
         ):
             result = fetch_config("http://localhost:8995")
-        assert result == _UNREACHABLE
+        assert result == UNREACHABLE
 
     def test_fetch_config_not_klangk(self, monkeypatch):
         from klangk.cli.auth import fetch_config
@@ -876,7 +876,7 @@ class TestOIDCCLILogin:
         from klangk.cli import auth
 
         state_path = tmp_path / "klangk-state.yaml"
-        monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
+        monkeypatch.setattr("klangk.cli.config.STATE_PATH", state_path)
         monkeypatch.setattr(
             "klangk.cli.auth.fetch_config",
             lambda _: {
@@ -884,7 +884,7 @@ class TestOIDCCLILogin:
                 "auth_modes": "oidc",
             },
         )
-        with patch.object(auth, "_oidc_browser_login") as mock_browser:
+        with patch.object(auth, "oidc_browser_login") as mock_browser:
             auth.login("http://localhost:8995")
         mock_browser.assert_called_once()
         assert mock_browser.call_args[0][1] == "test"
@@ -894,7 +894,7 @@ class TestOIDCCLILogin:
         from klangk.cli import auth
 
         state_path = tmp_path / "klangk-state.yaml"
-        monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
+        monkeypatch.setattr("klangk.cli.config.STATE_PATH", state_path)
         monkeypatch.setattr(
             "klangk.cli.auth.fetch_config",
             lambda _: {
@@ -906,7 +906,7 @@ class TestOIDCCLILogin:
             },
         )
         with (
-            patch.object(auth, "_oidc_browser_login") as mock_browser,
+            patch.object(auth, "oidc_browser_login") as mock_browser,
             patch(
                 "klangk.cli.auth.Prompt.ask",
                 return_value="2",
@@ -923,7 +923,7 @@ class TestOIDCCLILogin:
         from klangk.cli import auth
 
         state_path = tmp_path / "klangk-state.yaml"
-        monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
+        monkeypatch.setattr("klangk.cli.config.STATE_PATH", state_path)
         monkeypatch.setattr(
             "klangk.cli.auth.fetch_config",
             lambda _: {
@@ -949,7 +949,7 @@ class TestOIDCCLILogin:
         from klangk.cli import auth
 
         state_path = tmp_path / "klangk-state.yaml"
-        monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
+        monkeypatch.setattr("klangk.cli.config.STATE_PATH", state_path)
         monkeypatch.setattr(
             "klangk.cli.auth.fetch_config",
             lambda _: {
@@ -974,7 +974,7 @@ class TestOIDCCLILogin:
         from klangk.cli import auth
 
         state_path = tmp_path / "klangk-state.yaml"
-        monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
+        monkeypatch.setattr("klangk.cli.config.STATE_PATH", state_path)
         monkeypatch.setattr("klangk.cli.auth.fetch_config", lambda _: {})
         mock_resp = MagicMock()
         mock_resp.status_code = 301
@@ -996,7 +996,7 @@ class TestOIDCCLILogin:
         from klangk.cli import auth
 
         state_path = tmp_path / "klangk-state.yaml"
-        monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
+        monkeypatch.setattr("klangk.cli.config.STATE_PATH", state_path)
         monkeypatch.setattr("klangk.cli.auth.fetch_config", lambda _: {})
         mock_resp = MagicMock()
         mock_resp.status_code = 403
@@ -1019,7 +1019,7 @@ class TestOIDCCLILogin:
         from klangk.cli import auth
 
         state_path = tmp_path / "klangk-state.yaml"
-        monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
+        monkeypatch.setattr("klangk.cli.config.STATE_PATH", state_path)
         monkeypatch.setattr("klangk.cli.auth.fetch_config", lambda _: None)
         with pytest.raises(SystemExit):
             auth.login(
@@ -1033,9 +1033,9 @@ class TestOIDCCLILogin:
         from klangk.cli import auth
 
         state_path = tmp_path / "klangk-state.yaml"
-        monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
+        monkeypatch.setattr("klangk.cli.config.STATE_PATH", state_path)
         monkeypatch.setattr(
-            "klangk.cli.auth.fetch_config", lambda _: auth._UNREACHABLE
+            "klangk.cli.auth.fetch_config", lambda _: auth.UNREACHABLE
         )
         with pytest.raises(SystemExit):
             auth.login(
@@ -1054,7 +1054,7 @@ class TestOIDCCLILogin:
 
         # Start the OIDC callback server (reuse the handler from auth.py)
         # We replicate the handler here to test the actual escaping logic
-        # without needing to invoke _oidc_browser_login (pragma: no cover)
+        # without needing to invoke oidc_browser_login (pragma: no cover)
         import html as html_mod
 
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -1220,7 +1220,7 @@ class TestKlangkClient:
 
     def test_config_returns_authed_payload(self):
         # #1931: config() GETs /api/v1/config through the authed client
-        # (self.get -> _request attaches the Bearer token), so the response
+        # (self.get -> request attaches the Bearer token), so the response
         # carries the auth-gated netfilter_default_domains that the pre-auth
         # fetch_config helper can't see.
         client = KlangkClient("http://test:8995", "token")
@@ -1654,7 +1654,7 @@ class TestKlangkClient:
             return_value=mock_ws,
         ):
             result = asyncio.run(client.close_terminal("alpha", "@1"))
-        # Error surfaced as [] (via _terminals' except), not a hang.
+        # Error surfaced as [] (via terminals' except), not a hang.
         assert result == []
         # _recv_windows stopped at the error frame — it did not loop past
         # the provided frames looking for another terminal_windows.
@@ -2260,7 +2260,7 @@ class TestNoneModeAuth:
     def test_login_none_arm_no_password_prompt(self, tmp_path, monkeypatch):
         """In none mode login() hits /auth/local with no prompt."""
         monkeypatch.setattr(
-            "klangk.cli.config._STATE_PATH", tmp_path / "s.yaml"
+            "klangk.cli.config.STATE_PATH", tmp_path / "s.yaml"
         )
         monkeypatch.setattr(
             "klangk.cli.auth.fetch_config",
@@ -2287,7 +2287,7 @@ class TestNoneModeAuth:
     def test_login_password_arm_unchanged(self, tmp_path, monkeypatch):
         """In password mode login() prompts as before (cache removed)."""
         monkeypatch.setattr(
-            "klangk.cli.config._STATE_PATH", tmp_path / "s.yaml"
+            "klangk.cli.config.STATE_PATH", tmp_path / "s.yaml"
         )
         monkeypatch.setattr(
             "klangk.cli.auth.fetch_config",
@@ -2317,12 +2317,12 @@ class TestRequireAuthNoneMode:
         from klangk.cli import main
 
         monkeypatch.setattr(
-            "klangk.cli.config._STATE_PATH", tmp_path / "s.yaml"
+            "klangk.cli.config.STATE_PATH", tmp_path / "s.yaml"
         )
         monkeypatch.setattr(
-            "klangk.cli.config._CONFIG_PATH", tmp_path / "c.yaml"
+            "klangk.cli.config.CONFIG_PATH", tmp_path / "c.yaml"
         )
-        monkeypatch.setattr(main, "_state_cache", None)
+        monkeypatch.setattr(main, "state_cache", None)
         # Server is already registered (active_server set) — mirroring the
         # scoped behavior where `klangk login <server>` registers it once.
         state = CLIState()
@@ -2343,7 +2343,7 @@ class TestRequireAuthNoneMode:
             "klangk.cli.transport.httpx.request", return_value=local_resp
         ):
             main.require_auth()
-        state = main._state()
+        state = main.state()
         assert state.get_token("http://localhost:8995") == "jwt-auto"
 
     def test_errors_when_not_logged_in_and_not_none(
@@ -2352,9 +2352,9 @@ class TestRequireAuthNoneMode:
         from klangk.cli import main
 
         monkeypatch.setattr(
-            "klangk.cli.config._STATE_PATH", tmp_path / "s.yaml"
+            "klangk.cli.config.STATE_PATH", tmp_path / "s.yaml"
         )
-        monkeypatch.setattr(main, "_state_cache", None)
+        monkeypatch.setattr(main, "state_cache", None)
         state = CLIState()
         state.active_server = "http://localhost:8995"
         state.save()
@@ -2375,12 +2375,12 @@ class TestRequireAuthNoneMode:
         from klangk.cli import main
 
         monkeypatch.setattr(
-            "klangk.cli.config._STATE_PATH", tmp_path / "s.yaml"
+            "klangk.cli.config.STATE_PATH", tmp_path / "s.yaml"
         )
         monkeypatch.setattr(
-            "klangk.cli.config._CONFIG_PATH", tmp_path / "c.yaml"
+            "klangk.cli.config.CONFIG_PATH", tmp_path / "c.yaml"
         )
-        monkeypatch.setattr(main, "_state_cache", None)
+        monkeypatch.setattr(main, "state_cache", None)
         state = CLIState()
         state.active_server = "http://localhost:8995"
         state.save()
@@ -2399,9 +2399,9 @@ class TestRequireAuthNoneMode:
         from klangk.cli import main
 
         monkeypatch.setattr(
-            "klangk.cli.config._STATE_PATH", tmp_path / "s.yaml"
+            "klangk.cli.config.STATE_PATH", tmp_path / "s.yaml"
         )
-        monkeypatch.setattr(main, "_state_cache", None)
+        monkeypatch.setattr(main, "state_cache", None)
         state = CLIState()
         state.active_server = "http://localhost:8995"
         state.save()
@@ -2417,9 +2417,9 @@ class TestRequireAuthNoneMode:
         from klangk.cli import main
 
         monkeypatch.setattr(
-            "klangk.cli.config._STATE_PATH", tmp_path / "s.yaml"
+            "klangk.cli.config.STATE_PATH", tmp_path / "s.yaml"
         )
-        monkeypatch.setattr(main, "_state_cache", None)
+        monkeypatch.setattr(main, "state_cache", None)
         state = CLIState()
         state.active_server = "http://localhost:8995"
         state.save()
@@ -2445,7 +2445,7 @@ class TestMonitorNoneRelogin:
 
         with patch("klangk.cli.monitor.refresh_token", return_value=None):
             with patch(
-                "klangk.cli.monitor._server_mode_is_none", return_value=True
+                "klangk.cli.monitor.server_mode_is_none", return_value=True
             ):
                 with patch(
                     "klangk.cli.monitor.local_login",
@@ -2464,7 +2464,7 @@ class TestMonitorNoneRelogin:
 
         with patch("klangk.cli.monitor.refresh_token", return_value=None):
             with patch(
-                "klangk.cli.monitor._server_mode_is_none", return_value=True
+                "klangk.cli.monitor.server_mode_is_none", return_value=True
             ):
                 with patch(
                     "klangk.cli.monitor.local_login", side_effect=SystemExit(1)
@@ -2482,7 +2482,7 @@ class TestMonitorNoneRelogin:
 
         with patch("klangk.cli.monitor.refresh_token", return_value=None):
             with patch(
-                "klangk.cli.monitor._server_mode_is_none", return_value=False
+                "klangk.cli.monitor.server_mode_is_none", return_value=False
             ):
                 with patch("klangk.cli.monitor.local_login") as m:
                     new = await main.refresh_token_threaded(
@@ -2495,7 +2495,7 @@ class TestMonitorNoneRelogin:
 class TestRefreshToken:
     def test_returns_new_token_on_success(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
-            "klangk.cli.config._STATE_PATH", tmp_path / "s.yaml"
+            "klangk.cli.config.STATE_PATH", tmp_path / "s.yaml"
         )
         new_jwt = _make_jwt(9999999999.0, email="me@test.com")
         mock_resp = MagicMock()
@@ -2536,7 +2536,7 @@ class TestRefreshToken:
 
     def test_handles_unparseable_jwt_email(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
-            "klangk.cli.config._STATE_PATH", tmp_path / "s.yaml"
+            "klangk.cli.config.STATE_PATH", tmp_path / "s.yaml"
         )
         mock_resp = MagicMock()
         mock_resp.status_code = 200
@@ -2555,7 +2555,7 @@ class TestClientTryRefresh:
     def test_try_refresh_updates_token(self):
         client = KlangkClient("http://test:8995", "old-token")
         with patch(
-            "klangk.cli.client._refresh_token", return_value="new-token"
+            "klangk.cli.client.refresh_token", return_value="new-token"
         ):
             assert client._try_refresh() is True
         assert client.token == "new-token"
@@ -2563,7 +2563,7 @@ class TestClientTryRefresh:
     def test_try_refresh_returns_false_on_failure(self):
         client = KlangkClient("http://test:8995", "old-token")
         with (
-            patch("klangk.cli.client._refresh_token", return_value=None),
+            patch("klangk.cli.client.refresh_token", return_value=None),
             # Stub the server-mode probe so it doesn't make a real
             # (DNS-timeout) GET to the unresolvable http://test:8995 (#1989).
             patch("klangk.cli.client._fetch_config", return_value=None),
@@ -2577,9 +2577,9 @@ class TestClientTryRefresh:
 
     def test_try_refresh_relogins_in_none_mode(self, tmp_path, monkeypatch):
         client = KlangkClient("http://test:8995", "old-token")
-        with patch("klangk.cli.client._refresh_token", return_value=None):
+        with patch("klangk.cli.client.refresh_token", return_value=None):
             with patch(
-                "klangk.cli.client._server_mode_is_none", return_value=True
+                "klangk.cli.client.server_mode_is_none", return_value=True
             ):
                 with patch(
                     "klangk.cli.client._local_login",
@@ -2591,9 +2591,9 @@ class TestClientTryRefresh:
 
     def test_try_refresh_skips_relogin_when_not_none_mode(self):
         client = KlangkClient("http://test:8995", "old-token")
-        with patch("klangk.cli.client._refresh_token", return_value=None):
+        with patch("klangk.cli.client.refresh_token", return_value=None):
             with patch(
-                "klangk.cli.client._server_mode_is_none", return_value=False
+                "klangk.cli.client.server_mode_is_none", return_value=False
             ):
                 with patch("klangk.cli.client._local_login") as m:
                     assert client._try_refresh() is False
@@ -2604,9 +2604,9 @@ class TestClientTryRefresh:
         self, tmp_path, monkeypatch
     ):
         client = KlangkClient("http://test:8995", "old-token")
-        with patch("klangk.cli.client._refresh_token", return_value=None):
+        with patch("klangk.cli.client.refresh_token", return_value=None):
             with patch(
-                "klangk.cli.client._server_mode_is_none", return_value=True
+                "klangk.cli.client.server_mode_is_none", return_value=True
             ):
                 with patch(
                     "klangk.cli.client._local_login", side_effect=SystemExit(1)
@@ -2627,9 +2627,7 @@ class TestClientRetryOn401:
                 "klangk.cli.client.request_with_retry",
                 side_effect=[resp_401, resp_200],
             ),
-            patch(
-                "klangk.cli.client._refresh_token", return_value="new-token"
-            ),
+            patch("klangk.cli.client.refresh_token", return_value="new-token"),
         ):
             result = client.get("/api/v1/workspaces")
         assert result.status_code == 200
@@ -2644,7 +2642,7 @@ class TestClientRetryOn401:
                 "klangk.cli.client.request_with_retry",
                 return_value=resp_401,
             ),
-            patch("klangk.cli.client._refresh_token", return_value=None),
+            patch("klangk.cli.client.refresh_token", return_value=None),
             # Stub the server-mode probe so _try_refresh doesn't make a real
             # (DNS-timeout) GET to the unresolvable http://test:8995 (#1989).
             patch("klangk.cli.client._fetch_config", return_value=None),
@@ -2669,7 +2667,7 @@ class TestClientRetryOn401:
                 return_value=resp_401,
             ),
             patch(
-                "klangk.cli.client._refresh_token",
+                "klangk.cli.client.refresh_token",
                 side_effect=counting_refresh,
             ),
         ):
@@ -2683,7 +2681,7 @@ class TestClientRetryOn401:
         token = _make_jwt(time.time() + 60)  # expiring soon
         client = KlangkClient("http://test:8995", token)
         with patch(
-            "klangk.cli.client._refresh_token", return_value="refreshed"
+            "klangk.cli.client.refresh_token", return_value="refreshed"
         ):
             headers = client._headers()
         assert headers["Authorization"] == "Bearer refreshed"
@@ -2720,7 +2718,7 @@ class TestWs4002Refresh:
             token="old-token",
         )
         with patch(
-            "klangk.cli.client._refresh_token", return_value="new-token"
+            "klangk.cli.client.refresh_token", return_value="new-token"
         ):
             await session.stdout_loop()
         output = "".join(captured)
@@ -2755,7 +2753,7 @@ class TestWs4002Refresh:
             token="old-token",
         )
         with (
-            patch("klangk.cli.client._refresh_token", return_value=None),
+            patch("klangk.cli.client.refresh_token", return_value=None),
             # Stub the server-mode probe so the refresh-failure path doesn't
             # make a real (DNS-timeout) GET to http://test:8995 (#1989).
             patch("klangk.cli.client._fetch_config", return_value=None),
@@ -2792,9 +2790,9 @@ class TestWs4002Refresh:
             server_url="http://test:8995",
             token="old-token",
         )
-        with patch("klangk.cli.client._refresh_token", return_value=None):
+        with patch("klangk.cli.client.refresh_token", return_value=None):
             with patch(
-                "klangk.cli.client._server_mode_is_none", return_value=True
+                "klangk.cli.client.server_mode_is_none", return_value=True
             ):
                 with patch(
                     "klangk.cli.client._local_login",
@@ -2832,9 +2830,9 @@ class TestWs4002Refresh:
             server_url="http://test:8995",
             token="old-token",
         )
-        with patch("klangk.cli.client._refresh_token", return_value=None):
+        with patch("klangk.cli.client.refresh_token", return_value=None):
             with patch(
-                "klangk.cli.client._server_mode_is_none", return_value=True
+                "klangk.cli.client.server_mode_is_none", return_value=True
             ):
                 with patch(
                     "klangk.cli.client._local_login", side_effect=SystemExit(1)
@@ -3587,7 +3585,7 @@ class TestMisc:
 
     def test_login_success_stores_email(self, tmp_path, monkeypatch):
         state_path = tmp_path / "klangk-state.yaml"
-        monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
+        monkeypatch.setattr("klangk.cli.config.STATE_PATH", state_path)
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"access_token": "jwt"}
@@ -4799,7 +4797,7 @@ class TestCliBranchGaps2834:
         client = MagicMock()
         client.get = MagicMock(return_value=resp)
         client.check_auth = MagicMock()
-        monkeypatch.setattr("klangk.cli.context._client", lambda: client)
+        monkeypatch.setattr("klangk.cli.context.client", lambda: client)
         assert authcmds.admin_status("tok") is None
 
     def test_set_email_without_prior_email_skips_rename(self, monkeypatch):
@@ -4809,15 +4807,15 @@ class TestCliBranchGaps2834:
         state = MagicMock()
         state.get_email = lambda url: None  # no prior email
         state.rename_user = MagicMock()
-        monkeypatch.setattr("klangk.cli.context._state", lambda: state)
+        monkeypatch.setattr("klangk.cli.context.state", lambda: state)
         monkeypatch.setattr("klangk.cli.context.require_auth", lambda: None)
         monkeypatch.setattr(
             "klangk.cli.context.server_url",
             lambda: "http://test:8995",
         )
-        monkeypatch.setattr("klangk.cli.context._err", MagicMock())
+        monkeypatch.setattr("klangk.cli.context.err", MagicMock())
         client = MagicMock()
-        monkeypatch.setattr("klangk.cli.context._client", lambda: client)
+        monkeypatch.setattr("klangk.cli.context.client", lambda: client)
         monkeypatch.setattr(
             "klangk.cli.authcmds.Prompt.ask",
             lambda *a, **kw: "new@example.com",
@@ -4836,10 +4834,10 @@ class TestCliBranchGaps2834:
         assert restart_needed(ws, body) is False
 
     def test_validate_create_specs_accepts_valid_mounts(self):
-        from klangk.cli.workspaces import _validate_create_specs
+        from klangk.cli.workspaces import validate_create_specs
 
         # A fully valid mount list walks every spec without exiting.
-        _validate_create_specs(["/srv/data:/data:ro"], [], [])
+        validate_create_specs(["/srv/data:/data:ro"], [], [])
 
 
 class TestCliBranchGaps2834b:
@@ -4858,7 +4856,7 @@ class TestCliBranchGaps2834b:
             return MagicMock(returncode=0)
 
         with patch.object(monitor.subprocess, "run", fake_run):
-            monitor._dispatch_monitor_event(
+            monitor.dispatch_monitor_event(
                 {"type": "workspace_created"}, ["/bin/true"]
             )
         env = calls["env"]
@@ -4875,7 +4873,7 @@ class TestCliBranchGaps2834b:
             return MagicMock(returncode=0)
 
         with patch.object(monitor.subprocess, "run", fake_run):
-            monitor._dispatch_monitor_event(
+            monitor.dispatch_monitor_event(
                 {
                     "type": "service_health",
                     "workspace_id": "ws-1",
@@ -4902,7 +4900,7 @@ class TestCliBranchGaps2834b:
         proc.returncode = 0
         with patch.object(shell_popup.subprocess, "run", return_value=proc):
             with caplog.at_level("WARNING"):
-                rc = shell_popup._default_run(
+                rc = shell_popup.default_run(
                     ["/usr/bin/tmux", "list-sessions"], quiet=False
                 )
         assert rc == 0
@@ -5257,7 +5255,7 @@ class TestCliBranchGaps2834c:
         client.list_workspaces.return_value = [ws]
         with (
             patch("klangk.cli.context.require_auth", lambda: None),
-            patch("klangk.cli.context._client", lambda: client),
+            patch("klangk.cli.context.client", lambda: client),
         ):
             wsmod.list_workspaces(shared=False, plain=False)
         out = capsys.readouterr().out
@@ -5279,7 +5277,7 @@ class TestCliBranchGaps2834c:
         client.list_shared_workspaces.return_value = []
         with (
             patch("klangk.cli.context.require_auth", lambda: None),
-            patch("klangk.cli.context._client", lambda: client),
+            patch("klangk.cli.context.client", lambda: client),
         ):
             wsmod.list_workspaces(plain=True, shared=False)
         out = capsys.readouterr().out
@@ -5300,7 +5298,7 @@ class TestCliBranchGaps2834c:
             "    ok:\n"
             "      token: tk\n"
         )
-        with patch.object(cfgmod, "_STATE_PATH", state_file):
+        with patch.object(cfgmod, "STATE_PATH", state_file):
             state = cfgmod.CLIState.load()
         assert "ok" in state.servers["http://t"].users
         assert "broken" not in state.servers["http://t"].users
@@ -5321,7 +5319,7 @@ class TestCliBranchGaps2834c:
                 )
             },
         )
-        with patch.object(cfgmod, "_STATE_PATH", state_file):
+        with patch.object(cfgmod, "STATE_PATH", state_file):
             state.save()
         text = state_file.read_text()
         assert "tok_user" in text
@@ -5418,7 +5416,7 @@ class TestCliBranchGaps2834d:
             return None  # agent gone: no reply, no raise
 
         task = asyncio.create_task(session.ssh_agent_relay_loop())
-        with patch.object(client_mod, "_query_local_ssh_agent", _none):
+        with patch.object(client_mod, "query_local_ssh_agent", _none):
             for _ in range(100):
                 if session.agent_queue.empty():
                     break
@@ -5475,8 +5473,8 @@ class TestCliBranchGaps2834d:
                 lambda client, w, f: ws,
             ),
             patch.object(sandboxcmd, "run_sandbox_setup") as setup,
-            patch("klangk.cli.context._client"),
-            patch("klangk.cli.context._err", MagicMock()),
+            patch("klangk.cli.context.client"),
+            patch("klangk.cli.context.err", MagicMock()),
             patch("pathlib.Path.resolve", lambda self: root),
         ):
             sandboxcmd.sandbox("existing", str(root), force=False)
@@ -5489,7 +5487,7 @@ class TestCliBranchGaps2834d:
 
         with (
             patch("klangk.cli.context.session_token", lambda: ""),
-            patch("klangk.cli.context._err", MagicMock()),
+            patch("klangk.cli.context.err", MagicMock()),
         ):
             import typer as typer_mod
 

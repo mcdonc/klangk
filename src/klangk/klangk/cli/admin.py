@@ -49,14 +49,14 @@ vol_app = typer.Typer(
 context.app.add_typer(vol_app, name="volumes")
 
 
-def _admin_error(resp) -> None:
+def admin_error(resp) -> None:
     """Print a backend error detail and exit 1 for an admin API response."""
     detail = (
         resp.json().get("detail", resp.text)
         if resp.headers.get("content-type", "").startswith("application/json")
         else resp.text
     )
-    context._err.print(f"[red]{detail}[/red]")
+    context.err.print(f"[red]{detail}[/red]")
     raise typer.Exit(code=1)
 
 
@@ -69,14 +69,14 @@ def admin_users_ls(
 ) -> None:
     """List all user accounts (admin only)."""
     context.require_auth()
-    client = context._client()
+    client = context.client()
     resp = client.get(
         "/api/v1/admin/users",
         params={"page": page, "page_size": page_size},
     )
     client.check_auth(resp)
     if resp.status_code != 200:
-        _admin_error(resp)
+        admin_error(resp)
     body = resp.json()
     users = body.get("users", [])
     if not users:
@@ -129,21 +129,21 @@ def admin_users_set_password(
     password hash, so this is the non-lockout path for the hero.
     """
     context.require_auth()
-    client = context._client()
+    client = context.client()
     # Resolve email-or-handle -> user id. /users/search is prefix-match
     # (LIKE) on email *and* handle (#616), so exact-match the result on
     # either field; both are unique so there's at most one.
     search = client.get("/api/v1/users/search", params={"q": email})
     client.check_auth(search)
     if search.status_code != 200:
-        _admin_error(search)
+        admin_error(search)
     matches = [
         u
         for u in search.json()
         if u.get("email") == email or u.get("handle") == email
     ]
     if not matches:
-        context._err.print(
+        context.err.print(
             f"[red]No user found with email or handle {email}[/red]"
         )
         raise typer.Exit(code=1)
@@ -153,7 +153,7 @@ def admin_users_set_password(
         password = Prompt.ask("[bold]New password[/bold]", password=True)
         confirm = Prompt.ask("[bold]Confirm password[/bold]", password=True)
         if password != confirm:
-            context._err.print("[red]Passwords do not match[/red]")
+            context.err.print("[red]Passwords do not match[/red]")
             raise typer.Exit(code=1)
 
     resp = client.patch(
@@ -162,7 +162,7 @@ def admin_users_set_password(
     )
     client.check_auth(resp)
     if resp.status_code != 200:
-        _admin_error(resp)
+        admin_error(resp)
     Console().print(f"Password set for [bold]{email}[/bold]")
 
 
@@ -178,14 +178,14 @@ def admin_invitations_send(
     # instead of surfacing the API error after the round-trip.
     err = account.validate_email(email)
     if err:
-        context._err.print(f"[red]{err}[/red]")
+        context.err.print(f"[red]{err}[/red]")
         raise typer.Exit(code=1)
     context.require_auth()
-    client = context._client()
+    client = context.client()
     resp = client.post("/api/v1/admin/invitations", json={"email": email})
     client.check_auth(resp)
     if resp.status_code != 200:
-        _admin_error(resp)
+        admin_error(resp)
     Console().print(f"Invitation sent to [bold]{email}[/bold]")
 
 
@@ -193,11 +193,11 @@ def admin_invitations_send(
 def admin_invitations_ls() -> None:
     """List all invitations (admin only)."""
     context.require_auth()
-    client = context._client()
+    client = context.client()
     resp = client.get("/api/v1/admin/invitations?page_size=200")
     client.check_auth(resp)
     if resp.status_code != 200:
-        _admin_error(resp)
+        admin_error(resp)
     data = resp.json().get("invitations", [])
     if not data:
         typer.echo("No invitations.")
@@ -224,7 +224,7 @@ def volumes_list(
 ) -> None:
     """List klangk-managed container volumes."""
     context.require_auth()
-    client = context._client()
+    client = context.client()
     resp = client.get("/api/v1/volumes")
     client.check_auth(resp)
     resp.raise_for_status()
@@ -251,11 +251,11 @@ def volumes_create(
 ) -> None:
     """Create a named container volume."""
     context.require_auth()
-    client = context._client()
+    client = context.client()
     resp = client.post("/api/v1/volumes", json={"name": name})
     client.check_auth(resp)
     if resp.status_code == 409:
-        context._err.print(f"[red]Volume already exists:[/red] {name}")
+        context.err.print(f"[red]Volume already exists:[/red] {name}")
         raise typer.Exit(code=1)
     resp.raise_for_status()
     typer.echo(f"Created volume {name}")
@@ -267,17 +267,17 @@ def volumes_rm(
 ) -> None:
     """Delete a named container volume."""
     context.require_auth()
-    client = context._client()
+    client = context.client()
     resp = client.delete(f"/api/v1/volumes/{name}")
     client.check_auth(resp)
     if resp.status_code == 403:
-        context._err.print(f"[red]Permission denied:[/red] {name}")
+        context.err.print(f"[red]Permission denied:[/red] {name}")
         raise typer.Exit(code=1)
     if resp.status_code == 404:
-        context._err.print(f"[red]Volume not found:[/red] {name}")
+        context.err.print(f"[red]Volume not found:[/red] {name}")
         raise typer.Exit(code=1)
     if resp.status_code == 409:
-        context._err.print(f"[red]Volume is in use:[/red] {name}")
+        context.err.print(f"[red]Volume is in use:[/red] {name}")
         raise typer.Exit(code=1)
     resp.raise_for_status()
     typer.echo(f"Deleted volume {name}")
@@ -327,8 +327,8 @@ def consent_decide(
     spectators are watch-only).
     """
     context.require_auth()
-    client = context._client()
-    ws = _resolve_workspace_for_consent(client, workspace)
+    client = context.client()
+    ws = resolve_workspace_for_consent(client, workspace)
     token = context.session_token()
     # Lazy import so the textual dep only loads on this command path.
     # allow-deferred-import (textual, this path only)
@@ -346,13 +346,13 @@ def consent_decide(
     ).run()
 
 
-def _resolve_workspace_for_consent(client: KlangkClient, arg: str):
+def resolve_workspace_for_consent(client: KlangkClient, arg: str):
     """Resolve a workspace name OR id to a Workspace (for consent-decide)."""
     all_ws = client.list_workspaces(all_pages=True) + (
         client.list_shared_workspaces(all_pages=True)
     )
     match = next((w for w in all_ws if w.id == arg or w.name == arg), None)
     if match is None:
-        context._err.print(f"[red]No such workspace:[/red] {arg}")
+        context.err.print(f"[red]No such workspace:[/red] {arg}")
         raise typer.Exit(code=1)
     return match

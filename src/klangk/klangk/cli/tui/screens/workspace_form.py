@@ -31,7 +31,7 @@ from ...mount import (
     validate_allowed_domain_spec,
     validate_mount_spec,
 )
-from ._base import (
+from .base import (
     ConfirmScreen,
     NonFocusableVerticalScroll,
     StatusScreen,
@@ -70,7 +70,7 @@ def _cpu_setting(screen: Screen) -> float | None:
     return cpu
 
 
-def _collect_settings(screen: Screen) -> dict | None:
+def collect_settings(screen: Screen) -> dict | None:
     """Read the resource-limit inputs and return a settings dict, or None.
 
     Raises ``ValueError`` (field-named) on invalid input so the form can
@@ -480,7 +480,7 @@ class WorkspaceFormMixin:
             return
         err = validate(v)
         if err:
-            self._msg(err, error=True)
+            self.msg(err, error=True)
             return
         idx = getattr(self, editing_attr) if editing_attr else None
         replacing = idx is not None and 0 <= idx < len(entries)
@@ -491,7 +491,7 @@ class WorkspaceFormMixin:
         if replacing and editing_attr:
             setattr(self, editing_attr, None)
         inp.value = ""
-        self._msg("")
+        self.msg("")
         render()
 
     def _remove_list_entry(
@@ -533,7 +533,7 @@ class WorkspaceFormMixin:
         inp = self.query_one(input_id, Input)
         inp.value = entries[idx]
         inp.focus()
-        self._msg(f"Editing {label} — press Add to update.")
+        self.msg(f"Editing {label} — press Add to update.")
 
     # --- env (dict-keyed) editor actions, the analogue of the string
     # list editors above; #1778 in-place edits track a key rather than
@@ -552,7 +552,7 @@ class WorkspaceFormMixin:
             return
         err = validate_env_entry(v)
         if err:
-            self._msg(err, error=True)
+            self.msg(err, error=True)
             return
         key, _, value = v.partition("=")
         if editing_attr:
@@ -562,7 +562,7 @@ class WorkspaceFormMixin:
                 setattr(self, editing_attr, None)
         self._env[key] = value
         inp.value = ""
-        self._msg("")
+        self.msg("")
         self._render_env()
 
     def remove_env_entry(self, editing_attr: str | None = None) -> None:
@@ -821,7 +821,7 @@ class CreateWorkspaceScreen(WorkspaceFormMixin, TabSkipMixin, StatusScreen):
         phh_cb.display = self._default_per_handle_home is not None
         phh_cb.disabled = self._default_per_handle_home is None
 
-    def _msg(self, text: str, *, error: bool = False) -> None:
+    def msg(self, text: str, *, error: bool = False) -> None:
         self.query_one("#create_msg", Static).update(
             Text(text, style="red" if error else "")
         )
@@ -945,13 +945,13 @@ class CreateWorkspaceScreen(WorkspaceFormMixin, TabSkipMixin, StatusScreen):
     def _create(self) -> None:
         name = self.query_one("#name", Input).value.strip()
         if not name:
-            self._msg("Name is required.", error=True)
+            self.msg("Name is required.", error=True)
             return
         p = self._create_payload()
         try:
-            settings = _collect_settings(self)
+            settings = collect_settings(self)
         except ValueError as exc:
-            self._msg(str(exc), error=True)
+            self.msg(str(exc), error=True)
             return
         if self._nix_available and self.query_one("#nix", Checkbox).value:
             settings = {**(settings or {}), "nix": True}
@@ -1023,10 +1023,10 @@ class CreateWorkspaceScreen(WorkspaceFormMixin, TabSkipMixin, StatusScreen):
                 detail = exc.response.json().get("detail", exc.response.text)
             except (ValueError, KeyError):
                 detail = exc.response.text or str(exc)
-            self._msg(f"Failed to create: {detail}", error=True)
+            self.msg(f"Failed to create: {detail}", error=True)
             return
         except Exception as exc:
-            self._msg(f"Failed to create: {exc}", error=True)
+            self.msg(f"Failed to create: {exc}", error=True)
             return
         self.dismiss(ws.name)
 
@@ -1253,7 +1253,7 @@ class EditWorkspaceScreen(WorkspaceFormMixin, TabSkipMixin, StatusScreen):
     def on_mount(self) -> None:
         self.form_on_mount()
 
-    def _msg(self, text: str, *, error: bool = False) -> None:
+    def msg(self, text: str, *, error: bool = False) -> None:
         self.query_one("#edit_msg", Static).update(
             Text(text, style="red" if error else "")
         )
@@ -1323,7 +1323,7 @@ class EditWorkspaceScreen(WorkspaceFormMixin, TabSkipMixin, StatusScreen):
         inp = self.query_one("#env_input", Input)
         inp.value = f"{key}={self._env[key]}"
         inp.focus()
-        self._msg("Editing env var — press Add to update.")
+        self.msg("Editing env var — press Add to update.")
 
     def _edit_allowed_domain(self) -> None:
         self._edit_list_entry(
@@ -1432,9 +1432,9 @@ class EditWorkspaceScreen(WorkspaceFormMixin, TabSkipMixin, StatusScreen):
         }
 
     def _merged_save_settings(self) -> dict:
-        """The settings bag for the PUT body: _collect_settings merged over
+        """The settings bag for the PUT body: collect_settings merged over
         the existing bag, plus the shown nix/sudo toggles."""
-        settings = _collect_settings(self)
+        settings = collect_settings(self)
         # PUT settings is a full-replace bag, so seed from the existing
         # bag unconditionally — API-only keys the form does not represent
         # (e.g. bridge_timeout) and toggle-gated keys (nix, allow_sudo)
@@ -1461,11 +1461,11 @@ class EditWorkspaceScreen(WorkspaceFormMixin, TabSkipMixin, StatusScreen):
 
     def _save_body(self, name: str) -> dict | None:
         """Gather the form fields into a PUT body; None on invalid input
-        (the error has already been shown via ``_msg``)."""
+        (the error has already been shown via ``msg``)."""
         try:
             merged_settings = self._merged_save_settings()
         except ValueError as exc:
-            self._msg(str(exc), error=True)
+            self.msg(str(exc), error=True)
             return None
         body = {
             "name": name,
@@ -1538,17 +1538,17 @@ class EditWorkspaceScreen(WorkspaceFormMixin, TabSkipMixin, StatusScreen):
             body, ws
         ) or self._settings_changed_since_create(body, ws)
 
-    def _save(self) -> None:
+    def save(self) -> None:
         name = self.query_one("#name", Input).value.strip()
         if not name:
-            self._msg("Name is required.", error=True)
+            self.msg("Name is required.", error=True)
             return
         body = self._save_body(name)
         if body is None:
             return
         ws = self._ws
         self.run_worker(
-            self._do_save(
+            self.do_save(
                 name, body, ws, self._restart_needed_after_save(body)
             ),
             exit_on_error=False,
@@ -1566,7 +1566,7 @@ class EditWorkspaceScreen(WorkspaceFormMixin, TabSkipMixin, StatusScreen):
         if self in self.app.screen_stack:
             self.dismiss(result)
 
-    async def _do_save(self, name, body, ws, restart_needed) -> None:
+    async def do_save(self, name, body, ws, restart_needed) -> None:
         try:
             await asyncio.to_thread(
                 self.app.tui_state.update_workspace, ws.id, **body
@@ -1579,10 +1579,10 @@ class EditWorkspaceScreen(WorkspaceFormMixin, TabSkipMixin, StatusScreen):
                 detail = exc.response.json().get("detail", exc.response.text)
             except Exception:
                 detail = exc.response.text or str(exc)
-            self._msg(f"Failed to save: {detail}", error=True)
+            self.msg(f"Failed to save: {detail}", error=True)
             return
         except Exception as exc:
-            self._msg(f"Failed to save: {exc}", error=True)
+            self.msg(f"Failed to save: {exc}", error=True)
             return
         if restart_needed:
 
@@ -1614,7 +1614,7 @@ class EditWorkspaceScreen(WorkspaceFormMixin, TabSkipMixin, StatusScreen):
                 self.app.tui_state.restart_workspace, ws_name
             )
         except Exception as exc:
-            self._msg(f"Saved, but restart failed: {exc}", error=True)
+            self.msg(f"Saved, but restart failed: {exc}", error=True)
             return
         self._safe_dismiss(dismiss_name)
 
@@ -1625,7 +1625,7 @@ class EditWorkspaceScreen(WorkspaceFormMixin, TabSkipMixin, StatusScreen):
             event,
             submit_id="save",
             cancel_result=False,
-            submit=self._save,
+            submit=self.save,
         )
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
@@ -1641,7 +1641,7 @@ class EditWorkspaceScreen(WorkspaceFormMixin, TabSkipMixin, StatusScreen):
                 "memory_limit",
                 "pids_limit",
             ),
-            submit=self._save,
+            submit=self.save,
         )
 
 

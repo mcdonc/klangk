@@ -141,8 +141,8 @@ def tui_state(base_url, token, tmp_path, monkeypatch):
     # Write a temporary CLI config/state so TuiState can find the server.
     config_path = tmp_path / "klangk.yaml"
     state_path = tmp_path / "state.yaml"
-    monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
-    monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
+    monkeypatch.setattr("klangk.cli.config.CONFIG_PATH", config_path)
+    monkeypatch.setattr("klangk.cli.config.STATE_PATH", state_path)
     # Seed config with the server.
     add_server_to_config("e2e", base_url)
     # Write state with the token.
@@ -190,9 +190,9 @@ def _api_get_workspace(base_url, token, ws_id):
 def _api_wait_for_workspace_name(base_url, token, ws_id, name, timeout=15.0):
     """Poll the API until workspace ``ws_id``'s name becomes ``name``.
 
-    The TUI edit form persists in a background worker (``_save`` ->
-    ``run_worker(_do_save)``), so a rename lands asynchronously and reading
-    the API immediately after ``_save()`` races the worker's PUT (#2185).
+    The TUI edit form persists in a background worker (``save`` ->
+    ``run_worker(do_save)``), so a rename lands asynchronously and reading
+    the API immediately after ``save()`` races the worker's PUT (#2185).
     Poll until it lands instead of asserting on a single read.
     """
     deadline = time.monotonic() + timeout
@@ -224,8 +224,8 @@ class TestTuiE2E:
         """An unauthenticated TuiState lands on the login screen."""
         config_path = tmp_path / "klangk.yaml"
         state_path = tmp_path / "state.yaml"
-        monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
-        monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
+        monkeypatch.setattr("klangk.cli.config.CONFIG_PATH", config_path)
+        monkeypatch.setattr("klangk.cli.config.STATE_PATH", state_path)
         state = TuiState()
         app = KlangkApp(state)
         async with app.run_test() as pilot:
@@ -238,8 +238,8 @@ class TestTuiE2E:
         """Login with wrong password shows an error."""
         config_path = tmp_path / "klangk.yaml"
         state_path = tmp_path / "state.yaml"
-        monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
-        monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
+        monkeypatch.setattr("klangk.cli.config.CONFIG_PATH", config_path)
+        monkeypatch.setattr("klangk.cli.config.STATE_PATH", state_path)
         add_server_to_config("e2e", base_url)
         st = CLIState.load()
         st.active_server = base_url
@@ -279,8 +279,8 @@ class TestTuiE2E:
         """Login with empty fields shows validation message."""
         config_path = tmp_path / "klangk.yaml"
         state_path = tmp_path / "state.yaml"
-        monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
-        monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
+        monkeypatch.setattr("klangk.cli.config.CONFIG_PATH", config_path)
+        monkeypatch.setattr("klangk.cli.config.STATE_PATH", state_path)
         add_server_to_config("e2e", base_url)
         st = CLIState.load()
         st.active_server = base_url
@@ -304,8 +304,8 @@ class TestTuiE2E:
         """Quitting and re-launching skips the login screen (#1813)."""
         config_path = tmp_path / "klangk.yaml"
         state_path = tmp_path / "state.yaml"
-        monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
-        monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
+        monkeypatch.setattr("klangk.cli.config.CONFIG_PATH", config_path)
+        monkeypatch.setattr("klangk.cli.config.STATE_PATH", state_path)
 
         # First launch: seed credentials (simulates a prior login session).
         add_server_to_config("e2e", base_url)
@@ -587,12 +587,12 @@ class TestTuiE2E:
                 # Change the name.
                 app.screen.query_one("#name", Input).value = new_name
                 # Submit.
-                app.screen._save()
+                app.screen.save()
                 await _settle(app, pilot)
                 await pilot.pause()
 
-            # The edit form persists via a background worker (_save ->
-            # run_worker(_do_save)), so a rename lands asynchronously; poll
+            # The edit form persists via a background worker (save ->
+            # run_worker(do_save)), so a rename lands asynchronously; poll
             # until it shows up rather than racing the worker's PUT (#2185).
             ws = _api_wait_for_workspace_name(base_url, token, ws_id, new_name)
             assert ws["name"] == new_name
@@ -648,7 +648,7 @@ class TestTuiE2E:
                 assert isinstance(app.screen, EditWorkspaceScreen)
                 # Clear name and submit.
                 app.screen.query_one("#name", Input).value = ""
-                app.screen._save()
+                app.screen.save()
                 await pilot.pause()
                 # Should still be on edit screen with error.
                 assert isinstance(app.screen, EditWorkspaceScreen)

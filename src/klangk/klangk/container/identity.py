@@ -15,7 +15,7 @@ import re
 # ---------------------------------------------------------------------------
 
 
-def _workspace_name_slug(name: str, *, limit: int = 24) -> str:
+def workspace_name_slug(name: str, *, limit: int = 24) -> str:
     """Sanitize a workspace name for embedding in a container name (#2286).
 
     Podman container names must match ``[a-zA-Z0-9][a-zA-Z0-9_.-]*``. Lowercase,
@@ -28,12 +28,12 @@ def _workspace_name_slug(name: str, *, limit: int = 24) -> str:
     return slug[:limit].strip("-")
 
 
-def _workspace_container_name(iid: str, workspace_id: str, slug: str) -> str:
+def workspace_container_name(iid: str, workspace_id: str, slug: str) -> str:
     """The workspace container name: iid + slugified name + id[:8] (#2286).
 
     Falls back to an id-only name when the slug is empty (all-symbol / missing
     name). Uniqueness is iid + id; the slug is decorative. The network sidecar
-    name (:meth:`ContainerRegistry._network_sidecar_name`) shares the id[:8]
+    name (:meth:`ContainerRegistry.network_sidecar_name`) shares the id[:8]
     tail so an id-prefix grep matches the pair.
     """
     if slug:
@@ -59,7 +59,7 @@ class BrowserRouter:
     """
 
     def __init__(self) -> None:
-        self._browsers: dict[str, tuple[str, object | None]] = {}
+        self.browsers: dict[str, tuple[str, object | None]] = {}
 
     def register_browser(
         self, browser_id: str, workspace_id: str, sock: object
@@ -69,11 +69,11 @@ class BrowserRouter:
         Idempotent: the same *browser_id* can re-register with a new
         *sock* after a browser refresh (sessionStorage keeps the ID).
         """
-        self._browsers[browser_id] = (workspace_id, sock)
+        self.browsers[browser_id] = (workspace_id, sock)
 
     def resolve_browser(self, browser_id: str) -> tuple[str, object] | None:
         """Look up (workspace_id, sock) for a browser ID."""
-        return self._browsers.get(browser_id)
+        return self.browsers.get(browser_id)
 
     def revoke_workspace_browsers(self, workspace_id: str) -> None:
         """Remove ALL browser registrations for a workspace.
@@ -82,16 +82,16 @@ class BrowserRouter:
         """
         to_remove = [
             bid
-            for bid, (ws, _s) in self._browsers.items()
+            for bid, (ws, _s) in self.browsers.items()
             if ws == workspace_id
         ]
         for bid in to_remove:
-            del self._browsers[bid]
+            del self.browsers[bid]
 
     def revoke_browser(self, sock: object) -> None:
         """Remove all browser registrations bound to a specific socket."""
         to_remove = [
-            bid for bid, (_ws, s) in self._browsers.items() if s is sock
+            bid for bid, (_ws, s) in self.browsers.items() if s is sock
         ]
         for bid in to_remove:
-            del self._browsers[bid]
+            del self.browsers[bid]

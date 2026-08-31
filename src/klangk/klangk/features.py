@@ -52,15 +52,15 @@ _FRONTEND_SCOPES = {"frontend", "both"}
 # — no denylist / reserved-set needed, and nothing to keep in sync between
 # this file and the build emitter (#1662). Non-KLANGKD_ environment poison
 # (``PATH``, ``HOME``, ``LD_PRELOAD``, …) is rejected by the same rule.
-# Mirrors _CONTAINER_ENV_KEY_PREFIX in scripts/import_dart_features.py.
-_CONTAINER_ENV_KEY_PREFIX = "KLANGKWS_FEATURE_"
+# Mirrors CONTAINER_ENV_KEY_PREFIX in scripts/import_dart_features.py.
+CONTAINER_ENV_KEY_PREFIX = "KLANGKWS_FEATURE_"
 
 # Features.json is a build artifact shipped in the wheel — not attacker-
 # controlled at runtime — but cap its read size as defense-in-depth against
 # a buggy build emitting a runaway structure (#1662). The real manifest is
 # ~1KB for 7 features; 1MB is a generous ceiling that still rejects any
 # pathological growth.
-_MAX_MANIFEST_BYTES = 1024 * 1024
+MAX_MANIFEST_BYTES = 1024 * 1024
 
 # Feature names that were removed from the product. A deploy that still
 # lists one in ``KLANGKD_FEATURES_ENABLE`` boots fine — the name simply
@@ -92,7 +92,7 @@ def warn_removed_features(raw: str | None) -> None:
 def is_valid_container_env_key(key: str) -> bool:
     """True if *key* is a safe container-env declaration.
 
-    Must start with :data:`_CONTAINER_ENV_KEY_PREFIX` (``KLANGKWS_FEATURE_``).
+    Must start with :data:`CONTAINER_ENV_KEY_PREFIX` (``KLANGKWS_FEATURE_``).
     That prefix is the feature-config namespace; every server setting is
     ``KLANGKD_<SETTING>`` (no ``FEATURE_`` infix), so the prefix alone keeps
     feature-declared container env vars from ever colliding with a server
@@ -100,7 +100,7 @@ def is_valid_container_env_key(key: str) -> bool:
     Used by both the runtime resolver (here) and re-implemented by the build
     emitter (``import_dart_features.py``).
     """
-    return key.startswith(_CONTAINER_ENV_KEY_PREFIX)
+    return key.startswith(CONTAINER_ENV_KEY_PREFIX)
 
 
 def _deploy_feature_names(raw: str) -> set[str]:
@@ -171,20 +171,20 @@ class Features:
         """Read + parse features.json. Empty dict on any failure (missing
         file, bad JSON, oversize). Callers degrade to empty feature/env lists.
 
-        Size-capped at :data:`_MAX_MANIFEST_BYTES` as defense-in-depth against
+        Size-capped at :data:`MAX_MANIFEST_BYTES` as defense-in-depth against
         a buggy build emitting a runaway structure (#1662)."""
         path = self._features_path
         try:
             if (
                 os.path.isfile(path)
-                and os.path.getsize(path) > _MAX_MANIFEST_BYTES
+                and os.path.getsize(path) > MAX_MANIFEST_BYTES
             ):
                 logger.warning(
                     "features.json at %s is %d bytes (cap %d) — ignoring "
                     "manifest, degrading to empty feature/env lists",
                     path,
                     os.path.getsize(path),
-                    _MAX_MANIFEST_BYTES,
+                    MAX_MANIFEST_BYTES,
                 )
                 return {}
             with open(path) as f:
@@ -341,7 +341,7 @@ class Features:
                 if scope not in _FRONTEND_SCOPES:
                     continue
                 if not isinstance(key, str) or not key.startswith(
-                    _CONTAINER_ENV_KEY_PREFIX
+                    CONTAINER_ENV_KEY_PREFIX
                 ):
                     logger.warning(
                         "features.json frontend-scope config key %r — "
@@ -355,7 +355,7 @@ class Features:
                 # for the JSON key (e.g. KLANGKWS_FEATURE_BOING_SPEED →
                 # boing_speed). The prefix is enforced above; the suffix is
                 # the feature-owned name, surfaced un-prefixed to the frontend.
-                json_key = key[len(_CONTAINER_ENV_KEY_PREFIX) :].lower()
+                json_key = key[len(CONTAINER_ENV_KEY_PREFIX) :].lower()
                 result[json_key] = (
                     resolve_dynamic_config(
                         key, default, features_config=features_config

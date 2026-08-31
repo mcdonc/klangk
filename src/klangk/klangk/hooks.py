@@ -63,7 +63,7 @@ logger = logging.getLogger(__name__)
 _HOOK_MUTABLE_FIELDS = UPDATABLE_WORKSPACE_FIELDS
 
 
-def _parse_hook_value(raw: str) -> tuple[str, str]:
+def parse_hook_value(raw: str) -> tuple[str, str]:
     """Parse ``KLANGKD_WORKSPACE_CREATED_HOOK`` into (path, func_name).
 
     Accepted formats:
@@ -136,7 +136,7 @@ def _validate_hook_strings(app, changed: dict) -> str | None:
     return None
 
 
-def _hook_field_changes(handle, workspace: dict) -> dict:
+def hook_field_changes(handle, workspace: dict) -> dict:
     """The mutable fields a hook actually changed: deleted-from-handle means
     clear-the-column, a differing value means replace it."""
     changed = {}
@@ -368,7 +368,7 @@ class Hooks:
             self.workspace_created_hook_is_async = False
             self.workspace_created_hook_source = None
             return
-        path, func_name = _parse_hook_value(raw)
+        path, func_name = parse_hook_value(raw)
         if not os.path.isfile(path):
             raise ConfigurationError(
                 f"KLANGKD_WORKSPACE_CREATED_HOOK: file not found: {path!r}"
@@ -441,7 +441,7 @@ class Hooks:
                 exc_info=True,
             )
             return workspace
-        changed = _hook_field_changes(handle, workspace)
+        changed = hook_field_changes(handle, workspace)
         if not changed:
             return workspace
         invalid = _validate_hook_changes(self.app, changed)

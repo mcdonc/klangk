@@ -226,7 +226,7 @@ def _machine(name="podman-machine-default", memory=2 * GIB, default=None):
 
 class TestPodmanMachineMemory:
     def _clear_cache(self):
-        admission_mod._machine_memory_cache.clear()
+        admission_mod.machine_memory_cache.clear()
 
     def setup_method(self):
         self._clear_cache()
@@ -307,17 +307,17 @@ class TestPodmanMachineMemory:
         """The real subprocess transport: non-JSON stdout raises
         ValueError, a non-zero exit raises OSError (both -> no cap), and
         omitting *runner* uses it by default."""
-        from klangk.container.admission import _run_podman_json
+        from klangk.container.admission import run_podman_json
 
         with pytest.raises(ValueError):
-            await _run_podman_json("true")  # exits 0, empty (non-JSON) out
+            await run_podman_json("true")  # exits 0, empty (non-JSON) out
         with pytest.raises(OSError):
-            await _run_podman_json("false")
+            await run_podman_json("false")
 
         async def fake_json(*cmd):
             return [_machine()]
 
-        monkeypatch.setattr(admission_mod, "_run_podman_json", fake_json)
+        monkeypatch.setattr(admission_mod, "run_podman_json", fake_json)
         self._clear_cache()
         assert await podman_machine_memory_bytes() == 2 * GIB
 
@@ -333,7 +333,7 @@ class TestPodmanMachineMemory:
         assert len(calls) == 1
 
     async def test_cache_expires(self, monkeypatch):
-        monkeypatch.setattr(admission_mod, "_MACHINE_MEMORY_TTL_SECONDS", 0.0)
+        monkeypatch.setattr(admission_mod, "MACHINE_MEMORY_TTL_SECONDS", 0.0)
         calls = []
 
         async def runner(*cmd):
@@ -353,7 +353,7 @@ class TestPodmanMachineMemory:
             await podman_machine_memory_bytes("/opt/podman", runner=runner)
             == 4 * GIB
         )
-        assert len(admission_mod._machine_memory_cache) == 2
+        assert len(admission_mod.machine_memory_cache) == 2
 
 
 # --- host-memory fit gate ---

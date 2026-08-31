@@ -48,7 +48,7 @@ class NixError(RuntimeError):
     """A btrfs/fuse operation or configuration problem in the nix subsystem."""
 
 
-def _rmtree_rw(path: str) -> None:
+def rmtree_rw(path: str) -> None:
     """``shutil.rmtree`` that survives read-only store files/dirs.
 
     nix store paths are 0444 files inside 0555 dirs; a plain ``rmtree`` aborts
@@ -144,7 +144,7 @@ class Nix:
                 )
             return None
         if self._type == "btrfs-snapshot":
-            return await self._ensure_btrfs(workspace_id)
+            return await self.ensure_btrfs(workspace_id)
         return await self._ensure_fuse(workspace_id)
 
     async def destroy_workspace_nix(self, workspace_id: str) -> None:
@@ -158,7 +158,7 @@ class Nix:
 
     # --- subprocess helper ---------------------------------------------------
 
-    async def _run(
+    async def run(
         self, args: list[str], *, check: bool = True, timeout: float = 30.0
     ) -> tuple[int, str, str]:
         try:
@@ -190,7 +190,7 @@ class Nix:
 
     # --- btrfs-snapshot backend ---------------------------------------------
 
-    async def _ensure_btrfs(self, workspace_id: str) -> str:
+    async def ensure_btrfs(self, workspace_id: str) -> str:
         seed = self._seed
         if not os.path.isdir(seed):
             raise NixError(
@@ -198,7 +198,7 @@ class Nix:
                 f"(klangk-build-nix-seed) and load it "
                 f"(klangk-load-nix-seed-btrfs) first"
             )
-        fstype = (await self._run(["stat", "-f", "-c", "%T", seed]))[1].strip()
+        fstype = (await self.run(["stat", "-f", "-c", "%T", seed]))[1].strip()
         if fstype != "btrfs":
             raise NixError(
                 f"nix_seed.type is btrfs-snapshot but the seed {seed} is on "
@@ -213,14 +213,14 @@ class Nix:
                 workspace_id,
                 ws,
             )
-            await self._run(["btrfs", "subvolume", "snapshot", seed, ws])
+            await self.run(["btrfs", "subvolume", "snapshot", seed, ws])
         return ws
 
     async def _destroy_btrfs(self, workspace_id: str) -> str | None:
         ws = self._ws_path(workspace_id)
         if not os.path.exists(ws):
             return None
-        rc, _, err = await self._run(
+        rc, _, err = await self.run(
             ["btrfs", "subvolume", "delete", ws], check=False
         )
         if rc != 0:
@@ -254,7 +254,7 @@ class Nix:
                 logger.warning(
                     "nix: stale fuse mount at %s; re-mounting", merged
                 )
-                await self._run(["fusermount3", "-u", merged], check=False)
+                await self.run(["fusermount3", "-u", merged], check=False)
                 await self._mount_fuse(seed, ws, merged)
         else:
             await self._mount_fuse(seed, ws, merged)
@@ -264,7 +264,7 @@ class Nix:
         os.makedirs(os.path.join(ws, "upper"), exist_ok=True)
         os.makedirs(os.path.join(ws, "work"), exist_ok=True)
         os.makedirs(merged, exist_ok=True)
-        await self._run(
+        await self.run(
             [
                 "fuse-overlayfs",
                 merged,
@@ -285,7 +285,7 @@ class Nix:
             return
         merged = os.path.join(ws, "nix")
         if os.path.ismount(merged):
-            rc, _, err = await self._run(
+            rc, _, err = await self.run(
                 ["fusermount3", "-u", merged], check=False
             )
             if rc != 0:
@@ -296,7 +296,7 @@ class Nix:
                     err.strip(),
                 )
                 # Lazy unmount so a busy mount doesn't pin the ws dir.
-                rc2, _, err2 = await self._run(
+                rc2, _, err2 = await self.run(
                     ["fusermount3", "-u", "-z", merged], check=False
                 )
                 if rc2 != 0:
@@ -307,8 +307,8 @@ class Nix:
                         rc2,
                         err2.strip(),
                     )
-        # upper holds read-only store paths; _rmtree_rw chmods them away. If
+        # upper holds read-only store paths; rmtree_rw chmods them away. If
         # the mount is still live (both unmounts failed), rmtree best-effort-
         # skips the busy mountpoint (logged via _onerror) — the ws dir is then
         # an orphan the operator must clean up (umount + rm).
-        _rmtree_rw(ws)
+        rmtree_rw(ws)

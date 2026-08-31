@@ -63,24 +63,24 @@ class TestLevelToInt:
         ],
     )
     def test_named_levels(self, name, expected):
-        assert logger_mod._level_to_int(name) == expected
+        assert logger_mod.level_to_int(name) == expected
 
     def test_case_insensitive(self):
-        assert logger_mod._level_to_int("debug") == logging.DEBUG
-        assert logger_mod._level_to_int("WaRnInG") == logging.WARNING
+        assert logger_mod.level_to_int("debug") == logging.DEBUG
+        assert logger_mod.level_to_int("WaRnInG") == logging.WARNING
 
     def test_numeric_string(self):
-        assert logger_mod._level_to_int("20") == logging.INFO
-        assert logger_mod._level_to_int("10") == logging.DEBUG
+        assert logger_mod.level_to_int("20") == logging.INFO
+        assert logger_mod.level_to_int("10") == logging.DEBUG
 
     def test_empty_or_none_falls_back_to_info(self):
-        assert logger_mod._level_to_int("") == logging.INFO
-        assert logger_mod._level_to_int(None) == logging.INFO
+        assert logger_mod.level_to_int("") == logging.INFO
+        assert logger_mod.level_to_int(None) == logging.INFO
 
     def test_unknown_falls_back_to_info(self):
         # Settings validator rejects garbage at construction; this fallback
         # only defends a misconfigured live reload.
-        assert logger_mod._level_to_int("verbose") == logging.INFO
+        assert logger_mod.level_to_int("verbose") == logging.INFO
 
 
 class TestConfigureDefaults:
@@ -122,7 +122,7 @@ class TestConfigureDefaults:
     def test_module_level_default_level_constant(self):
         """The import-time call uses this constant (coverage marks the
         module-level call line executed at import)."""
-        assert logger_mod._DEFAULT_LEVEL == logging.INFO
+        assert logger_mod.DEFAULT_LEVEL == logging.INFO
 
     def test_settings_construction_logs_through_configured_root(
         self, clean_root, caplog

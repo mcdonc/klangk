@@ -39,7 +39,7 @@ class _Proc:
 
 
 class _Slow:
-    """A proc whose communicate() never resolves — for the _run timeout test."""
+    """A proc whose communicate() never resolves — for the run timeout test."""
 
     def __init__(self):
         self.killed = False
@@ -75,7 +75,7 @@ def _tar_bytes(entries):
 
 
 class _FakePopen:
-    """Stands in for subprocess.Popen for the _export_to_dir_sync tests."""
+    """Stands in for subprocess.Popen for the export_to_dir_sync tests."""
 
     def __init__(self, tar_buf, rc=0, err=b""):
         self.stdout = tar_buf
@@ -100,38 +100,38 @@ def test_resolve_podman_bin_env_override():
     )
 
 
-# --- _sig_policy_args ------------------------------------------------------
+# --- sig_policy_args ------------------------------------------------------
 
 
 def test_sig_policy_unset(monkeypatch):
     monkeypatch.delenv("CONTAINERS_SIGNATURE_POLICY", raising=False)
-    assert seed._sig_policy_args() == []
+    assert seed.sig_policy_args() == []
 
 
 def test_sig_policy_existing(tmp_path, monkeypatch):
     pol = tmp_path / "pol.json"
     pol.write_text("{}")
     monkeypatch.setenv("CONTAINERS_SIGNATURE_POLICY", str(pol))
-    assert seed._sig_policy_args() == ["--signature-policy", str(pol)]
+    assert seed.sig_policy_args() == ["--signature-policy", str(pol)]
 
 
 def test_sig_policy_creates_file(tmp_path, monkeypatch):
     pol = tmp_path / "sub" / "pol.json"
     monkeypatch.setenv("CONTAINERS_SIGNATURE_POLICY", str(pol))
-    assert seed._sig_policy_args() == ["--signature-policy", str(pol)]
+    assert seed.sig_policy_args() == ["--signature-policy", str(pol)]
     assert (
         pol.read_text() == '{"default": [{"type": "insecureAcceptAnything"}]}'
     )
 
 
-# --- _run ------------------------------------------------------------------
+# --- run ------------------------------------------------------------------
 
 
 async def test_run_success(monkeypatch):
     monkeypatch.setattr(
         seed.asyncio, "create_subprocess_exec", _aprocs(_Proc(0, b"ok", b""))
     )
-    rc, out, _ = await seed._run(_PODMAN, ["ps"])
+    rc, out, _ = await seed.run(_PODMAN, ["ps"])
     assert (rc, out) == (0, "ok")
 
 
@@ -141,14 +141,14 @@ async def test_run_binary_missing(monkeypatch):
 
     monkeypatch.setattr(seed.asyncio, "create_subprocess_exec", boom)
     with pytest.raises(seed.SeedError, match="podman not found"):
-        await seed._run(_PODMAN, ["ps"])
+        await seed.run(_PODMAN, ["ps"])
 
 
 async def test_run_timeout(monkeypatch):
     p = _Slow()
     monkeypatch.setattr(seed.asyncio, "create_subprocess_exec", _aprocs(p))
     with pytest.raises(seed.SeedError, match="timed out"):
-        await seed._run(_PODMAN, ["build"], timeout=0.05)
+        await seed.run(_PODMAN, ["build"], timeout=0.05)
     assert p.killed
 
 
@@ -159,7 +159,7 @@ async def test_run_rc_nonzero_raises(monkeypatch):
         _aprocs(_Proc(1, b"", b"broken")),
     )
     with pytest.raises(seed.SeedError, match="failed"):
-        await seed._run(_PODMAN, ["ps"])
+        await seed.run(_PODMAN, ["ps"])
 
 
 async def test_run_rc_nonzero_no_check(monkeypatch):
@@ -168,12 +168,12 @@ async def test_run_rc_nonzero_no_check(monkeypatch):
         "create_subprocess_exec",
         _aprocs(_Proc(1, b"", b"broken")),
     )
-    rc, _, err = await seed._run(_PODMAN, ["ps"], check=False)
+    rc, _, err = await seed.run(_PODMAN, ["ps"], check=False)
     assert rc == 1
     assert "broken" in err
 
 
-# --- _build_image ----------------------------------------------------------
+# --- build_image ----------------------------------------------------------
 
 
 async def test_build_image_args(tmp_path, monkeypatch):
@@ -184,7 +184,7 @@ async def test_build_image_args(tmp_path, monkeypatch):
         captured["kw"] = kw
         return (0, "", "")
 
-    monkeypatch.setattr(seed, "_run", fake_run)
+    monkeypatch.setattr(seed, "run", fake_run)
     monkeypatch.setenv("KLANGKBUILD_PLATFORM", "linux/arm64")
     monkeypatch.setenv(
         "CONTAINERS_SIGNATURE_POLICY", str(tmp_path / "pol.json")
@@ -193,14 +193,14 @@ async def test_build_image_args(tmp_path, monkeypatch):
     # (d66ec5cc) — set explicitly so the branch is covered on every
     # runner, not only where the env happens to carry it.
     monkeypatch.setenv("CONTAINERS_STORAGE_CONF", "/tmp/storage.conf")
-    await seed._build_image(_PODMAN, "FROM x\n", no_cache=True)
+    await seed.build_image(_PODMAN, "FROM x\n", no_cache=True)
     a = captured["args"]
     assert a[0] == "build"
     assert "--signature-policy" in a
     assert "--platform" in a and "linux/arm64" in a
     assert "--no-cache" in a
     assert "--security-opt" in a and "unmask=ALL" in a
-    assert "-t" in a and seed._IMAGE in a
+    assert "-t" in a and seed.IMAGE in a
     assert captured["kw"]["timeout"] == 2400.0
 
 
@@ -212,11 +212,11 @@ async def test_build_image_minimal(monkeypatch):
         captured["args"] = args
         return (0, "", "")
 
-    monkeypatch.setattr(seed, "_run", fake_run)
+    monkeypatch.setattr(seed, "run", fake_run)
     monkeypatch.delenv("KLANGKBUILD_PLATFORM", raising=False)
     monkeypatch.delenv("CONTAINERS_SIGNATURE_POLICY", raising=False)
     monkeypatch.delenv("CONTAINERS_STORAGE_CONF", raising=False)
-    await seed._build_image(_PODMAN, "FROM x\n", no_cache=False)
+    await seed.build_image(_PODMAN, "FROM x\n", no_cache=False)
     a = captured["args"]
     assert "--platform" not in a
     assert "--signature-policy" not in a
@@ -224,7 +224,7 @@ async def test_build_image_minimal(monkeypatch):
     assert "--security-opt" not in a
 
 
-# --- _export_to_dir_sync (the streaming tarfile extraction) ----------------
+# --- export_to_dir_sync (the streaming tarfile extraction) ----------------
 
 
 def test_export_to_dir_sync_extracts_nix_and_conf(tmp_path, monkeypatch):
@@ -241,7 +241,7 @@ def test_export_to_dir_sync_extracts_nix_and_conf(tmp_path, monkeypatch):
     )
     out = tmp_path / "seed"
     out.mkdir()
-    seed._export_to_dir_sync(_PODMAN, "cid", str(out))
+    seed.export_to_dir_sync(_PODMAN, "cid", str(out))
     assert (out / "nix").is_dir()
     assert (out / "nix" / "store").is_dir()
     assert (
@@ -259,7 +259,7 @@ def test_export_to_dir_sync_strips_leading_dot_slash(tmp_path, monkeypatch):
     )
     out = tmp_path / "seed"
     out.mkdir()
-    seed._export_to_dir_sync(_PODMAN, "cid", str(out))
+    seed.export_to_dir_sync(_PODMAN, "cid", str(out))
     assert (out / "nix").is_dir()
     assert (out / "etc" / "nix" / "nix.conf").read_bytes() == b"x"
 
@@ -272,7 +272,7 @@ def test_export_to_dir_sync_rc_fail(tmp_path, monkeypatch):
         lambda *a, **k: _FakePopen(io.BytesIO(), rc=1, err=b"export boom"),
     )
     with pytest.raises(seed.SeedError, match="podman export failed"):
-        seed._export_to_dir_sync(_PODMAN, "cid", str(tmp_path / "seed"))
+        seed.export_to_dir_sync(_PODMAN, "cid", str(tmp_path / "seed"))
 
 
 def test_export_to_dir_sync_empty_stream_rc_zero(tmp_path, monkeypatch):
@@ -283,25 +283,25 @@ def test_export_to_dir_sync_empty_stream_rc_zero(tmp_path, monkeypatch):
         lambda *a, **k: _FakePopen(io.BytesIO(), rc=0),
     )
     with pytest.raises(seed.SeedError, match="no readable tar stream"):
-        seed._export_to_dir_sync(_PODMAN, "cid", str(tmp_path / "seed"))
+        seed.export_to_dir_sync(_PODMAN, "cid", str(tmp_path / "seed"))
 
 
-# --- _export_and_extract (orchestration) ----------------------------------
+# --- export_and_extract (orchestration) ----------------------------------
 
 
 def _wire_export(monkeypatch, *, cid="cid123", sync=None):
-    """Patch _run for create+rm and _export_to_dir_sync for the extraction."""
+    """Patch run for create+rm and export_to_dir_sync for the extraction."""
 
     async def fake_run(podman, args, **kw):
         if args[:1] == ["create"]:
             return (0, f"{cid}\n", "")
         if args[:1] == ["rm"]:
             return (0, "", "")
-        raise AssertionError(f"unexpected _run: {args}")
+        raise AssertionError(f"unexpected run: {args}")
 
-    monkeypatch.setattr(seed, "_run", fake_run)
+    monkeypatch.setattr(seed, "run", fake_run)
     if sync is not None:
-        monkeypatch.setattr(seed, "_export_to_dir_sync", sync)
+        monkeypatch.setattr(seed, "export_to_dir_sync", sync)
 
 
 async def test_export_and_extract(tmp_path, monkeypatch):
@@ -315,7 +315,7 @@ async def test_export_and_extract(tmp_path, monkeypatch):
             f.write("experimental-features = ")
 
     _wire_export(monkeypatch, sync=fake_sync)
-    await seed._export_and_extract(_PODMAN, "img", out)
+    await seed.export_and_extract(_PODMAN, "img", out)
     assert (out / "nix.conf").read_text() == "experimental-features = "
     assert not (out / "etc").exists()  # flattened + rmdir'd
 
@@ -324,9 +324,9 @@ async def test_export_and_extract_no_cid(tmp_path, monkeypatch):
     async def fake_run(podman, args, **kw):
         return (0, "   \n", "")  # blank container id
 
-    monkeypatch.setattr(seed, "_run", fake_run)
+    monkeypatch.setattr(seed, "run", fake_run)
     with pytest.raises(seed.SeedError, match="no container id"):
-        await seed._export_and_extract(_PODMAN, "img", tmp_path)
+        await seed.export_and_extract(_PODMAN, "img", tmp_path)
 
 
 async def test_export_and_extract_propagates_sync_error(tmp_path, monkeypatch):
@@ -342,14 +342,14 @@ async def test_export_and_extract_propagates_sync_error(tmp_path, monkeypatch):
             return (0, "", "")
         raise AssertionError
 
-    monkeypatch.setattr(seed, "_run", fake_run)
+    monkeypatch.setattr(seed, "run", fake_run)
 
     def boom(podman, cid, o):
         raise seed.SeedError("export broken")
 
-    monkeypatch.setattr(seed, "_export_to_dir_sync", boom)
+    monkeypatch.setattr(seed, "export_to_dir_sync", boom)
     with pytest.raises(seed.SeedError, match="export broken"):
-        await seed._export_and_extract(_PODMAN, "img", out)
+        await seed.export_and_extract(_PODMAN, "img", out)
     assert rm  # the throwaway container is rm'd in the finally
 
 
@@ -362,7 +362,7 @@ async def test_export_and_extract_missing_conf(tmp_path, monkeypatch):
 
     _wire_export(monkeypatch, sync=fake_sync)
     with pytest.raises(seed.SeedError, match="nix.conf missing"):
-        await seed._export_and_extract(_PODMAN, "img", out)
+        await seed.export_and_extract(_PODMAN, "img", out)
 
 
 async def test_export_and_extract_overwrites_existing_conf(
@@ -378,7 +378,7 @@ async def test_export_and_extract_overwrites_existing_conf(
             f.write("NEW")
 
     _wire_export(monkeypatch, sync=fake_sync)
-    await seed._export_and_extract(_PODMAN, "img", out)
+    await seed.export_and_extract(_PODMAN, "img", out)
     assert (out / "nix.conf").read_text() == "NEW"
 
 
@@ -394,12 +394,12 @@ async def test_export_and_extract_leaves_nonempty_etc(tmp_path, monkeypatch):
             f.write("y")
 
     _wire_export(monkeypatch, sync=fake_sync)
-    await seed._export_and_extract(_PODMAN, "img", out)
+    await seed.export_and_extract(_PODMAN, "img", out)
     assert (out / "nix.conf").exists()
     assert (out / "etc").exists()  # rmdir(etc) failed (non-empty) -> kept
 
 
-# --- _verify ---------------------------------------------------------------
+# --- verify ---------------------------------------------------------------
 
 
 async def test_verify_args(tmp_path, monkeypatch):
@@ -414,8 +414,8 @@ async def test_verify_args(tmp_path, monkeypatch):
         captured["kw"] = kw
         return (0, "nix 2.x\n", "")
 
-    monkeypatch.setattr(seed, "_run", fake_run)
-    await seed._verify(_PODMAN, "img", out)
+    monkeypatch.setattr(seed, "run", fake_run)
+    await seed.verify(_PODMAN, "img", out)
     a = captured["args"]
     assert a[0] == "run" and "--rm" in a
     assert f"{out / 'nix'}:/nix:ro" in a
@@ -440,13 +440,13 @@ def test_chmod_w(tmp_path):
     g.write_text("y")
     g.chmod(0o444)
     sub.chmod(0o555)
-    seed._chmod_w(d)
+    seed.chmod_w(d)
     assert os.access(f, os.W_OK)
     assert os.access(g, os.W_OK)
 
 
 def test_chmod_w_swallows_chmod_errors(tmp_path, monkeypatch):
-    """os.chmod failures don't crash _chmod_w."""
+    """os.chmod failures don't crash chmod_w."""
     d = tmp_path / "nix"
     d.mkdir()
     (d / "f").write_text("x")
@@ -455,7 +455,7 @@ def test_chmod_w_swallows_chmod_errors(tmp_path, monkeypatch):
         raise OSError("denied")
 
     monkeypatch.setattr(seed.os, "chmod", boom)
-    seed._chmod_w(d)  # no raise
+    seed.chmod_w(d)  # no raise
 
 
 def test_clear_seed_dir(tmp_path):
@@ -470,7 +470,7 @@ def test_clear_seed_dir(tmp_path):
     (nix / "store").chmod(0o555)
     nix.chmod(0o555)
     (out / "nix.conf").write_text("old")
-    seed._clear_seed_dir(out)
+    seed.clear_seed_dir(out)
     assert not (out / "nix").exists()
     assert not (out / "nix.conf").exists()
 
@@ -480,7 +480,7 @@ def test_clear_seed_dir_skips_absent(tmp_path):
     out = tmp_path / "seed"
     out.mkdir()
     (out / "nix.conf").write_text("old")
-    seed._clear_seed_dir(out)
+    seed.clear_seed_dir(out)
     assert not (out / "nix.conf").exists()
 
 
@@ -494,7 +494,7 @@ def test_clear_seed_dir_swallows_unlink_error(tmp_path, monkeypatch):
         raise OSError("busy")
 
     monkeypatch.setattr(seed.os, "unlink", boom)
-    seed._clear_seed_dir(out)  # no raise
+    seed.clear_seed_dir(out)  # no raise
     assert (out / "nix.conf").exists()  # unlink failed -> kept
 
 
@@ -525,9 +525,9 @@ async def test_build_nix_seed_happy(tmp_path, monkeypatch):
     async def fake_verify(podman, image, o):
         calls.append(("verify",))
 
-    monkeypatch.setattr(seed, "_build_image", fake_build_img)
-    monkeypatch.setattr(seed, "_export_and_extract", fake_export)
-    monkeypatch.setattr(seed, "_verify", fake_verify)
+    monkeypatch.setattr(seed, "build_image", fake_build_img)
+    monkeypatch.setattr(seed, "export_and_extract", fake_export)
+    monkeypatch.setattr(seed, "verify", fake_verify)
     await seed.build_nix_seed(
         out, podman_bin=_PODMAN, dockerfile_text="FROM x", no_cache=True
     )
@@ -543,15 +543,15 @@ async def test_build_nix_seed_update_clears(tmp_path, monkeypatch):
     (out / "nix.conf").write_text("old")
     cleared = {}
     monkeypatch.setattr(
-        seed, "_clear_seed_dir", lambda o: cleared.__setitem__("o", o)
+        seed, "clear_seed_dir", lambda o: cleared.__setitem__("o", o)
     )
 
     async def noop(*a, **k):
         pass
 
-    monkeypatch.setattr(seed, "_build_image", noop)
-    monkeypatch.setattr(seed, "_export_and_extract", noop)
-    monkeypatch.setattr(seed, "_verify", noop)
+    monkeypatch.setattr(seed, "build_image", noop)
+    monkeypatch.setattr(seed, "export_and_extract", noop)
+    monkeypatch.setattr(seed, "verify", noop)
     await seed.build_nix_seed(
         out, podman_bin=_PODMAN, dockerfile_text="FROM x", update=True
     )
@@ -565,12 +565,12 @@ def test_bundled_dockerfile_present(tmp_path, monkeypatch):
     (tmp_path / "nix-seed").mkdir()
     (tmp_path / "nix-seed" / "Dockerfile").write_text("FROM x")
     monkeypatch.setattr(_ires, "files", lambda pkg: tmp_path)
-    assert seed._bundled_dockerfile() == tmp_path / "nix-seed" / "Dockerfile"
+    assert seed.bundled_dockerfile() == tmp_path / "nix-seed" / "Dockerfile"
 
 
 def test_bundled_dockerfile_absent(tmp_path, monkeypatch):
     monkeypatch.setattr(_ires, "files", lambda pkg: tmp_path)  # no nix-seed/
-    assert seed._bundled_dockerfile() is None
+    assert seed.bundled_dockerfile() is None
 
 
 def test_bundled_dockerfile_resource_error(monkeypatch):
@@ -580,11 +580,11 @@ def test_bundled_dockerfile_resource_error(monkeypatch):
         raise FileNotFoundError("no resources")
 
     monkeypatch.setattr(_ires, "files", boom)
-    assert seed._bundled_dockerfile() is None
+    assert seed.bundled_dockerfile() is None
 
 
 def test_source_dockerfile_found():
-    p = seed._source_dockerfile()
+    p = seed.source_dockerfile()
     assert p is not None and p.is_file()  # the worktree's committed Dockerfile
 
 
@@ -593,7 +593,7 @@ def test_source_dockerfile_absent(tmp_path, monkeypatch):
     fake.parent.mkdir(parents=True)
     fake.write_text("")
     monkeypatch.setattr(seed, "__file__", str(fake))
-    assert seed._source_dockerfile() is None
+    assert seed.source_dockerfile() is None
 
 
 def test_read_dockerfile_bundled(tmp_path, monkeypatch):
@@ -604,16 +604,16 @@ def test_read_dockerfile_bundled(tmp_path, monkeypatch):
 
 
 def test_read_dockerfile_source_fallback(monkeypatch):
-    monkeypatch.setattr(seed, "_bundled_dockerfile", lambda: None)
-    real = seed._source_dockerfile()
+    monkeypatch.setattr(seed, "bundled_dockerfile", lambda: None)
+    real = seed.source_dockerfile()
     assert real is not None  # exists in this worktree
-    monkeypatch.setattr(seed, "_source_dockerfile", lambda: real)
+    monkeypatch.setattr(seed, "source_dockerfile", lambda: real)
     assert seed.read_dockerfile() == real.read_text()
 
 
 def test_read_dockerfile_missing(monkeypatch):
-    monkeypatch.setattr(seed, "_bundled_dockerfile", lambda: None)
-    monkeypatch.setattr(seed, "_source_dockerfile", lambda: None)
+    monkeypatch.setattr(seed, "bundled_dockerfile", lambda: None)
+    monkeypatch.setattr(seed, "source_dockerfile", lambda: None)
     with pytest.raises(seed.SeedError, match="could not locate"):
         seed.read_dockerfile()
 
@@ -682,7 +682,7 @@ def test_main_passes_update_and_nocache(tmp_path, monkeypatch):
     assert seen["no_cache"] is True
 
 
-# --- btrfs loader (_cp_a, load_nix_seed_btrfs, load_main) ------------------
+# --- btrfs loader (cp_a, load_nix_seed_btrfs, load_main) ------------------
 
 
 def test_cp_a_dir_preserves_symlinks(tmp_path):
@@ -691,7 +691,7 @@ def test_cp_a_dir_preserves_symlinks(tmp_path):
     (src / "f").write_text("x")
     (src / "link").symlink_to("f")
     dst = tmp_path / "out" / "nix"
-    seed._cp_a(src, dst)
+    seed.cp_a(src, dst)
     assert (dst / "f").read_text() == "x"
     assert (dst / "link").is_symlink()
 
@@ -701,7 +701,7 @@ def test_cp_a_file(tmp_path):
     src.write_text("experimental = ")
     (tmp_path / "out").mkdir()
     dst = tmp_path / "out" / "nix.conf"
-    seed._cp_a(src, dst)
+    seed.cp_a(src, dst)
     assert dst.read_text() == "experimental = "
 
 
@@ -719,9 +719,9 @@ async def test_load_btrfs_happy(tmp_path, monkeypatch):
         if args[:2] == ["subvolume", "create"]:
             Path(args[2]).mkdir(parents=True, exist_ok=True)
             return (0, "", "")
-        raise AssertionError(f"unexpected _run: {args}")
+        raise AssertionError(f"unexpected run: {args}")
 
-    monkeypatch.setattr(seed, "_run", fake_run)
+    monkeypatch.setattr(seed, "run", fake_run)
     parent = tmp_path / "btrfs"
     result = await seed.load_nix_seed_btrfs(tree, parent)
     assert result == parent / "seed"

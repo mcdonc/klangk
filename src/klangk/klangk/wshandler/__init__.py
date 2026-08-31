@@ -48,8 +48,8 @@ from .connection import Connection as Connection
 from .decider import handle_consent_decider as handle_consent_decider
 from .sidecar import handle_egress_sidecar as handle_egress_sidecar
 from .dispatch import (
-    _WS_CONNECTION_COMMANDS as _WS_CONNECTION_COMMANDS,
-    _WS_STATE_COMMANDS as _WS_STATE_COMMANDS,
+    WS_CONNECTION_COMMANDS as WS_CONNECTION_COMMANDS,
+    WS_STATE_COMMANDS as WS_STATE_COMMANDS,
     handle_websocket as handle_websocket,
 )
 from .helpers import (

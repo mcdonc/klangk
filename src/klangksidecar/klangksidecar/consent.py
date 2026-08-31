@@ -2,7 +2,7 @@
 
 One socket per workspace, reconnected on drop. request() sends an egress frame
 and awaits the matching verdict; fail-close -> deny so the workspace never
-hangs. _handle_drop_rule applies klangkd revocations (#2339).
+hangs. handle_drop_rule applies klangkd revocations (#2339).
 """
 
 from __future__ import annotations
@@ -16,14 +16,14 @@ import websockets
 
 from . import allowlist, rules
 from .config import ACTIVITY_GATE_S, DEBUG
-from .state import _VERDICT_CACHE, _clear_verdict_cache
+from .state import VERDICT_CACHE, clear_verdict_cache
 
 # ---------------------------------------------------------------------------
 # Interactive consent: egress-sidecar WS client + hold paths (#2311 half B).
 # ---------------------------------------------------------------------------
 
 
-def _jittered_gate() -> float:
+def jittered_gate() -> float:
     """The activity flood gate, jittered to 0.5x-1.0x of :data:`ACTIVITY_GATE_S`.
 
     Full-jitter (the AWS-backoff idiom): the suppression window lands randomly
@@ -34,7 +34,7 @@ def _jittered_gate() -> float:
     return ACTIVITY_GATE_S * random.uniform(0.5, 1.0)
 
 
-def _ws_url(consent_url: str) -> str:
+def ws_url(consent_url: str) -> str:
     """Derive the ``/ws/egress-sidecar`` WS URL from the consent HTTP URL.
 
     ``http(s)://host:port/...`` -> ``ws(s)://host:port/ws/egress-sidecar``.
@@ -61,13 +61,13 @@ class SidecarConsentClient:
     unreachable -- the workspace never hangs on a pending connection.
 
     All ``_pending`` state lives on the event-loop thread (coroutines +
-    ``_run``'s receive loop); the NFQUEUE consumer is itself loop-driven
+    ``run``'s receive loop); the NFQUEUE consumer is itself loop-driven
     (``get_fd`` + ``add_reader``) and calls :meth:`request` directly, so it
     never crosses threads or touches ``_pending`` from outside the loop.
     """
 
     def __init__(self, consent_url: str, token_path: str, hold_timeout: float) -> None:
-        self._url = _ws_url(consent_url)
+        self._url = ws_url(consent_url)
         self._token_path = token_path
         self._hold_timeout = hold_timeout
         self._ws = None  # current websockets connection, or None
@@ -86,7 +86,7 @@ class SidecarConsentClient:
         return self._connected.is_set()
 
     async def start(self) -> None:
-        self._task = asyncio.create_task(self._run())
+        self._task = asyncio.create_task(self.run())
 
     async def stop(self) -> None:
         self._stop = True
@@ -105,14 +105,14 @@ class SidecarConsentClient:
                 # makes the awaited task raise it wherever it is parked
                 # (reconnect backoff, token-retry sleep), and it is a
                 # BaseException (3.8+) that `except Exception` alone let
-                # escape -- aborting _shutdown (nfq.unbind/sock.close
+                # escape -- aborting shutdown (nfq.unbind/sock.close
                 # skipped) and dumping a raw traceback on every workspace
-                # removal whose WS was down. Same guard shape _shutdown
+                # removal whose WS was down. Same guard shape shutdown
                 # uses for its sweep/sampler awaits (app.py).
                 pass
         self._fail_close_pending()
 
-    async def _run(self) -> None:
+    async def run(self) -> None:
         backoff = 1.0
         while not self._stop:
             token = self._read_token()
@@ -175,11 +175,11 @@ class SidecarConsentClient:
             return
         mtype = msg.get("type")
         if mtype == "verdict":
-            self._apply_verdict(msg)
+            self.apply_verdict(msg)
         elif mtype == "drop_rule":
-            await self._handle_drop_rule(msg)
+            await self.handle_drop_rule(msg)
 
-    def _apply_verdict(self, msg: dict) -> None:
+    def apply_verdict(self, msg: dict) -> None:
         vid = msg.get("id")
         decision = msg.get("decision")
         if not isinstance(vid, str):
@@ -191,7 +191,7 @@ class SidecarConsentClient:
             duration = msg.get("duration") or "once"
             fut.set_result((token, duration))
 
-    async def _handle_drop_rule(self, msg: dict) -> None:
+    async def handle_drop_rule(self, msg: dict) -> None:
         """klangkd asked us to drop a host's rules (revocation, #2339).
 
         Runs :func:`drop_for_host` off the loop (it forks iptables) and acks
@@ -204,14 +204,14 @@ class SidecarConsentClient:
         if isinstance(host, str) and decision in ("allowed", "denied"):
             # #2370: close the session-allow gates BEFORE the executor window.
             # While drop_for_host forks iptables off-loop (~tens of ms), a racing
-            # SYN/DNS could read _SESSION_HOST_ALLOWS and re-install a fresh
+            # SYN/DNS could read SESSION_HOST_ALLOWS and re-install a fresh
             # ACCEPT (the host's remaining allow TTL) the revoke never clears.
-            # _drop_session_hosts runs on the loop (loop-only structure) and
-            # makes _cb's _session_host_allows_ttl + ports_for deny during the
-            # window. (A deny never adds to _SESSION_HOST_ALLOWS, so skip it
+            # drop_session_hosts runs on the loop (loop-only structure) and
+            # makes cb's session_host_allows_ttl + ports_for deny during the
+            # window. (A deny never adds to SESSION_HOST_ALLOWS, so skip it
             # there.)
             if decision == "allowed":
-                allowlist._drop_session_hosts(host)
+                allowlist.drop_session_hosts(host)
             # The outer guard already restricted decision to allowed/denied,
             # so exactly one of these branches runs -- the elif's false arc
             # (neither) is unreachable.
@@ -219,7 +219,7 @@ class SidecarConsentClient:
                 # Clear the host-scoped deny memory (#2446) BEFORE drop_for_host
                 # forks iptables, so a SYN arriving during that window re-prompts
                 # instead of staying auto-denied (mirror of the allow revoke).
-                allowlist._drop_session_denies(host)
+                allowlist.drop_session_denies(host)
             try:
                 ips = await asyncio.get_running_loop().run_in_executor(
                     None, rules.drop_for_host, host, decision
@@ -228,7 +228,7 @@ class SidecarConsentClient:
                 # removal (loop-only dict). A cache hit only pkt.accept()s a
                 # retransmit -- it does not re-install an ACCEPT -- so this is
                 # safe after the drop and needs no window protection.
-                _clear_verdict_cache(ips)
+                clear_verdict_cache(ips)
                 # The ack means "the rule is dropped" (#2339); the loop-state
                 # clears above are pure dict ops and don't affect it.
                 ok = True
@@ -275,7 +275,7 @@ class SidecarConsentClient:
         queued connection SYN) so klangkd's idle timer reflects egress-only
         workloads, whose traffic bypasses the daemon entirely and would
         otherwise be reaped by the idle timeout. Throttled by a jittered flood
-        gate (:func:`_jittered_gate` -- 0.5x-1.0x of :data:`ACTIVITY_GATE_S`):
+        gate (:func:`jittered_gate` -- 0.5x-1.0x of :data:`ACTIVITY_GATE_S`):
         a connect-heavy workload (a build, a crawler) generates a bounded,
         desynchronized frame rate, while the first event after a quiet period
         (>= the jittered window since the last send) forwards at once so a
@@ -287,7 +287,7 @@ class SidecarConsentClient:
         if not self._connected.is_set() or self._ws is None:
             return
         now = time.monotonic()
-        if now - self._last_activity_send < _jittered_gate():
+        if now - self._last_activity_send < jittered_gate():
             return
         self._last_activity_send = now
         try:
@@ -312,7 +312,7 @@ class SidecarConsentClient:
         # coordinator, so prior verdicts must not be trusted: in-flight flows
         # re-prompt after reconnect instead of being silently re-allowed/denied
         # by a stale cached verdict (#2326 review).
-        _VERDICT_CACHE.clear()
+        VERDICT_CACHE.clear()
         for lid in list(self._pending):
             fut = self._pending.pop(lid, None)
             if fut is not None and not fut.done():
@@ -329,12 +329,12 @@ class SidecarConsentClient:
 # ---------------------------------------------------------------------------
 # Idle-activity sampler (#2485): poll the workspace-egress byte counter and
 # bump the idle timer on real traffic (long-lived / UDP flows the #2481 DNS+SYN
-# hooks miss). The per-tick logic is factored into _activity_delta so it is
+# hooks miss). The per-tick logic is factored into activity_delta so it is
 # unit-testable without driving the infinite loop.
 # ---------------------------------------------------------------------------
 
 
-def _safe_bytes(get_bytes) -> int:
+def safe_bytes(get_bytes) -> int:
     """Read the accounting counter; 0 on any failure (so a transient read
     error or a missing rule reads as a flat baseline, never as activity)."""
     try:
@@ -347,7 +347,7 @@ def _safe_bytes(get_bytes) -> int:
         return 0
 
 
-def _activity_delta(get_bytes, prev: int) -> tuple[bool, int]:
+def activity_delta(get_bytes, prev: int) -> tuple[bool, int]:
     """One sample tick's logic (#2485), factored out for unit tests.
 
     Returns ``(bumped, new_prev)``: ``bumped`` is True iff the workspace-egress
@@ -357,11 +357,11 @@ def _activity_delta(get_bytes, prev: int) -> tuple[bool, int]:
     prev) re-baselines without bumping, so a reset can never masquerade as a
     burst of activity.
     """
-    cur = _safe_bytes(get_bytes)
+    cur = safe_bytes(get_bytes)
     return cur > prev, cur
 
 
-async def _activity_sampler(client, get_bytes, interval: float) -> None:
+async def activity_sampler(client, get_bytes, interval: float) -> None:
     """Background task: sample the workspace-egress byte counter and, on a
     positive delta, call ``client.bump_activity`` (#2485).
 
@@ -371,22 +371,22 @@ async def _activity_sampler(client, get_bytes, interval: float) -> None:
     per window -- the send itself is flood-gated by ``bump_activity``). The
     per-tick work is exactly one counter read; the kernel does all the
     per-packet accounting. The read runs OFF the event loop via
-    ``run_in_executor`` (like :func:`klangksidecar.rules._async_sweeper` runs
+    ``run_in_executor`` (like :func:`klangksidecar.rules.async_sweeper` runs
     :func:`sweep_once`), because the production reader forks iptables and would
     otherwise stall the DNS recv loop once per interval. Best-effort, like the
-    #2481 hooks: a read failure re-baselines (:func:`_activity_delta`) and
+    #2481 hooks: a read failure re-baselines (:func:`activity_delta`) and
     ``bump_activity`` is silent on a down WS, so sampling never breaks egress.
     Per-tick errors are swallowed so one bad tick doesn't kill the task.
     """
     loop = asyncio.get_running_loop()
-    _, prev = await loop.run_in_executor(None, _activity_delta, get_bytes, 0)
+    _, prev = await loop.run_in_executor(None, activity_delta, get_bytes, 0)
     # Runs for the sidecar's lifetime; cancelled at shutdown, never exits by
     # falling through the condition (the arc to loop exit is unreachable).
     while True:  # pragma: no branch
         await asyncio.sleep(interval)
         try:
             bumped, prev = await loop.run_in_executor(
-                None, _activity_delta, get_bytes, prev
+                None, activity_delta, get_bytes, prev
             )
             if bumped:
                 client.bump_activity()

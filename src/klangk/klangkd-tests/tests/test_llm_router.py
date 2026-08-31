@@ -9,8 +9,8 @@ import httpx
 
 from klangk.llm_router import (
     LLMRouter,
-    _is_passthrough,
-    _normalize_dict_entry,
+    is_passthrough,
+    normalize_dict_entry,
     parse_model_entry,
 )
 from _helpers import make_settings
@@ -111,7 +111,7 @@ class TestLLMRouterDictEntries:
 
 class TestNormalizeDictEntry:
     def test_kebab_to_snake_top_level(self):
-        result = _normalize_dict_entry(
+        result = normalize_dict_entry(
             {
                 "model-name": "test",
                 "litellm-params": {"model": "openai/gpt-4o"},
@@ -121,7 +121,7 @@ class TestNormalizeDictEntry:
         assert "litellm_params" in result
 
     def test_kebab_to_snake_params(self):
-        result = _normalize_dict_entry(
+        result = normalize_dict_entry(
             {
                 "model_name": "test",
                 "litellm_params": {
@@ -142,7 +142,7 @@ class TestNormalizeDictEntry:
             f.write("sk-from-file\n")
             f.flush()
             try:
-                result = _normalize_dict_entry(
+                result = normalize_dict_entry(
                     {
                         "model_name": "test",
                         "litellm_params": {
@@ -156,7 +156,7 @@ class TestNormalizeDictEntry:
                 os.unlink(f.name)
 
     def test_cmd_indirection_on_api_key(self):
-        result = _normalize_dict_entry(
+        result = normalize_dict_entry(
             {
                 "model_name": "test",
                 "litellm_params": {
@@ -174,7 +174,7 @@ class TestNormalizeDictEntry:
             f.write("http://secret-host:8080\n")
             f.flush()
             try:
-                result = _normalize_dict_entry(
+                result = normalize_dict_entry(
                     {
                         "model_name": "test",
                         "litellm_params": {
@@ -191,7 +191,7 @@ class TestNormalizeDictEntry:
                 os.unlink(f.name)
 
     def test_params_alias_for_litellm_params(self):
-        result = _normalize_dict_entry(
+        result = normalize_dict_entry(
             {
                 "model_name": "test",
                 "params": {
@@ -205,7 +205,7 @@ class TestNormalizeDictEntry:
         assert result["litellm_params"]["api_key"] == "sk-xxx"
 
     def test_non_indirect_keys_left_alone(self):
-        result = _normalize_dict_entry(
+        result = normalize_dict_entry(
             {
                 "model_name": "test",
                 "litellm_params": {
@@ -302,17 +302,17 @@ class TestLLMRouterCompletion:
 class TestPassthrough:
     def test_is_passthrough_single_wildcard(self):
         ml = [{"model_name": "*", "litellm_params": {}}]
-        assert _is_passthrough(ml)
+        assert is_passthrough(ml)
 
     def test_not_passthrough_named_wildcard(self):
         """Only model_name='*' triggers passthrough, not 'openai/*'."""
         ml = [{"model_name": "openai/*", "litellm_params": {}}]
-        assert not _is_passthrough(ml)
+        assert not is_passthrough(ml)
 
     def test_not_passthrough_star_in_name(self):
         """A name containing '*' but not exactly '*' is not passthrough."""
         ml = [{"model_name": "my*model", "litellm_params": {}}]
-        assert not _is_passthrough(ml)
+        assert not is_passthrough(ml)
 
     def test_not_passthrough_no_wildcard(self):
         ml = [
@@ -321,7 +321,7 @@ class TestPassthrough:
                 "litellm_params": {"model": "openai/gpt-4o"},
             }
         ]
-        assert not _is_passthrough(ml)
+        assert not is_passthrough(ml)
 
     def test_not_passthrough_multiple_entries(self):
         ml = [
@@ -331,7 +331,7 @@ class TestPassthrough:
                 "litellm_params": {"model": "ollama/llama3"},
             },
         ]
-        assert not _is_passthrough(ml)
+        assert not is_passthrough(ml)
 
     def test_passthrough_mode_active(self):
         app = _app()

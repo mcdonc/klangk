@@ -19,12 +19,12 @@ import typer
 import websockets
 
 from .auth import local_login, refresh_token
-from .client import _server_mode_is_none
+from .client import server_mode_is_none
 from . import context
 from .transport import ws_connect
 
 
-def _dispatch_monitor_event(msg: dict, command: list[str]) -> None:
+def dispatch_monitor_event(msg: dict, command: list[str]) -> None:
     """Act on one server event.
 
     With no *command*, the event is streamed as line-delimited JSON to
@@ -86,7 +86,7 @@ async def monitor_connection(
         async for raw in conn:
             msg = parse_monitor_event(raw, type_filter, ws_filter)
             if msg is not None:
-                _dispatch_monitor_event(msg, command)
+                dispatch_monitor_event(msg, command)
 
 
 def parse_monitor_event(
@@ -126,7 +126,7 @@ async def refresh_token_threaded(server_url: str, token: str) -> str | None:
     new = await asyncio.to_thread(refresh_token, server_url, token)
     if new:
         return new
-    if await asyncio.to_thread(_server_mode_is_none, server_url):
+    if await asyncio.to_thread(server_mode_is_none, server_url):
         try:
             _email, new = await asyncio.to_thread(local_login, server_url)
         except SystemExit:
@@ -156,7 +156,7 @@ async def monitor_run(
     token so the monitor self-heals once the server/token recovers.
     """
     current_token = token
-    context._err.print(
+    context.err.print(
         "[green]Monitoring events. Press Ctrl+C to stop.[/green]"
     )
     attempt = 0
@@ -190,22 +190,22 @@ async def monitor_run(
             new = await refresh_token_threaded(server_spec, current_token)
             if new:
                 current_token = new
-                context._err.print("[green]Token refreshed.[/green]")
+                context.err.print("[green]Token refreshed.[/green]")
             else:
-                context._err.print(
+                context.err.print(
                     "[yellow]Token refresh failed; retrying with the"
                     " current token.[/yellow]"
                 )
 
         if max_reconnects is not None and attempt >= max_reconnects:
-            context._err.print(
+            context.err.print(
                 f"[red]{reason}; max reconnects ({max_reconnects})"
                 " reached, giving up.[/red]"
             )
             raise typer.Exit(code=1)
         attempt += 1
         delay = monitor_backoff(attempt, max_delay)
-        context._err.print(
+        context.err.print(
             f"[yellow]{reason}; reconnecting in {delay:.1f}s"
             f" (attempt {attempt})...[/yellow]"
         )
@@ -300,7 +300,7 @@ def monitor(
     if (
         not token
     ):  # pragma: no cover  # context.require_auth already guards this
-        context._err.print(
+        context.err.print(
             "[red]Not logged in. Run `klangk login` first.[/red]"
         )
         raise typer.Exit(code=1)
@@ -321,7 +321,7 @@ def monitor(
     except websockets.InvalidStatus as e:
         # A rejection during the very first connect (before the loop's
         # reconnect path is established).
-        context._err.print(f"[red]Connection rejected: {e}[/red]")
+        context.err.print(f"[red]Connection rejected: {e}[/red]")
         raise typer.Exit(code=1) from None
     except KeyboardInterrupt:
-        context._err.print("[dim]Stopped.[/dim]")
+        context.err.print("[dim]Stopped.[/dim]")

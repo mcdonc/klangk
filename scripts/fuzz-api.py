@@ -591,10 +591,10 @@ class TeeReader:
 
     def __init__(self, stream: io.RawIOBase):
         self._buf: list[str] = []
-        self._thread = threading.Thread(target=self._run, args=(stream,), daemon=True)
+        self._thread = threading.Thread(target=self.run, args=(stream,), daemon=True)
         self._thread.start()
 
-    def _run(self, stream):
+    def run(self, stream):
         for raw_line in stream:
             line = raw_line.decode(errors="replace")
             sys.stderr.write(f"[server] {line}")

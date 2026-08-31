@@ -42,7 +42,7 @@ logger = logging.getLogger(__name__)
 # workspaces (#1936), so a v6 destination is neither reachable nor
 # enforceable, and the bracket grammar (``[::1]:443``) has been removed. CIDR
 # ranges (``10.0.0.0/8``) are handled before this regex runs — the ``/``
-# routes them to :func:`_valid_cidr_spec` — so this grammar stays
+# routes them to :func:`valid_cidr_spec` — so this grammar stays
 # host/IPv4-only (#1935).
 _DOMAIN_RE = re.compile(
     r"^[A-Za-z0-9](?:[A-Za-z0-9.\-]*[A-Za-z0-9])?"  # hostname / IPv4
@@ -58,7 +58,7 @@ def _valid_domain_spec(spec: str) -> bool:
     # distinguishes a CIDR from a ``host:port`` spec, so the host grammar
     # below is unchanged (#1935).
     if "/" in spec:
-        return _valid_cidr_spec(spec)
+        return valid_cidr_spec(spec)
     # nginx-style host scopes (#2377): a bare host is EXACT (apex only); a
     # leading ``.`` is INCLUSIVE (apex + subdomains); ``*.`` is SUBDOMAINS only.
     # Strip the sigil and validate the remaining ``host[:port]`` grammar; a bare
@@ -94,7 +94,7 @@ def _valid_spec_port(spec: str) -> bool:
     return True
 
 
-def _valid_cidr_spec(spec: str) -> bool:
+def valid_cidr_spec(spec: str) -> bool:
     """Validate an IPv4 CIDR spec, optionally scoped to a TCP port.
 
     Forms: ``<ip>/<plen>`` (e.g. ``10.0.0.0/8``) or ``<ip>/<plen>:<port>``
@@ -177,7 +177,7 @@ def _warn_allow_all_cidrs(specs: list[str]) -> None:
         if "/" not in spec:
             continue
         # The CIDR is everything before an optional :port suffix. This
-        # parse cannot raise: the spec already passed _valid_cidr_spec,
+        # parse cannot raise: the spec already passed valid_cidr_spec,
         # which ran the same IPv4Network(...) and rejected on ValueError.
         cidr = spec.rsplit(":", 1)[0] if ":" in spec else spec
         if ipaddress.IPv4Network(cidr, strict=False).prefixlen == 0:
@@ -191,7 +191,7 @@ def _warn_allow_all_cidrs(specs: list[str]) -> None:
             )
 
 
-def _is_ipv4(s: str) -> bool:
+def is_ipv4(s: str) -> bool:
     """True if ``s`` is a literal IPv4 address."""
     try:
         return isinstance(ipaddress.ip_address(s), ipaddress.IPv4Address)
@@ -199,7 +199,7 @@ def _is_ipv4(s: str) -> bool:
         return False
 
 
-def _nameservers(path: str) -> list[str]:
+def nameservers(path: str) -> list[str]:
     """IPv4 ``nameserver`` IPs from a resolv.conf file (best-effort)."""
     out: list[str] = []
     try:
@@ -209,7 +209,7 @@ def _nameservers(path: str) -> list[str]:
                 if (
                     len(parts) >= 2
                     and parts[0] == "nameserver"
-                    and _is_ipv4(parts[1])
+                    and is_ipv4(parts[1])
                 ):
                     out.append(parts[1])
     except OSError:
@@ -217,7 +217,7 @@ def _nameservers(path: str) -> list[str]:
     return out
 
 
-def _detect_host_resolvers() -> list[str]:
+def detect_host_resolvers() -> list[str]:
     """Best-effort detection of the host's upstream IPv4 DNS resolvers.
 
     On systemd-resolved hosts ``/etc/resolv.conf`` is the ``127.0.0.53``
@@ -227,9 +227,9 @@ def _detect_host_resolvers() -> list[str]:
     when no usable resolver is found (#1365). The sidecar's proxy forwards
     to one of these (picking one that differs from the REDIRECT target for
     loop-avoidance)."""
-    primary = _nameservers("/etc/resolv.conf")
+    primary = nameservers("/etc/resolv.conf")
     if any(ns == "127.0.0.53" for ns in primary):
-        upstream = _nameservers("/run/systemd/resolve/resolv.conf")
+        upstream = nameservers("/run/systemd/resolve/resolv.conf")
         if upstream:
             return list(dict.fromkeys(upstream))
     return list(
@@ -268,7 +268,7 @@ class NetFilter:
         Armed = the master switch (``netfilter_enabled``) is on AND the
         network sidecar image is configured. A workspace with
         ``allowed_domains`` that starts when this is False is fail-closed at
-        ``_start_container_inner`` (it raises rather than running
+        ``start_container_inner`` (it raises rather than running
         unrestricted) — so the API warns early when an operator persists an
         allow-list on a deploy that can't enforce it (#1365).
         """
@@ -281,7 +281,7 @@ class NetFilter:
 
         Re-detected each call (cheap file read) so a SIGHUP settings reload
         or a host resolver change takes effect for the next workspace without
-        per-instance caching (#1365). ``_start_network_sidecar`` picks the
+        per-instance caching (#1365). ``start_network_sidecar`` picks the
         first one that differs from the REDIRECT target (1.1.1.1) for
         loop-avoidance."""
-        return _detect_host_resolvers()
+        return detect_host_resolvers()

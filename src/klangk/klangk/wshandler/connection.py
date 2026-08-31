@@ -41,7 +41,7 @@ class Connection:
         # Terminal sessions are owned by the TerminalController
         # collaborator; Connection delegates the terminal_* commands to
         # it.  The ``terminal_session``/``terminal_task`` (and
-        # ``_terminal_cols``/``_terminal_rows``) properties below proxy
+        # ``terminal_cols``/``terminal_rows``) properties below proxy
         # to the controller for backwards compatibility with code
         # (and tests) that read/write those fields directly.
         self.terminal = TerminalController(self)
@@ -62,8 +62,8 @@ class Connection:
         self._user_home: str | None = None
         self._service_command: str | None = None
         self._home_created: bool = False
-        self._terminal_cols: int = 80
-        self._terminal_rows: int = 24
+        self.terminal_cols: int = 80
+        self.terminal_rows: int = 24
         # Tracks which shared terminal this connection is viewing.
         # Set on join_shared_terminal, cleared on stop_terminal/terminal_start.
         # Shared-terminal state is owned by the
@@ -101,8 +101,8 @@ class Connection:
     # Backwards-compatible proxies for the state formerly held on
     # Connection itself.  Reads and writes are forwarded to the
     # controller so existing callers (and tests) that read/write
-    # ``terminal_session``/``terminal_task``/``_terminal_cols``/
-    # ``_terminal_rows`` directly keep working unchanged.
+    # ``terminal_session``/``terminal_task``/``terminal_cols``/
+    # ``terminal_rows`` directly keep working unchanged.
     @property
     def terminal_session(self):
         return self.terminal.session
@@ -120,19 +120,19 @@ class Connection:
         self.terminal.task = value
 
     @property
-    def _terminal_cols(self):
+    def terminal_cols(self):
         return self.terminal.cols
 
-    @_terminal_cols.setter
-    def _terminal_cols(self, value):
+    @terminal_cols.setter
+    def terminal_cols(self, value):
         self.terminal.cols = value
 
     @property
-    def _terminal_rows(self):
+    def terminal_rows(self):
         return self.terminal.rows
 
-    @_terminal_rows.setter
-    def _terminal_rows(self, value):
+    @terminal_rows.setter
+    def terminal_rows(self, value):
         self.terminal.rows = value
 
     async def handle_terminal_start(self, msg: dict) -> None:
@@ -468,7 +468,7 @@ class Connection:
             send_error(self.sock, "Not connected to a workspace")
             return
         # Restarting affects everyone in the workspace; require terminal.
-        if not await self._has_perm("terminal"):
+        if not await self.has_perm("terminal"):
             # #2891: same machine-readable refusal as workspace_connect.
             send_error(self.sock, "Permission denied", code="forbidden")
             return
@@ -556,7 +556,7 @@ class Connection:
             workspace_id,
         )
 
-    async def _has_perm(self, perm: str) -> bool:
+    async def has_perm(self, perm: str) -> bool:
         """Check if the connected user has a workspace permission."""
         if not self.workspace_id:
             return False

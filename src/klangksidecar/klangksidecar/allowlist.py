@@ -13,20 +13,20 @@ import time
 
 from . import (
     state,
-)  # _SESSION_HOST_ALLOWS/_DENIES read qualified so tests can reassign them
+)  # SESSION_HOST_ALLOWS/_DENIES read qualified so tests can reassign them
 
 # Host-scope modes for an allow-list spec, nginx-style (#2377): a bare host is
 # EXACT (apex only); a leading-dot ``.host`` is INCLUSIVE (apex + subdomains);
 # ``*.host`` is SUBDOMAINS only. (Bare = exact is the breaking flip from the
 # old "bare = apex+subdomains" model.) One definition shared by parse_specs /
-# ports_for / _session_host_allows_ttl.
-_EXACT = "exact"
+# ports_for / session_host_allows_ttl.
+EXACT = "exact"
 
 
-_INCLUSIVE = "inclusive"
+INCLUSIVE = "inclusive"
 
 
-_SUBDOMAINS = "subdomains"
+SUBDOMAINS = "subdomains"
 
 
 def parse_specs(
@@ -34,9 +34,9 @@ def parse_specs(
 ) -> list[tuple[str, int | None, str]]:
     """Structured host specs from ``env_var`` (#2377, #2367).
 
-    Each entry is ``(host, port, mode)``: ``mode`` is :data:`_EXACT` (bare host,
-    apex only), :data:`_INCLUSIVE` (``.host``, apex + subdomains), or
-    :data:`_SUBDOMAINS` (``*.host``, subdomains only). ``port`` is ``None`` for
+    Each entry is ``(host, port, mode)``: ``mode`` is :data:`EXACT` (bare host,
+    apex only), :data:`INCLUSIVE` (``.host``, apex + subdomains), or
+    :data:`SUBDOMAINS` (``*.host``, subdomains only). ``port`` is ``None`` for
     all-ports. CIDR specs (``10.0.0.0/8``) are excluded — the entrypoint applies
     those statically. The grammar mirrors ``klangk.netfilter.parse_allowed_domains``.
     """
@@ -52,12 +52,12 @@ def parse_specs(
                 port = int(port_part)
                 spec = host_part
         s = spec.lower()
-        mode = _EXACT
+        mode = EXACT
         if s.startswith("*."):
-            mode = _SUBDOMAINS
+            mode = SUBDOMAINS
             s = s[2:]
         elif s.startswith("."):
-            mode = _INCLUSIVE
+            mode = INCLUSIVE
             s = s[1:]
         if s:
             out.append((s, port, mode))
@@ -72,21 +72,21 @@ SPECS = parse_specs()
 REJECT_SPECS = parse_specs("KLANGKNETWORK_EGRESS_REJECT")
 
 
-def _host_matches(qname: str, host: str, mode: str) -> bool:
+def host_matches(qname: str, host: str, mode: str) -> bool:
     """Does ``qname`` match ``host`` under nginx-style scope ``mode`` (#2377)?
 
-    Shared by :func:`ports_for` (the DNS gate) and :func:`_session_host_allows_ttl`
-    (the NFQUEUE gate) so the two can't drift. :data:`_EXACT` (bare host) matches
-    the apex only; :data:`_INCLUSIVE` (``.host``) matches apex + subdomains;
-    :data:`_SUBDOMAINS` (``*.host``) matches subdomains only. The suffix check
+    Shared by :func:`ports_for` (the DNS gate) and :func:`session_host_allows_ttl`
+    (the NFQUEUE gate) so the two can't drift. :data:`EXACT` (bare host) matches
+    the apex only; :data:`INCLUSIVE` (``.host``) matches apex + subdomains;
+    :data:`SUBDOMAINS` (``*.host``) matches subdomains only. The suffix check
     requires a leading dot, so ``evilexample.com`` does NOT match
     ``example.com``.
     """
-    if mode == _SUBDOMAINS:
+    if mode == SUBDOMAINS:
         return qname.endswith("." + host)
-    if mode == _INCLUSIVE:
+    if mode == INCLUSIVE:
         return qname == host or qname.endswith("." + host)
-    return qname == host  # _EXACT (and the safe default for an unknown mode)
+    return qname == host  # EXACT (and the safe default for an unknown mode)
 
 
 def ports_for(qname: str) -> set[int] | None:
@@ -96,15 +96,15 @@ def ports_for(qname: str) -> set[int] | None:
     ``set()`` — nothing matched (deny).
     ``{443, ...}`` — allow exactly these TCP ports.
 
-    Scope: a bare host is :data:`_EXACT` (apex only); ``.host`` is
-    :data:`_INCLUSIVE` (apex + subdomains); ``*.host`` is :data:`_SUBDOMAINS`
+    Scope: a bare host is :data:`EXACT` (apex only); ``.host`` is
+    :data:`INCLUSIVE` (apex + subdomains); ``*.host`` is :data:`SUBDOMAINS`
     (subdomains only, apex excluded).
     """
     ports: set[int] = set()
     _prune_session_allows()
-    session = [(h, p, m) for (h, p, m, _exp) in state._SESSION_HOST_ALLOWS]
+    session = [(h, p, m) for (h, p, m, _exp) in state.SESSION_HOST_ALLOWS]
     for host, port, mode in (*SPECS, *session):
-        if not _host_matches(qname, host, mode):
+        if not host_matches(qname, host, mode):
             continue
         if port is None:
             return None  # an all-ports spec dominates
@@ -117,51 +117,49 @@ def rejected_for(qname: str) -> bool:
 
     Parallel to :func:`ports_for` for the deny-list, but boolean -- a rejected
     name is NXDOMAIN'd unconditionally, so there is no port dimension. Matches
-    via :func:`_host_matches` (nginx-style scope): bare = apex only, ``.host`` =
+    via :func:`host_matches` (nginx-style scope): bare = apex only, ``.host`` =
     apex + subdomains, ``*.host`` = subdomains only.
     """
-    return any(_host_matches(qname, host, mode) for host, _port, mode in REJECT_SPECS)
+    return any(host_matches(qname, host, mode) for host, _port, mode in REJECT_SPECS)
 
 
 def _prune_session_allows() -> None:
     """Drop expired in-session host allows (lazy sweep, #2434).
 
-    :data:`_SESSION_HOST_ALLOWS` is loop-only (no lock), so -- unlike
-    :data:`_LEARNED` / :data:`_REJECTED`, which are swept off-loop by
-    :func:`sweep_once` under :data:`_LOCK` -- its timed entries expire here, on
+    :data:`SESSION_HOST_ALLOWS` is loop-only (no lock), so -- unlike
+    :data:`LEARNED` / :data:`REJECTED`, which are swept off-loop by
+    :func:`sweep_once` under :data:`LOCK` -- its timed entries expire here, on
     the loop, the next time a gate (:func:`ports_for`,
-    :func:`_session_host_allows_ttl`, :func:`_add_session_host`) reads them.
+    :func:`session_host_allows_ttl`, :func:`add_session_host`) reads them.
     Cheap (the list is tiny -- one entry per consented host:port) and keeps the
     structure from growing unbounded across a long session.
     """
     now = time.time()
-    state._SESSION_HOST_ALLOWS[:] = [
-        t for t in state._SESSION_HOST_ALLOWS if t[3] > now
-    ]
+    state.SESSION_HOST_ALLOWS[:] = [t for t in state.SESSION_HOST_ALLOWS if t[3] > now]
 
 
 def _add_session_entry(lst: list, host: str, port: int, ttl: float) -> None:
     """Add/refresh an EXACT ``(host, port)`` entry in *lst* (#2554).
 
-    The shared body of :func:`_add_session_host` (allows) and
-    :func:`_add_session_deny` (denies): deduped, a re-add refreshes the
+    The shared body of :func:`add_session_host` (allows) and
+    :func:`add_session_deny` (denies): deduped, a re-add refreshes the
     expiry (``max`` -- never shortens an unexpired entry). Loop-only
     (no lock). Callers prune first.
     """
     expire = time.time() + ttl
-    spec = (host, port, _EXACT)
+    spec = (host, port, EXACT)
     for i, (h, p, mode, _exp) in enumerate(lst):
         if (h, p, mode) == spec:
             lst[i] = (h, p, mode, max(_exp, expire))
             return
-    lst.append((host, port, _EXACT, expire))
+    lst.append((host, port, EXACT, expire))
 
 
-def _session_entry_ttl(lst: list, host: str, port: int) -> float | None:
+def session_entry_ttl(lst: list, host: str, port: int) -> float | None:
     """Max remaining TTL of an entry in *lst* covering ``host:port``, or None.
 
-    The shared body of :func:`_session_host_allows_ttl` and
-    :func:`_session_host_denies_ttl`: matches via :func:`_host_matches`
+    The shared body of :func:`session_host_allows_ttl` and
+    :func:`session_host_denies_ttl`: matches via :func:`host_matches`
     (nginx-style scope; entries are added EXACT, so only the exact host
     matches, #2377); port must match (or the entry is all-ports).
     Loop-only (no lock). Callers prune first.
@@ -174,23 +172,23 @@ def _session_entry_ttl(lst: list, host: str, port: int) -> float | None:
         if exp <= now:
             continue  # belt-and-suspenders: _prune ran above, but a just-expired
             # entry can survive the microseconds between its `now` and this one.
-        if _host_matches(host, h, mode) and (p == port or p is None):
+        if host_matches(host, h, mode) and (p == port or p is None):
             remaining = exp - now
             if best is None or remaining > best:
                 best = remaining
     return best
 
 
-def _add_session_host(host: str, port: int, ttl: float) -> None:
+def add_session_host(host: str, port: int, ttl: float) -> None:
     """Allow-list ``host:port`` in-session for a consent allow verdict (#2372,
     #2434).
 
-    Adds ``(host, port, _EXACT, now + ttl)`` to :data:`_SESSION_HOST_ALLOWS` so
+    Adds ``(host, port, EXACT, now + ttl)`` to :data:`SESSION_HOST_ALLOWS` so
     :func:`ports_for` (the DNS gate) treats the host as allow-listed for the
     verdict's lifetime -- the DNS path then learns every resolved IP and allows
     it without NFQUEUE, so a CDN-rotated IP no longer re-prompts (or, if it
-    still races NFQUEUE, :func:`_session_host_allows_ttl` short-circuits it in
-    :func:`_cb`). EXACT scope: the user approved the specific qname they saw, so
+    still races NFQUEUE, :func:`session_host_allows_ttl` short-circuits it in
+    :func:`cb`). EXACT scope: the user approved the specific qname they saw, so
     only that host (not its subdomains) is opened (#2377). Deduped; a re-allow
     of the same host:port refreshes the expiry (``max`` -- never shortens an
     unexpired entry). A timed allow (5s/5m/1h/tilrestart) is host-scoped just
@@ -198,36 +196,36 @@ def _add_session_host(host: str, port: int, ttl: float) -> None:
     a reconnect re-prompts). Loop-only (no lock).
     """
     _prune_session_allows()
-    _add_session_entry(state._SESSION_HOST_ALLOWS, host, port, ttl)
+    _add_session_entry(state.SESSION_HOST_ALLOWS, host, port, ttl)
 
 
-def _session_host_allows_ttl(host: str, port: int) -> float | None:
+def session_host_allows_ttl(host: str, port: int) -> float | None:
     """Remaining seconds an in-session allow covers ``host`` on ``port``, or
     ``None`` (#2372, #2434).
 
-    Used by :func:`_cb` as the last-chance gate before prompting: a SYN to a
+    Used by :func:`cb` as the last-chance gate before prompting: a SYN to a
     host:port the user allowed (timed or forever) -- including a CDN-rotated or
     resolver-cached IP that no fresh DNS resolution re-ACCEPTed -- is
     auto-allowed, learned for the allow's remaining window, so the user isn't
     re-asked (and a hold timeout can't fail-close a still-allowed host to a
-    deny, #2434). Matches via :func:`_host_matches` (nginx-style scope); entries
-    are added EXACT by :func:`_add_session_host`, so only the approved host
+    deny, #2434). Matches via :func:`host_matches` (nginx-style scope); entries
+    are added EXACT by :func:`add_session_host`, so only the approved host
     matches (#2377). Returns the max remaining TTL across matching entries.
     Loop-only (no lock).
     """
     if not host:
         return None
     _prune_session_allows()
-    return _session_entry_ttl(state._SESSION_HOST_ALLOWS, host, port)
+    return session_entry_ttl(state.SESSION_HOST_ALLOWS, host, port)
 
 
-def _session_allow_rule_cap(qname: str) -> float | None:
+def session_allow_rule_cap(qname: str) -> float | None:
     """Min remaining TTL bounding a DNS-path learned rule for ``qname``, or
     ``None`` (#2465).
 
-    A timed consent allow adds the host to :data:`_SESSION_HOST_ALLOWS`, so
+    A timed consent allow adds the host to :data:`SESSION_HOST_ALLOWS`, so
     :func:`ports_for` treats it as allow-listed and the DNS path
-    (:func:`_respond_allowed` -> :func:`_learn_all`) learns every resolved IP.
+    (:func:`respond_allowed` -> :func:`learn_all`) learns every resolved IP.
     That learn used to install the ACCEPT rule for the response's DNS TTL --
     often minutes -- so a short verdict (5s) left a rule that outlived it: a
     retry past the window connected with no re-prompt (the allow/deny asymmetry
@@ -243,8 +241,8 @@ def _session_allow_rule_cap(qname: str) -> float | None:
     host (a static spec has no NFQUEUE gate, only the learned rule covers its
     SYN). Also ``None`` when no session allow matches (a static-only or
     non-allow-listed name learns at its DNS TTL). Loop-only (reads
-    :data:`_SESSION_HOST_ALLOWS`); computed on the event-loop thread in
-    :func:`_respond_allowed` and passed to :func:`_learn_all`, which runs
+    :data:`SESSION_HOST_ALLOWS`); computed on the event-loop thread in
+    :func:`respond_allowed` and passed to :func:`learn_all`, which runs
     off-loop in the executor.
 
     The static-spec check is qname-level (any port), so a host with a
@@ -257,15 +255,15 @@ def _session_allow_rule_cap(qname: str) -> float | None:
     NOT covered by the NFQUEUE gate. All real consent flows hit this for a
     single host:port, where the cap is exact.
     """
-    if any(_host_matches(qname, host, mode) for host, _port, mode in SPECS):
+    if any(host_matches(qname, host, mode) for host, _port, mode in SPECS):
         return None  # a static spec matches -> forever -> DNS TTL is correct
     _prune_session_allows()
     now = time.time()
     best: float | None = None
-    for host, _port, mode, exp in state._SESSION_HOST_ALLOWS:
+    for host, _port, mode, exp in state.SESSION_HOST_ALLOWS:
         if exp <= now:
             continue
-        if _host_matches(qname, host, mode):
+        if host_matches(qname, host, mode):
             remaining = exp - now
             if best is None or remaining < best:
                 best = remaining
@@ -275,93 +273,91 @@ def _session_allow_rule_cap(qname: str) -> float | None:
 def _prune_session_denies() -> None:
     """Drop expired in-session host denies (lazy sweep, #2446).
 
-    :data:`_SESSION_HOST_DENIES` is loop-only (no lock), so -- like
-    :data:`_SESSION_HOST_ALLOWS` -- its timed entries expire here, on the loop,
-    the next time a gate (:func:`_session_host_denies_ttl`,
-    :func:`_add_session_deny`, :func:`_drop_session_denies`) reads them. Cheap
+    :data:`SESSION_HOST_DENIES` is loop-only (no lock), so -- like
+    :data:`SESSION_HOST_ALLOWS` -- its timed entries expire here, on the loop,
+    the next time a gate (:func:`session_host_denies_ttl`,
+    :func:`add_session_deny`, :func:`drop_session_denies`) reads them. Cheap
     (the list is tiny -- one entry per denied host:port) and keeps the structure
     from growing unbounded across a long session.
     """
     now = time.time()
-    state._SESSION_HOST_DENIES[:] = [
-        t for t in state._SESSION_HOST_DENIES if t[3] > now
-    ]
+    state.SESSION_HOST_DENIES[:] = [t for t in state.SESSION_HOST_DENIES if t[3] > now]
 
 
-def _add_session_deny(host: str, port: int, ttl: float) -> None:
+def add_session_deny(host: str, port: int, ttl: float) -> None:
     """Deny ``host:port`` in-session for a consent deny verdict (#2446).
 
-    The deny-side mirror of :func:`_add_session_host`: adds
-    ``(host, port, _EXACT, now + ttl)`` to :data:`_SESSION_HOST_DENIES` so
-    :func:`_cb` (via :func:`_session_host_denies_ttl`) suppresses a re-prompt
+    The deny-side mirror of :func:`add_session_host`: adds
+    ``(host, port, EXACT, now + ttl)`` to :data:`SESSION_HOST_DENIES` so
+    :func:`cb` (via :func:`session_host_denies_ttl`) suppresses a re-prompt
     for a host the user already denied -- including a CDN-rotated or
-    resolver-cached IP that the per-IP :data:`_REJECTED` rule does not cover
+    resolver-cached IP that the per-IP :data:`REJECTED` rule does not cover
     (the CARRYOVER-SURPRISE, #2446). EXACT scope (only the denied host, not its
     subdomains, #2377); deduped, a re-deny refreshes the expiry (``max`` --
     never shortens an unexpired entry). ``once`` adds nothing (per-connection,
     so a reconnect re-prompts). Loop-only (no lock).
     """
     _prune_session_denies()
-    _add_session_entry(state._SESSION_HOST_DENIES, host, port, ttl)
+    _add_session_entry(state.SESSION_HOST_DENIES, host, port, ttl)
 
 
-def _session_host_denies_ttl(host: str, port: int) -> float | None:
+def session_host_denies_ttl(host: str, port: int) -> float | None:
     """Remaining seconds an in-session deny covers ``host`` on ``port``, or
     ``None`` (#2446).
 
-    The deny-side mirror of :func:`_session_host_allows_ttl`, used by
-    :func:`_cb` as the last-chance gate before prompting: a SYN to a host:port
+    The deny-side mirror of :func:`session_host_allows_ttl`, used by
+    :func:`cb` as the last-chance gate before prompting: a SYN to a host:port
     the user already denied (timed or forever) -- including a CDN-rotated or
-    resolver-cached IP that no fresh per-IP :data:`_REJECTED` rule covers -- is
+    resolver-cached IP that no fresh per-IP :data:`REJECTED` rule covers -- is
     denied fast (RST + short REJECT) without re-prompting. Matches via
-    :func:`_host_matches` (entries are added EXACT, so only the denied host
+    :func:`host_matches` (entries are added EXACT, so only the denied host
     matches, #2377); port must match (or the entry is all-ports). Returns the
     max remaining TTL across matching entries. Loop-only (no lock).
     """
     if not host:
         return None
     _prune_session_denies()
-    return _session_entry_ttl(state._SESSION_HOST_DENIES, host, port)
+    return session_entry_ttl(state.SESSION_HOST_DENIES, host, port)
 
 
-def _drop_session_hosts(host: str) -> None:
+def drop_session_hosts(host: str) -> None:
     """Remove a host's in-session allow coverage (#2370, #2372, #2434).
 
-    Drops every :data:`_SESSION_HOST_ALLOWS` entry whose host matches
+    Drops every :data:`SESSION_HOST_ALLOWS` entry whose host matches
     (case-insensitive). Called on the **event loop** by
-    :meth:`SidecarConsentClient._handle_drop_rule` **before** :func:`drop_for_host`
+    :meth:`SidecarConsentClient.handle_drop_rule` **before** :func:`drop_for_host`
     forks iptables in the executor: while that fork runs (~tens of ms), the
-    NFQUEUE consumer (:func:`_cb` -> :func:`_session_host_allows_ttl`) and the DNS
-    path (:func:`ports_for`) both read :data:`_SESSION_HOST_ALLOWS`, and a
+    NFQUEUE consumer (:func:`cb` -> :func:`session_host_allows_ttl`) and the DNS
+    path (:func:`ports_for`) both read :data:`SESSION_HOST_ALLOWS`, and a
     SYN/resolve arriving in that window would otherwise re-install a fresh
     ACCEPT (the host's remaining allow TTL, via :func:`allow`) that the revoke
     never clears. Clearing it first makes both gates deny during the window, so
     no fresh rule can be installed; :func:`drop_for_host` then removes the
-    existing ACCEPTs. :data:`_SESSION_HOST_ALLOWS` is loop-only (no lock) --
+    existing ACCEPTs. :data:`SESSION_HOST_ALLOWS` is loop-only (no lock) --
     touched on the loop, never inside :func:`drop_for_host` (executor thread). A
     deny revoke does not call this (a deny never adds to
-    :data:`_SESSION_HOST_ALLOWS`).
+    :data:`SESSION_HOST_ALLOWS`).
     """
     hl = host.lower()
-    state._SESSION_HOST_ALLOWS[:] = [
-        t for t in state._SESSION_HOST_ALLOWS if t[0].lower() != hl
+    state.SESSION_HOST_ALLOWS[:] = [
+        t for t in state.SESSION_HOST_ALLOWS if t[0].lower() != hl
     ]
 
 
-def _drop_session_denies(host: str) -> None:
+def drop_session_denies(host: str) -> None:
     """Remove a host's in-session deny coverage (#2446).
 
-    The deny-side mirror of :func:`_drop_session_hosts`, called on the event
-    loop by :meth:`SidecarConsentClient._handle_drop_rule` for a ``denied``
+    The deny-side mirror of :func:`drop_session_hosts`, called on the event
+    loop by :meth:`SidecarConsentClient.handle_drop_rule` for a ``denied``
     revoke BEFORE :func:`drop_for_host` forks iptables in the executor: while
-    that fork runs (~tens of ms), :func:`_cb` reads :data:`_SESSION_HOST_DENIES`,
+    that fork runs (~tens of ms), :func:`cb` reads :data:`SESSION_HOST_DENIES`,
     and a SYN arriving in that window would otherwise keep auto-denying (and
     re-installing a REJECT for) the host the operator just un-denied. Clearing
-    it first lets the host re-prompt. :data:`_SESSION_HOST_DENIES` is loop-only
+    it first lets the host re-prompt. :data:`SESSION_HOST_DENIES` is loop-only
     (no lock) -- touched on the loop, never inside :func:`drop_for_host`
     (executor thread).
     """
     hl = host.lower()
-    state._SESSION_HOST_DENIES[:] = [
-        t for t in state._SESSION_HOST_DENIES if t[0].lower() != hl
+    state.SESSION_HOST_DENIES[:] = [
+        t for t in state.SESSION_HOST_DENIES if t[0].lower() != hl
     ]

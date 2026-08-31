@@ -348,7 +348,7 @@ class WorkspacesModel:
     ``self.app.state.db`` (the single DB instance for the whole app).
 
     The ``db``-param private helpers (:meth:`_insert_workspace_row` /
-    :meth:`_seed_workspace_acl`) take a caller-supplied connection so they
+    :meth:`seed_workspace_acl`) take a caller-supplied connection so they
     can run inside a larger transaction (the atomic create-with-ACL path);
     they do not reach for ``self.app.state.db`` themselves — the atomicity
     constraint (the owner ACE + role groups must commit/roll back with the
@@ -464,7 +464,7 @@ class WorkspacesModel:
             for row in await cursor.fetchall()
         ]
 
-    async def _seed_workspace_acl(self, db, ws: dict, user_id: str) -> None:
+    async def seed_workspace_acl(self, db, ws: dict, user_id: str) -> None:
         """Seed the owner ACE and per-workspace role groups on ``db``.
 
         Writes the owner ``Allow`` ACE at position 0, then creates the four
@@ -584,7 +584,7 @@ class WorkspacesModel:
         )
         async with self.app.state.db.transaction() as db:
             ws = await self._insert_workspace_row(db, user_id, name, **insert)
-            await self._seed_workspace_acl(db, ws, user_id)
+            await self.seed_workspace_acl(db, ws, user_id)
             return ws
 
     async def create_workspace(
@@ -775,7 +775,7 @@ class WorkspacesModel:
         """Return the IDs of every workspace row (for orphan-file sweeps).
 
         Used by the periodic sidecar-token sweep (:meth:`ContainerRegistry.
-        _sweep_orphaned_sidecar_tokens`) to tell token files whose workspace
+        sweep_orphaned_sidecar_tokens`) to tell token files whose workspace
         still exists from orphans left by a deleted/crashed workspace (#2309).
         """
         rows = await self.app.state.db.fetchall("SELECT id FROM workspaces")

@@ -5,7 +5,7 @@ performs *mounts only* — the no-cache middleware is registered exactly once
 by ``main.build_app`` via :func:`no_cache_headers`. It deliberately does not
 call ``app.add_middleware`` itself: Starlette raises ``RuntimeError`` for
 middleware added after the app has started serving, which the SIGHUP
-``frontend_dir`` remount path (``Lifecycle._remount_frontend``) would hit
+``frontend_dir`` remount path (``Lifecycle.remount_frontend``) would hit
 on a live server — the #2738 audit found the old in-function registration
 broke exactly that path.
 """

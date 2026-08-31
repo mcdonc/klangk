@@ -15,11 +15,11 @@ os.environ.setdefault("COVERAGE_CORE", "sysmon")
 def _isolate_cli_state(tmp_path, monkeypatch):
     """Redirect CLI config/state to a per-test tmp dir for every klangkc-test.
 
-    ``klangk.cli.config`` resolves ``_CONFIG_PATH`` / ``_STATE_PATH`` at
+    ``klangk.cli.config`` resolves ``CONFIG_PATH`` / ``STATE_PATH`` at
     *import* time from ``XDG_CONFIG_HOME`` / ``XDG_STATE_HOME`` (with
     ~/.config / ~/.local/state fallbacks), so setting the env vars later
     has no effect — the module globals are patched directly, and the
-    ``_cfg()`` / ``_state()`` caches in ``klangk.cli.context`` are reset so
+    ``cfg()`` / ``state()`` caches in ``klangk.cli.context`` are reset so
     the next call re-loads from the isolated path.
 
     Without this, a unit test that invokes the real CLI in-process (e.g.
@@ -30,10 +30,10 @@ def _isolate_cli_state(tmp_path, monkeypatch):
     import klangk.cli.config as _cfg
     import klangk.cli.context as _ctx
 
-    monkeypatch.setattr(_cfg, "_CONFIG_PATH", tmp_path / "klangk.yaml")
-    monkeypatch.setattr(_cfg, "_STATE_PATH", tmp_path / "klangk-state.yaml")
-    monkeypatch.setattr(_ctx, "_cfg_cache", None)
-    monkeypatch.setattr(_ctx, "_state_cache", None)
+    monkeypatch.setattr(_cfg, "CONFIG_PATH", tmp_path / "klangk.yaml")
+    monkeypatch.setattr(_cfg, "STATE_PATH", tmp_path / "klangk-state.yaml")
+    monkeypatch.setattr(_ctx, "cfg_cache", None)
+    monkeypatch.setattr(_ctx, "state_cache", None)
 
 
 @pytest.fixture(autouse=True)

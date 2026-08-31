@@ -33,9 +33,9 @@ from textual.widgets import (
 )
 
 from ...client import AuthError, WorkspaceNotFoundError, decode_token_claims
-from ...auth import refresh_token as _refresh_token
+from ...auth import refresh_token as refresh_token
 from ...transport import ws_connect
-from ._base import (
+from .base import (
     CheatsheetScreen,
     ConfirmScreen,
     DuplicateScreen,
@@ -53,21 +53,21 @@ from .workspace_form import (
 
 logger = logging.getLogger(__name__)
 
-_TOKEN_REFRESH_MARGIN = 600  # refresh 10 minutes before expiry
-_TOKEN_REFRESH_POLL = 60  # check every 60 seconds
+TOKEN_REFRESH_MARGIN = 600  # refresh 10 minutes before expiry
+TOKEN_REFRESH_POLL = 60  # check every 60 seconds
 
 # Auto-reconnect for the workspaces list when the backend is unreachable
 # (#2012). Mirrors the Flutter WS client
 # (src/frontend/lib/ws/ws_client.dart: ``_scheduleReconnect`` / ``_backoffDelay``):
 # bounded exponential backoff with jitter and a hard attempt cap, after which
 # we give up and tell the user to switch server / restart.
-_MAX_RECONNECT_ATTEMPTS = 25
-_MAX_BACKOFF_SECONDS = 5
+MAX_RECONNECT_ATTEMPTS = 25
+MAX_BACKOFF_SECONDS = 5
 
 # Indirection so tests can advance the WS reconnect loop without real delays
 # (and without patching the global ``asyncio.sleep``, which Textual's own
 # event loop depends on).
-_reconnect_sleep = asyncio.sleep
+reconnect_sleep = asyncio.sleep
 
 
 class ServerUnreachable(Exception):
@@ -80,7 +80,7 @@ class ServerUnreachable(Exception):
     """
 
 
-def _is_unreachable(exc: BaseException) -> bool:
+def is_unreachable(exc: BaseException) -> bool:
     """True for transport-layer failures (server down / unreachable).
 
     Covers httpx connect/timeout/protocol errors and raw socket errors, but
@@ -90,7 +90,7 @@ def _is_unreachable(exc: BaseException) -> bool:
     return isinstance(exc, (httpx.TransportError, OSError))
 
 
-def _server_schedule_line(schedule: dict) -> str:
+def server_schedule_line(schedule: dict) -> str:
     """Status-line text for the next pending server action (#2661).
 
     Shows fire time (local) plus a coarse remaining duration, e.g.
@@ -119,14 +119,14 @@ def _server_schedule_line(schedule: dict) -> str:
     return f"server: {action} at {fire_at:%H:%M} (in {left})"
 
 
-def _reconnect_backoff(attempt: int) -> float:
+def reconnect_backoff(attempt: int) -> float:
     """Backoff delay (seconds) for reconnect *attempt* (1-based).
 
     Ported from ``WsClient._backoffDelay``: an exponential base capped at
-    ``_MAX_BACKOFF_SECONDS``, halved with random jitter so retries spread out
+    ``MAX_BACKOFF_SECONDS``, halved with random jitter so retries spread out
     instead of stampeding a just-restarted server.
     """
-    base = min(1 << attempt, _MAX_BACKOFF_SECONDS)
+    base = min(1 << attempt, MAX_BACKOFF_SECONDS)
     jitter = random.random() * base
     return (base + jitter) / 2.0
 
@@ -139,7 +139,7 @@ async def run_token_refresh_loop(state) -> str:
     Runs indefinitely until the token can't be refreshed.
     """
     while True:
-        await asyncio.sleep(_TOKEN_REFRESH_POLL)
+        await asyncio.sleep(TOKEN_REFRESH_POLL)
         url = state.current_url()
         token = state.token()
         if not url or not token:
@@ -148,10 +148,10 @@ async def run_token_refresh_loop(state) -> str:
         if exp is None:
             continue
         remaining = exp - time.time()
-        if remaining > _TOKEN_REFRESH_MARGIN:
+        if remaining > TOKEN_REFRESH_MARGIN:
             continue
         logger.debug("Token expires in %.0fs, refreshing", remaining)
-        new = await asyncio.to_thread(_refresh_token, url, token)
+        new = await asyncio.to_thread(refresh_token, url, token)
         if new:
             logger.debug("Token refreshed proactively")
         else:
@@ -492,8 +492,8 @@ class MainScreen(StatusScreen):
         owned = self._sort_workspaces(owned)
         shared = self._sort_workspaces(shared)
         empty = "(no matches)" if q else "(no workspaces)"
-        self._populate("#owned_list", owned, empty_label=empty)
-        self._populate("#shared_list", shared, empty_label=empty)
+        self.populate("#owned_list", owned, empty_label=empty)
+        self.populate("#shared_list", shared, empty_label=empty)
         self._refresh_action_hints()
 
     def _focus_visible_list(self) -> None:
@@ -567,7 +567,7 @@ class MainScreen(StatusScreen):
         item = self._highlighted_item()
         name = getattr(item, "name", "") or "" if item is not None else ""
         if not name:
-            self._flash("Select a workspace first.")
+            self.flash("Select a workspace first.")
             return None
         return name
 
@@ -589,7 +589,7 @@ class MainScreen(StatusScreen):
     def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
         self._refresh_action_hints()
 
-    def _flash(self, message: str) -> None:
+    def flash(self, message: str) -> None:
         """Show a transient message in the status bar's 'extra' slot.
 
         The next status event overwrites it. There's no dedicated message
@@ -611,7 +611,7 @@ class MainScreen(StatusScreen):
                 yes_label="Restart",
                 yes_variant="warning",
             ),
-            confirm_then(self, partial(self._do_restart, name)),
+            confirm_then(self, partial(self.do_restart, name)),
         )
 
     async def _do_lifecycle(
@@ -627,14 +627,14 @@ class MainScreen(StatusScreen):
             method = getattr(self.app.tui_state, f"{verb.lower()}_workspace")
             await asyncio.to_thread(method, name)
         except Exception as exc:
-            self._flash(f"{verb} failed: {exc}")
+            self.flash(f"{verb} failed: {exc}")
             return
-        self._flash(f"{verb} requested for '{name}'.")
+        self.flash(f"{verb} requested for '{name}'.")
         self.app.refresh_workspaces()
         if refresh_hints:
             self._refresh_action_hints()
 
-    async def _do_restart(self, name: str) -> None:
+    async def do_restart(self, name: str) -> None:
         await self._do_lifecycle("Restart", name, refresh_hints=False)
 
     def action_stop(self) -> None:
@@ -649,15 +649,15 @@ class MainScreen(StatusScreen):
                     yes_label="Stop",
                     yes_variant="warning",
                 ),
-                confirm_then(self, partial(self._do_stop, name)),
+                confirm_then(self, partial(self.do_stop, name)),
             )
         else:
-            self.run_worker(self._do_start(name), exit_on_error=False)
+            self.run_worker(self.do_start(name), exit_on_error=False)
 
-    async def _do_stop(self, name: str) -> None:
+    async def do_stop(self, name: str) -> None:
         await self._do_lifecycle("Stop", name, refresh_hints=True)
 
-    async def _do_start(self, name: str) -> None:
+    async def do_start(self, name: str) -> None:
         await self._do_lifecycle("Start", name, refresh_hints=True)
 
     def action_duplicate(self) -> None:
@@ -669,20 +669,20 @@ class MainScreen(StatusScreen):
             if not new_name:
                 return
             self.run_worker(
-                self._do_duplicate(name, new_name), exit_on_error=False
+                self.do_duplicate(name, new_name), exit_on_error=False
             )
 
         self.app.push_screen(DuplicateScreen(name), _on_dup)
 
-    async def _do_duplicate(self, src: str, new_name: str) -> None:
+    async def do_duplicate(self, src: str, new_name: str) -> None:
         try:
             await asyncio.to_thread(
                 self.app.tui_state.duplicate_workspace, src, new_name
             )
         except Exception as exc:
-            self._flash(f"Duplicate failed: {exc}")
+            self.flash(f"Duplicate failed: {exc}")
             return
-        self._flash(f"Duplicated '{src}' -> '{new_name}'.")
+        self.flash(f"Duplicated '{src}' -> '{new_name}'.")
         self.app.refresh_workspaces()
 
     def action_delete(self) -> None:
@@ -695,40 +695,40 @@ class MainScreen(StatusScreen):
                 f"Delete '{name}'? This permanently deletes the workspace"
                 " and its container.",
             ),
-            confirm_then(self, partial(self._do_delete, name)),
+            confirm_then(self, partial(self.do_delete, name)),
         )
 
-    async def _do_delete(self, name: str) -> None:
+    async def do_delete(self, name: str) -> None:
         try:
             await asyncio.to_thread(self.app.tui_state.delete_workspace, name)
         except Exception as exc:
-            self._flash(f"Delete failed: {exc}")
+            self.flash(f"Delete failed: {exc}")
             return
-        self._flash(f"Deleted '{name}'.")
+        self.flash(f"Deleted '{name}'.")
         self.app.refresh_workspaces()
 
     def action_edit(self) -> None:
         name = self._require_highlighted()
         if not name:
             return
-        self.run_worker(self._do_edit(name), exit_on_error=False)
+        self.run_worker(self.do_edit(name), exit_on_error=False)
 
-    async def _do_edit(self, name: str) -> None:
+    async def do_edit(self, name: str) -> None:
         state = self.app.tui_state
         try:
             ws = await asyncio.to_thread(state.find_workspace, name)
         except WorkspaceNotFoundError:
-            self._flash(f"Workspace '{name}' not found.")
+            self.flash(f"Workspace '{name}' not found.")
             return
         except AuthError:
             self.app.session_expired()
             return
         except Exception as exc:
-            self._flash(f"Could not load workspace: {exc}")
+            self.flash(f"Could not load workspace: {exc}")
             return
-        await open_edit_screen(self, state, ws, self._on_edited)
+        await open_edit_screen(self, state, ws, self.on_edited)
 
-    def _on_edited(self, result) -> None:
+    def on_edited(self, result) -> None:
         if result:
             self.refresh_lists()
 
@@ -737,10 +737,10 @@ class MainScreen(StatusScreen):
 
     def action_cheatsheet(self) -> None:
         """Open the ``?`` keyboard cheatsheet modal (#1802)."""
-        self.app.push_screen(CheatsheetScreen(self._cheatsheet_sections()))
+        self.app.push_screen(CheatsheetScreen(self.cheatsheet_sections()))
 
     @staticmethod
-    def _cheatsheet_sections() -> list[tuple[str, list[tuple[str, str]]]]:
+    def cheatsheet_sections() -> list[tuple[str, list[tuple[str, str]]]]:
         """Keybindings shown in the cheatsheet, grouped by context (#1802).
 
         Hand-written (not derived from ``BINDINGS``) so the display labels
@@ -781,7 +781,7 @@ class MainScreen(StatusScreen):
         ]
 
     def action_create(self) -> None:
-        self.run_worker(self._do_create, exit_on_error=False)
+        self.run_worker(self.do_create, exit_on_error=False)
 
     def action_import(self) -> None:
         """Import a workspace from a .tar.gz archive with upload progress (#1758)."""
@@ -798,7 +798,7 @@ class MainScreen(StatusScreen):
             return
         archive = Path(path)
         if not archive.exists():
-            self._flash(f"Import failed: file not found: {path}")
+            self.flash(f"Import failed: file not found: {path}")
             return
         state = self.app.tui_state
 
@@ -816,11 +816,11 @@ class MainScreen(StatusScreen):
 
     def _on_import_done(self, result: tuple[bool, str]) -> None:
         ok, msg = result
-        self._flash(msg)
+        self.flash(msg)
         if ok:
             self.refresh_lists()
 
-    async def _do_create(self) -> None:
+    async def do_create(self) -> None:
         state = self.app.tui_state
         try:
             data = await asyncio.to_thread(state.list_images)
@@ -922,7 +922,7 @@ class MainScreen(StatusScreen):
             self._owned_all = []
             self._shared_all = []
             for sel in ("#owned_list", "#shared_list"):
-                self._populate(sel, [])
+                self.populate(sel, [])
             self._refresh_status()
             self.app.session_expired()
             return
@@ -993,7 +993,7 @@ class MainScreen(StatusScreen):
         self._owned_all = []
         self._shared_all = []
         for sel in ("#owned_list", "#shared_list"):
-            self._populate(sel, [], empty_label=label)
+            self.populate(sel, [], empty_label=label)
         self._refresh_status()
 
     def _enter_unreachable(self) -> None:
@@ -1018,7 +1018,7 @@ class MainScreen(StatusScreen):
         return (
             f"server: unreachable, retrying "
             f"(attempt {self._reconnect_attempt}/"
-            f"{_MAX_RECONNECT_ATTEMPTS})…"
+            f"{MAX_RECONNECT_ATTEMPTS})…"
         )
 
     def _refresh_unreachable_display(self) -> None:
@@ -1035,7 +1035,7 @@ class MainScreen(StatusScreen):
         Resets the reconnect counter on a confirmed connection. Note a
         flapping backend (one that completes the WS handshake then drops)
         resets on every connect, so it stays in the silent grace retry and
-        never reaches ``_MAX_RECONNECT_ATTEMPTS`` — the cap is hit only by a
+        never reaches ``MAX_RECONNECT_ATTEMPTS`` — the cap is hit only by a
         backend that can't establish a connection at all (#2052).
         """
         self._reconnect_attempt = 0
@@ -1064,7 +1064,7 @@ class MainScreen(StatusScreen):
         return (
             f"⏳ Server unreachable\n\nReconnecting "
             f"(attempt {self._reconnect_attempt}/"
-            f"{_MAX_RECONNECT_ATTEMPTS})…\n"
+            f"{MAX_RECONNECT_ATTEMPTS})…\n"
             "The page will reload when the backend returns.\n"
             "[c] switch server   [Esc] dismiss"
         )
@@ -1080,7 +1080,7 @@ class MainScreen(StatusScreen):
         except AuthError:
             raise
         except Exception as exc:
-            if _is_unreachable(exc):
+            if is_unreachable(exc):
                 raise ServerUnreachable(
                     str(exc) or "server unreachable"
                 ) from exc
@@ -1136,7 +1136,7 @@ class MainScreen(StatusScreen):
         wid = str(getattr(ws, "id", "") or "")
         return Text(wid[:8], style="dim") if wid else Text("")
 
-    def _populate(
+    def populate(
         self,
         selector: str,
         workspaces: list,
@@ -1200,7 +1200,7 @@ class MainScreen(StatusScreen):
         """(Re)start the status-WS loop worker (#2704).
 
         The loop terminates itself once it exhausts
-        ``_MAX_RECONNECT_ATTEMPTS`` — the give-up overlay tells the user to
+        ``MAX_RECONNECT_ATTEMPTS`` — the give-up overlay tells the user to
         "switch server … to reconnect" — and a switch reuses this screen
         (no re-mount, so ``on_mount`` doesn't run). Without a restart here
         the switched-to server would get no live updates and no WS
@@ -1359,10 +1359,10 @@ class MainScreen(StatusScreen):
         if self not in self.app.screen_stack:
             return "exit"
         self._reconnect_attempt += 1
-        if self._reconnect_attempt > _MAX_RECONNECT_ATTEMPTS:
+        if self._reconnect_attempt > MAX_RECONNECT_ATTEMPTS:
             self._give_up_reconnect()
             return "exit"
-        delay = _reconnect_backoff(self._reconnect_attempt)
+        delay = reconnect_backoff(self._reconnect_attempt)
         if self._reconnect_attempt == 1:
             # Grace: a transient drop / clean close (server restart, idle
             # timeout) gets one silent quick retry before the overlay
@@ -1373,7 +1373,7 @@ class MainScreen(StatusScreen):
             self._enter_unreachable()
             self._refresh_unreachable_display()
         if await self._wait_drop_or(
-            asyncio.create_task(_reconnect_sleep(delay))
+            asyncio.create_task(reconnect_sleep(delay))
         ):
             return "switched"
         return "elapsed"
@@ -1462,7 +1462,7 @@ class MainScreen(StatusScreen):
                 self._refresh_status()
             return
         next_up = schedules[0]
-        self.app.live_extra = _server_schedule_line(next_up)
+        self.app.live_extra = server_schedule_line(next_up)
         self._refresh_status()
 
     def _on_status_event(self, event: dict) -> None:

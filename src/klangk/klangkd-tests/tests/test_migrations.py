@@ -1178,18 +1178,18 @@ class TestRenameDetection:
 class TestValidation:
     def test_rejects_gap(self):
         with pytest.raises(RuntimeError, match="contiguous"):
-            migrations_mod._validate_migrations(
+            migrations_mod.validate_migrations(
                 [Migration(1, "a", None), Migration(3, "c", None)]  # noqa: ARG005
             )
 
     def test_rejects_duplicate_names(self):
         with pytest.raises(RuntimeError, match="Duplicate"):
-            migrations_mod._validate_migrations(
+            migrations_mod.validate_migrations(
                 [Migration(1, "a", None), Migration(2, "a", None)]  # noqa: ARG005
             )
 
     def test_accepts_contiguous(self):
-        migrations_mod._validate_migrations(
+        migrations_mod.validate_migrations(
             [Migration(1, "a", None), Migration(2, "b", None)]  # noqa: ARG005
         )
 

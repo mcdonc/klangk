@@ -1,7 +1,7 @@
 """Env-derived configuration for the network sidecar's DNS proxy (#2450).
 
 Constants are read once at import from the KLANGKNETWORK_EGRESS_* /
-KLANGKNETWORK_* env vars; _duration_ttl maps a consent duration token
+KLANGKNETWORK_* env vars; duration_ttl maps a consent duration token
 (#2328) to seconds.
 """
 
@@ -94,9 +94,9 @@ CONSENT_REJECT_TTL = float(os.environ.get("KLANGKNETWORK_EGRESS_REJECT_TTL", "10
 # stdout. Off by default -- a denied connection's SYN retransmits each hit the
 # cached deny and re-forge an RST, which would spam a production sidecar's log.
 # The egress smoketest enables it (KLANGKNETWORK_EGRESS_DEBUG_RST=1, forwarded
-# by ContainerManager._start_network_sidecar) and captures the sidecar's podman
+# by ContainerManager.start_network_sidecar) and captures the sidecar's podman
 # log so a fast-refuse miss is diagnosable after the run.
-_RST_DEBUG = os.environ.get("KLANGKNETWORK_EGRESS_DEBUG_RST", "") == "1"
+RST_DEBUG = os.environ.get("KLANGKNETWORK_EGRESS_DEBUG_RST", "") == "1"
 
 
 # Duration token -> seconds the sidecar honors a verdict (#2328): an allow
@@ -119,15 +119,15 @@ _DURATION_SECONDS = {
 }
 
 
-_DURATION_FOREVER = 365 * 86400  # ~a year; practically until restart
+DURATION_FOREVER = 365 * 86400  # ~a year; practically until restart
 
 
-def _duration_ttl(duration: str) -> float | None:
+def duration_ttl(duration: str) -> float | None:
     """Seconds for a timed/tilrestart/forever duration, or None for ``once``."""
     if duration in _DURATION_SECONDS:
         return _DURATION_SECONDS[duration]
     if duration in ("tilrestart", "forever"):
-        return _DURATION_FOREVER
+        return DURATION_FOREVER
     return None  # "once" or unknown -> caller handles (no learn / short reject)
 
 

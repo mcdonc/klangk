@@ -55,7 +55,7 @@ VERDICT_DENY = "deny"
 # How long revoke() waits for the sidecar's drop-rule ack before giving up
 # (fail-closed: leave the row enforced). The sidecar's rule-drop is a single
 # iptables delete, so this is generous.
-_REVOKE_ACK_TIMEOUT = 5.0
+REVOKE_ACK_TIMEOUT = 5.0
 
 # Consent-pause durations (#2332): how long interactive prompting is silenced
 # workspace-wide. While paused, a destination with no allow-list rule and no
@@ -195,7 +195,7 @@ class ConsentCoordinator:
                 fut = loop.create_future()
                 fut.set_result(verdict)
                 return fut
-            if not await self._is_interactive(workspace_id):
+            if not await self.is_interactive(workspace_id):
                 await self.app.state.model.egress_consent.record_static_denial(
                     workspace_id, dst, dport
                 )
@@ -598,7 +598,7 @@ class ConsentCoordinator:
         )
         if fut is not None:
             try:
-                ok = await asyncio.wait_for(fut, _REVOKE_ACK_TIMEOUT)
+                ok = await asyncio.wait_for(fut, REVOKE_ACK_TIMEOUT)
             except asyncio.TimeoutError:
                 ok = False
             if not ok:
@@ -803,7 +803,7 @@ class ConsentCoordinator:
         if frame is not None:
             self.app.state.consent_deciders.broadcast(workspace_id, frame)
 
-    async def _is_interactive(self, workspace_id: str) -> bool:
+    async def is_interactive(self, workspace_id: str) -> bool:
         """Interactive iff the workspace opted in AND a live decider exists (#2308)."""
         return await workspace_is_interactive(self.app, workspace_id)
 

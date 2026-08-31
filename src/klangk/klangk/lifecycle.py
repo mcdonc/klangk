@@ -26,7 +26,7 @@ from . import (
     wshandler,
 )
 from . import static
-from .auth import _PASSWORD_CLASSES, password_class_counts
+from .auth import PASSWORD_CLASSES, password_class_counts
 from .bind_safety import enforce_no_auth_bind_safety
 from .exceptions import ConfigurationError
 from .settings import KlangkSettings
@@ -65,7 +65,7 @@ def broadcast_container_status(
     broadcast to.
     """
 
-    async def _run() -> None:
+    async def run() -> None:
         try:
             await app.state.sockets.notify_container_status(
                 workspace_id, running, started_at
@@ -80,7 +80,7 @@ def broadcast_container_status(
         loop = asyncio.get_running_loop()
     except RuntimeError:
         return
-    task = loop.create_task(_run())
+    task = loop.create_task(run())
     _status_broadcast_tasks.add(task)
     task.add_done_callback(_status_broadcast_tasks.discard)
 
@@ -339,7 +339,7 @@ class Lifecycle:
                 f"is shorter than KLANGKD_MIN_PASSWORD_LENGTH={min_len}"
             )
         _counts = password_class_counts(password)
-        for _key, _name in _PASSWORD_CLASSES:
+        for _key, _name in PASSWORD_CLASSES:
             _need = getattr(settings, f"password_require_{_key}")
             if _need > 0 and _counts[_key] < _need:
                 _policy_errors.append(
@@ -577,7 +577,7 @@ class Lifecycle:
             if self.shutting_down:
                 logger.info("SIGHUP: restart aborted; shutdown in progress")
                 return
-            new_settings, error = self._reload_settings()
+            new_settings, error = self.reload_settings()
             if error is not None:
                 logger.error(
                     "SIGHUP: denying restart — invalid configuration: %s",
@@ -628,7 +628,7 @@ class Lifecycle:
                     )
                     return
                 logger.info("SIGHUP: phase: apply (applying reloaded config)")
-                await self._apply_reloaded_settings(new_settings)
+                await self.apply_reloaded_settings(new_settings)
                 state.sockets.notify_server_recycle("recycling")
                 logger.info(
                     "SIGHUP: phase: restart (recycling runtime; "
@@ -650,7 +650,7 @@ class Lifecycle:
             logger.info("SIGHUP: restart complete (phase: resumed)")
             state.sockets.notify_host_started()
 
-    def _reload_settings(
+    def reload_settings(
         self,
     ) -> tuple[KlangkSettings | None, str | None]:
         """Re-resolve settings for a SIGHUP reload.
@@ -665,7 +665,7 @@ class Lifecycle:
             return None, str(exc)
         return new, None
 
-    async def _apply_reloaded_settings(self, new: KlangkSettings) -> None:
+    async def apply_reloaded_settings(self, new: KlangkSettings) -> None:
         """Swap settings and call ``reconfigure(app_state)`` on every subsystem.
 
         All subsystems read ``self.app.state.settings`` live (#1608), so
@@ -747,9 +747,9 @@ class Lifecycle:
                 )
         # #1610: remount frontend_dir if it changed.
         if old.frontend_dir != new.frontend_dir:
-            self._remount_frontend(app, new)
+            self.remount_frontend(app, new)
 
-    def _remount_frontend(self, app, settings: KlangkSettings) -> None:
+    def remount_frontend(self, app, settings: KlangkSettings) -> None:
         """Replace the frontend + branding mounts when ``frontend_dir`` changes.
 
         Both mounts are dropped and re-added: branding's directory is

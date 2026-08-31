@@ -102,7 +102,7 @@ def validate_allowed_domain_spec(
 
 def _validate_cidr_domain_spec(spec: str, s: str) -> str | None:
     """Client-side IPv4 CIDR pre-check, mirroring the server's
-    :func:`klangk.netfilter._valid_cidr_spec` (#1935).
+    :func:`klangk.netfilter.valid_cidr_spec` (#1935).
 
     ``s`` is the stripped spec; ``spec`` is the original (for the error
     message). Accepts ``<ip>/<plen>`` or ``<ip>/<plen>:<port>`` (port

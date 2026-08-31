@@ -66,7 +66,7 @@ ACTIVITY_STAMP_INTERVAL = 60.0
 _MAX_VERIFY_ITERATIONS = 10_000_000
 
 # Display names for the character classes, in requirement-message order.
-_PASSWORD_CLASSES = (
+PASSWORD_CLASSES = (
     ("upper", "uppercase letter"),
     ("lower", "lowercase letter"),
     ("digit", "digit"),
@@ -427,7 +427,7 @@ class Auth:
         }
         unmet = [
             f"at least {need} {name}{'s' if need != 1 else ''}"
-            for key, name in _PASSWORD_CLASSES
+            for key, name in PASSWORD_CLASSES
             if (need := configured[key]) > 0 and counts[key] < need
         ]
         if unmet:

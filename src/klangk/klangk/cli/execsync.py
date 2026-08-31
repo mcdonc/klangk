@@ -110,10 +110,10 @@ def exec_cmd(
     if command and command[0] == "--":
         command = command[1:]
     if not command:
-        context._err.print("[red]No command specified[/red]")
+        context.err.print("[red]No command specified[/red]")
         raise typer.Exit(code=1)
 
-    client = context._client()
+    client = context.client()
     ws = context.resolve_or_exit(client, workspace)
 
     surl = context.server_url()
@@ -164,12 +164,12 @@ def sync(
 
     klangk_bin = shutil.which("klangk")
     if not klangk_bin:  # pragma: no cover
-        context._err.print("[red]Cannot find klangk in PATH[/red]")
+        context.err.print("[red]Cannot find klangk in PATH[/red]")
         raise typer.Exit(code=1)
 
     rsync_bin = shutil.which("rsync")
     if not rsync_bin:
-        context._err.print("[red]Cannot find rsync in PATH[/red]")
+        context.err.print("[red]Cannot find rsync in PATH[/red]")
         raise typer.Exit(code=1)
 
     # #2706/#2712: sync rides the one-shot exec channel, gated on the
@@ -177,17 +177,17 @@ def sync(
     # means the user needs it on that workspace (either direction).
     # Fail fast with a clear permission error; the server still enforces
     # when rsync gets that far.
-    client = context._client()
+    client = context.client()
     pull_host = remote_host(src)
     if pull_host and sync_denied(client, pull_host):
-        context._err.print(
+        context.err.print(
             f"[red]Permission denied:[/red] syncing out of workspace"
             f" '{pull_host}' requires the exec-and-sync permission"
         )
         raise typer.Exit(code=1)
     push_host = remote_host(dest)
     if push_host and sync_denied(client, push_host):
-        context._err.print(
+        context.err.print(
             f"[red]Permission denied:[/red] syncing into workspace"
             f" '{push_host}' requires the exec-and-sync permission"
         )
@@ -207,7 +207,7 @@ def sync(
         src,
         dest,
     ]
-    context._err.print(f"[dim]{' '.join(cmd)}[/dim]")
+    context.err.print(f"[dim]{' '.join(cmd)}[/dim]")
     result = subprocess.run(cmd)
     raise typer.Exit(code=result.returncode)
 
@@ -217,10 +217,10 @@ def images() -> None:
     """List available container images for workspaces."""
     context.require_auth()
     try:
-        data = context._client().list_images()
+        data = context.client().list_images()
     except httpx.HTTPStatusError as exc:  # pragma: no cover
         detail = exc.response.json().get("detail", exc.response.text)
-        context._err.print(f"[red]Failed to list images:[/red] {detail}")
+        context.err.print(f"[red]Failed to list images:[/red] {detail}")
         raise typer.Exit(code=1) from None
     console = Console()
     for img in data["allowed"]:

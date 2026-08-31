@@ -830,7 +830,7 @@ class TestRunShell:
         monkeypatch.setattr(cli_client, "get_terminal_size", cycling_size)
         # Shrink the poll interval so the test does not race the 1s tick
         # on slow runners (#2574).
-        monkeypatch.setattr(cli_client, "_RESIZE_POLL_INTERVAL", 0.05)
+        monkeypatch.setattr(cli_client, "RESIZE_POLL_INTERVAL", 0.05)
 
         # select returns empty so stdin_loop keeps looping without reading EOF
         with patch(
@@ -1153,7 +1153,7 @@ class TestAuthLines:
         from klangk.cli import auth
 
         state_path = tmp_path / "klangk-state.yaml"
-        monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
+        monkeypatch.setattr("klangk.cli.config.STATE_PATH", state_path)
         state = CLIState()
         state.set_credentials("http://localhost:8995", "x@y.com", "tok")
         state.save()
@@ -1446,11 +1446,11 @@ class TestImagesCommand:
             "default": "klangk",
             "allowed": ["klangk", "klangk-custom"],
         }
-        monkeypatch.setattr(context_mod, "_client", lambda: mock_client)
+        monkeypatch.setattr(context_mod, "client", lambda: mock_client)
         state = CLIState()
         state.set_credentials("http://localhost:8995", "t@t", "tok")
-        monkeypatch.setattr(context_mod, "_state", lambda: state)
-        monkeypatch.setattr(context_mod, "_server_override", None)
+        monkeypatch.setattr(context_mod, "state", lambda: state)
+        monkeypatch.setattr(context_mod, "server_override", None)
 
         from typer.testing import CliRunner
 
@@ -1533,9 +1533,9 @@ class TestShellConnectionError:
         """Set up common mocks for shell tests."""
         state = CLIState()
         state.set_credentials("http://localhost:8995", "test@test.com", "fake")
-        monkeypatch.setattr("klangk.cli.context._state", lambda: state)
-        monkeypatch.setattr("klangk.cli.context._server_override", None)
-        monkeypatch.setattr("klangk.cli.context._cfg", lambda: CLIConfig())
+        monkeypatch.setattr("klangk.cli.context.state", lambda: state)
+        monkeypatch.setattr("klangk.cli.context.server_override", None)
+        monkeypatch.setattr("klangk.cli.context.cfg", lambda: CLIConfig())
 
     def test_shell_catches_connection_error(self, monkeypatch):
         """shell() catches ConnectionError from ws_shell and exits cleanly."""
@@ -1546,7 +1546,7 @@ class TestShellConnectionError:
 
         fake_ws = Workspace(id="ws1", name="ws", created_at="2026-01-01")
         monkeypatch.setattr(
-            "klangk.cli.context._client",
+            "klangk.cli.context.client",
             lambda: MagicMock(
                 resolve_workspace=MagicMock(return_value=fake_ws)
             ),
@@ -1573,7 +1573,7 @@ class TestShellConnectionError:
 
         fake_ws = Workspace(id="ws1", name="ws", created_at="2026-01-01")
         monkeypatch.setattr(
-            "klangk.cli.context._client",
+            "klangk.cli.context.client",
             lambda: MagicMock(
                 resolve_workspace=MagicMock(return_value=fake_ws)
             ),

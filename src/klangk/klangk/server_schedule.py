@@ -33,7 +33,7 @@ from datetime import datetime, timedelta, timezone
 logger = logging.getLogger(__name__)
 
 # Poll cadence: how often due schedules are looked for.
-_POLL_INTERVAL_SECONDS = 5.0
+POLL_INTERVAL_SECONDS = 5.0
 # Upper bound for a relative schedule delay: ~1000 years in seconds.
 # Beyond it timedelta would overflow (an unhandled OverflowError from the
 # API); nobody needs a longer schedule, and the bound keeps the value
@@ -53,7 +53,7 @@ class ServerScheduler(IntervalWorker):
     # the module global and SIGHUP-adjacent changes apply next cycle.
     @property
     def interval(self) -> float:
-        return _POLL_INTERVAL_SECONDS
+        return POLL_INTERVAL_SECONDS
 
     log_label = "Server scheduler tick"
 
@@ -117,7 +117,7 @@ class ServerScheduler(IntervalWorker):
         pending = []
         for s in schedules:
             try:
-                is_due = _parse_fire_at(s["fire_at"]) <= now
+                is_due = parse_fire_at(s["fire_at"]) <= now
             except (TypeError, ValueError):
                 logger.exception(
                     "Server scheduler: skipping schedule %s — malformed "
@@ -206,7 +206,7 @@ class ServerScheduler(IntervalWorker):
             lifecycle.request_recycle(source="scheduled recycle")
 
 
-def _parse_fire_at(value: str) -> datetime:
+def parse_fire_at(value: str) -> datetime:
     """Parse a stored fire_at ISO string as timezone-aware UTC."""
     parsed = datetime.fromisoformat(value)
     if parsed.tzinfo is None:

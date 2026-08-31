@@ -57,7 +57,7 @@ def _dest(row: sqlite3.Row) -> str:
     )
 
 
-def _decide(
+def decide(
     conn: sqlite3.Connection,
     request_id: str,
     decision: str,
@@ -126,7 +126,7 @@ def _prompt_and_decide(conn, ws: str, row, user_id: str, seen: set) -> None:
         .lower()
     )
     if choice == "a":
-        _decide(conn, row["id"], "allowed", user_id, "workspace")
+        decide(conn, row["id"], "allowed", user_id, "workspace")
         added = _allow_destination(conn, ws, row)
         conn.commit()
         seen.add(row["id"])
@@ -139,7 +139,7 @@ def _prompt_and_decide(conn, ws: str, row, user_id: str, seen: set) -> None:
             )
         )
     elif choice == "d":
-        _decide(conn, row["id"], "denied", user_id)
+        decide(conn, row["id"], "denied", user_id)
         conn.commit()
         seen.add(row["id"])
         console.print(f"[red]denied[/red] {_dest(row)}")

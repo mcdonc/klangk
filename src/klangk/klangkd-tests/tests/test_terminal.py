@@ -1819,7 +1819,7 @@ class TestEnsureServiceSession:
         container must not both create the service-cmd window.
 
         The boot path (workspaces.start_workspace) and the per-connection
-        path (wshandler _fire_service_command) are both unserialized callers.
+        path (wshandler fire_service_command) are both unserialized callers.
         Without the per-container lock, both can pass the window-exists check
         before either's new-window lands, and since tmux allows duplicate
         window names, both create a service-cmd window -- leaving later
@@ -2333,9 +2333,9 @@ class TestTerminalBranchGaps2834:
     condition-exit + tail flush."""
 
     def test_parse_windows_skips_malformed_line(self):
-        from klangk.terminal import _parse_windows
+        from klangk.terminal import parse_windows
 
-        windows = _parse_windows(
+        windows = parse_windows(
             "@0|||1|||main|||1\nbroken-line-without-separators\n"
         )
         assert len(windows) == 1

@@ -95,7 +95,7 @@ def _ensure_shared_home_dir_sync(
     (#2717). ``Path.mkdir(exist_ok=True)`` alone would re-raise
     ``FileExistsError`` on the dangling symlink (``exist_ok`` only
     suppresses when the path is a directory), crashing container
-    create after the container is already running — and ``_bringup``
+    create after the container is already running — and ``bringup``
     never runs again for that container.
     """
     shared_dir = workspace_home / name
@@ -114,7 +114,7 @@ def _ensure_shared_home_dir_sync(
     return created or not any(shared_dir.iterdir())
 
 
-async def _async_rmtree(path: Path | str, label: str = "") -> None:
+async def async_rmtree(path: Path | str, label: str = "") -> None:
     """Remove a directory tree in a thread, logging errors."""
     await asyncio.to_thread(rmtree, path, label)
 
@@ -385,7 +385,7 @@ class Workspaces:
             )
             return False
         finally:
-            await _async_rmtree(tmpdir, "build_workspace_archive tmpdir")
+            await async_rmtree(tmpdir, "build_workspace_archive tmpdir")
 
     async def archive_user_data(self, user_id: str, email: str) -> list[Path]:
         """Archive each workspace to a .tar.gz in the export/import format.
@@ -446,7 +446,7 @@ class Workspaces:
             await self.app.state.nix.destroy_workspace_nix(ws_id)
             ws_dir = self.safe_path(ws_id)
             if ws_dir.exists():
-                await _async_rmtree(ws_dir, f"workspace data {ws_id}")
+                await async_rmtree(ws_dir, f"workspace data {ws_id}")
         return archives
 
     # --- CRUD ---
@@ -502,7 +502,7 @@ class Workspaces:
             await self.app.state.model.workspaces.delete_workspace(
                 workspace["id"], user_id
             )
-            await _async_rmtree(home, f"workspace {workspace['id']} rollback")
+            await async_rmtree(home, f"workspace {workspace['id']} rollback")
             raise
         # #2762: fire the deployment's workspace-created hook
         # (KLANGKD_WORKSPACE_CREATED_HOOK) on every creation path —
@@ -562,7 +562,7 @@ class Workspaces:
             # (no-op otherwise).
             await self.app.state.nix.destroy_workspace_nix(workspace_id)
             ws_dir = self.safe_path(workspace_id)
-            await _async_rmtree(ws_dir, f"workspace {workspace_id}")
+            await async_rmtree(ws_dir, f"workspace {workspace_id}")
         return deleted
 
     # --- home symlink ---
@@ -606,7 +606,7 @@ class Workspaces:
         directory the build created is root-owned and empty). So nothing
         usable at ``/home/klangk`` exists on a fresh volume until this
         creates it (#2717).
-        Called at the container-create choke point (``_bringup``) —
+        Called at the container-create choke point (``bringup``) —
         before ``ensure_service_session`` and before any user's first
         shell — including the boot/autostart path where no user ever
         connects first. For pre-#2718 per-user volumes this materializes
@@ -677,7 +677,7 @@ class Workspaces:
         Thin wrapper around ``self.app.state.container_registry.start_container``
         that unpacks the workspace dict. The agent home provisioning and the
         service command firing happen at the single create choke point
-        inside ``start_container`` (see ``ContainerRegistry._bringup``, #1244),
+        inside ``start_container`` (see ``ContainerRegistry.bringup``, #1244),
         so they no longer live here.
 
         ``idle_timeout`` overrides from the settings bag are applied inside
@@ -722,7 +722,7 @@ class Workspaces:
 
         Skipped entirely if ``KLANGKD_ALLOW_AUTOSTART`` is not enabled
         (parsed via the shared :func:`parse_bool_setting`, so this gate and
-        ``api._common.autostart_allowed`` agree — #2796).
+        ``api.common.autostart_allowed`` agree — #2796).
         Returns the number of containers started.
         """
         if not parse_bool_setting(self.app.state.settings.allow_autostart):

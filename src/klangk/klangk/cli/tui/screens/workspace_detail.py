@@ -27,7 +27,7 @@ from textual.widgets import (
 )
 
 from ...client import AuthError, WorkspaceNotFoundError
-from ._base import (
+from .base import (
     CheatsheetScreen,
     ConfirmScreen,
     DuplicateScreen,
@@ -186,7 +186,7 @@ class WorkspaceDetailScreen(StatusScreen):
         super().__init__()
         self._name = name
         self._ws = None
-        self._terminals: list[dict] = []
+        self.terminals: list[dict] = []
         # Shared terminals visible to this user in the workspace (others'
         # shared windows + the agent's service window). Loaded alongside
         # own terminals so the detail page can list + launch them (#2164).
@@ -340,7 +340,7 @@ class WorkspaceDetailScreen(StatusScreen):
             self._missing = False
             self._load_error = f"Could not load workspace: {exc}"
             logger.warning("Workspace load failed: %s", exc)
-        self._display()
+        self.refresh_display()
 
     async def _start_if_stopped(self) -> None:
         """Auto-start a stopped workspace container on visit.
@@ -348,16 +348,16 @@ class WorkspaceDetailScreen(StatusScreen):
         The Flutter UI does this via its WebSocket ``connectWorkspace``
         call; the TUI replicates the behaviour with a restart request.
         """
-        self._msg("Starting container…")
+        self.msg("Starting container…")
         try:
             await asyncio.to_thread(
                 self.app.tui_state.restart_workspace, self._name
             )
         except Exception as exc:
-            self._msg(f"Auto-start failed: {exc}", error=True)
+            self.msg(f"Auto-start failed: {exc}", error=True)
             return
         await self._load()
-        self._msg("Container started.")
+        self.msg("Container started.")
         self.app.refresh_workspaces()
 
     @staticmethod
@@ -379,14 +379,14 @@ class WorkspaceDetailScreen(StatusScreen):
             Binding("m", "rename_terminal", "Rename term", show=False),
             Binding("t", "delete_terminal", "Del term", show=False),
             # `?` must survive the per-display BINDINGS rebuild so the
-            # cheatsheet stays reachable after _display() runs on mount
+            # cheatsheet stays reachable after refresh_display() runs on mount
             # (#1802).
             Binding("?", "cheatsheet", "Keys", show=False),
         ]
 
-    def _display(self) -> None:
+    def refresh_display(self) -> None:
         # Re-assert focus on the terminals list while this screen is active.
-        # _display runs on every load and on the 5s uptime tick, so a focus
+        # refresh_display runs on every load and on the 5s uptime tick, so a focus
         # steal during the first-visit auto-start event storm (which left the
         # terminal row green-then-grey, #1956) is recovered within moments.
         # No-op while a modal is on top (guarded in _focus_term_list).
@@ -522,9 +522,9 @@ class WorkspaceDetailScreen(StatusScreen):
             and self._ws.running
             and self._ws.service_started_at
         ):
-            self._display()
+            self.refresh_display()
 
-    def _msg(self, text: str, *, error: bool = False) -> None:
+    def msg(self, text: str, *, error: bool = False) -> None:
         """Show transient operational feedback on the detail screen (#2019).
 
         Errors persist inline (red) so the user can read why an action failed
@@ -543,13 +543,13 @@ class WorkspaceDetailScreen(StatusScreen):
     def action_edit(self) -> None:
         if self._ws is None:
             return
-        self.run_worker(self._do_edit, exit_on_error=False)
+        self.run_worker(self.do_edit, exit_on_error=False)
 
-    async def _do_edit(self) -> None:
+    async def do_edit(self) -> None:
         state = self.app.tui_state
-        await open_edit_screen(self, state, self._ws, self._on_edited)
+        await open_edit_screen(self, state, self._ws, self.on_edited)
 
-    def _on_edited(self, result: str | bool | None) -> None:
+    def on_edited(self, result: str | bool | None) -> None:
         if isinstance(result, str):
             self._name = result
         if result:
@@ -592,7 +592,7 @@ class WorkspaceDetailScreen(StatusScreen):
             self._apply_service_health(event)
         else:
             return
-        self._display()
+        self.refresh_display()
 
     def _status_event_applies(self, event: dict) -> bool:
         """False when no workspace is mounted or the event is for a
@@ -615,7 +615,7 @@ class WorkspaceDetailScreen(StatusScreen):
             # close broadcast beating its create) is not expected;
             # the payload type check above also makes the push path
             # resilient to a malformed payload (fall back to fetch).
-            self._terminals = windows
+            self.terminals = windows
             self.run_worker(self._render_terminals(), exit_on_error=False)
         else:
             # No payload (older server) or malformed -- fall back to a
@@ -663,7 +663,7 @@ class WorkspaceDetailScreen(StatusScreen):
             # self -- a bare pop_screen() would dismiss only the TOP screen,
             # silently closing the user's dialog while leaving the dead
             # detail page mounted (#2029 audit).
-            self.app._pop_above(self)
+            self.app.pop_above(self)
             if self.app.screen is self:
                 self.app.pop_screen()
 
@@ -688,7 +688,7 @@ class WorkspaceDetailScreen(StatusScreen):
             return
         except Exception:
             windows = []
-        self._terminals = windows or []
+        self.terminals = windows or []
         await self._render_terminals()
 
     async def _render_terminals(self) -> None:
@@ -699,7 +699,7 @@ class WorkspaceDetailScreen(StatusScreen):
         async with self._render_lock:
             lv = self.query_one("#term_list", ListView)
             await lv.clear()
-            if not self._terminals:
+            if not self.terminals:
                 items = [ListItem(Label(Text("(no terminals)")), name="")]
             else:
                 items = [
@@ -712,7 +712,7 @@ class WorkspaceDetailScreen(StatusScreen):
                         ),
                         name=str(w.get("index", "")),
                     )
-                    for w in self._terminals
+                    for w in self.terminals
                 ]
             mount = lv.extend(items)
             # Keep focus on the list; skipped when a modal is open over this
@@ -821,7 +821,7 @@ class WorkspaceDetailScreen(StatusScreen):
         # raw index would reproduce the duplicate-window bug.
         target = self._window_id_for(terminal)
         if target is None:
-            self._msg(
+            self.msg(
                 "Terminal no longer exists — refreshing list.", error=True
             )
             self.run_worker(self._load_terminals, exit_on_error=False)
@@ -880,7 +880,7 @@ class WorkspaceDetailScreen(StatusScreen):
                 )
                 return None
             except OSError as exc:
-                self._msg(
+                self.msg(
                     f"terminal-open-cmd failed ({exc}) —"
                     " opening in this terminal instead.",
                     error=True,
@@ -913,7 +913,7 @@ class WorkspaceDetailScreen(StatusScreen):
         # A shared window named with a colon would confuse the
         # ``handle:window`` parser; refuse rather than mis-target.
         if ":" not in target or target.count(":") != 1:
-            self._msg("Invalid shared terminal — refreshing.", error=True)
+            self.msg("Invalid shared terminal — refreshing.", error=True)
             self.run_worker(self._load_shared_terminals, exit_on_error=False)
             return
         completed = self._launch_shell(self._shell_argv(target))
@@ -934,7 +934,7 @@ class WorkspaceDetailScreen(StatusScreen):
             idx = int(key)
         except (TypeError, ValueError):
             return None
-        for w in self._terminals:
+        for w in self.terminals:
             if w.get("index") == idx:
                 wid = w.get("id")
                 if wid:
@@ -973,14 +973,14 @@ class WorkspaceDetailScreen(StatusScreen):
             return
         if not child.name:
             return
-        if len(self._terminals) <= 1:
-            self._msg("Can't delete the last terminal.", error=True)
+        if len(self.terminals) <= 1:
+            self.msg("Can't delete the last terminal.", error=True)
             return
         # Target the window by its stable id (@N), not the row index —
         # a stale list could otherwise close the wrong window (#1965).
         window_id = self._window_id_for(child.name)
         if window_id is None:
-            self._msg(
+            self.msg(
                 "Terminal no longer exists — refreshing list.", error=True
             )
             self.run_worker(self._load_terminals, exit_on_error=False)
@@ -1019,7 +1019,7 @@ class WorkspaceDetailScreen(StatusScreen):
             )
             await self._load_terminals()
             return
-        self._terminals = windows
+        self.terminals = windows
         await self._render_terminals()
         self.app.notify(f"Deleted terminal {display}.")
 
@@ -1029,7 +1029,7 @@ class WorkspaceDetailScreen(StatusScreen):
             idx = int(key)
         except (TypeError, ValueError):
             return key
-        for w in self._terminals:
+        for w in self.terminals:
             if w.get("index") == idx:
                 return str(w.get("name") or idx)
         return key
@@ -1087,7 +1087,7 @@ class WorkspaceDetailScreen(StatusScreen):
             )
             await self._load_terminals()
             return
-        self._terminals = windows
+        self.terminals = windows
         await self._render_terminals()
         self.app.notify(f"Renamed terminal to '{new_name}'.")
 
@@ -1117,7 +1117,7 @@ class WorkspaceDetailScreen(StatusScreen):
                 timeout=8,
             )
             return
-        self._terminals = windows
+        self.terminals = windows
         await self._render_terminals()
         self.app.notify("Created terminal.")
 
@@ -1131,21 +1131,21 @@ class WorkspaceDetailScreen(StatusScreen):
                 yes_label="Restart",
                 yes_variant="warning",
             ),
-            confirm_then(self, self._do_restart),
+            confirm_then(self, self.do_restart),
         )
 
-    async def _do_restart(self) -> None:
+    async def do_restart(self) -> None:
         try:
             await asyncio.to_thread(
                 self.app.tui_state.restart_workspace, self._name
             )
         except Exception as exc:
-            self._msg(f"Restart failed: {exc}", error=True)
+            self.msg(f"Restart failed: {exc}", error=True)
             return
         if self._ws is not None:
             self._ws.service_started_at = time.time()
-            self._display()
-        self._msg("Restart requested.")
+            self.refresh_display()
+        self.msg("Restart requested.")
         self.app.refresh_workspaces()
 
     def action_stop(self) -> None:
@@ -1154,7 +1154,7 @@ class WorkspaceDetailScreen(StatusScreen):
         if self._ws.running:
             self._confirm_stop()
         else:
-            self.run_worker(self._do_start, exit_on_error=False)
+            self.run_worker(self.do_start, exit_on_error=False)
 
     def _confirm_stop(self) -> None:
         self.app.push_screen(
@@ -1163,37 +1163,37 @@ class WorkspaceDetailScreen(StatusScreen):
                 yes_label="Stop",
                 yes_variant="warning",
             ),
-            confirm_then(self, self._do_stop),
+            confirm_then(self, self.do_stop),
         )
 
-    async def _do_stop(self) -> None:
+    async def do_stop(self) -> None:
         try:
             await asyncio.to_thread(
                 self.app.tui_state.stop_workspace, self._name
             )
         except Exception as exc:
-            self._msg(f"Stop failed: {exc}", error=True)
+            self.msg(f"Stop failed: {exc}", error=True)
             return
         if self._ws is not None:
             self._ws.running = False
             self._ws.service_started_at = None
-            self._display()
-        self._msg("Stop requested.")
+            self.refresh_display()
+        self.msg("Stop requested.")
         self.app.refresh_workspaces()
 
-    async def _do_start(self) -> None:
+    async def do_start(self) -> None:
         try:
             await asyncio.to_thread(
                 self.app.tui_state.start_workspace, self._name
             )
         except Exception as exc:
-            self._msg(f"Start failed: {exc}", error=True)
+            self.msg(f"Start failed: {exc}", error=True)
             return
         if self._ws is not None:
             self._ws.running = True
             self._ws.service_started_at = time.time()
-            self._display()
-        self._msg("Start requested.")
+            self.refresh_display()
+        self.msg("Start requested.")
         self.app.refresh_workspaces()
 
     def action_delete(self) -> None:
@@ -1202,16 +1202,16 @@ class WorkspaceDetailScreen(StatusScreen):
                 f"Delete '{self._name}'? This permanently deletes the"
                 " workspace and its container."
             ),
-            confirm_then(self, self._do_delete),
+            confirm_then(self, self.do_delete),
         )
 
-    async def _do_delete(self) -> None:
+    async def do_delete(self) -> None:
         try:
             await asyncio.to_thread(
                 self.app.tui_state.delete_workspace, self._name
             )
         except Exception as exc:
-            self._msg(f"Delete failed: {exc}", error=True)
+            self.msg(f"Delete failed: {exc}", error=True)
             return
         # Guarded: the delete's own workspaces_changed broadcast can pop
         # this screen before the worker resumes (#2029 review round 2) —
@@ -1226,17 +1226,17 @@ class WorkspaceDetailScreen(StatusScreen):
     def _on_duplicate(self, new_name: str | None) -> None:
         if not new_name:
             return
-        self.run_worker(self._do_duplicate(new_name), exit_on_error=False)
+        self.run_worker(self.do_duplicate(new_name), exit_on_error=False)
 
-    async def _do_duplicate(self, new_name: str) -> None:
+    async def do_duplicate(self, new_name: str) -> None:
         try:
             await asyncio.to_thread(
                 self.app.tui_state.duplicate_workspace, self._name, new_name
             )
         except Exception as exc:
-            self._msg(f"Duplicate failed: {exc}", error=True)
+            self.msg(f"Duplicate failed: {exc}", error=True)
             return
-        self._msg(f"Duplicated as '{new_name}'.")
+        self.msg(f"Duplicated as '{new_name}'.")
         self.app.refresh_workspaces()
 
     def action_export(self) -> None:
@@ -1252,13 +1252,13 @@ class WorkspaceDetailScreen(StatusScreen):
 
     def action_cheatsheet(self) -> None:
         """Open the ``?`` keyboard cheatsheet modal (#1802)."""
-        self.app.push_screen(CheatsheetScreen(self._cheatsheet_sections()))
+        self.app.push_screen(CheatsheetScreen(self.cheatsheet_sections()))
 
     @staticmethod
-    def _cheatsheet_sections() -> list[tuple[str, list[tuple[str, str]]]]:
+    def cheatsheet_sections() -> list[tuple[str, list[tuple[str, str]]]]:
         """Keybindings shown in the cheatsheet, grouped by context (#1802).
 
-        Hand-written display labels (see MainScreen._cheatsheet_sections
+        Hand-written display labels (see MainScreen.cheatsheet_sections
         for the rationale); the TUI tests assert each key appears.
         """
         return [
@@ -1320,7 +1320,7 @@ class WorkspaceDetailScreen(StatusScreen):
             self.app.notify(f"Exported to {payload}", timeout=10)
         else:
             # payload is the error text; show it inline on the detail screen.
-            self._msg(payload, error=True)
+            self.msg(payload, error=True)
 
 
 # ---------------------------------------------------------------------------

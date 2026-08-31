@@ -18,7 +18,7 @@ fixes the declaration before ship.
 The runtime resolver in ``klangk.features`` enforces the same prefix on read;
 those tests live in ``src/klangk/klangkd-tests/tests/test_features.py``.
 
-This file mirrors ``_CONTAINER_ENV_KEY_PREFIX`` against the runtime copy in
+This file mirrors ``CONTAINER_ENV_KEY_PREFIX`` against the runtime copy in
 ``klangk.features`` to catch drift between the two (the build script
 deliberately does not import ``klangk``, #1666 — duplication is intentional
 and this test is the drift detector).
@@ -209,10 +209,10 @@ class TestPrefixConstantDrift:
         # skip instead of an ImportError. CI's backend-tests job installs
         # klangk before running scripts/tests/, so the test runs there.
         pytest.importorskip("klangk")
-        from klangk.features import _CONTAINER_ENV_KEY_PREFIX
+        from klangk.features import CONTAINER_ENV_KEY_PREFIX
 
         assert (
             import_dart_features._CONTAINER_ENV_KEY_PREFIX
-            == _CONTAINER_ENV_KEY_PREFIX
+            == CONTAINER_ENV_KEY_PREFIX
             == "KLANGKWS_FEATURE_"
         )

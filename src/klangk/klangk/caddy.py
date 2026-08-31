@@ -126,7 +126,7 @@ def _proxy_preexec() -> None:  # pragma: no cover  – runs in forked child
 logger = logging.getLogger(__name__)
 
 
-def _classify_caddy_line(line: str) -> tuple[int, str]:
+def classify_caddy_line(line: str) -> tuple[int, str]:
     """Parse a Caddy JSON log line and return ``(log_level, message)``.
 
     Caddy emits structured JSON to stderr with ``level``, ``msg``, and
@@ -157,7 +157,7 @@ def _classify_caddy_line(line: str) -> tuple[int, str]:
     return logging.DEBUG, msg
 
 
-def _is_bind_error(line: str) -> bool:
+def is_bind_error(line: str) -> bool:
     """Return True if *line* is a Caddy bind failure (admin, ingress, or egress).
 
     Caddy emits structured JSON to stderr when it can't bind a listener.
@@ -694,7 +694,7 @@ class CaddyRenderer:
 # ---------------------------------------------------------------------------
 
 
-def _caddy_supports_full_global_block(bin_path: str) -> bool:
+def caddy_supports_full_global_block(bin_path: str) -> bool:
     """True if the caddy binary adapts klangkd's full global options block.
 
     klangkd's global block uses features that postdate the older system caddy a
@@ -779,7 +779,7 @@ class CaddyWatchdog:
         # Whether the caddy binary supports the full global block (persist_config
         # + servers/trusted_proxies/strict) — probed in start(). Defaults True
         # (feature-preserving) until then / if the probe can't run. See
-        # _caddy_supports_full_global_block (#1709).
+        # caddy_supports_full_global_block (#1709).
         self._full_global: bool = True
         # Flagged by reconfigure() on a SIGHUP settings swap; applied
         # async by apply_pending_reload() (POST /load can't run in the
@@ -806,7 +806,7 @@ class CaddyWatchdog:
         Mirrors :meth:`klangk.main.Lifecycle.apply_pending_reseed`: the
         sync ``reconfigure()`` can't ``POST /load`` (it runs inside the
         SIGHUP subsystem loop, not a coroutine), so it flags and this
-        async method — called by ``_apply_reloaded_settings`` after the
+        async method — called by ``apply_reloaded_settings`` after the
         loop — does the push. No-op when the watchdog didn't start
         (``_KLANGKD_DISABLE_PROXY``) or nothing flagged. A push failure
         is logged + swallowed so a broken reload can't abort the wider
@@ -936,9 +936,9 @@ class CaddyWatchdog:
             line = raw.decode("utf-8", errors="replace").rstrip()
             if not line:
                 continue
-            level, msg = _classify_caddy_line(line)
+            level, msg = classify_caddy_line(line)
             logger.log(level, "caddy: %s", msg)
-            if level >= logging.ERROR and _is_bind_error(line):
+            if level >= logging.ERROR and is_bind_error(line):
                 self._bind_fatal = True
 
     def _log_listeners(self) -> None:
@@ -1081,7 +1081,7 @@ class CaddyWatchdog:
         # 2.6.2); emitting them unconditionally makes that caddy reject the
         # whole config (#1709). klangkd must run on both the devenv's current
         # caddy and that older system caddy.
-        self._full_global = _caddy_supports_full_global_block(bin_path)
+        self._full_global = caddy_supports_full_global_block(bin_path)
         self._stopping = False
         self._task = asyncio.create_task(self._watch(bin_path))
 

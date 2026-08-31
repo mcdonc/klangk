@@ -44,7 +44,7 @@ from klangk.cli.tui.screens import workspace_detail as scr_detail
 from klangk.cli.tui import state as tui_state_mod
 from klangk.cli.tui.screens import main as ws_mod
 from klangk.cli.tui.app import KlangkApp, run_tui
-from klangk.cli.tui.screens._base import StatusBar
+from klangk.cli.tui.screens.base import StatusBar
 from klangk.cli.config import (
     AliasConflictError,
     CLIConfig,
@@ -86,8 +86,8 @@ def redirect_xdg(monkeypatch, tmp_path):
     """Point CLI config/state files at tmp_path (never the user's real ones)."""
     cpath = tmp_path / "klangk.yaml"
     spath = tmp_path / "klangk-state.yaml"
-    monkeypatch.setattr(cfgmod, "_CONFIG_PATH", cpath)
-    monkeypatch.setattr(cfgmod, "_STATE_PATH", spath)
+    monkeypatch.setattr(cfgmod, "CONFIG_PATH", cpath)
+    monkeypatch.setattr(cfgmod, "STATE_PATH", spath)
     # Prevent the local klangkd UDS socket from being detected.
     monkeypatch.setattr(
         tui_state_mod,
@@ -169,7 +169,7 @@ def _authed_state(**extra):
         current_user_id=lambda: None,
         close_terminal=_async_empty,
         restart_workspace=lambda n: None,
-        # Stubbed so MainScreen._do_create doesn't make a real (timing-out)
+        # Stubbed so MainScreen.do_create doesn't make a real (timing-out)
         # HTTP call for the allowed-domains list (#1989).
         default_allowed_domains=lambda: [],
     )
@@ -192,7 +192,7 @@ def _ws(owned=None, shared=None, **extra):
         current_user_id=lambda: None,
         close_terminal=_async_empty,
         restart_workspace=lambda n: None,
-        # Stubbed so MainScreen._do_create doesn't make a real (timing-out)
+        # Stubbed so MainScreen.do_create doesn't make a real (timing-out)
         # HTTP call for the allowed-domains list (#1989).
         default_allowed_domains=lambda: [],
     )
@@ -398,7 +398,7 @@ def test_update_server_sets_user(redirect_xdg):
 
 
 def test_update_server_no_config_file(monkeypatch, tmp_path):
-    monkeypatch.setattr(cfgmod, "_CONFIG_PATH", tmp_path / "nope.yaml")
+    monkeypatch.setattr(cfgmod, "CONFIG_PATH", tmp_path / "nope.yaml")
     assert update_server_in_config("a", "a", "https://x.example") is False
 
 
@@ -415,7 +415,7 @@ def test_update_server_bare_string_entry(redirect_xdg):
 
 
 def test_remove_server_no_config_file(monkeypatch, tmp_path):
-    monkeypatch.setattr(cfgmod, "_CONFIG_PATH", tmp_path / "nope.yaml")
+    monkeypatch.setattr(cfgmod, "CONFIG_PATH", tmp_path / "nope.yaml")
     assert remove_server_from_config("a") is False
 
 
@@ -702,7 +702,7 @@ def test_token_email_client_from_state(redirect_xdg):
 def test_auth_mode_variants(monkeypatch, redirect_xdg):
     t = TuiState("https://x.example")
     monkeypatch.setattr(
-        tui_state_mod, "fetch_config", lambda url: tui_state_mod._UNREACHABLE
+        tui_state_mod, "fetch_config", lambda url: tui_state_mod.UNREACHABLE
     )
     assert t.auth_mode() == "unreachable"
 
@@ -721,7 +721,7 @@ def test_auth_mode_variants(monkeypatch, redirect_xdg):
 def test_validate_server_for_switch_unreachable(monkeypatch, redirect_xdg):
     t = TuiState("https://x.example")
     monkeypatch.setattr(
-        tui_state_mod, "fetch_config", lambda url: tui_state_mod._UNREACHABLE
+        tui_state_mod, "fetch_config", lambda url: tui_state_mod.UNREACHABLE
     )
     assert t.validate_server_for_switch("https://x.example") == "unreachable"
 
@@ -1018,14 +1018,14 @@ def test_oidc_login(monkeypatch, redirect_xdg):
         state.set_credentials(url, "oidc@x", "otok")
         state.save()
 
-    monkeypatch.setattr(tui_state_mod, "_oidc_browser_login", fake_oidc)
+    monkeypatch.setattr(tui_state_mod, "oidc_browser_login", fake_oidc)
     TuiState("https://x.example").oidc_login("google")
     assert seen["args"] == ("https://x.example", "google")
 
     def die(*a):
         raise SystemExit(1)
 
-    monkeypatch.setattr(tui_state_mod, "_oidc_browser_login", die)
+    monkeypatch.setattr(tui_state_mod, "oidc_browser_login", die)
     with pytest.raises(LoginError):
         TuiState("https://x.example").oidc_login("google")
 
@@ -1481,14 +1481,14 @@ async def test_status_loop_resets_backoff_after_success(monkeypatch):
 
     # Spy on the backoff arg (= _reconnect_attempt after each increment) so we
     # can see the counter climb, reset on connect, then re-climb.
-    orig_backoff = scr_main._reconnect_backoff
+    orig_backoff = scr_main.reconnect_backoff
     seen = []
 
     def spy_backoff(attempt):
         seen.append(attempt)
         return orig_backoff(attempt)
 
-    monkeypatch.setattr(scr_main, "_reconnect_backoff", spy_backoff)
+    monkeypatch.setattr(scr_main, "reconnect_backoff", spy_backoff)
 
     calls = {"n": 0}
 
@@ -1546,7 +1546,7 @@ async def test_server_switch_drops_old_ws_and_redials(monkeypatch):
     seen: list[int] = []
     monkeypatch.setattr(
         scr_main,
-        "_reconnect_backoff",
+        "reconnect_backoff",
         lambda attempt: (seen.append(attempt), 0.0)[1],
     )
 
@@ -1604,7 +1604,7 @@ async def test_server_switch_during_backoff_redials_immediately(monkeypatch):
     interrupts the delay and re-dials the new server at once (#2704)."""
     # Deliberately NOT _fast_reconnect: the long backoff sleep is the thing
     # that must get cut short.
-    monkeypatch.setattr(scr_main, "_reconnect_backoff", lambda attempt: 999.0)
+    monkeypatch.setattr(scr_main, "reconnect_backoff", lambda attempt: 999.0)
     _real_sleep = asyncio.sleep
     sleep_cancelled: list[bool] = []
 
@@ -1615,7 +1615,7 @@ async def test_server_switch_during_backoff_redials_immediately(monkeypatch):
             sleep_cancelled.append(True)
             raise
 
-    monkeypatch.setattr(scr_main, "_reconnect_sleep", slow)
+    monkeypatch.setattr(scr_main, "reconnect_sleep", slow)
 
     dialed: list[str] = []
     release = asyncio.Event()
@@ -1668,7 +1668,7 @@ async def test_switch_lands_same_tick_as_listener_end(monkeypatch):
     seen: list[int] = []
     monkeypatch.setattr(
         scr_main,
-        "_reconnect_backoff",
+        "reconnect_backoff",
         lambda attempt: (seen.append(attempt), 0.0)[1],
     )
 
@@ -1767,7 +1767,7 @@ async def test_server_switch_restarts_loop_after_gave_up(monkeypatch):
     # Run the real loop (undo the autouse stub) so give-up and the restart
     # exercise actual worker lifecycle.
     monkeypatch.setattr(MainScreen, "_status_loop", _real_status_loop)
-    monkeypatch.setattr(scr_main, "_MAX_RECONNECT_ATTEMPTS", 2)
+    monkeypatch.setattr(scr_main, "MAX_RECONNECT_ATTEMPTS", 2)
     await _fast_reconnect(monkeypatch)
 
     dialed: list[str] = []
@@ -2360,7 +2360,7 @@ async def test_edit_server_saves(monkeypatch):
         assert isinstance(app.screen, EditServerScreen)
         app.screen.query_one("#alias", Input).value = "production"
         # Keep URL unchanged — no server_changed() call.
-        app.screen._save()
+        app.screen.save()
         await app.workers.wait_for_complete()
         await pilot.pause()
         assert updated["u"] == (
@@ -2419,7 +2419,7 @@ async def test_edit_server_empty_fields(monkeypatch):
         app.push_screen(EditServerScreen(alias="a", url="https://a.example"))
         await pilot.pause()
         app.screen.query_one("#alias", Input).value = ""
-        app.screen._save()
+        app.screen.save()
         await app.workers.wait_for_complete()
         assert "required" in str(
             app.screen.query_one("#edit_srv_msg").render()
@@ -2436,7 +2436,7 @@ async def test_edit_server_invalid_url(monkeypatch):
         app.push_screen(EditServerScreen(alias="a", url="https://a.example"))
         await pilot.pause()
         app.screen.query_one("#url", Input).value = "not-a-url"
-        app.screen._save()
+        app.screen.save()
         await app.workers.wait_for_complete()
         assert "http(s)://" in str(
             app.screen.query_one("#edit_srv_msg").render()
@@ -2477,7 +2477,7 @@ async def test_edit_server_not_found(monkeypatch):
             EditServerScreen(alias="gone", url="https://g.example")
         )
         await pilot.pause()
-        app.screen._save()
+        app.screen.save()
         await app.workers.wait_for_complete()
         await pilot.pause()
         assert (
@@ -2506,7 +2506,7 @@ async def test_edit_server_alias_conflict(monkeypatch):
         app.push_screen(EditServerScreen(alias="a", url="https://a.example"))
         await pilot.pause()
         app.screen.query_one("#alias", Input).value = "b"
-        app.screen._save()
+        app.screen.save()
         await app.workers.wait_for_complete()
         await pilot.pause()
         assert (
@@ -2542,7 +2542,7 @@ async def test_edit_server_url_change_triggers_server_changed(monkeypatch):
         await pilot.pause()
         assert isinstance(app.screen, EditServerScreen)
         app.screen.query_one("#url", Input).value = "https://new.example"
-        app.screen._save()
+        app.screen.save()
         await app.workers.wait_for_complete()
         await pilot.pause()
         assert changed == [True]
@@ -2948,15 +2948,15 @@ def test_tui_state_export_import(monkeypatch, redirect_xdg):
 
 def test_fmt_transfer_known_unknown_and_units():
     """Byte formatter covers B/KB/MB/GB and the unknown-total branch."""
-    from klangk.cli.tui.screens._base import _fmt_transfer, _human_bytes
+    from klangk.cli.tui.screens.base import fmt_transfer, human_bytes
 
-    assert _human_bytes(0) == "0.0 B"
-    assert _human_bytes(512).endswith("B")
-    assert _human_bytes(1536) == "1.5 KB"
-    assert _human_bytes(2 * 1024 * 1024) == "2.0 MB"
-    assert _human_bytes(3 * 1024**3) == "3.0 GB"
-    assert _fmt_transfer(1536, 4096) == "1.5 KB / 4.0 KB"
-    assert _fmt_transfer(9999, None) == "9.8 KB (size unknown)"
+    assert human_bytes(0) == "0.0 B"
+    assert human_bytes(512).endswith("B")
+    assert human_bytes(1536) == "1.5 KB"
+    assert human_bytes(2 * 1024 * 1024) == "2.0 MB"
+    assert human_bytes(3 * 1024**3) == "3.0 GB"
+    assert fmt_transfer(1536, 4096) == "1.5 KB / 4.0 KB"
+    assert fmt_transfer(9999, None) == "9.8 KB (size unknown)"
 
 
 async def test_input_screen_ok_cancel_and_enter(monkeypatch):
@@ -3154,7 +3154,7 @@ async def test_transfer_screen_success_error_and_progress(monkeypatch):
         cap = {}
 
         # Success: on_progress fires from the thread with both a known and
-        # an unknown total (covers both _update branches), then dismisses.
+        # an unknown total (covers both update branches), then dismisses.
         def ok_call(on_progress):
             on_progress(50, 200)
             on_progress(80, None)
@@ -3363,7 +3363,7 @@ async def test_main_import_cancel_aborts(monkeypatch):
 
 
 async def test_main_screen_action_edit_load_fallbacks(monkeypatch):
-    """_do_edit tolerates find_workspace/list_images/allow_autostart errors."""
+    """do_edit tolerates find_workspace/list_images/allow_autostart errors."""
 
     async def noop(*a, **k):
         return None
@@ -3452,7 +3452,7 @@ async def test_main_and_detail_edit_pass_sudo_available(monkeypatch):
 
 
 async def test_main_screen_edit_find_auth_error_shows_overlay(monkeypatch):
-    """AuthError in find_workspace during _do_edit (main screen) triggers
+    """AuthError in find_workspace during do_edit (main screen) triggers
     session-expired overlay (#2035)."""
 
     async def noop(*a, **k):
@@ -3473,7 +3473,7 @@ async def test_main_screen_edit_find_auth_error_shows_overlay(monkeypatch):
 
 
 async def test_main_screen_edit_auth_error_shows_overlay(monkeypatch):
-    """AuthError in list_images during _do_edit (main screen) triggers
+    """AuthError in list_images during do_edit (main screen) triggers
     session-expired overlay instead of opening the form with defaults (#2035)."""
 
     async def noop(*a, **k):
@@ -3495,7 +3495,7 @@ async def test_main_screen_edit_auth_error_shows_overlay(monkeypatch):
 
 
 async def test_main_screen_create_auth_error_shows_overlay(monkeypatch):
-    """AuthError in list_images during _do_create (main screen) triggers the
+    """AuthError in list_images during do_create (main screen) triggers the
     session-expired overlay instead of opening the form with defaults — parity
     with the edit path (#2035, #2234)."""
 
@@ -3518,7 +3518,7 @@ async def test_main_screen_create_auth_error_shows_overlay(monkeypatch):
 async def test_main_screen_edit_autostart_auth_error_shows_overlay(
     monkeypatch,
 ):
-    """AuthError fetching allow_autostart in _do_edit (main screen) triggers
+    """AuthError fetching allow_autostart in do_edit (main screen) triggers
     the session-expired overlay (#2035)."""
 
     async def noop(*a, **k):
@@ -3554,9 +3554,9 @@ async def test_main_screen_on_edited_refreshes(monkeypatch):
         m = app.screen
         called = {}
         m.refresh_lists = lambda: called.__setitem__("r", True)
-        m._on_edited(True)  # truthy result -> refresh
+        m.on_edited(True)  # truthy result -> refresh
         assert called.get("r") is True
-        m._on_edited(None)  # falsy -> no refresh
+        m.on_edited(None)  # falsy -> no refresh
         assert called.get("r") is True  # unchanged
 
 
@@ -4184,28 +4184,28 @@ async def test_main_screen_list_error_shows_placeholder(monkeypatch):
 
 
 def test_reconnect_backoff_is_bounded():
-    """_reconnect_backoff stays within [0, _MAX_BACKOFF_SECONDS] for every
+    """reconnect_backoff stays within [0, MAX_BACKOFF_SECONDS] for every
     attempt and respects the cap once the exponential ramp exceeds it (#2012)."""
-    delays = [scr_main._reconnect_backoff(a) for a in range(1, 30)]
-    assert all(0.0 <= d <= scr_main._MAX_BACKOFF_SECONDS for d in delays)
+    delays = [scr_main.reconnect_backoff(a) for a in range(1, 30)]
+    assert all(0.0 <= d <= scr_main.MAX_BACKOFF_SECONDS for d in delays)
     # The exponential base (1 << attempt) quickly exceeds the cap; the cap
     # (not the raw exponential) must bound the result from there on.
-    assert scr_main._reconnect_backoff(50) <= scr_main._MAX_BACKOFF_SECONDS
+    assert scr_main.reconnect_backoff(50) <= scr_main.MAX_BACKOFF_SECONDS
 
 
 def test_is_unreachable_classifies_transport_errors():
     """Only transport-layer failures count as 'server down' — auth and HTTP
     status errors mean the server responded, so they are reachable (#2012)."""
-    assert scr_main._is_unreachable(httpx.ConnectError("refused"))
-    assert scr_main._is_unreachable(httpx.ConnectTimeout("slow"))
-    assert scr_main._is_unreachable(ConnectionRefusedError())  # OSError
+    assert scr_main.is_unreachable(httpx.ConnectError("refused"))
+    assert scr_main.is_unreachable(httpx.ConnectTimeout("slow"))
+    assert scr_main.is_unreachable(ConnectionRefusedError())  # OSError
     req = httpx.Request("GET", "https://x.example/")
     resp = httpx.Response(500, request=req)
-    assert not scr_main._is_unreachable(
+    assert not scr_main.is_unreachable(
         httpx.HTTPStatusError("boom", request=req, response=resp)
     )
-    assert not scr_main._is_unreachable(RuntimeError("net"))
-    assert not scr_main._is_unreachable(scr_main.AuthError("expired"))
+    assert not scr_main.is_unreachable(RuntimeError("net"))
+    assert not scr_main.is_unreachable(scr_main.AuthError("expired"))
 
 
 async def test_main_screen_server_down_shows_indicator(monkeypatch):
@@ -4322,12 +4322,12 @@ async def test_main_screen_http_error_is_not_unreachable(monkeypatch):
 
 async def _fast_reconnect(monkeypatch):
     """Make the reconnect loop instant: zero backoff + no real sleep."""
-    monkeypatch.setattr(scr_main, "_reconnect_backoff", lambda attempt: 0.0)
+    monkeypatch.setattr(scr_main, "reconnect_backoff", lambda attempt: 0.0)
 
     async def _nowait(_t):
         return None
 
-    monkeypatch.setattr(scr_main, "_reconnect_sleep", _nowait)
+    monkeypatch.setattr(scr_main, "reconnect_sleep", _nowait)
 
 
 async def test_reconnect_recovers_when_server_returns(monkeypatch):
@@ -4399,7 +4399,7 @@ async def test_reconnect_gives_up_after_cap(monkeypatch):
         raise RuntimeError("ws refused")
 
     monkeypatch.setattr(scr_main, "listen_for_status", fail)
-    monkeypatch.setattr(scr_main, "_MAX_RECONNECT_ATTEMPTS", 2)
+    monkeypatch.setattr(scr_main, "MAX_RECONNECT_ATTEMPTS", 2)
     await _fast_reconnect(monkeypatch)
 
     def down():
@@ -4437,7 +4437,7 @@ async def test_server_down_overlay_dismiss_then_no_repop(monkeypatch):
         return None
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
-    monkeypatch.setattr(scr_main, "_reconnect_backoff", lambda attempt: 999.0)
+    monkeypatch.setattr(scr_main, "reconnect_backoff", lambda attempt: 999.0)
 
     def down():
         raise httpx.ConnectError("refused")
@@ -4467,7 +4467,7 @@ async def test_server_down_overlay_c_opens_switch_server(monkeypatch):
         return None
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
-    monkeypatch.setattr(scr_main, "_reconnect_backoff", lambda attempt: 999.0)
+    monkeypatch.setattr(scr_main, "reconnect_backoff", lambda attempt: 999.0)
 
     def down():
         raise httpx.ConnectError("refused")
@@ -4619,7 +4619,7 @@ async def test_status_loop_exits_when_screen_popped_during_backoff(
         raise RuntimeError("ws died")
 
     monkeypatch.setattr(scr_main, "listen_for_status", fail)
-    monkeypatch.setattr(scr_main, "_reconnect_backoff", lambda attempt: 0.0)
+    monkeypatch.setattr(scr_main, "reconnect_backoff", lambda attempt: 0.0)
     rendered: list = []
     app = KlangkApp(_ws())
     async with app.run_test():
@@ -4634,7 +4634,7 @@ async def test_status_loop_exits_when_screen_popped_during_backoff(
                 _App, "screen_stack", property(lambda self: [])
             )
 
-        monkeypatch.setattr(scr_main, "_reconnect_sleep", pop_during_sleep)
+        monkeypatch.setattr(scr_main, "reconnect_sleep", pop_during_sleep)
         monkeypatch.setattr(
             screen, "_render_unreachable", lambda *a, **k: rendered.append(1)
         )
@@ -5561,7 +5561,7 @@ async def test_detail_action_edit_opens_form_and_refreshes(monkeypatch):
         await app.workers.wait_for_complete()
         await pilot.pause()
         assert isinstance(app.screen, EditWorkspaceScreen)
-        # Simulate a successful save/disdismiss -> _on_edited refreshes.
+        # Simulate a successful save/disdismiss -> on_edited refreshes.
         app.screen.dismiss(True)
         await pilot.pause()
         await app.workers.wait_for_complete()
@@ -5962,7 +5962,7 @@ async def test_detail_start_error(monkeypatch):
     async with app.run_test() as pilot:
         app.push_screen(WorkspaceDetailScreen("alpha"))
         await pilot.pause()
-        app.screen.action_stop()  # ws not running → _do_start
+        app.screen.action_stop()  # ws not running → do_start
         await app.workers.wait_for_complete()
         assert "Start failed" in str(
             app.screen.query_one("#detail_msg").render()
@@ -7011,7 +7011,7 @@ def test_detail_window_id_for_resolves_index_and_falls_back():
     bug (#1955 review).
     """
     d = WorkspaceDetailScreen("alpha")
-    d._terminals = [
+    d.terminals = [
         {"index": 0, "name": "main", "id": "@0"},
         {"index": 1, "name": "build", "id": "@1"},
     ]
@@ -7027,7 +7027,7 @@ def test_detail_window_id_for_warns_when_id_missing(caplog):
     """A window matching the index but lacking an id is a server-contract
     violation — refuse to select and log loudly (#1955 review)."""
     d = WorkspaceDetailScreen("alpha")
-    d._terminals = [{"index": 0, "name": "main"}]  # no "id"
+    d.terminals = [{"index": 0, "name": "main"}]  # no "id"
     with caplog.at_level(
         "WARNING",
         logger="klangk.cli.tui.screens.workspace_detail",
@@ -7040,7 +7040,7 @@ def test_detail_terminal_label_for():
     """Delete-message label prefers the window name, falling back to the
     index/key (#1966 review UX nit)."""
     d = WorkspaceDetailScreen("alpha")
-    d._terminals = [
+    d.terminals = [
         {"index": 0, "name": "main", "id": "@0"},
         {"index": 1, "name": "", "id": "@1"},  # empty name → index
     ]
@@ -8202,7 +8202,7 @@ async def test_detail_load_terminals_auth_error_shows_overlay(monkeypatch):
 
 
 async def test_detail_edit_auth_error_in_images_shows_overlay(monkeypatch):
-    """AuthError fetching images in _do_edit (detail screen) triggers the
+    """AuthError fetching images in do_edit (detail screen) triggers the
     session-expired overlay instead of opening the form with defaults (#2035)."""
 
     async def noop(*a, **k):
@@ -8224,14 +8224,14 @@ async def test_detail_edit_auth_error_in_images_shows_overlay(monkeypatch):
         screen = next(
             s for s in app.screen_stack if isinstance(s, WorkspaceDetailScreen)
         )
-        screen.run_worker(screen._do_edit, exit_on_error=False)
+        screen.run_worker(screen.do_edit, exit_on_error=False)
         await app.workers.wait_for_complete()
         await pilot.pause()
         assert isinstance(app.screen, SessionExpiredScreen)
 
 
 async def test_detail_edit_auth_error_in_autostart_shows_overlay(monkeypatch):
-    """AuthError fetching allow_autostart in _do_edit (detail screen) triggers
+    """AuthError fetching allow_autostart in do_edit (detail screen) triggers
     the session-expired overlay (#2035)."""
 
     async def noop(*a, **k):
@@ -8253,7 +8253,7 @@ async def test_detail_edit_auth_error_in_autostart_shows_overlay(monkeypatch):
         screen = next(
             s for s in app.screen_stack if isinstance(s, WorkspaceDetailScreen)
         )
-        screen.run_worker(screen._do_edit, exit_on_error=False)
+        screen.run_worker(screen.do_edit, exit_on_error=False)
         await app.workers.wait_for_complete()
         await pilot.pause()
         assert isinstance(app.screen, SessionExpiredScreen)
@@ -9657,7 +9657,7 @@ async def test_edit_screen_egress_mode_pre_populates_and_saves(monkeypatch):
         # Seeded from the workspace (static), not the default interactive.
         assert es.query_one("#egress_mode", Select).value == "static"
         es.query_one("#egress_mode", Select).value = "allow"
-        es._save()
+        es.save()
         await app.workers.wait_for_complete()
         assert captured["egress_mode"] == "allow"
         # Not running => no restart offer.
@@ -9690,7 +9690,7 @@ async def test_edit_screen_per_handle_home_pre_populates_and_saves(
         # Seeded from the workspace (per-handle).
         assert es.query_one("#per_handle_home", Checkbox).value is True
         es.query_one("#per_handle_home", Checkbox).value = False
-        es._save()
+        es.save()
         await app.workers.wait_for_complete()
         assert captured["per_handle_home"] is False
         # Running workspace, but a layout flip applies from the next
@@ -9718,7 +9718,7 @@ async def test_edit_screen_restart_needed_when_egress_mode_changed(
         await pilot.pause()
         es = app.screen
         es.query_one("#egress_mode", Select).value = "static"
-        es._save()
+        es.save()
         await app.workers.wait_for_complete()
         assert isinstance(app.screen, ConfirmScreen)  # restart offered
 
@@ -9743,7 +9743,7 @@ async def test_edit_screen_save_calls_update(monkeypatch):
         es.query_one("#name").value = "renamed"
         es.query_one("#allow_input").value = "github.com:443"
         es._add_allowed_domain()
-        es._save()
+        es.save()
         await app.workers.wait_for_complete()
         assert captured["id"] == ws.id
         assert captured["name"] == "renamed"
@@ -9770,7 +9770,7 @@ async def test_edit_screen_restart_needed_when_running_and_changed(
         await pilot.pause()
         es = app.screen
         es.query_one("#image", Select).value = "py:3"  # create-time change
-        es._save()
+        es.save()
         await app.workers.wait_for_complete()
         assert isinstance(app.screen, ConfirmScreen)  # restart offered
         # accept -> restart_workspace called + edit screen dismissed
@@ -9794,7 +9794,7 @@ async def test_edit_screen_no_restart_when_create_field_unchanged(monkeypatch):
         es = app.screen
         # No create-time field changed (only a live-propagating field).
         es.query_one("#health_check").value = "curl x"
-        es._save()
+        es.save()
         await app.workers.wait_for_complete()
         assert not isinstance(app.screen, ConfirmScreen)
         assert not isinstance(app.screen, EditWorkspaceScreen)
@@ -9840,7 +9840,7 @@ async def test_edit_screen_nix_prepopulated_and_sent(monkeypatch):
         nix = es.query_one("#nix", Checkbox)
         assert nix.display is True
         assert nix.value is True  # pre-populated from settings.nix
-        es._save()
+        es.save()
         await app.workers.wait_for_complete()
         assert captured["settings"] == {"nix": True}
 
@@ -9869,7 +9869,7 @@ async def test_edit_screen_nix_off_clears_setting(monkeypatch):
         nix = es.query_one("#nix", Checkbox)
         assert nix.value is True  # pre-populated from settings.nix
         nix.value = False  # turn it off
-        es._save()
+        es.save()
         await app.workers.wait_for_complete()
         assert captured["settings"] == {"nix": False}
 
@@ -9899,7 +9899,7 @@ async def test_edit_screen_hidden_toggles_preserve_bag(monkeypatch):
         await pilot.pause()
         es = app.screen
         es.query_one("#cpu_limit").value = "2.0"
-        es._save()
+        es.save()
         await app.workers.wait_for_complete()
         # The lock-down, the API-only key, and the new limit all survive.
         assert captured["settings"] == {
@@ -9952,7 +9952,7 @@ async def test_edit_screen_sudo_prepopulated_and_sent(monkeypatch):
         assert sudo.display is True
         assert sudo.value is False  # pre-populated from settings.allow_sudo
         sudo.value = True  # revert to the deploy posture
-        es._save()
+        es.save()
         await app.workers.wait_for_complete()
         assert captured["settings"] == {"allow_sudo": True}
 
@@ -9981,7 +9981,7 @@ async def test_edit_screen_sudo_unchecked_sends_lockdown(monkeypatch):
         sudo = es.query_one("#allow_sudo", Checkbox)
         assert sudo.value is True  # absent bag key = follow the deploy
         sudo.value = False  # lock this workspace down
-        es._save()
+        es.save()
         await app.workers.wait_for_complete()
         assert captured["settings"] == {
             "idle_timeout": 300,
@@ -10012,7 +10012,7 @@ async def test_edit_screen_nix_preserves_unmanaged_settings(monkeypatch):
         await pilot.pause()
         es = app.screen
         # leave the nix checkbox untouched (pre-populated False) and save
-        es._save()
+        es.save()
         await app.workers.wait_for_complete()
         assert captured["settings"]["bridge_timeout"] == 60
         assert captured["settings"]["nix"] is False
@@ -10034,7 +10034,7 @@ async def test_edit_screen_nix_off_prompts_restart(monkeypatch):
         await pilot.pause()
         es = app.screen
         es.query_one("#nix", Checkbox).value = False  # turn nix off
-        es._save()
+        es.save()
         await app.workers.wait_for_complete()
         assert isinstance(app.screen, ConfirmScreen)  # restart offered
 
@@ -10054,7 +10054,7 @@ async def test_edit_screen_nix_change_prompts_restart(monkeypatch):
         await pilot.pause()
         es = app.screen
         es.query_one("#nix", Checkbox).value = True  # turn nix on
-        es._save()
+        es.save()
         await app.workers.wait_for_complete()
         assert isinstance(app.screen, ConfirmScreen)  # restart offered
 
@@ -10072,7 +10072,7 @@ async def test_edit_screen_name_required(monkeypatch):
         await pilot.pause()
         es = app.screen
         es.query_one("#name").value = ""
-        es._save()
+        es.save()
         assert updated == []
         assert "required" in str(es.query_one("#edit_msg").render()).lower()
 
@@ -10099,7 +10099,7 @@ async def test_edit_screen_save_http_error_shows_detail(monkeypatch):
         _edit_screen(app, ws)
         await pilot.pause()
         es = app.screen
-        es._save()
+        es.save()
         await app.workers.wait_for_complete()
         assert "name taken" in str(es.query_one("#edit_msg").render())
         assert isinstance(app.screen, EditWorkspaceScreen)  # still on form
@@ -10255,7 +10255,7 @@ async def test_edit_screen_save_auth_error(monkeypatch):
         _edit_screen(app, ws)
         await pilot.pause()
         es = app.screen
-        es._save()
+        es.save()
         await app.workers.wait_for_complete()
         await pilot.pause()
         # AuthError surfaces the app-wide overlay, not an inline form message (#2025).
@@ -10277,7 +10277,7 @@ async def test_edit_screen_save_generic_error(monkeypatch):
         _edit_screen(app, ws)
         await pilot.pause()
         es = app.screen
-        es._save()
+        es.save()
         await app.workers.wait_for_complete()
         assert "Failed to save: boom" in str(
             es.query_one("#edit_msg").render()
@@ -10306,7 +10306,7 @@ async def test_edit_screen_save_http_error_non_json(monkeypatch):
         _edit_screen(app, ws)
         await pilot.pause()
         es = app.screen
-        es._save()
+        es.save()
         await app.workers.wait_for_complete()
         assert "proxy" in str(es.query_one("#edit_msg").render())
 
@@ -10324,7 +10324,7 @@ async def test_edit_screen_field_submit_saves(monkeypatch):
         await pilot.pause()
         es = app.screen
         name = es.query_one("#name")
-        es.on_input_submitted(Input.Submitted(name, name.value))  # -> _save
+        es.on_input_submitted(Input.Submitted(name, name.value))  # -> save
         await app.workers.wait_for_complete()
         assert updated  # update_workspace called
         assert not isinstance(app.screen, EditWorkspaceScreen)
@@ -10348,12 +10348,12 @@ async def test_edit_screen_classification_banner_in_save_body(monkeypatch):
         assert es.query_one("#classification_banner").value == "SECRET"
         # Change it, save.
         es.query_one("#classification_banner").value = "CUI"
-        es._save()
+        es.save()
         await app.workers.wait_for_complete()
         assert updated[-1]["classification_banner"] == "CUI"
         # Clear it, save — None clears the override back to inherit.
         es.query_one("#classification_banner").value = "   "
-        es._save()
+        es.save()
         await app.workers.wait_for_complete()
         assert updated[-1]["classification_banner"] is None
 
@@ -10465,7 +10465,7 @@ async def test_edit_screen_restart_declined(monkeypatch):
         await pilot.pause()
         es = app.screen
         es.query_one("#image", Select).value = "py:3"
-        es._save()
+        es.save()
         await app.workers.wait_for_complete()
         assert isinstance(app.screen, ConfirmScreen)
         app.screen.dismiss(False)  # decline restart
@@ -10490,7 +10490,7 @@ async def test_edit_screen_restart_failure(monkeypatch):
         await pilot.pause()
         es = app.screen
         es.query_one("#image", Select).value = "py:3"
-        es._save()
+        es.save()
         await app.workers.wait_for_complete()
         assert isinstance(app.screen, ConfirmScreen)
         app.screen.dismiss(True)  # accept restart -> fails
@@ -10899,7 +10899,7 @@ async def test_edit_rename_propagates_to_detail_and_list(monkeypatch):
         await pilot.pause()
         es = app.screen
         es.query_one("#name").value = "renamed"
-        es._save()
+        es.save()
         await app.workers.wait_for_complete()
         # The post-edit reload worker is spawned from inside the save
         # worker, so wait_for_complete above may return before it has
@@ -11851,7 +11851,7 @@ async def test_add_server_event_handlers(monkeypatch):
 def test_is_interactive_returns_bool():
     from klangk.cli import main as cli_main
 
-    assert isinstance(cli_main._is_interactive(), bool)
+    assert isinstance(cli_main.is_interactive(), bool)
 
 
 def test_run_tui_invokes_app_run(monkeypatch):
@@ -11877,7 +11877,7 @@ def test_bare_klangk_non_tty_prints_help(monkeypatch):
         "run_tui",
         lambda server_url=None: launched.__setitem__("v", True),
     )
-    monkeypatch.setattr(cli_main, "_is_interactive", lambda: False)
+    monkeypatch.setattr(cli_main, "is_interactive", lambda: False)
 
     result = CliRunner().invoke(app, [])
     assert result.exit_code == 0
@@ -11897,7 +11897,7 @@ def test_bare_klangk_tty_launches_tui(monkeypatch):
         "run_tui",
         lambda server_url=None: seen.__setitem__("s", server_url),
     )
-    monkeypatch.setattr(cli_main, "_is_interactive", lambda: True)
+    monkeypatch.setattr(cli_main, "is_interactive", lambda: True)
 
     result = CliRunner().invoke(app, [])
     assert result.exit_code == 0
@@ -11914,7 +11914,7 @@ def test_bare_klangk_tty_crash_surfaces_error(monkeypatch):
         raise RuntimeError("kaboom")
 
     monkeypatch.setattr(tui_pkg, "run_tui", boom)
-    monkeypatch.setattr(cli_main, "_is_interactive", lambda: True)
+    monkeypatch.setattr(cli_main, "is_interactive", lambda: True)
 
     result = CliRunner().invoke(app, [])
     assert result.exit_code == 1
@@ -12252,8 +12252,8 @@ async def test_run_token_refresh_loop_returns_expired_on_failure(monkeypatch):
     """run_token_refresh_loop returns 'expired' when refresh fails."""
     import time as _time
 
-    monkeypatch.setattr(scr_main, "_TOKEN_REFRESH_POLL", 0)
-    monkeypatch.setattr(scr_main, "_TOKEN_REFRESH_MARGIN", 99999)
+    monkeypatch.setattr(scr_main, "TOKEN_REFRESH_POLL", 0)
+    monkeypatch.setattr(scr_main, "TOKEN_REFRESH_MARGIN", 99999)
 
     fake_token_payload = {
         "sub": "uid",
@@ -12275,14 +12275,14 @@ async def test_run_token_refresh_loop_returns_expired_on_failure(monkeypatch):
         def token(self):
             return fake_jwt
 
-    monkeypatch.setattr(scr_main, "_refresh_token", lambda url, tok: None)
+    monkeypatch.setattr(scr_main, "refresh_token", lambda url, tok: None)
     result = await _real_run_token_refresh_loop(FakeState())
     assert result == "expired"
 
 
 async def test_run_token_refresh_loop_returns_no_token(monkeypatch):
     """run_token_refresh_loop returns 'no_token' when token disappears."""
-    monkeypatch.setattr(scr_main, "_TOKEN_REFRESH_POLL", 0)
+    monkeypatch.setattr(scr_main, "TOKEN_REFRESH_POLL", 0)
 
     class FakeState:
         def current_url(self):
@@ -12308,7 +12308,7 @@ def _fake_jwt(exp=None):
 
 async def test_run_token_refresh_loop_skips_when_exp_missing(monkeypatch):
     """A token with no ``exp`` claim is skipped (continue); exits on no-token."""
-    monkeypatch.setattr(scr_main, "_TOKEN_REFRESH_POLL", 0)
+    monkeypatch.setattr(scr_main, "TOKEN_REFRESH_POLL", 0)
     tokens = iter([_fake_jwt(exp=None), None])
 
     class FakeState:
@@ -12326,7 +12326,7 @@ async def test_run_token_refresh_loop_skips_when_far_from_expiry(monkeypatch):
     """A token not near expiry is skipped (continue); exits on no-token."""
     import time as _time
 
-    monkeypatch.setattr(scr_main, "_TOKEN_REFRESH_POLL", 0)
+    monkeypatch.setattr(scr_main, "TOKEN_REFRESH_POLL", 0)
     tokens = iter([_fake_jwt(exp=int(_time.time()) + 3600), None])
 
     class FakeState:
@@ -12344,7 +12344,7 @@ async def test_run_token_refresh_loop_refreshes_near_expiry(monkeypatch):
     """A near-expiry token is refreshed (success branch); exits on no-token."""
     import time as _time
 
-    monkeypatch.setattr(scr_main, "_TOKEN_REFRESH_POLL", 0)
+    monkeypatch.setattr(scr_main, "TOKEN_REFRESH_POLL", 0)
     tokens = iter([_fake_jwt(exp=int(_time.time()) + 60), None])
 
     class FakeState:
@@ -12354,7 +12354,7 @@ async def test_run_token_refresh_loop_refreshes_near_expiry(monkeypatch):
         def token(self):
             return next(tokens)
 
-    monkeypatch.setattr(scr_main, "_refresh_token", lambda url, tok: "newtok")
+    monkeypatch.setattr(scr_main, "refresh_token", lambda url, tok: "newtok")
     result = await _real_run_token_refresh_loop(FakeState())
     assert result == "no_token"
 
@@ -12519,12 +12519,12 @@ async def test_session_expired_overlay_covers_any_active_page(monkeypatch):
 # to pop screens in a ``while top is not X: pop_screen()`` loop, which is
 # fragile (a side effect that pushes a screen mid-teardown can extend or
 # loop it) and crashes (ScreenStackError) when the target screen isn't in
-# the stack. They now route through KlangkApp._pop_above, a snapshot-guarded
+# the stack. They now route through KlangkApp.pop_above, a snapshot-guarded
 # helper. These tests pin the new behavior.
 
 
 async def test_pop_above_returns_false_when_target_absent(monkeypatch):
-    """_pop_above is a no-op (returns False) when target isn't on the stack."""
+    """pop_above is a no-op (returns False) when target isn't on the stack."""
 
     async def noop(*a, **k):
         return None
@@ -12537,13 +12537,13 @@ async def test_pop_above_returns_false_when_target_absent(monkeypatch):
     async with app.run_test() as pilot:
         await pilot.pause()
         before = list(app.screen_stack)
-        result = app._pop_above(_Screen())  # never pushed -> absent
+        result = app.pop_above(_Screen())  # never pushed -> absent
         assert result is False
         assert app.screen_stack == before  # nothing popped
 
 
 async def test_pop_above_stops_when_top_changes_mid_teardown(monkeypatch):
-    """If the live top is no longer the screen ``_pop_above`` planned to pop
+    """If the live top is no longer the screen ``pop_above`` planned to pop
     next, it stops instead of popping a screen it didn't plan to remove.
 
     ``pop_screen`` is synchronous, so a real call never changes the top out
@@ -12582,7 +12582,7 @@ async def test_pop_above_stops_when_top_changes_mid_teardown(monkeypatch):
             return result
 
         monkeypatch.setattr(app, "pop_screen", patched)
-        result = app._pop_above(main)
+        result = app.pop_above(main)
         # b was popped, then sentinel was pushed -> the top is no longer the
         # planned 'a', so the loop stops with MainScreen NOT exposed.
         assert result is False
@@ -12721,7 +12721,7 @@ async def test_run_token_refresh_loop_concurrent_rotation(monkeypatch):
     """If the token was rotated concurrently, don't expire — keep running."""
     import time as _time
 
-    monkeypatch.setattr(scr_main, "_TOKEN_REFRESH_POLL", 0)
+    monkeypatch.setattr(scr_main, "TOKEN_REFRESH_POLL", 0)
     near = _fake_jwt(exp=int(_time.time()) + 60)
     # token() returns: the near-expiry token, then a *different* one (the
     # mitigation re-reads state and sees the rotation), then None (exit).
@@ -12734,7 +12734,7 @@ async def test_run_token_refresh_loop_concurrent_rotation(monkeypatch):
         def token(self):
             return next(tokens)
 
-    monkeypatch.setattr(scr_main, "_refresh_token", lambda url, tok: None)
+    monkeypatch.setattr(scr_main, "refresh_token", lambda url, tok: None)
     result = await _real_run_token_refresh_loop(FakeState())
     assert result == "no_token"
 
@@ -13010,7 +13010,7 @@ async def test_edit_screen_editor_add_buttons_clickable(monkeypatch):
 async def test_edit_running_env_saved_before_restart_prompt(monkeypatch):
     """Editing a RUNNING workspace's env persists the change *before* the
     restart-needed prompt appears; dismissing the prompt (Skip) must not
-    drop it (#1891). The update PUT fires unconditionally in _do_save,
+    drop it (#1891). The update PUT fires unconditionally in do_save,
     ahead of the ConfirmScreen."""
 
     async def noop(*a, **k):
@@ -13106,7 +13106,7 @@ async def test_main_screen_cheatsheet_modal():
 async def test_detail_screen_cheatsheet_modal():
     """`?` on the detail screen opens a cheatsheet of WorkspaceDetailScreen
     bindings; Escape dismisses (#1802). Also confirms the `?` binding survives
-    the per-display BINDINGS rebuild in _display()."""
+    the per-display BINDINGS rebuild in refresh_display()."""
     a = _wsobj("alpha", running=True, service_started_at=1.0)
     st = _ws(owned=[a])
     st.find_workspace = lambda n: a
@@ -13177,7 +13177,7 @@ def test_render_detail_indents_wrapped_values_to_value_column():
 async def test_detail_display_renders_at_body_width_not_screen_width(
     monkeypatch,
 ):
-    """#detail_body is narrower than the screen (horizontal chrome); _display
+    """#detail_body is narrower than the screen (horizontal chrome); refresh_display
     must render the detail table at the body's content width, or the Static
     re-wraps the pre-folded lines and drops the value-column indent (#2190)."""
 
@@ -13211,7 +13211,7 @@ async def test_detail_display_renders_at_body_width_not_screen_width(
         await pilot.pause()
         await app.screen._load()
         await pilot.pause()
-        app.screen._display()
+        app.screen.refresh_display()
         await pilot.pause()
         body = app.screen.query_one("#detail_body", Static)
         screen_w = app.screen.size.width
@@ -13282,7 +13282,7 @@ def test_render_detail_label_column_bold_and_right_aligned():
 
 async def test_create_screen_collects_settings(monkeypatch):
     """Resource fields on the create form populate the settings dict (#2217)."""
-    from klangk.cli.tui.screens.workspace_form import _collect_settings
+    from klangk.cli.tui.screens.workspace_form import collect_settings
 
     async def noop(*a, **k):
         return None
@@ -13298,14 +13298,14 @@ async def test_create_screen_collects_settings(monkeypatch):
         await pilot.pause()
         cs = app.screen
         # Empty fields → None
-        assert _collect_settings(cs) is None
+        assert collect_settings(cs) is None
         # Fill in resource fields
         cs.query_one("#idle_timeout", Input).value = "600"
         cs.query_one("#cpu_limit", Input).value = "1.5"
         cs.query_one("#memory_limit", Input).value = "4g"
         cs.query_one("#pids_limit", Input).value = "256"
         cs.query_one("#tmp_size", Input).value = "2g"
-        result = _collect_settings(cs)
+        result = collect_settings(cs)
         assert result == {
             "idle_timeout": 600,
             "cpu_limit": 1.5,
@@ -13337,7 +13337,7 @@ async def test_edit_screen_save_includes_settings(monkeypatch):
         es.query_one("#cpu_limit", Input).value = "2.0"
         es.query_one("#pids_limit", Input).value = "512"
         es.query_one("#tmp_size", Input).value = "1g"
-        es._save()
+        es.save()
         await app.workers.wait_for_complete()
         assert captured["settings"] == {
             "cpu_limit": 2.0,
@@ -13420,7 +13420,7 @@ def test_server_schedule_line_formats():
     soon = (
         datetime.now(timezone.utc) + timedelta(minutes=2, seconds=30)
     ).isoformat()
-    line = scr_main._server_schedule_line(
+    line = scr_main.server_schedule_line(
         {"action": "recycle", "fire_at": soon}
     )
     assert line.startswith("server: recycle at ")
@@ -13428,28 +13428,28 @@ def test_server_schedule_line_formats():
     hours = (
         datetime.now(timezone.utc) + timedelta(hours=2, minutes=3, seconds=45)
     ).isoformat()
-    assert "(in 2h 3m)" in scr_main._server_schedule_line(
+    assert "(in 2h 3m)" in scr_main.server_schedule_line(
         {"action": "stop", "fire_at": hours}
     )
     # Bad/absent fire_at degrades to a static line, never raises.
     assert (
-        scr_main._server_schedule_line({"action": "stop", "fire_at": "x"})
+        scr_main.server_schedule_line({"action": "stop", "fire_at": "x"})
         == "server: stop scheduled"
     )
     assert (
-        scr_main._server_schedule_line({"action": "recycle"})
+        scr_main.server_schedule_line({"action": "recycle"})
         == "server: recycle scheduled"
     )
     # Naive (no-tz) fire_at is treated as local time, not rejected.
     naive = (datetime.now() + timedelta(minutes=2, seconds=30)).isoformat()
-    assert "(in 2m)" in scr_main._server_schedule_line(
+    assert "(in 2m)" in scr_main.server_schedule_line(
         {"action": "stop", "fire_at": naive}
     )
     # Sub-minute remaining renders seconds.
     seconds = (datetime.now(timezone.utc) + timedelta(seconds=45)).isoformat()
     assert re.search(
         r"\(in 4\ds\)",
-        scr_main._server_schedule_line({"action": "stop", "fire_at": seconds}),
+        scr_main.server_schedule_line({"action": "stop", "fire_at": seconds}),
     )
 
 
@@ -13595,7 +13595,7 @@ async def test_detail_status_event_ignores_string_started_at(monkeypatch):
         await app.workers.wait_for_complete()
         await pilot.pause()
         d = app.screen
-        # Malformed string stamp: not adopted, no crash on _display().
+        # Malformed string stamp: not adopted, no crash on refresh_display().
         d.apply_status_event(
             {
                 "type": "container_status",
@@ -13655,7 +13655,7 @@ async def test_create_screen_settings_validation_inline_error(monkeypatch):
 
 
 async def test_edit_screen_settings_validation_inline_error(monkeypatch):
-    """#2029: same validation on the edit form's _save path."""
+    """#2029: same validation on the edit form's save path."""
 
     async def noop(*a, **k):
         return None
@@ -13674,7 +13674,7 @@ async def test_edit_screen_settings_validation_inline_error(monkeypatch):
         await pilot.pause()
         es = app.screen
         es.query_one("#cpu_limit", Input).value = "fast"
-        es._save()
+        es.save()
         await app.workers.wait_for_complete()
         assert updated == {}  # never submitted
         assert "CPU limit" in str(es.query_one("#edit_msg", Static).render())
@@ -13846,7 +13846,7 @@ def test_oidc_login_drops_stamp_cache_on_save_failure(
         state.set_credentials(url, "ghost@x", "ghost-token")
         return None
 
-    monkeypatch.setattr(tui_state_mod, "_oidc_browser_login", fake_flow)
+    monkeypatch.setattr(tui_state_mod, "oidc_browser_login", fake_flow)
     st = TuiState("https://x.example")
     st.oidc_login("google")
     # Cache dropped: state() reloaded from disk and does NOT serve the
@@ -13866,7 +13866,7 @@ def test_oidc_login_keeps_credentials_after_successful_save(
         state.set_credentials(url, "real@x", "real-token")
         state.save()
 
-    monkeypatch.setattr(tui_state_mod, "_oidc_browser_login", fake_flow)
+    monkeypatch.setattr(tui_state_mod, "oidc_browser_login", fake_flow)
     st = TuiState("https://x.example")
     st.oidc_login("google")
     assert st.token() == "real-token"
@@ -13991,7 +13991,7 @@ async def test_detail_delete_pop_guarded_when_screen_already_popped(
         app.pop_screen()  # external actor pops it first
         await pilot.pause()
         before = list(app.screen_stack)
-        await d._do_delete()  # guarded pop no-ops
+        await d.do_delete()  # guarded pop no-ops
         await pilot.pause()
         assert list(app.screen_stack) == before
         assert isinstance(app.screen, MainScreen)
@@ -14043,7 +14043,7 @@ class TestBaseScreenBranchGaps2834:
     def test_btn_step_with_non_button_focus_is_noop(self):
         # Focus sitting on nothing (or a non-button): the left/right
         # button-step does not move focus.
-        from klangk.cli.tui.screens._base import ConfirmScreen
+        from klangk.cli.tui.screens.base import ConfirmScreen
 
         s = ConfirmScreen("p")
         # Not mounted: self.focused is None -> fid None -> guard exits.
@@ -14054,7 +14054,7 @@ class TestBaseScreenBranchGaps2834:
     def test_error_screen_unknown_button_ignored(self):
         # A button id the screen does not handle: nothing happens (no
         # crash, no dismissal).
-        from klangk.cli.tui.screens._base import SessionExpiredScreen
+        from klangk.cli.tui.screens.base import SessionExpiredScreen
 
         s = SessionExpiredScreen()
         dismissed = []
@@ -14063,7 +14063,7 @@ class TestBaseScreenBranchGaps2834:
         assert dismissed == []
 
     def test_confirm_screen_cancel_button_dismisses(self):
-        from klangk.cli.tui.screens._base import ConfirmScreen
+        from klangk.cli.tui.screens.base import ConfirmScreen
 
         s = ConfirmScreen("p")
         dismissed = []
@@ -14072,7 +14072,7 @@ class TestBaseScreenBranchGaps2834:
         assert dismissed == [False]
 
     def test_duplicate_screen_unknown_button_and_input_ignored(self):
-        from klangk.cli.tui.screens._base import DuplicateScreen
+        from klangk.cli.tui.screens.base import DuplicateScreen
 
         s = DuplicateScreen("src-name")
         dismissed = []
@@ -14085,7 +14085,7 @@ class TestBaseScreenBranchGaps2834:
         assert dismissed == []
 
     def test_input_screen_unknown_button_and_input_ignored(self):
-        from klangk.cli.tui.screens._base import InputScreen
+        from klangk.cli.tui.screens.base import InputScreen
 
         s = InputScreen("t")
         dismissed = []
@@ -14098,7 +14098,7 @@ class TestBaseScreenBranchGaps2834:
         assert dismissed == []
 
     def test_spatial_up_at_chain_top_without_exit_stays(self):
-        from klangk.cli.tui.screens._base import SpatialNavScreen
+        from klangk.cli.tui.screens.base import SpatialNavScreen
 
         class _S(SpatialNavScreen):
             SPATIAL_CHAIN = ["top", "bottom"]
@@ -14111,7 +14111,7 @@ class TestBaseScreenBranchGaps2834:
         _S().action_spatial_up()  # no exit target: stays (no raise)
 
     def test_spatial_down_at_chain_bottom_stays(self):
-        from klangk.cli.tui.screens._base import SpatialNavScreen
+        from klangk.cli.tui.screens.base import SpatialNavScreen
 
         class _S(SpatialNavScreen):
             SPATIAL_CHAIN = ["top", "bottom"]
@@ -14123,7 +14123,7 @@ class TestBaseScreenBranchGaps2834:
         _S().action_spatial_down()  # at the end: stays (no raise)
 
     def test_tab_skip_skips_disabled_and_hidden_targets(self):
-        from klangk.cli.tui.screens._base import TabSkipMixin
+        from klangk.cli.tui.screens.base import TabSkipMixin
 
         focused_ids = []
 
@@ -14211,13 +14211,13 @@ class TestAppBranchGaps2834:
         with self._status_patched():
             app = KlangkApp(_ws())
             async with app.run_test() as pilot:
-                from klangk.cli.tui.screens._base import ConfirmScreen
+                from klangk.cli.tui.screens.base import ConfirmScreen
 
                 top = ConfirmScreen("sure?")
                 app.push_screen(top)
                 await pilot.pause()
                 before = len(app.screen_stack)
-                assert app._pop_above(top) is True
+                assert app.pop_above(top) is True
                 await pilot.pause()
                 # Target was already on top: nothing above it to pop.
                 assert len(app.screen_stack) == before
@@ -14483,7 +14483,7 @@ class TestDetailScreenBranchGaps2834:
         async with self._detail() as (app, screen):
             workers = []
             screen.run_worker = lambda *a, **k: workers.append(a)
-            screen._on_edited(None)
+            screen.on_edited(None)
             assert workers == []
 
     async def test_health_event_without_message(self):
@@ -14494,7 +14494,7 @@ class TestDetailScreenBranchGaps2834:
 
     async def test_reload_on_status_pops_when_screen_not_top(self):
         async with self._detail() as (app, screen):
-            from klangk.cli.tui.screens._base import ConfirmScreen
+            from klangk.cli.tui.screens.base import ConfirmScreen
 
             app.push_screen(ConfirmScreen("modal?"))
             await asyncio.sleep(0)
@@ -14546,7 +14546,7 @@ class TestDetailScreenBranchGaps2834:
                 name
             )
             screen.app.refresh_workspaces = lambda: None
-            await screen._do_start()
+            await screen.do_start()
             assert started == ["alpha"]
 
     async def test_start_without_ws_still_requests(self):
@@ -14557,7 +14557,7 @@ class TestDetailScreenBranchGaps2834:
                 name
             )
             screen.app.refresh_workspaces = lambda: None
-            await screen._do_start()
+            await screen.do_start()
             assert started == ["alpha"]
 
     async def test_second_terminal_load_keeps_selected_index(self):
@@ -14674,7 +14674,7 @@ class TestLoginServerFormBranchGaps2834:
                 # nothing changed) result: no repopulate, no server change.
                 view.action_edit_server()
                 calls = []
-                view._populate = lambda: calls.append(1)
+                view.populate = lambda: calls.append(1)
                 cb = pushed.get("cb")
                 cb(False)
                 assert calls == []
@@ -14719,7 +14719,7 @@ class TestLoginServerFormBranchGaps2834:
                 screen._rejected_domains = ["evil.example:443"]
                 inp = screen.query_one("#reject_input", TextualInput)
                 inp.value = "evil.example:443"
-                screen._msg = lambda *a, **k: None
+                screen.msg = lambda *a, **k: None
                 screen._render_rejected_domains = lambda: None
                 screen._add_rejected_domain()
                 assert screen._rejected_domains == ["evil.example:443"]
@@ -14887,23 +14887,23 @@ class TestFinalBranchGaps2834:
                 screen._load = _noop_load
                 screen._refresh_deploy_banner = _noop_load
                 screen._missing = True
-                real_pop = app._pop_above
+                real_pop = app.pop_above
 
                 def _pop_then_push(target):
                     result = real_pop(target)
                     # A racing push lands between the teardown and the
                     # self-pop check.
-                    from klangk.cli.tui.screens._base import ConfirmScreen
+                    from klangk.cli.tui.screens.base import ConfirmScreen
 
                     app.push_screen(ConfirmScreen("raced in"))
                     return result
 
-                app._pop_above = _pop_then_push
+                app.pop_above = _pop_then_push
                 await screen._reload_on_status()
                 await pilot.pause()
                 # The raced-in modal is now on top: the dead detail
                 # screen did NOT pop itself beneath it.
-                from klangk.cli.tui.screens._base import ConfirmScreen
+                from klangk.cli.tui.screens.base import ConfirmScreen
 
                 assert isinstance(app.screen, ConfirmScreen)
                 assert screen in app.screen_stack
@@ -14927,8 +14927,8 @@ class TestFinalBranchGaps2834:
                     stopped.append(name)
                 )
                 screen.app.refresh_workspaces = lambda: None
-                await screen._do_restart()
-                await screen._do_stop()
+                await screen.do_restart()
+                await screen.do_stop()
                 assert restarted == ["nows"]
                 assert stopped == ["nows"]
 
@@ -14956,7 +14956,7 @@ class TestFinalBranchGaps2834:
                 screen._editing_reject = None
                 inp = screen.query_one("#reject_input", TextualInput)
                 inp.value = "a.example:443"  # already present
-                screen._msg = lambda *a, **k: None
+                screen.msg = lambda *a, **k: None
                 screen._render_rejected_domains = lambda: None
                 screen._add_rejected_domain()
                 # No stale edit row and the value already present: the

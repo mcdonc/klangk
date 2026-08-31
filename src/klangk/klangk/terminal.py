@@ -263,7 +263,7 @@ _WINDOW_FMT = (
 )
 
 
-def _parse_windows(output: str) -> list[dict]:
+def parse_windows(output: str) -> list[dict]:
     """Parse tmux ``list-windows -F _WINDOW_FMT`` output into dicts."""
     windows = []
     for line in output.strip().splitlines():
@@ -636,7 +636,7 @@ class Terminal:
                     container_id, service_command
                 )
                 return
-            await self._fire_service_command(container_id, service_command)
+            await self.fire_service_command(container_id, service_command)
 
     async def _retry_pending_service_send(
         self, container_id: str, service_command: str
@@ -659,7 +659,7 @@ class Terminal:
                 container_id,
             )
 
-    async def _fire_service_command(
+    async def fire_service_command(
         self, container_id: str, service_command: str
     ) -> None:
         """Fresh fire: create the window, send the command; clean up (and
@@ -866,7 +866,7 @@ class Terminal:
             session_name,
             ["list-windows", "-t", session_name, "-F", _WINDOW_FMT],
         )
-        return _parse_windows(output)
+        return parse_windows(output)
 
     async def new_window(
         self,
@@ -907,7 +907,7 @@ class Terminal:
         )
         if rc != 0:
             raise TerminalError(f"new_window failed: {stderr.strip()}")
-        return _parse_windows(output)
+        return parse_windows(output)
 
     async def rename_window(
         self,
@@ -1030,7 +1030,7 @@ class ShellProcess:
     """
 
     def __init__(self, podman=None) -> None:
-        self._podman = podman
+        self.podman = podman
         self._master_fd: int | None = None
         self._proc: asyncio.subprocess.Process | None = None
         self._read_event: asyncio.Event | None = None
@@ -1043,7 +1043,7 @@ class ShellProcess:
             tty.setraw(slave_fd)
             _set_winsize(master_fd, rows, cols)
             self._proc = await asyncio.create_subprocess_exec(
-                self._podman.bin,
+                self.podman.bin,
                 *argv,
                 stdin=slave_fd,
                 stdout=slave_fd,
@@ -1155,7 +1155,7 @@ class TerminalSession:
         self.tmux_session_name: str | None = None
 
     @property
-    def _podman(self):
+    def podman(self):
         """Reach podman via the Terminal instance (#1480)."""
         return self._terminal.podman
 
@@ -1219,7 +1219,7 @@ class TerminalSession:
         argv = _build_exec_argv(self.container_id, env, shell_cmd, work_dir)
 
         logger.info("Terminal exec argv: %s", argv)
-        shell = make_shell_process(self._podman)
+        shell = make_shell_process(self.podman)
         try:
             await shell.start(argv, rows, cols)
         except Exception:
@@ -1227,7 +1227,7 @@ class TerminalSession:
             raise
 
         self._shell = shell
-        self._read_task = asyncio.create_task(self._read_loop())
+        self._read_task = asyncio.create_task(self.read_loop())
         logger.info(
             "Terminal session started for container %s", self.container_id
         )
@@ -1238,7 +1238,7 @@ class TerminalSession:
         # ignores the `-e` flags — the env var must be set explicitly.
         if self.ssh_agent_socket and self.session_name:
             try:
-                await self._podman.exec_container(
+                await self.podman.exec_container(
                     self.container_id,
                     [
                         "tmux",
@@ -1267,7 +1267,7 @@ class TerminalSession:
         except Exception:
             pass
 
-    async def _read_loop(self) -> None:
+    async def read_loop(self) -> None:
         """Read PTY output and queue it as text.
 
         Uses an *incremental* UTF-8 decoder so a multi-byte glyph (e.g. the
@@ -1381,7 +1381,7 @@ class TerminalSession:
                 socket_args = (
                     ["-S", self.socket_path] if self.socket_path else []
                 )
-                await self._podman.exec_container(
+                await self.podman.exec_container(
                     self.container_id,
                     [
                         "tmux",

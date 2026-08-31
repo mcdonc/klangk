@@ -4,7 +4,7 @@
 an actively-enforcing OpenSSL FIPS provider:
 
 - at every workspace-container start (the single
-  :meth:`~klangk.container.registry.ContainerRegistry._create_and_start`
+  :meth:`~klangk.container.registry.ContainerRegistry.create_and_start`
   choke point), probing inside the container and failing closed — the
   container is removed and the start raises;
 - at backend startup, probing klangkd's own process (its password
@@ -39,10 +39,10 @@ the result is ``ok=False`` with a ``no-probe-available`` detail — a
 FIPS posture that cannot be verified is treated as absent (fail
 closed), and the detail tells the image builder what to provide.
 
-**Dual-maintenance note** (#2626 review): :data:`_PROBE_SCRIPT` (the
+**Dual-maintenance note** (#2626 review): :data:`PROBE_SCRIPT` (the
 self-contained snippet run inside containers via ``python3 -c``)
-deliberately re-implements layer 1 (``_probe_hashlib``) and layer 2
-(``_parse_openssl_list`` + the CLI argv) because a ``python3 -c``
+deliberately re-implements layer 1 (``probe_hashlib``) and layer 2
+(``parse_openssl_list`` + the CLI argv) because a ``python3 -c``
 script cannot import this module from the klangkd host. A fix to the
 probe *logic* must be applied in **both** places — and to
 ``test_fips.py``'s mirror of the script. The single source of truth
@@ -63,7 +63,7 @@ logger = logging.getLogger(__name__)
 _PROBE_BYTES = b"klangk-fips-probe"
 
 
-def _parse_openssl_list(stdout: str) -> tuple[bool, str] | None:
+def parse_openssl_list(stdout: str) -> tuple[bool, str] | None:
     """Parse ``openssl list -digest-algorithms -propquery fips=yes`` output.
 
     Returns ``(ok, detail)`` when conclusive: ok when a SHA-2 digest is
@@ -84,7 +84,7 @@ def _parse_openssl_list(stdout: str) -> tuple[bool, str] | None:
     return None  # pragma: no cover — unreachable by construction
 
 
-def _run_openssl_list() -> tuple[bool, str]:
+def run_openssl_list() -> tuple[bool, str]:
     """Layer-2 probe via the ``openssl`` CLI (same process or a container).
 
     Why the host's openssl matters: it dynamically links the *same*
@@ -118,13 +118,13 @@ def _run_openssl_list() -> tuple[bool, str]:
             f"openssl-cli-failed rc={out.returncode}: "
             f"{out.stderr.strip()[:120]}",
         )
-    parsed = _parse_openssl_list(out.stdout)
+    parsed = parse_openssl_list(out.stdout)
     if parsed is None:
         return False, "openssl-cli-output-unparseable"
     return parsed
 
 
-def _probe_hashlib() -> tuple[bool, str] | None:
+def probe_hashlib() -> tuple[bool, str] | None:
     """Layer-1 probe via CPython's ``_hashlib`` (provider-aware).
 
     Why the host's hashlib matters at all: klangkd's own crypto runs
@@ -179,10 +179,10 @@ def probe_process() -> tuple[bool, str]:
     ``(ok, detail)``; ``detail`` names the layer that decided and why —
     it rides the audit log and any failure error.
     """
-    result = _probe_hashlib()
+    result = probe_hashlib()
     if result is not None:
         return result
-    return _run_openssl_list()
+    return run_openssl_list()
 
 
 # The in-container probe: a self-contained python snippet with the same
@@ -192,7 +192,7 @@ def probe_process() -> tuple[bool, str]:
 # Written for genericity: it requires only *some* probe to exist in the
 # image (CPython-with-OpenSSL or the ``openssl`` CLI), never a specific
 # distro, OpenSSL version, or module path.
-_PROBE_SCRIPT = r"""
+PROBE_SCRIPT = r"""
 import subprocess, sys
 
 PAYLOAD = b"klangk-fips-probe"
@@ -284,7 +284,7 @@ async def probe_container(podman, container_id: str) -> tuple[bool, str]:
     """
     try:
         rc, out, err = await podman.exec_container(
-            container_id, ["python3", "-c", _PROBE_SCRIPT], timeout=30
+            container_id, ["python3", "-c", PROBE_SCRIPT], timeout=30
         )
     except Exception as e:  # podman-level failure — treat as no-python
         rc, out, err = -1, "", f"{type(e).__name__}: {e}"
@@ -326,7 +326,7 @@ async def _probe_via_openssl_cli(
                 "OpenSSL nor the openssl CLI",
             )
         return False, f"openssl-cli-failed rc={rc}: {err.strip()[:120]}"
-    parsed = _parse_openssl_list(out)
+    parsed = parse_openssl_list(out)
     if parsed is None:
         return False, "openssl-cli-output-unparseable"
     return parsed

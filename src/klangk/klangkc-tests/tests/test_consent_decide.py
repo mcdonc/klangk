@@ -475,22 +475,22 @@ class TestAppRender:
     def test_user_agent_has_distinctive_prefix(self):
         # The UA names this client so klangkd's refusal log can attribute a
         # 403 to the consent decider (#2490).
-        assert tui_consent._USER_AGENT.startswith("klangk-consent-decide/")
-        assert tui_consent._user_agent() == tui_consent._USER_AGENT
+        assert tui_consent.USER_AGENT.startswith("klangk-consent-decide/")
+        assert tui_consent.user_agent() == tui_consent.USER_AGENT
 
     def test_user_agent_falls_back_when_not_installed(self, monkeypatch):
         def boom(name):
             raise tui_consent.PackageNotFoundError(name)
 
         monkeypatch.setattr(tui_consent, "_pkg_version", boom)
-        assert tui_consent._user_agent() == "klangk-consent-decide/dev"
+        assert tui_consent.user_agent() == "klangk-consent-decide/dev"
 
     async def test_refresh_shows_active_flash(self):
         # While a flash is active (within TTL), _refresh renders it instead of
         # the normal status (so flashes survive the 1s periodic refresh).
         app = _make_app()
         async with app.run_test() as pilot:
-            app._flash("something broke")
+            app.flash("something broke")
             app._refresh()
             await pilot.pause()
             status = app.query_one("#status", Static)
@@ -1339,13 +1339,13 @@ class TestWsLoop:
             return FakeCM(FakeWS([]))  # 3rd+ connect succeeds, then drops
 
         monkeypatch.setattr(tui_consent, "ws_connect", connect)
-        monkeypatch.setattr(tui_consent, "_REFUSED_RETRY_INTERVAL", 0.0)
+        monkeypatch.setattr(tui_consent, "REFUSED_RETRY_INTERVAL", 0.0)
         app = _make_app(reconnect_delays=(0.0,))
 
         async def fake_refresh():
             return "refreshed-token"
 
-        monkeypatch.setattr(app, "_refresh_token", fake_refresh)
+        monkeypatch.setattr(app, "refresh_token", fake_refresh)
         with caplog.at_level(logging.WARNING, logger="klangk.cli.tui.consent"):
             task = asyncio.create_task(_real_ws_loop(app))
             for _ in range(100):  # wait for the healing connect
@@ -1381,9 +1381,9 @@ class TestWsLoop:
             return None  # no new token available
 
         monkeypatch.setattr(tui_consent, "ws_connect", refuse_403)
-        monkeypatch.setattr(tui_consent, "_REFUSED_RETRY_INTERVAL", 0.0)
+        monkeypatch.setattr(tui_consent, "REFUSED_RETRY_INTERVAL", 0.0)
         app = _make_app(reconnect_delays=(0.0,))
-        monkeypatch.setattr(app, "_refresh_token", fake_refresh)
+        monkeypatch.setattr(app, "refresh_token", fake_refresh)
         task = asyncio.create_task(_real_ws_loop(app))
         await asyncio.sleep(0.2)
         task.cancel()
@@ -1454,7 +1454,7 @@ class TestWsLoop:
         async def fake_refresh():
             return "new-token"
 
-        monkeypatch.setattr(app, "_refresh_token", fake_refresh)
+        monkeypatch.setattr(app, "refresh_token", fake_refresh)
         task = asyncio.create_task(_real_ws_loop(app))
         await asyncio.sleep(0.1)
         app._stop = True
@@ -1471,7 +1471,7 @@ class TestWsLoop:
         monkeypatch.setattr(
             tui_consent, "refresh_token", lambda url, tok: "fresh"
         )
-        assert await app._refresh_token() == "fresh"
+        assert await app.refresh_token() == "fresh"
 
     async def test_refresh_token_failure_is_swallowed(self, monkeypatch):
         app = _make_app()
@@ -1480,7 +1480,7 @@ class TestWsLoop:
             raise RuntimeError("nope")
 
         monkeypatch.setattr(tui_consent, "refresh_token", boom)
-        assert await app._refresh_token() is None
+        assert await app.refresh_token() is None
 
     async def test_breaks_on_stop_mid_stream(self, monkeypatch):
         # _stop set while the pump is parked in a read: the loop exits via
@@ -1998,15 +1998,15 @@ class TestControllerRulesExpiry:
 
 
 def test_fmt_duration_tiers():
-    assert tui_consent._fmt_duration(5) == "5s"
-    assert tui_consent._fmt_duration(45) == "45s"
-    assert tui_consent._fmt_duration(90) == "1m"
-    assert tui_consent._fmt_duration(300) == "5m"
-    assert tui_consent._fmt_duration(3600) == "1h"
-    assert tui_consent._fmt_duration(7200) == "2h"
-    assert tui_consent._fmt_duration(86400) == "1d"
-    assert tui_consent._fmt_duration(604800) == "1w"
-    assert tui_consent._fmt_duration(1209600) == "2w"
+    assert tui_consent.fmt_duration(5) == "5s"
+    assert tui_consent.fmt_duration(45) == "45s"
+    assert tui_consent.fmt_duration(90) == "1m"
+    assert tui_consent.fmt_duration(300) == "5m"
+    assert tui_consent.fmt_duration(3600) == "1h"
+    assert tui_consent.fmt_duration(7200) == "2h"
+    assert tui_consent.fmt_duration(86400) == "1d"
+    assert tui_consent.fmt_duration(604800) == "1w"
+    assert tui_consent.fmt_duration(1209600) == "2w"
 
 
 def test_reset_clears_rules():
@@ -2480,7 +2480,7 @@ async def test_q_and_escape_keypress_pop_back_via_pilot():
 async def test_deny_with_null_decided_at_renders_without_crash():
     # Regression: the deny branch of _rule_line once formatted rem before
     # checking it for None, so a timed deny with a null decided_at (or an
-    # unknown duration) hit _fmt_duration(None) -> TypeError. The parser
+    # unknown duration) hit fmt_duration(None) -> TypeError. The parser
     # permits these rows, so rendering must degrade to a blank label rather
     # than crash (which would silently stale the whole rules body).
     app = _make_app()
@@ -3232,7 +3232,7 @@ class TestPopupShowOffLoop:
         app = _make_app(
             popup_socket="/tmp/k.sock", popup_session="klangk-consent-w"
         )
-        monkeypatch.setattr(tui_consent, "_POPUP_SHOW_RETRY_DELAY", 0.0)
+        monkeypatch.setattr(tui_consent, "POPUP_SHOW_RETRY_DELAY", 0.0)
         attempts = []
         clients = iter([[], ["clientA"]])
         monkeypatch.setattr(
@@ -3258,12 +3258,12 @@ class TestPopupShowOffLoop:
         self, monkeypatch
     ):
         # Every attempt targets nothing: the worker stops after
-        # _POPUP_SHOW_ATTEMPTS tries (no infinite retry loop). The slot
+        # POPUP_SHOW_ATTEMPTS tries (no infinite retry loop). The slot
         # frees, so the next ADDED frame schedules a fresh worker.
         app = _make_app(
             popup_socket="/tmp/k.sock", popup_session="klangk-consent-w"
         )
-        monkeypatch.setattr(tui_consent, "_POPUP_SHOW_RETRY_DELAY", 0.0)
+        monkeypatch.setattr(tui_consent, "POPUP_SHOW_RETRY_DELAY", 0.0)
         attempts = []
         monkeypatch.setattr(
             tui_consent,
@@ -3276,7 +3276,7 @@ class TestPopupShowOffLoop:
         async with app.run_test():
             app.controller.apply_frame(_req_frame("r1"))  # still held
             await app._popup_show_worker()  # returns (does not spin)
-            assert len(attempts) == tui_consent._POPUP_SHOW_ATTEMPTS
+            assert len(attempts) == tui_consent.POPUP_SHOW_ATTEMPTS
 
     async def test_popup_show_no_retry_when_nothing_pending(self, monkeypatch):
         # Nothing is held anymore (the lone request resolved while the
@@ -3285,7 +3285,7 @@ class TestPopupShowOffLoop:
         app = _make_app(
             popup_socket="/tmp/k.sock", popup_session="klangk-consent-w"
         )
-        monkeypatch.setattr(tui_consent, "_POPUP_SHOW_RETRY_DELAY", 0.0)
+        monkeypatch.setattr(tui_consent, "POPUP_SHOW_RETRY_DELAY", 0.0)
         attempts = []
         monkeypatch.setattr(
             tui_consent,
@@ -3320,7 +3320,7 @@ class TestBranchGaps2834:
         async with app.run_test() as pilot:
             await pilot.pause()
             flashed = []
-            app._flash = lambda msg: flashed.append(msg)
+            app.flash = lambda msg: flashed.append(msg)
             refreshed = []
             app._refresh = lambda: refreshed.append(1)
             app._react(PAUSE_ACK, (True, 123.0))

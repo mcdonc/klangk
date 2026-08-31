@@ -49,11 +49,11 @@ def _xdg_state_home() -> Path:
 # The CLI's XDG subdir (the binary name ``klangk``).
 _CLI_SUBDIR = "klangk"
 
-_CONFIG_PATH = _xdg_config_home() / _CLI_SUBDIR / "klangk.yaml"
-_STATE_PATH = _xdg_state_home() / _CLI_SUBDIR / "klangk-state.yaml"
+CONFIG_PATH = _xdg_config_home() / _CLI_SUBDIR / "klangk.yaml"
+STATE_PATH = _xdg_state_home() / _CLI_SUBDIR / "klangk-state.yaml"
 
 
-_DEFAULT_WS_MAX_SIZE = 2**24  # 16 MB
+DEFAULT_WS_MAX_SIZE = 2**24  # 16 MB
 
 
 # Envvar override for ``terminal-open-cmd`` — ``KLANGKC_<FIELD>``
@@ -116,7 +116,7 @@ def _split_terminal_cmd(text: str) -> list[str] | None:
         return None
 
 
-def _parse_terminal_open_cmd(value) -> list[str] | None:
+def parse_terminal_open_cmd(value) -> list[str] | None:
     """Normalize a ``terminal-open-cmd`` yaml value to an argv list.
 
     Accepts a shell string (``"konsole --hold -e"``, split with shlex) or
@@ -153,9 +153,9 @@ class CLIConfig:
 
     @classmethod
     def load(cls) -> CLIConfig:
-        if not _CONFIG_PATH.exists():
+        if not CONFIG_PATH.exists():
             return cls()
-        text = _CONFIG_PATH.read_text()
+        text = CONFIG_PATH.read_text()
         data = yaml.safe_load(text) or {}
         servers: dict[str, ServerEntry] = {}
         for name, entry in (data.get("servers") or {}).items():
@@ -170,7 +170,7 @@ class CLIConfig:
         return cls(
             forward_agent=data.get("forward-agent"),
             ws_max_size=data.get("ws-max-size"),
-            terminal_open_cmd=_parse_terminal_open_cmd(
+            terminal_open_cmd=parse_terminal_open_cmd(
                 data.get("terminal-open-cmd")
             ),
             servers=servers,
@@ -201,7 +201,7 @@ class CLIConfig:
         for entry in self.servers.values():
             if entry.url == server_url and entry.ws_max_size is not None:
                 return entry.ws_max_size
-        return self.ws_max_size or _DEFAULT_WS_MAX_SIZE
+        return self.ws_max_size or DEFAULT_WS_MAX_SIZE
 
     def get_terminal_open_cmd(self) -> list[str] | None:
         """Return the argv that opens a new terminal window, or None.
@@ -224,7 +224,7 @@ def ensure_config() -> None:
     Called early on every CLI invocation so the config file is always
     present, even before the user logs in.
     """
-    if _CONFIG_PATH.exists():
+    if CONFIG_PATH.exists():
         return
     header = (
         "# SSH agent forwarding is ON by default so your workspace can use\n"
@@ -235,13 +235,13 @@ def ensure_config() -> None:
         "# See docs/features/ssh-agent-forwarding.md.\n"
         "forward-agent: true\n\n"
     )
-    _CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    _CONFIG_PATH.write_text(header + "servers: {}\n")
+    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    CONFIG_PATH.write_text(header + "servers: {}\n")
 
 
 def seed_config(server_url: str, user: str | None = None) -> None:
     """Create klangk.yaml with an initial server entry if it doesn't exist."""
-    if _CONFIG_PATH.exists():
+    if CONFIG_PATH.exists():
         return
     parsed = urlparse(server_url)
     alias = parsed.hostname or "default"
@@ -263,8 +263,8 @@ def seed_config(server_url: str, user: str | None = None) -> None:
         "# See docs/features/ssh-agent-forwarding.md.\n"
         "forward-agent: true\n\n"
     )
-    _CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    _CONFIG_PATH.write_text(header + servers_yaml)
+    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    CONFIG_PATH.write_text(header + servers_yaml)
 
 
 def add_server_to_config(
@@ -281,9 +281,9 @@ def add_server_to_config(
     Raises ``AliasConflictError`` if *alias* already exists — callers
     must catch the error and surface it to the user (#1763).
     """
-    _CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    if _CONFIG_PATH.exists():
-        data = yaml.safe_load(_CONFIG_PATH.read_text()) or {}
+    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if CONFIG_PATH.exists():
+        data = yaml.safe_load(CONFIG_PATH.read_text()) or {}
     else:
         data = {}
     servers = data.get("servers") or {}
@@ -294,7 +294,7 @@ def add_server_to_config(
         entry["user"] = user
     servers[alias] = entry
     data["servers"] = servers
-    _CONFIG_PATH.write_text(yaml.dump(data, default_flow_style=False))
+    CONFIG_PATH.write_text(yaml.dump(data, default_flow_style=False))
 
 
 class AliasConflictError(Exception):
@@ -314,9 +314,9 @@ def update_server_in_config(
     Raises ``AliasConflictError`` if *new_alias* already exists under
     a different key.
     """
-    if not _CONFIG_PATH.exists():
+    if not CONFIG_PATH.exists():
         return False
-    data = yaml.safe_load(_CONFIG_PATH.read_text()) or {}
+    data = yaml.safe_load(CONFIG_PATH.read_text()) or {}
     servers = data.get("servers") or {}
     if old_alias not in servers:
         return False
@@ -335,7 +335,7 @@ def update_server_in_config(
         del servers[old_alias]
     servers[new_alias] = entry
     data["servers"] = servers
-    _CONFIG_PATH.write_text(yaml.dump(data, default_flow_style=False))
+    CONFIG_PATH.write_text(yaml.dump(data, default_flow_style=False))
     return True
 
 
@@ -345,15 +345,15 @@ def remove_server_from_config(alias: str) -> bool:
     Returns True if the alias was present and removed, False otherwise.
     The counterpart to ``add_server_to_config`` (TUI delete-server flow).
     """
-    if not _CONFIG_PATH.exists():
+    if not CONFIG_PATH.exists():
         return False
-    data = yaml.safe_load(_CONFIG_PATH.read_text()) or {}
+    data = yaml.safe_load(CONFIG_PATH.read_text()) or {}
     servers = data.get("servers") or {}
     if alias not in servers:
         return False
     del servers[alias]
     data["servers"] = servers
-    _CONFIG_PATH.write_text(yaml.dump(data, default_flow_style=False))
+    CONFIG_PATH.write_text(yaml.dump(data, default_flow_style=False))
     return True
 
 
@@ -381,9 +381,9 @@ class CLIState:
 
     @classmethod
     def load(cls) -> CLIState:
-        if not _STATE_PATH.exists():
+        if not STATE_PATH.exists():
             return cls()
-        text = _STATE_PATH.read_text()
+        text = STATE_PATH.read_text()
         data = yaml.safe_load(text) or {}
         active = data.get("active-server")
         servers: dict[str, ServerState] = {}
@@ -403,7 +403,7 @@ class CLIState:
         return cls(active_server=active, servers=servers)
 
     def save(self) -> None:
-        _STATE_PATH.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        STATE_PATH.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         data: dict = {}
         if self.active_server is not None:
             data["active-server"] = self.active_server
@@ -420,8 +420,8 @@ class CLIState:
             if server_data:
                 data[url] = server_data
         content = yaml.dump(data, default_flow_style=False)
-        _STATE_PATH.write_text(content)
-        os.chmod(_STATE_PATH, 0o600)
+        STATE_PATH.write_text(content)
+        os.chmod(STATE_PATH, 0o600)
 
     def get_token(self, server_url: str) -> str | None:
         """Return the token for the active user on a server."""

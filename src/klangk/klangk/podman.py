@@ -697,7 +697,7 @@ class ExecSession:
         work_dir: str = SHARED_HOME,
     ):
         self.container_id = container_id
-        self._podman = podman
+        self.podman = podman
         self.env = env or []
         self.work_dir = work_dir
         self._proc: asyncio.subprocess.Process | None = None
@@ -740,7 +740,7 @@ class ExecSession:
         else:
             argv = command
         exec_cmd = [
-            self._podman.bin,
+            self.podman.bin,
             "exec",
             "-i",
             *env_flags,

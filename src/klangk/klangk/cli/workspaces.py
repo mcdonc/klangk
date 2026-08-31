@@ -116,7 +116,7 @@ def list_workspaces(
     with --filter.
     """
     context.require_auth()
-    client = context._client()
+    client = context.client()
     workspaces = client.list_workspaces(
         limit=limit,
         all_pages=all_workspaces,
@@ -186,27 +186,27 @@ def _print_plain_listing(workspaces, shared_workspaces) -> None:
             )
 
 
-def _validate_create_specs(mount, allow, reject) -> None:
+def validate_create_specs(mount, allow, reject) -> None:
     """Validate repeatable create options up front; exits 1 on the first
     invalid spec."""
     if isinstance(mount, list):
         for m in mount:
             err = validate_mount_spec(m)
             if err:
-                context._err.print(f"[red]{err}[/red]")
+                context.err.print(f"[red]{err}[/red]")
                 raise typer.Exit(code=1)
     if isinstance(allow, list):
         for spec in allow:
             err = validate_allowed_domain_spec(spec)
             if err:
-                context._err.print(f"[red]{err}[/red]")
+                context.err.print(f"[red]{err}[/red]")
                 raise typer.Exit(code=1)
     if isinstance(reject, list):
         for spec in reject:
             # CIDR is meaningless for a name-level NXDOMAIN deny-list (#2367).
             err = validate_allowed_domain_spec(spec, allow_cidr=False)
             if err:
-                context._err.print(f"[red]{err}[/red]")
+                context.err.print(f"[red]{err}[/red]")
                 raise typer.Exit(code=1)
 
 
@@ -274,13 +274,13 @@ def create(
 ) -> None:
     """Create a new workspace."""
     context.require_auth()
-    _validate_create_specs(mount, allow, reject)
-    env_dict = _parse_env_list(env) if isinstance(env, list) else None
-    settings = _build_settings(
+    validate_create_specs(mount, allow, reject)
+    env_dict = parse_env_list(env) if isinstance(env, list) else None
+    settings = build_settings(
         idle_timeout, cpu_limit, memory_limit, pids_limit, allow_sudo
     )
     try:
-        ws = context._client().create_workspace(
+        ws = context.client().create_workspace(
             name,
             image=image,
             service_command=command,
@@ -296,7 +296,7 @@ def create(
         )
     except httpx.HTTPStatusError as exc:
         detail = exc.response.json().get("detail", exc.response.text)
-        context._err.print(f"[red]Failed to create workspace:[/red] {detail}")
+        context.err.print(f"[red]Failed to create workspace:[/red] {detail}")
         raise typer.Exit(code=1) from None
     _out = Console()
     _out.print(f"Created workspace [bold]{name}[/bold] ({ws.id[:12]})")
@@ -309,18 +309,18 @@ def dup(
 ) -> None:
     """Duplicate a workspace."""
     context.require_auth()
-    client = context._client()
+    client = context.client()
     ws = context.resolve_or_exit(client, source)
     resp = client.post(
         f"/api/v1/workspaces/{ws.id}/duplicate", json={"name": new_name}
     )
     if resp.status_code == 409:
-        context._err.print(
+        context.err.print(
             f"[red]A workspace named[/red] '{new_name}' [red]already exists[/red]"
         )
         raise typer.Exit(code=1)
     if resp.status_code == 404:
-        context._err.print("[red]Workspace not found[/red]")
+        context.err.print("[red]Workspace not found[/red]")
         raise typer.Exit(code=1)
     resp.raise_for_status()
     data = resp.json()
@@ -340,9 +340,9 @@ def run_workspace_action(name: str, method: str, verb: str) -> None:
     """
     context.require_auth()
     try:
-        getattr(context._client(), method)(name)
+        getattr(context.client(), method)(name)
     except WorkspaceNotFoundError:
-        context._err.print(f"[red]No workspace named[/red] '{name}'")
+        context.err.print(f"[red]No workspace named[/red] '{name}'")
         raise typer.Exit(code=1) from None
     typer.echo(f"{verb} workspace {name}")
 
@@ -361,7 +361,7 @@ def members(
 ) -> None:
     """List members of a workspace by role."""
     context.require_auth()
-    client = context._client()
+    client = context.client()
     ws = context.resolve_or_exit(client, workspace)
     resp = client.get(f"/api/v1/workspaces/{ws.id}/roles")
     client.check_auth(resp)
@@ -413,7 +413,7 @@ def export_workspace(
 ) -> None:
     """Export a workspace to a .tar.gz archive."""
     context.require_auth()
-    client = context._client()
+    client = context.client()
     ws = context.resolve_or_exit(client, name)
     out_path = output or Path(f"{name}.tar.gz")
     if out_path.exists() and output is None:
@@ -447,7 +447,7 @@ def export_workspace(
         task_id = progress.add_task("Downloading...", total=0)
         started = [False]
 
-        def _update(downloaded, total):
+        def update(downloaded, total):
             if not started[0]:
                 started[0] = True
                 live.update(progress)
@@ -460,19 +460,19 @@ def export_workspace(
 
         spinner = Spinner("dots", text="Building archive on server...")
         with Live(spinner, refresh_per_second=10) as live:
-            client.export_workspace(ws.id, out_path, on_progress=_update)
+            client.export_workspace(ws.id, out_path, on_progress=update)
             # Ensure progress bar hits 100% regardless of estimate accuracy
             if started[0]:
                 final = progress.tasks[task_id].completed
                 progress.update(task_id, total=final, completed=final)
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 403:
-            context._err.print(
+            context.err.print(
                 "[red]Export failed:[/red] permission denied — you need"
                 " the export permission on this workspace"
             )
         else:
-            context._err.print(f"[red]Export failed:[/red] {e.response.text}")
+            context.err.print(f"[red]Export failed:[/red] {e.response.text}")
         raise typer.Exit(code=1) from None
     _out = Console()
     _out.print(f"Exported [bold]{name}[/bold] → {out_path}")
@@ -488,9 +488,9 @@ def import_workspace(
     """Import a workspace from a .tar.gz archive."""
     context.require_auth()
     if not archive.exists():
-        context._err.print(f"[red]File not found:[/red] {archive}")
+        context.err.print(f"[red]File not found:[/red] {archive}")
         raise typer.Exit(code=1)
-    client = context._client()
+    client = context.client()
     try:
         progress = Progress(
             "[progress.description]{task.description}",
@@ -502,29 +502,26 @@ def import_workspace(
             "Uploading...", total=archive.stat().st_size
         )
 
-        def _update(uploaded, total):
+        def update(uploaded, total):
             progress.update(task_id, completed=uploaded)
 
         with progress:
             ws = client.import_workspace(
-                archive, name=name, on_progress=_update
+                archive, name=name, on_progress=update
             )
     except httpx.HTTPStatusError as e:
-        context._err.print(f"[red]Import failed:[/red] {e.response.text}")
+        context.err.print(f"[red]Import failed:[/red] {e.response.text}")
         raise typer.Exit(code=1) from None
     _out = Console()
     _out.print(f"Imported [bold]{ws.name}[/bold] ({ws.id[:12]})")
 
 
-_SENTINEL = object()
-
-
-def _parse_env_list(env_list: list[str]) -> dict[str, str]:
+def parse_env_list(env_list: list[str]) -> dict[str, str]:
     """Parse ['KEY=VALUE', ...] into a dict."""
     result = {}
     for item in env_list:
         if "=" not in item:
-            context._err.print(
+            context.err.print(
                 f"[red]Invalid env var (expected KEY=VALUE):[/red] {item}"
             )
             raise typer.Exit(code=1)
@@ -533,7 +530,7 @@ def _parse_env_list(env_list: list[str]) -> dict[str, str]:
     return result
 
 
-def _build_settings(
+def build_settings(
     idle_timeout: int | None,
     cpu_limit: float | None,
     memory_limit: str | None,
@@ -559,18 +556,18 @@ def _build_settings(
     return settings or None
 
 
-class _SENTINEL:
+class SENTINEL:
     pass
 
 
-def _prompt(label: str, current: str | None) -> str | _SENTINEL.__class__:
+def prompt(label: str, current: str | None) -> str | SENTINEL.__class__:
     """Prompt for a value, showing the current default.
 
-    Returns the new value, or _SENTINEL if the user pressed Enter to keep.
+    Returns the new value, or SENTINEL if the user pressed Enter to keep.
     Empty input (just whitespace) clears the value and returns "".
     """
     display = current or "(none)"
     raw = input(f"{label} [{display}]: ")
     if raw == "":
-        return _SENTINEL  # keep current
+        return SENTINEL  # keep current
     return raw.strip()

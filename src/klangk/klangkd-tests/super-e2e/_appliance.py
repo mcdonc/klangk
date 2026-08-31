@@ -56,12 +56,12 @@ def docker_path() -> str:
     return path
 
 
-def _run(cmd: list[str], *, timeout: int = 120) -> subprocess.CompletedProcess:
+def run(cmd: list[str], *, timeout: int = 120) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
 
 
 def image_exists(image: str) -> bool:
-    return _run(["docker", "image", "inspect", image]).returncode == 0
+    return run(["docker", "image", "inspect", image]).returncode == 0
 
 
 def _free_host_port() -> int:
@@ -113,7 +113,7 @@ class Appliance:
         for key, value in self._env().items():
             cmd += ["-e", f"{key}={value}"]
         cmd += ["-p", f"127.0.0.1:{self.port}:{_APPLIANCE_PORT}", self.image]
-        result = _run(cmd, timeout=180)
+        result = run(cmd, timeout=180)
         if result.returncode != 0:
             raise RuntimeError(
                 f"docker run failed ({result.returncode}):\n"
@@ -184,7 +184,7 @@ class Appliance:
         )
 
     def _container_running(self) -> bool:
-        result = _run(
+        result = run(
             ["docker", "inspect", "-f", "{{.State.Running}}", self.name]
         )
         return result.returncode == 0 and result.stdout.strip() == "true"
@@ -198,7 +198,7 @@ class Appliance:
         check: bool = True,
     ) -> subprocess.CompletedProcess:
         """``docker exec`` inside the appliance (as the image's klangk user)."""
-        result = _run(["docker", "exec", self.name, *args], timeout=timeout)
+        result = run(["docker", "exec", self.name, *args], timeout=timeout)
         if check and result.returncode != 0:
             raise RuntimeError(
                 f"docker exec {args} failed ({result.returncode}):\n"
@@ -211,11 +211,11 @@ class Appliance:
         return self.exec(*args, timeout=timeout).stdout.strip()
 
     def logs(self) -> str:
-        return _run(["docker", "logs", self.name], timeout=60).stdout
+        return run(["docker", "logs", self.name], timeout=60).stdout
 
     def stop(self) -> None:
         """Tear the appliance down (idempotent)."""
-        _run(["docker", "rm", "-f", self.name], timeout=120)
+        run(["docker", "rm", "-f", self.name], timeout=120)
 
     # --- service-state helpers -----------------------------------------
 

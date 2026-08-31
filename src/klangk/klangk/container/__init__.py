@@ -20,8 +20,8 @@ patch/import) so callers keep working unchanged:
 - :mod:`.registry` - ``ContainerRegistry`` (lifecycle, bringup, reaps)
 
 Patch-target note: monkeypatching module globals must now target the
-defining submodule (e.g. ``klangk.container.registry._pid_alive``,
-``klangk.container.sidecar._NETWORK_SIDECAR_READY_TIMEOUT``); re-exports
+defining submodule (e.g. ``klangk.container.registry.pid_alive``,
+``klangk.container.sidecar.NETWORK_SIDECAR_READY_TIMEOUT``); re-exports
 here are bindings, not live cells.
 """
 
@@ -45,8 +45,8 @@ from .health import (
 )
 from .idle import IdleMonitor as IdleMonitor
 from .identity import (
-    _workspace_container_name as _workspace_container_name,
-    _workspace_name_slug as _workspace_name_slug,
+    workspace_container_name as workspace_container_name,
+    workspace_name_slug as workspace_name_slug,
     BrowserRouter as BrowserRouter,
 )
 from .ports import (
@@ -56,8 +56,8 @@ from .ports import (
 )
 from .registry import (
     ContainerRegistry as ContainerRegistry,
-    _pid_alive as _pid_alive,
-    _reap_sort_key as _reap_sort_key,
+    pid_alive as pid_alive,
+    reap_sort_key as reap_sort_key,
 )
 from .sidecar import NetworkSidecarMixin as NetworkSidecarMixin
 from .spec import (

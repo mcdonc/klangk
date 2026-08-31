@@ -27,8 +27,8 @@ from ..settings import parse_bool_setting
 from ..util import (
     sanitize_disposition_name,
 )
-from ._common import get_app_dep
-from ._common import (
+from .common import get_app_dep
+from .common import (
     workspace_resource,
 )
 

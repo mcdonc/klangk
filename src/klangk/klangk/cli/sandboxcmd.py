@@ -28,12 +28,12 @@ from .sandbox import (
 )
 
 
-def _resolve_workspace_and_url(
+def resolve_workspace_and_url(
     workspace_name: str,
 ) -> tuple:
     """Resolve a workspace by name and return (ws, server_spec, token)."""
     context.require_auth()
-    client = context._client()
+    client = context.client()
     ws = context.resolve_or_exit(client, workspace_name)
     return (ws, context.server_url(), context.session_token())
 
@@ -53,14 +53,12 @@ async def sandbox_setup(ws, config, sandbox_root, handle):
     ):
         src = Path(host_path)
         if not src.exists():
-            context._err.print(
+            context.err.print(
                 f"[yellow]Warning: copy source {host_path} not"
                 f" found, skipping[/yellow]"
             )
             continue
-        context._err.print(
-            f"  [dim]copy:[/dim] {host_path} → {container_dest}"
-        )
+        context.err.print(f"  [dim]copy:[/dim] {host_path} → {container_dest}")
         parent = str(Path(container_dest).parent)
         stdout_buf = io.BytesIO()
         exit_code = await exec_on_ws(
@@ -70,7 +68,7 @@ async def sandbox_setup(ws, config, sandbox_root, handle):
             stdout=stdout_buf,
         )
         if exit_code != 0:
-            context._err.print(
+            context.err.print(
                 f"[yellow]Warning: copy to {container_dest}"
                 f" failed (exit {exit_code})[/yellow]"
             )
@@ -79,7 +77,7 @@ async def sandbox_setup(ws, config, sandbox_root, handle):
     setup_cmd = resolve_setup_command(config, handle)
     if setup_cmd:
         mount_at = expand_container_path(config.mount_at, handle)
-        context._err.print(f"[dim]setup:[/dim] {setup_cmd}")
+        context.err.print(f"[dim]setup:[/dim] {setup_cmd}")
         # Set GIT_SSH_COMMAND so SSH accepts new host keys automatically.
         # Setup runs non-interactively (no TTY), so SSH cannot prompt the
         # user for host-key confirmation; without this, git-over-SSH hangs
@@ -97,11 +95,11 @@ async def sandbox_setup(ws, config, sandbox_root, handle):
             timeout=timeout,
         )
         if exit_code == 124:
-            context._err.print(
+            context.err.print(
                 f"[yellow]Setup timed out after {timeout}s[/yellow]"
             )
         elif exit_code != 0:
-            context._err.print(
+            context.err.print(
                 f"[yellow]Setup exited with code {exit_code}[/yellow]"
             )
         return exit_code
@@ -113,13 +111,13 @@ def reuse_or_refuse_workspace(client, workspace: str, force: bool):
     re-apply config."""
     ws = client.resolve_workspace(workspace)
     if not force:
-        context._err.print(
+        context.err.print(
             f"[red]Workspace [bold]{workspace}[/bold] already"
             " exists.[/red] Pass [bold]--force[/bold] to re-apply"
             " config and re-run setup."
         )
         raise typer.Exit(code=1)
-    context._err.print(
+    context.err.print(
         f"Workspace [bold]{workspace}[/bold] exists, re-applying config..."
     )
     return ws
@@ -130,7 +128,7 @@ def create_sandbox_workspace(client, workspace, config, sandbox_root, handle):
     installs proceed — #2325/#2406/#2404; see the original inline
     notes)."""
     all_mounts = build_all_mounts(config, sandbox_root, handle)
-    context._err.print(f"Creating workspace [bold]{workspace}[/bold]...")
+    context.err.print(f"Creating workspace [bold]{workspace}[/bold]...")
     ws = client.create_workspace(
         workspace,
         image=config.image,
@@ -177,7 +175,7 @@ def run_sandbox_setup(
     surl, token, workspace, ws_id, config, sandbox_root, handle, client
 ) -> None:
     """Connect and run the sandbox's setup.sh (via sandbox_setup_only)."""
-    context._err.print(f"Connecting to [bold]{workspace}[/bold] for setup...")
+    context.err.print(f"Connecting to [bold]{workspace}[/bold] for setup...")
     try:
         asyncio.run(
             sandbox_setup_only(
@@ -193,14 +191,14 @@ def run_sandbox_setup(
         )
     except websockets.InvalidStatus as e:  # pragma: no cover
         if e.response.status_code in (4001, 4002):
-            context._err.print(
+            context.err.print(
                 "[red]Session expired.[/red] Run"
                 " [bold]klangk login[/bold] to re-authenticate."
             )
             raise typer.Exit(code=1) from None
         raise
     except ConnectionError as e:
-        context._err.print(f"[red]{e}[/red]")
+        context.err.print(f"[red]{e}[/red]")
         raise typer.Exit(code=1) from None
 
 
@@ -225,7 +223,7 @@ def sandbox(
     """
     token = context.session_token()
     if not token:  # pragma: no cover
-        context._err.print(
+        context.err.print(
             "[red]Not logged in[/red] — run [bold]klangk login[/bold] first."
         )
         raise typer.Exit(code=1)
@@ -234,13 +232,13 @@ def sandbox(
     try:
         config = load_sandbox_config(sandbox_root)
     except FileNotFoundError as e:
-        context._err.print(f"[red]{e}[/red]")
+        context.err.print(f"[red]{e}[/red]")
         raise typer.Exit(code=1) from None
     except ValueError as e:
-        context._err.print(f"[red]Invalid sandbox config:[/red] {e}")
+        context.err.print(f"[red]Invalid sandbox config:[/red] {e}")
         raise typer.Exit(code=1) from None
 
-    client = context._client()
+    client = context.client()
     handle = client.get_handle()
     surl = context.server_url()
     created = False
@@ -263,7 +261,7 @@ def sandbox(
             surl, token, workspace, ws.id, config, sandbox_root, handle, client
         )
 
-    context._err.print(
+    context.err.print(
         f"[green]Done.[/green] Run [bold]klangk shell"
         f" {workspace}[/bold] to connect."
     )
@@ -278,7 +276,7 @@ async def mark_setup_state(client, workspace_id: str, new_state: str) -> None:
             client.set_setup_state, workspace_id, new_state
         )
     except Exception as e:  # pragma: no cover
-        context._err.print(
+        context.err.print(
             f"[yellow]Warning: could not mark setup_state"
             f" = {new_state}: {e}[/yellow]"
         )
@@ -313,7 +311,7 @@ async def decide_egress_reset(config, client) -> tuple[bool, str | None]:
         cfg = await asyncio.to_thread(client.config)
     except Exception as e:  # pragma: no cover
         cfg = {}
-        context._err.print(
+        context.err.print(
             "[yellow]Warning: could not read server config"
             f" ({e}); leaving workspace in allow[/yellow]"
         )
@@ -338,18 +336,18 @@ async def reset_egress_and_stop(client, workspace_id: str) -> None:
             egress_mode="interactive",
         )
     except Exception as e:  # pragma: no cover
-        context._err.print(
+        context.err.print(
             "[yellow]Warning: could not reset egress_mode"
             f" to interactive: {e}[/yellow]"
         )
     try:
         await asyncio.to_thread(client.stop_workspace_by_id, workspace_id)
     except Exception as e:  # pragma: no cover
-        context._err.print(
+        context.err.print(
             f"[yellow]Warning: could not stop container"
             f" after setup: {e}[/yellow]"
         )
-    context._err.print(
+    context.err.print(
         "[dim]Workspace stopped; egress reset to interactive"
         " for the next start.[/dim]"
     )
@@ -442,7 +440,7 @@ async def sandbox_setup_only(
             # command now so it's up.
             await fire_service_command(ws, config, setup_ok)
             if client is not None:
-                context._err.print(
+                context.err.print(
                     "[dim]Workspace left in allow mode"
                     f" ({skipped_reason}).[/dim]"
                 )

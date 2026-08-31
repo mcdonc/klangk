@@ -47,7 +47,7 @@ import httpx
 if TYPE_CHECKING:
     from litellm import Router
 
-from klangk.settings import _resolve_indirection
+from klangk.settings import resolve_indirection
 
 logger = logging.getLogger(__name__)
 
@@ -121,7 +121,7 @@ def _normalize_key(key: str) -> str:
     return key.replace("-", "_")
 
 
-def _normalize_dict_entry(entry: dict[str, Any]) -> dict[str, Any]:
+def normalize_dict_entry(entry: dict[str, Any]) -> dict[str, Any]:
     """Normalize a LiteLLM model-list dict entry.
 
     Accepts kebab-case or snake_case keys at both the top level
@@ -140,7 +140,7 @@ def _normalize_dict_entry(entry: dict[str, Any]) -> dict[str, Any]:
             for pk, pv in v.items():
                 npk = _normalize_key(pk)
                 if npk in _INDIRECT_KEYS and isinstance(pv, str):
-                    pv = _resolve_indirection(pv, npk) or ""
+                    pv = resolve_indirection(pv, npk) or ""
                 params[npk] = pv
             norm[nk] = params
         else:
@@ -156,7 +156,7 @@ def _build_model_list(
     items = []
     for entry in entries:
         if isinstance(entry, dict):
-            parsed = _normalize_dict_entry(entry)
+            parsed = normalize_dict_entry(entry)
         else:
             parsed = parse_model_entry(entry)
         params = parsed.get("litellm_params", {})
@@ -166,7 +166,7 @@ def _build_model_list(
     return items
 
 
-def _is_passthrough(model_list: list[dict[str, Any]]) -> bool:
+def is_passthrough(model_list: list[dict[str, Any]]) -> bool:
     """True when the config is a single wildcard entry (passthrough mode).
 
     Only ``model_name: "*"`` triggers passthrough — not a name that
@@ -219,7 +219,7 @@ class LLMRouter:
                 pass
             self._http_client = None
 
-        if _is_passthrough(model_list):
+        if is_passthrough(model_list):
             params = model_list[0].get("litellm_params", {})
             self._passthrough_base = params.get("api_base", "")
             self._passthrough_key = params.get("api_key", "")

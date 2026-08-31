@@ -188,7 +188,7 @@ class Server:
             # Prompt sidecar activity bumps at fuzz timescale (#2485): the
             # default 60s gate would starve egress keep-alive between checks
             # when timeouts are single-digit seconds (forwarded by
-            # ContainerManager._start_network_sidecar).
+            # ContainerManager.start_network_sidecar).
             KLANGKNETWORK_EGRESS_ACTIVITY_GATE="1",
             LOGFIRE_TOKEN="",
             **env_overrides,
@@ -345,7 +345,7 @@ class Api:
     async def aclose(self) -> None:
         await self.client.aclose()
 
-    async def _request(
+    async def request(
         self, method: str, path: str, *, json_body: dict | None = None
     ) -> httpx.Response:
         headers = {"Authorization": f"Bearer {self.token}"} if self.token else {}
@@ -358,7 +358,7 @@ class Api:
         return resp
 
     async def login(self) -> None:
-        resp = await self._request(
+        resp = await self.request(
             "POST",
             "/api/v1/auth/login",
             json_body={
@@ -370,24 +370,24 @@ class Api:
         self.token = resp.json()["access_token"]
 
     async def create_workspace(self, name: str) -> str:
-        resp = await self._request(
+        resp = await self.request(
             "POST", "/api/v1/workspaces", json_body={"name": name}
         )
         resp.raise_for_status()
         return resp.json()["id"]
 
     async def patch_settings(self, ws_id: str, settings: dict) -> httpx.Response:
-        return await self._request(
+        return await self.request(
             "PATCH",
             f"/api/v1/workspaces/{ws_id}/settings",
             json_body=settings,
         )
 
     async def start(self, ws_id: str) -> httpx.Response:
-        return await self._request("POST", f"/api/v1/workspaces/{ws_id}/start")
+        return await self.request("POST", f"/api/v1/workspaces/{ws_id}/start")
 
     async def status(self, ws_id: str) -> dict | None:
-        resp = await self._request("GET", f"/api/v1/workspaces/{ws_id}/status")
+        resp = await self.request("GET", f"/api/v1/workspaces/{ws_id}/status")
         if resp.status_code != 200:
             return None
         return resp.json()
@@ -395,7 +395,7 @@ class Api:
     async def workspace_row_exists(self, ws_id: str) -> bool:
         """True while the workspace row survives (GET /workspaces/{id} does
         not exist as a route; check the list instead)."""
-        resp = await self._request("GET", "/api/v1/workspaces")
+        resp = await self.request("GET", "/api/v1/workspaces")
         if resp.status_code != 200:
             return False
         try:
@@ -409,14 +409,14 @@ class Api:
     async def delete(self, ws_id: str) -> None:
         try:
             await asyncio.wait_for(
-                self._request("DELETE", f"/api/v1/workspaces/{ws_id}"),
+                self.request("DELETE", f"/api/v1/workspaces/{ws_id}"),
                 timeout=DELETE_TIMEOUT,
             )
         except (httpx.HTTPError, asyncio.TimeoutError) as exc:
             logger.warning("DELETE %s failed: %r", ws_id, exc)
 
     async def test_set_idle_timeout(self, ws_id: str, seconds: int) -> httpx.Response:
-        return await self._request(
+        return await self.request(
             "POST",
             "/api/v1/test/set-idle-timeout",
             json_body={"seconds": seconds, "workspace_id": ws_id},

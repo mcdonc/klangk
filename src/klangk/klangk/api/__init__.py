@@ -5,7 +5,7 @@ admin, images, OIDC, browser-delegate, imports/exports — lived in a
 single ~2800-line ``api.py``.  That module has been split into per-domain
 submodules, each mounting its own sub-router:
 
-    _common.py         shared helpers / constants / request models
+    common.py         shared helpers / constants / request models
     auth.py            register/login/logout + password/email/handle changes
                        + OIDC login/callback (merged from oidc_auth)
     workspaces.py      CRUD + members + roles + groups + ACL + import/export
@@ -42,7 +42,7 @@ from .. import (
     oidc,
     wshandler,
 )
-from ._common import autostart_allowed, get_app_dep
+from .common import autostart_allowed, get_app_dep
 
 # Imported under an alias: the ``from . import auth as _auth_routes`` line
 # below pulls in the api/auth.py *submodule*, and the import machinery writes
@@ -113,7 +113,15 @@ async def version(app=Depends(get_app_dep)):
 
 # --- Test/debug endpoints (only when KLANGKD_TEST_MODE is set) ---
 
-if os.environ.get("KLANGKD_TEST_MODE"):  # pragma: no cover
+
+def register_test_endpoints(router: APIRouter) -> None:
+    """Register the KLANGKD_TEST_MODE-only test/debug endpoints.
+
+    Covers what the Playwright e2e suite drives remotely: idle-timeout
+    read/set, workspace-token forging, and browser-bridge registration
+    introspection. Registered at import time only when the env var is
+    set; the unit tests exercise them via this function directly.
+    """
 
     @router.get("/test/idle-timeout")
     async def get_idle_timeout(
@@ -169,7 +177,7 @@ if os.environ.get("KLANGKD_TEST_MODE"):  # pragma: no cover
         for bid, (
             ws_id,
             sock,
-        ) in app.state.container_registry._browsers.items():
+        ) in app.state.container_registry.browser_routes.items():
             if ws_id == workspace_id:
                 email = None
                 if sock is not None:
@@ -178,6 +186,10 @@ if os.environ.get("KLANGKD_TEST_MODE"):  # pragma: no cover
                         email = conn.user.get("email")
                 browsers.append({"browser_id": bid, "email": email})
         return browsers
+
+
+if os.environ.get("KLANGKD_TEST_MODE"):
+    register_test_endpoints(router)
 
 
 @router.get("/config")

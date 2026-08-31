@@ -27,11 +27,11 @@ import websockets
 
 from .auth import fetch_config as _fetch_config
 from .auth import local_login as _local_login
-from .auth import refresh_token as _refresh_token
+from .auth import refresh_token as refresh_token
 from .transport import http_request, http_stream, ws_connect
 
 
-def _server_mode_is_none(server_url: str) -> bool:
+def server_mode_is_none(server_url: str) -> bool:
     """True if the server's live auth mode is ``none`` (no-login).
 
     Probes ``/config`` on every call rather than trusting a cache: a mode
@@ -49,13 +49,13 @@ _WS_MAX_SIZE = int(os.environ.get("KLANGK_WEBSOCKET_MSG_SIZE_MAX", 2**24))
 logger = logging.getLogger(__name__)
 
 _RETRY_ATTEMPTS = 3
-_RESIZE_POLL_INTERVAL = 1.0  # seconds between terminal size checks
+RESIZE_POLL_INTERVAL = 1.0  # seconds between terminal size checks
 _RETRY_BACKOFF = 2.0  # seconds, doubled each retry
 
 _WS_CONNECT_TIMEOUT = 60  # seconds to wait for container_ready
 
 
-def _query_local_ssh_agent(sock_path: str, data: bytes) -> bytes | None:
+def query_local_ssh_agent(sock_path: str, data: bytes) -> bytes | None:
     """Send *data* to the local SSH agent and return its response.
 
     Connects to the Unix socket at *sock_path*, writes *data*, then
@@ -258,11 +258,11 @@ class KlangkClient:
         """
         if not self.token:
             return False
-        new_token = _refresh_token(self.server_url, self.token)
+        new_token = refresh_token(self.server_url, self.token)
         if new_token:
             self.token = new_token
             return True
-        if _server_mode_is_none(self.server_url):
+        if server_mode_is_none(self.server_url):
             try:
                 _email, token = _local_login(self.server_url)
             except SystemExit:
@@ -278,7 +278,7 @@ class KlangkClient:
             return {"Authorization": f"Bearer {self.token}"}
         return {}
 
-    def _request(self, method: str, path: str, **kwargs) -> httpx.Response:
+    def request(self, method: str, path: str, **kwargs) -> httpx.Response:
         resp = request_with_retry(
             self.server_url,
             method,
@@ -299,19 +299,19 @@ class KlangkClient:
         return resp
 
     def get(self, path: str, **kwargs) -> httpx.Response:
-        return self._request("GET", path, **kwargs)
+        return self.request("GET", path, **kwargs)
 
     def post(self, path: str, **kwargs) -> httpx.Response:
-        return self._request("POST", path, **kwargs)
+        return self.request("POST", path, **kwargs)
 
     def put(self, path: str, **kwargs) -> httpx.Response:
-        return self._request("PUT", path, **kwargs)
+        return self.request("PUT", path, **kwargs)
 
     def patch(self, path: str, **kwargs) -> httpx.Response:
-        return self._request("PATCH", path, **kwargs)
+        return self.request("PATCH", path, **kwargs)
 
     def delete(self, path: str, **kwargs) -> httpx.Response:
-        return self._request("DELETE", path, **kwargs)
+        return self.request("DELETE", path, **kwargs)
 
     # --- REST API ---
 
@@ -707,7 +707,7 @@ class KlangkClient:
         terminal to enumerate windows, then stop. Returns ``[]`` on any
         failure so the TUI can degrade gracefully.
         """
-        return await self._terminals(name)
+        return await self.terminals(name)
 
     async def list_shared_terminals(self, name: str) -> list[dict]:
         """Return shared terminals visible in workspace *name*.
@@ -734,7 +734,7 @@ class KlangkClient:
 
     async def close_terminal(self, name: str, window_id: str) -> list[dict]:
         """Close terminal window *window_id* (@N) in *name*; return list."""
-        return await self._terminals(name, close_window_id=window_id)
+        return await self.terminals(name, close_window_id=window_id)
 
     async def create_terminal(
         self, name: str, window_name: str | None = None
@@ -745,7 +745,7 @@ class KlangkClient:
         window 0); names are display-only, so callers need not invent a
         unique label (#2192).
         """
-        return await self._terminals(
+        return await self.terminals(
             name, create_window=True, window_name=window_name
         )
 
@@ -753,9 +753,9 @@ class KlangkClient:
         self, name: str, index: int, new_name: str
     ) -> list[dict]:
         """Rename terminal window at *index* in workspace *name*; return list."""
-        return await self._terminals(name, rename=(index, new_name))
+        return await self.terminals(name, rename=(index, new_name))
 
-    async def _terminals(
+    async def terminals(
         self,
         name: str,
         *,
@@ -1529,7 +1529,7 @@ class _ShellSession:
             try:
                 loop = asyncio.get_event_loop()
                 response = await loop.run_in_executor(
-                    None, _query_local_ssh_agent, self.ssh_agent_sock, data
+                    None, query_local_ssh_agent, self.ssh_agent_sock, data
                 )
                 if response is not None:
                     await self.ws.send(
@@ -1688,8 +1688,8 @@ class TerminalSession(_ShellSession):
             return
         _code = exc.rcvd.code if exc.rcvd else None
         if _code == 4002 and self.token:
-            new = _refresh_token(self.server_url, self.token)
-            if not new and _server_mode_is_none(self.server_url):
+            new = refresh_token(self.server_url, self.token)
+            if not new and server_mode_is_none(self.server_url):
                 try:
                     _email, new = _local_login(self.server_url)
                 except SystemExit:
@@ -1717,7 +1717,7 @@ class TerminalSession(_ShellSession):
         while not self.stop.is_set():
             try:
                 await asyncio.wait_for(
-                    self.stop.wait(), timeout=_RESIZE_POLL_INTERVAL
+                    self.stop.wait(), timeout=RESIZE_POLL_INTERVAL
                 )
                 return  # pragma: no cover
             except asyncio.TimeoutError:

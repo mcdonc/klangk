@@ -178,11 +178,11 @@ class TestDetectHostResolvers:
     """Host DNS-resolver detection the sidecar's proxy forwards through (#1365)."""
 
     def test_is_ipv4_classifies(self):
-        assert nf._is_ipv4("1.2.3.4")
-        assert nf._is_ipv4("10.0.0.1")
-        assert not nf._is_ipv4("::1")  # IPv6 excluded
-        assert not nf._is_ipv4("host")  # not an address
-        assert not nf._is_ipv4("")
+        assert nf.is_ipv4("1.2.3.4")
+        assert nf.is_ipv4("10.0.0.1")
+        assert not nf.is_ipv4("::1")  # IPv6 excluded
+        assert not nf.is_ipv4("host")  # not an address
+        assert not nf.is_ipv4("")
 
     def test_nameservers_parses_ipv4_only(self, tmp_path):
         r = tmp_path / "resolv.conf"
@@ -193,10 +193,10 @@ class TestDetectHostResolvers:
             "nameserver 8.8.8.8\n"
             "search example.com\n"
         )
-        assert nf._nameservers(str(r)) == ["1.1.1.1", "8.8.8.8"]
+        assert nf.nameservers(str(r)) == ["1.1.1.1", "8.8.8.8"]
 
     def test_nameservers_missing_file_returns_empty(self, tmp_path):
-        assert nf._nameservers(str(tmp_path / "nope")) == []
+        assert nf.nameservers(str(tmp_path / "nope")) == []
 
     def test_stub_uses_upstream(self, monkeypatch):
         def fake(path):
@@ -206,8 +206,8 @@ class TestDetectHostResolvers:
                 else ["1.1.1.1", "8.8.8.8"]
             )
 
-        monkeypatch.setattr(nf, "_nameservers", fake)
-        assert nf._detect_host_resolvers() == ["1.1.1.1", "8.8.8.8"]
+        monkeypatch.setattr(nf, "nameservers", fake)
+        assert nf.detect_host_resolvers() == ["1.1.1.1", "8.8.8.8"]
 
     def test_stub_but_no_upstream_falls_back_to_empty(self, monkeypatch):
         # systemd-resolved stub present but the upstream file is empty/
@@ -215,32 +215,32 @@ class TestDetectHostResolvers:
         def fake(path):
             return ["127.0.0.53"] if path == "/etc/resolv.conf" else []
 
-        monkeypatch.setattr(nf, "_nameservers", fake)
-        assert nf._detect_host_resolvers() == []
+        monkeypatch.setattr(nf, "nameservers", fake)
+        assert nf.detect_host_resolvers() == []
 
     def test_no_stub_returns_primary_minus_loopback(self, monkeypatch):
         monkeypatch.setattr(
             nf,
-            "_nameservers",
+            "nameservers",
             lambda path: (
                 ["1.1.1.1", "127.0.1.1", "8.8.8.8"]
                 if path == "/etc/resolv.conf"
                 else []
             ),
         )
-        assert nf._detect_host_resolvers() == ["1.1.1.1", "8.8.8.8"]
+        assert nf.detect_host_resolvers() == ["1.1.1.1", "8.8.8.8"]
 
     def test_dedup_preserve_order(self, monkeypatch):
         monkeypatch.setattr(
             nf,
-            "_nameservers",
+            "nameservers",
             lambda path: (
                 ["1.1.1.1", "8.8.8.8", "1.1.1.1"]
                 if path == "/etc/resolv.conf"
                 else []
             ),
         )
-        assert nf._detect_host_resolvers() == ["1.1.1.1", "8.8.8.8"]
+        assert nf.detect_host_resolvers() == ["1.1.1.1", "8.8.8.8"]
 
 
 # --- NetFilter state object ---
@@ -272,12 +272,12 @@ class TestNetFilterDefaultDomains:
 class TestNetFilterResolvers:
     def test_delegates_to_detect(self, monkeypatch):
         monkeypatch.setattr(
-            nf, "_detect_host_resolvers", lambda: ["1.1.1.1", "8.8.8.8"]
+            nf, "detect_host_resolvers", lambda: ["1.1.1.1", "8.8.8.8"]
         )
         assert nf.NetFilter(_app()).resolvers() == ["1.1.1.1", "8.8.8.8"]
 
     def test_empty_when_none_detected(self, monkeypatch):
-        monkeypatch.setattr(nf, "_detect_host_resolvers", lambda: [])
+        monkeypatch.setattr(nf, "detect_host_resolvers", lambda: [])
         assert nf.NetFilter(_app()).resolvers() == []
 
 

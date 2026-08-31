@@ -50,7 +50,7 @@ def read_file_value(value: str) -> tuple[str | None, OSError | None]:
 # Maximum time a `cmd:`-prefixed value may run before being killed.
 # Guards against a hung command (e.g. a vault CLI waiting on a prompt)
 # blocking startup.
-_CMD_TIMEOUT_SECONDS = 10
+CMD_TIMEOUT_SECONDS = 10
 
 
 def run_cmd_value(value: str) -> tuple[str | None, str | None]:
@@ -73,10 +73,10 @@ def run_cmd_value(value: str) -> tuple[str | None, str | None]:
             shell=True,
             capture_output=True,
             text=True,
-            timeout=_CMD_TIMEOUT_SECONDS,
+            timeout=CMD_TIMEOUT_SECONDS,
         )
     except subprocess.TimeoutExpired:
-        return None, f"timed out after {_CMD_TIMEOUT_SECONDS}s"
+        return None, f"timed out after {CMD_TIMEOUT_SECONDS}s"
     except OSError as e:
         return None, str(e)
     if proc.returncode != 0:
@@ -321,7 +321,7 @@ class Util:
     def customize_dir(self) -> str:
         """Root customization directory (``KLANGKD_CUSTOMIZE_DIR``).
 
-        Defaults to ``<state_dir>/custom`` (derived in ``_require_dirs``).
+        Defaults to ``<state_dir>/custom`` (derived in ``require_dirs``).
         """
         return self.app.state.settings.customize_dir
 

@@ -516,7 +516,7 @@ class TestHandleDeathEntryGuards:
         handle_death passes its entry guards and parks inside
         ``_effective_memory_limit`` (its first await). Meanwhile the
         user's ``klangk exec`` reconnect runs ``start_container`` —
-        ``_handle_existing_container`` removes the dead container with a
+        ``handle_existing_container`` removes the dead container with a
         direct podman rm (never marking ``stopping`` nor bumping the
         epoch) and ``track_activity`` re-binds the SAME state object to a
         fresh container (in-place mutation). Death handling resumes: the
@@ -563,7 +563,7 @@ class TestHandleDeathEntryGuards:
                     # parked (all four interleave shapes the re-validation
                     # guards must catch):
                     if interleave == "rebind_in_place":
-                        # The reconnect's _handle_existing_container rm +
+                        # The reconnect's handle_existing_container rm +
                         # track_activity re-bind (state mutated in place).
                         await pm.remove_container("cid-crash")
                         reg.track_activity("cid-fresh", "ws-crash")

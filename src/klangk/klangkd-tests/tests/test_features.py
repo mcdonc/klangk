@@ -283,7 +283,7 @@ class TestManifestSizeCap:
         # degrades to empty feature/env lists.
         import klangk.features as features_mod
 
-        cap = features_mod._MAX_MANIFEST_BYTES
+        cap = features_mod.MAX_MANIFEST_BYTES
         manifest = {
             "features": [{"name": "x", "version": "1.0.0", "description": ""}],
             "defaults": [],
@@ -361,7 +361,7 @@ class TestSettingsCollisionInvariant:
     (#1662 adversarial review.)"""
 
     def test_no_settings_field_collides_with_feature_namespace(self):
-        from klangk.features import _CONTAINER_ENV_KEY_PREFIX
+        from klangk.features import CONTAINER_ENV_KEY_PREFIX
         from klangk.settings import KlangkSettings
 
         # KlangkSettings uses env_prefix="KLANGKD_" with no per-field aliasing
@@ -372,19 +372,17 @@ class TestSettingsCollisionInvariant:
         colliding = sorted(
             f"KLANGKD_{name.upper()}"
             for name in KlangkSettings.model_fields
-            if (f"KLANGKD_{name.upper()}").startswith(
-                _CONTAINER_ENV_KEY_PREFIX
-            )
-            and f"KLANGKD_{name.upper()}" != _CONTAINER_ENV_KEY_PREFIX
+            if (f"KLANGKD_{name.upper()}").startswith(CONTAINER_ENV_KEY_PREFIX)
+            and f"KLANGKD_{name.upper()}" != CONTAINER_ENV_KEY_PREFIX
         )
         # Note the plural: KLANGKD_FEATURES_ENABLE (features_enable field) is
         # a near-miss but does NOT start with KLANGKWS_FEATURE_ — "feature" vs
         # "features". If that ever flips, this assertion catches it.
         assert colliding == [], (
             f"KlangkSettings has fields whose env-var form starts with "
-            f"{_CONTAINER_ENV_KEY_PREFIX!r}: {colliding}. The feature-config "
+            f"{CONTAINER_ENV_KEY_PREFIX!r}: {colliding}. The feature-config "
             f"prefix rule assumes no server setting lives under "
-            f"{_CONTAINER_ENV_KEY_PREFIX!r} — either rename the field(s) or "
+            f"{CONTAINER_ENV_KEY_PREFIX!r} — either rename the field(s) or "
             f"revisit the prefix."
         )
 

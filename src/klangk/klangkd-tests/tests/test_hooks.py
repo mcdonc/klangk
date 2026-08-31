@@ -26,17 +26,17 @@ def _hooks(settings=None) -> hooks_mod.Hooks:
 
 class TestParseHookValue:
     def test_path_only_defaults_func(self):
-        path, func = hooks_mod._parse_hook_value("/etc/klangk/hook.py")
+        path, func = hooks_mod.parse_hook_value("/etc/klangk/hook.py")
         assert path == "/etc/klangk/hook.py"
         assert func == "on_workspace_created"
 
     def test_path_with_func(self):
-        path, func = hooks_mod._parse_hook_value("/etc/klangk/hook.py:mutate")
+        path, func = hooks_mod.parse_hook_value("/etc/klangk/hook.py:mutate")
         assert path == "/etc/klangk/hook.py"
         assert func == "mutate"
 
     def test_colon_in_path(self):
-        path, func = hooks_mod._parse_hook_value("/a/b:c/hook.py:mutate")
+        path, func = hooks_mod.parse_hook_value("/a/b:c/hook.py:mutate")
         assert path == "/a/b:c/hook.py"
         assert func == "mutate"
 
@@ -875,7 +875,7 @@ class TestHooksBranchGaps2834:
     def test_changed_fields_absent_everywhere_is_no_change(self):
         # A field deleted from the handle whose column was never set on
         # the row: nothing to clear, nothing to write.
-        changed = hooks_mod._hook_field_changes(
+        changed = hooks_mod.hook_field_changes(
             {"name": "x"},  # no mutable fields present
             {"name": "x"},
         )

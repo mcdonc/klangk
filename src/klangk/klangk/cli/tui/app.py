@@ -268,7 +268,7 @@ class KlangkApp(App):
         elif isinstance(screen, MainScreen):
             self.title = "Klangk: Workspaces"
 
-    def _sync_chrome(self) -> None:
+    def sync_chrome(self) -> None:
         """After any navigation: mirror the active screen in the window
         title (#1778) and refresh every StatusBar (#2689).
 
@@ -296,12 +296,12 @@ class KlangkApp(App):
 
     def push_screen(self, screen, *args, **kwargs):
         result = super().push_screen(screen, *args, **kwargs)
-        self.call_after_refresh(self._sync_chrome)
+        self.call_after_refresh(self.sync_chrome)
         return result
 
     def pop_screen(self):
         result = super().pop_screen()
-        self.call_after_refresh(self._sync_chrome)
+        self.call_after_refresh(self.sync_chrome)
         return result
 
     # --- navigation hooks used by screens ---
@@ -334,7 +334,7 @@ class KlangkApp(App):
 
         self.run_worker(_logout, exit_on_error=False)
 
-    def _pop_above(self, target: Screen) -> bool:
+    def pop_above(self, target: Screen) -> bool:
         """Pop every screen above ``target`` (leaving it on top), safely.
 
         Replacement for the ``while top is not target: self.pop_screen()``
@@ -393,10 +393,10 @@ class KlangkApp(App):
             # the defensive teardown-race case (#2034), not a state a
             # running app reaches.
             if self.screen_stack:  # pragma: no branch
-                self._pop_above(self.screen_stack[0])
+                self.pop_above(self.screen_stack[0])
             self.push_screen(MainScreen())
             return
-        self._pop_above(main)
+        self.pop_above(main)
         # The status-WS loop is parked inside its listener against the old
         # server — without this drop it stays there until that server drops
         # the connection itself, so reachability and live updates keep
@@ -423,11 +423,11 @@ class KlangkApp(App):
         if main is not None:
             main.drop_status_connection()
         # Tear down every screen above the base, then push login. The
-        # ``target not in stack`` early return in ``_pop_above`` is what
+        # ``target not in stack`` early return in ``pop_above`` is what
         # prevents the ScreenStackError the old pop-until-MainScreen loop hit
         # when MainScreen wasn't in the stack (#2034).
         if self.screen_stack:  # pragma: no branch
-            self._pop_above(self.screen_stack[0])
+            self.pop_above(self.screen_stack[0])
         self.push_screen(LoginScreen())
 
     def session_expired(self) -> None:
@@ -480,11 +480,11 @@ class KlangkApp(App):
                 if main is not None:
                     main.drop_status_connection()
                 # Clear every screen above the base, then show login.
-                # ``_pop_above`` pops a fixed snapshot, so the teardown is
+                # ``pop_above`` pops a fixed snapshot, so the teardown is
                 # bounded regardless of what a concurrent worker does between
                 # this call and the push (#2034).
                 if self.screen_stack:  # pragma: no branch
-                    self._pop_above(self.screen_stack[0])
+                    self.pop_above(self.screen_stack[0])
                 self.live_extra = ""
                 self.last_login = None
                 self.push_screen(LoginScreen())

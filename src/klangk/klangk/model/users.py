@@ -26,7 +26,7 @@ AGENT_EMAIL = _DEFAULT_AGENT_EMAIL
 # ``user_groups.source``. 'manual' is the default (human-created via the
 # API, plus the boot-seeded admin/members groups and OIDC-synced groups);
 # 'workspace-role' marks the four per-workspace role groups seeded by
-# ``WorkspacesModel._seed_workspace_acl`` so global group lists can hide
+# ``WorkspacesModel.seed_workspace_acl`` so global group lists can hide
 # them and teardown can find them without reconstructing names.
 GROUP_SOURCE_MANUAL = "manual"
 GROUP_SOURCE_WORKSPACE_ROLE = "workspace-role"
@@ -475,7 +475,7 @@ class UsersModel:
 
         *source* marks who owns the row (#2750): ``manual`` for
         human-managed groups, ``workspace-role`` for the per-workspace
-        role groups seeded by ``_seed_workspace_acl``.
+        role groups seeded by ``seed_workspace_acl``.
         """
         if source not in GROUP_SOURCES:
             raise ValueError(f"Invalid group source: {source!r}")

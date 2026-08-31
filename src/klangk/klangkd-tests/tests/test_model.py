@@ -1904,7 +1904,7 @@ class TestCreateWorkspaceWithAclAgentGuard:
         self, db, app_state
     ):
         # Choke-point guard (#1135): the owner ACE is written by
-        # _seed_workspace_acl via raw SQL (can't call the guarded
+        # seed_workspace_acl via raw SQL (can't call the guarded
         # add_acl_entry), so the public entry point guards the creator.
         with pytest.raises(model.AgentPrincipalError, match="system agent"):
             await app_state.state.model.workspaces.create_workspace_with_acl(

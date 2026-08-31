@@ -20,8 +20,8 @@ import httpx
 
 from .. import config as cli_config
 from ..auth import (
-    _UNREACHABLE,
-    _oidc_browser_login,
+    UNREACHABLE,
+    oidc_browser_login,
     fetch_config,
     local_login,
 )
@@ -123,7 +123,7 @@ class TuiState:
         tradeoff is a decision, not an accident (#2029 review).
         """
         with self._state_lock:
-            stamp = _file_stamp(cli_config._STATE_PATH)
+            stamp = _file_stamp(cli_config.STATE_PATH)
             if self._state_cache is None or stamp != self._state_stamp:
                 self._state_cache = CLIState.load()
                 self._state_stamp = stamp
@@ -161,7 +161,7 @@ class TuiState:
         both without waiting for the next stamp mismatch).
         """
         self._state_cache = state
-        self._state_stamp = _file_stamp(cli_config._STATE_PATH)
+        self._state_stamp = _file_stamp(cli_config.STATE_PATH)
 
     def current_url(self) -> str | None:
         if self._server_override is not None:
@@ -362,7 +362,7 @@ class TuiState:
         Auth-gated on ``/api/v1/config`` (absent from the pre-auth payload),
         so this uses the authed client — ``fetch_config`` would not see it.
         Mirrors the Flutter dialog's ``defaultAllowedDomains``. Raises on a
-        transport/server error; ``_do_create`` catches that and falls back
+        transport/server error; ``do_create`` catches that and falls back
         to an empty list so the form still opens.
         """
         cfg = self.client().config()
@@ -396,7 +396,7 @@ class TuiState:
         if url is None:
             return "password"
         config = fetch_config(url)
-        if config == _UNREACHABLE:
+        if config == UNREACHABLE:
             return "unreachable"
         if not isinstance(config, dict):
             return "password"
@@ -521,7 +521,7 @@ class TuiState:
         if url is None:
             raise LoginError("No server configured")
         try:
-            _oidc_browser_login(url, provider_id, self.state())
+            oidc_browser_login(url, provider_id, self.state())
         except SystemExit as exc:
             raise LoginError("OIDC login failed") from exc
         finally:
@@ -553,7 +553,7 @@ class TuiState:
         Returns ``"ok"``, ``"unreachable"``, or ``"auth_required"``.
         """
         config = fetch_config(url)
-        if config == _UNREACHABLE:
+        if config == UNREACHABLE:
             return "unreachable"
         if not isinstance(config, dict):
             return "unreachable"

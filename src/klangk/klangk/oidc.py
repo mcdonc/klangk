@@ -23,8 +23,8 @@ from .util import resolve_file_value
 logger = logging.getLogger(__name__)
 
 # Cache TTL for OIDC discovery and JWKS (seconds)
-_DISCOVERY_TTL = 300
-_JWKS_TTL = 3600
+DISCOVERY_TTL = 300
+JWKS_TTL = 3600
 
 
 @dataclass
@@ -104,7 +104,7 @@ def _parse_providers(
     return providers
 
 
-def _parse_hook_value(raw: str) -> tuple[str, str]:
+def parse_hook_value(raw: str) -> tuple[str, str]:
     """Parse KLANGKD_OIDC_LOGIN_HOOK into (file_path, func_name).
 
     Accepted formats:
@@ -305,7 +305,7 @@ class OIDC:
         """Fetch OIDC discovery document, cached."""
         now = time.time()
         cached = self.discovery_cache.get(provider.id)
-        if cached and now - cached.fetched_at < _DISCOVERY_TTL:
+        if cached and now - cached.fetched_at < DISCOVERY_TTL:
             return cached.data
 
         url = f"{provider.issuer}/.well-known/openid-configuration"
@@ -323,7 +323,7 @@ class OIDC:
         """Fetch JWKS keys for token validation, cached."""
         now = time.time()
         cached = self.jwks_cache.get(provider.id)
-        if cached and now - cached.fetched_at < _JWKS_TTL:
+        if cached and now - cached.fetched_at < JWKS_TTL:
             return cached.keys
 
         disc = await self.discover(provider)
@@ -460,7 +460,7 @@ class OIDC:
             self.login_hook = None
             self.login_hook_is_async = False
             return
-        path, func_name = _parse_hook_value(raw)
+        path, func_name = parse_hook_value(raw)
         if not os.path.isfile(path):
             raise ConfigurationError(
                 f"KLANGKD_OIDC_LOGIN_HOOK: file not found: {path!r}"

@@ -254,7 +254,7 @@ async def test_create_workspace_with_acl_rollback_on_seeding_failure(
 
     with patch.object(
         model_ws.WorkspacesModel,
-        "_seed_workspace_acl",
+        "seed_workspace_acl",
         new_callable=AsyncMock,
         side_effect=_boom,
     ):
@@ -543,7 +543,7 @@ class TestAutoStartWorkspaces:
     async def test_returns_zero_when_disabled_by_string(self, user, app_state):
         # "false" is a non-empty string, so the pre-#2796 plain-truthiness
         # gate read it as *enabled*; the gate now parses it like
-        # api._common.autostart_allowed does.
+        # api.common.autostart_allowed does.
         registry = app_state.state.container_registry
         await app_state.state.workspaces.create_workspace(
             user["id"], "auto-ws", auto_start=True
@@ -630,7 +630,7 @@ class TestStartWorkspace:
 
     The service-command firing and agent-home provisioning moved to
     the create choke point inside start_container (see
-    ContainerRegistry._bringup, #1244), and idle_timeout pinning moved to auto_start_workspaces
+    ContainerRegistry.bringup, #1244), and idle_timeout pinning moved to auto_start_workspaces
     (boot path only). So start_workspace itself only unpacks the
     workspace dict and delegates to registry.start_container.
     """
@@ -712,7 +712,7 @@ class TestStartWorkspace:
         try:
             with patch.object(
                 registry,
-                "_start_container_inner",
+                "start_container_inner",
                 new_callable=AsyncMock,
                 return_value=("cid-z", "created"),
             ):
@@ -738,7 +738,7 @@ class TestStartWorkspace:
         try:
             with patch.object(
                 registry,
-                "_start_container_inner",
+                "start_container_inner",
                 new_callable=AsyncMock,
                 return_value=("cid-w", "created"),
             ):
@@ -771,7 +771,7 @@ async def test_idle_timeout_zero_pins_alive(user, app_state):
     try:
         with patch.object(
             registry,
-            "_start_container_inner",
+            "start_container_inner",
             new_callable=AsyncMock,
             return_value=("cid-0", "created"),
         ):
@@ -945,7 +945,7 @@ class TestEnsureSharedHome:
     ):
         """A DANGLING ``klangk`` symlink (chat-era target deleted) must not
         crash create: ``mkdir(exist_ok=True)`` re-raises FileExistsError
-        on a dangling symlink, which would fail ``_bringup`` after the
+        on a dangling symlink, which would fail ``bringup`` after the
         container is already running (and it never runs again for that
         container). The broken link is removed and a real directory
         materialized instead (#2717)."""
@@ -1166,7 +1166,7 @@ class TestWorkspacesServiceBranchGaps2834:
         async def _spy_rmtree(path, label):
             removed.append(label)
 
-        monkeypatch.setattr(ws_mod, "_async_rmtree", _spy_rmtree)
+        monkeypatch.setattr(ws_mod, "async_rmtree", _spy_rmtree)
         archives = await wsvc.archive_user_data(user["id"], user["email"])
         assert archives  # the archive was still built
         # No "workspace data" teardown ran (the dir read as absent).
@@ -1193,6 +1193,6 @@ class TestWorkspacesServiceBranchGaps2834:
         async def _spy_rmtree(path, label):
             removed.append(path)
 
-        monkeypatch.setattr(ws_mod, "_async_rmtree", _spy_rmtree)
+        monkeypatch.setattr(ws_mod, "async_rmtree", _spy_rmtree)
         assert await wsvc.delete_workspace("ws-gone", user["id"]) is False
         assert removed == []
