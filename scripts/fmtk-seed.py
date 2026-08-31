@@ -10,7 +10,7 @@ the ``fmtk-verify`` workspace's Sharing panel:
   ================== ==========================  =========================
   user               grants                     exercises
   ================== ==========================  =========================
-  fmtk-admin         ``admin`` group member;    everything: Sharing tab
+  fmtk-admin         ``admins`` group member;   everything: Sharing tab
                      owns the workspace         with role buckets AND
                                                 the Advanced ACL editor
   fmtk-collaborator  collaborators role group   Collaborators bucket
@@ -113,9 +113,9 @@ def ensure_users(base: str, token: str) -> dict[str, str]:
 
 
 def ensure_admin_group_member(base: str, token: str, user_id: str) -> None:
-    """Idempotently add fmtk-admin to the ``admin`` group."""
+    """Idempotently add fmtk-admin to the ``admins`` group."""
     _, listing = api(base, token, "GET", "/api/v1/admin/groups?page_size=100")
-    group = next(g for g in listing["groups"] if g["name"] == "admin")
+    group = next(g for g in listing["groups"] if g["name"] == "admins")
     _, members = api(base, token, "GET", f"/api/v1/admin/groups/{group['id']}/members")
     if any(m["id"] == user_id for m in members):
         return
@@ -128,7 +128,7 @@ def ensure_admin_group_member(base: str, token: str, user_id: str) -> None:
     )
     if status != 200:
         sys.exit(f"add admin-group member failed ({status}): {body}")
-    print("added fmtk-admin to the admin group")
+    print("added fmtk-admin to the admins group")
 
 
 def ensure_workspace(base: str, owner_token: str) -> str:
@@ -192,7 +192,7 @@ def main() -> None:
         f"\nfixture ready on {args.url} — workspace {WORKSPACE_NAME} "
         f"({ws_id[:8]}…)\n"
         f"logins (password {FIXTURE_PASSWORD} for all):\n"
-        "  fmtk-admin@example.com          -> admin group + owner:"
+        "  fmtk-admin@example.com          -> admins group + owner:"
         " everything\n"
         "  fmtk-collaborator@example.com   -> collaborators bucket\n"
         "  fmtk-coder@example.com          -> coders bucket\n"

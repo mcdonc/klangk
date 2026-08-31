@@ -124,7 +124,7 @@ def _make_user_admin(api, user_id, admin_headers):
     groups = body.get("groups", body)
     if isinstance(groups, dict):
         groups = list(groups.values()) if groups else []
-    admin_group = next((g for g in groups if g.get("name") == "admin"), None)
+    admin_group = next((g for g in groups if g.get("name") == "admins"), None)
     if not admin_group:
         return
     api.post(
@@ -185,7 +185,7 @@ class TestGroupManagement:
         resp = api.get("/api/v1/admin/groups", headers=admin_headers)
         assert resp.status_code == 200
         groups = resp.json()["groups"]
-        assert any(g["name"] == "admin" for g in groups)
+        assert any(g["name"] == "admins" for g in groups)
 
     def test_create_group(self, api, admin_headers):
         resp = api.post(
@@ -402,7 +402,7 @@ class TestACLIntrospection:
         # Get admin group ID
         resp = api.get("/api/v1/admin/groups", headers=admin_headers)
         admin_group = next(
-            g for g in resp.json()["groups"] if g["name"] == "admin"
+            g for g in resp.json()["groups"] if g["name"] == "admins"
         )
 
         resp = api.get(
@@ -449,7 +449,7 @@ class TestACLIntrospection:
         assert "/admin" in data["permissions"]
         assert "*" in data["permissions"]["/admin"]
         assert len(data["groups"]) > 0
-        assert any(g["name"] == "admin" for g in data["groups"])
+        assert any(g["name"] == "admins" for g in data["groups"])
 
     def test_my_permissions_regular_user(self, api, nonadmin_user):
         resp = api.get(
@@ -699,7 +699,7 @@ class TestGrantAdminViaGroup:
         # Get admin group
         resp = api.get("/api/v1/admin/groups", headers=admin_headers)
         admin_group = next(
-            g for g in resp.json()["groups"] if g["name"] == "admin"
+            g for g in resp.json()["groups"] if g["name"] == "admins"
         )
 
         user_id = nonadmin_user["user_id"]
@@ -943,7 +943,7 @@ class TestAdminResourceACL:
         assert any(e["permission"] == "create" for e in entries)
         # #2569: create on /workspaces is granted to the admin group,
         # not Authenticated.
-        assert any(e["principal"] == "admin" for e in entries)
+        assert any(e["principal"] == "admins" for e in entries)
 
     def test_modify_workspaces_acl(self, api, admin_headers):
         """Admin can add and remove ACEs on /workspaces."""

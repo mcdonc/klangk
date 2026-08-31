@@ -38,7 +38,7 @@ const BOOTSTRAP_EMAIL = process.env.KLANGKD_DEFAULT_USER || "admin@plope.com";
 // keep in sync with run-demo-backend.sh DEMO_BOOTSTRAP_PASSWORD.
 const BOOTSTRAP_PASSWORD = process.env.KLANGKD_DEFAULT_PASSWORD || "Admin123!";
 
-// Hero = the on-camera admin. Created + promoted to the "admin" group by this
+// Hero = the on-camera admin. Created + promoted to the "admins" group by this
 // seed, so --reset can fully repave (delete -> recreate) for a clean slate.
 const ADMIN_EMAIL =
   process.env.KLANGKBUILD_DEMO_ADMIN_EMAIL || "admin@example.com";
@@ -178,12 +178,12 @@ async function findGroupId(
   return found ? found.id : null;
 }
 
-/** Add a user to the "admin" group (idempotent). True if now a member. */
+/** Add a user to the "admins" group (idempotent). True if now a member. */
 async function ensureAdmin(
   userId: string,
   adminToken: string,
 ): Promise<boolean> {
-  const gid = await findGroupId("admin", adminToken);
+  const gid = await findGroupId("admins", adminToken);
   if (!gid) return false;
   const r = await post(
     `/admin/groups/${gid}/members`,
@@ -269,7 +269,7 @@ async function seed() {
     }
   }
 
-  // Hero (on-camera admin) — ensure exists + in the "admin" group.
+  // Hero (on-camera admin) — ensure exists + in the "admins" group.
   {
     const { created, id } = await ensureUser(
       ADMIN_EMAIL,
@@ -280,7 +280,7 @@ async function seed() {
       `  ${created ? "✓ created" : "✓ exists "} hero: ${ADMIN_EMAIL}`,
     );
     const admin = await ensureAdmin(id, bootstrapToken);
-    console.log(`  ${admin ? "✓" : "·"} hero in 'admin' group`);
+    console.log(`  ${admin ? "✓" : "·"} hero in 'admins' group`);
   }
 
   // Cast users.

@@ -32,6 +32,18 @@ operators or integrators to act when upgrading.
 
 ### Breaking
 
+- **The seeded admin group is renamed to `admins` (#2934).** Fresh
+  installs seed a group named `admins`; upgrading renames the `admin`
+  group in place (memberships and ACLs keep pointing at the same
+  group). If a group named `admins` already exists (created manually),
+  boot fails: stop klangkd, rename that group directly in SQLite
+  (`UPDATE groups SET name = 'admins-manual' WHERE name = 'admins';`
+  on `<data-dir>/klangk.db`), and restart. OIDC login hooks must
+  return `"admins"` from `on_login` **before the first post-upgrade
+  login** — an unchanged hook auto-creates a permissionless `admin`
+  group and its membership diff-sync strips the user's synced `admins`
+  membership at their next login.
+
 - **`enable_ping` is removed; workspaces never hold `CAP_NET_RAW` (#2347).**
   The `KLANGKD_ENABLE_PING` setting is gone (ignored on an existing config)
   and every newly created workspace container launches with

@@ -119,8 +119,8 @@ def test_seed_matrix_wiring():
     ``workspace_connect`` gate requires it — #2881 pain point 2).
     """
     seed = _SEED.read_text()
-    assert "fmtk-admin" in seed and '"admin"' in seed, (
-        "fmtk-admin must exist and join the admin group"
+    assert "fmtk-admin" in seed and '"admins"' in seed, (
+        "fmtk-admin must exist and join the admins group"
     )
     for removed in ("fmtk-sharer", "fmtk-acler", "fmtk-viewer"):
         assert removed not in seed, f"the {removed} fixture was removed"

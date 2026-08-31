@@ -77,7 +77,7 @@ http.Client _mockClient(
             '/admin': ['*'],
           },
           'groups': [
-            {'id': 'g1', 'name': 'admin'}
+            {'id': 'g1', 'name': 'admins'}
           ],
         }),
         200,

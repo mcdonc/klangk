@@ -1,6 +1,6 @@
 # Admin Management
 
-Members of the `admin` group have access to the Admin page, which
+Members of the `admins` group have access to the Admin page, which
 provides user and group management, invitation handling, and server
 scheduling for the entire Klangk instance.
 
@@ -32,7 +32,7 @@ used for sharing workspaces and controlling access via
 - **Delete groups** — removing a group also removes any ACL entries
   that reference it.
 
-The `admin` group is created automatically on first startup and
+The `admins` group is created automatically on first startup and
 grants access to this Admin page. The default user is added to it
 automatically.
 

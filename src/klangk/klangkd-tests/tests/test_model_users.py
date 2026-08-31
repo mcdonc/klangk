@@ -426,7 +426,7 @@ async def test_disable_inactive_users_exempts_admins_and_agent(users):
     an idle deploy must not lock out every operator (#2588)."""
     from datetime import datetime, timedelta, timezone
 
-    group = await users.create_group("admin")
+    group = await users.create_group("admins")
     admin = await users.create_user("admin@x.com", "hash", verified=True)
     await users.add_user_to_group(admin["id"], group["id"])
     stale = (datetime.now(timezone.utc) - timedelta(days=90)).isoformat()

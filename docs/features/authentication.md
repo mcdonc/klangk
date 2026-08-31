@@ -189,7 +189,7 @@ response stays `"sent"` so the disabled state is not revealed).
 
 Two classes of account are never auto-disabled:
 
-- members of the `admin` group — an idle deployment must not lock out
+- members of the `admins` group — an idle deployment must not lock out
   every operator, and
 - the system agent (it does not authenticate).
 

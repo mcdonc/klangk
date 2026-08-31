@@ -6227,7 +6227,7 @@ class TestUserGroupEndpoints:
         assert manual.status_code == 200
         assert manual.json()["total"] == 2
         assert {g["name"] for g in manual.json()["groups"]} == {
-            "admin",
+            "admins",
             "members",
         }
 
@@ -9174,7 +9174,7 @@ class TestGroupEndpoints:
         assert resp.status_code == 200
         body = resp.json()
         groups = body["groups"]
-        assert any(g["name"] == "admin" for g in groups)
+        assert any(g["name"] == "admins" for g in groups)
         # Paged envelope metadata.
         assert body["page"] == 1
         assert body["page_size"] == 10
@@ -9481,7 +9481,7 @@ class TestACLEndpoints:
         headers = await self._admin_headers(client)
         # Get the admin group ID
         groups = (await app_state.state.model.users.list_groups())["groups"]
-        admin_group = next(g for g in groups if g["name"] == "admin")
+        admin_group = next(g for g in groups if g["name"] == "admins")
         resp = await client.get(
             f"/api/v1/admin/acl/by-principal/group/{admin_group['id']}",
             headers=headers,
@@ -14251,7 +14251,7 @@ class TestBranchGaps2834:
         # The mirror of rejects_removing_all_group_access: a /admin ACL
         # that keeps an Allow group entry saves fine (the validator's
         # pass-through path).
-        group = await app.state.model.users.get_group_by_name("admin")
+        group = await app.state.model.users.get_group_by_name("admins")
         headers = await _admin_login(client)
         resp = await client.put(
             "/api/v1/admin/acl/resource?resource=/admin",
