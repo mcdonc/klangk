@@ -35,6 +35,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       fuse-overlayfs \
       gnupg \
       gzip \
+      iproute2 \
       passt \
       podman \
       procps \

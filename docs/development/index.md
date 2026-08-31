@@ -21,6 +21,9 @@ test-cli-e2e
 # Frontend E2E tests (Playwright, needs flutter build + podman build)
 test-frontend-e2e
 
+# Super-E2E tests (real Docker host appliance; needs build-host-image)
+test-super-e2e
+
 # Run a specific frontend E2E test
 test-frontend-e2e --project=chromium --no-deps -g "test name"
 ```
@@ -41,6 +44,7 @@ Inside `devenv shell`, these commands are available:
 | `test-backend-e2e`       | Run backend E2E tests                       |
 | `test-cli-e2e`           | Run CLI E2E tests                           |
 | `test-frontend-e2e`      | Run frontend E2E tests (Playwright)         |
+| `test-super-e2e`         | Run super-E2E tests (host appliance)        |
 | `flutterbuildweb`        | Rebuild Flutter web only                    |
 | `build-workspace-image`  | Rebuild workspace image (podman)            |
 | `build-base-image`       | Rebuild workspace base image                |

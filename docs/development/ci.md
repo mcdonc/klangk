@@ -14,6 +14,7 @@ triggering.
 | **E2E: CLI Tests**      | `cli-e2e-tests.yml`              | Changes to `src/klangk/`, containers        |
 | **E2E: Frontend Tests** | `frontend-e2e-tests.yml`         | Changes to `src/klangk/`, `src/frontend/`   |
 | **E2E: Cross-Browser**  | `frontend-e2e-cross-browser.yml` | Scheduled (every 6 hours), release branches |
+| **E2E: Super (host)**   | `super-e2e.yml`                  | Manual, release branches (#2561)            |
 
 Unit tests (Python, frontend) run with `pip install` or `flutter test`
 and do not require devenv. The Python suite covers both the `klangkd`
