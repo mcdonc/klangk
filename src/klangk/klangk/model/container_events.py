@@ -11,9 +11,10 @@ Recording is best-effort: an audit write failure is logged and never
 fails the start/stop path it annotates (see
 ``ContainerRegistry.record_container_event``).
 
-Retention/bounding (like the egress-consent table) is deliberately not
-implemented here — tracked as a follow-up in #2915. An admin-facing
-paged view is tracked separately.
+Retention/bounding (#2924) mirrors the egress-consent pruning design
+(#2303): :meth:`ContainerEventsModel.prune` deletes rows past a
+retention window and trims overflow past a deploy-wide row cap,
+keeping the newest. An admin-facing paged view is tracked separately.
 """
 
 import logging
@@ -160,3 +161,51 @@ class ContainerEventsModel:
             params = (workspace_id,)
         row = await self.app.state.db.fetchone(sql, params)
         return row[0] if row else 0
+
+    async def prune(self, now: float | None = None) -> int:
+        """Bound the table: delete rows past retention / over the row cap
+        (#2924). Returns the number of rows deleted.
+
+        Two passes, both pure history (unlike the egress-consent prune
+        there is no in-effect exemption -- every row is terminal at write
+        time, so nothing here is enforcement state):
+
+        - **Retention** (``container_events_retention_days`` > 0): delete
+          rows whose ``created_at`` is older than the window.
+        - **Row cap** (``container_events_row_cap`` > 0, deploy-wide): when
+          the total row count exceeds the cap, delete the oldest rows down
+          to it, keeping the newest.
+        """
+        settings = self.app.state.settings
+        retention_days = settings.container_events_retention_days
+        row_cap = settings.container_events_row_cap
+        if retention_days <= 0 and row_cap <= 0:
+            return 0
+        if now is None:
+            now = time.time()
+        deleted = 0
+        if retention_days > 0:
+            async with self.app.state.db.transaction() as db:
+                cursor = await db.execute(
+                    "DELETE FROM container_events WHERE created_at < ?",
+                    (now - retention_days * 86400.0,),
+                )
+                deleted += cursor.rowcount
+        if row_cap > 0:
+            deleted += await self._prune_row_cap(row_cap)
+        return deleted
+
+    async def _prune_row_cap(self, row_cap: int) -> int:
+        """Deploy-wide cap: delete the oldest rows over the cap, keeping
+        the newest (``created_at DESC, id DESC`` -- the same tie-break
+        :meth:`list_events` uses, so "newest" is stable across equal
+        timestamps). ``LIMIT -1 OFFSET n`` is SQLite's "all but the first
+        n" -- a single statement, no snapshot, so no TOCTOU."""
+        async with self.app.state.db.transaction() as db:
+            cursor = await db.execute(
+                "DELETE FROM container_events WHERE id IN"
+                " (SELECT id FROM container_events"
+                " ORDER BY created_at DESC, id DESC LIMIT -1 OFFSET ?)",
+                (row_cap,),
+            )
+            return cursor.rowcount

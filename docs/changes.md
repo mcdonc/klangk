@@ -318,7 +318,14 @@ sync` report a clear permission-denied error.
   reaps, and the sidecar dependent-container teardowns are attributed
   too (by their `klangk.workspace` label). Recording is best-effort
   and never fails the start/stop itself; rows accumulate under
-  `data_dir`'s SQLite DB (retention is #2924).
+  `data_dir`'s SQLite DB (bounded by the #2924 prune knobs).
+- **`KLANGKD_CONTAINER_EVENTS_RETENTION_DAYS` / `KLANGKD_CONTAINER_EVENTS_ROW_CAP`
+  (#2924).** Bound the `container_events` audit table (#2915): rows older
+  than the retention window (default 90 days) are deleted, and when the
+  table exceeds the deploy-wide row cap (default 10000) the oldest rows
+  are trimmed keeping the newest. Swept once at startup, then hourly, by
+  the consent sweeper's retention pass. Set either to `0` to disable that
+  bound. Reloadable on SIGHUP (applies on the next sweep).
 
 - **Super-E2E suite (#2561).** A new pytest suite
   (`src/klangk/klangkd-tests/super-e2e/`, run via `test-super-e2e`)

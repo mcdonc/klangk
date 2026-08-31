@@ -13,7 +13,10 @@ held connection, which is why the coordinator design won.
 What remains here is periodic retention (:class:`EgressConsentSweeper`,
 #2303) — bounding ``egress_consent`` table growth past the retention
 window / per-workspace cap — plus the :func:`workspace_is_interactive`
-predicate the coordinator gate-checks with.
+predicate the coordinator gate-checks with. Since #2924 the same sweeper
+also prunes the ``container_events`` audit table (retention window +
+deploy-wide row cap) — the one hourly housekeeping loop for every
+bounded table.
 """
 
 from __future__ import annotations
@@ -25,10 +28,11 @@ from ..model.workspaces import EGRESS_MODE_INTERACTIVE
 
 logger = logging.getLogger(__name__)
 
-# Retention sweep interval (#2303): how often egress_consent rows past the
-# retention window / over the per-workspace cap are pruned. Pruning is
-# day-scale housekeeping, so an hour between sweeps is plenty. The deadline
-# is wall-clock (a monotonic ``next_prune`` compared at every loop top), NOT
+# Retention sweep interval (#2303): how often rows past a retention
+# window / over a cap are pruned from the bounded tables (egress_consent
+# since #2303, container_events since #2924). Pruning is day-scale
+# housekeeping, so an hour between sweeps is plenty. The deadline is
+# wall-clock (a monotonic ``next_prune`` compared at every loop top), NOT
 # an idle timeout: the sweep fires on schedule regardless of any other
 # traffic. Mirrors the idle monitor's throttled piggyback sweeps.
 PRUNE_INTERVAL = 3600.0
@@ -46,15 +50,18 @@ async def workspace_is_interactive(app, workspace_id: str) -> bool:
 
 
 class EgressConsentSweeper(IntervalWorker):
-    """Prune the egress_consent retention table on a wall-clock interval.
+    """Prune the bounded tables on a wall-clock interval.
 
     Constructed once in :func:`build_app` and stored on ``app.state``;
-    started in the lifespan and stopped on shutdown. A sweep fires once
-    immediately on startup, then every :data:`PRUNE_INTERVAL`. A failed
-    sweep logs and retries an interval later — housekeeping, not a
-    correctness path.
+    started in the lifespan and stopped on shutdown. A sweep prunes every
+    bounded table — ``egress_consent`` (#2303) and ``container_events``
+    (#2924) — each target independently, so a failure in one is logged
+    without skipping the others. A sweep fires once immediately on
+    startup (an upgrade over a bloated table trims right away), then every
+    :data:`PRUNE_INTERVAL`. A failed sweep is logged and retried an
+    interval later — housekeeping, not a correctness path.
 
-    Owns only ``app``; settings are read live inside the model call so a
+    Owns only ``app``; settings are read live inside the model calls so a
     SIGHUP reload applies on the next sweep (:meth:`reconfigure` swaps
     ``app``).
     """
@@ -68,13 +75,24 @@ class EgressConsentSweeper(IntervalWorker):
     log_label = "egress consent: retention sweep"
 
     async def sweep(self) -> None:
-        """One retention sweep: prune rows past retention / over the cap.
+        """One retention sweep over every bounded table.
 
-        Settings are read live inside the model call (SIGHUP reload-safe:
+        Settings are read live inside each model call (SIGHUP reload-safe:
         a reload applies on the next sweep).
         """
-        deleted = await self.app.state.model.egress_consent.prune()
+        model = self.app.state.model
+        await self._prune_target("egress consent", model.egress_consent)
+        await self._prune_target("container events", model.container_events)
+
+    async def _prune_target(self, label: str, target) -> None:
+        """Prune one bounded table; a failure is logged and the remaining
+        targets still run this sweep (every target retries next interval)."""
+        try:
+            deleted = await target.prune()
+        except Exception:
+            logger.warning("%s: prune failed", label, exc_info=True)
+            return
         if deleted:
             logger.info(
-                "egress consent: pruned %d row(s) past retention/cap", deleted
+                "%s: pruned %d row(s) past retention/cap", label, deleted
             )
