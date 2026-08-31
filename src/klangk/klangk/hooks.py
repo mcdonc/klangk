@@ -376,7 +376,7 @@ class Hooks:
         spec = importlib.util.spec_from_file_location(
             "_klangk_workspace_created_hook", path
         )
-        if spec is None or spec.loader is None:  # pragma: no cover
+        if spec is None or spec.loader is None:
             raise ConfigurationError(
                 f"KLANGKD_WORKSPACE_CREATED_HOOK: could not load: {path!r}"
             )

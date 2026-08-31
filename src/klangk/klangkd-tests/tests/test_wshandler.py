@@ -11131,3 +11131,97 @@ class TestWshandlerBranchGaps2834:
         sockets.pending_browser_requests["rid"] = (fut, sock)
         sockets.handle_browser_response({"type": "reply", "id": "rid"}, sock)
         assert fut.result()["type"] == "first"  # not clobbered
+
+
+class TestNoCoverAudit2910Part3:
+    async def test_input_slow_write_logs_warning(self, app_state, caplog):
+        """A terminal write slower than 100ms trips the SLOW warning."""
+        import logging
+
+        from klangk.wshandler.controllers import TerminalController
+
+        app_state = _make_app_state()
+        conn = SimpleNamespace(
+            app=app_state,
+            container_id="cid",
+            workspace_id="ws-1",
+            user={"id": "uid", "email": "a@b.com"},
+        )
+        ctrl = TerminalController(conn)
+
+        async def slow_write(data):
+            await asyncio.sleep(0.15)
+
+        ctrl.session = SimpleNamespace(
+            is_alive=True, read_only=False, write=slow_write
+        )
+        with caplog.at_level(
+            logging.WARNING, logger="klangk.wshandler.controllers"
+        ):
+            await ctrl.input({"data": "x"})
+        assert any("terminal_input SLOW" in r.message for r in caplog.records)
+
+    async def test_join_cancelled_stops_session_and_reraises(
+        self, user, temp_data_dir, app_state
+    ):
+        """Cancellation mid-join stops the half-built session and
+        re-raises (the connection teardown owns the rest)."""
+        app_state = _make_app_state()
+        sockets = app_state.state.sockets
+        registry = app_state.state.container_registry
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock, app_state=app_state)
+        conn.workspace_id = "ws-1"
+        conn.container_id = "cid"
+        conn._user_home = "/home/joiner"
+        session = sockets.get_or_create_session("ws-1", app_state)
+        session.terminal_windows[user["id"]] = [
+            {"name": "work", "index": 0, "id": "@0", "shared": True},
+        ]
+        registry.track_activity("cid", "ws-1")
+        try:
+            with (
+                patch.object(
+                    acl_mod.ACL,
+                    "check_permission",
+                    new=AsyncMock(return_value=True),
+                ),
+                patch.object(_ws_controllers, "TerminalSession") as MockTS,
+                patch.object(_mock_term, "select_window"),
+                patch.object(_mock_term, "tmux_command", return_value=""),
+            ):
+                mock_sess = _mock_terminal()
+                MockTS.return_value = mock_sess
+
+                async def fake_output():
+                    return
+                    yield
+
+                mock_sess.output = fake_output
+                conn.activate_session = AsyncMock(
+                    side_effect=asyncio.CancelledError
+                )
+
+                await conn.handle_join_shared_terminal(
+                    {"user_id": user["id"], "window_id": "@0"}
+                )
+                # The join runs as a background task: cancellation lands
+                # there, and the task re-raises after stopping the session.
+                with pytest.raises(asyncio.CancelledError):
+                    await conn.terminal_task
+            mock_sess.stop.assert_awaited_once()
+        finally:
+            sockets.sessions.pop("ws-1", None)
+            registry.states.pop("ws-1", None)
+
+    async def test_handle_list_error_sends_error_frame(self):
+        """The legacy shared-terminal list error handler reports to the
+        client socket."""
+        from klangk.wshandler.controllers import SharedTerminalController
+
+        sock = _mock_sock()
+        conn = SimpleNamespace(sock=sock)
+        ctrl = SharedTerminalController(conn)
+        await ctrl.handle_list_error(RuntimeError("listing broke"))
+        sent = [c[0][0] for c in sock.send_json.call_args_list]
+        assert any(m.get("type") == "error" for m in sent)

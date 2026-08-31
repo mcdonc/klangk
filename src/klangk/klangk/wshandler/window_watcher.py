@@ -40,7 +40,7 @@ def is_window_event(line: str) -> bool:
     return line.startswith(_WINDOW_EVENT_PREFIXES)
 
 
-async def _terminate_watcher_proc(proc) -> None:  # pragma: no cover
+async def _terminate_watcher_proc(proc) -> None:
     """Terminate the watcher subprocess: TERM, a 3s grace, then KILL
     (both racing a process that is already gone)."""
     if proc.returncode is not None:
@@ -78,7 +78,7 @@ class WindowEventWatcher:
 
     async def start(
         self,
-    ) -> None:  # pragma: no cover - subprocess; integration
+    ) -> None:
         if self._task is not None and not self._task.done():
             return
         self._proc = await asyncio.create_subprocess_exec(
@@ -107,15 +107,15 @@ class WindowEventWatcher:
             while True:
                 raw = await proc.stdout.readline()
                 if not raw:
-                    return  # pragma: no cover - subprocess exited
+                    return
                 if is_window_event(raw.decode(errors="replace").strip()):
                     self._on_change()
         except asyncio.CancelledError:
             raise
-        except Exception:  # pragma: no cover
+        except Exception:
             logger.exception("WindowEventWatcher read loop error")
 
-    async def stop(self) -> None:  # pragma: no cover - subprocess; integration
+    async def stop(self) -> None:
         if self._task is not None and not self._task.done():
             self._task.cancel()
             try:
@@ -131,11 +131,11 @@ class WindowEventWatcher:
 
     async def _kill_ctrl_session(
         self,
-    ) -> None:  # pragma: no cover - subprocess
+    ) -> None:
         try:
             await self.podman.exec_container(
                 self._container_id,
                 ["tmux", "kill-session", "-t", self._ctrl_session],
             )
-        except Exception:  # pragma: no cover
+        except Exception:
             pass

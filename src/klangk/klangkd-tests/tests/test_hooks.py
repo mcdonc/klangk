@@ -920,3 +920,26 @@ class TestHooksBranchGaps2834:
             workspace, {"id": "u1", "email": "a@b"}
         )
         assert out["created_at"] == "t1"
+
+
+class TestHookLoadBadModule2910:
+    def test_unloadable_extension_raises(self, tmp_path):
+        """A hook file that exists but yields no importable spec (no
+        recognized extension) fails loudly at load."""
+        import klangk.hooks as hooks_mod
+
+        hook_file = tmp_path / "hook.txt"
+        hook_file.write_text("def on_workspace_created(app, ws):\n")
+        mgr = hooks_mod.Hooks(
+            types.SimpleNamespace(
+                state=types.SimpleNamespace(
+                    settings=make_settings(
+                        {"KLANGKD_WORKSPACE_CREATED_HOOK": str(hook_file)}
+                    )
+                )
+            )
+        )
+        with pytest.raises(
+            hooks_mod.ConfigurationError, match="could not load"
+        ):
+            mgr.load_workspace_created_hook()

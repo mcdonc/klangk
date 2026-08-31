@@ -418,3 +418,59 @@ def test_broadcast_shared_terminals_noop_without_app():
     sess.broadcast_shared_terminals()
 
     sock.send_json.assert_not_called()
+
+
+# --- No-cover audit tests (#2910, part 3) --------------------------------
+
+
+async def test_sync_continues_when_list_windows_fails():
+    """A container mid-restart (list_windows raising) is skipped for that
+    user, not fatal for the sweep."""
+    sess, sock, terminal = _session_with_user()
+    terminal.list_windows = AsyncMock(side_effect=RuntimeError("gone"))
+    await sess._sync_windows_once()  # must not raise
+    sock.send_json.assert_not_called()
+
+
+async def test_reset_stops_window_watcher():
+    sess, _, _ = _session_with_user()
+    watcher = MagicMock()
+    watcher.stop = AsyncMock()
+    sess._window_watcher = watcher
+    with patch("asyncio.create_task") as create_task:
+        await sess.reset()
+    create_task.assert_called_once()
+    watcher.stop.assert_not_awaited()  # scheduled, not awaited inline
+
+
+async def test_start_window_sync_schedules_watcher_start():
+    sess, _, _ = _session_with_user()
+    sess.container_id = "cid"
+    with patch("klangk.wshandler.session.WindowEventWatcher") as cls:
+        cls.return_value.start = AsyncMock()
+        with patch("asyncio.create_task") as create_task:
+            sess.start_window_sync()
+        create_task.assert_called_once()
+
+
+async def test_dispatch_window_sync_schedules_once():
+    sess, _, _ = _session_with_user()
+    with patch("asyncio.create_task") as create_task:
+        sess._dispatch_window_sync()
+    create_task.assert_called_once()
+
+
+async def test_token_renewal_loop_exits_without_expiry():
+    sess, _, _ = _session_with_user()
+    sess.workspace_token_expiry = None
+    await sess._token_renewal_loop()  # returns immediately
+
+
+async def test_token_renewal_loop_exits_without_container():
+    sess, _, _ = _session_with_user()
+    import time as time_mod
+
+    sess.workspace_token_expiry = time_mod.time() + 3600
+    sess.container_id = None
+    with patch("klangk.wshandler.session.asyncio.sleep", new=AsyncMock()):
+        await sess._token_renewal_loop()  # renewal unreachable: exit

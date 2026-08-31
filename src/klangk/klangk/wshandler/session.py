@@ -269,7 +269,7 @@ class WorkspaceSession:
         watcher = self._window_watcher
         self._window_watcher = None
         if watcher is not None:
-            asyncio.create_task(watcher.stop())  # pragma: no cover
+            asyncio.create_task(watcher.stop())
         self._last_windows.clear()
         self._window_generations.clear()
 
@@ -374,7 +374,7 @@ class WorkspaceSession:
             self.container_id,
             self._schedule_window_sync,
         )
-        asyncio.create_task(self._window_watcher.start())  # pragma: no cover
+        asyncio.create_task(self._window_watcher.start())
 
     def _schedule_window_sync(self) -> None:
         """Debounce a burst of control-mode events into one re-sync."""
@@ -410,7 +410,7 @@ class WorkspaceSession:
 
     def _dispatch_window_sync(self) -> None:
         self._window_sync_handle = None
-        asyncio.create_task(self._sync_windows_once())  # pragma: no cover
+        asyncio.create_task(self._sync_windows_once())
 
     async def _sync_windows_once(self) -> None:
         """Re-broadcast ``terminal_windows`` to each connected user when tmux's
@@ -432,7 +432,7 @@ class WorkspaceSession:
             generation = self._window_generations.get(uid, 0)
             try:
                 windows = await terminal.list_windows(self.container_id, uid)
-            except Exception:  # pragma: no cover - container mid-restart
+            except Exception:
                 continue
             if self._window_generations.get(uid, 0) != generation:
                 # Stale in-flight snapshot (#2653): the newer applied
@@ -464,7 +464,7 @@ class WorkspaceSession:
         while True:
             expiry = self.workspace_token_expiry
             if expiry is None:
-                return  # pragma: no cover
+                return
 
             # Renew at 80% of the token lifetime.
             lifetime = self.app.state.auth.workspace_token_expire_hours * 3600
@@ -476,7 +476,7 @@ class WorkspaceSession:
 
             container_id = self.container_id
             if container_id is None:
-                return  # pragma: no cover
+                return
 
             try:
                 new_token = self.app.state.auth.create_workspace_token(

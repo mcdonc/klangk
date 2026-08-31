@@ -14629,3 +14629,112 @@ class TestTestModeEndpoints:
             {"browser_id": "bid-anon", "email": None},
             {"browser_id": "bid-none", "email": None},
         ]
+
+
+class TestNoCoverAudit2910Part3:
+    async def test_create_workspace_oserror_maps_400(self):
+        """create_workspace raising OSError (bad mount source etc.) is a
+        400, not a 500 (direct handler call, Depends bypassed)."""
+        from fastapi import HTTPException
+
+        from klangk.api.workspaces import (
+            CreateWorkspaceRequest,
+            create_workspace as create_endpoint,
+        )
+
+        app = MagicMock()
+        app.state.workspaces.create_workspace = AsyncMock(
+            side_effect=OSError("mount source missing")
+        )
+        app.state.settings.default_image = None
+        with pytest.raises(HTTPException) as caught:
+            await create_endpoint(
+                CreateWorkspaceRequest(name="os-fail"),
+                user={"id": "u1", "email": "u@x.com"},
+                app=app,
+            )
+        assert caught.value.status_code == 400
+        assert "mount source missing" in caught.value.detail
+
+    async def test_duplicate_workspace_collection_acl_false_403(self):
+        """The in-handler defense-in-depth collection-create check (#2569):
+        called directly (Depends bypassed) with a refusing ACL, the
+        duplicate is a 403."""
+        from fastapi import HTTPException
+
+        from klangk.api.workspaces import (
+            DuplicateWorkspaceRequest,
+            duplicate_workspace,
+        )
+
+        acl = MagicMock()
+        acl.get_principals = AsyncMock(return_value=set())
+        acl.check_permission = AsyncMock(return_value=False)
+        app = MagicMock()
+        app.state.acl = acl
+        with pytest.raises(HTTPException) as caught:
+            await duplicate_workspace(
+                "ws-id",
+                DuplicateWorkspaceRequest(name="clone"),
+                user={"id": "u1", "email": "u@x.com"},
+                app=app,
+            )
+        assert caught.value.status_code == 403
+        assert "Not permitted to create workspaces" in caught.value.detail
+
+    async def test_export_stream_kills_leftover_proc(self, tmp_path):
+        """A tar proc still alive when the stream ends is killed, not
+        leaked (direct endpoint call; export permission bypassed)."""
+        from klangk.api.workspaces import export_workspace
+
+        app = MagicMock()
+        app.state.model.workspaces.get_workspace = AsyncMock(
+            return_value={"id": "ws-1", "name": "ws-one"}
+        )
+        app.state.workspaces.home_path.return_value = tmp_path / "missing"
+        app.state.workspaces.workspace_metadata.return_value = {}
+        app.state.workspaces.build_export_tar_args.return_value = []
+
+        proc = MagicMock()
+        proc.returncode = None
+        proc.kill = MagicMock()
+        proc.wait = AsyncMock()
+        proc.stdout.read = AsyncMock(
+            side_effect=[b"tar-bytes", RuntimeError("consumer gone")]
+        )
+
+        with patch(
+            "klangk.api.workspaces.asyncio.create_subprocess_exec",
+            return_value=proc,
+        ):
+            response = await export_workspace(
+                "ws-1",
+                user={"id": "u1", "email": "u@x.com"},
+                app=app,
+            )
+            with pytest.raises(RuntimeError, match="consumer gone"):
+                async for _ in response.body_iterator:
+                    pass
+        proc.kill.assert_called_once()
+
+    async def test_upload_without_filename_is_400(self):
+        """No path and a file with no name: 400, not a crash."""
+        from fastapi import HTTPException
+
+        from klangk.api.resources import upload_file
+
+        app = MagicMock()
+        app.state.container_registry.get_container.return_value = "cid"
+        upload = MagicMock()
+        upload.filename = ""
+        with pytest.raises(HTTPException) as caught:
+            await upload_file(
+                "ws-1",
+                upload,
+                path="",
+                user={"id": "u1"},
+                _write={"user_id": "u1"},
+                app=app,
+            )
+        assert caught.value.status_code == 400
+        assert "No filename provided" in caught.value.detail

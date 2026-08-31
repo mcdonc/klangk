@@ -915,7 +915,7 @@ class TerminalController:
         )
         await session.write(data)
         elapsed = time.monotonic() - t0
-        if elapsed > 0.1:  # pragma: no cover
+        if elapsed > 0.1:
             logger.warning("terminal_input SLOW: %.3fs", elapsed)
 
     async def resize(self, msg: dict) -> None:
@@ -1529,7 +1529,7 @@ class SharedTerminalController:
                 ws_sess = conn.app.state.sockets.get_session(conn.workspace_id)
                 if ws_sess:
                     conn.broadcast_shared_terminals(ws_sess)
-            except asyncio.CancelledError:  # pragma: no cover
+            except asyncio.CancelledError:
                 await session.stop()
                 raise
             except Exception as e:
@@ -1732,8 +1732,6 @@ class SharedTerminalController:
         self.broadcast_shared_terminals(ws_session)
 
     # Legacy error handler kept for coverage
-    async def handle_list_error(
-        self, e: Exception
-    ) -> None:  # pragma: no cover
+    async def handle_list_error(self, e: Exception) -> None:
         logger.exception("Failed to list shared terminals: %s", e)
         send_error(self._conn.sock, "Failed to list shared terminals")

@@ -4,7 +4,8 @@
 # (``python3 -m klangksidecar``, see the image Dockerfile) and exercised
 # end-to-end by the real-podman e2e (test_network_sidecar_e2e.py), never
 # imported by the unit suite.
-from .app import main  # pragma: no cover
+from .app import main  # pragma: no cover — module-exec arm
 
-if __name__ == "__main__":  # pragma: no cover
+if __name__ == "__main__":  # pragma: no cover — module-exec arm
+    # (python -m klangksidecar) never runs under in-process tests.
     main()
