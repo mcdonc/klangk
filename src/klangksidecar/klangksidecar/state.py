@@ -111,7 +111,7 @@ BG_TASKS: set[asyncio.Task] = set()
 def clear_verdict_cache(ips: set[str]) -> None:
     """Drop cached SYN verdicts for a revoked host's IPs (#2370).
 
-    Called on the **event loop** by :meth:`SidecarConsentClient._handle_drop_rule`
+    Called on the **event loop** by :meth:`SidecarConsentClient.handle_drop_rule`
     AFTER :func:`drop_for_host` (which returned the host's candidate IPs).
     :data:`VERDICT_CACHE` is keyed by ``(src_ip, src_port, dst, port)``; dst is
     ``key[2]``. A cache hit only ``pkt.accept()``s a retransmit -- it does NOT

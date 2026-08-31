@@ -333,7 +333,7 @@ async def create_workspace(
     # Eagerly start the container so it's running by the time the
     # user connects.  Errors are logged but don't fail the create.
     # The service command fires at the create choke point inside
-    # start_container (see ContainerRegistry._bringup, #1244), gated on
+    # start_container (see ContainerRegistry.bringup, #1244), gated on
     # setup_state so workspaces whose setup.sh hasn't run yet defer until
     # complete.
     await _eager_start(app, body, ws)

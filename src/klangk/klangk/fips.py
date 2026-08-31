@@ -4,7 +4,7 @@
 an actively-enforcing OpenSSL FIPS provider:
 
 - at every workspace-container start (the single
-  :meth:`~klangk.container.registry.ContainerRegistry._create_and_start`
+  :meth:`~klangk.container.registry.ContainerRegistry.create_and_start`
   choke point), probing inside the container and failing closed — the
   container is removed and the start raises;
 - at backend startup, probing klangkd's own process (its password

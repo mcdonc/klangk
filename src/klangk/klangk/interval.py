@@ -44,7 +44,7 @@ class IntervalWorker:
     def start(self) -> None:
         """Start the loop (idempotent). Runs until :meth:`stop`."""
         if self._task is None:
-            self._task = asyncio.create_task(self._run())
+            self._task = asyncio.create_task(self.run())
 
     async def stop(self) -> None:
         """Cancel the loop."""
@@ -56,7 +56,7 @@ class IntervalWorker:
                 pass
             self._task = None
 
-    async def _run(self) -> None:
+    async def run(self) -> None:
         # 0.0 sweeps once immediately on startup, then every interval.
         next_sweep = 0.0
         try:

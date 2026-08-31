@@ -887,14 +887,14 @@ class TestARecordsWithTtl:
             return iter(self._rdata)
 
     @staticmethod
-    def _msg(answer):
+    def msg(answer):
         return types.SimpleNamespace(answer=answer)
 
     def _wire(self, proxy, monkeypatch, answer):
         """Stub ``dns.message.from_wire`` to return a response with ``answer``;
         return throwaway wire bytes (the stub ignores them)."""
         monkeypatch.setattr(
-            proxy.dns.message, "from_wire", lambda wire: self._msg(answer)
+            proxy.dns.message, "from_wire", lambda wire: self.msg(answer)
         )
         return b""
 
@@ -1838,7 +1838,7 @@ class TestNfqueueCallback:
         proxy.state.SESSION_HOST_DENIES.clear()
         proxy.BG_TASKS.clear()
 
-    async def _decide(self, proxy, pkt, client):
+    async def decide(self, proxy, pkt, client):
         """Run the non-blocking ``cb`` to completion + await its verdict task(s)."""
         proxy.cb(pkt, client)
         if proxy.BG_TASKS:
@@ -1856,7 +1856,7 @@ class TestNfqueueCallback:
         )
         self._bind(proxy, monkeypatch, client)
         pkt = _FakePkt(_ip_payload("1.2.3.4", 443))
-        await self._decide(proxy, pkt, client)
+        await self.decide(proxy, pkt, client)
         assert pkt.verdict == "accept"
         client.request.assert_awaited_once_with("1.2.3.4", 443)  # host=IP (no record)
         assert learned == [
@@ -1871,7 +1871,7 @@ class TestNfqueueCallback:
         self._bind(proxy, monkeypatch, client)
         proxy.record_hosts([("1.2.3.4", 60)], "evil.test")  # DNS resolved this IP
         pkt = _FakePkt(_ip_payload("1.2.3.4", 443))
-        await self._decide(proxy, pkt, client)
+        await self.decide(proxy, pkt, client)
         assert pkt.verdict == "accept"
         client.request.assert_awaited_once_with("evil.test", 443)  # host, not IP
 
@@ -1889,7 +1889,7 @@ class TestNfqueueCallback:
         self._bind(proxy, monkeypatch, client)
         proxy.record_hosts([("1.2.3.4", 60)], "example.com")
         pkt = _FakePkt(_ip_payload("1.2.3.4", 443))
-        await self._decide(proxy, pkt, client)
+        await self.decide(proxy, pkt, client)
         assert pkt.verdict == "accept"
         specs = [(h, p, m) for (h, p, m, _exp) in proxy.state.SESSION_HOST_ALLOWS]
         assert ("example.com", 443, proxy.EXACT) in specs
@@ -1958,7 +1958,7 @@ class TestNfqueueCallback:
         self._bind(proxy, monkeypatch, client)
         proxy.record_hosts([("1.2.3.4", 60)], "example.com")
         pkt = _FakePkt(_ip_payload("1.2.3.4", 443))
-        await self._decide(proxy, pkt, client)
+        await self.decide(proxy, pkt, client)
         assert proxy.state.SESSION_HOST_ALLOWS == []
 
     async def test_timed_allow_is_host_scoped(self, proxy, monkeypatch):
@@ -1976,7 +1976,7 @@ class TestNfqueueCallback:
         self._bind(proxy, monkeypatch, client)
         # Decide on IP_A (the resolved IP at decision time).
         proxy.record_hosts([("1.2.3.4", 60)], "example.com")
-        await self._decide(proxy, _FakePkt(_ip_payload("1.2.3.4", 443)), client)
+        await self.decide(proxy, _FakePkt(_ip_payload("1.2.3.4", 443)), client)
         specs = [(h, p, m) for (h, p, m, _exp) in proxy.state.SESSION_HOST_ALLOWS]
         assert ("example.com", 443, proxy.EXACT) in specs  # host-scoped
         # A CDN-rotated IP_B (no ACCEPT, never consented) is auto-allowed at the
@@ -2021,7 +2021,7 @@ class TestNfqueueCallback:
         self._bind(proxy, monkeypatch, client)
         # Decide (deny) on IP_A (the resolved IP at decision time).
         proxy.record_hosts([("1.2.3.4", 60)], "example.com")
-        await self._decide(proxy, _FakePkt(_ip_payload("1.2.3.4", 443)), client)
+        await self.decide(proxy, _FakePkt(_ip_payload("1.2.3.4", 443)), client)
         specs = [(h, p, m) for (h, p, m, _exp) in proxy.state.SESSION_HOST_DENIES]
         assert ("example.com", 443, proxy.EXACT) in specs  # host-scoped
         # A CDN-rotated IP_B (no REJECT, never consented) is auto-denied at the
@@ -2099,7 +2099,7 @@ class TestNfqueueCallback:
         self._bind(proxy, monkeypatch, client)
         proxy.record_hosts([("1.2.3.4", 60)], "example.com")
         pkt = _FakePkt(_ip_payload("1.2.3.4", 443))
-        await self._decide(proxy, pkt, client)
+        await self.decide(proxy, pkt, client)
         assert proxy.state.SESSION_HOST_DENIES == []
 
     def test_timed_session_deny_expires(self, proxy, monkeypatch):
@@ -2152,7 +2152,7 @@ class TestNfqueueCallback:
         )
         self._bind(proxy, monkeypatch, client)
         pkt = _FakePkt(_syn_payload("10.0.0.5", 50000, "1.2.3.4", 443, 0x1111))
-        await self._decide(proxy, pkt, client)
+        await self.decide(proxy, pkt, client)
         assert pkt.verdict == "drop"
         assert rejected == [
             ("1.2.3.4", 443, proxy.CONSENT_REJECT_TTL, 50000)
@@ -2164,7 +2164,7 @@ class TestNfqueueCallback:
         client.request = AsyncMock(side_effect=RuntimeError("boom"))
         self._bind(proxy, monkeypatch, client)
         pkt = _FakePkt(_ip_payload("1.2.3.4", 443))
-        await self._decide(proxy, pkt, client)
+        await self.decide(proxy, pkt, client)
         assert pkt.verdict == "drop"  # except -> deny -> drop
 
     async def test_verdict_timeout_drops(self, proxy, monkeypatch):
@@ -2175,7 +2175,7 @@ class TestNfqueueCallback:
         client.request = AsyncMock(side_effect=asyncio.TimeoutError)
         self._bind(proxy, monkeypatch, client)
         pkt = _FakePkt(_ip_payload("1.2.3.4", 443))
-        await self._decide(proxy, pkt, client)
+        await self.decide(proxy, pkt, client)
         assert pkt.verdict == "drop"
 
     async def test_ws_down_fails_fast_not_hang(self, proxy, monkeypatch):
@@ -2219,7 +2219,7 @@ class TestNfqueueCallback:
         client.request = AsyncMock(return_value=("allow", "tilrestart"))
         self._bind(proxy, monkeypatch, client)
         pkt = _FakePkt(b"\x00" * 24)  # version nibble 0 -> parse_dest ("", 0)
-        await self._decide(proxy, pkt, client)
+        await self.decide(proxy, pkt, client)
         assert pkt.verdict == "drop"
         client.request.assert_not_awaited()
 
@@ -2235,7 +2235,7 @@ class TestNfqueueCallback:
         self._bind(proxy, monkeypatch, client)
         pkt1 = _FakePkt(_ip_payload("1.2.3.4", 443))
         pkt2 = _FakePkt(_ip_payload("1.2.3.4", 443))  # retransmit
-        await self._decide(proxy, pkt1, client)
+        await self.decide(proxy, pkt1, client)
         proxy.cb(pkt2, client)  # cache hit -> inline accept, no task
         assert pkt1.verdict == "accept"
         assert pkt2.verdict == "accept"  # reused the cached allow
@@ -2282,7 +2282,7 @@ class TestNfqueueCallback:
         monkeypatch.setattr(proxy.rules, "allow", lambda *a: learned.append(a))
         self._bind(proxy, monkeypatch, client)
         pkt = _FakePkt(_ip_payload("1.2.3.4", 443))
-        await self._decide(proxy, pkt, client)
+        await self.decide(proxy, pkt, client)
         assert pkt.verdict == "accept"
         assert learned == []  # no learn for `once`
 
@@ -2298,7 +2298,7 @@ class TestNfqueueCallback:
         )
         self._bind(proxy, monkeypatch, client)
         pkt = _FakePkt(_ip_payload("1.2.3.4", 443))
-        await self._decide(proxy, pkt, client)
+        await self.decide(proxy, pkt, client)
         assert pkt.verdict == "accept"
         assert learned == [("1.2.3.4", None, 3600)]  # 1h -> 3600s
 
@@ -2314,7 +2314,7 @@ class TestNfqueueCallback:
         )
         self._bind(proxy, monkeypatch, client)
         pkt = _FakePkt(_ip_payload("1.2.3.4", 443))
-        await self._decide(proxy, pkt, client)
+        await self.decide(proxy, pkt, client)
         assert pkt.verdict == "drop"
         assert rejected == [("1.2.3.4", 443, 900)]  # 15m -> 900s
 
@@ -2327,7 +2327,7 @@ class TestNfqueueCallback:
         monkeypatch.setattr(proxy.rules, "reject", lambda *a: rejected.append(a[2]))
         self._bind(proxy, monkeypatch, client)
         pkt = _FakePkt(_ip_payload("1.2.3.4", 443))
-        await self._decide(proxy, pkt, client)
+        await self.decide(proxy, pkt, client)
         assert pkt.verdict == "drop"
         assert rejected == [proxy.CONSENT_REJECT_TTL]
 
@@ -2346,7 +2346,7 @@ class TestNfqueueCallback:
         monkeypatch.setattr(proxy.packets, "RST_SOCK", sock)
         self._bind(proxy, monkeypatch, client)
         pkt = _FakePkt(_syn_payload("10.0.0.5", 50000, "1.2.3.4", 443, 0x1111))
-        await self._decide(proxy, pkt, client)
+        await self.decide(proxy, pkt, client)
         assert pkt.verdict == "drop"
         sock.sendto.assert_called_once_with(
             proxy.build_rst_packet("1.2.3.4", 443, "10.0.0.5", 50000, 0x1111),
@@ -2363,14 +2363,14 @@ class TestNfqueueCallback:
         monkeypatch.setattr(proxy.packets, "RST_SOCK", None)
         self._bind(proxy, monkeypatch, client)
         pkt = _FakePkt(_syn_payload("10.0.0.5", 50000, "1.2.3.4", 443, 0x1111))
-        await self._decide(proxy, pkt, client)
+        await self.decide(proxy, pkt, client)
         assert pkt.verdict == "drop"
 
     def test_send_rst_paths_and_debug(self, proxy, monkeypatch, capsys):
         # Direct coverage of send_rst's four branches + the opt-in RST debug
         # log (#2464): no-socket, success, sendto-failure, unparseable, and the
         # KLANGKNETWORK_EGRESS_DEBUG_RST flag on/off. The flag defaults off so
-        # the debug print is the only branch the indirect _decide tests miss.
+        # the debug print is the only branch the indirect decide tests miss.
         syn = _syn_payload("10.0.0.5", 50000, "1.2.3.4", 443, 0x1111)
 
         # No socket -> no-op; with the debug flag on, note the REJECT-only fall
@@ -2415,7 +2415,7 @@ class TestNfqueueCallback:
         monkeypatch.setattr(proxy.packets, "RST_SOCK", sock)
         self._bind(proxy, monkeypatch, client)
         pkt1 = _FakePkt(_syn_payload("10.0.0.5", 50000, "1.2.3.4", 443, 1))
-        await self._decide(proxy, pkt1, client)  # populates the cache
+        await self.decide(proxy, pkt1, client)  # populates the cache
         assert sock.sendto.call_count == 1  # original deny forged an RST
         pkt2 = _FakePkt(_syn_payload("10.0.0.5", 50000, "1.2.3.4", 443, 2))
         proxy.cb(pkt2, client)  # cache hit -> inline forge + drop
@@ -2558,7 +2558,7 @@ class TestNfqueueCallback:
             )
             self._bind(proxy, monkeypatch, client)
             pkt = _FakePkt(_syn_payload("10.0.0.5", 50000, "1.2.3.4", 443, 0x1111))
-            await self._decide(proxy, pkt, client)
+            await self.decide(proxy, pkt, client)
             assert rejected == [expect_sport], duration
 
 
@@ -3247,9 +3247,9 @@ class TestSigtermShutdown:
         sock.close.assert_called()
 
     async def test_stop_swallows_cancelled_backoff_task(self, proxy, tmp_path):
-        # Regression (#2657): stop() awaited its cancelled _run task behind an
+        # Regression (#2657): stop() awaited its cancelled run task behind an
         # `except Exception`, but the CancelledError a cancelled task raises is
-        # a BaseException (3.8+), so a stop() issued while _run was parked in
+        # a BaseException (3.8+), so a stop() issued while run was parked in
         # the token-retry / reconnect-backoff sleep escaped stop(), escaped
         # shutdown's `except Exception` around the wait_for, and dumped a raw
         # traceback out of asyncio.run on every workspace removal whose WS was
@@ -3258,7 +3258,7 @@ class TestSigtermShutdown:
         # shutdown's sweep/sampler pattern.
         c = proxy.SidecarConsentClient("http://h/ev", str(tmp_path / "missing"), 5)
         await c.start()
-        await asyncio.sleep(0.05)  # let _run park in the token-retry sleep
+        await asyncio.sleep(0.05)  # let run park in the token-retry sleep
         assert not c._task.done()
         fut = asyncio.get_running_loop().create_future()
         c._pending["lid"] = fut
@@ -3783,7 +3783,7 @@ class _FakeConsentWS:
 
 
 class TestConsentClientRunLoop:
-    """SidecarConsentClient._run / stop / request edge outcomes (#2834): the
+    """SidecarConsentClient.run / stop / request edge outcomes (#2834): the
     connect-dispatch-reconnect loop (stubbed websockets.connect), the no-token
     retry, the fail-close exception paths, and stop()'s guarded teardown."""
 
@@ -3801,7 +3801,7 @@ class TestConsentClientRunLoop:
             c._stop = True
 
         monkeypatch.setattr(proxy.consent.asyncio, "sleep", _fast_sleep)
-        await c._run()
+        await c.run()
         assert "workspace token not yet present" in capsys.readouterr().out
 
     async def test_run_connects_dispatches_and_resolves_verdict(
@@ -3839,7 +3839,7 @@ class TestConsentClientRunLoop:
             c._stop = True  # exit after the last frame instead of reconnecting
 
         monkeypatch.setattr(c, "_dispatch", _dispatch_then_stop)
-        await c._run()
+        await c.run()
         assert connect_args[0][1]["additional_headers"] == {
             "Authorization": "Bearer tok"
         }
@@ -3867,7 +3867,7 @@ class TestConsentClientRunLoop:
                 c._stop = True  # exits via the while condition (post-backoff)
 
         monkeypatch.setattr(proxy.consent.asyncio, "sleep", _fast_sleep)
-        await c._run()
+        await c.run()
         assert attempts["n"] >= 2  # reconnected after the backoff sleep
         assert sleeps[0] == 1.0  # initial backoff
         assert sleeps[1] == 2.0  # capped exponential backoff
@@ -3960,7 +3960,7 @@ class TestConsentClientRunLoop:
         ws = MagicMock()
         ws.send = AsyncMock()
         c._ws = ws
-        await c._handle_drop_rule({"type": "drop_rule", "id": "r1"})
+        await c.handle_drop_rule({"type": "drop_rule", "id": "r1"})
         sent = json.loads(ws.send.await_args.args[0])
         assert sent == {"type": "drop_ack", "id": "r1", "ok": False}
 
@@ -3974,7 +3974,7 @@ class TestConsentClientRunLoop:
             "drop_for_host",
             lambda host, decision: (_ for _ in ()).throw(RuntimeError("iptables")),
         )
-        await c._handle_drop_rule(
+        await c.handle_drop_rule(
             {
                 "type": "drop_rule",
                 "id": "r2",
@@ -3988,13 +3988,13 @@ class TestConsentClientRunLoop:
     async def test_handle_drop_rule_ack_send_failure_is_silent(
         self, proxy, monkeypatch
     ):
-        # Best-effort ack: a dropped ack must not raise into _run's loop.
+        # Best-effort ack: a dropped ack must not raise into run's loop.
         c = self._client(proxy)
         ws = MagicMock()
         ws.send = AsyncMock(side_effect=RuntimeError("socket gone"))
         c._ws = ws
         monkeypatch.setattr(proxy.rules, "drop_for_host", lambda h, d: set())
-        await c._handle_drop_rule(
+        await c.handle_drop_rule(
             {"type": "drop_rule", "id": "r3", "host": "evil.test", "decision": "denied"}
         )
 
@@ -4577,7 +4577,7 @@ class TestBranchArcs:
             await real_sleep(0)
 
         monkeypatch.setattr(proxy.consent.asyncio, "sleep", _fast_sleep)
-        await c._run()
+        await c.run()
         assert "consent: connected to" in capsys.readouterr().out
 
     async def test_run_connect_error_without_debug(self, proxy, monkeypatch, capsys):
@@ -4599,7 +4599,7 @@ class TestBranchArcs:
             await real_sleep(0)
 
         monkeypatch.setattr(proxy.consent.asyncio, "sleep", _fast_sleep)
-        await c._run()
+        await c.run()
         assert "connection error" not in capsys.readouterr().out
 
     async def test_handle_drop_rule_unknown_decision_skips_drop(
@@ -4615,7 +4615,7 @@ class TestBranchArcs:
         monkeypatch.setattr(
             proxy.consent.rules, "drop_for_host", lambda h, d: dropped.append(h)
         )
-        await c._handle_drop_rule(
+        await c.handle_drop_rule(
             {"type": "drop_rule", "id": "r4", "host": "evil.test", "decision": "bogus"}
         )
         assert not dropped
@@ -4633,7 +4633,7 @@ class TestBranchArcs:
             "drop_for_host",
             lambda h, d: dropped.append(h) or set(),
         )
-        await c._handle_drop_rule(
+        await c.handle_drop_rule(
             {
                 "type": "drop_rule",
                 "id": "r5",
@@ -4651,7 +4651,7 @@ class TestBranchArcs:
         monkeypatch.setattr(
             proxy.consent.rules, "drop_for_host", lambda h, d: {"1.2.3.4"}
         )
-        await c._handle_drop_rule(
+        await c.handle_drop_rule(
             {
                 "type": "drop_rule",
                 "id": "r6",

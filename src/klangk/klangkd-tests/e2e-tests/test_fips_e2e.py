@@ -181,7 +181,7 @@ class TestFipsPasses:
         assert resp.status_code == 200, resp.text
 
         # A 200 start already proves the container is genuinely usable:
-        # _create_and_start runs several podman execs inside it (sudo
+        # create_and_start runs several podman execs inside it (sudo
         # config, workspace-token write, the readiness sentinel) plus the
         # FIPS probe itself (python3). A broken image fails one of those.
         status = server["client"].get(

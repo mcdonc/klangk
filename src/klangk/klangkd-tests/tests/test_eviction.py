@@ -3,7 +3,7 @@
 Covers the ``/proc/meminfo`` reader, the sustain/hysteresis state
 machine, the connections-aware least-recently-active victim choice, the
 graceful stop path, the ``workspace_evicted`` broadcast, settings
-validation, and the ``_run`` loop's disabled/unreadable branches.
+validation, and the ``run`` loop's disabled/unreadable branches.
 """
 
 import asyncio
@@ -39,7 +39,7 @@ SwapTotal:        8388608 kB
 
 
 async def _boom(evictor) -> None:
-    """Pretend to be a dead _run task: raise immediately."""
+    """Pretend to be a dead run task: raise immediately."""
     raise OSError(11, "fork failed")
 
 

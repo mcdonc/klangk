@@ -436,7 +436,7 @@ class TestLoop:
         scheduler.sweep = flaky_tick
         with patch("klangk.server_schedule.POLL_INTERVAL_SECONDS", 0.01):
             with pytest.raises(asyncio.CancelledError):
-                await asyncio.wait_for(scheduler._run(), timeout=5)
+                await asyncio.wait_for(scheduler.run(), timeout=5)
         assert calls["n"] >= 2
 
 
@@ -498,7 +498,7 @@ class TestSchedulerCoverageDetails:
             await held.wait()
 
         scheduler._tick = stuck_tick
-        task = asyncio.get_event_loop().create_task(scheduler._run())
+        task = asyncio.get_event_loop().create_task(scheduler.run())
         await asyncio.sleep(0.05)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):

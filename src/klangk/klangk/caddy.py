@@ -806,7 +806,7 @@ class CaddyWatchdog:
         Mirrors :meth:`klangk.main.Lifecycle.apply_pending_reseed`: the
         sync ``reconfigure()`` can't ``POST /load`` (it runs inside the
         SIGHUP subsystem loop, not a coroutine), so it flags and this
-        async method — called by ``_apply_reloaded_settings`` after the
+        async method — called by ``apply_reloaded_settings`` after the
         loop — does the push. No-op when the watchdog didn't start
         (``_KLANGKD_DISABLE_PROXY``) or nothing flagged. A push failure
         is logged + swallowed so a broken reload can't abort the wider

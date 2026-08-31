@@ -427,9 +427,9 @@ class CrashRecoveryMonitor:
             return
         memory_limit = await self._effective_memory_limit(ws_id)
         # Re-validate after the await (#331): a user-driven reconnect
-        # (start_container -> _handle_existing_container removes the dead
+        # (start_container -> handle_existing_container removes the dead
         # container with a direct podman rm -- no ``stopping`` marker, no
-        # epoch bump -- then _create_and_start re-binds the state to a
+        # epoch bump -- then create_and_start re-binds the state to a
         # fresh container) can complete entirely while the limit read is
         # in flight. The entry guards above ran before that await; acting
         # on the post-await state would tear down the freshly-started

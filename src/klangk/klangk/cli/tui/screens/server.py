@@ -78,9 +78,9 @@ class ServerSwitchScreen(StatusScreen):
         )
 
     def on_mount(self) -> None:
-        self._populate()
+        self.populate()
 
-    def _populate(self) -> None:
+    def populate(self) -> None:
         lv = self.query_one("#server_options", ListView)
         lv.clear()
         servers = self.app.tui_state.known_servers()
@@ -115,7 +115,7 @@ class ServerSwitchScreen(StatusScreen):
             if result == "url_changed":
                 self.app.server_changed()
             elif result:
-                self._populate()
+                self.populate()
 
         self.app.push_screen(EditServerScreen(alias=alias, url=url), _on_edit)
 
@@ -133,7 +133,7 @@ class ServerSwitchScreen(StatusScreen):
 
     async def _do_delete_and_refresh(self, url: str) -> None:
         await asyncio.to_thread(self.app.tui_state.delete_server, url)
-        self._populate()
+        self.populate()
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         url = getattr(event.item, "name", "") or ""
@@ -262,18 +262,18 @@ class EditServerScreen(ModalScreen):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "save":
-            self._save()
+            self.save()
         elif event.button.id == "cancel":
             self.dismiss(False)
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id in ("alias", "url"):
-            self._save()
+            self.save()
 
     def action_cancel(self) -> None:
         self.dismiss(False)
 
-    def _save(self) -> None:
+    def save(self) -> None:
         alias = self.query_one("#alias", Input).value.strip()
         url = self.query_one("#url", Input).value.strip()
         msg = self.query_one("#edit_srv_msg", Static)
@@ -289,9 +289,9 @@ class EditServerScreen(ModalScreen):
                 )
             )
             return
-        self.run_worker(self._do_save(alias, url), exit_on_error=False)
+        self.run_worker(self.do_save(alias, url), exit_on_error=False)
 
-    async def _do_save(self, alias: str, url: str) -> None:
+    async def do_save(self, alias: str, url: str) -> None:
         try:
             ok = await asyncio.to_thread(
                 self.app.tui_state.update_server,

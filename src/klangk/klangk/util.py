@@ -321,7 +321,7 @@ class Util:
     def customize_dir(self) -> str:
         """Root customization directory (``KLANGKD_CUSTOMIZE_DIR``).
 
-        Defaults to ``<state_dir>/custom`` (derived in ``_require_dirs``).
+        Defaults to ``<state_dir>/custom`` (derived in ``require_dirs``).
         """
         return self.app.state.settings.customize_dir
 

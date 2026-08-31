@@ -786,7 +786,7 @@ class ConsentDeciderApp(App):
 
     async def _rotate_token(self) -> None:
         """Refresh the JWT and adopt it when a fresh one comes back."""
-        new = await self._refresh_token()
+        new = await self.refresh_token()
         if new:
             self.token = new
 
@@ -884,7 +884,7 @@ class ConsentDeciderApp(App):
             await asyncio.sleep(self._backoff(attempt))
             self._refresh()
 
-    async def _refresh_token(self) -> str | None:
+    async def refresh_token(self) -> str | None:
         """Refresh the JWT off the event loop (the HTTP call is blocking)."""
         try:
             return await asyncio.to_thread(
@@ -956,7 +956,7 @@ class ConsentDeciderApp(App):
             self._schedule_popup_show()
         try:
             if action == ERROR:
-                self._flash(str(payload))
+                self.flash(str(payload))
             elif action == REVOKE_ACK:
                 # payload = (request_id, ok). A failed revoke (not an
                 # active verdict, wrong workspace, or the sidecar never
@@ -966,7 +966,7 @@ class ConsentDeciderApp(App):
                 # the row and the refresh re-renders the list without it.
                 _rid, ok = payload  # type: ignore[misc]
                 if not ok:
-                    self._flash("revoke failed — still in effect")
+                    self.flash("revoke failed — still in effect")
                 self._refresh()
             elif action == PAUSE_ACK:
                 # payload = (ok, until). A failed pause/unpause flashes;
@@ -974,7 +974,7 @@ class ConsentDeciderApp(App):
                 # frame the server broadcasts (no flash needed).
                 ok, _until = payload  # type: ignore[misc]
                 if not ok:
-                    self._flash("pause failed")
+                    self.flash("pause failed")
                 self._refresh()
             else:
                 self._refresh()
@@ -1156,7 +1156,7 @@ class ConsentDeciderApp(App):
             return
         lv.index = max(0, min(index, len(lv.children) - 1))
 
-    def _flash(self, message: str, ttl: float = _FLASH_TTL) -> None:
+    def flash(self, message: str, ttl: float = _FLASH_TTL) -> None:
         """Show a transient message in the status line for ``ttl`` seconds.
 
         The TTL survives the 1s periodic refresh (which would otherwise
@@ -1196,7 +1196,7 @@ class ConsentDeciderApp(App):
         """Send a pause (window token) or unpause (Unpaused) frame (#2332)."""
         ws = self._ws
         if ws is None:
-            self._flash("disconnected — reconnecting")
+            self.flash("disconnected — reconnecting")
             return
         dur = getattr(button, "pause_duration", None)
         # Track the user's request so the matching button stays highlighted.
@@ -1210,13 +1210,13 @@ class ConsentDeciderApp(App):
         try:
             await ws.send(make_pause(duration))
         except Exception:
-            self._flash("pause send failed — reconnecting")
+            self.flash("pause send failed — reconnecting")
 
     async def _send_unpause(self, ws) -> None:
         try:
             await ws.send(make_unpause())
         except Exception:
-            self._flash("unpause send failed — reconnecting")
+            self.flash("unpause send failed — reconnecting")
 
     def _refresh_pause_highlight(self) -> None:
         """Highlight the pause button matching the user's last request + show
@@ -1268,12 +1268,12 @@ class ConsentDeciderApp(App):
         # (`tilrestart`): the common case stays one keypress (#2511).
         if not self._on_queue_screen():
             return
-        self._decide(DECISION_ALLOWED)
+        self.decide(DECISION_ALLOWED)
 
     def action_deny(self) -> None:
         if not self._on_queue_screen():
             return
-        self._decide(DECISION_DENIED)
+        self.decide(DECISION_DENIED)
 
     def action_allow_duration(self) -> None:
         """``A``: allow the highlighted row with a picked duration (#2511)."""
@@ -1450,7 +1450,7 @@ class ConsentDeciderApp(App):
                 logger.debug("consent-decide popup show failed")
         return bool(clients)
 
-    def _decide(self, decision: str) -> None:
+    def decide(self, decision: str) -> None:
         rid = self._focused_request_id()
         if rid is None:
             return
@@ -1459,7 +1459,7 @@ class ConsentDeciderApp(App):
     def _decide_id(self, rid: str, decision: str, duration: str) -> None:
         ws = self._ws
         if ws is None:
-            self._flash("disconnected — reconnecting")
+            self.flash("disconnected — reconnecting")
             return
         # Send on the shared loop via _send_verdict, which awaits the send and
         # flashes on failure (a dropped socket between the check and the send
@@ -1474,7 +1474,7 @@ class ConsentDeciderApp(App):
         try:
             await ws.send(make_verdict(rid, decision, duration))
         except Exception:
-            self._flash("verdict send failed — reconnecting")
+            self.flash("verdict send failed — reconnecting")
 
 
 class DurationPickerScreen(ModalScreen[None]):
@@ -1636,7 +1636,7 @@ class RulesScreen(Screen):
             return
         ws = app._ws  # type: ignore[attr-defined]
         if ws is None:
-            app._flash("disconnected — reconnecting")  # type: ignore[attr-defined]
+            app.flash("disconnected — reconnecting")  # type: ignore[attr-defined]
             return
         asyncio.create_task(self._send_revoke(app, ws, rid))
 
@@ -1644,7 +1644,7 @@ class RulesScreen(Screen):
         try:
             await ws.send(make_revoke(rid))
         except Exception:
-            app._flash("revoke send failed — reconnecting")  # type: ignore[attr-defined]
+            app.flash("revoke send failed — reconnecting")  # type: ignore[attr-defined]
 
     def _focused_rule_id(self) -> str | None:
         lv = self.query_one("#rules-list", ListView)

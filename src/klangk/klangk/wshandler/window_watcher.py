@@ -67,7 +67,7 @@ class WindowEventWatcher:
     """
 
     def __init__(self, podman: Podman, container_id: str, on_change) -> None:
-        self._podman = podman
+        self.podman = podman
         self._container_id = container_id
         self._on_change = on_change
         self._proc: asyncio.subprocess.Process | None = None
@@ -82,7 +82,7 @@ class WindowEventWatcher:
         if self._task is not None and not self._task.done():
             return
         self._proc = await asyncio.create_subprocess_exec(
-            self._podman.bin,
+            self.podman.bin,
             "exec",
             "-i",
             self._container_id,
@@ -97,9 +97,9 @@ class WindowEventWatcher:
             start_new_session=True,
             env=subprocess_env(),
         )
-        self._task = asyncio.create_task(self._read_loop())
+        self._task = asyncio.create_task(self.read_loop())
 
-    async def _read_loop(self) -> None:
+    async def read_loop(self) -> None:
         proc = self._proc
         if proc is None or proc.stdout is None:
             return
@@ -133,7 +133,7 @@ class WindowEventWatcher:
         self,
     ) -> None:  # pragma: no cover - subprocess
         try:
-            await self._podman.exec_container(
+            await self.podman.exec_container(
                 self._container_id,
                 ["tmux", "kill-session", "-t", self._ctrl_session],
             )

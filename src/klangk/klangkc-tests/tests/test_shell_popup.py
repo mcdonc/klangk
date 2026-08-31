@@ -382,7 +382,7 @@ class TestShouldUsePopup:
 
 class TestRunConsentShell:
     @staticmethod
-    def _run(**kwargs):
+    def run(**kwargs):
         """Drive run_consent_shell with recording run/attach stubs."""
         ran: list[list[str]] = []
 
@@ -398,7 +398,7 @@ class TestRunConsentShell:
         return rc, ran
 
     def test_command_sequence(self):
-        rc, ran = self._run(
+        rc, ran = self.run(
             workspace_id="wsid",
             inner_argv=["klangk", "shell", "ws", "--no-consent-popup"],
             decider_argv=["klangk", "consent-decide", "ws"],

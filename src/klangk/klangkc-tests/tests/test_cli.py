@@ -1220,7 +1220,7 @@ class TestKlangkClient:
 
     def test_config_returns_authed_payload(self):
         # #1931: config() GETs /api/v1/config through the authed client
-        # (self.get -> _request attaches the Bearer token), so the response
+        # (self.get -> request attaches the Bearer token), so the response
         # carries the auth-gated netfilter_default_domains that the pre-auth
         # fetch_config helper can't see.
         client = KlangkClient("http://test:8995", "token")
@@ -1654,7 +1654,7 @@ class TestKlangkClient:
             return_value=mock_ws,
         ):
             result = asyncio.run(client.close_terminal("alpha", "@1"))
-        # Error surfaced as [] (via _terminals' except), not a hang.
+        # Error surfaced as [] (via terminals' except), not a hang.
         assert result == []
         # _recv_windows stopped at the error frame — it did not loop past
         # the provided frames looking for another terminal_windows.
@@ -2555,7 +2555,7 @@ class TestClientTryRefresh:
     def test_try_refresh_updates_token(self):
         client = KlangkClient("http://test:8995", "old-token")
         with patch(
-            "klangk.cli.client._refresh_token", return_value="new-token"
+            "klangk.cli.client.refresh_token", return_value="new-token"
         ):
             assert client._try_refresh() is True
         assert client.token == "new-token"
@@ -2563,7 +2563,7 @@ class TestClientTryRefresh:
     def test_try_refresh_returns_false_on_failure(self):
         client = KlangkClient("http://test:8995", "old-token")
         with (
-            patch("klangk.cli.client._refresh_token", return_value=None),
+            patch("klangk.cli.client.refresh_token", return_value=None),
             # Stub the server-mode probe so it doesn't make a real
             # (DNS-timeout) GET to the unresolvable http://test:8995 (#1989).
             patch("klangk.cli.client._fetch_config", return_value=None),
@@ -2577,7 +2577,7 @@ class TestClientTryRefresh:
 
     def test_try_refresh_relogins_in_none_mode(self, tmp_path, monkeypatch):
         client = KlangkClient("http://test:8995", "old-token")
-        with patch("klangk.cli.client._refresh_token", return_value=None):
+        with patch("klangk.cli.client.refresh_token", return_value=None):
             with patch(
                 "klangk.cli.client.server_mode_is_none", return_value=True
             ):
@@ -2591,7 +2591,7 @@ class TestClientTryRefresh:
 
     def test_try_refresh_skips_relogin_when_not_none_mode(self):
         client = KlangkClient("http://test:8995", "old-token")
-        with patch("klangk.cli.client._refresh_token", return_value=None):
+        with patch("klangk.cli.client.refresh_token", return_value=None):
             with patch(
                 "klangk.cli.client.server_mode_is_none", return_value=False
             ):
@@ -2604,7 +2604,7 @@ class TestClientTryRefresh:
         self, tmp_path, monkeypatch
     ):
         client = KlangkClient("http://test:8995", "old-token")
-        with patch("klangk.cli.client._refresh_token", return_value=None):
+        with patch("klangk.cli.client.refresh_token", return_value=None):
             with patch(
                 "klangk.cli.client.server_mode_is_none", return_value=True
             ):
@@ -2627,9 +2627,7 @@ class TestClientRetryOn401:
                 "klangk.cli.client.request_with_retry",
                 side_effect=[resp_401, resp_200],
             ),
-            patch(
-                "klangk.cli.client._refresh_token", return_value="new-token"
-            ),
+            patch("klangk.cli.client.refresh_token", return_value="new-token"),
         ):
             result = client.get("/api/v1/workspaces")
         assert result.status_code == 200
@@ -2644,7 +2642,7 @@ class TestClientRetryOn401:
                 "klangk.cli.client.request_with_retry",
                 return_value=resp_401,
             ),
-            patch("klangk.cli.client._refresh_token", return_value=None),
+            patch("klangk.cli.client.refresh_token", return_value=None),
             # Stub the server-mode probe so _try_refresh doesn't make a real
             # (DNS-timeout) GET to the unresolvable http://test:8995 (#1989).
             patch("klangk.cli.client._fetch_config", return_value=None),
@@ -2669,7 +2667,7 @@ class TestClientRetryOn401:
                 return_value=resp_401,
             ),
             patch(
-                "klangk.cli.client._refresh_token",
+                "klangk.cli.client.refresh_token",
                 side_effect=counting_refresh,
             ),
         ):
@@ -2683,7 +2681,7 @@ class TestClientRetryOn401:
         token = _make_jwt(time.time() + 60)  # expiring soon
         client = KlangkClient("http://test:8995", token)
         with patch(
-            "klangk.cli.client._refresh_token", return_value="refreshed"
+            "klangk.cli.client.refresh_token", return_value="refreshed"
         ):
             headers = client._headers()
         assert headers["Authorization"] == "Bearer refreshed"
@@ -2720,7 +2718,7 @@ class TestWs4002Refresh:
             token="old-token",
         )
         with patch(
-            "klangk.cli.client._refresh_token", return_value="new-token"
+            "klangk.cli.client.refresh_token", return_value="new-token"
         ):
             await session.stdout_loop()
         output = "".join(captured)
@@ -2755,7 +2753,7 @@ class TestWs4002Refresh:
             token="old-token",
         )
         with (
-            patch("klangk.cli.client._refresh_token", return_value=None),
+            patch("klangk.cli.client.refresh_token", return_value=None),
             # Stub the server-mode probe so the refresh-failure path doesn't
             # make a real (DNS-timeout) GET to http://test:8995 (#1989).
             patch("klangk.cli.client._fetch_config", return_value=None),
@@ -2792,7 +2790,7 @@ class TestWs4002Refresh:
             server_url="http://test:8995",
             token="old-token",
         )
-        with patch("klangk.cli.client._refresh_token", return_value=None):
+        with patch("klangk.cli.client.refresh_token", return_value=None):
             with patch(
                 "klangk.cli.client.server_mode_is_none", return_value=True
             ):
@@ -2832,7 +2830,7 @@ class TestWs4002Refresh:
             server_url="http://test:8995",
             token="old-token",
         )
-        with patch("klangk.cli.client._refresh_token", return_value=None):
+        with patch("klangk.cli.client.refresh_token", return_value=None):
             with patch(
                 "klangk.cli.client.server_mode_is_none", return_value=True
             ):

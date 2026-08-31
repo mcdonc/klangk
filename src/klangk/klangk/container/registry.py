@@ -574,7 +574,7 @@ class ContainerRegistry(NetworkSidecarMixin):
         is popped only if it still belongs to that container. A racing
         user-driven start may have removed the dead container and
         re-bound the workspace to a fresh one (``start_container`` ->
-        ``_handle_existing_container`` removes a stopped container with a
+        ``handle_existing_container`` removes a stopped container with a
         direct ``podman rm`` -- never marking ``stopping`` or bumping the
         stop epoch -- then ``track_activity`` re-binds the state) while
         this teardown was between its guard checks and the lock; popping
@@ -617,8 +617,8 @@ class ContainerRegistry(NetworkSidecarMixin):
     # --- Proxy: BrowserRouter ---
 
     @property
-    def _browsers(self) -> dict:
-        return self.browsers._browsers
+    def browser_routes(self) -> dict:
+        return self.browsers.browsers
 
     def register_browser(
         self, browser_id: str, workspace_id: str, sock: object
@@ -645,14 +645,14 @@ class ContainerRegistry(NetworkSidecarMixin):
         self.idle.cleanup_task = value
 
     @property
-    def _cleanup_wake(self) -> asyncio.Event | None:  # pragma: no cover
-        return self.idle._cleanup_wake
+    def cleanup_wake(self) -> asyncio.Event | None:  # pragma: no cover
+        return self.idle.cleanup_wake
 
-    @_cleanup_wake.setter
-    def _cleanup_wake(
+    @cleanup_wake.setter
+    def cleanup_wake(
         self, value: asyncio.Event | None
     ) -> None:  # pragma: no cover
-        self.idle._cleanup_wake = value
+        self.idle.cleanup_wake = value
 
     def get_cleanup_wake(self) -> asyncio.Event:
         return self.idle.get_cleanup_wake()
@@ -688,7 +688,7 @@ class ContainerRegistry(NetworkSidecarMixin):
 
     # --- Container lifecycle ---
 
-    async def _bringup(
+    async def bringup(
         self,
         workspace_id: str,
         container_id: str,
@@ -749,7 +749,7 @@ class ContainerRegistry(NetworkSidecarMixin):
         Serialized per workspace so concurrent WebSocket connections
         don't race to create the same container. All parameters travel
         on the :class:`ContainerStartSpec` (#2566) shared with
-        :meth:`_start_container_inner`, so adding a start parameter is a
+        :meth:`start_container_inner`, so adding a start parameter is a
         single spec field instead of a two-signature edit.
 
         Applies the per-workspace idle-timeout override from the
@@ -780,11 +780,11 @@ class ContainerRegistry(NetworkSidecarMixin):
             # auto-creates it as container-root (unwritable) or — for a
             # legacy dangling `klangk` symlink — refuses to start (chdir
             # ENOENT). Idempotent; the skel populate itself stays in
-            # _bringup where a container already exists to run it in.
+            # bringup where a container already exists to run it in.
             await self.app.state.workspaces.ensure_shared_home_dir(
                 spec.workspace_id
             )
-            result = await self._start_container_inner(spec)
+            result = await self.start_container_inner(spec)
             bag = spec.workspace_settings or {}
             if "idle_timeout" in bag:
                 self.idle.set_workspace_idle_timeout(
@@ -792,7 +792,7 @@ class ContainerRegistry(NetworkSidecarMixin):
                 )
             return result
 
-    async def _handle_existing_container(
+    async def handle_existing_container(
         self,
         existing_container_id: str,
         workspace_id: str,
@@ -848,7 +848,7 @@ class ContainerRegistry(NetworkSidecarMixin):
             # before the mode was enabled (or left adoptable by a
             # best-effort-failed startup reap) must not serve unprobed.
             # Runs only with the mode on, and only on this adopt path
-            # (fresh creates are gated in _create_and_start). Raises on
+            # (fresh creates are gated in create_and_start). Raises on
             # failure after removing the container + state — the caller
             # (start_container) surfaces it; the workspace is not left
             # half-tracked.
@@ -899,7 +899,7 @@ class ContainerRegistry(NetworkSidecarMixin):
         the same identity the reaper and sidecar sweeps key on — and:
 
         - running  -> adopt it: same semantics as the matching-id branch of
-          :meth:`_handle_existing_container` (FIPS gate, re-track), plus the
+          :meth:`handle_existing_container` (FIPS gate, re-track), plus the
           DB ``container_id`` is re-persisted so the staleness heals for
           every later caller;
         - stopped  -> remove it (so the create path's sidecar pre-remove
@@ -993,7 +993,7 @@ class ContainerRegistry(NetworkSidecarMixin):
                 host_ports = host_ports[:num_ports]
         return host_ports
 
-    async def _create_and_start(
+    async def create_and_start(
         self,
         container_name: str,
         resolved_image: str,
@@ -1038,7 +1038,7 @@ class ContainerRegistry(NetworkSidecarMixin):
         # for any future --hooks-dir consumer.
         _hooks_dirs = create_kwargs.get("hooks_dir")
         t_podman_start = time.monotonic()
-        await self._start_with_port_conflict_retry(
+        await self.start_with_port_conflict_retry(
             cid, publish, container_name, hooks_dir=_hooks_dirs
         )
         logger.info(
@@ -1097,8 +1097,8 @@ class ContainerRegistry(NetworkSidecarMixin):
         Ordering (#2626 review): the gate runs after
         ``wait_for_container_ready`` (the probe needs ``podman exec``,
         which needs a started container) and BEFORE every user handoff
-        — it is the last step of ``_create_and_start``, so the create-
-        time service-command fire (``_bringup`` →
+        — it is the last step of ``create_and_start``, so the create-
+        time service-command fire (``bringup`` →
         ``ensure_service_session``, #1244) and any WS connect/
         terminal/exec that could fire one happen strictly after the
         gate. Residual exposure in the pre-gate window: published host
@@ -1110,7 +1110,7 @@ class ContainerRegistry(NetworkSidecarMixin):
         Cleanup is inline (not stop_and_remove_container / remove_state,
         which take the workspace lock this path already holds —
         asyncio.Lock is not reentrant); the DB container_id going stale
-        is fine: the next start's _handle_existing_container treats an
+        is fine: the next start's handle_existing_container treats an
         uninspectable container as recreate-me.
         """
         if not self.app.state.settings.fips_mode:
@@ -1190,7 +1190,7 @@ class ContainerRegistry(NetworkSidecarMixin):
                     podman, stale_id, bound, wanted_ports
                 )
 
-    async def _start_with_port_conflict_retry(
+    async def start_with_port_conflict_retry(
         self,
         cid: str,
         publish: list[tuple[int, int]],
@@ -1206,7 +1206,7 @@ class ContainerRegistry(NetworkSidecarMixin):
         (:meth:`_resolve_port_conflict`, which skips ``cid`` itself) and retry
         with back-off — ports may linger in TIME_WAIT after the previous
         container's pasta process exits. Shared by the workspace create path
-        (:meth:`_create_and_start`) and the network sidecar start, so a
+        (:meth:`create_and_start`) and the network sidecar start, so a
         filtered workspace — whose host ports are published on the sidecar
         (#2291) — self-heals the same way a non-filtered one does. Fails
         closed: an unresolved conflict re-raises.
@@ -1254,7 +1254,7 @@ class ContainerRegistry(NetworkSidecarMixin):
         consent decision even with empty lists (the "ask first" default
         posture). Static mode with no lists stays unrestricted (no point
         filtering nothing). Used by both the reconnect re-track in
-        _start_container_inner and the create-path sidecar start.
+        start_container_inner and the create-path sidecar start.
 
         #2406: ``allow`` mode requests permissiveness, not filtering -- it
         runs the sidecar WHEN one is configured (so off-list egress is logged
@@ -1270,7 +1270,7 @@ class ContainerRegistry(NetworkSidecarMixin):
         sidecar_optional = (
             egress_mode == EGRESS_MODE_ALLOW
             and not sidecar_required
-            and self._network_sidecar_enabled()
+            and self.network_sidecar_enabled()
             and bool(self.app.state.settings.userns)
         )
         return sidecar_required, sidecar_required or sidecar_optional
@@ -1385,7 +1385,7 @@ class ContainerRegistry(NetworkSidecarMixin):
         # for). ``allow`` mode is best-effort (sidecar_optional already
         # gated on these), so it never reaches this fail-close (#2406).
         if sidecar_required:
-            if not self._network_sidecar_enabled():
+            if not self.network_sidecar_enabled():
                 raise podman.PodmanError(
                     500,
                     f"workspace {workspace_id[:8]} is egress-filtered "
@@ -1418,7 +1418,7 @@ class ContainerRegistry(NetworkSidecarMixin):
                     "keep-id:uid=1000,gid=1000) or switch the workspace to "
                     "static mode with no lists.",
                 )
-        network_sidecar_id = await self._start_network_sidecar(
+        network_sidecar_id = await self.start_network_sidecar(
             workspace_id,
             spec.allowed_domains,
             spec.egress_mode,
@@ -1436,7 +1436,7 @@ class ContainerRegistry(NetworkSidecarMixin):
         # /etc/hosts (podman populates it), and the network sidecar's iptables
         # statically allow-lists the backend port (entrypoint.sh, B1).
         # #2267: the workspace's host ports are instead published on the
-        # network sidecar (passed to _start_network_sidecar above). The
+        # network sidecar (passed to start_network_sidecar above). The
         # workspace shares the sidecar's netns, so the sidecar's --publish
         # forwards into that netns and reaches the workspace's listener,
         # letting filtered workspaces host apps (which --publish on the
@@ -1463,7 +1463,7 @@ class ContainerRegistry(NetworkSidecarMixin):
         workspace_id = spec.workspace_id
         try:
             container_id = await asyncio.shield(
-                self._create_and_start(
+                self.create_and_start(
                     container_name,
                     resolved_image,
                     workspace_id,
@@ -1491,12 +1491,12 @@ class ContainerRegistry(NetworkSidecarMixin):
             # cleaning up immediately matches how workspace containers are
             # treated and avoids an unfiltered netns lingering (#2255).
             if workspace_id in self._ws_with_network_sidecar:
-                await self._stop_network_sidecar(workspace_id)
+                await self.stop_network_sidecar(workspace_id)
                 self._ws_with_network_sidecar.discard(workspace_id)
             raise
         return container_id
 
-    async def _start_container_inner(
+    async def start_container_inner(
         self, spec: ContainerStartSpec
     ) -> tuple[str, str]:
         """Inner implementation of start_container (called under lock).
@@ -1531,7 +1531,7 @@ class ContainerRegistry(NetworkSidecarMixin):
 
         # Reuse a running container or remove a stopped one.
         if existing_container_id:
-            result = await self._handle_existing_container(
+            result = await self.handle_existing_container(
                 existing_container_id,
                 workspace_id,
                 t_start,
@@ -1544,7 +1544,7 @@ class ContainerRegistry(NetworkSidecarMixin):
                 # Re-track a sidecar'd workspace's network sidecar on reconnect.
                 # _ws_with_network_sidecar is in-memory and lost on a process
                 # restart; without this, a reconnect-then-stop would skip
-                # _stop_network_sidecar (only the create path added it before)
+                # stop_network_sidecar (only the create path added it before)
                 # and leak the sidecar until the next start's force-remove or
                 # the instance reaper. A sidecar'd workspace always has a live
                 # sidecar (fail-closed), so needs_sidecar => re-track.
@@ -1649,7 +1649,7 @@ class ContainerRegistry(NetworkSidecarMixin):
         # fresh container regardless of caller. ensure_service_session
         # is idempotent, and setup_state gates the create-time deferral
         # for workspaces whose setup.sh has not run yet.
-        await self._bringup(
+        await self.bringup(
             workspace_id, container_id, service_command, setup_state
         )
         logger.info(
@@ -1756,7 +1756,7 @@ class ContainerRegistry(NetworkSidecarMixin):
                         # session is cleaned up even if it isn't tracked in
                         # _ws_with_network_sidecar (#2286).
                         self._ws_with_network_sidecar.discard(ws_id)
-                        await self._stop_network_sidecar(ws_id)
+                        await self.stop_network_sidecar(ws_id)
                         self._cid_to_wsid.pop(container_id, None)
                         self.revoke_workspace_browsers(ws_id)
                         self.states.pop(ws_id, None)

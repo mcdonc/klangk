@@ -490,7 +490,7 @@ class TestAppRender:
         # the normal status (so flashes survive the 1s periodic refresh).
         app = _make_app()
         async with app.run_test() as pilot:
-            app._flash("something broke")
+            app.flash("something broke")
             app._refresh()
             await pilot.pause()
             status = app.query_one("#status", Static)
@@ -1345,7 +1345,7 @@ class TestWsLoop:
         async def fake_refresh():
             return "refreshed-token"
 
-        monkeypatch.setattr(app, "_refresh_token", fake_refresh)
+        monkeypatch.setattr(app, "refresh_token", fake_refresh)
         with caplog.at_level(logging.WARNING, logger="klangk.cli.tui.consent"):
             task = asyncio.create_task(_real_ws_loop(app))
             for _ in range(100):  # wait for the healing connect
@@ -1383,7 +1383,7 @@ class TestWsLoop:
         monkeypatch.setattr(tui_consent, "ws_connect", refuse_403)
         monkeypatch.setattr(tui_consent, "REFUSED_RETRY_INTERVAL", 0.0)
         app = _make_app(reconnect_delays=(0.0,))
-        monkeypatch.setattr(app, "_refresh_token", fake_refresh)
+        monkeypatch.setattr(app, "refresh_token", fake_refresh)
         task = asyncio.create_task(_real_ws_loop(app))
         await asyncio.sleep(0.2)
         task.cancel()
@@ -1454,7 +1454,7 @@ class TestWsLoop:
         async def fake_refresh():
             return "new-token"
 
-        monkeypatch.setattr(app, "_refresh_token", fake_refresh)
+        monkeypatch.setattr(app, "refresh_token", fake_refresh)
         task = asyncio.create_task(_real_ws_loop(app))
         await asyncio.sleep(0.1)
         app._stop = True
@@ -1471,7 +1471,7 @@ class TestWsLoop:
         monkeypatch.setattr(
             tui_consent, "refresh_token", lambda url, tok: "fresh"
         )
-        assert await app._refresh_token() == "fresh"
+        assert await app.refresh_token() == "fresh"
 
     async def test_refresh_token_failure_is_swallowed(self, monkeypatch):
         app = _make_app()
@@ -1480,7 +1480,7 @@ class TestWsLoop:
             raise RuntimeError("nope")
 
         monkeypatch.setattr(tui_consent, "refresh_token", boom)
-        assert await app._refresh_token() is None
+        assert await app.refresh_token() is None
 
     async def test_breaks_on_stop_mid_stream(self, monkeypatch):
         # _stop set while the pump is parked in a read: the loop exits via
@@ -3320,7 +3320,7 @@ class TestBranchGaps2834:
         async with app.run_test() as pilot:
             await pilot.pause()
             flashed = []
-            app._flash = lambda msg: flashed.append(msg)
+            app.flash = lambda msg: flashed.append(msg)
             refreshed = []
             app._refresh = lambda: refreshed.append(1)
             app._react(PAUSE_ACK, (True, 123.0))

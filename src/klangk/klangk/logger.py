@@ -24,7 +24,7 @@ module-level functions (no state object):
   :func:`klangk.main.build_app`) to re-apply the level from
   ``settings.log_level`` (``KLANGKD_LOG_LEVEL``), overriding the import-time
   defaults. Idempotent, so it is also the **SIGHUP reconfigure** path:
-  :func:`klangk.main.Lifecycle._apply_reloaded_settings` calls it right after
+  :func:`klangk.main.Lifecycle.apply_reloaded_settings` calls it right after
   the settings swap (before the subsystem loop, so warnings the loop emits use
   the new level).
 

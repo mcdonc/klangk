@@ -21,7 +21,7 @@ from klangk.consent.coordinator import ConsentCoordinator
 FULL_WS = "aaaa1111bbbb-cccc-dddd-eeee-ffffffffffff"
 
 
-def _request(req_id="rid-1", host="1.2.3.4", port=443):
+def request(req_id="rid-1", host="1.2.3.4", port=443):
     return {
         "id": req_id,
         "workspace_id": FULL_WS,
@@ -406,7 +406,7 @@ class TestConsentCoordinatorGate:
         # A registered external decider is irrelevant to allow mode (allow
         # mode refuses deciders; it auto-allows). Even with a live decider
         # present, the gate short-circuits to allow + record, never holding.
-        app = _app(egress_mode="allow", has_decider=True, request=_request())
+        app = _app(egress_mode="allow", has_decider=True, request=request())
         coord = ConsentCoordinator(app)
         fut = await coord.hold(FULL_WS, "1.2.3.4", 443)
         verdict = fut.result()
@@ -416,7 +416,7 @@ class TestConsentCoordinatorGate:
         assert coord._holds == {}
 
     async def test_rate_limited_denies_without_hold(self):
-        app = _app(count_pending=50, rate_limit=50, request=_request())
+        app = _app(count_pending=50, rate_limit=50, request=request())
         coord = ConsentCoordinator(app)
         fut = await coord.hold(FULL_WS, "1.2.3.4", 443)
         assert fut.result() == {"decision": "deny", "reason": "rate_limited"}
@@ -431,7 +431,7 @@ class TestConsentCoordinatorGate:
         assert coord._holds == {}
 
     async def test_interactive_with_decider_creates_hold(self):
-        app = _app(request=_request())
+        app = _app(request=request())
         coord = ConsentCoordinator(app)
         fut = await coord.hold(FULL_WS, "1.2.3.4", 443)
         assert not fut.done()  # held, awaiting verdict
@@ -452,7 +452,7 @@ class TestConsentCoordinatorGate:
 
     async def test_hold_interactive_db_error_fail_closes_to_deny(self):
         # same resilience on the interactive path (create_request raises).
-        app = _app(request=_request())
+        app = _app(request=request())
         app.state.model.egress_consent.create_request = AsyncMock(
             side_effect=RuntimeError("db gone")
         )
@@ -464,7 +464,7 @@ class TestConsentCoordinatorGate:
 
 class TestConsentCoordinatorFanout:
     async def test_hold_broadcasts_egress_request_to_deciders(self):
-        app = _app(request=_request())
+        app = _app(request=request())
         coord = ConsentCoordinator(app)
         await coord.hold(FULL_WS, "1.2.3.4", 443)
         app.state.consent_deciders.broadcast.assert_called_once()
@@ -475,9 +475,9 @@ class TestConsentCoordinatorFanout:
         assert frame["request"]["id"] == "rid-1"
 
     async def test_resolve_broadcasts_egress_resolved(self):
-        row = _request()
+        row = request()
         row["decision"] = "allowed"
-        app = _app(request=_request(), decide_row=row)
+        app = _app(request=request(), decide_row=row)
         coord = ConsentCoordinator(app)
         await coord.hold(FULL_WS, "1.2.3.4", 443)
         app.state.consent_deciders.broadcast.reset_mock()
@@ -498,13 +498,13 @@ class TestConsentCoordinatorFanout:
     async def test_resolve_broadcasts_rules_after_verdict(self):
         # A verdict landing refreshes the deciders' in-effect rules view
         # (#2335 slice A).
-        row = _request()
+        row = request()
         row["decision"] = "allowed"
         row["duration"] = (
             "tilrestart"  # a real in-effect duration (once would be excluded)
         )
         app = _app(
-            request=_request(),
+            request=request(),
             decide_row=row,
             active_rows=[row],
             allowed_domains=["static.example.com"],
@@ -531,9 +531,9 @@ class TestConsentCoordinatorFanout:
     async def test_resolve_rejects_verdict_outside_decider_workspace(self):
         # defense-in-depth: a workspace-scoped decider may not decide another
         # workspace's request; the hold stays for a scoped decider.
-        row = _request()
+        row = request()
         row["decision"] = "allowed"
-        app = _app(request=_request(), decide_row=row)
+        app = _app(request=request(), decide_row=row)
         coord = ConsentCoordinator(app)
         await coord.hold(FULL_WS, "1.2.3.4", 443)
         verdict = await coord.resolve(
@@ -544,7 +544,7 @@ class TestConsentCoordinatorFanout:
         app.state.model.egress_consent.decide.assert_not_awaited()
 
     async def test_timeout_broadcasts_expired(self):
-        app = _app(timeout=0.05, request=_request())
+        app = _app(timeout=0.05, request=request())
         coord = ConsentCoordinator(app)
         await coord.hold(FULL_WS, "1.2.3.4", 443)
         app.state.consent_deciders.broadcast.reset_mock()
@@ -556,9 +556,9 @@ class TestConsentCoordinatorFanout:
     async def test_broadcast_rules_swallows_refresh_failure(self):
         # A rules-frame DB failure during the post-verdict refresh must not
         # break resolve (best-effort: the sidecar already has its verdict).
-        row = _request()
+        row = request()
         row["decision"] = "allowed"
-        app = _app(request=_request(), decide_row=row)
+        app = _app(request=request(), decide_row=row)
         coord = ConsentCoordinator(app)
         await coord.hold(FULL_WS, "1.2.3.4", 443)
         app.state.model.workspaces.get_workspace = AsyncMock(
@@ -569,7 +569,7 @@ class TestConsentCoordinatorFanout:
         assert verdict["decision"] == "allow"
 
     async def test_snapshot_replays_pending_requests(self):
-        rows = [_request("a"), _request("b")]
+        rows = [request("a"), request("b")]
         app = _app(pending_rows=rows)
         coord = ConsentCoordinator(app)
         # Only DB-pending rows that are also currently held are replayed (a
@@ -589,7 +589,7 @@ class TestConsentCoordinatorFanout:
         # connection) must NOT be replayed to a reconnecting decider, or it
         # lingers as already-resolved (#2345 e2e flake). _holds.pop is
         # synchronous in resolve, so the membership check is race-free.
-        rows = [_request("a"), _request("b")]
+        rows = [request("a"), request("b")]
         app = _app(pending_rows=rows)
         coord = ConsentCoordinator(app)
         coord._holds.update({"a": {}})  # only "a" still held; "b" resolved
@@ -765,7 +765,7 @@ class TestConsentCoordinatorHoldPaused:
         # auto-allowed at once -- no hold, no pending row, no static denial.
         import time
 
-        app = _app(request=_request())
+        app = _app(request=request())
         app.state.model.workspaces.get_consent_pause = AsyncMock(
             return_value=time.time() + 600
         )
@@ -783,7 +783,7 @@ class TestConsentCoordinatorHoldPaused:
         # not override existing verdicts).
         import time
 
-        app = _app(request=_request())
+        app = _app(request=request())
         app.state.model.workspaces.get_consent_pause = AsyncMock(
             return_value=time.time() + 600
         )
@@ -809,7 +809,7 @@ class TestConsentCoordinatorHoldPaused:
         # An in-effect ALLOW verdict is respected too (allow either way).
         import time
 
-        app = _app(request=_request())
+        app = _app(request=request())
         app.state.model.workspaces.get_consent_pause = AsyncMock(
             return_value=time.time() + 600
         )
@@ -829,7 +829,7 @@ class TestConsentCoordinatorHoldPaused:
     async def test_expired_pause_falls_through_to_normal_gate(self):
         # A pause whose window elapsed is not paused -> the normal interactive
         # gate applies (here: a decider is present -> hold).
-        app = _app(request=_request())
+        app = _app(request=request())
         app.state.model.workspaces.get_consent_pause = AsyncMock(
             return_value=1.0  # past
         )
@@ -845,7 +845,7 @@ class TestConsentCoordinatorHoldPaused:
         # outer guard fail-closes to deny.
         import time
 
-        app = _app(request=_request())
+        app = _app(request=request())
         app.state.model.workspaces.get_consent_pause = AsyncMock(
             return_value=time.time() + 600
         )
@@ -860,9 +860,9 @@ class TestConsentCoordinatorHoldPaused:
 
 class TestConsentCoordinatorResolve:
     async def test_resolve_allow_records_and_releases(self):
-        row = _request()
+        row = request()
         row["decision"] = "allowed"
-        app = _app(request=_request(), decide_row=row)
+        app = _app(request=request(), decide_row=row)
         coord = ConsentCoordinator(app)
         fut = await coord.hold(FULL_WS, "1.2.3.4", 443)
         verdict = await coord.resolve("rid-1", "allowed", "a@x", duration="1d")
@@ -882,9 +882,9 @@ class TestConsentCoordinatorResolve:
         assert coord._holds == {}
 
     async def test_resolve_deny_releases_deny(self):
-        row = _request()
+        row = request()
         row["decision"] = "denied"
-        app = _app(request=_request(), decide_row=row)
+        app = _app(request=request(), decide_row=row)
         coord = ConsentCoordinator(app)
         fut = await coord.hold(FULL_WS, "1.2.3.4", 443)
         verdict = await coord.resolve("rid-1", "denied", "a@x", duration="15m")
@@ -896,14 +896,14 @@ class TestConsentCoordinatorResolve:
         assert fut.result()["decision"] == "deny"
 
     async def test_resolve_unknown_returns_none(self):
-        app = _app(request=_request())
+        app = _app(request=request())
         coord = ConsentCoordinator(app)
         assert await coord.resolve("nope", "allowed", "a@x") is None
 
     async def test_resolve_after_decide_returns_none_fail_closes(self):
         # decide() returns None (row no longer pending -- concurrent expiry):
         # the hold fail-closes to deny.
-        app = _app(request=_request(), decide_row=None)
+        app = _app(request=request(), decide_row=None)
         coord = ConsentCoordinator(app)
         fut = await coord.hold(FULL_WS, "1.2.3.4", 443)
         verdict = await coord.resolve("rid-1", "allowed", "a@x")
@@ -911,7 +911,7 @@ class TestConsentCoordinatorResolve:
         assert fut.result()["decision"] == "deny"
 
     async def test_resolve_cancels_the_timeout(self):
-        app = _app(timeout=0.05, request=_request(), decide_row=_request())
+        app = _app(timeout=0.05, request=request(), decide_row=request())
         coord = ConsentCoordinator(app)
         fut = await coord.hold(FULL_WS, "1.2.3.4", 443)
         await coord.resolve("rid-1", "allowed", "a@x")
@@ -923,7 +923,7 @@ class TestConsentCoordinatorResolve:
     async def test_resolve_fail_closes_when_decide_raises(self):
         # decide() raising (DB error) must not orphan the Future -- the hold's
         # timeout is already cancelled, so resolve fail-closes to deny itself.
-        app = _app(request=_request())
+        app = _app(request=request())
         app.state.model.egress_consent.decide = AsyncMock(
             side_effect=RuntimeError("db gone")
         )
@@ -941,9 +941,9 @@ class TestConsentCoordinatorResolve:
     async def test_concurrent_resolves_first_decision_wins(self):
         # two deciders resolve the same hold concurrently: exactly one wins
         # (one decide() write), the other is a no-op (returns None).
-        row = _request()
+        row = request()
         row["decision"] = "allowed"
-        app = _app(request=_request(), decide_row=row)
+        app = _app(request=request(), decide_row=row)
         coord = ConsentCoordinator(app)
         await coord.hold(FULL_WS, "1.2.3.4", 443)
         v1, v2 = await asyncio.gather(
@@ -960,9 +960,9 @@ class TestConsentCoordinatorResolve:
         # A `forever` allow persists by appending the consented host:port to
         # the workspace's allowed_domains (#2368) -- least-privilege (the port
         # the decider was shown), lowercased + deduped by the model.
-        row = _request()  # host 1.2.3.4, port 443
+        row = request()  # host 1.2.3.4, port 443
         row["decision"] = "allowed"
-        app = _app(request=_request(), decide_row=row)
+        app = _app(request=request(), decide_row=row)
         coord = ConsentCoordinator(app)
         fut = await coord.hold(FULL_WS, "1.2.3.4", 443)
         verdict = await coord.resolve(
@@ -982,9 +982,9 @@ class TestConsentCoordinatorResolve:
     async def test_timed_allow_does_not_mutate_allowed_domains(self):
         # Only `forever` mutates allowed_domains; a timed allow ("1d") is a
         # plain in-memory learn (no list mutation).
-        row = _request()
+        row = request()
         row["decision"] = "allowed"
-        app = _app(request=_request(), decide_row=row)
+        app = _app(request=request(), decide_row=row)
         coord = ConsentCoordinator(app)
         await coord.hold(FULL_WS, "1.2.3.4", 443)
         await coord.resolve("rid-1", "allowed", "a@x", duration="1d")
@@ -994,9 +994,9 @@ class TestConsentCoordinatorResolve:
         # A persistence failure (model raises) is swallowed: the verdict is
         # still allow and the rules refresh still fires (best-effort
         # durability; the session's in-memory ACCEPT already covers it).
-        row = _request()
+        row = request()
         row["decision"] = "allowed"
-        app = _app(request=_request(), decide_row=row)
+        app = _app(request=request(), decide_row=row)
         app.state.model.workspaces.add_allowed_domain = AsyncMock(
             side_effect=RuntimeError("db gone")
         )
@@ -1011,10 +1011,10 @@ class TestConsentCoordinatorResolve:
     async def test_forever_allow_missing_host_skips_persist(self):
         # No host in the row -> nothing to persist; the verdict still lands
         # (best-effort durability; the session's in-memory ACCEPT covers it).
-        row = _request()
+        row = request()
         row["decision"] = "allowed"
         row["dest_host"] = None
-        app = _app(request=_request(), decide_row=row)
+        app = _app(request=request(), decide_row=row)
         coord = ConsentCoordinator(app)
         await coord.hold(FULL_WS, "1.2.3.4", 443)
         verdict = await coord.resolve(
@@ -1026,9 +1026,9 @@ class TestConsentCoordinatorResolve:
     async def test_forever_allow_not_persisted_still_succeeds(self):
         # add_allowed_domain returns False (workspace missing / malformed):
         # logged as a warning, but the verdict still lands.
-        row = _request()
+        row = request()
         row["decision"] = "allowed"
-        app = _app(request=_request(), decide_row=row)
+        app = _app(request=request(), decide_row=row)
         app.state.model.workspaces.add_allowed_domain = AsyncMock(
             return_value=False
         )
@@ -1044,9 +1044,9 @@ class TestConsentCoordinatorResolve:
         # A `forever` deny persists by appending the consented host:port to
         # the workspace's rejected_domains (#2369) -- the mirror of the allow
         # side. It must NOT touch allowed_domains (a deny is never an allow).
-        row = _request()  # host 1.2.3.4, port 443
+        row = request()  # host 1.2.3.4, port 443
         row["decision"] = "denied"
-        app = _app(request=_request(), decide_row=row)
+        app = _app(request=request(), decide_row=row)
         coord = ConsentCoordinator(app)
         fut = await coord.hold(FULL_WS, "1.2.3.4", 443)
         verdict = await coord.resolve(
@@ -1066,9 +1066,9 @@ class TestConsentCoordinatorResolve:
     async def test_forever_deny_persist_failure_does_not_break_verdict(self):
         # Mirror of the allow side: a persistence failure (model raises) is
         # swallowed -- the verdict is still deny (best-effort durability).
-        row = _request()
+        row = request()
         row["decision"] = "denied"
-        app = _app(request=_request(), decide_row=row)
+        app = _app(request=request(), decide_row=row)
         app.state.model.workspaces.add_rejected_domain = AsyncMock(
             side_effect=RuntimeError("db gone")
         )
@@ -1081,10 +1081,10 @@ class TestConsentCoordinatorResolve:
         app.state.model.workspaces.add_rejected_domain.assert_awaited_once()
 
     async def test_forever_deny_missing_host_skips_persist(self):
-        row = _request()
+        row = request()
         row["decision"] = "denied"
         row["dest_host"] = None
-        app = _app(request=_request(), decide_row=row)
+        app = _app(request=request(), decide_row=row)
         coord = ConsentCoordinator(app)
         await coord.hold(FULL_WS, "1.2.3.4", 443)
         verdict = await coord.resolve(
@@ -1096,9 +1096,9 @@ class TestConsentCoordinatorResolve:
     async def test_forever_deny_not_persisted_still_succeeds(self):
         # add_rejected_domain returns False (workspace missing/malformed):
         # logged as a warning, but the verdict still lands.
-        row = _request()
+        row = request()
         row["decision"] = "denied"
-        app = _app(request=_request(), decide_row=row)
+        app = _app(request=request(), decide_row=row)
         app.state.model.workspaces.add_rejected_domain = AsyncMock(
             return_value=False
         )
@@ -1115,10 +1115,10 @@ class TestConsentCoordinatorResolve:
         # host: reject enforcement is name-level (port ignored), so blocking
         # the whole host is the safe, natural unit of a deny, and withholding
         # it would make a `forever` deny silently non-durable across restart.
-        row = _request()
+        row = request()
         row["decision"] = "denied"
         row["dest_port"] = 0
-        app = _app(request=_request(), decide_row=row)
+        app = _app(request=request(), decide_row=row)
         coord = ConsentCoordinator(app)
         await coord.hold(FULL_WS, "1.2.3.4", 443)
         verdict = await coord.resolve(
@@ -1135,10 +1135,10 @@ class TestConsentCoordinatorResolve:
         # bare host would broaden to all-ports + subdomains (#2371 review).
         # The deciding connection still gets its in-memory ACCEPT (verdict
         # allow); only durability is withheld.
-        row = _request()
+        row = request()
         row["decision"] = "allowed"
         row["dest_port"] = 0
-        app = _app(request=_request(), decide_row=row)
+        app = _app(request=request(), decide_row=row)
         coord = ConsentCoordinator(app)
         await coord.hold(FULL_WS, "1.2.3.4", 443)
         verdict = await coord.resolve(
@@ -1150,9 +1150,9 @@ class TestConsentCoordinatorResolve:
     async def test_forever_allow_blocked_outside_decider_workspace(self):
         # defense-in-depth: a workspace-scoped decider may not decide another
         # workspace's request -> no verdict, no allowed_domains mutation.
-        row = _request()
+        row = request()
         row["decision"] = "allowed"
-        app = _app(request=_request(), decide_row=row)
+        app = _app(request=request(), decide_row=row)
         coord = ConsentCoordinator(app)
         await coord.hold(FULL_WS, "1.2.3.4", 443)
         verdict = await coord.resolve(
@@ -1169,7 +1169,7 @@ class TestConsentCoordinatorResolve:
 
 class TestConsentCoordinatorTimeout:
     async def test_timeout_expires_and_denies(self):
-        app = _app(timeout=0.05, request=_request())
+        app = _app(timeout=0.05, request=request())
         coord = ConsentCoordinator(app)
         fut = await coord.hold(FULL_WS, "1.2.3.4", 443)
         verdict = await fut
@@ -1185,7 +1185,7 @@ class TestConsentCoordinatorTimeout:
 
     async def test_timeout_noops_if_resolved_first(self):
         # resolve wins the race -> the timeout task is cancelled before wake.
-        app = _app(timeout=0.05, request=_request(), decide_row=_request())
+        app = _app(timeout=0.05, request=request(), decide_row=request())
         coord = ConsentCoordinator(app)
         fut = await coord.hold(FULL_WS, "1.2.3.4", 443)
         await coord.resolve("rid-1", "allowed", "a@x")
@@ -1203,7 +1203,7 @@ class TestConsentCoordinatorTimeout:
     async def test_timeout_still_denies_when_expire_raises(self):
         # expire_pending failing must not strand the hold -- it logs + still
         # resolves the Future deny.
-        app = _app(timeout=0.05, request=_request())
+        app = _app(timeout=0.05, request=request())
         app.state.model.egress_consent.expire_pending = AsyncMock(
             side_effect=RuntimeError("db gone")
         )
@@ -1222,12 +1222,12 @@ class TestConsentCoordinatorTimeout:
 
 class TestConsentCoordinatorStop:
     async def test_stop_fail_closes_all_holds(self):
-        app = _app(request=_request("r1"))
+        app = _app(request=request("r1"))
         coord = ConsentCoordinator(app)
         await coord.hold(FULL_WS, "1.2.3.4", 443)
         # second hold with a distinct request id
         app.state.model.egress_consent.create_request = AsyncMock(
-            return_value=_request("r2")
+            return_value=request("r2")
         )
         await coord.hold(FULL_WS, "5.6.7.8", 80)
         assert len(coord._holds) == 2
@@ -1240,7 +1240,7 @@ class TestConsentCoordinatorStop:
         assert expired == {"r1", "r2"}
 
     async def test_stop_is_idempotent(self):
-        app = _app(request=_request())
+        app = _app(request=request())
         coord = ConsentCoordinator(app)
         await coord.stop()
         await coord.stop()
@@ -1249,9 +1249,9 @@ class TestConsentCoordinatorStop:
 
 class TestConsentCoordinatorReconfigure:
     async def test_reconfigure_swaps_app(self):
-        app = _app(request=_request())
+        app = _app(request=request())
         coord = ConsentCoordinator(app)
-        new_app = _app(timeout=1.0, request=_request())
+        new_app = _app(timeout=1.0, request=request())
         coord.reconfigure(new_app)
         assert coord.app is new_app
         assert coord.timeout == 1.0
@@ -1659,11 +1659,11 @@ class TestCoordinatorBranchGaps2834:
         # fail_all iterates a snapshot; a hold resolved+removed while an
         # earlier one is being fail-closed is simply skipped (its task
         # cancel is skipped, its _fail_close is a no-op).
-        app = _app(request=_request("r1"))
+        app = _app(request=request("r1"))
         coord = ConsentCoordinator(app)
         await coord.hold(FULL_WS, "1.2.3.4", 443)
         app.state.model.egress_consent.create_request = AsyncMock(
-            return_value=_request("r2")
+            return_value=request("r2")
         )
         await coord.hold(FULL_WS, "5.6.7.8", 80)
         real_fail_close = coord._fail_close
@@ -1683,7 +1683,7 @@ class TestCoordinatorBranchGaps2834:
         # A hold whose future was already resolved (a racing timeout)
         # must not be overwritten by the decide path -- the verdict that
         # landed first wins.
-        app = _app(request=_request())
+        app = _app(request=request())
         coord = ConsentCoordinator(app)
         fut = await coord.hold(FULL_WS, "1.2.3.4", 443)
         fut.set_result(
@@ -1695,7 +1695,7 @@ class TestCoordinatorBranchGaps2834:
     async def test_fail_close_with_already_done_future_skips_set_result(self):
         # Same race on the timeout path: an already-resolved future keeps
         # its first verdict; the expire bookkeeping still runs.
-        app = _app(timeout=0.05, request=_request())
+        app = _app(timeout=0.05, request=request())
         coord = ConsentCoordinator(app)
         fut = await coord.hold(FULL_WS, "1.2.3.4", 443)
         fut.set_result(

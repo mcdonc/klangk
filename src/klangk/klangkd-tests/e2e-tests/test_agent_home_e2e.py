@@ -208,7 +208,7 @@ class TestAgentHomeE2E:
         """The shared home exists immediately after a container is brought
         up via start_workspace — with NO WS connection preceding the check.
 
-        Nothing but the create choke point (``_bringup`` →
+        Nothing but the create choke point (``bringup`` →
         ``ensure_shared_home``) materializes ``/home/klangk`` — the home
         volume mounts at ``/home`` and shadows the image's own content —
         so a populated ``/home/klangk`` (with ``.profile``) must be there

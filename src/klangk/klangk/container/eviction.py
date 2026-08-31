@@ -349,7 +349,7 @@ class MemoryPressureEvictor:
                 MIN_POLL_INTERVAL_SECONDS,
                 settings.memory_eviction_enabled,
             )
-            self._task = asyncio.create_task(self._run())
+            self._task = asyncio.create_task(self.run())
 
     async def stop(self) -> None:
         """Cancel the eviction loop.
@@ -547,7 +547,7 @@ class MemoryPressureEvictor:
             return below, pressured
         return 0, pressured
 
-    async def _run(self) -> None:
+    async def run(self) -> None:
         """Poll loop: measure, sustain, evict, hysteresis.
 
         Sleeps ``memory_eviction_poll_interval`` (floored at

@@ -82,7 +82,7 @@ def _session_user_handle(
     """The user's handle from any active connection.
 
     The agent (AGENT_USER_ID) has no WS connection, so its handle is the
-    cached ``agent_handle`` populated by ``_sync_service_windows`` -- the
+    cached ``agent_handle`` populated by ``sync_service_windows`` -- the
     agent is always attributable, never "offline" (#1133)."""
     if user_id == model.AGENT_USER_ID:
         return ws_session.agent_handle
@@ -226,7 +226,7 @@ class WorkspaceSession:
         # attributable (and visible in the shared list) even though the
         # agent has no active WS connection -- the agent is never
         # "offline" the way the owner could be under the old model
-        # (#1133). Populated by ``_sync_service_windows``.
+        # (#1133). Populated by ``sync_service_windows``.
         self.agent_handle: str | None = None
         # Workspace token renewal tracking.
         self.workspace_token_expiry: datetime | None = None

@@ -43,7 +43,7 @@ async def test_read_loop_dispatches_only_relevant_events():
     stdout = MagicMock()
     stdout.readline = AsyncMock(side_effect=lines)
     watcher._proc = MagicMock(stdout=stdout, returncode=None)
-    await watcher._read_loop()
+    await watcher.read_loop()
     assert calls == [1, 1, 1]
 
 
@@ -51,7 +51,7 @@ async def test_read_loop_ignores_dead_socket():
     # No stdout / no proc → no-op, no crash.
     watcher = WindowEventWatcher(MagicMock(), "cid", lambda: None)
     watcher._proc = None
-    await watcher._read_loop()  # returns immediately
+    await watcher.read_loop()  # returns immediately
 
 
 async def test_read_loop_propagates_cancellation():
@@ -63,7 +63,7 @@ async def test_read_loop_propagates_cancellation():
     stdout = MagicMock()
     stdout.readline = block_forever
     watcher._proc = MagicMock(stdout=stdout, returncode=None)
-    task = asyncio.create_task(watcher._read_loop())
+    task = asyncio.create_task(watcher.read_loop())
     await asyncio.sleep(0)  # let it start awaiting readline
     task.cancel()
     with pytest.raises(asyncio.CancelledError):

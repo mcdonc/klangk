@@ -26,7 +26,7 @@ whose memory limit is unset (unbounded) skip the fit check: there is no
 limit to admit against.
 
 The check runs at the single container-start choke point
-(``ContainerRegistry._start_container_inner``, right after the #2527
+(``ContainerRegistry.start_container_inner``, right after the #2527
 drain gate), so every start path — API start/restart, WS connect,
 create's eager start, boot auto-start, crash-recovery restart — is
 covered, while a reconnect to an already-running workspace (container

@@ -94,7 +94,7 @@ CONSENT_REJECT_TTL = float(os.environ.get("KLANGKNETWORK_EGRESS_REJECT_TTL", "10
 # stdout. Off by default -- a denied connection's SYN retransmits each hit the
 # cached deny and re-forge an RST, which would spam a production sidecar's log.
 # The egress smoketest enables it (KLANGKNETWORK_EGRESS_DEBUG_RST=1, forwarded
-# by ContainerManager._start_network_sidecar) and captures the sidecar's podman
+# by ContainerManager.start_network_sidecar) and captures the sidecar's podman
 # log so a fast-refuse miss is diagnosable after the run.
 RST_DEBUG = os.environ.get("KLANGKNETWORK_EGRESS_DEBUG_RST", "") == "1"
 

@@ -386,7 +386,7 @@ async def test_fuse_destroy_warns_on_unmount_error(
 
 
 class _SlowProc:
-    """A proc whose communicate() never resolves — for the _run timeout test."""
+    """A proc whose communicate() never resolves — for the run timeout test."""
 
     def __init__(self):
         self.killed = False
@@ -428,7 +428,7 @@ async def test_run_timeout_raises_nixerror_and_kills(monkeypatch):
     monkeypatch.setattr(nix.asyncio, "create_subprocess_exec", fake_exec)
     n = Nix(_app("/seed", type="fuse-overlayfs"))
     with pytest.raises(NixError, match="timed out"):
-        await n._run(["fuse-overlayfs"], timeout=0.05)
+        await n.run(["fuse-overlayfs"], timeout=0.05)
     assert proc.killed
 
 

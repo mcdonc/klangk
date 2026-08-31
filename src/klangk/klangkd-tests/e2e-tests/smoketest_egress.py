@@ -1173,7 +1173,7 @@ class SmokeTest:
             # eager-deny RST is the primary fast-refuse, so when a denied
             # connection instead times out (exit 28), the captured sidecar log
             # shows whether each RST fired. Forwarded by
-            # ContainerManager._start_network_sidecar; captured to
+            # ContainerManager.start_network_sidecar; captured to
             # /tmp/smoke_sidecar_*.log by _capture_sidecar_logs at teardown.
             KLANGKNETWORK_EGRESS_DEBUG_RST="1",
             LOGFIRE_TOKEN="",
@@ -1182,7 +1182,7 @@ class SmokeTest:
         # (#2424): when --controlled-dns is on, every workspace the smoketest
         # creates resolves chosen names to single stable test IPs and forwards
         # the rest to a real resolver. Honored verbatim by
-        # _start_network_sidecar (mirrors the MIN_TTL/SWEEP forwarding above).
+        # start_network_sidecar (mirrors the MIN_TTL/SWEEP forwarding above).
         if self.dns is not None:
             kwargs["KLANGKNETWORK_EGRESS_UPSTREAM"] = self.dns.upstream_ip
         try:
@@ -2950,7 +2950,7 @@ class SmokeTest:
           2. Revoke A -> B STILL connects with no re-prompt (the revoke is a
              NO-op). Canary #1's B connect resolves B after A's allow, and
              ``_record_hosts`` keeps only the LATEST name per IP, so
-             ``_LEARNED[ip]["host"]`` is ``core-b`` when
+             ``LEARNED[ip]["host"]`` is ``core-b`` when
              ``drop_for_host("core-a")`` scans it: no rule is dropped and
              both hosts stay reachable (the under-removal half of #2352;
              the over-removal half -- revoke A of the name still on record
@@ -3094,7 +3094,7 @@ class SmokeTest:
             # 2) Revoke A -> today a NO-OP for this sequence. Canary #1's
             #    B connect re-resolved the shared IP, and _record_hosts
             #    keeps only the LATEST name per IP, so
-            #    _LEARNED[ip]["host"] is core-b by now;
+            #    LEARNED[ip]["host"] is core-b by now;
             #    drop_for_host("core-a") matches nothing, the shared ACCEPT
             #    survives, and A itself also stays reachable -- the
             #    under-removal half of #2352.

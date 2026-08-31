@@ -10,7 +10,7 @@ import types
 from klangk.podman import ExecSession, Podman
 from _helpers import make_settings
 
-_podman = Podman(
+podman = Podman(
     types.SimpleNamespace(
         state=types.SimpleNamespace(settings=make_settings({}))
     )
@@ -44,7 +44,7 @@ def _mock_proc(stdout_data=b"", returncode=None):
 
 class TestExecSession:
     async def test_start_and_output(self):
-        session = ExecSession("cid", _podman)
+        session = ExecSession("cid", podman)
         proc = _mock_proc(b"hello world")
         with patch(
             "asyncio.create_subprocess_exec",
@@ -64,7 +64,7 @@ class TestExecSession:
         transports (rsync) need: their argv must round-trip untouched,
         and a ~/.profile that prints must not corrupt the binary stream.
         """
-        session = ExecSession("cid", _podman)
+        session = ExecSession("cid", podman)
         proc = _mock_proc(b"")
         with patch(
             "asyncio.create_subprocess_exec",
@@ -87,7 +87,7 @@ class TestExecSession:
         command needs an explicit ``bash -c``. Each element survives as
         one word (no shlex/quoting games).
         """
-        session = ExecSession("cid", _podman)
+        session = ExecSession("cid", podman)
         proc = _mock_proc(b"")
         with patch(
             "asyncio.create_subprocess_exec",
@@ -115,7 +115,7 @@ class TestExecSession:
         and the e2e sync tests rely on, and what a naive space-join or
         ``shlex.join`` would each break in a different way.
         """
-        session = ExecSession("cid", _podman)
+        session = ExecSession("cid", podman)
         proc = _mock_proc(b"")
         cmd = ["bash", "-c", "echo remote-data > /home/klangk/out.txt"]
         with patch(
@@ -131,7 +131,7 @@ class TestExecSession:
         assert argv[-1] == "echo remote-data > /home/klangk/out.txt"
 
     async def test_write_sends_to_stdin(self):
-        session = ExecSession("cid", _podman)
+        session = ExecSession("cid", podman)
         proc = _mock_proc(b"")
         with patch(
             "asyncio.create_subprocess_exec",
@@ -142,7 +142,7 @@ class TestExecSession:
         proc.stdin.write.assert_called_with(b"input data")
 
     async def test_close_stdin(self):
-        session = ExecSession("cid", _podman)
+        session = ExecSession("cid", podman)
         proc = _mock_proc(b"")
         with patch(
             "asyncio.create_subprocess_exec",
@@ -153,7 +153,7 @@ class TestExecSession:
         proc.stdin.close.assert_called_once()
 
     async def test_stop_terminates_process(self):
-        session = ExecSession("cid", _podman)
+        session = ExecSession("cid", podman)
         proc = _mock_proc(b"", returncode=None)
         proc.wait = AsyncMock()
         with patch(
@@ -166,7 +166,7 @@ class TestExecSession:
         assert session._proc is None
 
     async def test_stop_kills_on_timeout(self):
-        session = ExecSession("cid", _podman)
+        session = ExecSession("cid", podman)
         proc = _mock_proc(b"", returncode=None)
         proc.wait = AsyncMock(side_effect=asyncio.TimeoutError)
         with patch(
@@ -178,7 +178,7 @@ class TestExecSession:
         proc.kill.assert_called_once()
 
     async def test_returncode(self):
-        session = ExecSession("cid", _podman)
+        session = ExecSession("cid", podman)
         proc = _mock_proc(b"", returncode=42)
         with patch(
             "asyncio.create_subprocess_exec",
@@ -188,12 +188,12 @@ class TestExecSession:
         assert session.returncode == 42
 
     async def test_returncode_none_when_no_proc(self):
-        session = ExecSession("cid", _podman)
+        session = ExecSession("cid", podman)
         assert session.returncode is None
 
     async def test_returncode_survives_stop(self):
         """returncode is still accessible after stop() nulls _proc."""
-        session = ExecSession("cid", _podman)
+        session = ExecSession("cid", podman)
         proc = _mock_proc(b"", returncode=7)
         proc.wait = AsyncMock()
         with patch(
@@ -207,23 +207,23 @@ class TestExecSession:
         assert session.returncode == 7
 
     async def test_is_alive_false_when_no_proc(self):
-        session = ExecSession("cid", _podman)
+        session = ExecSession("cid", podman)
         assert not session.is_alive
 
     async def test_write_noop_when_no_proc(self):
-        session = ExecSession("cid", _podman)
+        session = ExecSession("cid", podman)
         await session.write(b"data")  # should not raise
 
     async def test_close_stdin_noop_when_no_proc(self):
-        session = ExecSession("cid", _podman)
+        session = ExecSession("cid", podman)
         await session.close_stdin()  # should not raise
 
     async def test_stop_noop_when_no_proc(self):
-        session = ExecSession("cid", _podman)
+        session = ExecSession("cid", podman)
         await session.stop()  # should not raise
 
     async def test_read_stdout_handles_oserror(self):
-        session = ExecSession("cid", _podman)
+        session = ExecSession("cid", podman)
         proc = _mock_proc(b"")
         proc.stdout.read = AsyncMock(side_effect=OSError("broken"))
         with patch(
@@ -236,7 +236,7 @@ class TestExecSession:
         assert data is None
 
     async def test_read_task_held_after_start(self):
-        session = ExecSession("cid", _podman)
+        session = ExecSession("cid", podman)
         assert session._read_task is None
         proc = _mock_proc(b"hello")
         with patch(
@@ -248,7 +248,7 @@ class TestExecSession:
         assert isinstance(session._read_task, asyncio.Task)
 
     async def test_stop_cancels_read_task(self):
-        session = ExecSession("cid", _podman)
+        session = ExecSession("cid", podman)
         proc = _mock_proc(b"", returncode=None)
         proc.wait = AsyncMock()
         with patch(
@@ -261,7 +261,7 @@ class TestExecSession:
         assert session._read_task is None
 
     async def test_read_stdout_reraises_cancelled_error(self):
-        session = ExecSession("cid", _podman)
+        session = ExecSession("cid", podman)
         proc = _mock_proc(b"")
         blocked = asyncio.Event()
 
@@ -282,7 +282,7 @@ class TestExecSession:
             await session._read_task
 
     async def test_is_alive_false_when_read_task_done(self):
-        session = ExecSession("cid", _podman)
+        session = ExecSession("cid", podman)
         proc = _mock_proc(b"output")
         # returncode stays None so is_alive would be True without
         # the read_task.done() check
@@ -298,7 +298,7 @@ class TestExecSession:
 
     async def test_sentinel_uses_put_nowait(self):
         """_read_stdout uses put_nowait for the sentinel."""
-        session = ExecSession("cid", _podman)
+        session = ExecSession("cid", podman)
         proc = _mock_proc(b"")
         with patch(
             "asyncio.create_subprocess_exec",
@@ -311,7 +311,7 @@ class TestExecSession:
 
     async def test_sentinel_dropped_when_queue_full(self):
         """When queue is full, sentinel is silently dropped (no deadlock)."""
-        session = ExecSession("cid", _podman)
+        session = ExecSession("cid", podman)
         session._running = True
         # Pre-fill the queue to capacity
         for _ in range(64):
@@ -333,7 +333,7 @@ class TestExecSession:
 
     async def test_output_exits_when_running_cleared_without_sentinel(self):
         """output() exits via _running check when sentinel is dropped."""
-        session = ExecSession("cid", _podman)
+        session = ExecSession("cid", podman)
         proc = _mock_proc(b"data")
         with patch(
             "asyncio.create_subprocess_exec",
@@ -364,7 +364,7 @@ class TestExecSession:
     async def test_output_exits_when_read_task_done_without_sentinel(self):
         """When sentinel is dropped and _running is True, output() exits
         via _read_task.done() check after timeout."""
-        session = ExecSession("cid", _podman)
+        session = ExecSession("cid", podman)
         proc = _mock_proc(b"data")
         with patch(
             "asyncio.create_subprocess_exec",
@@ -396,7 +396,7 @@ class TestExecSession:
         await session.stop()
 
     async def test_default_work_dir(self):
-        session = ExecSession("cid", _podman)
+        session = ExecSession("cid", podman)
         proc = _mock_proc(b"")
         with patch(
             "asyncio.create_subprocess_exec",
@@ -411,7 +411,7 @@ class TestExecSession:
     async def test_user_home_sets_env_and_work_dir(self):
         session = ExecSession(
             "cid",
-            _podman,
+            podman,
             env=["HOME=/home/alice"],
             work_dir="/home/alice",
         )
@@ -427,7 +427,7 @@ class TestExecSession:
         assert cmd[w_idx + 1] == "/home/alice"
 
     async def test_no_home_env_without_user_home(self):
-        session = ExecSession("cid", _podman)
+        session = ExecSession("cid", podman)
         proc = _mock_proc(b"")
         with patch(
             "asyncio.create_subprocess_exec",
@@ -440,7 +440,7 @@ class TestExecSession:
     async def test_ssh_agent_socket_in_env(self):
         session = ExecSession(
             "cid",
-            _podman,
+            podman,
             env=["HOME=/home/alice", "SSH_AUTH_SOCK=/tmp/agent.sock"],
             work_dir="/home/alice",
         )
@@ -459,7 +459,7 @@ class TestExecOutputBranchGaps2834:
         """#2834: the generator's while-condition exit -- data arrives
         after _running was cleared, is yielded once, then the loop
         re-checks the flag and exits (not via the timeout break)."""
-        session = ExecSession("cid", _podman)
+        session = ExecSession("cid", podman)
         proc = _mock_proc(b"data")
         with patch(
             "asyncio.create_subprocess_exec",

@@ -169,7 +169,7 @@ if os.environ.get("KLANGKD_TEST_MODE"):  # pragma: no cover
         for bid, (
             ws_id,
             sock,
-        ) in app.state.container_registry._browsers.items():
+        ) in app.state.container_registry.browser_routes.items():
             if ws_id == workspace_id:
                 email = None
                 if sock is not None:

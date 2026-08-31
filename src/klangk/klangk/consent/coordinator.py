@@ -195,7 +195,7 @@ class ConsentCoordinator:
                 fut = loop.create_future()
                 fut.set_result(verdict)
                 return fut
-            if not await self._is_interactive(workspace_id):
+            if not await self.is_interactive(workspace_id):
                 await self.app.state.model.egress_consent.record_static_denial(
                     workspace_id, dst, dport
                 )
@@ -803,7 +803,7 @@ class ConsentCoordinator:
         if frame is not None:
             self.app.state.consent_deciders.broadcast(workspace_id, frame)
 
-    async def _is_interactive(self, workspace_id: str) -> bool:
+    async def is_interactive(self, workspace_id: str) -> bool:
         """Interactive iff the workspace opted in AND a live decider exists (#2308)."""
         return await workspace_is_interactive(self.app, workspace_id)
 

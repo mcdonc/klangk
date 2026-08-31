@@ -229,7 +229,7 @@ class StatusScreen(Screen):
     The bar renders App-level state (``app.live_extra``, ``app.last_login``)
     via :meth:`refresh_status_bar`. Freshness is driven from the App:
     ``KlangkApp.refresh_status`` re-renders every mounted ``StatusScreen``
-    after each push/pop (the ``_sync_chrome`` pattern — screens don't re-run
+    after each push/pop (the ``sync_chrome`` pattern — screens don't re-run
     on pop-back) and whenever a status WS event updates ``live_extra`` on
     the MainScreen underneath. Subclasses only implement
     :meth:`compose_body`; an ``on_show`` override needs no ``super()``
@@ -639,8 +639,8 @@ class CheatsheetScreen(ModalScreen):
     Lists the active screen's keybindings grouped by context. Dismissed
     with Escape or ``?`` (pressed again). Construct with ``sections`` — a
     list of ``(group_title, [(display_key, description), ...])``; each
-    screen supplies its own (see ``MainScreen._cheatsheet_sections`` /
-    ``WorkspaceDetailScreen._cheatsheet_sections``) so the content adapts
+    screen supplies its own (see ``MainScreen.cheatsheet_sections`` /
+    ``WorkspaceDetailScreen.cheatsheet_sections``) so the content adapts
     to the current screen.
     """
 
@@ -739,12 +739,12 @@ class TransferScreen(ModalScreen):
         )
 
     def on_mount(self) -> None:
-        self.run_worker(self._run, exit_on_error=False)
+        self.run_worker(self.run, exit_on_error=False)
 
-    async def _run(self) -> None:
+    async def run(self) -> None:
         def on_progress(done, total):
             # Fires inside the worker thread — hop back to the UI thread.
-            self.app.call_from_thread(self._update, done, total)
+            self.app.call_from_thread(self.update, done, total)
 
         try:
             await asyncio.to_thread(self._make_call, on_progress)
@@ -753,7 +753,7 @@ class TransferScreen(ModalScreen):
             return
         self.dismiss((True, self._success_msg))
 
-    def _update(self, done: float, total: float | None) -> None:
+    def update(self, done: float, total: float | None) -> None:
         bar = self.query_one("#xfer_bar", ProgressBar)
         if total:
             bar.update(total=total, progress=done)

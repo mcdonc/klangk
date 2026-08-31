@@ -2,7 +2,7 @@
 
 One socket per workspace, reconnected on drop. request() sends an egress frame
 and awaits the matching verdict; fail-close -> deny so the workspace never
-hangs. _handle_drop_rule applies klangkd revocations (#2339).
+hangs. handle_drop_rule applies klangkd revocations (#2339).
 """
 
 from __future__ import annotations
@@ -61,7 +61,7 @@ class SidecarConsentClient:
     unreachable -- the workspace never hangs on a pending connection.
 
     All ``_pending`` state lives on the event-loop thread (coroutines +
-    ``_run``'s receive loop); the NFQUEUE consumer is itself loop-driven
+    ``run``'s receive loop); the NFQUEUE consumer is itself loop-driven
     (``get_fd`` + ``add_reader``) and calls :meth:`request` directly, so it
     never crosses threads or touches ``_pending`` from outside the loop.
     """
@@ -86,7 +86,7 @@ class SidecarConsentClient:
         return self._connected.is_set()
 
     async def start(self) -> None:
-        self._task = asyncio.create_task(self._run())
+        self._task = asyncio.create_task(self.run())
 
     async def stop(self) -> None:
         self._stop = True
@@ -112,7 +112,7 @@ class SidecarConsentClient:
                 pass
         self._fail_close_pending()
 
-    async def _run(self) -> None:
+    async def run(self) -> None:
         backoff = 1.0
         while not self._stop:
             token = self._read_token()
@@ -177,7 +177,7 @@ class SidecarConsentClient:
         if mtype == "verdict":
             self.apply_verdict(msg)
         elif mtype == "drop_rule":
-            await self._handle_drop_rule(msg)
+            await self.handle_drop_rule(msg)
 
     def apply_verdict(self, msg: dict) -> None:
         vid = msg.get("id")
@@ -191,7 +191,7 @@ class SidecarConsentClient:
             duration = msg.get("duration") or "once"
             fut.set_result((token, duration))
 
-    async def _handle_drop_rule(self, msg: dict) -> None:
+    async def handle_drop_rule(self, msg: dict) -> None:
         """klangkd asked us to drop a host's rules (revocation, #2339).
 
         Runs :func:`drop_for_host` off the loop (it forks iptables) and acks

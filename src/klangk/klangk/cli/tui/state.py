@@ -362,7 +362,7 @@ class TuiState:
         Auth-gated on ``/api/v1/config`` (absent from the pre-auth payload),
         so this uses the authed client — ``fetch_config`` would not see it.
         Mirrors the Flutter dialog's ``defaultAllowedDomains``. Raises on a
-        transport/server error; ``_do_create`` catches that and falls back
+        transport/server error; ``do_create`` catches that and falls back
         to an empty list so the form still opens.
         """
         cfg = self.client().config()

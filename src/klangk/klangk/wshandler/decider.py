@@ -100,7 +100,7 @@ async def _refuse_invalid_handshake(
     (its non-allow-listed egress is denied immediately with a static
     verdict). Refuse a workspace-scoped decider at registration so the
     static/interactive boundary is structural (enforced here), not just
-    behavioral (the coordinator's hold-time ``_is_interactive`` gate stays
+    behavioral (the coordinator's hold-time ``is_interactive`` gate stays
     as defense-in-depth). Reads the same egress_mode the coordinator does.
     Deploy-wide deciders (workspace None) are unaffected -- they cover
     interactive workspaces without flipping a static one.

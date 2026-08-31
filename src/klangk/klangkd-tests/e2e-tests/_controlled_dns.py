@@ -22,7 +22,7 @@ The fixture drives the real stack only. It brings up two ordinary podman
 containers on the default ``podman`` network and points the real network
 sidecar's upstream resolver at the DNS container via the existing operator
 knob ``KLANGKNETWORK_EGRESS_UPSTREAM`` (honored by
-:meth:`ContainerManager._start_network_sidecar`, mirroring the
+:meth:`ContainerManager.start_network_sidecar`, mirroring the
 ``KLANGKNETWORK_EGRESS_MIN_TTL`` / ``SWEEP_INTERVAL`` forwarding). The sidecar's
 proxy then forwards the workspace's :53 queries to this fixture as it would any
 upstream -- the same REDIRECT + mark + learn path production uses.
@@ -219,7 +219,7 @@ class _Procs:
     map_path: str = ""  # host path of map.json (bind-mounted into dns)
 
 
-def _podman(*args: str, timeout: float = 60) -> str:
+def podman(*args: str, timeout: float = 60) -> str:
     """Run podman, return stdout (stripped); raise on non-zero."""
     r = subprocess.run(
         ["podman", *args],
@@ -237,7 +237,7 @@ def _podman(*args: str, timeout: float = 60) -> str:
 
 def _net_ip(name: str, network: str = DEFAULT_NETWORK) -> str:
     """The container's bridge IP on ``network`` via inspect."""
-    out = _podman(
+    out = podman(
         "inspect",
         name,
         "--format",
@@ -247,7 +247,7 @@ def _net_ip(name: str, network: str = DEFAULT_NETWORK) -> str:
 
 
 def _net_gw(name: str, network: str = DEFAULT_NETWORK) -> str:
-    out = _podman(
+    out = podman(
         "inspect",
         name,
         "--format",
@@ -369,7 +369,7 @@ class ControlledDns:
         #    can add the secondary slice it serves on. The secondary slice is
         #    derived from the gateway once we know it (below).
         self._p.target = "ctrl-dns-target-%d" % os.getpid()
-        _podman(
+        podman(
             "run",
             "-d",
             "--name",
@@ -407,7 +407,7 @@ class ControlledDns:
         # 2) dns: dynamic IP (this IS the sidecar upstream). Bind-mount the
         #    shared dir so it reads the live map at /mnt/map.json.
         self._p.dns = "ctrl-dns-dns-%d" % os.getpid()
-        _podman(
+        podman(
             "run",
             "-d",
             "--name",
@@ -443,7 +443,7 @@ class ControlledDns:
                 name = getattr(self._p, attr, "")
                 if name:
                     try:
-                        _podman("rm", "-f", name, timeout=30)
+                        podman("rm", "-f", name, timeout=30)
                     except Exception:
                         pass
                     setattr(self._p, attr, "")
@@ -563,7 +563,7 @@ class ControlledDns:
     def _install_target_ips(self) -> None:
         env = "CTRL_TARGET_IPS=" + ",".join(self._p.ips)
         # exec ip addr add for each; ignore "already exists" duplicates.
-        _podman(
+        podman(
             "exec",
             "-e",
             env,

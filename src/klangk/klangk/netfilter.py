@@ -268,7 +268,7 @@ class NetFilter:
         Armed = the master switch (``netfilter_enabled``) is on AND the
         network sidecar image is configured. A workspace with
         ``allowed_domains`` that starts when this is False is fail-closed at
-        ``_start_container_inner`` (it raises rather than running
+        ``start_container_inner`` (it raises rather than running
         unrestricted) — so the API warns early when an operator persists an
         allow-list on a deploy that can't enforce it (#1365).
         """
@@ -281,7 +281,7 @@ class NetFilter:
 
         Re-detected each call (cheap file read) so a SIGHUP settings reload
         or a host resolver change takes effect for the next workspace without
-        per-instance caching (#1365). ``_start_network_sidecar`` picks the
+        per-instance caching (#1365). ``start_network_sidecar`` picks the
         first one that differs from the REDIRECT target (1.1.1.1) for
         loop-avoidance."""
         return detect_host_resolvers()

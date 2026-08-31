@@ -40,7 +40,7 @@ PORT = str(free_port())
 WS_NAME = "e2e-twintest"
 
 
-def _run(args, timeout=120, input=None, **kwargs):
+def run(args, timeout=120, input=None, **kwargs):
     return subprocess.run(
         args,
         capture_output=True,
@@ -73,7 +73,7 @@ def _stop_server(server, data_dir=None):
 
 
 def _login(base_url, env):
-    _run(
+    run(
         [
             "klangk",
             "login",
@@ -357,8 +357,8 @@ class TestTerminalWindows:
     @pytest.fixture(autouse=True)
     def _fresh_workspace(self):
         """Create a fresh workspace for each test."""
-        _run(["klangk", "rm", WS_NAME], env=self._env)
-        result = _run(["klangk", "create", WS_NAME], env=self._env)
+        run(["klangk", "rm", WS_NAME], env=self._env)
+        result = run(["klangk", "create", WS_NAME], env=self._env)
         assert result.returncode == 0, result.stderr
         # Resolve full ID via API
         r = httpx.get(
@@ -373,13 +373,13 @@ class TestTerminalWindows:
                 break
         assert self._ws_id, f"Workspace {WS_NAME} not found after create"
         # Warm up container
-        _run(
+        run(
             ["klangk", "exec", WS_NAME, "true"],
             env=self._env,
             timeout=120,
         )
         yield
-        _run(["klangk", "rm", WS_NAME], env=self._env)
+        run(["klangk", "rm", WS_NAME], env=self._env)
 
     def test_web_tab_switch_doesnt_move_cli(self):
         """Clicking a different tab in web UI doesn't change CLI window."""
@@ -446,7 +446,7 @@ foreach sid [list $s1 $s2] {{
 puts "BEFORE=$b1"
 puts "AFTER=$a1"
 """
-        result = _run(
+        result = run(
             ["expect", "-c", script],
             env=self._env,
             timeout=60,
@@ -634,7 +634,7 @@ send "~."
 expect {{ eof {{}} timeout {{ close }} }}
 wait
 """
-            result = _run(
+            result = run(
                 ["expect", "-c", script],
                 env=self._env,
                 timeout=35,

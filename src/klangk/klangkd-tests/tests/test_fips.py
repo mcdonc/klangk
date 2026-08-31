@@ -427,7 +427,7 @@ class TestSettingsParsing:
 
 
 class TestRegistryFipsFailClosed:
-    """The _create_and_start hook fails closed on a non-FIPS container."""
+    """The create_and_start hook fails closed on a non-FIPS container."""
 
     def _app_state(self):
         import sys
@@ -559,9 +559,7 @@ class TestFipsAdoptPathGate:
             patch.object(fips, "probe_container", probe),
         ):
             with pytest.raises(podman.PodmanError, match="FIPS"):
-                await reg._handle_existing_container(
-                    "cid-old", "ws-adopt", 0.0
-                )
+                await reg.handle_existing_container("cid-old", "ws-adopt", 0.0)
         # The adopted (non-FIPS) container was removed before refusing.
         remove.assert_awaited_once()
         assert "ws-adopt" not in reg.states
@@ -581,7 +579,7 @@ class TestFipsAdoptPathGate:
             patch.object(fips, "probe_container", probe),
             patch.object(reg, "track_activity") as track,
         ):
-            result = await reg._handle_existing_container(
+            result = await reg.handle_existing_container(
                 "cid-old", "ws-adopt", 0.0
             )
         assert result == ("cid-old", "connected")
@@ -601,7 +599,5 @@ class TestFipsAdoptPathGate:
             patch.object(fips, "probe_container", AsyncMock()) as probe,
         ):
             with patch.object(reg, "track_activity"):
-                await reg._handle_existing_container(
-                    "cid-old", "ws-adopt", 0.0
-                )
+                await reg.handle_existing_container("cid-old", "ws-adopt", 0.0)
         probe.assert_not_awaited()

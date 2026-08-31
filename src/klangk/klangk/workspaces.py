@@ -95,7 +95,7 @@ def _ensure_shared_home_dir_sync(
     (#2717). ``Path.mkdir(exist_ok=True)`` alone would re-raise
     ``FileExistsError`` on the dangling symlink (``exist_ok`` only
     suppresses when the path is a directory), crashing container
-    create after the container is already running — and ``_bringup``
+    create after the container is already running — and ``bringup``
     never runs again for that container.
     """
     shared_dir = workspace_home / name
@@ -606,7 +606,7 @@ class Workspaces:
         directory the build created is root-owned and empty). So nothing
         usable at ``/home/klangk`` exists on a fresh volume until this
         creates it (#2717).
-        Called at the container-create choke point (``_bringup``) —
+        Called at the container-create choke point (``bringup``) —
         before ``ensure_service_session`` and before any user's first
         shell — including the boot/autostart path where no user ever
         connects first. For pre-#2718 per-user volumes this materializes
@@ -677,7 +677,7 @@ class Workspaces:
         Thin wrapper around ``self.app.state.container_registry.start_container``
         that unpacks the workspace dict. The agent home provisioning and the
         service command firing happen at the single create choke point
-        inside ``start_container`` (see ``ContainerRegistry._bringup``, #1244),
+        inside ``start_container`` (see ``ContainerRegistry.bringup``, #1244),
         so they no longer live here.
 
         ``idle_timeout`` overrides from the settings bag are applied inside

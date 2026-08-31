@@ -391,7 +391,7 @@ class ExecController:
         # keep terminals available while stopping one-shot command
         # execution and bulk sync — revoking ``exec-and-sync`` blocks
         # both sync directions along with ``klangk exec``.
-        if not await self._conn._has_perm("exec-and-sync"):
+        if not await self._conn.has_perm("exec-and-sync"):
             send_error(
                 self._conn.sock,
                 "exec requires the exec-and-sync permission",
@@ -581,7 +581,7 @@ class TerminalController:
         # it) -- the service session is owned by the agent, not any user
         # who has connected (#1133).
         if ws_session:
-            await self._sync_service_windows(ws_session)
+            await self.sync_service_windows(ws_session)
 
     def _send_shared_terminals(self) -> None:
         """Send the current shared terminal list to the client."""
@@ -615,7 +615,7 @@ class TerminalController:
             return "complete"
         return ws.get("setup_state") or "complete"
 
-    async def _fire_service_command(self) -> None:
+    async def fire_service_command(self) -> None:
         """Fire the service command in the agent's ``service`` session.
 
         The post-setup path (#1033): a non-auto-start workspace's service
@@ -642,7 +642,7 @@ class TerminalController:
             setup_state=setup_state,
         )
 
-    async def _sync_service_windows(self, ws_session) -> bool:
+    async def sync_service_windows(self, ws_session) -> bool:
         """Discover the agent's ``service`` session windows (#1133).
 
         The service command runs in a standalone ``service`` tmux
@@ -718,7 +718,7 @@ class TerminalController:
         if self._conn._user_home is None:
             send_error(self._conn.sock, "Handle not set")
             return
-        if not await self._conn._has_perm("code-in-isolation"):
+        if not await self._conn.has_perm("code-in-isolation"):
             logger.info(
                 "Skipping isolated terminal for user=%s "
                 "(no code-in-isolation)",
@@ -791,7 +791,7 @@ class TerminalController:
                 # here once setup is complete, not in any user's session.
                 # The window-exists check makes it a no-op after the first
                 # fire. Done before window sync so discovery picks it up.
-                await ctrl._fire_service_command()
+                await ctrl.fire_service_command()
                 # Attach the browser ID (if any) into the container's tmux
                 # env. Reads conn.browser_id — the post-_register_browser
                 # value — so a deploy that disabled the delegate (#2710)
@@ -964,7 +964,7 @@ class TerminalController:
 
         Unlike ``sync_terminal_windows`` (which serves the firing user and
         broadcasts/saves), this is a quiet merge used by
-        ``_sync_service_windows`` to make the ``service:service-cmd`` window
+        ``sync_service_windows`` to make the ``service:service-cmd`` window
         discoverable as shared. Windows are attributed to the agent
         (``AGENT_USER_ID``) and ``service-cmd`` is forced shared (#1133).
         """
@@ -1179,7 +1179,7 @@ class TerminalController:
         # (``self.task``). ``activate_session`` runs *from inside* the
         # ``_start_terminal`` task; overwriting ``self.task`` here would
         # orphan that task -- and if it is then cancelled/torn down while
-        # a DB op (e.g. ``_sync_service_windows``) is in flight, the
+        # a DB op (e.g. ``sync_service_windows``) is in flight, the
         # orphaned transaction's connection leaks past event-loop
         # teardown (#1250).
         self.output_task = asyncio.create_task(self.forward_output(session))
@@ -1326,7 +1326,7 @@ class SharedTerminalController:
 
         if not self._conn.container_id or not self._conn._user_home:
             return
-        if not await self._conn._has_perm("share-terminals"):
+        if not await self._conn.has_perm("share-terminals"):
             send_error(self._conn.sock, "Permission denied")
             return
         window_id = msg.get("window_id", "")
@@ -1440,7 +1440,7 @@ class SharedTerminalController:
         )
         if not self._conn.container_id or not self._conn._user_home:
             return
-        if not await self._conn._has_perm("spectate-on-shared-terminals"):
+        if not await self._conn.has_perm("spectate-on-shared-terminals"):
             send_error(self._conn.sock, "Permission denied")
             return
 
@@ -1467,8 +1467,8 @@ class SharedTerminalController:
         window_name = match["name"]
 
         read_only = not (
-            await self._conn._has_perm("code-in-shared-terminals")
-            or await self._conn._has_perm("share-terminals")
+            await self._conn.has_perm("code-in-shared-terminals")
+            or await self._conn.has_perm("share-terminals")
         )
 
         await self._conn.stop_terminal()
@@ -1503,8 +1503,8 @@ class SharedTerminalController:
         self._conn.terminal_session = session
         conn = self._conn
 
-        cols = self._conn._terminal_cols
-        rows = self._conn._terminal_rows
+        cols = self._conn.terminal_cols
+        rows = self._conn.terminal_rows
 
         async def _start_shared() -> None:
             try:
@@ -1546,7 +1546,7 @@ class SharedTerminalController:
 
         if not self._conn.workspace_id:
             return
-        if not await self._conn._has_perm("spectate-on-shared-terminals"):
+        if not await self._conn.has_perm("spectate-on-shared-terminals"):
             send_error(self._conn.sock, "Permission denied")
             return
         ws_session = self._conn.app.state.sockets.get_session(
@@ -1560,7 +1560,7 @@ class SharedTerminalController:
         # Discover the agent's ``service:service-cmd`` window in case it
         # was fired (e.g. auto-start) before anyone connected to discover
         # it (#1133).
-        await self._conn.terminal._sync_service_windows(ws_session)
+        await self._conn.terminal.sync_service_windows(ws_session)
         terminals = get_shared_terminals(
             ws_session, self._conn.app.state.sockets
         )
@@ -1612,7 +1612,7 @@ class SharedTerminalController:
         share-terminals permission could close other users' windows."""
         if not self._conn.container_id:
             return None
-        if not await self._conn._has_perm("share-terminals"):
+        if not await self._conn.has_perm("share-terminals"):
             send_error(self._conn.sock, "Permission denied")
             return None
 
@@ -1682,7 +1682,7 @@ class SharedTerminalController:
         name, or None after sending the refusal."""
         if not self._conn.container_id or not self._conn._user_home:
             return None
-        if not await self._conn._has_perm("share-terminals"):
+        if not await self._conn.has_perm("share-terminals"):
             send_error(self._conn.sock, "Permission denied")
             return None
         name = msg.get("name", "").strip()

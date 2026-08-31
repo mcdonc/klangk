@@ -236,7 +236,7 @@ class TestConfigFile:
     def test_netfilter_default_domains_malformed_aborts_reload(self):
         """#1939: a malformed value introduced after startup (operator edits
         KLANGKD_NETFILTER_DEFAULT_DOMAINS, then SIGHUPs) makes reload()
-        raise. ``_reload_settings`` (main.py) catches that (``except
+        raise. ``reload_settings`` (main.py) catches that (``except
         Exception``) and denies the restart, keeping the runtime on the old
         config — so a typo in a reload no longer silently drops the default."""
         from pydantic import ValidationError

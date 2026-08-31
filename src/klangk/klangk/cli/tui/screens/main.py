@@ -33,7 +33,7 @@ from textual.widgets import (
 )
 
 from ...client import AuthError, WorkspaceNotFoundError, decode_token_claims
-from ...auth import refresh_token as _refresh_token
+from ...auth import refresh_token as refresh_token
 from ...transport import ws_connect
 from .base import (
     CheatsheetScreen,
@@ -151,7 +151,7 @@ async def run_token_refresh_loop(state) -> str:
         if remaining > TOKEN_REFRESH_MARGIN:
             continue
         logger.debug("Token expires in %.0fs, refreshing", remaining)
-        new = await asyncio.to_thread(_refresh_token, url, token)
+        new = await asyncio.to_thread(refresh_token, url, token)
         if new:
             logger.debug("Token refreshed proactively")
         else:
@@ -492,8 +492,8 @@ class MainScreen(StatusScreen):
         owned = self._sort_workspaces(owned)
         shared = self._sort_workspaces(shared)
         empty = "(no matches)" if q else "(no workspaces)"
-        self._populate("#owned_list", owned, empty_label=empty)
-        self._populate("#shared_list", shared, empty_label=empty)
+        self.populate("#owned_list", owned, empty_label=empty)
+        self.populate("#shared_list", shared, empty_label=empty)
         self._refresh_action_hints()
 
     def _focus_visible_list(self) -> None:
@@ -567,7 +567,7 @@ class MainScreen(StatusScreen):
         item = self._highlighted_item()
         name = getattr(item, "name", "") or "" if item is not None else ""
         if not name:
-            self._flash("Select a workspace first.")
+            self.flash("Select a workspace first.")
             return None
         return name
 
@@ -589,7 +589,7 @@ class MainScreen(StatusScreen):
     def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
         self._refresh_action_hints()
 
-    def _flash(self, message: str) -> None:
+    def flash(self, message: str) -> None:
         """Show a transient message in the status bar's 'extra' slot.
 
         The next status event overwrites it. There's no dedicated message
@@ -611,7 +611,7 @@ class MainScreen(StatusScreen):
                 yes_label="Restart",
                 yes_variant="warning",
             ),
-            confirm_then(self, partial(self._do_restart, name)),
+            confirm_then(self, partial(self.do_restart, name)),
         )
 
     async def _do_lifecycle(
@@ -627,14 +627,14 @@ class MainScreen(StatusScreen):
             method = getattr(self.app.tui_state, f"{verb.lower()}_workspace")
             await asyncio.to_thread(method, name)
         except Exception as exc:
-            self._flash(f"{verb} failed: {exc}")
+            self.flash(f"{verb} failed: {exc}")
             return
-        self._flash(f"{verb} requested for '{name}'.")
+        self.flash(f"{verb} requested for '{name}'.")
         self.app.refresh_workspaces()
         if refresh_hints:
             self._refresh_action_hints()
 
-    async def _do_restart(self, name: str) -> None:
+    async def do_restart(self, name: str) -> None:
         await self._do_lifecycle("Restart", name, refresh_hints=False)
 
     def action_stop(self) -> None:
@@ -649,15 +649,15 @@ class MainScreen(StatusScreen):
                     yes_label="Stop",
                     yes_variant="warning",
                 ),
-                confirm_then(self, partial(self._do_stop, name)),
+                confirm_then(self, partial(self.do_stop, name)),
             )
         else:
-            self.run_worker(self._do_start(name), exit_on_error=False)
+            self.run_worker(self.do_start(name), exit_on_error=False)
 
-    async def _do_stop(self, name: str) -> None:
+    async def do_stop(self, name: str) -> None:
         await self._do_lifecycle("Stop", name, refresh_hints=True)
 
-    async def _do_start(self, name: str) -> None:
+    async def do_start(self, name: str) -> None:
         await self._do_lifecycle("Start", name, refresh_hints=True)
 
     def action_duplicate(self) -> None:
@@ -669,20 +669,20 @@ class MainScreen(StatusScreen):
             if not new_name:
                 return
             self.run_worker(
-                self._do_duplicate(name, new_name), exit_on_error=False
+                self.do_duplicate(name, new_name), exit_on_error=False
             )
 
         self.app.push_screen(DuplicateScreen(name), _on_dup)
 
-    async def _do_duplicate(self, src: str, new_name: str) -> None:
+    async def do_duplicate(self, src: str, new_name: str) -> None:
         try:
             await asyncio.to_thread(
                 self.app.tui_state.duplicate_workspace, src, new_name
             )
         except Exception as exc:
-            self._flash(f"Duplicate failed: {exc}")
+            self.flash(f"Duplicate failed: {exc}")
             return
-        self._flash(f"Duplicated '{src}' -> '{new_name}'.")
+        self.flash(f"Duplicated '{src}' -> '{new_name}'.")
         self.app.refresh_workspaces()
 
     def action_delete(self) -> None:
@@ -695,40 +695,40 @@ class MainScreen(StatusScreen):
                 f"Delete '{name}'? This permanently deletes the workspace"
                 " and its container.",
             ),
-            confirm_then(self, partial(self._do_delete, name)),
+            confirm_then(self, partial(self.do_delete, name)),
         )
 
-    async def _do_delete(self, name: str) -> None:
+    async def do_delete(self, name: str) -> None:
         try:
             await asyncio.to_thread(self.app.tui_state.delete_workspace, name)
         except Exception as exc:
-            self._flash(f"Delete failed: {exc}")
+            self.flash(f"Delete failed: {exc}")
             return
-        self._flash(f"Deleted '{name}'.")
+        self.flash(f"Deleted '{name}'.")
         self.app.refresh_workspaces()
 
     def action_edit(self) -> None:
         name = self._require_highlighted()
         if not name:
             return
-        self.run_worker(self._do_edit(name), exit_on_error=False)
+        self.run_worker(self.do_edit(name), exit_on_error=False)
 
-    async def _do_edit(self, name: str) -> None:
+    async def do_edit(self, name: str) -> None:
         state = self.app.tui_state
         try:
             ws = await asyncio.to_thread(state.find_workspace, name)
         except WorkspaceNotFoundError:
-            self._flash(f"Workspace '{name}' not found.")
+            self.flash(f"Workspace '{name}' not found.")
             return
         except AuthError:
             self.app.session_expired()
             return
         except Exception as exc:
-            self._flash(f"Could not load workspace: {exc}")
+            self.flash(f"Could not load workspace: {exc}")
             return
-        await open_edit_screen(self, state, ws, self._on_edited)
+        await open_edit_screen(self, state, ws, self.on_edited)
 
-    def _on_edited(self, result) -> None:
+    def on_edited(self, result) -> None:
         if result:
             self.refresh_lists()
 
@@ -737,10 +737,10 @@ class MainScreen(StatusScreen):
 
     def action_cheatsheet(self) -> None:
         """Open the ``?`` keyboard cheatsheet modal (#1802)."""
-        self.app.push_screen(CheatsheetScreen(self._cheatsheet_sections()))
+        self.app.push_screen(CheatsheetScreen(self.cheatsheet_sections()))
 
     @staticmethod
-    def _cheatsheet_sections() -> list[tuple[str, list[tuple[str, str]]]]:
+    def cheatsheet_sections() -> list[tuple[str, list[tuple[str, str]]]]:
         """Keybindings shown in the cheatsheet, grouped by context (#1802).
 
         Hand-written (not derived from ``BINDINGS``) so the display labels
@@ -781,7 +781,7 @@ class MainScreen(StatusScreen):
         ]
 
     def action_create(self) -> None:
-        self.run_worker(self._do_create, exit_on_error=False)
+        self.run_worker(self.do_create, exit_on_error=False)
 
     def action_import(self) -> None:
         """Import a workspace from a .tar.gz archive with upload progress (#1758)."""
@@ -798,7 +798,7 @@ class MainScreen(StatusScreen):
             return
         archive = Path(path)
         if not archive.exists():
-            self._flash(f"Import failed: file not found: {path}")
+            self.flash(f"Import failed: file not found: {path}")
             return
         state = self.app.tui_state
 
@@ -816,11 +816,11 @@ class MainScreen(StatusScreen):
 
     def _on_import_done(self, result: tuple[bool, str]) -> None:
         ok, msg = result
-        self._flash(msg)
+        self.flash(msg)
         if ok:
             self.refresh_lists()
 
-    async def _do_create(self) -> None:
+    async def do_create(self) -> None:
         state = self.app.tui_state
         try:
             data = await asyncio.to_thread(state.list_images)
@@ -922,7 +922,7 @@ class MainScreen(StatusScreen):
             self._owned_all = []
             self._shared_all = []
             for sel in ("#owned_list", "#shared_list"):
-                self._populate(sel, [])
+                self.populate(sel, [])
             self._refresh_status()
             self.app.session_expired()
             return
@@ -993,7 +993,7 @@ class MainScreen(StatusScreen):
         self._owned_all = []
         self._shared_all = []
         for sel in ("#owned_list", "#shared_list"):
-            self._populate(sel, [], empty_label=label)
+            self.populate(sel, [], empty_label=label)
         self._refresh_status()
 
     def _enter_unreachable(self) -> None:
@@ -1136,7 +1136,7 @@ class MainScreen(StatusScreen):
         wid = str(getattr(ws, "id", "") or "")
         return Text(wid[:8], style="dim") if wid else Text("")
 
-    def _populate(
+    def populate(
         self,
         selector: str,
         workspaces: list,

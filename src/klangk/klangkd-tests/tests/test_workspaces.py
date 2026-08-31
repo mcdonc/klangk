@@ -254,7 +254,7 @@ async def test_create_workspace_with_acl_rollback_on_seeding_failure(
 
     with patch.object(
         model_ws.WorkspacesModel,
-        "_seed_workspace_acl",
+        "seed_workspace_acl",
         new_callable=AsyncMock,
         side_effect=_boom,
     ):
@@ -630,7 +630,7 @@ class TestStartWorkspace:
 
     The service-command firing and agent-home provisioning moved to
     the create choke point inside start_container (see
-    ContainerRegistry._bringup, #1244), and idle_timeout pinning moved to auto_start_workspaces
+    ContainerRegistry.bringup, #1244), and idle_timeout pinning moved to auto_start_workspaces
     (boot path only). So start_workspace itself only unpacks the
     workspace dict and delegates to registry.start_container.
     """
@@ -712,7 +712,7 @@ class TestStartWorkspace:
         try:
             with patch.object(
                 registry,
-                "_start_container_inner",
+                "start_container_inner",
                 new_callable=AsyncMock,
                 return_value=("cid-z", "created"),
             ):
@@ -738,7 +738,7 @@ class TestStartWorkspace:
         try:
             with patch.object(
                 registry,
-                "_start_container_inner",
+                "start_container_inner",
                 new_callable=AsyncMock,
                 return_value=("cid-w", "created"),
             ):
@@ -771,7 +771,7 @@ async def test_idle_timeout_zero_pins_alive(user, app_state):
     try:
         with patch.object(
             registry,
-            "_start_container_inner",
+            "start_container_inner",
             new_callable=AsyncMock,
             return_value=("cid-0", "created"),
         ):
@@ -945,7 +945,7 @@ class TestEnsureSharedHome:
     ):
         """A DANGLING ``klangk`` symlink (chat-era target deleted) must not
         crash create: ``mkdir(exist_ok=True)`` re-raises FileExistsError
-        on a dangling symlink, which would fail ``_bringup`` after the
+        on a dangling symlink, which would fail ``bringup`` after the
         container is already running (and it never runs again for that
         container). The broken link is removed and a real directory
         materialized instead (#2717)."""

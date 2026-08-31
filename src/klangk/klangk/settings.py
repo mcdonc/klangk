@@ -908,7 +908,7 @@ class KlangkSettings(BaseSettings):
 
     # --- Container / workspace ---
     # data_dir: persistent storage (SQLite DB, workspace volumes). Defaults
-    # to ``<state_dir>/data`` when unset (derived in the ``_require_dirs``
+    # to ``<state_dir>/data`` when unset (derived in the ``require_dirs``
     # validator after state_dir is resolved), so an operator who sets only
     # ``state_dir`` gets a sensible data location. An explicit
     # ``KLANGKD_DATA_DIR`` / config-file value wins (#1506).
@@ -1306,7 +1306,7 @@ class KlangkSettings(BaseSettings):
         return self
 
     @model_validator(mode="after")
-    def _require_dirs(self) -> "KlangkSettings":
+    def require_dirs(self) -> "KlangkSettings":
         """Default ``state_dir``; derive ``data_dir``, ``customize_dir``, ``config_dir``.
 
         ``state_dir`` defaults to ``$XDG_STATE_HOME/klangkd`` (→
@@ -1378,7 +1378,7 @@ class KlangkSettings(BaseSettings):
 
         Runs after ``_resolve_indirections`` (so ``proxy_port`` /
         ``egress_port`` / ``socket`` string values are already
-        ``file:``/``cmd:``-resolved) and after ``_require_dirs`` (so
+        ``file:``/``cmd:``-resolved) and after ``require_dirs`` (so
         ``state_dir`` is non-None for the ``socket`` default). After this,
         **every consumer reads ``self.egress_port`` and ``self.socket`` —
         nothing reads ``proxy_port``.**
@@ -1723,7 +1723,7 @@ class KlangkSettings(BaseSettings):
         egress allow-list that silently disables itself on a typo leaves
         workspaces running unrestricted while the operator believes egress
         is filtered, so a misconfigured value must fail loudly. A SIGHUP
-        reload with a bad value is denied by ``_reload_settings``
+        reload with a bad value is denied by ``reload_settings``
         (main.py), which catches the construction error and keeps the
         runtime on the prior config. Reverses the warn-and-fallback posture
         of #1772; matches the malformed→abort rule decided for the
@@ -1755,7 +1755,7 @@ class KlangkSettings(BaseSettings):
         ``/api/v1/config`` to every client and renders as a banner, so a
         malformed value (a stray newline, a bidirectional override) must
         fail loudly: a malformed value **raises**, aborting boot; a SIGHUP
-        reload with a bad value is denied by ``_reload_settings``
+        reload with a bad value is denied by ``reload_settings``
         (``main.py``), which keeps the runtime on the prior config — same
         posture as ``netfilter_default_domains`` (#1939).
         """
@@ -1784,7 +1784,7 @@ class KlangkSettings(BaseSettings):
         ``podman create`` and fails at workspace-start instead of boot.) A
         safety control that silently disables itself on a typo (warn-and-
         fall-back) is worse than none: you think the host is protected and it
-        isn't (#34). SIGHUP reload is still safe — ``_reload_settings``
+        isn't (#34). SIGHUP reload is still safe — ``reload_settings``
         (``main.py``) catches the construction error, logs "SIGHUP: denying
         restart — invalid configuration", and keeps the runtime on the old
         (valid) config.

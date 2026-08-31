@@ -91,7 +91,7 @@ async def test_concurrent_renders_do_not_duplicate_rows(tmp_path):
         app.push_screen(WorkspaceDetailScreen(WS_NAME))
         await _wait_for_screen(pilot, WorkspaceDetailScreen)
         screen = app.screen
-        screen._terminals = list(REAL_TERMINALS)
+        screen.terminals = list(REAL_TERMINALS)
         # Fire two renders concurrently (as the action + broadcast would).
         await asyncio.gather(
             screen._render_terminals(), screen._render_terminals()

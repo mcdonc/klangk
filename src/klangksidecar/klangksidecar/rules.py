@@ -192,7 +192,7 @@ def drop_for_host(host: str, decision: str) -> set[str]:
 
     Returns the set of candidate IPs (the host's resolved IPs + the host
     string itself, for a direct-IP connect) so the caller --
-    :meth:`SidecarConsentClient._handle_drop_rule`, on the event loop -- can
+    :meth:`SidecarConsentClient.handle_drop_rule`, on the event loop -- can
     clear the loop-only ``SESSION_HOST_ALLOWS``/``VERDICT_CACHE`` state
     (via :func:`drop_session_hosts` / :func:`clear_verdict_cache`). Those
     structures are documented loop-only

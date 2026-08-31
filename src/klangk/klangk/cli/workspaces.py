@@ -447,7 +447,7 @@ def export_workspace(
         task_id = progress.add_task("Downloading...", total=0)
         started = [False]
 
-        def _update(downloaded, total):
+        def update(downloaded, total):
             if not started[0]:
                 started[0] = True
                 live.update(progress)
@@ -460,7 +460,7 @@ def export_workspace(
 
         spinner = Spinner("dots", text="Building archive on server...")
         with Live(spinner, refresh_per_second=10) as live:
-            client.export_workspace(ws.id, out_path, on_progress=_update)
+            client.export_workspace(ws.id, out_path, on_progress=update)
             # Ensure progress bar hits 100% regardless of estimate accuracy
             if started[0]:
                 final = progress.tasks[task_id].completed
@@ -502,12 +502,12 @@ def import_workspace(
             "Uploading...", total=archive.stat().st_size
         )
 
-        def _update(uploaded, total):
+        def update(uploaded, total):
             progress.update(task_id, completed=uploaded)
 
         with progress:
             ws = client.import_workspace(
-                archive, name=name, on_progress=_update
+                archive, name=name, on_progress=update
             )
     except httpx.HTTPStatusError as e:
         context.err.print(f"[red]Import failed:[/red] {e.response.text}")

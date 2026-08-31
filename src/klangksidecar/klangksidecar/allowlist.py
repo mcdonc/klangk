@@ -325,7 +325,7 @@ def drop_session_hosts(host: str) -> None:
 
     Drops every :data:`SESSION_HOST_ALLOWS` entry whose host matches
     (case-insensitive). Called on the **event loop** by
-    :meth:`SidecarConsentClient._handle_drop_rule` **before** :func:`drop_for_host`
+    :meth:`SidecarConsentClient.handle_drop_rule` **before** :func:`drop_for_host`
     forks iptables in the executor: while that fork runs (~tens of ms), the
     NFQUEUE consumer (:func:`cb` -> :func:`session_host_allows_ttl`) and the DNS
     path (:func:`ports_for`) both read :data:`SESSION_HOST_ALLOWS`, and a
@@ -348,7 +348,7 @@ def drop_session_denies(host: str) -> None:
     """Remove a host's in-session deny coverage (#2446).
 
     The deny-side mirror of :func:`drop_session_hosts`, called on the event
-    loop by :meth:`SidecarConsentClient._handle_drop_rule` for a ``denied``
+    loop by :meth:`SidecarConsentClient.handle_drop_rule` for a ``denied``
     revoke BEFORE :func:`drop_for_host` forks iptables in the executor: while
     that fork runs (~tens of ms), :func:`cb` reads :data:`SESSION_HOST_DENIES`,
     and a SYN arriving in that window would otherwise keep auto-denying (and

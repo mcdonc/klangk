@@ -729,7 +729,7 @@ class TestHandleTerminalStart:
         async def _perm(*a):
             return True
 
-        conn._has_perm = _perm  # type: ignore[method-assign]
+        conn.has_perm = _perm  # type: ignore[method-assign]
         registry.track_activity("cid", "ws")
 
         # Create a session with shared windows so the shared_terminals
@@ -753,7 +753,7 @@ class TestHandleTerminalStart:
             patch.object(_mock_term, "attach_browser", new_callable=AsyncMock),
             patch.object(
                 _ws_controllers.TerminalController,
-                "_sync_service_windows",
+                "sync_service_windows",
                 new=AsyncMock(return_value=False),
             ),
         ):
@@ -824,7 +824,7 @@ class TestHandleTerminalStart:
         """terminal_start fires the service command in the agent's service
         session (the post-setup path, #1033/#1133) -- not in any user's
         session. The on_service_command_started callback is gone; the
-        service command is fired via _fire_service_command."""
+        service command is fired via fire_service_command."""
         app_state = _make_app_state()
         sockets = app_state.state.sockets
         registry = app_state.state.container_registry
@@ -838,7 +838,7 @@ class TestHandleTerminalStart:
         async def _perm(*a):
             return True
 
-        conn._has_perm = _perm  # type: ignore[method-assign]
+        conn.has_perm = _perm  # type: ignore[method-assign]
         registry.track_activity("cid", "ws")
         session = sockets.get_or_create_session("ws", app_state)
         await session.add_subscriber(sock, "cid")
@@ -929,7 +929,7 @@ class TestHandleTerminalStart:
         async def deny_isolation(perm):
             return perm != "code-in-isolation"
 
-        conn._has_perm = deny_isolation
+        conn.has_perm = deny_isolation
         await conn.handle_terminal_start({"cols": 80, "rows": 24})
         sent = sock.send_json.call_args_list
         # Should send terminal_started (no error) so the pane renders
@@ -951,7 +951,7 @@ class TestHandleTerminalStart:
         async def _perm(*a):
             return True
 
-        conn._has_perm = _perm
+        conn.has_perm = _perm
         import time
 
         conn._last_terminal_start = time.monotonic()
@@ -975,7 +975,7 @@ class TestHandleTerminalStart:
         async def _perm(*a):
             return True
 
-        conn._has_perm = _perm  # type: ignore[method-assign]
+        conn.has_perm = _perm  # type: ignore[method-assign]
         registry.track_activity("cid", "ws")
 
         with (
@@ -1035,7 +1035,7 @@ class TestHandleTerminalStart:
         async def _perm(*a):
             return True
 
-        conn._has_perm = _perm  # type: ignore[method-assign]
+        conn.has_perm = _perm  # type: ignore[method-assign]
         registry.track_activity("cid", "ws")
 
         with (
@@ -1091,7 +1091,7 @@ class TestHandleTerminalStart:
         async def _perm(*a):
             return True
 
-        conn._has_perm = _perm  # type: ignore[method-assign]
+        conn.has_perm = _perm  # type: ignore[method-assign]
         registry.track_activity("cid", "ws")
 
         with (
@@ -1163,7 +1163,7 @@ class TestHandleTerminalStart:
         async def _perm(*a):
             return True
 
-        conn._has_perm = _perm  # type: ignore[method-assign]
+        conn.has_perm = _perm  # type: ignore[method-assign]
         registry.track_activity("cid", "ws")
 
         # terminal_started send must succeed; only the recovery error send
@@ -1217,7 +1217,7 @@ class TestHandleTerminalStart:
         async def _perm(*a):
             return True
 
-        conn._has_perm = _perm
+        conn.has_perm = _perm
         registry.track_activity("cid", "ws")
 
         with (
@@ -1268,7 +1268,7 @@ class TestHandleTerminalStart:
         async def _perm(*a):
             return True
 
-        conn._has_perm = _perm  # type: ignore[method-assign]
+        conn.has_perm = _perm  # type: ignore[method-assign]
         registry.track_activity("cid", "ws")
 
         with (
@@ -1330,7 +1330,7 @@ class TestHandleTerminalStart:
         async def _perm(*a):
             return True
 
-        conn._has_perm = _perm  # type: ignore[method-assign]
+        conn.has_perm = _perm  # type: ignore[method-assign]
         registry.track_activity("cid", "ws")
         session = sockets.get_or_create_session("ws", app_state)
         await session.add_subscriber(sock, "cid")
@@ -1470,7 +1470,7 @@ class TestHandleTerminalStart:
         async def _perm(*a):
             return True
 
-        conn._has_perm = _perm  # type: ignore[method-assign]
+        conn.has_perm = _perm  # type: ignore[method-assign]
         registry.track_activity("cid", "ws")
 
         mock_session = AsyncMock()
@@ -1543,7 +1543,7 @@ class TestHandleTerminalStart:
         async def _perm(*a):
             return True
 
-        conn._has_perm = _perm  # type: ignore[method-assign]
+        conn.has_perm = _perm  # type: ignore[method-assign]
         registry.track_activity("cid", "ws")
 
         mock_session = AsyncMock()
@@ -1578,7 +1578,7 @@ class TestHandleTerminalStart:
         async def _perm(*a):
             return True
 
-        conn._has_perm = _perm  # type: ignore[method-assign]
+        conn.has_perm = _perm  # type: ignore[method-assign]
         registry.track_activity("cid", "ws")
 
         mock_session = AsyncMock()
@@ -1609,7 +1609,7 @@ class TestHandleTerminalStart:
         async def _perm(*a):
             return True
 
-        conn._has_perm = _perm  # type: ignore[method-assign]
+        conn.has_perm = _perm  # type: ignore[method-assign]
         registry.track_activity("cid", "ws")
 
         mock_session = AsyncMock()
@@ -1639,7 +1639,7 @@ class TestHandleTerminalStart:
         async def _perm(*a):
             return True
 
-        conn._has_perm = _perm  # type: ignore[method-assign]
+        conn.has_perm = _perm  # type: ignore[method-assign]
         registry.track_activity("cid", "ws")
 
         mock_session = AsyncMock()
@@ -1672,7 +1672,7 @@ class TestHandleTerminalStart:
         async def _perm(*a):
             return True
 
-        conn._has_perm = _perm  # type: ignore[method-assign]
+        conn.has_perm = _perm  # type: ignore[method-assign]
         registry.track_activity("cid", "ws")
 
         mock_session = AsyncMock()
@@ -2462,7 +2462,7 @@ class TestSharedHomeLayout:
                 return_value=mock_session,
             ) as session_cls,
             patch.object(registry, "record_activity"),
-            patch.object(conn, "_has_perm", new=AsyncMock(return_value=True)),
+            patch.object(conn, "has_perm", new=AsyncMock(return_value=True)),
         ):
             await conn.handle_exec_start({"command": ["ls"]})
         kwargs = session_cls.call_args.kwargs
@@ -2850,9 +2850,7 @@ class TestExecHandlers:
         sock = _mock_sock()
         conn = _base_conn(ws=sock)
         conn.container_id = "cid"
-        with patch.object(
-            conn, "_has_perm", new=AsyncMock(return_value=False)
-        ):
+        with patch.object(conn, "has_perm", new=AsyncMock(return_value=False)):
             await conn.handle_exec_start({"command": ["ls"]})
         sock.send_json.assert_called()
         assert "exec-and-sync permission" in sock.send_json.call_args[0][
@@ -2864,7 +2862,7 @@ class TestExecHandlers:
         sock = _mock_sock()
         conn = _base_conn(ws=sock)
         conn.container_id = "cid"
-        with patch.object(conn, "_has_perm", new=AsyncMock(return_value=True)):
+        with patch.object(conn, "has_perm", new=AsyncMock(return_value=True)):
             await conn.handle_exec_start({"command": []})
         sock.send_json.assert_called()
         assert "command" in sock.send_json.call_args[0][0].get("message", "")
@@ -2880,7 +2878,7 @@ class TestExecHandlers:
         conn.container_id = "cid"
         with patch.object(
             conn,
-            "_has_perm",
+            "has_perm",
             new=AsyncMock(side_effect=lambda p: p == "code-in-isolation"),
         ):
             await conn.handle_exec_start(
@@ -2923,7 +2921,7 @@ class TestExecHandlers:
         ):
             with patch.object(
                 conn,
-                "_has_perm",
+                "has_perm",
                 new=AsyncMock(side_effect=lambda p: p == "exec-and-sync"),
             ):
                 await conn.handle_exec_start({"command": ["ls"]})
@@ -2956,7 +2954,7 @@ class TestExecHandlers:
         ):
             with patch.object(registry, "record_activity"):
                 with patch.object(
-                    conn, "_has_perm", new=AsyncMock(return_value=True)
+                    conn, "has_perm", new=AsyncMock(return_value=True)
                 ):
                     await conn.handle_exec_start({"command": ["ls"]})
         assert conn.exec_session is mock_session
@@ -2990,7 +2988,7 @@ class TestExecHandlers:
         ) as mock_cls:
             with patch.object(registry, "record_activity"):
                 with patch.object(
-                    conn, "_has_perm", new=AsyncMock(return_value=True)
+                    conn, "has_perm", new=AsyncMock(return_value=True)
                 ):
                     await conn.handle_exec_start({"command": ["ls"]})
         call_kwargs = mock_cls.call_args[1]
@@ -3158,7 +3156,7 @@ class TestExecController:
             container_id=container_id,
             _user_home=user_home,
             _ssh_agent_socket=ssh_agent_socket,
-            _has_perm=AsyncMock(return_value=has_perm),
+            has_perm=AsyncMock(return_value=has_perm),
             app=app_state,
             # exec start derives the SSH_AUTH_SOCK path from the user id
             # (#2001), so the fake connection needs a user identity.
@@ -3841,7 +3839,7 @@ class TestSSHAgentHandlers:
             ),
             patch.object(
                 conn,
-                "_has_perm",
+                "has_perm",
                 new=AsyncMock(return_value=True),
             ),
         ):
@@ -3903,7 +3901,7 @@ class TestSSHAgentHandlers:
             ),
             patch.object(_mock_term, "attach_browser", new=AsyncMock()),
             patch.object(_mock_term, "list_windows", return_value=[]),
-            patch.object(conn, "_has_perm", new=AsyncMock(return_value=True)),
+            patch.object(conn, "has_perm", new=AsyncMock(return_value=True)),
         ):
             await conn.handle_terminal_start({"cols": 80, "rows": 24})
             for _ in range(4):
@@ -5837,7 +5835,7 @@ class TestHandleRestartContainer:
         conn = _base_conn(ws=sock)
         conn.workspace_id = "ws-noadmin"
         with (
-            patch.object(conn, "_has_perm", new=AsyncMock(return_value=False)),
+            patch.object(conn, "has_perm", new=AsyncMock(return_value=False)),
             patch.object(
                 Connection, "cleanup", new_callable=AsyncMock
             ) as mock_cleanup,
@@ -5885,7 +5883,7 @@ class TestHandleRestartContainer:
             # conn1 is a spectator: terminal denied.
             with (
                 patch.object(
-                    conn1, "_has_perm", new=AsyncMock(return_value=False)
+                    conn1, "has_perm", new=AsyncMock(return_value=False)
                 ),
                 patch.object(
                     Connection,
@@ -5967,7 +5965,7 @@ class TestHandleRestartContainer:
         conn.workspace = None
         # "ws-gone" is not a real workspace; grant admin so the perm
         # gate passes and we reach the "not found" path under test.
-        conn._has_perm = AsyncMock(return_value=True)
+        conn.has_perm = AsyncMock(return_value=True)
 
         with (
             patch.object(
@@ -6009,7 +6007,7 @@ class TestHandleRestartContainer:
         conn.workspace_id = workspace["id"]
         conn.container_id = "cid-stale"
         conn.workspace = stale
-        conn._has_perm = AsyncMock(return_value=True)
+        conn.has_perm = AsyncMock(return_value=True)
 
         started: list[tuple[str, dict]] = []
 
@@ -6062,7 +6060,7 @@ class TestHandleRestartContainer:
         conn.workspace_id = workspace["id"]
         conn.container_id = "cid-old"
         conn.workspace = workspace
-        conn._has_perm = AsyncMock(return_value=True)
+        conn.has_perm = AsyncMock(return_value=True)
 
         with (
             patch.object(Connection, "cleanup", new_callable=AsyncMock),
@@ -6822,7 +6820,7 @@ class TestTerminalController:
             _service_command=None,
             user=user,
             workspace=None,
-            _has_perm=AsyncMock(return_value=has_perm),
+            has_perm=AsyncMock(return_value=has_perm),
             broadcast_shared_terminals=MagicMock(),
             app=app_state,
         )
@@ -7461,7 +7459,7 @@ class TestTerminalController:
                     new=AsyncMock(return_value="klangk"),
                 ),
             ):
-                synced = await ctrl._sync_service_windows(ws_session)
+                synced = await ctrl.sync_service_windows(ws_session)
             assert synced is True
             agent_wins = ws_session.terminal_windows[model.AGENT_USER_ID]
             assert agent_wins[0]["name"] == "service-cmd"
@@ -7479,7 +7477,7 @@ class TestTerminalController:
         ctrl, _, _ = self._controller(container_id=None, app_state=app_state)
         ws_session = sockets.get_or_create_session("ws-1", app_state)
         try:
-            assert await ctrl._sync_service_windows(ws_session) is False
+            assert await ctrl.sync_service_windows(ws_session) is False
         finally:
             sockets.sessions.pop("ws-1", None)
 
@@ -7496,7 +7494,7 @@ class TestTerminalController:
                 "list_windows",
                 new=AsyncMock(side_effect=TerminalError),
             ):
-                assert await ctrl._sync_service_windows(ws_session) is False
+                assert await ctrl.sync_service_windows(ws_session) is False
         finally:
             sockets.sessions.pop("ws-1", None)
 
@@ -7511,7 +7509,7 @@ class TestTerminalController:
                 "list_windows",
                 new=AsyncMock(return_value=[]),
             ):
-                assert await ctrl._sync_service_windows(ws_session) is False
+                assert await ctrl.sync_service_windows(ws_session) is False
         finally:
             sockets.sessions.pop("ws-1", None)
 
@@ -7541,7 +7539,7 @@ class TestTerminalController:
                     new=AsyncMock(side_effect=RuntimeError("db down")),
                 ),
             ):
-                assert await ctrl._sync_service_windows(ws_session) is False
+                assert await ctrl.sync_service_windows(ws_session) is False
             assert ws_session.agent_handle is None
         finally:
             sockets.sessions.pop("ws-1", None)
@@ -7577,7 +7575,7 @@ class TestTerminalController:
     async def test_fire_service_command_invokes_ensure_service_session(
         self, app_state
     ):
-        """_fire_service_command reads fresh setup_state from the DB and
+        """fire_service_command reads fresh setup_state from the DB and
         targets the service session (#1133); the session HOME is pinned
         inside ensure_service_session, so no home argument (#2717)."""
         ctrl, _, conn = self._controller()
@@ -7599,7 +7597,7 @@ class TestTerminalController:
                 new=AsyncMock(),
             ) as mock_ess,
         ):
-            await ctrl._fire_service_command()
+            await ctrl.fire_service_command()
         mock_ess.assert_awaited_once_with(
             "cid",
             "./run.sh",
@@ -7614,7 +7612,7 @@ class TestTerminalController:
             "ensure_service_session",
             new=AsyncMock(),
         ) as mock_ess:
-            await ctrl._fire_service_command()
+            await ctrl.fire_service_command()
         mock_ess.assert_not_awaited()
 
     async def test_fire_service_command_no_container_noop(self):
@@ -7625,7 +7623,7 @@ class TestTerminalController:
             "ensure_service_session",
             new=AsyncMock(),
         ) as mock_ess:
-            await ctrl._fire_service_command()
+            await ctrl.fire_service_command()
         mock_ess.assert_not_awaited()
 
     # --- browser_reattach ---
@@ -7746,12 +7744,12 @@ class TestTerminalController:
 
     async def test_terminal_cols_rows_property_round_trip(self):
         conn = _base_conn()
-        conn._terminal_cols = 120
-        conn._terminal_rows = 40
+        conn.terminal_cols = 120
+        conn.terminal_rows = 40
         assert conn.terminal.cols == 120
         assert conn.terminal.rows == 40
-        assert conn._terminal_cols == 120
-        assert conn._terminal_rows == 40
+        assert conn.terminal_cols == 120
+        assert conn.terminal_rows == 40
 
 
 class TestShareWindowHandlers:
@@ -8895,11 +8893,11 @@ class TestShareWindowHandlers:
         conn = _base_conn(user=user, ws=sock)
         ws = await _create_workspace_with_acl(app_state, user["id"], "perm-ws")
         conn.workspace_id = ws["id"]
-        assert await conn._has_perm("view")
+        assert await conn.has_perm("view")
 
     async def test_has_perm_no_workspace(self):
         conn = _base_conn()
-        assert not await conn._has_perm("view")
+        assert not await conn.has_perm("view")
 
 
 class TestSharedTerminalController:
@@ -8947,17 +8945,17 @@ class TestSharedTerminalController:
                 self._user_home = user_home
                 self.user = user
                 self.app = app_state
-                self._has_perm = AsyncMock(return_value=has_perm)
+                self.has_perm = AsyncMock(return_value=has_perm)
                 self.stop_terminal = AsyncMock()
                 self.activate_session = AsyncMock(return_value=True)
                 self.tmux_session_name = MagicMock(return_value="uid")
                 self.sync_terminal_windows = MagicMock()
-                self._terminal_cols = 80
-                self._terminal_rows = 24
+                self.terminal_cols = 80
+                self.terminal_rows = 24
                 self.terminal = SimpleNamespace(
                     session=None,
                     task=None,
-                    _sync_service_windows=AsyncMock(return_value=False),
+                    sync_service_windows=AsyncMock(return_value=False),
                 )
 
             @property
@@ -10697,7 +10695,7 @@ class TestDrainingStartPaths:
         conn.workspace_id = "ws-c"
         conn.workspace = {"id": "ws-c", "name": "c"}
         with (
-            patch.object(conn, "_has_perm", new=AsyncMock(return_value=True)),
+            patch.object(conn, "has_perm", new=AsyncMock(return_value=True)),
             patch.object(
                 app_state.state.workspaces,
                 "get_workspace",

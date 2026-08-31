@@ -348,7 +348,7 @@ def check_gnu_stat(manager: str | None) -> CheckResult:
     """Check that stat is GNU coreutils (supports ``-f -c %T`` for fstype).
 
     The nix btrfs-snapshot backend uses ``stat -f -c %T <seed>`` to verify the
-    seed path is on btrfs (``Nix._ensure_btrfs``). GNU coreutils only — BSD
+    seed path is on btrfs (``Nix.ensure_btrfs``). GNU coreutils only — BSD
     ``stat`` parses ``-f`` differently. Linux-only in ``run_doctor`` (the btrfs
     backend doesn't apply on macOS).
     """

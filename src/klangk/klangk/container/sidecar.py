@@ -59,7 +59,7 @@ class NetworkSidecarMixin:
     the old container.py) for the #NNNN history.
     """
 
-    def _network_sidecar_enabled(self) -> bool:
+    def network_sidecar_enabled(self) -> bool:
         """Whether the FQDN network sidecar model is configured (#2254).
 
         Mirrors :meth:`NetFilter.enabled`: the master switch on AND the
@@ -69,7 +69,7 @@ class NetworkSidecarMixin:
             self.app.state.settings.network_sidecar_image
         )
 
-    def _network_sidecar_name(self, workspace_id: str, slug: str = "") -> str:
+    def network_sidecar_name(self, workspace_id: str, slug: str = "") -> str:
         """Derive the network sidecar name (#2254, #2286).
 
         Carries the slugified workspace name (when there is one) so
@@ -107,7 +107,7 @@ class NetworkSidecarMixin:
             f.write(token)
         os.replace(tmp, path)
 
-    async def _sweep_orphaned_sidecar_tokens(self) -> int:
+    async def sweep_orphaned_sidecar_tokens(self) -> int:
         """Remove ``ws-tokens/<id>`` files for workspaces that no longer exist.
 
         The sidecar's workspace-token file is written on every network-sidecar
@@ -154,7 +154,7 @@ class NetworkSidecarMixin:
                 )
         return removed
 
-    async def _start_network_sidecar(
+    async def start_network_sidecar(
         self,
         workspace_id: str,
         allowed_domains: list[str] | None,
@@ -183,7 +183,7 @@ class NetworkSidecarMixin:
             raise podman.PodmanError(
                 500, "network_sidecar_image is not configured"
             )
-        name = self._network_sidecar_name(workspace_id, slug)
+        name = self.network_sidecar_name(workspace_id, slug)
         # Pick an upstream that differs from the REDIRECT target (1.1.1.1).
         env, binds = self._network_sidecar_env(
             workspace_id, allowed_domains, rejected_domains
@@ -244,9 +244,7 @@ class NetworkSidecarMixin:
             cid = await self.app.state.podman.create_container(
                 name, image, **sidecar_kwargs
             )
-            await self._start_with_port_conflict_retry(
-                cid, publish or [], name
-            )
+            await self.start_with_port_conflict_retry(cid, publish or [], name)
             await self._wait_sidecar_proxy_ready(cid, name)
             logger.info(
                 "network sidecar started for %s: %s (%s)",
@@ -431,14 +429,14 @@ class NetworkSidecarMixin:
         resolvers = nf.resolvers() if nf else []
         return next((r for r in resolvers if r != "1.1.1.1"), "8.8.8.8")
 
-    async def _stop_network_sidecar(self, workspace_id: str) -> None:
+    async def stop_network_sidecar(self, workspace_id: str) -> None:
         """Best-effort remove the network sidecar for a workspace (#2254, #2286).
 
         Delegates to :meth:`_remove_network_sidecar` (label-based) so a sidecar
         whose name carries a now-stale slug (a renamed or deleted workspace) is
         still found and removed.
         """
-        if not self._network_sidecar_enabled():
+        if not self.network_sidecar_enabled():
             return
         await self._remove_network_sidecar(workspace_id)
 

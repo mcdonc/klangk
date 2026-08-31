@@ -81,7 +81,7 @@ class ContainerStartSpec:
     """Parameters for :meth:`ContainerRegistry.start_container` (#2566).
 
     Collapses the previously duplicated ``start_container`` /
-    ``_start_container_inner`` signature pair into one shared shape:
+    ``start_container_inner`` signature pair into one shared shape:
     the public method takes (and forwards) this spec, the inner
     under-lock implementation unpacks it once, and adding a start
     parameter becomes a single field here instead of a two-signature
@@ -431,7 +431,7 @@ def build_create_kwargs(
     bind/tmpfs mounts, DNS, resource limits, pull policy. The
     egress-model-specific pieces (``network``, cap add/drop, port
     moves to the sidecar) are layered on by the caller — see
-    ``ContainerRegistry._start_container_inner``.
+    ``ContainerRegistry.start_container_inner``.
     """
     # #2378: per-workspace /tmp tmpfs size. Default (``2g``) preserves
     # the pre-#2378 mount; ``None`` (explicit unset) -> no ``size=``

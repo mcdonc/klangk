@@ -169,7 +169,7 @@ def _authed_state(**extra):
         current_user_id=lambda: None,
         close_terminal=_async_empty,
         restart_workspace=lambda n: None,
-        # Stubbed so MainScreen._do_create doesn't make a real (timing-out)
+        # Stubbed so MainScreen.do_create doesn't make a real (timing-out)
         # HTTP call for the allowed-domains list (#1989).
         default_allowed_domains=lambda: [],
     )
@@ -192,7 +192,7 @@ def _ws(owned=None, shared=None, **extra):
         current_user_id=lambda: None,
         close_terminal=_async_empty,
         restart_workspace=lambda n: None,
-        # Stubbed so MainScreen._do_create doesn't make a real (timing-out)
+        # Stubbed so MainScreen.do_create doesn't make a real (timing-out)
         # HTTP call for the allowed-domains list (#1989).
         default_allowed_domains=lambda: [],
     )
@@ -2360,7 +2360,7 @@ async def test_edit_server_saves(monkeypatch):
         assert isinstance(app.screen, EditServerScreen)
         app.screen.query_one("#alias", Input).value = "production"
         # Keep URL unchanged — no server_changed() call.
-        app.screen._save()
+        app.screen.save()
         await app.workers.wait_for_complete()
         await pilot.pause()
         assert updated["u"] == (
@@ -2419,7 +2419,7 @@ async def test_edit_server_empty_fields(monkeypatch):
         app.push_screen(EditServerScreen(alias="a", url="https://a.example"))
         await pilot.pause()
         app.screen.query_one("#alias", Input).value = ""
-        app.screen._save()
+        app.screen.save()
         await app.workers.wait_for_complete()
         assert "required" in str(
             app.screen.query_one("#edit_srv_msg").render()
@@ -2436,7 +2436,7 @@ async def test_edit_server_invalid_url(monkeypatch):
         app.push_screen(EditServerScreen(alias="a", url="https://a.example"))
         await pilot.pause()
         app.screen.query_one("#url", Input).value = "not-a-url"
-        app.screen._save()
+        app.screen.save()
         await app.workers.wait_for_complete()
         assert "http(s)://" in str(
             app.screen.query_one("#edit_srv_msg").render()
@@ -2477,7 +2477,7 @@ async def test_edit_server_not_found(monkeypatch):
             EditServerScreen(alias="gone", url="https://g.example")
         )
         await pilot.pause()
-        app.screen._save()
+        app.screen.save()
         await app.workers.wait_for_complete()
         await pilot.pause()
         assert (
@@ -2506,7 +2506,7 @@ async def test_edit_server_alias_conflict(monkeypatch):
         app.push_screen(EditServerScreen(alias="a", url="https://a.example"))
         await pilot.pause()
         app.screen.query_one("#alias", Input).value = "b"
-        app.screen._save()
+        app.screen.save()
         await app.workers.wait_for_complete()
         await pilot.pause()
         assert (
@@ -2542,7 +2542,7 @@ async def test_edit_server_url_change_triggers_server_changed(monkeypatch):
         await pilot.pause()
         assert isinstance(app.screen, EditServerScreen)
         app.screen.query_one("#url", Input).value = "https://new.example"
-        app.screen._save()
+        app.screen.save()
         await app.workers.wait_for_complete()
         await pilot.pause()
         assert changed == [True]
@@ -3154,7 +3154,7 @@ async def test_transfer_screen_success_error_and_progress(monkeypatch):
         cap = {}
 
         # Success: on_progress fires from the thread with both a known and
-        # an unknown total (covers both _update branches), then dismisses.
+        # an unknown total (covers both update branches), then dismisses.
         def ok_call(on_progress):
             on_progress(50, 200)
             on_progress(80, None)
@@ -3363,7 +3363,7 @@ async def test_main_import_cancel_aborts(monkeypatch):
 
 
 async def test_main_screen_action_edit_load_fallbacks(monkeypatch):
-    """_do_edit tolerates find_workspace/list_images/allow_autostart errors."""
+    """do_edit tolerates find_workspace/list_images/allow_autostart errors."""
 
     async def noop(*a, **k):
         return None
@@ -3452,7 +3452,7 @@ async def test_main_and_detail_edit_pass_sudo_available(monkeypatch):
 
 
 async def test_main_screen_edit_find_auth_error_shows_overlay(monkeypatch):
-    """AuthError in find_workspace during _do_edit (main screen) triggers
+    """AuthError in find_workspace during do_edit (main screen) triggers
     session-expired overlay (#2035)."""
 
     async def noop(*a, **k):
@@ -3473,7 +3473,7 @@ async def test_main_screen_edit_find_auth_error_shows_overlay(monkeypatch):
 
 
 async def test_main_screen_edit_auth_error_shows_overlay(monkeypatch):
-    """AuthError in list_images during _do_edit (main screen) triggers
+    """AuthError in list_images during do_edit (main screen) triggers
     session-expired overlay instead of opening the form with defaults (#2035)."""
 
     async def noop(*a, **k):
@@ -3495,7 +3495,7 @@ async def test_main_screen_edit_auth_error_shows_overlay(monkeypatch):
 
 
 async def test_main_screen_create_auth_error_shows_overlay(monkeypatch):
-    """AuthError in list_images during _do_create (main screen) triggers the
+    """AuthError in list_images during do_create (main screen) triggers the
     session-expired overlay instead of opening the form with defaults — parity
     with the edit path (#2035, #2234)."""
 
@@ -3518,7 +3518,7 @@ async def test_main_screen_create_auth_error_shows_overlay(monkeypatch):
 async def test_main_screen_edit_autostart_auth_error_shows_overlay(
     monkeypatch,
 ):
-    """AuthError fetching allow_autostart in _do_edit (main screen) triggers
+    """AuthError fetching allow_autostart in do_edit (main screen) triggers
     the session-expired overlay (#2035)."""
 
     async def noop(*a, **k):
@@ -3554,9 +3554,9 @@ async def test_main_screen_on_edited_refreshes(monkeypatch):
         m = app.screen
         called = {}
         m.refresh_lists = lambda: called.__setitem__("r", True)
-        m._on_edited(True)  # truthy result -> refresh
+        m.on_edited(True)  # truthy result -> refresh
         assert called.get("r") is True
-        m._on_edited(None)  # falsy -> no refresh
+        m.on_edited(None)  # falsy -> no refresh
         assert called.get("r") is True  # unchanged
 
 
@@ -5561,7 +5561,7 @@ async def test_detail_action_edit_opens_form_and_refreshes(monkeypatch):
         await app.workers.wait_for_complete()
         await pilot.pause()
         assert isinstance(app.screen, EditWorkspaceScreen)
-        # Simulate a successful save/disdismiss -> _on_edited refreshes.
+        # Simulate a successful save/disdismiss -> on_edited refreshes.
         app.screen.dismiss(True)
         await pilot.pause()
         await app.workers.wait_for_complete()
@@ -5962,7 +5962,7 @@ async def test_detail_start_error(monkeypatch):
     async with app.run_test() as pilot:
         app.push_screen(WorkspaceDetailScreen("alpha"))
         await pilot.pause()
-        app.screen.action_stop()  # ws not running → _do_start
+        app.screen.action_stop()  # ws not running → do_start
         await app.workers.wait_for_complete()
         assert "Start failed" in str(
             app.screen.query_one("#detail_msg").render()
@@ -7011,7 +7011,7 @@ def test_detail_window_id_for_resolves_index_and_falls_back():
     bug (#1955 review).
     """
     d = WorkspaceDetailScreen("alpha")
-    d._terminals = [
+    d.terminals = [
         {"index": 0, "name": "main", "id": "@0"},
         {"index": 1, "name": "build", "id": "@1"},
     ]
@@ -7027,7 +7027,7 @@ def test_detail_window_id_for_warns_when_id_missing(caplog):
     """A window matching the index but lacking an id is a server-contract
     violation — refuse to select and log loudly (#1955 review)."""
     d = WorkspaceDetailScreen("alpha")
-    d._terminals = [{"index": 0, "name": "main"}]  # no "id"
+    d.terminals = [{"index": 0, "name": "main"}]  # no "id"
     with caplog.at_level(
         "WARNING",
         logger="klangk.cli.tui.screens.workspace_detail",
@@ -7040,7 +7040,7 @@ def test_detail_terminal_label_for():
     """Delete-message label prefers the window name, falling back to the
     index/key (#1966 review UX nit)."""
     d = WorkspaceDetailScreen("alpha")
-    d._terminals = [
+    d.terminals = [
         {"index": 0, "name": "main", "id": "@0"},
         {"index": 1, "name": "", "id": "@1"},  # empty name → index
     ]
@@ -8202,7 +8202,7 @@ async def test_detail_load_terminals_auth_error_shows_overlay(monkeypatch):
 
 
 async def test_detail_edit_auth_error_in_images_shows_overlay(monkeypatch):
-    """AuthError fetching images in _do_edit (detail screen) triggers the
+    """AuthError fetching images in do_edit (detail screen) triggers the
     session-expired overlay instead of opening the form with defaults (#2035)."""
 
     async def noop(*a, **k):
@@ -8224,14 +8224,14 @@ async def test_detail_edit_auth_error_in_images_shows_overlay(monkeypatch):
         screen = next(
             s for s in app.screen_stack if isinstance(s, WorkspaceDetailScreen)
         )
-        screen.run_worker(screen._do_edit, exit_on_error=False)
+        screen.run_worker(screen.do_edit, exit_on_error=False)
         await app.workers.wait_for_complete()
         await pilot.pause()
         assert isinstance(app.screen, SessionExpiredScreen)
 
 
 async def test_detail_edit_auth_error_in_autostart_shows_overlay(monkeypatch):
-    """AuthError fetching allow_autostart in _do_edit (detail screen) triggers
+    """AuthError fetching allow_autostart in do_edit (detail screen) triggers
     the session-expired overlay (#2035)."""
 
     async def noop(*a, **k):
@@ -8253,7 +8253,7 @@ async def test_detail_edit_auth_error_in_autostart_shows_overlay(monkeypatch):
         screen = next(
             s for s in app.screen_stack if isinstance(s, WorkspaceDetailScreen)
         )
-        screen.run_worker(screen._do_edit, exit_on_error=False)
+        screen.run_worker(screen.do_edit, exit_on_error=False)
         await app.workers.wait_for_complete()
         await pilot.pause()
         assert isinstance(app.screen, SessionExpiredScreen)
@@ -9657,7 +9657,7 @@ async def test_edit_screen_egress_mode_pre_populates_and_saves(monkeypatch):
         # Seeded from the workspace (static), not the default interactive.
         assert es.query_one("#egress_mode", Select).value == "static"
         es.query_one("#egress_mode", Select).value = "allow"
-        es._save()
+        es.save()
         await app.workers.wait_for_complete()
         assert captured["egress_mode"] == "allow"
         # Not running => no restart offer.
@@ -9690,7 +9690,7 @@ async def test_edit_screen_per_handle_home_pre_populates_and_saves(
         # Seeded from the workspace (per-handle).
         assert es.query_one("#per_handle_home", Checkbox).value is True
         es.query_one("#per_handle_home", Checkbox).value = False
-        es._save()
+        es.save()
         await app.workers.wait_for_complete()
         assert captured["per_handle_home"] is False
         # Running workspace, but a layout flip applies from the next
@@ -9718,7 +9718,7 @@ async def test_edit_screen_restart_needed_when_egress_mode_changed(
         await pilot.pause()
         es = app.screen
         es.query_one("#egress_mode", Select).value = "static"
-        es._save()
+        es.save()
         await app.workers.wait_for_complete()
         assert isinstance(app.screen, ConfirmScreen)  # restart offered
 
@@ -9743,7 +9743,7 @@ async def test_edit_screen_save_calls_update(monkeypatch):
         es.query_one("#name").value = "renamed"
         es.query_one("#allow_input").value = "github.com:443"
         es._add_allowed_domain()
-        es._save()
+        es.save()
         await app.workers.wait_for_complete()
         assert captured["id"] == ws.id
         assert captured["name"] == "renamed"
@@ -9770,7 +9770,7 @@ async def test_edit_screen_restart_needed_when_running_and_changed(
         await pilot.pause()
         es = app.screen
         es.query_one("#image", Select).value = "py:3"  # create-time change
-        es._save()
+        es.save()
         await app.workers.wait_for_complete()
         assert isinstance(app.screen, ConfirmScreen)  # restart offered
         # accept -> restart_workspace called + edit screen dismissed
@@ -9794,7 +9794,7 @@ async def test_edit_screen_no_restart_when_create_field_unchanged(monkeypatch):
         es = app.screen
         # No create-time field changed (only a live-propagating field).
         es.query_one("#health_check").value = "curl x"
-        es._save()
+        es.save()
         await app.workers.wait_for_complete()
         assert not isinstance(app.screen, ConfirmScreen)
         assert not isinstance(app.screen, EditWorkspaceScreen)
@@ -9840,7 +9840,7 @@ async def test_edit_screen_nix_prepopulated_and_sent(monkeypatch):
         nix = es.query_one("#nix", Checkbox)
         assert nix.display is True
         assert nix.value is True  # pre-populated from settings.nix
-        es._save()
+        es.save()
         await app.workers.wait_for_complete()
         assert captured["settings"] == {"nix": True}
 
@@ -9869,7 +9869,7 @@ async def test_edit_screen_nix_off_clears_setting(monkeypatch):
         nix = es.query_one("#nix", Checkbox)
         assert nix.value is True  # pre-populated from settings.nix
         nix.value = False  # turn it off
-        es._save()
+        es.save()
         await app.workers.wait_for_complete()
         assert captured["settings"] == {"nix": False}
 
@@ -9899,7 +9899,7 @@ async def test_edit_screen_hidden_toggles_preserve_bag(monkeypatch):
         await pilot.pause()
         es = app.screen
         es.query_one("#cpu_limit").value = "2.0"
-        es._save()
+        es.save()
         await app.workers.wait_for_complete()
         # The lock-down, the API-only key, and the new limit all survive.
         assert captured["settings"] == {
@@ -9952,7 +9952,7 @@ async def test_edit_screen_sudo_prepopulated_and_sent(monkeypatch):
         assert sudo.display is True
         assert sudo.value is False  # pre-populated from settings.allow_sudo
         sudo.value = True  # revert to the deploy posture
-        es._save()
+        es.save()
         await app.workers.wait_for_complete()
         assert captured["settings"] == {"allow_sudo": True}
 
@@ -9981,7 +9981,7 @@ async def test_edit_screen_sudo_unchecked_sends_lockdown(monkeypatch):
         sudo = es.query_one("#allow_sudo", Checkbox)
         assert sudo.value is True  # absent bag key = follow the deploy
         sudo.value = False  # lock this workspace down
-        es._save()
+        es.save()
         await app.workers.wait_for_complete()
         assert captured["settings"] == {
             "idle_timeout": 300,
@@ -10012,7 +10012,7 @@ async def test_edit_screen_nix_preserves_unmanaged_settings(monkeypatch):
         await pilot.pause()
         es = app.screen
         # leave the nix checkbox untouched (pre-populated False) and save
-        es._save()
+        es.save()
         await app.workers.wait_for_complete()
         assert captured["settings"]["bridge_timeout"] == 60
         assert captured["settings"]["nix"] is False
@@ -10034,7 +10034,7 @@ async def test_edit_screen_nix_off_prompts_restart(monkeypatch):
         await pilot.pause()
         es = app.screen
         es.query_one("#nix", Checkbox).value = False  # turn nix off
-        es._save()
+        es.save()
         await app.workers.wait_for_complete()
         assert isinstance(app.screen, ConfirmScreen)  # restart offered
 
@@ -10054,7 +10054,7 @@ async def test_edit_screen_nix_change_prompts_restart(monkeypatch):
         await pilot.pause()
         es = app.screen
         es.query_one("#nix", Checkbox).value = True  # turn nix on
-        es._save()
+        es.save()
         await app.workers.wait_for_complete()
         assert isinstance(app.screen, ConfirmScreen)  # restart offered
 
@@ -10072,7 +10072,7 @@ async def test_edit_screen_name_required(monkeypatch):
         await pilot.pause()
         es = app.screen
         es.query_one("#name").value = ""
-        es._save()
+        es.save()
         assert updated == []
         assert "required" in str(es.query_one("#edit_msg").render()).lower()
 
@@ -10099,7 +10099,7 @@ async def test_edit_screen_save_http_error_shows_detail(monkeypatch):
         _edit_screen(app, ws)
         await pilot.pause()
         es = app.screen
-        es._save()
+        es.save()
         await app.workers.wait_for_complete()
         assert "name taken" in str(es.query_one("#edit_msg").render())
         assert isinstance(app.screen, EditWorkspaceScreen)  # still on form
@@ -10255,7 +10255,7 @@ async def test_edit_screen_save_auth_error(monkeypatch):
         _edit_screen(app, ws)
         await pilot.pause()
         es = app.screen
-        es._save()
+        es.save()
         await app.workers.wait_for_complete()
         await pilot.pause()
         # AuthError surfaces the app-wide overlay, not an inline form message (#2025).
@@ -10277,7 +10277,7 @@ async def test_edit_screen_save_generic_error(monkeypatch):
         _edit_screen(app, ws)
         await pilot.pause()
         es = app.screen
-        es._save()
+        es.save()
         await app.workers.wait_for_complete()
         assert "Failed to save: boom" in str(
             es.query_one("#edit_msg").render()
@@ -10306,7 +10306,7 @@ async def test_edit_screen_save_http_error_non_json(monkeypatch):
         _edit_screen(app, ws)
         await pilot.pause()
         es = app.screen
-        es._save()
+        es.save()
         await app.workers.wait_for_complete()
         assert "proxy" in str(es.query_one("#edit_msg").render())
 
@@ -10324,7 +10324,7 @@ async def test_edit_screen_field_submit_saves(monkeypatch):
         await pilot.pause()
         es = app.screen
         name = es.query_one("#name")
-        es.on_input_submitted(Input.Submitted(name, name.value))  # -> _save
+        es.on_input_submitted(Input.Submitted(name, name.value))  # -> save
         await app.workers.wait_for_complete()
         assert updated  # update_workspace called
         assert not isinstance(app.screen, EditWorkspaceScreen)
@@ -10348,12 +10348,12 @@ async def test_edit_screen_classification_banner_in_save_body(monkeypatch):
         assert es.query_one("#classification_banner").value == "SECRET"
         # Change it, save.
         es.query_one("#classification_banner").value = "CUI"
-        es._save()
+        es.save()
         await app.workers.wait_for_complete()
         assert updated[-1]["classification_banner"] == "CUI"
         # Clear it, save — None clears the override back to inherit.
         es.query_one("#classification_banner").value = "   "
-        es._save()
+        es.save()
         await app.workers.wait_for_complete()
         assert updated[-1]["classification_banner"] is None
 
@@ -10465,7 +10465,7 @@ async def test_edit_screen_restart_declined(monkeypatch):
         await pilot.pause()
         es = app.screen
         es.query_one("#image", Select).value = "py:3"
-        es._save()
+        es.save()
         await app.workers.wait_for_complete()
         assert isinstance(app.screen, ConfirmScreen)
         app.screen.dismiss(False)  # decline restart
@@ -10490,7 +10490,7 @@ async def test_edit_screen_restart_failure(monkeypatch):
         await pilot.pause()
         es = app.screen
         es.query_one("#image", Select).value = "py:3"
-        es._save()
+        es.save()
         await app.workers.wait_for_complete()
         assert isinstance(app.screen, ConfirmScreen)
         app.screen.dismiss(True)  # accept restart -> fails
@@ -10899,7 +10899,7 @@ async def test_edit_rename_propagates_to_detail_and_list(monkeypatch):
         await pilot.pause()
         es = app.screen
         es.query_one("#name").value = "renamed"
-        es._save()
+        es.save()
         await app.workers.wait_for_complete()
         # The post-edit reload worker is spawned from inside the save
         # worker, so wait_for_complete above may return before it has
@@ -12275,7 +12275,7 @@ async def test_run_token_refresh_loop_returns_expired_on_failure(monkeypatch):
         def token(self):
             return fake_jwt
 
-    monkeypatch.setattr(scr_main, "_refresh_token", lambda url, tok: None)
+    monkeypatch.setattr(scr_main, "refresh_token", lambda url, tok: None)
     result = await _real_run_token_refresh_loop(FakeState())
     assert result == "expired"
 
@@ -12354,7 +12354,7 @@ async def test_run_token_refresh_loop_refreshes_near_expiry(monkeypatch):
         def token(self):
             return next(tokens)
 
-    monkeypatch.setattr(scr_main, "_refresh_token", lambda url, tok: "newtok")
+    monkeypatch.setattr(scr_main, "refresh_token", lambda url, tok: "newtok")
     result = await _real_run_token_refresh_loop(FakeState())
     assert result == "no_token"
 
@@ -12519,12 +12519,12 @@ async def test_session_expired_overlay_covers_any_active_page(monkeypatch):
 # to pop screens in a ``while top is not X: pop_screen()`` loop, which is
 # fragile (a side effect that pushes a screen mid-teardown can extend or
 # loop it) and crashes (ScreenStackError) when the target screen isn't in
-# the stack. They now route through KlangkApp._pop_above, a snapshot-guarded
+# the stack. They now route through KlangkApp.pop_above, a snapshot-guarded
 # helper. These tests pin the new behavior.
 
 
 async def test_pop_above_returns_false_when_target_absent(monkeypatch):
-    """_pop_above is a no-op (returns False) when target isn't on the stack."""
+    """pop_above is a no-op (returns False) when target isn't on the stack."""
 
     async def noop(*a, **k):
         return None
@@ -12537,13 +12537,13 @@ async def test_pop_above_returns_false_when_target_absent(monkeypatch):
     async with app.run_test() as pilot:
         await pilot.pause()
         before = list(app.screen_stack)
-        result = app._pop_above(_Screen())  # never pushed -> absent
+        result = app.pop_above(_Screen())  # never pushed -> absent
         assert result is False
         assert app.screen_stack == before  # nothing popped
 
 
 async def test_pop_above_stops_when_top_changes_mid_teardown(monkeypatch):
-    """If the live top is no longer the screen ``_pop_above`` planned to pop
+    """If the live top is no longer the screen ``pop_above`` planned to pop
     next, it stops instead of popping a screen it didn't plan to remove.
 
     ``pop_screen`` is synchronous, so a real call never changes the top out
@@ -12582,7 +12582,7 @@ async def test_pop_above_stops_when_top_changes_mid_teardown(monkeypatch):
             return result
 
         monkeypatch.setattr(app, "pop_screen", patched)
-        result = app._pop_above(main)
+        result = app.pop_above(main)
         # b was popped, then sentinel was pushed -> the top is no longer the
         # planned 'a', so the loop stops with MainScreen NOT exposed.
         assert result is False
@@ -12734,7 +12734,7 @@ async def test_run_token_refresh_loop_concurrent_rotation(monkeypatch):
         def token(self):
             return next(tokens)
 
-    monkeypatch.setattr(scr_main, "_refresh_token", lambda url, tok: None)
+    monkeypatch.setattr(scr_main, "refresh_token", lambda url, tok: None)
     result = await _real_run_token_refresh_loop(FakeState())
     assert result == "no_token"
 
@@ -13010,7 +13010,7 @@ async def test_edit_screen_editor_add_buttons_clickable(monkeypatch):
 async def test_edit_running_env_saved_before_restart_prompt(monkeypatch):
     """Editing a RUNNING workspace's env persists the change *before* the
     restart-needed prompt appears; dismissing the prompt (Skip) must not
-    drop it (#1891). The update PUT fires unconditionally in _do_save,
+    drop it (#1891). The update PUT fires unconditionally in do_save,
     ahead of the ConfirmScreen."""
 
     async def noop(*a, **k):
@@ -13106,7 +13106,7 @@ async def test_main_screen_cheatsheet_modal():
 async def test_detail_screen_cheatsheet_modal():
     """`?` on the detail screen opens a cheatsheet of WorkspaceDetailScreen
     bindings; Escape dismisses (#1802). Also confirms the `?` binding survives
-    the per-display BINDINGS rebuild in _display()."""
+    the per-display BINDINGS rebuild in refresh_display()."""
     a = _wsobj("alpha", running=True, service_started_at=1.0)
     st = _ws(owned=[a])
     st.find_workspace = lambda n: a
@@ -13177,7 +13177,7 @@ def test_render_detail_indents_wrapped_values_to_value_column():
 async def test_detail_display_renders_at_body_width_not_screen_width(
     monkeypatch,
 ):
-    """#detail_body is narrower than the screen (horizontal chrome); _display
+    """#detail_body is narrower than the screen (horizontal chrome); refresh_display
     must render the detail table at the body's content width, or the Static
     re-wraps the pre-folded lines and drops the value-column indent (#2190)."""
 
@@ -13211,7 +13211,7 @@ async def test_detail_display_renders_at_body_width_not_screen_width(
         await pilot.pause()
         await app.screen._load()
         await pilot.pause()
-        app.screen._display()
+        app.screen.refresh_display()
         await pilot.pause()
         body = app.screen.query_one("#detail_body", Static)
         screen_w = app.screen.size.width
@@ -13337,7 +13337,7 @@ async def test_edit_screen_save_includes_settings(monkeypatch):
         es.query_one("#cpu_limit", Input).value = "2.0"
         es.query_one("#pids_limit", Input).value = "512"
         es.query_one("#tmp_size", Input).value = "1g"
-        es._save()
+        es.save()
         await app.workers.wait_for_complete()
         assert captured["settings"] == {
             "cpu_limit": 2.0,
@@ -13595,7 +13595,7 @@ async def test_detail_status_event_ignores_string_started_at(monkeypatch):
         await app.workers.wait_for_complete()
         await pilot.pause()
         d = app.screen
-        # Malformed string stamp: not adopted, no crash on _display().
+        # Malformed string stamp: not adopted, no crash on refresh_display().
         d.apply_status_event(
             {
                 "type": "container_status",
@@ -13655,7 +13655,7 @@ async def test_create_screen_settings_validation_inline_error(monkeypatch):
 
 
 async def test_edit_screen_settings_validation_inline_error(monkeypatch):
-    """#2029: same validation on the edit form's _save path."""
+    """#2029: same validation on the edit form's save path."""
 
     async def noop(*a, **k):
         return None
@@ -13674,7 +13674,7 @@ async def test_edit_screen_settings_validation_inline_error(monkeypatch):
         await pilot.pause()
         es = app.screen
         es.query_one("#cpu_limit", Input).value = "fast"
-        es._save()
+        es.save()
         await app.workers.wait_for_complete()
         assert updated == {}  # never submitted
         assert "CPU limit" in str(es.query_one("#edit_msg", Static).render())
@@ -13991,7 +13991,7 @@ async def test_detail_delete_pop_guarded_when_screen_already_popped(
         app.pop_screen()  # external actor pops it first
         await pilot.pause()
         before = list(app.screen_stack)
-        await d._do_delete()  # guarded pop no-ops
+        await d.do_delete()  # guarded pop no-ops
         await pilot.pause()
         assert list(app.screen_stack) == before
         assert isinstance(app.screen, MainScreen)
@@ -14217,7 +14217,7 @@ class TestAppBranchGaps2834:
                 app.push_screen(top)
                 await pilot.pause()
                 before = len(app.screen_stack)
-                assert app._pop_above(top) is True
+                assert app.pop_above(top) is True
                 await pilot.pause()
                 # Target was already on top: nothing above it to pop.
                 assert len(app.screen_stack) == before
@@ -14483,7 +14483,7 @@ class TestDetailScreenBranchGaps2834:
         async with self._detail() as (app, screen):
             workers = []
             screen.run_worker = lambda *a, **k: workers.append(a)
-            screen._on_edited(None)
+            screen.on_edited(None)
             assert workers == []
 
     async def test_health_event_without_message(self):
@@ -14546,7 +14546,7 @@ class TestDetailScreenBranchGaps2834:
                 name
             )
             screen.app.refresh_workspaces = lambda: None
-            await screen._do_start()
+            await screen.do_start()
             assert started == ["alpha"]
 
     async def test_start_without_ws_still_requests(self):
@@ -14557,7 +14557,7 @@ class TestDetailScreenBranchGaps2834:
                 name
             )
             screen.app.refresh_workspaces = lambda: None
-            await screen._do_start()
+            await screen.do_start()
             assert started == ["alpha"]
 
     async def test_second_terminal_load_keeps_selected_index(self):
@@ -14674,7 +14674,7 @@ class TestLoginServerFormBranchGaps2834:
                 # nothing changed) result: no repopulate, no server change.
                 view.action_edit_server()
                 calls = []
-                view._populate = lambda: calls.append(1)
+                view.populate = lambda: calls.append(1)
                 cb = pushed.get("cb")
                 cb(False)
                 assert calls == []
@@ -14719,7 +14719,7 @@ class TestLoginServerFormBranchGaps2834:
                 screen._rejected_domains = ["evil.example:443"]
                 inp = screen.query_one("#reject_input", TextualInput)
                 inp.value = "evil.example:443"
-                screen._msg = lambda *a, **k: None
+                screen.msg = lambda *a, **k: None
                 screen._render_rejected_domains = lambda: None
                 screen._add_rejected_domain()
                 assert screen._rejected_domains == ["evil.example:443"]
@@ -14887,7 +14887,7 @@ class TestFinalBranchGaps2834:
                 screen._load = _noop_load
                 screen._refresh_deploy_banner = _noop_load
                 screen._missing = True
-                real_pop = app._pop_above
+                real_pop = app.pop_above
 
                 def _pop_then_push(target):
                     result = real_pop(target)
@@ -14898,7 +14898,7 @@ class TestFinalBranchGaps2834:
                     app.push_screen(ConfirmScreen("raced in"))
                     return result
 
-                app._pop_above = _pop_then_push
+                app.pop_above = _pop_then_push
                 await screen._reload_on_status()
                 await pilot.pause()
                 # The raced-in modal is now on top: the dead detail
@@ -14927,8 +14927,8 @@ class TestFinalBranchGaps2834:
                     stopped.append(name)
                 )
                 screen.app.refresh_workspaces = lambda: None
-                await screen._do_restart()
-                await screen._do_stop()
+                await screen.do_restart()
+                await screen.do_stop()
                 assert restarted == ["nows"]
                 assert stopped == ["nows"]
 
@@ -14956,7 +14956,7 @@ class TestFinalBranchGaps2834:
                 screen._editing_reject = None
                 inp = screen.query_one("#reject_input", TextualInput)
                 inp.value = "a.example:443"  # already present
-                screen._msg = lambda *a, **k: None
+                screen.msg = lambda *a, **k: None
                 screen._render_rejected_domains = lambda: None
                 screen._add_rejected_domain()
                 # No stale edit row and the value already present: the

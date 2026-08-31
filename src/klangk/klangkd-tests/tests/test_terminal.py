@@ -1819,7 +1819,7 @@ class TestEnsureServiceSession:
         container must not both create the service-cmd window.
 
         The boot path (workspaces.start_workspace) and the per-connection
-        path (wshandler _fire_service_command) are both unserialized callers.
+        path (wshandler fire_service_command) are both unserialized callers.
         Without the per-container lock, both can pass the window-exists check
         before either's new-window lands, and since tmux allows duplicate
         window names, both create a service-cmd window -- leaving later

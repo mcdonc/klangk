@@ -209,7 +209,7 @@ except Exception as exc:
 """
 
 
-def _podman(*args, check=True, timeout=120):
+def podman(*args, check=True, timeout=120):
     return subprocess.run(
         ["podman", *args],
         capture_output=True,
@@ -223,7 +223,7 @@ def _podman_exists(kind, name):
     """Exit-code probe: is the podman object still there?"""
     try:
         return (
-            _podman(kind, "exists", name, check=False, timeout=10).returncode
+            podman(kind, "exists", name, check=False, timeout=10).returncode
             == 0
         )
     except subprocess.TimeoutExpired:
@@ -260,7 +260,7 @@ def _podman_cleanup(kind, *targets, attempts=3, timeout=10):
     for target in targets:
         for attempt in range(1, attempts + 1):
             try:
-                _podman(*verb, target, check=False, timeout=timeout)
+                podman(*verb, target, check=False, timeout=timeout)
             except subprocess.TimeoutExpired:
                 print(
                     f"podman {' '.join(verb)} {target} timed out after "
@@ -311,7 +311,7 @@ def env():
         timeout=120,
     )
     assert uv.returncode == 0, uv.stderr
-    build = _podman(
+    build = podman(
         "build",
         "-q",
         "-t",
@@ -344,7 +344,7 @@ def env():
 
 
 def _ip_of(name):
-    out = _podman(
+    out = podman(
         "inspect",
         "-f",
         "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}",
@@ -367,11 +367,11 @@ def _wait_ready(name, timeout=40):
     """Wait for the network sidecar's proxy to print its listening line."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        logs = _podman("logs", name, check=False).stdout
+        logs = podman("logs", name, check=False).stdout
         if "dns-proxy listening" in logs:
             return
         # Surface an early crash (e.g. SO_MARK / iptables failure).
-        state = _podman(
+        state = podman(
             "inspect",
             "-f",
             "{{.State.Status}} {{.State.ExitCode}}",
@@ -381,12 +381,12 @@ def _wait_ready(name, timeout=40):
         if "exited" in state or "stopped" in state:
             pytest.fail(
                 f"network sidecar {name} exited before ready. state={state}\n"
-                f"logs:\n{_podman('logs', name, check=False).stdout}"
+                f"logs:\n{podman('logs', name, check=False).stdout}"
             )
         time.sleep(0.5)
     pytest.fail(
         f"network sidecar {name} not ready within {timeout}s\n"
-        f"logs:\n{_podman('logs', name, check=False).stdout}"
+        f"logs:\n{podman('logs', name, check=False).stdout}"
     )
 
 
@@ -403,11 +403,11 @@ def stack(env):
     # --disable-dns: nothing on these networks resolves by container name
     # (raw IPs via _ip_of), and aardvark-dns restarts race under concurrent
     # xdist workers ("bind udp 10.89.0.1:53: address already in use").
-    _podman("network", "create", "--disable-dns", net)
+    podman("network", "create", "--disable-dns", net)
     try:
         # Fake upstream: reuse the network sidecar image (python3 + dnspython),
         # override the entrypoint to run the fake server. Listens on :53.
-        _podman(
+        podman(
             "run",
             "-d",
             "--name",
@@ -427,7 +427,7 @@ def stack(env):
         # The network sidecar: NET_ADMIN, allow-lists allowed.test, forwards to
         # the fake upstream. --dns 1.1.1.1 is the resolver the workspace inherits
         # (and that the nat REDIRECT sends to the proxy).
-        _podman(
+        podman(
             "run",
             "-d",
             "--name",
@@ -495,7 +495,7 @@ def _query(env, stack, name, server=None):
     last_exc = None
     for _attempt in range(2):
         try:
-            out = _podman(*run_args, timeout=60)
+            out = podman(*run_args, timeout=60)
             return out.stdout.strip()
         except subprocess.TimeoutExpired as exc:
             last_exc = exc
@@ -553,7 +553,7 @@ def _probe_somark(
         args = ["/probe.py", name, server, str(mark)]
         if as_root:
             args.append("root")  # 4th arg => probe stays root (sudo->root)
-    out = _podman(
+    out = podman(
         "run",
         "--rm",
         "--network",
@@ -600,13 +600,13 @@ class TestNetworkSidecarE2E:
         # for marked packets (the proxy), and the nat REDIRECT exempts marked
         # packets.
         _, network_sidecar = stack
-        rules = _podman(
+        rules = podman(
             "exec", network_sidecar, "iptables", "-S", "OUTPUT"
         ).stdout
         assert any(
             "53" in ln and "mark" in ln.lower() for ln in rules.splitlines()
         ), f"no mark-scoped upstream:53 rule in OUTPUT:\n{rules}"
-        nat = _podman(
+        nat = podman(
             "exec", network_sidecar, "iptables", "-t", "nat", "-S", "OUTPUT"
         ).stdout
         assert "REDIRECT" in nat and "RETURN" in nat, (
@@ -618,7 +618,7 @@ class TestNetworkSidecarE2E:
         # path can't bypass the v4 allow-list. ip6tables ships in the same
         # alpine iptables package.
         _, network_sidecar = stack
-        v6 = _podman(
+        v6 = podman(
             "exec", network_sidecar, "ip6tables", "-S", "OUTPUT"
         ).stdout
         assert any("-P OUTPUT DROP" in ln for ln in v6.splitlines()), (
@@ -634,9 +634,9 @@ class TestNetworkSidecarE2E:
         net = f"netc-nf-{uuid.uuid4().hex[:8]}"
         nc = f"netc-nf-{uuid.uuid4().hex[:8]}"
         # --disable-dns: see stack() — aardvark races under xdist.
-        _podman("network", "create", "--disable-dns", net)
+        podman("network", "create", "--disable-dns", net)
         try:
-            _podman(
+            podman(
                 "run",
                 "-d",
                 "--name",
@@ -656,7 +656,7 @@ class TestNetworkSidecarE2E:
                 env["image"],
             )
             _wait_ready(nc)
-            rules = _podman("exec", nc, "iptables", "-S", "OUTPUT").stdout
+            rules = podman("exec", nc, "iptables", "-S", "OUTPUT").stdout
             assert any(
                 "-j NFQUEUE" in ln and "5139" in ln
                 for ln in rules.splitlines()
@@ -666,14 +666,14 @@ class TestNetworkSidecarE2E:
             deadline = time.monotonic() + 20
             bound = False
             while time.monotonic() < deadline:
-                logs = _podman("logs", nc, check=False).stdout
+                logs = podman("logs", nc, check=False).stdout
                 if "nfqueue consumer bound to queue 5139" in logs:
                     bound = True
                     break
                 time.sleep(0.5)
             assert bound, (
                 "NFQUEUE consumer did not bind in interactive mode:\n"
-                f"{_podman('logs', nc, check=False).stdout}"
+                f"{podman('logs', nc, check=False).stdout}"
             )
         finally:
             _podman_cleanup("container", nc)
@@ -748,10 +748,10 @@ class TestNetworkSidecarE2E:
         nc = f"netc-pp-nc-{uuid.uuid4().hex[:8]}"
         ws = f"netc-pp-ws-{uuid.uuid4().hex[:8]}"
         # --disable-dns: see stack() — aardvark races under xdist.
-        _podman("network", "create", "--disable-dns", net)
+        podman("network", "create", "--disable-dns", net)
         try:
             # The sidecar owns the netns and publishes host_port -> :8000.
-            _podman(
+            podman(
                 "run",
                 "-d",
                 "--name",
@@ -772,7 +772,7 @@ class TestNetworkSidecarE2E:
             )
             _wait_ready(nc)
             # The workspace shares the sidecar's netns and binds :8000.
-            _podman(
+            podman(
                 "run",
                 "-d",
                 "--name",
@@ -907,13 +907,13 @@ def _wait_log(name, needle, timeout=20):
     """Poll ``podman logs <name>`` for ``needle`` or fail with the logs."""
     deadline = time.time() + timeout
     while time.time() < deadline:
-        logs = _podman("logs", name, check=False).stdout
+        logs = podman("logs", name, check=False).stdout
         if needle in logs:
             return
         time.sleep(0.5)
     pytest.fail(
         f"{needle!r} not in {name} logs within {timeout}s\\n"
-        f"logs:\\n{_podman('logs', name, check=False).stdout}"
+        f"logs:\\n{podman('logs', name, check=False).stdout}"
     )
 
 
@@ -941,9 +941,9 @@ def consent_stack(env):
     ver_c = f"consent-ver-{uuid.uuid4().hex[:8]}"
     nc = f"consent-nc-{uuid.uuid4().hex[:8]}"
     # --disable-dns: see stack() — aardvark races under xdist.
-    _podman("network", "create", "--disable-dns", net)
+    podman("network", "create", "--disable-dns", net)
     try:
-        _podman(
+        podman(
             "run",
             "-d",
             "--name",
@@ -959,7 +959,7 @@ def consent_stack(env):
         )
         fu_ip = _ip_of(fu_c)
         assert fu_ip, f"fake upstream {fu_c} has no IP"
-        _podman(
+        podman(
             "run",
             "-d",
             "--name",
@@ -975,7 +975,7 @@ def consent_stack(env):
         )
         ver_ip = _ip_of(ver_c)
         assert ver_ip, f"verifier {ver_c} has no IP"
-        _podman(
+        podman(
             "run",
             "-d",
             "--name",
@@ -1025,7 +1025,7 @@ class TestConsentConcurrentFlows:
         # sidecar's netns. Both SYNs hit NFQUEUE + are held for consent.
         trig_c = f"consent-trig-{uuid.uuid4().hex[:8]}"
         try:
-            _podman(
+            podman(
                 "run",
                 "-d",
                 "--name",
