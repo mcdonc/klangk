@@ -1620,6 +1620,13 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Admin users list marks the system agent (#2892).** The built-in
+  `klangk@example.com` user now carries a SYSTEM badge and a fixed-identity
+  note instead of looking like an ordinary account, and tapping its row no
+  longer opens the edit dialog (its email, handle, and password are fixed).
+  The group-member and ACL user pickers omit it as well, matching the
+  server's refusal to make it a principal.
+
 - **Access-revoked restart loop (#2891).** When a user's workspace access
   was revoked (share removed, ACL changed, workspace deleted) while a
   "Container stopped" overlay was up, pressing its Restart button was

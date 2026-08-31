@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../auth/auth_service.dart';
 import '../theme/colors.dart';
+import '../utils/system_agent.dart';
 
 /// Reusable ACL editor widget for any resource path.
 /// Shows ACE entries with add/remove/reorder, saves on button press.
@@ -180,6 +181,10 @@ class AclEditorState extends State<AclEditor> {
     } catch (e) {
       debugPrint('[AclEditor] fetch users failed: $e');
     }
+    // The system agent realizes capabilities through physical access, not
+    // principalship — the backend rejects an ACE for it, so the picker
+    // omits it (#2892).
+    users = users.where((u) => !isSystemAgent(u)).toList();
     try {
       groups = await _loadPickerGroups(auth);
     } catch (e) {
