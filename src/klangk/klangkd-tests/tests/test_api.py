@@ -2418,7 +2418,7 @@ class TestWorkspaceRoutes:
         """POST /restart checks the drain flag BEFORE stopping the
         running container — a running workspace survives the refusal
         (#2527)."""
-        from klangk.container.state import ContainerState
+        from klangk.container.basics import ContainerState
 
         headers = await _auth_headers(client)
         create_resp = await client.post(
@@ -14568,7 +14568,7 @@ class TestTestModeEndpoints:
     async def test_idle_timeout_per_workspace(self, tclient, app, registry):
         # Per-workspace overrides only apply to workspaces with live
         # container state (unknown ids fall back to the global default).
-        from klangk.container.state import ContainerState
+        from klangk.container.basics import ContainerState
 
         registry.states["ws-x"] = ContainerState("ws-x", "cid-x", app)
 

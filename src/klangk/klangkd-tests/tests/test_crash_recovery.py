@@ -54,7 +54,7 @@ def crash_env():
 
 def dead_state(registry, ws_id="ws-crash", cid="cid-crash", health_check=None):
     """Track a workspace whose container will be reported dead."""
-    state = container.state.ContainerState(ws_id, cid, registry.app)
+    state = container.ContainerState(ws_id, cid, registry.app)
     state.health_check = health_check
     registry.states[ws_id] = state
     registry._cid_to_wsid[cid] = ws_id

@@ -10,7 +10,7 @@ import time
 
 from .. import podman
 from .spec import SHARED_HOME
-from .state import ContainerState
+from .basics import ContainerState
 
 logger = logging.getLogger(__name__)
 
