@@ -27,7 +27,7 @@ from textual.widgets import (
 )
 
 from ...client import AuthError, WorkspaceNotFoundError
-from ._base import (
+from .base import (
     CheatsheetScreen,
     ConfirmScreen,
     DuplicateScreen,

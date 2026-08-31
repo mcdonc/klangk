@@ -5,7 +5,7 @@ admin, images, OIDC, browser-delegate, imports/exports — lived in a
 single ~2800-line ``api.py``.  That module has been split into per-domain
 submodules, each mounting its own sub-router:
 
-    _common.py         shared helpers / constants / request models
+    common.py         shared helpers / constants / request models
     auth.py            register/login/logout + password/email/handle changes
                        + OIDC login/callback (merged from oidc_auth)
     workspaces.py      CRUD + members + roles + groups + ACL + import/export
@@ -42,7 +42,7 @@ from .. import (
     oidc,
     wshandler,
 )
-from ._common import autostart_allowed, get_app_dep
+from .common import autostart_allowed, get_app_dep
 
 # Imported under an alias: the ``from . import auth as _auth_routes`` line
 # below pulls in the api/auth.py *submodule*, and the import machinery writes

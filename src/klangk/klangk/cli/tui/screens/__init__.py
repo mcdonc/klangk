@@ -4,7 +4,7 @@ Existing ``from klangk.cli.tui.screens import FooScreen`` imports
 continue to work unchanged.
 """
 
-from ._base import (
+from .base import (
     CheatsheetScreen,
     ConfirmScreen,
     DuplicateScreen,

@@ -722,7 +722,7 @@ class Workspaces:
 
         Skipped entirely if ``KLANGKD_ALLOW_AUTOSTART`` is not enabled
         (parsed via the shared :func:`parse_bool_setting`, so this gate and
-        ``api._common.autostart_allowed`` agree — #2796).
+        ``api.common.autostart_allowed`` agree — #2796).
         Returns the number of containers started.
         """
         if not parse_bool_setting(self.app.state.settings.allow_autostart):

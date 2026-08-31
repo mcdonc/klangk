@@ -22,7 +22,7 @@ from textual.widgets import (
 
 from ...config import AliasConflictError
 from ...transport import is_valid_server_spec
-from ._base import (
+from .base import (
     ConfirmScreen,
     SpatialListView,
     StatusScreen,

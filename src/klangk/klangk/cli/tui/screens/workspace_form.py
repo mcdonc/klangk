@@ -31,7 +31,7 @@ from ...mount import (
     validate_allowed_domain_spec,
     validate_mount_spec,
 )
-from ._base import (
+from .base import (
     ConfirmScreen,
     NonFocusableVerticalScroll,
     StatusScreen,

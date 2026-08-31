@@ -19,7 +19,7 @@ from .. import (
     wshandler,
 )
 from ..server_schedule import resolve_fire_at
-from ._common import get_app_dep
+from .common import get_app_dep
 from ..model import (
     ACTION_ALLOW,
     AgentPrincipalError,
@@ -29,7 +29,7 @@ from ..model import (
     PRINCIPAL_USER,
     SYSTEM_AUTHENTICATED,
 )
-from ._common import (
+from .common import (
     WorkspaceAclEntry,
     admin_resource,
     send_email,

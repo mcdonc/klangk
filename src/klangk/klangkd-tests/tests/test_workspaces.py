@@ -543,7 +543,7 @@ class TestAutoStartWorkspaces:
     async def test_returns_zero_when_disabled_by_string(self, user, app_state):
         # "false" is a non-empty string, so the pre-#2796 plain-truthiness
         # gate read it as *enabled*; the gate now parses it like
-        # api._common.autostart_allowed does.
+        # api.common.autostart_allowed does.
         registry = app_state.state.container_registry
         await app_state.state.workspaces.create_workspace(
             user["id"], "auto-ws", auto_start=True

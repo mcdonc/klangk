@@ -31,8 +31,8 @@ from .. import (
 )
 from ..settings import parse_bool_setting
 from ..util import API_PREFIX
-from ._common import get_app_dep, workstation
-from ._common import (
+from .common import get_app_dep, workstation
+from .common import (
     send_email,
 )
 

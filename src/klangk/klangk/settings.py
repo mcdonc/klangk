@@ -309,7 +309,7 @@ def parse_bool_setting(value: str | None) -> bool:
     consumer matches the same truthy forms (``1`` / ``true`` / ``yes``,
     case-insensitive, whitespace-tolerant). Centralizing the parse keeps
     the reads identical — the #2796 unification of
-    ``api._common.autostart_allowed``, the boot auto-start gate in
+    ``api.common.autostart_allowed``, the boot auto-start gate in
     ``workspaces.auto_start_workspaces`` (which previously used plain
     string truthiness, so ``allow_autostart: "false"`` read as
     *enabled*), the ``smtp_use_tls`` consumer in ``emailsvc``, and the

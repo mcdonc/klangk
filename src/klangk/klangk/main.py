@@ -845,10 +845,10 @@ from .bind_safety import (  # noqa: F401, E402
 from .lifecycle import setup_logfire  # noqa: F401, E402
 
 
-# Re-export from _common so existing callers (e.g. tests) that do
+# Re-export from common so existing callers (e.g. tests) that do
 # ``from klangk.main import get_app_state_dep`` keep working.
-# The canonical home is ``api._common`` (avoids main <-> api circular import).
-from .api._common import get_app_dep  # noqa: F401, E402
+# The canonical home is ``api.common`` (avoids main <-> api circular import).
+from .api.common import get_app_dep  # noqa: F401, E402
 
 
 # --- ASGI app ---

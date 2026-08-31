@@ -36,7 +36,7 @@ from ..workspace_settings import (
     validate_settings,
     validate_settings_patch,
 )
-from ._common import get_app_dep
+from .common import get_app_dep
 from ..model import (
     ACTION_ALLOW,
     EGRESS_MODE_DEFAULT,
@@ -48,7 +48,7 @@ from ..model import (
 from ..util import (
     sanitize_disposition_name,
 )
-from ._common import (
+from .common import (
     WorkspaceAclEntry,
     autostart_allowed,
     serialize_acl_entries,

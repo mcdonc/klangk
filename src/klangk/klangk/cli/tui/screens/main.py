@@ -35,7 +35,7 @@ from textual.widgets import (
 from ...client import AuthError, WorkspaceNotFoundError, decode_token_claims
 from ...auth import refresh_token as _refresh_token
 from ...transport import ws_connect
-from ._base import (
+from .base import (
     CheatsheetScreen,
     ConfirmScreen,
     DuplicateScreen,

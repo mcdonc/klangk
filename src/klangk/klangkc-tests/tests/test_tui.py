@@ -44,7 +44,7 @@ from klangk.cli.tui.screens import workspace_detail as scr_detail
 from klangk.cli.tui import state as tui_state_mod
 from klangk.cli.tui.screens import main as ws_mod
 from klangk.cli.tui.app import KlangkApp, run_tui
-from klangk.cli.tui.screens._base import StatusBar
+from klangk.cli.tui.screens.base import StatusBar
 from klangk.cli.config import (
     AliasConflictError,
     CLIConfig,
@@ -2948,7 +2948,7 @@ def test_tui_state_export_import(monkeypatch, redirect_xdg):
 
 def test_fmt_transfer_known_unknown_and_units():
     """Byte formatter covers B/KB/MB/GB and the unknown-total branch."""
-    from klangk.cli.tui.screens._base import _fmt_transfer, _human_bytes
+    from klangk.cli.tui.screens.base import _fmt_transfer, _human_bytes
 
     assert _human_bytes(0) == "0.0 B"
     assert _human_bytes(512).endswith("B")
@@ -14043,7 +14043,7 @@ class TestBaseScreenBranchGaps2834:
     def test_btn_step_with_non_button_focus_is_noop(self):
         # Focus sitting on nothing (or a non-button): the left/right
         # button-step does not move focus.
-        from klangk.cli.tui.screens._base import ConfirmScreen
+        from klangk.cli.tui.screens.base import ConfirmScreen
 
         s = ConfirmScreen("p")
         # Not mounted: self.focused is None -> fid None -> guard exits.
@@ -14054,7 +14054,7 @@ class TestBaseScreenBranchGaps2834:
     def test_error_screen_unknown_button_ignored(self):
         # A button id the screen does not handle: nothing happens (no
         # crash, no dismissal).
-        from klangk.cli.tui.screens._base import SessionExpiredScreen
+        from klangk.cli.tui.screens.base import SessionExpiredScreen
 
         s = SessionExpiredScreen()
         dismissed = []
@@ -14063,7 +14063,7 @@ class TestBaseScreenBranchGaps2834:
         assert dismissed == []
 
     def test_confirm_screen_cancel_button_dismisses(self):
-        from klangk.cli.tui.screens._base import ConfirmScreen
+        from klangk.cli.tui.screens.base import ConfirmScreen
 
         s = ConfirmScreen("p")
         dismissed = []
@@ -14072,7 +14072,7 @@ class TestBaseScreenBranchGaps2834:
         assert dismissed == [False]
 
     def test_duplicate_screen_unknown_button_and_input_ignored(self):
-        from klangk.cli.tui.screens._base import DuplicateScreen
+        from klangk.cli.tui.screens.base import DuplicateScreen
 
         s = DuplicateScreen("src-name")
         dismissed = []
@@ -14085,7 +14085,7 @@ class TestBaseScreenBranchGaps2834:
         assert dismissed == []
 
     def test_input_screen_unknown_button_and_input_ignored(self):
-        from klangk.cli.tui.screens._base import InputScreen
+        from klangk.cli.tui.screens.base import InputScreen
 
         s = InputScreen("t")
         dismissed = []
@@ -14098,7 +14098,7 @@ class TestBaseScreenBranchGaps2834:
         assert dismissed == []
 
     def test_spatial_up_at_chain_top_without_exit_stays(self):
-        from klangk.cli.tui.screens._base import SpatialNavScreen
+        from klangk.cli.tui.screens.base import SpatialNavScreen
 
         class _S(SpatialNavScreen):
             SPATIAL_CHAIN = ["top", "bottom"]
@@ -14111,7 +14111,7 @@ class TestBaseScreenBranchGaps2834:
         _S().action_spatial_up()  # no exit target: stays (no raise)
 
     def test_spatial_down_at_chain_bottom_stays(self):
-        from klangk.cli.tui.screens._base import SpatialNavScreen
+        from klangk.cli.tui.screens.base import SpatialNavScreen
 
         class _S(SpatialNavScreen):
             SPATIAL_CHAIN = ["top", "bottom"]
@@ -14123,7 +14123,7 @@ class TestBaseScreenBranchGaps2834:
         _S().action_spatial_down()  # at the end: stays (no raise)
 
     def test_tab_skip_skips_disabled_and_hidden_targets(self):
-        from klangk.cli.tui.screens._base import TabSkipMixin
+        from klangk.cli.tui.screens.base import TabSkipMixin
 
         focused_ids = []
 
@@ -14211,7 +14211,7 @@ class TestAppBranchGaps2834:
         with self._status_patched():
             app = KlangkApp(_ws())
             async with app.run_test() as pilot:
-                from klangk.cli.tui.screens._base import ConfirmScreen
+                from klangk.cli.tui.screens.base import ConfirmScreen
 
                 top = ConfirmScreen("sure?")
                 app.push_screen(top)
@@ -14494,7 +14494,7 @@ class TestDetailScreenBranchGaps2834:
 
     async def test_reload_on_status_pops_when_screen_not_top(self):
         async with self._detail() as (app, screen):
-            from klangk.cli.tui.screens._base import ConfirmScreen
+            from klangk.cli.tui.screens.base import ConfirmScreen
 
             app.push_screen(ConfirmScreen("modal?"))
             await asyncio.sleep(0)
@@ -14893,7 +14893,7 @@ class TestFinalBranchGaps2834:
                     result = real_pop(target)
                     # A racing push lands between the teardown and the
                     # self-pop check.
-                    from klangk.cli.tui.screens._base import ConfirmScreen
+                    from klangk.cli.tui.screens.base import ConfirmScreen
 
                     app.push_screen(ConfirmScreen("raced in"))
                     return result
@@ -14903,7 +14903,7 @@ class TestFinalBranchGaps2834:
                 await pilot.pause()
                 # The raced-in modal is now on top: the dead detail
                 # screen did NOT pop itself beneath it.
-                from klangk.cli.tui.screens._base import ConfirmScreen
+                from klangk.cli.tui.screens.base import ConfirmScreen
 
                 assert isinstance(app.screen, ConfirmScreen)
                 assert screen in app.screen_stack
