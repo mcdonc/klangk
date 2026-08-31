@@ -128,11 +128,16 @@ class TestInstallHint:
         )
 
     def test_ip_maps_to_iproute2(self):
-        """The ip binary ships as the iproute2 package (#2921) — 'install ip'
-        names a nonexistent package on every major manager."""
-        assert install_hint("ip", "dnf") == "sudo dnf install iproute2"
+        """The ip binary ships as `iproute` on Red Hat family and `iproute2`
+        elsewhere (#2921) — the binary name alone names a nonexistent
+        package on every major manager."""
+        assert install_hint("ip", "dnf") == "sudo dnf install iproute"
+        assert install_hint("ip", "yum") == "sudo yum install iproute"
         assert install_hint("ip", "apt") == "sudo apt install iproute2"
+        assert install_hint("ip", "zypper") == "sudo zypper install iproute2"
+        assert install_hint("ip", "apk") == "sudo apk install iproute2"
         assert install_hint("ip", "pacman") == "sudo pacman install iproute2"
+        assert install_hint("ip", "brew") == "brew install iproute2"
 
 
 class TestCheckBinary:
