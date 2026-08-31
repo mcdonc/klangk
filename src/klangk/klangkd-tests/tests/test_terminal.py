@@ -7,6 +7,7 @@ lifecycle/queue logic against an injected fake shell.
 
 import asyncio
 import contextlib
+import os
 import types
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -2370,3 +2371,235 @@ class TestTerminalBranchGaps2834:
         # char (not dropped) on the condition-exit path.
         assert _drain_text(s) == "ok\ufffd"
         await s.stop()
+
+
+# --- No-cover audit tests (#2910, part 2) --------------------------------
+# ShellProcess runs against a REAL pty + /bin/sh (a stub podman object
+# supplies only ``bin``), so the OS/PTY glue is covered without podman.
+
+
+class TestShellProcessRealPty:
+    """Real-PTY lifecycle: start, read, write, resize, close."""
+
+    def _shell(self):
+        import klangk.terminal as term
+
+        return term.ShellProcess(podman=types.SimpleNamespace(bin="/bin/sh"))
+
+    async def test_start_read_write_resize_close(self):
+        import fcntl
+        import struct
+        import termios
+
+        shell = self._shell()
+        await shell.start(["-c", "cat"], 24, 80)
+        assert shell._master_fd is not None
+        try:
+            # winsize applied at start: rows=24, cols=80
+            packed = fcntl.ioctl(
+                shell._master_fd, termios.TIOCGWINSZ, b"\0" * 8
+            )
+            rows, cols = struct.unpack("HHHH", packed)[:2]
+            assert (rows, cols) == (24, 80)
+
+            await shell.write(b"ping\n")
+            out = await asyncio.wait_for(shell.read(), 5)
+            assert out.startswith(b"ping")
+
+            shell.resize(50, 120)
+            packed = fcntl.ioctl(
+                shell._master_fd, termios.TIOCGWINSZ, b"\0" * 8
+            )
+            rows, cols = struct.unpack("HHHH", packed)[:2]
+            assert (rows, cols) == (50, 120)
+        finally:
+            shell.close()
+        assert shell._master_fd is None
+        await asyncio.sleep(0.1)
+        assert shell._proc.returncode is not None
+
+    async def test_read_on_closed_fd_returns_empty(self):
+        import os
+
+        shell = self._shell()
+        await shell.start(["-c", "cat"], 24, 80)
+        os.close(shell._master_fd)  # fd dies underneath the session
+        assert await asyncio.wait_for(shell.read(), 5) == b""
+
+    async def test_write_blocking_falls_back_to_executor(self):
+        import klangk.terminal as term
+
+        shell = self._shell()
+        await shell.start(["-c", "cat"], 24, 80)
+        try:
+            writes = [BlockingIOError(), 5]
+
+            def fake_write(fd, data):
+                item = writes.pop(0)
+                if isinstance(item, Exception):
+                    raise item
+                return item
+
+            with patch.object(term.os, "write", side_effect=fake_write):
+                await asyncio.wait_for(shell.write(b"x"), 5)
+        finally:
+            shell.close()
+
+    async def test_close_kill_and_reader_guard_arms(self):
+        shell = self._shell()
+        await shell.start(["-c", "cat"], 24, 80)
+        # Kill arm: proc record claims alive but the pid is gone.
+        shell._proc.kill = MagicMock(side_effect=ProcessLookupError)
+        shell.close()  # inside a running loop: remove_reader succeeds
+        assert shell._master_fd is None
+
+    async def test_close_without_running_loop_closes_fd(self):
+
+        shell = self._shell()
+        await shell.start(["-c", "cat"], 24, 80)
+
+        def close_outside_loop():
+            # Simulate teardown after the loop is gone: get_running_loop
+            # raises RuntimeError and the guard must swallow it.
+            with patch(
+                "klangk.terminal.asyncio.get_running_loop",
+                side_effect=RuntimeError,
+            ):
+                shell.close()
+
+        await asyncio.get_running_loop().run_in_executor(
+            None, close_outside_loop
+        )
+        assert shell._master_fd is None
+        # proc was alive (returncode None) but pid gone: kill raced, no raise.
+
+
+class TestTerminalSessionPumpGuards2910:
+    async def test_log_exec_exit_code_arms(self):
+        s = TerminalSession("cid", terminal=_terminal)
+
+        # No _proc behind the shell: early return.
+        s._shell = types.SimpleNamespace()
+        await s._log_exec_exit_code()
+
+        # Happy path: exit code logged, never raises.
+        proc = MagicMock()
+        proc.wait = AsyncMock(return_value=3)
+        s._shell = types.SimpleNamespace(_proc=proc)
+        await s._log_exec_exit_code()
+        proc.wait.assert_awaited_once()
+
+        # wait() explodes: swallowed (best-effort logger).
+        proc2 = MagicMock()
+        proc2.wait = AsyncMock(side_effect=RuntimeError("boom"))
+        s._shell = types.SimpleNamespace(_proc=proc2)
+        await s._log_exec_exit_code()
+
+    async def test_read_loop_drops_output_when_queue_full(self):
+        from klangk.util import BoundedOutputQueue
+
+        s = TerminalSession("cid", terminal=_terminal)
+        s._running = True
+        s._output_queue = BoundedOutputQueue(maxsize=1)
+        s._output_queue.put_nowait("stale")
+        s._shell = FakeShell(chunks=[b"fresh"])
+        await s.read_loop()
+        # The stale item survives; "fresh" was dropped, sentinel deferred.
+        assert s._output_queue.get_nowait() == "stale"
+
+    async def test_write_timeout_stops_session(self, monkeypatch):
+        import klangk.terminal as term
+
+        monkeypatch.setattr(term, "_WRITE_TIMEOUT", 0.05)
+
+        class HangingShell:
+            async def write(self, data):
+                await asyncio.Event().wait()
+
+            def close(self):
+                pass
+
+        s = TerminalSession("cid", terminal=_terminal)
+        s._shell = HangingShell()
+        await s.write("x")
+        assert s._running is False  # stop() ran
+
+
+class TestSshAgentEnvFailure2910:
+    async def test_set_environment_oserror_warns_not_raises(self):
+        """podman exec failing during the SSH_AUTH_SOCK injection is a
+        warning, not a session failure."""
+        fake = FakeShell(block_after_chunks=True)
+        with (
+            _patch(fake),
+            patch.object(
+                _mock_pod,
+                "exec_container",
+                new_callable=AsyncMock,
+                side_effect=OSError("agent socket gone"),
+            ),
+        ):
+            s = TerminalSession(
+                "cid",
+                session_name="uid-123",
+                ssh_agent_socket="/tmp/agent.sock",
+                terminal=_terminal,
+            )
+            await s.start(120, 40)  # must not raise
+            s._running = False
+            s._shell = None
+            s._read_task.cancel()
+
+
+class TestShellProcessCloseArms2910:
+    def _shell(self):
+        import klangk.terminal as term
+
+        return term.ShellProcess(podman=types.SimpleNamespace(bin="/bin/sh"))
+
+    def test_resize_without_proc_skips_sigwinch(self):
+        """resize() with a live fd but no spawned process: the winsize is
+        set on the pty, the SIGWINCH kill is skipped."""
+        import pty as pty_mod
+
+        master, slave = pty_mod.openpty()
+        os.close(slave)
+        shell = self._shell()
+        shell._master_fd = master
+        try:
+            shell.resize(30, 100)  # must not raise (no proc to signal)
+        finally:
+            os.close(master)
+
+    def test_close_unstarted_is_noop(self):
+        shell = self._shell()
+        shell.close()  # _proc None, _master_fd None: every guard false
+        assert shell._master_fd is None
+
+    async def test_close_after_exit_skips_kill(self):
+        shell = self._shell()
+        await shell.start(["-c", "exit 0"], 24, 80)
+        await shell._proc.wait()
+        shell.close()  # returncode set: kill skipped
+        assert shell._master_fd is None
+
+    async def test_close_without_read_event(self):
+        import os
+
+        shell = self._shell()
+        r, w = os.pipe()
+        os.close(w)
+        shell._master_fd = r  # fd present, _read_event never created
+        shell.close()
+        assert shell._master_fd is None
+
+    async def test_close_swallows_already_closed_fd(self):
+        import os
+
+        shell = self._shell()
+        await shell.start(["-c", "cat"], 24, 80)
+        fd = shell._master_fd
+        os.close(fd)  # fd dies underneath; close() must swallow EBADF
+        shell._master_fd = fd
+        shell.close()
+        assert shell._master_fd is None

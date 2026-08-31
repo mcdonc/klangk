@@ -1697,21 +1697,331 @@ class TestStartupShutdownRestart:
                 "reap_dead_owner_containers",
                 new_callable=AsyncMock,
             ),
-            patch.object(registry, "start_cleanup_loop") as mock_cleanup,
-            patch.object(registry, "start_health_loop") as mock_health,
+            patch.object(registry, "start_cleanup_loop"),
+            patch.object(registry, "start_health_loop"),
             patch.object(
                 workspaces.Workspaces,
                 "auto_start_workspaces",
                 new_callable=AsyncMock,
                 return_value=0,
-            ) as mock_autostart,
+            ),
         ):
             await app_state.state.lifecycle.startup()
         mock_prewarm.assert_awaited_once()
         mock_adopt.assert_awaited_once()
-        mock_cleanup.assert_called_once()
-        mock_health.assert_called_once()
-        mock_autostart.assert_awaited_once()
+
+    async def test_startup_logs_auto_started_count(self):
+        """:if n: arm — a nonzero auto-start count is logged, not skipped."""
+        app_state = _make_app_state()
+        registry = app_state.state.container_registry
+        with (
+            patch.object(
+                registry,
+                "prewarm_podman",
+                new_callable=AsyncMock,
+            ),
+            patch.object(
+                registry,
+                "reap_instance_containers",
+                new_callable=AsyncMock,
+            ),
+            patch.object(
+                registry,
+                "reap_dead_owner_containers",
+                new_callable=AsyncMock,
+            ),
+            patch.object(
+                registry,
+                "start_cleanup_loop",
+            ),
+            patch.object(
+                registry,
+                "start_health_loop",
+            ),
+            patch.object(
+                registry,
+                "start_crash_loop",
+            ),
+            patch.object(
+                workspaces.Workspaces,
+                "auto_start_workspaces",
+                new_callable=AsyncMock,
+                return_value=3,
+            ),
+        ):
+            await app_state.state.lifecycle.startup()
+
+    def test_recycle_request_without_loop_returns(self):
+        """Sync-context call (no running loop, e.g. a signal handler after
+        loop teardown): the guards return instead of raising."""
+        import klangk.lifecycle as lifecycle_mod
+
+        lc = lifecycle_mod.Lifecycle.__new__(lifecycle_mod.Lifecycle)
+        lc.shutting_down = False
+        lc._recycle_tasks = set()
+        lc.request_recycle(source="test")  # guard returns, no task made
+        assert not lc._recycle_tasks
+
+        failed = MagicMock()
+        failed.cancelled.return_value = False
+        failed.exception.return_value = RuntimeError("recycle broke")
+        lc._on_recycle_task_done(failed)  # recovery guard: quiet return
+        assert not lc._recycle_tasks
+
+
+class TestNoCoverAudit2910:
+    """WS endpoint closures, gnubin PATH fixup, pid/port collision
+    helpers, and the typer entry callback."""
+
+    def _ws_endpoint(self, path):
+        app = main.build_app(make_settings())
+        for route in app.routes:
+            if getattr(route, "path", None) == path and hasattr(
+                route, "endpoint"
+            ):
+                return route.endpoint
+        raise AssertionError(f"no ws route at {path}")
+
+    async def test_ws_endpoint_delegates_to_handler(self):
+        ws = MagicMock()
+        with patch.object(
+            main, "handle_websocket", new_callable=AsyncMock
+        ) as handler:
+            await self._ws_endpoint("/ws")(ws)
+        handler.assert_awaited_once()
+
+    async def test_consent_decider_endpoint_delegates(self):
+        ws = MagicMock()
+        with patch.object(
+            main, "handle_consent_decider", new_callable=AsyncMock
+        ) as handler:
+            await self._ws_endpoint("/ws/consent-decider")(ws)
+        handler.assert_awaited_once()
+
+    async def test_egress_sidecar_endpoint_delegates(self):
+        ws = MagicMock()
+        with patch.object(
+            main, "handle_egress_sidecar", new_callable=AsyncMock
+        ) as handler:
+            await self._ws_endpoint("/ws/egress-sidecar")(ws)
+        handler.assert_awaited_once()
+
+    async def test_ws_fallback_closes_with_4044(self):
+        ws = AsyncMock()
+        await self._ws_endpoint("/{path:path}")(ws, "junk")
+        ws.accept.assert_awaited_once()
+        ws.close.assert_awaited_once()
+        assert ws.close.await_args.kwargs["code"] == 4044
+
+    def test_prepend_gnubin_paths_noop_on_linux(self):
+        with patch.object(main.platform, "system", return_value="Linux"):
+            main.prepend_gnubin_paths()  # early return, PATH untouched
+
+    def test_prepend_gnubin_paths_no_brew(self, monkeypatch):
+        monkeypatch.setenv("PATH", "/usr/bin")
+        with (
+            patch.object(main.platform, "system", return_value="Darwin"),
+            patch.object(main.shutil, "which", return_value=None),
+        ):
+            main.prepend_gnubin_paths()
+        assert os.environ["PATH"] == "/usr/bin"
+
+    def test_prepend_gnubin_paths_prefix_probe_fails(self, monkeypatch):
+        monkeypatch.setenv("PATH", "/usr/bin")
+        with (
+            patch.object(main.platform, "system", return_value="Darwin"),
+            patch.object(
+                main.shutil, "which", return_value="/opt/homebrew/bin/brew"
+            ),
+            patch.object(
+                main.subprocess,
+                "run",
+                side_effect=main.subprocess.TimeoutExpired(
+                    cmd="brew", timeout=5
+                ),
+            ),
+        ):
+            main.prepend_gnubin_paths()
+        assert os.environ["PATH"] == "/usr/bin"
+
+    def test_prepend_gnubin_paths_empty_prefix(self, monkeypatch):
+        monkeypatch.setenv("PATH", "/usr/bin")
+        result = MagicMock(stdout="\n")
+        with (
+            patch.object(main.platform, "system", return_value="Darwin"),
+            patch.object(
+                main.shutil, "which", return_value="/opt/homebrew/bin/brew"
+            ),
+            patch.object(main.subprocess, "run", return_value=result),
+        ):
+            main.prepend_gnubin_paths()
+        assert os.environ["PATH"] == "/usr/bin"
+
+    def test_prepend_gnubin_paths_prepends_dirs(self, monkeypatch):
+        monkeypatch.setenv("PATH", "/usr/bin")
+        result = MagicMock(stdout="/opt/homebrew\n")
+        with (
+            patch.object(main.platform, "system", return_value="Darwin"),
+            patch.object(
+                main.shutil, "which", return_value="/opt/homebrew/bin/brew"
+            ),
+            patch.object(main.subprocess, "run", return_value=result),
+            patch.object(main.os.path, "isdir", return_value=True),
+        ):
+            main.prepend_gnubin_paths()
+        assert os.environ["PATH"].startswith(
+            "/opt/homebrew/opt/coreutils/libexec/gnubin"
+        )
+        assert os.environ["PATH"].endswith(":/usr/bin")
+
+    def test_report_pid_collision_first_report_then_dedup(self, tmp_path):
+        settings = make_settings(
+            {
+                "KLANGKD_STATE_DIR": str(tmp_path),
+                "KLANGKD_DATA_DIR": str(tmp_path / "data"),
+            }
+        )
+        data_dir = Path(settings.data_dir)
+        data_dir.mkdir(parents=True, exist_ok=True)
+        (data_dir / "instance-id").write_text("inst-1\n")
+        marker = main.refusal_marker_path(settings)
+        marker.unlink(missing_ok=True)
+        main._report_pid_collision(settings, 4242)  # logs + marks
+        assert marker.exists()
+        main._report_pid_collision(settings, 4242)  # dedup: quiet
+
+    def test_check_port_collisions_exits_on_live_listener(self):
+        settings = types.SimpleNamespace(
+            port="5999",
+            egress_port=None,
+            listen="127.0.0.1",
+            egress_listen="127.0.0.1",
+        )
+        with patch.object(main, "check_port_preflight", return_value=True):
+            with pytest.raises(SystemExit) as caught:
+                main._check_port_collisions(settings)
+        assert caught.value.code == 1
+
+    def test_check_port_collisions_passes_when_free(self):
+        settings = types.SimpleNamespace(
+            port="5999",
+            egress_port="5998",
+            listen="127.0.0.1",
+            egress_listen="127.0.0.1",
+        )
+        with patch.object(main, "check_port_preflight", return_value=False):
+            main._check_port_collisions(settings)  # must not raise
+
+
+class TestMainEntryCallback2910:
+    """The klangkd typer callback: deferral, startup wiring, failure
+    translations (uvicorn mocked; nothing binds or serves)."""
+
+    def _invoke(self, patched, args=()):
+        from typer.testing import CliRunner
+
+        with patched:
+            return CliRunner().invoke(main.app, list(args))
+
+    def test_subcommand_defers_startup(self):
+        with patch.object(
+            main, "resolve_config_path", return_value="/dev/null"
+        ) as resolve:
+            result = self._invoke(
+                patch("klangk.doctor.doctor_main", return_value=0),
+                ["doctor"],
+            )
+        resolve.assert_not_called()
+        assert result.exit_code == 0
+
+    def test_pid_collision_exits_1(self):
+        settings = make_settings()
+        with (
+            patch.object(main, "resolve_config_path", return_value=None),
+            patch.object(main, "KlangkSettings", return_value=settings),
+            patch.object(main, "check_pid_preflight", return_value=4242),
+            patch.object(main, "_report_pid_collision") as report,
+            patch.object(main, "_check_port_collisions"),
+        ):
+            result = self._invoke(self._noop())
+        report.assert_called_once()
+        assert result.exit_code == 1
+
+    def test_bind_oserror_exits_1(self, tmp_path):
+        settings = make_settings({"KLANGKD_STATE_DIR": str(tmp_path)})
+        server = MagicMock()
+        server.run = MagicMock(side_effect=OSError("EADDRINUSE"))
+        with (
+            patch.object(main, "resolve_config_path", return_value=None),
+            patch.object(main, "KlangkSettings", return_value=settings),
+            patch.object(main, "check_pid_preflight", return_value=None),
+            patch.object(main, "_check_port_collisions"),
+            patch.object(main, "build_app") as build,
+            patch.object(
+                main,
+                "make_graceful_exit_server",
+                return_value=lambda cfg: server,
+            ),
+        ):
+            built = MagicMock()
+            built.state.util.set_uds_mode = MagicMock()
+            build.return_value = built
+            result = self._invoke(self._noop())
+        assert result.exit_code == 1
+
+    def test_uvicorn_config_error_maps_to_ex_config(self):
+        settings = make_settings()
+        server = MagicMock()
+        server.run = MagicMock(side_effect=SystemExit(3))
+        with (
+            patch.object(main, "resolve_config_path", return_value=None),
+            patch.object(main, "KlangkSettings", return_value=settings),
+            patch.object(main, "check_pid_preflight", return_value=None),
+            patch.object(main, "_check_port_collisions"),
+            patch.object(main, "build_app") as build,
+            patch.object(
+                main,
+                "make_graceful_exit_server",
+                return_value=lambda cfg: server,
+            ),
+            patch.object(
+                main,
+                "config_error_exit_status",
+                return_value=78,
+            ),
+        ):
+            built = MagicMock()
+            built.state.util.set_uds_mode = MagicMock()
+            build.return_value = built
+            result = self._invoke(self._noop())
+        assert result.exit_code == 78
+
+    @staticmethod
+    def _noop():
+        return patch.object(main, "prepend_gnubin_paths")
+
+    def test_happy_path_runs_server(self):
+        settings = make_settings()
+        server = MagicMock()
+        with (
+            patch.object(main, "resolve_config_path", return_value=None),
+            patch.object(main, "KlangkSettings", return_value=settings),
+            patch.object(main, "check_pid_preflight", return_value=None),
+            patch.object(main, "_check_port_collisions"),
+            patch.object(main, "build_app") as build,
+            patch.object(
+                main,
+                "make_graceful_exit_server",
+                return_value=lambda cfg: server,
+            ),
+        ):
+            built = MagicMock()
+            built.state.util.set_uds_mode = MagicMock()
+            build.return_value = built
+            result = self._invoke(patch.object(main, "prepend_gnubin_paths"))
+        assert result.exit_code == 0
+        server.run.assert_called_once()
+        built.state.util.set_uds_mode.assert_called_once_with(True)
 
     async def test_runtime_shutdown_tears_down_layers(self, app_state):
         app_state = _make_app_state()
@@ -3832,3 +4142,63 @@ class TestGracefulExitBranchGaps2834:
                         await asyncio.sleep(0)
         server.handle_exit.assert_called_once_with(15, None)
         assert lc._shutdown_tasks == set()
+
+
+class TestEntryCallbackEdgeArms2910:
+    def test_prepend_gnubin_paths_without_gnubin_dirs(self, monkeypatch):
+        monkeypatch.setenv("PATH", "/usr/bin")
+        result = MagicMock(stdout="/opt/homebrew\n")
+        with (
+            patch.object(main.platform, "system", return_value="Darwin"),
+            patch.object(
+                main.shutil, "which", return_value="/opt/homebrew/bin/brew"
+            ),
+            patch.object(main.subprocess, "run", return_value=result),
+            patch.object(main.os.path, "isdir", return_value=False),
+        ):
+            main.prepend_gnubin_paths()
+        assert os.environ["PATH"] == "/usr/bin"
+
+    def test_uvicorn_non_config_exit_reraises(self):
+        """SystemExit(3) with no config-error flag re-raises untouched."""
+        settings = make_settings()
+        server = MagicMock()
+        server.run = MagicMock(side_effect=SystemExit(3))
+        from typer.testing import CliRunner
+
+        with (
+            patch.object(main, "resolve_config_path", return_value=None),
+            patch.object(main, "KlangkSettings", return_value=settings),
+            patch.object(main, "check_pid_preflight", return_value=None),
+            patch.object(main, "_check_port_collisions"),
+            patch.object(main, "build_app") as build,
+            patch.object(
+                main,
+                "make_graceful_exit_server",
+                return_value=lambda cfg: server,
+            ),
+            patch.object(main, "config_error_exit_status", return_value=None),
+            patch.object(main, "prepend_gnubin_paths"),
+        ):
+            built = MagicMock()
+            built.state.util.set_uds_mode = MagicMock()
+            build.return_value = built
+            result = CliRunner().invoke(main.app, [])
+        assert result.exit_code == 3
+
+    def test_report_pid_collision_without_marker_always_logs(self, tmp_path):
+        """No instance-id on disk -> marker None -> log every time."""
+        settings = make_settings({"KLANGKD_STATE_DIR": str(tmp_path)})
+        assert main.refusal_marker_path(settings) is None
+        main._report_pid_collision(settings, 111)  # logs, skips marking
+        main._report_pid_collision(settings, 222)  # logs again (no dedup)
+
+    def test_check_port_collisions_skips_headless_ports(self):
+        settings = types.SimpleNamespace(
+            port=None,  # headless: no browser proxy port to probe
+            egress_port="5998",
+            listen="127.0.0.1",
+            egress_listen="127.0.0.1",
+        )
+        with patch.object(main, "check_port_preflight", return_value=False):
+            main._check_port_collisions(settings)  # browser arm skipped

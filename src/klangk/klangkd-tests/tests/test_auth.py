@@ -1713,3 +1713,23 @@ class TestRefreshBranchGaps2834:
             await _auth().refresh_token(expired)
         assert exc_info.value.status_code == 401
         assert exc_info.value.detail == "Token expired"
+
+
+class TestRefreshTokenNoCover2910:
+    async def test_missing_claims_rejected_401(self, db, app_state):
+        """A structurally valid JWT lacking email/jti/exp claims is
+        refused (the all([...]) guard), not refreshed."""
+        from jose import jwt as _jwt
+
+        token = _jwt.encode(
+            {"sub": "uid"}, _auth().secret, algorithm=_auth().algorithm
+        )
+        with pytest.raises(HTTPException) as caught:
+            await _auth().refresh_token(token)
+        assert caught.value.status_code == 401
+        assert caught.value.detail == "Invalid token"
+
+    async def test_garbage_token_rejected_401(self, db):
+        with pytest.raises(HTTPException) as caught:
+            await _auth().refresh_token("not-a-jwt")
+        assert caught.value.status_code == 401

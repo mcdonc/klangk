@@ -316,7 +316,9 @@ async def _probe_via_openssl_cli(
         rc, out, err = await podman.exec_container(
             container_id, _cli_probe_cmd(), timeout=30
         )
-    except Exception as e:  # pragma: no cover — podman already worked once
+    except Exception as e:
+        # podman already worked once to reach this point, so any failure
+        # here is a probe-infrastructure hiccup, not a FIPS answer.
         return False, f"openssl-cli-exec-failed: {type(e).__name__}: {e}"
     if rc != 0:
         if _missing_binary(err):

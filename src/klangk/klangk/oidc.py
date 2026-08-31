@@ -468,7 +468,7 @@ class OIDC:
         spec = importlib.util.spec_from_file_location(
             "_klangk_login_hook", path
         )
-        if spec is None or spec.loader is None:  # pragma: no cover
+        if spec is None or spec.loader is None:
             raise ConfigurationError(
                 f"KLANGKD_OIDC_LOGIN_HOOK: could not load: {path!r}"
             )

@@ -30,6 +30,7 @@ from .util import BoundedOutputQueue
 
 logger = logging.getLogger(__name__)
 
+_WRITE_TIMEOUT = 30.0  # seconds before a stuck PTY write stops the session
 _READ_CHUNK = 65536
 CONTAINER_USER = "klangk"
 
@@ -855,7 +856,9 @@ class Terminal:
                     f"container {container_id!r} is gone: {stderr.strip()}"
                 )
             raise TerminalError(f"tmux command failed: {stderr.strip()}")
-        return ""  # pragma: no cover
+        # Unreachable: every iteration returns (rc==0), retries with
+        # attempt < attempts-1, or raises — the arc past the loop never runs.
+        return ""  # pragma: no cover — loop always exits inside
 
     async def list_windows(
         self, container_id: str, session_name: str
@@ -1035,9 +1038,7 @@ class ShellProcess:
         self._proc: asyncio.subprocess.Process | None = None
         self._read_event: asyncio.Event | None = None
 
-    async def start(  # pragma: no cover
-        self, argv: list[str], rows: int, cols: int
-    ) -> None:
+    async def start(self, argv: list[str], rows: int, cols: int) -> None:
         master_fd, slave_fd = pty.openpty()
         try:
             tty.setraw(slave_fd)
@@ -1060,7 +1061,7 @@ class ShellProcess:
         self._read_event = asyncio.Event()
         asyncio.get_running_loop().add_reader(master_fd, self._read_event.set)
 
-    async def read(self) -> bytes:  # pragma: no cover
+    async def read(self) -> bytes:
         try:
             while True:
                 try:
@@ -1071,7 +1072,7 @@ class ShellProcess:
         except OSError:
             return b""
 
-    async def write(self, data: bytes) -> None:  # pragma: no cover
+    async def write(self, data: bytes) -> None:
         try:
             os.write(self._master_fd, data)
         except BlockingIOError:
@@ -1080,12 +1081,12 @@ class ShellProcess:
             loop = asyncio.get_running_loop()
             await loop.run_in_executor(None, os.write, self._master_fd, data)
 
-    def resize(self, rows: int, cols: int) -> None:  # pragma: no cover
+    def resize(self, rows: int, cols: int) -> None:
         _set_winsize(self._master_fd, rows, cols)
         if self._proc is not None:
             os.kill(self._proc.pid, signal.SIGWINCH)
 
-    def close(self) -> None:  # pragma: no cover
+    def close(self) -> None:
         if self._proc is not None and self._proc.returncode is None:
             try:
                 self._proc.kill()
@@ -1105,7 +1106,7 @@ class ShellProcess:
             self._master_fd = None
 
 
-def _set_winsize(fd: int, rows: int, cols: int) -> None:  # pragma: no cover
+def _set_winsize(fd: int, rows: int, cols: int) -> None:
     fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
 
 
@@ -1249,10 +1250,10 @@ class TerminalSession:
                         self.ssh_agent_socket,
                     ],
                 )
-            except OSError as e:  # pragma: no cover
+            except OSError as e:
                 logger.warning("Failed to set SSH_AUTH_SOCK in tmux: %s", e)
 
-    async def _log_exec_exit_code(self) -> None:  # pragma: no cover
+    async def _log_exec_exit_code(self) -> None:
         """Best-effort: log the podman-exec exit code behind the EOF."""
         _p = getattr(self._shell, "_proc", None)
         if _p is None:
@@ -1288,7 +1289,7 @@ class TerminalSession:
                 if text:
                     try:
                         self._output_queue.put_nowait(text)
-                    except asyncio.QueueFull:  # pragma: no cover
+                    except asyncio.QueueFull:
                         pass  # drop output; don't block the PTY read
             # Flush any trailing partial sequence (a stream that ends
             # mid-character yields a single replacement char rather than
@@ -1296,7 +1297,7 @@ class TerminalSession:
             tail = decoder.decode(b"", final=True)
             if tail:
                 await self._output_queue.put(tail)
-        except asyncio.CancelledError:  # pragma: no cover
+        except asyncio.CancelledError:
             raise
         except Exception:
             logger.exception("Error in terminal read loop")
@@ -1317,9 +1318,9 @@ class TerminalSession:
             try:
                 await asyncio.wait_for(
                     self._shell.write(data.encode("utf-8")),
-                    timeout=30.0,
+                    timeout=_WRITE_TIMEOUT,
                 )
-            except asyncio.TimeoutError:  # pragma: no cover
+            except asyncio.TimeoutError:
                 logger.warning(
                     "PTY write timed out after 30s, stopping session"
                 )
@@ -1345,7 +1346,7 @@ class TerminalSession:
             except asyncio.TimeoutError:
                 if self._read_task is not None and self._read_task.done():
                     break
-                continue  # pragma: no cover
+                continue
             if data is None:
                 break
             yield data

@@ -188,9 +188,9 @@ def run(cmd: list[str], timeout: float = 10.0) -> tuple[int, str, str]:
             timeout=timeout,
         )
         return proc.returncode, proc.stdout, proc.stderr
-    except FileNotFoundError:  # pragma: no cover
+    except FileNotFoundError:
         return -1, "", f"{cmd[0]}: not found"
-    except subprocess.TimeoutExpired:  # pragma: no cover
+    except subprocess.TimeoutExpired:
         return -1, "", f"{cmd[0]}: timed out"
 
 
@@ -320,7 +320,7 @@ def check_gnu_tar(manager: str | None) -> CheckResult:
 def check_gnu_du(manager: str | None) -> CheckResult:
     """Check that du supports -b (GNU coreutils)."""
     path = shutil.which("du")
-    if not path:  # pragma: no cover
+    if not path:
         return CheckResult(
             name="du (GNU)",
             ok=False,
@@ -353,7 +353,7 @@ def check_gnu_stat(manager: str | None) -> CheckResult:
     backend doesn't apply on macOS).
     """
     path = shutil.which("stat")
-    if not path:  # pragma: no cover
+    if not path:
         return CheckResult(
             name="stat (GNU)",
             ok=False,
@@ -386,7 +386,7 @@ def check_subuid(user: str) -> CheckResult:
         ("/etc/subgid", "subgid"),
     ]:
         p = Path(path_name)
-        if not p.exists():  # pragma: no cover
+        if not p.exists():
             return CheckResult(
                 name="subuid/subgid",
                 ok=False,
@@ -451,7 +451,7 @@ def check_podman_policy(
     )
 
 
-def check_podman_machine() -> CheckResult:  # pragma: no cover
+def check_podman_machine() -> CheckResult:
     """macOS: check podman machine is running."""
     if platform.system() != "Darwin":
         return CheckResult(
@@ -485,7 +485,7 @@ def check_podman_machine() -> CheckResult:  # pragma: no cover
     )
 
 
-def check_rootless_podman() -> CheckResult:  # pragma: no cover
+def check_rootless_podman() -> CheckResult:
     """Verify rootless podman can actually run a container."""
     if not shutil.which("podman"):
         return CheckResult(
@@ -576,7 +576,7 @@ def run_doctor(*, verbose: bool = False) -> DoctorReport:
         report.add(result)
 
         report.add(check_subuid(user))
-    else:  # pragma: no cover
+    else:
         report.add(check_podman_machine())
 
     # 3. Configuration checks
@@ -661,7 +661,7 @@ def format_report(report: DoctorReport) -> str:
     return "\n".join(lines)
 
 
-def doctor_main(verbose: bool = False) -> int:  # pragma: no cover
+def doctor_main(verbose: bool = False) -> int:
     """Run doctor and print results. Returns exit code."""
     report = run_doctor(verbose=verbose)
     print(format_report(report))

@@ -2034,7 +2034,7 @@ def _llm_model_entries(v) -> list:
         return [i for i in raw if i]
     if isinstance(v, list):
         return [i for i in v if i]
-    raise ValueError(  # pragma: no cover
+    raise ValueError(
         f"KLANGKD_LLM_MODELS={v!r} must be a list or "
         f"a comma-separated string (got {type(v).__name__})."
     )

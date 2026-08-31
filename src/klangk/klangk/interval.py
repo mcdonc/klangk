@@ -81,4 +81,4 @@ class IntervalWorker:
 
     async def sweep(self) -> None:
         """One unit of periodic work; failures are logged, not fatal."""
-        raise NotImplementedError  # pragma: no cover - abstract hook
+        raise NotImplementedError  # abstract hook

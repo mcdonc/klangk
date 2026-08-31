@@ -15,7 +15,9 @@ from klangk.doctor import (
     check_gnu_du,
     check_gnu_stat,
     check_gnu_tar,
+    check_podman_machine,
     check_podman_policy,
+    check_rootless_podman,
     check_subuid,
     check_tmux_version,
     detect_package_manager,
@@ -617,3 +619,153 @@ class TestDoctorBranchGaps2834:
         assert "Failures" in text
         assert "x: broke" in text
         assert "Run:" not in text
+
+
+# --- No-cover audit tests (#2910, part 2) --------------------------------
+
+
+class TestRunCommandFailures:
+    def test_missing_binary(self):
+
+        from klangk.doctor import run
+
+        with patch(
+            "klangk.doctor.subprocess.run",
+            side_effect=FileNotFoundError("no du"),
+        ):
+            rc, out, err = run(["du", "--version"])
+        assert rc == -1 and out == "" and "not found" in err
+
+    def test_command_timeout(self):
+        import subprocess as subprocess_mod
+
+        from klangk.doctor import run
+
+        with patch(
+            "klangk.doctor.subprocess.run",
+            side_effect=subprocess_mod.TimeoutExpired(cmd="du", timeout=10),
+        ):
+            rc, out, err = run(["du", "--version"])
+        assert rc == -1 and out == "" and "timed out" in err
+
+
+class TestGnuBinaryMissing:
+    def test_du_not_found(self):
+        with patch("klangk.doctor.shutil.which", return_value=None):
+            result = check_gnu_du(None)
+        assert not result.ok
+        assert "du not found" in result.message
+
+    def test_stat_not_found(self):
+        with patch("klangk.doctor.shutil.which", return_value=None):
+            result = check_gnu_stat(None)
+        assert not result.ok
+        assert "stat not found" in result.message
+
+
+class TestCheckSubuidMissingFile:
+    def test_missing_file_fails(self, monkeypatch):
+        monkeypatch.setattr("klangk.doctor.platform.system", lambda: "Linux")
+        monkeypatch.setattr("klangk.doctor.Path.exists", lambda self: False)
+        result = check_subuid("someuser")
+        assert not result.ok
+        assert "does not exist" in result.message
+
+
+class TestCheckPodmanMachine:
+    def test_linux_skips(self):
+        with patch("klangk.doctor.platform.system", return_value="Linux"):
+            result = check_podman_machine()
+        assert result.ok and "skipped on Linux" in result.message
+
+    def test_darwin_info_fails(self):
+        with (
+            patch("klangk.doctor.platform.system", return_value="Darwin"),
+            patch("klangk.doctor.run", return_value=(1, "", "err")),
+        ):
+            result = check_podman_machine()
+        assert not result.ok and "not available" in result.message
+
+    def test_darwin_machine_running(self):
+        with (
+            patch("klangk.doctor.platform.system", return_value="Darwin"),
+            patch(
+                "klangk.doctor.run",
+                side_effect=[(0, "", ""), (0, "true\n", "")],
+            ),
+        ):
+            result = check_podman_machine()
+        assert result.ok and "running" in result.message
+
+    def test_darwin_machine_stopped(self):
+        with (
+            patch("klangk.doctor.platform.system", return_value="Darwin"),
+            patch(
+                "klangk.doctor.run",
+                side_effect=[(0, "", ""), (0, "false\n", "")],
+            ),
+        ):
+            result = check_podman_machine()
+        assert not result.ok and "no podman machine" in result.message
+
+    def test_run_doctor_darwin_uses_machine_check(self):
+        from klangk.doctor import run_doctor
+
+        with (
+            patch("klangk.doctor.platform.system", return_value="Darwin"),
+            patch("klangk.doctor.check_podman_machine") as machine,
+        ):
+            run_doctor()
+        machine.assert_called_once()
+
+
+class TestCheckRootlessPodman:
+    def test_no_podman_binary(self):
+        with patch("klangk.doctor.shutil.which", return_value=None):
+            result = check_rootless_podman()
+        assert not result.ok and "podman not found" in result.message
+
+    def test_run_fails(self):
+        with (
+            patch(
+                "klangk.doctor.shutil.which", return_value="/usr/bin/podman"
+            ),
+            patch(
+                "klangk.doctor.run", return_value=(125, "", "storage error")
+            ),
+        ):
+            result = check_rootless_podman()
+        assert not result.ok and "storage error" in result.message
+
+    def test_run_succeeds(self):
+        with (
+            patch(
+                "klangk.doctor.shutil.which", return_value="/usr/bin/podman"
+            ),
+            patch("klangk.doctor.run", return_value=(0, "", "")),
+        ):
+            result = check_rootless_podman()
+        assert result.ok and "can run containers" in result.message
+
+
+class TestDoctorMain:
+    def _report(self, ok):
+        return DoctorReport(
+            results=[CheckResult(name="x", ok=ok, message="m")]
+        )
+
+    def test_passing_report_exits_zero(self, capsys):
+        import klangk.doctor as doctor_mod
+
+        with patch.object(
+            doctor_mod, "run_doctor", return_value=self._report(True)
+        ):
+            assert doctor_mod.doctor_main() == 0
+
+    def test_failing_report_exits_one(self):
+        import klangk.doctor as doctor_mod
+
+        with patch.object(
+            doctor_mod, "run_doctor", return_value=self._report(False)
+        ):
+            assert doctor_mod.doctor_main() == 1

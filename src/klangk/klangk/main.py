@@ -318,18 +318,18 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     register_exception_handlers(app)
 
     @app.websocket("/ws")
-    async def websocket_endpoint(ws: WebSocket):  # pragma: no cover
+    async def websocket_endpoint(ws: WebSocket):
         await handle_websocket(ws, app)
 
     @app.websocket("/ws/consent-decider")
-    async def consent_decider_endpoint(ws: WebSocket):  # pragma: no cover
+    async def consent_decider_endpoint(ws: WebSocket):
         # #2308: a live consent decider registers here; its connection
         # lifecycle drives the ConsentDeciderRegistry (the interactive-mode
         # gate). Event content lands with #2244.
         await handle_consent_decider(ws, app)
 
     @app.websocket("/ws/egress-sidecar")
-    async def egress_sidecar_endpoint(ws: WebSocket):  # pragma: no cover
+    async def egress_sidecar_endpoint(ws: WebSocket):
         # #2311: the network sidecar sends blocked-egress events here and
         # receives verdicts (hold-and-prompt). The coordinator gate-checks
         # (hold iff a decider is registered, else static deny); the decider
@@ -340,7 +340,7 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     # ws routes but before the StaticFiles mount, which otherwise swallows ws
     # scopes and crashes with ``assert scope["type"] == "http"``.
     @app.websocket("/{path:path}")
-    async def ws_fallback(ws: WebSocket, path: str):  # pragma: no cover
+    async def ws_fallback(ws: WebSocket, path: str):
         await ws.accept()
         logger.warning("unhandled ws path: /%s", path)
         await ws.close(code=4044, reason=f"no websocket route at /{path}")
@@ -549,7 +549,7 @@ def config_error_exit_status(app_state) -> int | None:
     return EX_CONFIG
 
 
-def prepend_gnubin_paths() -> None:  # pragma: no cover
+def prepend_gnubin_paths() -> None:
     """On macOS, prepend Homebrew gnubin dirs to ``PATH`` (#1947).
 
     macOS ships BSD ``du`` and ``tar`` whose flags are incompatible with
@@ -592,7 +592,7 @@ def prepend_gnubin_paths() -> None:  # pragma: no cover
 
 
 @app.callback()
-def main(  # pragma: no cover
+def main(
     ctx: typer.Context,
     config: str | None = typer.Option(
         None,
@@ -823,7 +823,7 @@ def make_graceful_exit_server(asgi_app):
 
 
 @app.command()
-def doctor(  # pragma: no cover
+def doctor(
     verbose: bool = typer.Option(
         False, "--verbose", "-v", help="Show extra detail for each check."
     ),
@@ -861,7 +861,7 @@ from .api.common import get_app_dep  # noqa: F401, E402
 # ``module:app`` string import anywhere (#1525).
 
 
-def _report_pid_collision(settings, existing: int) -> None:  # pragma: no cover
+def _report_pid_collision(settings, existing: int) -> None:
     """Report the losing PID-collision refusal, de-duplicated against the
     live winner PID (#2021): a supervisor's restart loop logs the refusal
     once (first collision) and then stays quiet for retries against the
@@ -878,7 +878,7 @@ def _report_pid_collision(settings, existing: int) -> None:  # pragma: no cover
             mark_refusal_reported(marker, existing)
 
 
-def _check_port_collisions(settings) -> None:  # pragma: no cover
+def _check_port_collisions(settings) -> None:
     """Port-probe check: catch cross-deploy collisions the PID-file guard
     misses (#2211). Two klangkd instances from different checkouts
     (different $DEVENV_STATE → different state_dir → separate instance-id /
@@ -907,5 +907,6 @@ def _check_port_collisions(settings) -> None:  # pragma: no cover
             sys.exit(1)
 
 
-if __name__ == "__main__":  # pragma: no cover
+if __name__ == "__main__":  # pragma: no cover — module-exec arm
+    # (python -m klangk.main) never runs under in-process tests.
     app()

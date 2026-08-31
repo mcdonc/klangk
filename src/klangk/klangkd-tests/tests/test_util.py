@@ -1115,3 +1115,14 @@ class TestPeerTrustedBranchGaps2834:
         # them all (no short-circuit) and returns False.
         u = _util({"KLANGKD_TRUSTED_PROXY_CIDRS": "10.0.0.0/8, 172.16.0.0/12"})
         assert u.peer_trusted("203.0.113.9") is False
+
+
+class TestSentinelOnFullQueue2910:
+    def test_send_sentinel_on_full_queue_is_dropped(self):
+        from klangk.util import BoundedOutputQueue
+
+        queue = BoundedOutputQueue(maxsize=1)
+        queue.put_nowait("data")
+        queue.send_sentinel()
+        queue.send_sentinel()  # full: swallowed, never raises
+        assert queue.qsize() == 1
