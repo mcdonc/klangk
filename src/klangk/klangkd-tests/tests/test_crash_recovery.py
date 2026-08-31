@@ -1331,19 +1331,29 @@ class TestCrashBranchGaps2834:
         with patch_podman_methods(app_state, inspect_dead()):
             monitor.schedule_restart("ws-race", RestartTracker())
             first = monitor.pending["ws-race"]
-            monitor.schedule_restart("ws-race", RestartTracker())
+            # The successor fires far later (pre-bumped attempts -> a
+            # near-cap backoff), so "first done, second in flight" is a
+            # stable window, not a race with the successor completing.
+            late = RestartTracker()
+            late.attempts = 12
+            monitor.schedule_restart("ws-race", late)
             second = monitor.pending["ws-race"]
             assert second is not first
-            # Let both delayed_restart tasks finish (near-zero backoff;
-            # their workspace lookups fail harmlessly and are logged).
             for _ in range(200):
-                if first.done() and second.done():
+                if first.done():
                     break
                 await asyncio.sleep(0.01)
-            assert first.done() and second.done()
-        # The superseded task's callback did NOT clear the successor's
-        # entry; the successor's own callback did.
-        assert "ws-race" not in monitor.pending
+            assert first.done()
+            # The discriminating state: after the superseded task's
+            # done-callback ran, the successor's entry SURVIVES. (An
+            # unconditional pop in the callback would have cleared it —
+            # the end state alone can't tell those apart.)
+            assert monitor.pending["ws-race"] is second
+            # The successor's own callback does the popping: cancel it
+            # (done-callbacks fire on cancellation too) and observe.
+            second.cancel()
+            await asyncio.sleep(0.01)
+            assert "ws-race" not in monitor.pending
 
     async def test_broadcast_death_event_without_tracker(self, crash_env):
         # A death with no restart tracker (restarts disabled / gave up
