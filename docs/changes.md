@@ -1620,6 +1620,14 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Workspace session background tasks are now strongly referenced
+  (#2913).** The tmux window-watcher start/stop and the debounced window
+  re-sync ran as unreferenced fire-and-forget tasks, which CPython may
+  garbage-collect mid-execution. When the collected task was the window
+  watcher's stop, the per-workspace tmux control-mode teardown never
+  completed, leaking the host-side podman exec reader and its
+  container-side tmux control client until the container stopped.
+
 - **`klangkd doctor` names the right package for a missing `ip` command
   (#2921).** The warning hint now says `sudo dnf install iproute` on the
   Red Hat family and `sudo apt install iproute2` elsewhere (zypper, apk,
