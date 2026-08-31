@@ -487,14 +487,26 @@ class ContainerRegistry(NetworkSidecarMixin):
 
         Called **only** from workspace *delete* paths (the workspace
         delete endpoint and the admin user-delete cascade), after the
-        DB row is gone: the id can never be started again, so the
-        #1258 reason the lock entry outlives every stop (a racing start
-        must serialize against the in-flight stop's lock object) no
-        longer applies. Bounds ``_workspace_locks`` and ``stop_epoch``
-        against unbounded growth from workspace create/delete churn,
-        mirroring how :meth:`prune_service_session_locks` bounds the
-        per-container lock dict (#1351). A no-op when neither entry
-        exists (the workspace was never started in this process).
+        DB row is gone: no *new* start can pass its existence check,
+        so the #1258 reason the lock entry outlives every stop (a
+        racing start must serialize against the in-flight stop's lock
+        object) no longer applies to fresh starts. A start that
+        already passed its DB check before the delete committed may
+        still hold or wait on the popped lock — the pop removes the
+        dict entry, not the lock object, so the holder keeps a working
+        lock; the orphaned container it may leave behind is the
+        pre-existing delete-vs-start race outcome, not a new one.
+
+        The stop-epoch pop resets the workspace to the implicit 0
+        (``get``'s default, i.e. "never stopped"): the #2625 crash
+        guards compare epochs by inequality, so anything deleted
+        mid-detection reads as "changed" and skips — it can never
+        cause a wrong restart. Bounds ``_workspace_locks`` and
+        ``stop_epoch`` against unbounded growth from workspace
+        create/delete churn, mirroring how
+        :meth:`prune_service_session_locks` bounds the per-container
+        lock dict (#1351). A no-op when neither entry exists (the
+        workspace was never started in this process).
         """
         self._workspace_locks.pop(workspace_id, None)
         self.stop_epoch.pop(workspace_id, None)
@@ -1713,7 +1725,7 @@ class ContainerRegistry(NetworkSidecarMixin):
         prevent. The retained entry is a single small object per workspace
         ever seen and is cleared on process restart, or on workspace
         *delete* (:meth:`prune_workspace_registry_entries`, #2912) -- the
-        only path on which the id can never be started again.
+        only path after which no new start can begin for the id.
 
         Every caller of this method is an *expected* stop (user stop, idle
         stop, delete, logout, shutdown — plus the crash monitor's own

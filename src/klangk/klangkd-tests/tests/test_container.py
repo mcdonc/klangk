@@ -7042,3 +7042,22 @@ class TestRegistryWorkspaceEntryPrune2912:
         reg.prune_workspace_registry_entries("ws-never")
         assert "ws-never" not in reg._workspace_locks
         assert "ws-never" not in reg.stop_epoch
+
+    async def test_prune_while_held_replaces_lock_identity(self):
+        # A start that already passed its DB check may still hold the lock
+        # when a delete prunes it (#2912 review): the holder keeps a
+        # working lock object, but a later _get_workspace_lock builds a
+        # fresh one that does not serialize against it, and
+        # workspace_operation_in_flight stops reporting the workspace.
+        # Pin those semantics for the (orphaned) raced container.
+        reg = self.registry
+        held = reg._get_workspace_lock("ws-held")
+        await held.acquire()
+        try:
+            reg.prune_workspace_registry_entries("ws-held")
+            assert reg.workspace_operation_in_flight("ws-held") is False
+            fresh = reg._get_workspace_lock("ws-held")
+            assert fresh is not held
+            assert not fresh.locked()
+        finally:
+            held.release()
