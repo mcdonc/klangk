@@ -33,7 +33,6 @@ import logging
 import math
 import os
 import re
-import subprocess
 from pathlib import Path
 from typing import Any, ClassVar, Literal, Mapping
 
@@ -63,6 +62,11 @@ from klangk.netfilter import parse_allowed_domains
 # neither settings nor anything that does) — used by the
 # classification_banner field validator below.
 from klangk.model.workspaces import normalize_classification_banner
+
+# And util's cmd: runner (util is stdlib-only, so no cycle) — the single
+# implementation of the ``cmd:`` secret prefix, shared with
+# util.resolve_file_value.
+from klangk.util import run_cmd_value
 from pydantic_settings.sources.providers.env import parse_env_vars
 
 logger = logging.getLogger(__name__)
@@ -405,8 +409,10 @@ __all__ = [
 # ---------------------------------------------------------------------------
 # file: / cmd: indirection resolver (shared by all read paths)
 # ---------------------------------------------------------------------------
-
-_CMD_TIMEOUT_SECONDS = 10
+# (The cmd: runner itself is util.run_cmd_value; only the file: reader
+# lives here — its OSError is returned to the caller for strerror-only
+# logging, a contract util's string-returning read_file_value does not
+# have.)
 
 # Default frontend dir: the built Flutter Web UI ships inside the wheel at
 # klangk/frontend (force-include, #1600), so an installed (non-editable)
@@ -428,29 +434,6 @@ def _read_file(value: str) -> tuple[str | None, OSError | None]:
     except OSError as e:
         e.filename = e.filename or path
         return None, e
-
-
-def _run_cmd(value: str) -> tuple[str | None, str | None]:
-    """Strip a ``cmd:`` prefix and run the referenced command."""
-    command = value[4:]
-    try:
-        proc = subprocess.run(
-            command,
-            shell=True,
-            capture_output=True,
-            text=True,
-            timeout=_CMD_TIMEOUT_SECONDS,
-        )
-    except subprocess.TimeoutExpired:
-        return None, f"timed out after {_CMD_TIMEOUT_SECONDS}s"
-    except OSError as e:  # pragma: no cover — shell=True means /bin/sh spawns; OSError only if sh itself is missing
-        return None, str(e)
-    if proc.returncode != 0:
-        return (
-            None,
-            f"exited with code {proc.returncode}: {proc.stderr.strip()}",
-        )
-    return proc.stdout.strip(), None
 
 
 def _resolve_indirection(value: str | None, key: str = "") -> str | None:
@@ -493,7 +476,7 @@ def _resolve_indirection(value: str | None, key: str = "") -> str | None:
             return None
         return contents
     if value.startswith("cmd:"):
-        contents, err = _run_cmd(value)
+        contents, err = run_cmd_value(value)
         if err is not None:
             logger.error(
                 "Cannot resolve %s via cmd: %s",

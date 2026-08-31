@@ -110,3 +110,21 @@ class WorkspaceAclEntry(BaseModel):
     user_id: str | None = None
     group_id: str | None = None
     system_principal: int | None = None
+
+
+def serialize_acl_entries(entries: list[WorkspaceAclEntry]) -> list[dict]:
+    """Map an ACE request list to the model's row-dict shape, renumbering
+    positions in submission order (shared by the admin resource-level and
+    per-workspace ACL replace endpoints)."""
+    return [
+        {
+            "position": i,
+            "action": e.action,
+            "principal_type": e.principal_type,
+            "permission": e.permission,
+            "user_id": e.user_id,
+            "group_id": e.group_id,
+            "system_principal": e.system_principal,
+        }
+        for i, e in enumerate(entries)
+    ]

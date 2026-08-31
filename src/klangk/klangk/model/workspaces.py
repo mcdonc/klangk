@@ -16,6 +16,29 @@ from .users import (
 # Must match the DB default and container.DEFAULT_PORTS_PER_WORKSPACE.
 DEFAULT_PORTS_PER_WORKSPACE = 5
 
+# Declarative workspace-row fields ``update_workspace`` persists (and,
+# mirrored as-is, the only fields a workspace-created hook may mutate in
+# place — see hooks._parse/apply; keys outside this set are provisioned,
+# not declarative). Single source of truth for both callers.
+UPDATABLE_WORKSPACE_FIELDS = frozenset(
+    {
+        "name",
+        "image",
+        "service_command",
+        "auto_start",
+        "setup_state",
+        "health_check",
+        "mounts",
+        "env",
+        "allowed_domains",
+        "rejected_domains",
+        "settings",
+        "egress_mode",
+        "per_handle_home",
+        "classification_banner",
+    }
+)
+
 # Per-workspace role groups created for every workspace. The key is the
 # group-name suffix appended to ``<suffix>-<workspace_id>``; the value is the
 # ordered list of permissions granted to that group on ``/workspaces/{id}``.
@@ -929,26 +952,10 @@ class WorkspacesModel:
         **fields: str | None,
     ) -> bool:
         """Update workspace fields. Only provided fields are changed."""
-        allowed = {
-            "name",
-            "image",
-            "service_command",
-            "auto_start",
-            "setup_state",
-            "health_check",
-            "mounts",
-            "env",
-            "allowed_domains",
-            "rejected_domains",
-            "settings",
-            "egress_mode",
-            "per_handle_home",
-            "classification_banner",
-        }
         to_set = {
             k: coerce_workspace_field(k, v)
             for k, v in fields.items()
-            if k in allowed
+            if k in UPDATABLE_WORKSPACE_FIELDS
         }
         if not to_set:
             return False

@@ -33,6 +33,7 @@ from ._common import (
     WorkspaceAclEntry,
     admin_resource,
     send_email,
+    serialize_acl_entries,
 )
 
 logger = logging.getLogger(__name__)
@@ -860,18 +861,7 @@ async def replace_resource_acl(
                 detail=f"change-acls permission required on {workspace}",
             )
 
-    acl_entries = [
-        {
-            "position": i,
-            "action": e.action,
-            "principal_type": e.principal_type,
-            "permission": e.permission,
-            "user_id": e.user_id,
-            "group_id": e.group_id,
-            "system_principal": e.system_principal,
-        }
-        for i, e in enumerate(entries)
-    ]
+    acl_entries = serialize_acl_entries(entries)
     await app.state.model.acl.replace_acl_entries(resource, acl_entries)
     return await app.state.model.acl.get_acl_entries_resolved(resource)
 

@@ -263,15 +263,25 @@ class Podman:
 
     # --- Containers ---
 
-    async def inspect_container(self, container_id: str) -> dict | None:
-        """Return the inspect dict for a container, or None if it is gone."""
-        rc, out, _err = await self.run(
-            ["container", "inspect", container_id], check=False
-        )
+    async def _inspect_first(self, args: list[str]) -> dict | None:
+        """Run a ``podman inspect``-style command; first record or None."""
+        rc, out, _err = await self.run(args, check=False)
         if rc != 0:
             return None
         data = json.loads(out)
         return data[0] if data else None
+
+    async def _list_json(self, args: list[str]) -> list[dict]:
+        """Run a listing command; parsed JSON output (empty list if none)."""
+        _rc, out, _err = await self.run(args)
+        out = out.strip()
+        return json.loads(out) if out else []
+
+    async def inspect_container(self, container_id: str) -> dict | None:
+        """Return the inspect dict for a container, or None if it is gone."""
+        return await self._inspect_first(
+            ["container", "inspect", container_id]
+        )
 
     async def container_logs(self, container_id: str) -> str:
         """Return the container's combined stdout/stderr logs (empty if gone).
@@ -663,23 +673,15 @@ class Podman:
 
     async def list_containers(self, label: str) -> list[dict]:
         """List containers matching ``label`` (``key=value``)."""
-        _rc, out, _err = await self.run(
+        return await self._list_json(
             ["ps", "-a", "--filter", f"label={label}", "--format", "json"]
         )
-        out = out.strip()
-        return json.loads(out) if out else []
 
     # --- Volumes ---
 
     async def inspect_volume(self, name: str) -> dict | None:
         """Return a volume's inspect dict, or None if it does not exist."""
-        rc, out, _err = await self.run(
-            ["volume", "inspect", name], check=False
-        )
-        if rc != 0:
-            return None
-        data = json.loads(out)
-        return data[0] if data else None
+        return await self._inspect_first(["volume", "inspect", name])
 
     async def create_volume(
         self, name: str, labels: dict[str, str] | None = None
@@ -697,11 +699,9 @@ class Podman:
 
     async def list_volumes(self, label: str) -> list[dict]:
         """List volumes matching ``label`` (``key=value``)."""
-        _rc, out, _err = await self.run(
+        return await self._list_json(
             ["volume", "ls", "--filter", f"label={label}", "--format", "json"]
         )
-        out = out.strip()
-        return json.loads(out) if out else []
 
     async def remove_volume(self, name: str) -> None:
         """Remove a volume.

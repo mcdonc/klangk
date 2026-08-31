@@ -46,7 +46,10 @@ from ._base import (
     confirm_then,
 )
 from .server import ServerSwitchScreen
-from .workspace_form import CreateWorkspaceScreen, EditWorkspaceScreen
+from .workspace_form import (
+    CreateWorkspaceScreen,
+    open_edit_screen,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -611,14 +614,28 @@ class MainScreen(StatusScreen):
             confirm_then(self, partial(self._do_restart, name)),
         )
 
-    async def _do_restart(self, name: str) -> None:
+    async def _do_lifecycle(
+        self, verb: str, name: str, *, refresh_hints: bool
+    ) -> None:
+        """Run a workspace lifecycle op off-thread and flash the result.
+
+        *verb* is capitalized ("Restart"/"Stop"/"Start"); the operation
+        runs in a worker thread via ``asyncio.to_thread`` so the textual
+        event loop stays responsive.
+        """
         try:
-            await asyncio.to_thread(self.app.tui_state.restart_workspace, name)
+            method = getattr(self.app.tui_state, f"{verb.lower()}_workspace")
+            await asyncio.to_thread(method, name)
         except Exception as exc:
-            self._flash(f"Restart failed: {exc}")
+            self._flash(f"{verb} failed: {exc}")
             return
-        self._flash(f"Restart requested for '{name}'.")
+        self._flash(f"{verb} requested for '{name}'.")
         self.app.refresh_workspaces()
+        if refresh_hints:
+            self._refresh_action_hints()
+
+    async def _do_restart(self, name: str) -> None:
+        await self._do_lifecycle("Restart", name, refresh_hints=False)
 
     def action_stop(self) -> None:
         name = self._require_highlighted()
@@ -638,24 +655,10 @@ class MainScreen(StatusScreen):
             self.run_worker(self._do_start(name), exit_on_error=False)
 
     async def _do_stop(self, name: str) -> None:
-        try:
-            await asyncio.to_thread(self.app.tui_state.stop_workspace, name)
-        except Exception as exc:
-            self._flash(f"Stop failed: {exc}")
-            return
-        self._flash(f"Stop requested for '{name}'.")
-        self.app.refresh_workspaces()
-        self._refresh_action_hints()
+        await self._do_lifecycle("Stop", name, refresh_hints=True)
 
     async def _do_start(self, name: str) -> None:
-        try:
-            await asyncio.to_thread(self.app.tui_state.start_workspace, name)
-        except Exception as exc:
-            self._flash(f"Start failed: {exc}")
-            return
-        self._flash(f"Start requested for '{name}'.")
-        self.app.refresh_workspaces()
-        self._refresh_action_hints()
+        await self._do_lifecycle("Start", name, refresh_hints=True)
 
     def action_duplicate(self) -> None:
         name = self._require_highlighted()
@@ -723,37 +726,7 @@ class MainScreen(StatusScreen):
         except Exception as exc:
             self._flash(f"Could not load workspace: {exc}")
             return
-        try:
-            data = await asyncio.to_thread(state.list_images)
-            default = data.get("default", "") or ""
-            allowed = list(data.get("allowed") or [])
-            nix_available = data.get("nix_available") is True
-            sudo_available = data.get("sudo_available") is True
-        except AuthError:
-            self.app.session_expired()
-            return
-        except Exception:
-            default, allowed = "", []
-            nix_available = False
-            sudo_available = False
-        try:
-            allow_autostart = await asyncio.to_thread(state.allow_autostart)
-        except AuthError:
-            self.app.session_expired()
-            return
-        except Exception:
-            allow_autostart = False
-        self.app.push_screen(
-            EditWorkspaceScreen(
-                workspace=ws,
-                allowed=allowed,
-                default=default,
-                allow_autostart=allow_autostart,
-                nix_available=nix_available,
-                sudo_available=sudo_available,
-            ),
-            self._on_edited,
-        )
+        await open_edit_screen(self, state, ws, self._on_edited)
 
     def _on_edited(self, result) -> None:
         if result:

@@ -37,7 +37,7 @@ from ._base import (
     TransferScreen,
     confirm_then,
 )
-from .workspace_form import EditWorkspaceScreen
+from .workspace_form import open_edit_screen
 
 logger = logging.getLogger(__name__)
 
@@ -547,37 +547,7 @@ class WorkspaceDetailScreen(StatusScreen):
 
     async def _do_edit(self) -> None:
         state = self.app.tui_state
-        try:
-            data = await asyncio.to_thread(state.list_images)
-            default = data.get("default", "") or ""
-            allowed = list(data.get("allowed") or [])
-            nix_available = data.get("nix_available") is True
-            sudo_available = data.get("sudo_available") is True
-        except AuthError:
-            self.app.session_expired()
-            return
-        except Exception:
-            default, allowed = "", []
-            nix_available = False
-            sudo_available = False
-        try:
-            allow_autostart = await asyncio.to_thread(state.allow_autostart)
-        except AuthError:
-            self.app.session_expired()
-            return
-        except Exception:
-            allow_autostart = False
-        self.app.push_screen(
-            EditWorkspaceScreen(
-                workspace=self._ws,
-                allowed=allowed,
-                default=default,
-                allow_autostart=allow_autostart,
-                nix_available=nix_available,
-                sudo_available=sudo_available,
-            ),
-            self._on_edited,
-        )
+        await open_edit_screen(self, state, self._ws, self._on_edited)
 
     def _on_edited(self, result: str | bool | None) -> None:
         if isinstance(result, str):

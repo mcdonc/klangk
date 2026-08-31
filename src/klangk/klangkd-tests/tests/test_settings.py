@@ -61,8 +61,11 @@ class TestResolveIndirection:
     def test_cmd_timeout(self, monkeypatch):
         # Patch the timeout short so we don't actually wait the default
         # _CMD_TIMEOUT_SECONDS (10s); the test only asserts the timeout
-        # path fires. ``sleep 5`` outlasts the patched 0.5s timeout (#1989).
-        monkeypatch.setattr("klangk.settings._CMD_TIMEOUT_SECONDS", 0.5)
+        # path fires. ``sleep 5`` outlasts the patched 0.5s timeout
+        # (#1989). The constant lives in klangk.util since the cmd:
+        # runner was consolidated there (shared with
+        # util.resolve_file_value).
+        monkeypatch.setattr("klangk.util._CMD_TIMEOUT_SECONDS", 0.5)
         result = _resolve_indirection("cmd:sleep 5")
         assert result is None
 

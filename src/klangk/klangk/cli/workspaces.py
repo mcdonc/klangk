@@ -349,18 +349,29 @@ def dup(
     )
 
 
+def run_workspace_action(name: str, method: str, verb: str) -> None:
+    """Run a workspace lifecycle command (rm/restart/stop/start).
+
+    Auth-gates, resolves the client lazily (after the auth check, matching
+    the original per-command ordering), maps a missing workspace to the
+    standard "No workspace named" error + exit 1, and echoes
+    ``<verb> workspace <name>`` on success.
+    """
+    context.require_auth()
+    try:
+        getattr(context._client(), method)(name)
+    except WorkspaceNotFoundError:
+        context._err.print(f"[red]No workspace named[/red] '{name}'")
+        raise typer.Exit(code=1) from None
+    typer.echo(f"{verb} workspace {name}")
+
+
 @context.app.command("rm")
 def rm(
     name: str = typer.Argument(..., help="Workspace name"),
 ) -> None:
     """Delete a workspace."""
-    context.require_auth()
-    try:
-        context._client().delete_workspace(name)
-    except WorkspaceNotFoundError:
-        context._err.print(f"[red]No workspace named[/red] '{name}'")
-        raise typer.Exit(code=1) from None
-    typer.echo(f"Deleted workspace {name}")
+    run_workspace_action(name, "delete_workspace", "Deleted")
 
 
 @context.app.command("members")
@@ -393,13 +404,7 @@ def restart(
     name: str = typer.Argument(..., help="Workspace name"),
 ) -> None:
     """Restart the container for a workspace."""
-    context.require_auth()
-    try:
-        context._client().restart_workspace(name)
-    except WorkspaceNotFoundError:
-        context._err.print(f"[red]No workspace named[/red] '{name}'")
-        raise typer.Exit(code=1) from None
-    typer.echo(f"Restarted workspace {name}")
+    run_workspace_action(name, "restart_workspace", "Restarted")
 
 
 @context.app.command("stop")
@@ -407,13 +412,7 @@ def stop(
     name: str = typer.Argument(..., help="Workspace name"),
 ) -> None:
     """Stop the container for a workspace."""
-    context.require_auth()
-    try:
-        context._client().stop_workspace(name)
-    except WorkspaceNotFoundError:
-        context._err.print(f"[red]No workspace named[/red] '{name}'")
-        raise typer.Exit(code=1) from None
-    typer.echo(f"Stopped workspace {name}")
+    run_workspace_action(name, "stop_workspace", "Stopped")
 
 
 @context.app.command("start")
@@ -421,13 +420,7 @@ def start(
     name: str = typer.Argument(..., help="Workspace name"),
 ) -> None:
     """Start the container for a workspace."""
-    context.require_auth()
-    try:
-        context._client().start_workspace(name)
-    except WorkspaceNotFoundError:
-        context._err.print(f"[red]No workspace named[/red] '{name}'")
-        raise typer.Exit(code=1) from None
-    typer.echo(f"Started workspace {name}")
+    run_workspace_action(name, "start_workspace", "Started")
 
 
 @context.app.command("export")

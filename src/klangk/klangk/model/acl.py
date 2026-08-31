@@ -264,31 +264,39 @@ class ACLModel:
             )
             return cursor.rowcount
 
+    async def get_acl_entries_by_principal(
+        self, principal_type: int, principal_column: str, principal_id: str
+    ) -> list[dict]:
+        """Get all ACL entries for a principal.
+
+        *principal_column* is ``"user_id"`` or ``"group_id"`` and must
+        match *principal_type* (``PRINCIPAL_USER``/``PRINCIPAL_GROUP``).
+        """
+        rows = await self.app.state.db.fetchall(
+            "SELECT id, resource, position, action, principal_type,"
+            " user_id, group_id, system_principal, permission"
+            f" FROM acl_entries WHERE principal_type = ? AND"
+            f" {principal_column} = ?"
+            " ORDER BY resource, position",
+            (principal_type, principal_id),
+        )
+        return [dict(row) for row in rows]
+
     async def get_acl_entries_by_principal_user(
         self, user_id: str
     ) -> list[dict]:
         """Get all ACL entries referencing a specific user."""
-        rows = await self.app.state.db.fetchall(
-            "SELECT id, resource, position, action, principal_type,"
-            " user_id, group_id, system_principal, permission"
-            " FROM acl_entries WHERE principal_type = ? AND user_id = ?"
-            " ORDER BY resource, position",
-            (PRINCIPAL_USER, user_id),
+        return await self.get_acl_entries_by_principal(
+            PRINCIPAL_USER, "user_id", user_id
         )
-        return [dict(row) for row in rows]
 
     async def get_acl_entries_by_principal_group(
         self, group_id: str
     ) -> list[dict]:
         """Get all ACL entries referencing a specific group."""
-        rows = await self.app.state.db.fetchall(
-            "SELECT id, resource, position, action, principal_type,"
-            " user_id, group_id, system_principal, permission"
-            " FROM acl_entries WHERE principal_type = ? AND group_id = ?"
-            " ORDER BY resource, position",
-            (PRINCIPAL_GROUP, group_id),
+        return await self.get_acl_entries_by_principal(
+            PRINCIPAL_GROUP, "group_id", group_id
         )
-        return [dict(row) for row in rows]
 
     async def get_acl_tree_summary(self) -> list[dict]:
         """Get all distinct resources with their ACE counts."""

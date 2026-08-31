@@ -51,6 +51,7 @@ from ..util import (
 from ._common import (
     WorkspaceAclEntry,
     autostart_allowed,
+    serialize_acl_entries,
     workspace_collection_resource,
     workspace_resource,
 )
@@ -1711,19 +1712,9 @@ async def replace_workspace_acl(
     migration 0017 backfilled it onto existing ``share`` holders.
     """
     resource = f"/workspaces/{workspace_id}"
-    acl_entries = [
-        {
-            "position": i,
-            "action": e.action,
-            "principal_type": e.principal_type,
-            "permission": e.permission,
-            "user_id": e.user_id,
-            "group_id": e.group_id,
-            "system_principal": e.system_principal,
-        }
-        for i, e in enumerate(entries)
-    ]
-    await app.state.model.acl.replace_acl_entries(resource, acl_entries)
+    await app.state.model.acl.replace_acl_entries(
+        resource, serialize_acl_entries(entries)
+    )
     return await app.state.model.acl.get_acl_entries_resolved(resource)
 
 
