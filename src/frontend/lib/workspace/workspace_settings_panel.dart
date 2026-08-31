@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../auth/auth_service.dart';
 import '../theme/colors.dart';
+import '../utils/system_agent.dart';
 import 'marking_banner.dart' show classificationBannerMaxLength;
 import 'workspace_section_nav.dart';
 import '../utils/web_helpers_stub.dart'
@@ -1444,9 +1445,13 @@ class _SettingsFormState extends State<_SettingsForm> {
                         '/api/v1/users/search?q=${Uri.encodeQueryComponent(q.trim())}',
                       );
                       if (resp.statusCode == 200) {
-                        searchResults.value = List<Map<String, dynamic>>.from(
-                          jsonDecode(resp.body) as List,
-                        );
+                        // The agent can never own a workspace (the backend
+                        // rejects making it an ACL principal), so the
+                        // transfer autocomplete never offers it (#2892).
+                        searchResults.value = (jsonDecode(resp.body) as List)
+                            .map((e) => Map<String, dynamic>.from(e as Map))
+                            .where((r) => !isSystemAgent(r))
+                            .toList();
                       }
                     } catch (e) {
                       // coverage:ignore-start

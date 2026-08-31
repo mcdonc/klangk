@@ -430,8 +430,9 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
                     style: TextStyle(color: KColors.textMuted, fontSize: 12),
                   )
                 : null,
-            // Tap opens the edit dialog; every field it offers (email,
-            // handle, password) is immutable on the agent.
+            // The agent row is not tappable: the edit dialog's every
+            // field (email, handle, password) is fixed on it, so opening
+            // it could only ever end in a rejection.
             onTap: isAgent ? null : () => _editUser(user),
             trailing: Row(
               mainAxisSize: MainAxisSize.min,
