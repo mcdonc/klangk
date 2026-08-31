@@ -1620,6 +1620,14 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Window watcher start/stop race (#2929).** A quick connect→disconnect
+  on a live workspace could land `stop()` inside the tmux control-mode
+  watcher's still-in-flight start, leaving the host-side podman exec
+  reader and the container-side tmux control session running with
+  nothing left to ever stop them. The watcher now records the stop
+  request before reading its teardown state, so a racing start tears
+  itself down once its exec completes.
+
 - **Workspace session background tasks are now strongly referenced
   (#2913).** The tmux window-watcher start/stop and the debounced window
   re-sync ran as unreferenced fire-and-forget tasks, which CPython may

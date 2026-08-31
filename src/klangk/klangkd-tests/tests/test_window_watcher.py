@@ -169,6 +169,77 @@ class TestWatcherLifecycle:
     async def test_stop_without_task_or_proc(self):
         await self._watcher().stop()  # no-arg teardown must not raise
 
+    async def test_start_stop_race_tears_down_racing_exec(self):
+        # #2929: stop() landing inside start()'s slow podman exec used to
+        # no-op (fields still unset); the exec then completed into
+        # _proc/_task that nothing would ever stop — orphaning the
+        # host-side reader and the container-side control client.
+        podman = MagicMock()
+        podman.exec_container = AsyncMock()
+        watcher = self._watcher(podman)
+        proc = MagicMock(returncode=None)
+        proc.wait = AsyncMock()
+        stdout = MagicMock()
+        stdout.readline = AsyncMock(return_value=b"")
+        proc.stdout = stdout
+        exec_started = asyncio.Event()
+        release_exec = asyncio.Event()
+
+        async def slow_exec(*args, **kwargs):
+            exec_started.set()
+            await release_exec.wait()
+            return proc
+
+        with patch("asyncio.create_subprocess_exec", side_effect=slow_exec):
+            start_task = asyncio.create_task(watcher.start())
+            await exec_started.wait()
+            await watcher.stop()  # mid-exec: _task/_proc still unset
+            release_exec.set()
+            await start_task
+
+        assert watcher._task is None and watcher._proc is None
+        proc.terminate.assert_called_once()
+        # The racing client's tmux control session was killed too.
+        podman.exec_container.assert_awaited_once()
+
+    async def test_concurrent_starts_spawn_one_exec(self):
+        # A second start() while the first is still awaiting its podman
+        # exec must no-op instead of spawning a second control client
+        # that would overwrite (and orphan) the first (#2929).
+        watcher = self._watcher()
+        proc = MagicMock(returncode=None)
+        stdout = MagicMock()
+        stdout.readline = AsyncMock(return_value=b"")
+        proc.stdout = stdout
+        exec_started = asyncio.Event()
+        release_exec = asyncio.Event()
+
+        async def slow_exec(*args, **kwargs):
+            exec_started.set()
+            await release_exec.wait()
+            return proc
+
+        with patch(
+            "asyncio.create_subprocess_exec", side_effect=slow_exec
+        ) as spawn:
+            first = asyncio.create_task(watcher.start())
+            await exec_started.wait()
+            second = asyncio.create_task(watcher.start())
+            release_exec.set()
+            await asyncio.gather(first, second)
+            assert spawn.call_count == 1
+        assert watcher._task is not None
+
+    async def test_start_after_stop_never_spawns(self):
+        # A stopped watcher is single-use: a later start() must not
+        # spawn a control client that no teardown is watching (#2929).
+        watcher = self._watcher()
+        await watcher.stop()
+        with patch("asyncio.create_subprocess_exec") as spawn:
+            await watcher.start()
+            spawn.assert_not_called()
+        assert watcher._task is None and watcher._proc is None
+
     async def test_kill_ctrl_session_swallows_errors(self):
         watcher = self._watcher()
         watcher.podman.exec_container = AsyncMock(
