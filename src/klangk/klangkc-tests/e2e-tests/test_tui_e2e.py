@@ -141,8 +141,8 @@ def tui_state(base_url, token, tmp_path, monkeypatch):
     # Write a temporary CLI config/state so TuiState can find the server.
     config_path = tmp_path / "klangk.yaml"
     state_path = tmp_path / "state.yaml"
-    monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
-    monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
+    monkeypatch.setattr("klangk.cli.config.CONFIG_PATH", config_path)
+    monkeypatch.setattr("klangk.cli.config.STATE_PATH", state_path)
     # Seed config with the server.
     add_server_to_config("e2e", base_url)
     # Write state with the token.
@@ -224,8 +224,8 @@ class TestTuiE2E:
         """An unauthenticated TuiState lands on the login screen."""
         config_path = tmp_path / "klangk.yaml"
         state_path = tmp_path / "state.yaml"
-        monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
-        monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
+        monkeypatch.setattr("klangk.cli.config.CONFIG_PATH", config_path)
+        monkeypatch.setattr("klangk.cli.config.STATE_PATH", state_path)
         state = TuiState()
         app = KlangkApp(state)
         async with app.run_test() as pilot:
@@ -238,8 +238,8 @@ class TestTuiE2E:
         """Login with wrong password shows an error."""
         config_path = tmp_path / "klangk.yaml"
         state_path = tmp_path / "state.yaml"
-        monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
-        monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
+        monkeypatch.setattr("klangk.cli.config.CONFIG_PATH", config_path)
+        monkeypatch.setattr("klangk.cli.config.STATE_PATH", state_path)
         add_server_to_config("e2e", base_url)
         st = CLIState.load()
         st.active_server = base_url
@@ -279,8 +279,8 @@ class TestTuiE2E:
         """Login with empty fields shows validation message."""
         config_path = tmp_path / "klangk.yaml"
         state_path = tmp_path / "state.yaml"
-        monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
-        monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
+        monkeypatch.setattr("klangk.cli.config.CONFIG_PATH", config_path)
+        monkeypatch.setattr("klangk.cli.config.STATE_PATH", state_path)
         add_server_to_config("e2e", base_url)
         st = CLIState.load()
         st.active_server = base_url
@@ -304,8 +304,8 @@ class TestTuiE2E:
         """Quitting and re-launching skips the login screen (#1813)."""
         config_path = tmp_path / "klangk.yaml"
         state_path = tmp_path / "state.yaml"
-        monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
-        monkeypatch.setattr("klangk.cli.config._STATE_PATH", state_path)
+        monkeypatch.setattr("klangk.cli.config.CONFIG_PATH", config_path)
+        monkeypatch.setattr("klangk.cli.config.STATE_PATH", state_path)
 
         # First launch: seed credentials (simulates a prior login session).
         add_server_to_config("e2e", base_url)

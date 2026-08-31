@@ -21,7 +21,7 @@ from .options import (
     PIDS_LIMIT_OPTION,
     REJECT_OPTION,
 )
-from .workspaces import _build_settings, _parse_env_list, _prompt, _SENTINEL
+from .workspaces import build_settings, parse_env_list, prompt, SENTINEL
 from .mount import validate_allowed_domain_spec, validate_mount_spec
 
 # Body fields baked into the container at create time: changing one on a
@@ -184,16 +184,16 @@ def prompted_edit_fields(ws):
     """Prompt for the scalar fields (Enter keeps the current value).
 
     Returns (name, image, command, health_check, banner) — each either
-    the typed value or the ``_SENTINEL`` meaning "unchanged".
+    the typed value or the ``SENTINEL`` meaning "unchanged".
     """
-    new_name = _prompt("Name", ws.name)
-    new_image = _prompt("Container Image", ws.image)
-    new_command = _prompt("Service shell command", ws.service_command)
-    new_health_check = _prompt("Health check command", ws.health_check)
+    new_name = prompt("Name", ws.name)
+    new_image = prompt("Container Image", ws.image)
+    new_command = prompt("Service shell command", ws.service_command)
+    new_health_check = prompt("Health check command", ws.health_check)
     # Plain label like the sibling prompts: Enter keeps the current
     # value (the [(none)] display shows it); typing whitespace clears
     # the override back to the deploy default (#2768).
-    new_banner = _prompt("Classification banner", ws.classification_banner)
+    new_banner = prompt("Classification banner", ws.classification_banner)
     return (
         new_name,
         new_image,
@@ -300,7 +300,7 @@ def prompted_body_fields(
 ) -> dict:
     """Body fields from the scalar prompts (sentinel = leave unchanged)."""
     body: dict = {}
-    if new_name is not _SENTINEL:
+    if new_name is not SENTINEL:
         body["name"] = new_name or ws.name  # don't allow empty name
     # A cleared (whitespace) answer maps to None on the wire (#2768).
     clearable = {
@@ -310,7 +310,7 @@ def prompted_body_fields(
         "classification_banner": new_banner,
     }
     for key, value in clearable.items():
-        if value is not _SENTINEL:
+        if value is not SENTINEL:
             body[key] = value or None
     return body
 
@@ -343,7 +343,7 @@ def validated_specs_or_exit(values: list[str], validate) -> list[str]:
     for v in values:
         err = validate(v)
         if err:
-            context._err.print(f"[red]{err}[/red]")
+            context.err.print(f"[red]{err}[/red]")
             raise typer.Exit(code=1)
     return values
 
@@ -401,7 +401,7 @@ def flag_list_body(
         validated_specs_or_exit(mount, validate_mount_spec)
         body["mounts"] = mount or None
     if isinstance(env, list):
-        body["env"] = _parse_env_list(env) or None
+        body["env"] = parse_env_list(env) or None
     if isinstance(allow, list):
         validated_specs_or_exit(allow, validate_allowed_domain_spec)
         body["allowed_domains"] = allow or None
@@ -431,7 +431,7 @@ def merged_flag_settings(
     """Flag-provided settings merged over the existing bag so unspecified
     keys are preserved; None when no settings flag was given (the key is
     then omitted entirely)."""
-    edit_settings = _build_settings(
+    edit_settings = build_settings(
         idle_timeout, cpu_limit, memory_limit, pids_limit, allow_sudo
     )
     if not edit_settings:
@@ -457,13 +457,13 @@ def restart_needed(ws, body: dict) -> bool:
 def apply_edit(client, ws, body: dict, restart: bool) -> None:
     resp = client.put(f"/api/v1/workspaces/{ws.id}", json=body)
     if resp.status_code == 404:
-        context._err.print("[red]Workspace not found[/red]")
+        context.err.print("[red]Workspace not found[/red]")
         raise typer.Exit(code=1)
     resp.raise_for_status()
     typer.echo(f"Updated workspace {ws.name}")
 
     if restart:
-        context._err.print(
+        context.err.print(
             "[yellow]The running container is not affected by this "
             "edit — restart the workspace to apply.[/yellow]"
         )
@@ -537,7 +537,7 @@ def edit(
     Press Enter to keep the current value.
     """
     context.require_auth()
-    client = context._client()
+    client = context.client()
     ws = context.resolve_or_exit(client, workspace)
 
     if has_any_flags(

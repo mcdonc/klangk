@@ -64,7 +64,7 @@ def shutil_which(bin_name: str) -> str | None:
 def _query_local_ssh_agent(sock_path: str, data: bytes) -> bytes | None:
     """Send *data* to the local SSH agent, return its length-prefixed reply.
 
-    Mirrors ``klangk.cli.client._query_local_ssh_agent`` — the wire format
+    Mirrors ``klangk.cli.client.query_local_ssh_agent`` — the wire format
     the CLI's relay uses. Duplicated here because the CLI subpackage is
     isolated from the server package (and these tests are server-side).
     """

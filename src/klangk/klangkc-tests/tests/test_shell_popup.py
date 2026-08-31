@@ -606,9 +606,9 @@ class TestRunConsentShell:
         proc = sub.CompletedProcess(["tmux"], 1, stderr=b"boom")
         with patch("klangk.cli.shell_popup.subprocess.run", return_value=proc):
             with caplog.at_level("WARNING", logger="klangk.cli.shell_popup"):
-                assert sp._default_run(["tmux", "-S", "s", "new-session"]) == 1
+                assert sp.default_run(["tmux", "-S", "s", "new-session"]) == 1
                 assert (
-                    sp._default_run(
+                    sp.default_run(
                         ["tmux", "-S", "s", "kill-session"], quiet=True
                     )
                     == 1
@@ -686,7 +686,7 @@ class TestRunConsentShell:
                 side_effect=lambda *a: calls.append(("kill", a)),
             ),
         ):
-            with sp._cleanup_on_signal(lambda: calls.append("cleanup")):
+            with sp.cleanup_on_signal(lambda: calls.append("cleanup")):
                 handler = installed.get(signal.SIGHUP)
                 assert callable(handler)
                 handler(signal.SIGHUP, None)
@@ -711,7 +711,7 @@ class TestDefaultHelpers:
             "klangk.cli.shell_popup.subprocess.run",
             return_value=MagicMock(returncode=7),
         ):
-            assert sp._default_run(["tmux"]) == 7
+            assert sp.default_run(["tmux"]) == 7
 
     def test_default_run_captures_output(self):
         """Best-effort tmux commands must never spray stderr into the
@@ -721,7 +721,7 @@ class TestDefaultHelpers:
         with patch(
             "klangk.cli.shell_popup.subprocess.run", return_value=proc
         ) as fake_run:
-            assert sp._default_run(["tmux"]) == 1
+            assert sp.default_run(["tmux"]) == 1
         kwargs = fake_run.call_args.kwargs
         assert kwargs["stdout"] is sp.subprocess.PIPE
         assert kwargs["stderr"] is sp.subprocess.PIPE
@@ -731,11 +731,11 @@ class TestDefaultHelpers:
             "klangk.cli.shell_popup.subprocess.run",
             side_effect=OSError("boom"),
         ):
-            assert sp._default_run(["tmux"]) == 1
+            assert sp.default_run(["tmux"]) == 1
 
     def test_default_attach_returns_returncode(self):
         with patch("klangk.cli.shell_popup.subprocess.call", return_value=3):
-            assert sp._default_attach(["tmux"]) == 3
+            assert sp.default_attach(["tmux"]) == 3
 
     def test_term_size_from_terminal(self):
         with patch(
@@ -763,7 +763,7 @@ from klangk.cli import main as cli_main  # noqa: E402
 
 class TestShellWiring:
     def test_klangk_argv(self):
-        a = cli_main._klangk_argv("shell", "ws")
+        a = cli_main.klangk_argv("shell", "ws")
         assert a[:4] == [
             cli_main.sys.executable,
             "-m",
@@ -773,7 +773,7 @@ class TestShellWiring:
         assert a[4] == "ws"
 
     def test_popup_inner_shell_argv_with_target_and_agent(self):
-        a = cli_main._popup_inner_shell_argv("http://s", "ws", "@1", True)
+        a = cli_main.popup_inner_shell_argv("http://s", "ws", "@1", True)
         assert a[:4] == [
             cli_main.sys.executable,
             "-m",
@@ -786,13 +786,13 @@ class TestShellWiring:
         assert "--forward-agent" in a
 
     def test_popup_inner_shell_argv_no_target_no_agent(self):
-        a = cli_main._popup_inner_shell_argv("http://s", "ws", None, False)
+        a = cli_main.popup_inner_shell_argv("http://s", "ws", None, False)
         assert "--no-consent-popup" in a
         assert "--no-forward-agent" in a
         assert "@1" not in a
 
     def test_popup_decider_argv(self):
-        a = cli_main._popup_decider_argv(
+        a = cli_main.popup_decider_argv(
             "http://s", "ws", "/tmp/x.sock", "klangk-consent-ws"
         )
         assert "consent-decide" in a and "ws" in a
@@ -801,17 +801,17 @@ class TestShellWiring:
 
     def test_consent_popup_enabled_false_when_disabled(self):
         ws = SimpleNamespace(egress_mode="interactive")
-        assert cli_main._consent_popup_enabled(ws, True) is False
+        assert cli_main.consent_popup_enabled(ws, True) is False
 
     def test_consent_popup_enabled_false_when_not_interactive(self):
         ws = SimpleNamespace(egress_mode="allow")
         with patch("klangk.cli.main.sys.stdin.isatty", return_value=True):
-            assert cli_main._consent_popup_enabled(ws, False) is False
+            assert cli_main.consent_popup_enabled(ws, False) is False
 
     def test_consent_popup_enabled_false_when_no_tty(self):
         ws = SimpleNamespace(egress_mode="interactive")
         with patch("klangk.cli.main.sys.stdin.isatty", return_value=False):
-            assert cli_main._consent_popup_enabled(ws, False) is False
+            assert cli_main.consent_popup_enabled(ws, False) is False
 
     def test_consent_popup_enabled_true(self):
         ws = SimpleNamespace(egress_mode="interactive")
@@ -821,7 +821,7 @@ class TestShellWiring:
                 "klangk.cli.shellcmd.host_tmux_version", return_value=(3, 6)
             ),
         ):
-            assert cli_main._consent_popup_enabled(ws, False) is True
+            assert cli_main.consent_popup_enabled(ws, False) is True
 
     def test_consent_popup_enabled_false_when_old_tmux(self):
         ws = SimpleNamespace(egress_mode="interactive")
@@ -831,7 +831,7 @@ class TestShellWiring:
                 "klangk.cli.shellcmd.host_tmux_version", return_value=(3, 1)
             ),
         ):
-            assert cli_main._consent_popup_enabled(ws, False) is False
+            assert cli_main.consent_popup_enabled(ws, False) is False
 
     def test_run_consent_popup_builds_argv_and_returns_rc(self):
         ws = SimpleNamespace(id="wsid", name="ws")
@@ -849,7 +849,7 @@ class TestShellWiring:
                 "klangk.cli.context.server_url", return_value="http://server"
             ),
         ):
-            rc = cli_main._run_consent_popup(ws, "@1", True)
+            rc = cli_main.run_consent_popup(ws, "@1", True)
         assert rc == 7
         assert captured["workspace_id"] == "wsid"
         assert "--no-consent-popup" in captured["inner_argv"]
@@ -883,7 +883,7 @@ class TestShellWiring:
                 "klangk.cli.context.server_url", return_value="http://server"
             ),
         ):
-            rc = cli_main._run_consent_popup(ws, "@1", True)
+            rc = cli_main.run_consent_popup(ws, "@1", True)
         assert rc == 0
         out = capsys.readouterr()
         assert "Disconnected from mork" in out.err

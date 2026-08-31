@@ -15,13 +15,13 @@ import typer
 import websockets
 from rich.console import Console
 
-from .auth import fetch_config, local_login, seed_config, _UNREACHABLE
+from .auth import fetch_config, local_login, seed_config, UNREACHABLE
 from .client import KlangkClient
 from .config import CLIConfig, CLIState, default_server_uds_path
 
 
-_cfg_cache: CLIConfig | None = None
-_state_cache: CLIState | None = None
+cfg_cache: CLIConfig | None = None
+state_cache: CLIState | None = None
 
 # The shared typer app lives here (not in main.py) so command modules can
 # decorate against it at import time without a circular import; main.py
@@ -37,7 +37,7 @@ app = typer.Typer(
     invoke_without_command=True,
 )
 
-_err = Console(stderr=True)
+err = Console(stderr=True)
 
 
 def run_ws_command(body):
@@ -56,44 +56,44 @@ def run_ws_command(body):
     try:
         return asyncio.run(body())
     except ConnectionError as e:
-        _err.print(f"[red]{e}[/red]")
+        err.print(f"[red]{e}[/red]")
         raise typer.Exit(code=1) from None
     except asyncio.TimeoutError as e:
         detail = str(e) or "Timed out waiting for the server to respond"
-        _err.print(f"[red]{detail}[/red]")
+        err.print(f"[red]{detail}[/red]")
         raise typer.Exit(code=1) from None
     except websockets.InvalidStatus as e:
         if e.response.status_code in (4001, 4002):
-            _err.print(
+            err.print(
                 "[red]Session expired. Run `klangk login`"
                 " to re-authenticate.[/red]"
             )
         else:
-            _err.print(f"[red]Connection rejected: {e}[/red]")
+            err.print(f"[red]Connection rejected: {e}[/red]")
         raise typer.Exit(code=1) from None
 
 
-def _cfg() -> CLIConfig:
-    global _cfg_cache  # pragma: no cover
-    if _cfg_cache is None:  # pragma: no cover
-        _cfg_cache = CLIConfig.load()  # pragma: no cover
-    return _cfg_cache
+def cfg() -> CLIConfig:
+    global cfg_cache  # pragma: no cover
+    if cfg_cache is None:  # pragma: no cover
+        cfg_cache = CLIConfig.load()  # pragma: no cover
+    return cfg_cache
 
 
-def _state() -> CLIState:
-    global _state_cache  # pragma: no cover
-    if _state_cache is None:  # pragma: no cover
-        _state_cache = CLIState.load()  # pragma: no cover
-    return _state_cache
+def state() -> CLIState:
+    global state_cache  # pragma: no cover
+    if state_cache is None:  # pragma: no cover
+        state_cache = CLIState.load()  # pragma: no cover
+    return state_cache
 
 
-_server_override: str | None = None
+server_override: str | None = None
 
 
 def server_url() -> str:
-    if _server_override is not None:
-        return _server_override
-    active = _state().active_server
+    if server_override is not None:
+        return server_override
+    active = state().active_server
     if active is not None:
         return active
     # Single-host convenience (#1676): if a co-located klangkd has bound
@@ -107,7 +107,7 @@ def server_url() -> str:
     default_uds = default_server_uds_path()
     if Path(default_uds).exists():
         return default_uds
-    _err.print(
+    err.print(
         "[red]No server configured[/red] — run"
         " [bold]klangk login <server>[/bold] first,"
         " or pass [bold]--server[/bold]."
@@ -115,8 +115,8 @@ def server_url() -> str:
     raise typer.Exit(code=1)
 
 
-def _client() -> KlangkClient:  # pragma: no cover
-    return KlangkClient(server_url(), _state().get_token(server_url()))
+def client() -> KlangkClient:  # pragma: no cover
+    return KlangkClient(server_url(), state().get_token(server_url()))
 
 
 def resolve_or_exit(client, name: str):
@@ -135,23 +135,23 @@ def resolve_or_exit(client, name: str):
     try:
         return client.resolve_workspace(name)
     except WorkspaceNotFoundError:
-        _err.print(f"[red]No workspace named[/red] '{name}'")
+        err.print(f"[red]No workspace named[/red] '{name}'")
         raise typer.Exit(code=1) from None
 
 
 def session_token() -> str:
     """The active server's token, after require_auth.
 
-    Collapses the repeated ``_state().get_token(server_url())`` preamble
+    Collapses the repeated ``state().get_token(server_url())`` preamble
     (#2546). Callers pair it with ``require_auth()`` (which guarantees a
     token exists), so an empty return is the caller's pragma-nocover
     guard, unchanged from the inline form.
     """
-    return _state().get_token(server_url())
+    return state().get_token(server_url())
 
 
 def ws_max_size() -> int:
-    return _cfg().get_ws_max_size(server_url())
+    return cfg().get_ws_max_size(server_url())
 
 
 def require_auth() -> None:
@@ -165,12 +165,12 @@ def require_auth() -> None:
     that token valid until it expires, but a *fresh* command with no
     stored token will see the new mode and not auto-login.
     """
-    state = _state()
+    cli_state = state()
     url = server_url()
-    if state.get_token(url):
+    if cli_state.get_token(url):
         return
     config = fetch_config(url)
-    if _maybe_none_login(state, url, config):
+    if maybe_none_login(cli_state, url, config):
         return
     # A UDS server that's down (e.g. a stale default socket left behind
     # by a crashed klangkd, #1676) must not be reported as "not logged
@@ -178,18 +178,18 @@ def require_auth() -> None:
     # the same way. Tell the user the server is unreachable instead.
     # (TCP servers keep the existing "Not logged in" path; a reachability
     # hint for them is a separate UX change.)
-    if config == _UNREACHABLE and url.startswith("/"):
-        _err.print(
+    if config == UNREACHABLE and url.startswith("/"):
+        err.print(
             f"[red]Cannot connect to klangkd[/red] at {url} — is it running?"
         )
         raise typer.Exit(code=1)
-    _err.print(
+    err.print(
         "[red]Not logged in[/red] — run [bold]klangk login[/bold] first."
     )
     raise typer.Exit(code=1)
 
 
-def _maybe_none_login(
+def maybe_none_login(
     state: CLIState, url: str, config: dict | str | None = None
 ) -> bool:
     """If the server is in ``none`` mode, fetch a free token and store it.

@@ -86,8 +86,8 @@ def redirect_xdg(monkeypatch, tmp_path):
     """Point CLI config/state files at tmp_path (never the user's real ones)."""
     cpath = tmp_path / "klangk.yaml"
     spath = tmp_path / "klangk-state.yaml"
-    monkeypatch.setattr(cfgmod, "_CONFIG_PATH", cpath)
-    monkeypatch.setattr(cfgmod, "_STATE_PATH", spath)
+    monkeypatch.setattr(cfgmod, "CONFIG_PATH", cpath)
+    monkeypatch.setattr(cfgmod, "STATE_PATH", spath)
     # Prevent the local klangkd UDS socket from being detected.
     monkeypatch.setattr(
         tui_state_mod,
@@ -398,7 +398,7 @@ def test_update_server_sets_user(redirect_xdg):
 
 
 def test_update_server_no_config_file(monkeypatch, tmp_path):
-    monkeypatch.setattr(cfgmod, "_CONFIG_PATH", tmp_path / "nope.yaml")
+    monkeypatch.setattr(cfgmod, "CONFIG_PATH", tmp_path / "nope.yaml")
     assert update_server_in_config("a", "a", "https://x.example") is False
 
 
@@ -415,7 +415,7 @@ def test_update_server_bare_string_entry(redirect_xdg):
 
 
 def test_remove_server_no_config_file(monkeypatch, tmp_path):
-    monkeypatch.setattr(cfgmod, "_CONFIG_PATH", tmp_path / "nope.yaml")
+    monkeypatch.setattr(cfgmod, "CONFIG_PATH", tmp_path / "nope.yaml")
     assert remove_server_from_config("a") is False
 
 
@@ -702,7 +702,7 @@ def test_token_email_client_from_state(redirect_xdg):
 def test_auth_mode_variants(monkeypatch, redirect_xdg):
     t = TuiState("https://x.example")
     monkeypatch.setattr(
-        tui_state_mod, "fetch_config", lambda url: tui_state_mod._UNREACHABLE
+        tui_state_mod, "fetch_config", lambda url: tui_state_mod.UNREACHABLE
     )
     assert t.auth_mode() == "unreachable"
 
@@ -721,7 +721,7 @@ def test_auth_mode_variants(monkeypatch, redirect_xdg):
 def test_validate_server_for_switch_unreachable(monkeypatch, redirect_xdg):
     t = TuiState("https://x.example")
     monkeypatch.setattr(
-        tui_state_mod, "fetch_config", lambda url: tui_state_mod._UNREACHABLE
+        tui_state_mod, "fetch_config", lambda url: tui_state_mod.UNREACHABLE
     )
     assert t.validate_server_for_switch("https://x.example") == "unreachable"
 
@@ -1018,14 +1018,14 @@ def test_oidc_login(monkeypatch, redirect_xdg):
         state.set_credentials(url, "oidc@x", "otok")
         state.save()
 
-    monkeypatch.setattr(tui_state_mod, "_oidc_browser_login", fake_oidc)
+    monkeypatch.setattr(tui_state_mod, "oidc_browser_login", fake_oidc)
     TuiState("https://x.example").oidc_login("google")
     assert seen["args"] == ("https://x.example", "google")
 
     def die(*a):
         raise SystemExit(1)
 
-    monkeypatch.setattr(tui_state_mod, "_oidc_browser_login", die)
+    monkeypatch.setattr(tui_state_mod, "oidc_browser_login", die)
     with pytest.raises(LoginError):
         TuiState("https://x.example").oidc_login("google")
 
@@ -1481,14 +1481,14 @@ async def test_status_loop_resets_backoff_after_success(monkeypatch):
 
     # Spy on the backoff arg (= _reconnect_attempt after each increment) so we
     # can see the counter climb, reset on connect, then re-climb.
-    orig_backoff = scr_main._reconnect_backoff
+    orig_backoff = scr_main.reconnect_backoff
     seen = []
 
     def spy_backoff(attempt):
         seen.append(attempt)
         return orig_backoff(attempt)
 
-    monkeypatch.setattr(scr_main, "_reconnect_backoff", spy_backoff)
+    monkeypatch.setattr(scr_main, "reconnect_backoff", spy_backoff)
 
     calls = {"n": 0}
 
@@ -1546,7 +1546,7 @@ async def test_server_switch_drops_old_ws_and_redials(monkeypatch):
     seen: list[int] = []
     monkeypatch.setattr(
         scr_main,
-        "_reconnect_backoff",
+        "reconnect_backoff",
         lambda attempt: (seen.append(attempt), 0.0)[1],
     )
 
@@ -1604,7 +1604,7 @@ async def test_server_switch_during_backoff_redials_immediately(monkeypatch):
     interrupts the delay and re-dials the new server at once (#2704)."""
     # Deliberately NOT _fast_reconnect: the long backoff sleep is the thing
     # that must get cut short.
-    monkeypatch.setattr(scr_main, "_reconnect_backoff", lambda attempt: 999.0)
+    monkeypatch.setattr(scr_main, "reconnect_backoff", lambda attempt: 999.0)
     _real_sleep = asyncio.sleep
     sleep_cancelled: list[bool] = []
 
@@ -1615,7 +1615,7 @@ async def test_server_switch_during_backoff_redials_immediately(monkeypatch):
             sleep_cancelled.append(True)
             raise
 
-    monkeypatch.setattr(scr_main, "_reconnect_sleep", slow)
+    monkeypatch.setattr(scr_main, "reconnect_sleep", slow)
 
     dialed: list[str] = []
     release = asyncio.Event()
@@ -1668,7 +1668,7 @@ async def test_switch_lands_same_tick_as_listener_end(monkeypatch):
     seen: list[int] = []
     monkeypatch.setattr(
         scr_main,
-        "_reconnect_backoff",
+        "reconnect_backoff",
         lambda attempt: (seen.append(attempt), 0.0)[1],
     )
 
@@ -1767,7 +1767,7 @@ async def test_server_switch_restarts_loop_after_gave_up(monkeypatch):
     # Run the real loop (undo the autouse stub) so give-up and the restart
     # exercise actual worker lifecycle.
     monkeypatch.setattr(MainScreen, "_status_loop", _real_status_loop)
-    monkeypatch.setattr(scr_main, "_MAX_RECONNECT_ATTEMPTS", 2)
+    monkeypatch.setattr(scr_main, "MAX_RECONNECT_ATTEMPTS", 2)
     await _fast_reconnect(monkeypatch)
 
     dialed: list[str] = []
@@ -2948,15 +2948,15 @@ def test_tui_state_export_import(monkeypatch, redirect_xdg):
 
 def test_fmt_transfer_known_unknown_and_units():
     """Byte formatter covers B/KB/MB/GB and the unknown-total branch."""
-    from klangk.cli.tui.screens.base import _fmt_transfer, _human_bytes
+    from klangk.cli.tui.screens.base import fmt_transfer, human_bytes
 
-    assert _human_bytes(0) == "0.0 B"
-    assert _human_bytes(512).endswith("B")
-    assert _human_bytes(1536) == "1.5 KB"
-    assert _human_bytes(2 * 1024 * 1024) == "2.0 MB"
-    assert _human_bytes(3 * 1024**3) == "3.0 GB"
-    assert _fmt_transfer(1536, 4096) == "1.5 KB / 4.0 KB"
-    assert _fmt_transfer(9999, None) == "9.8 KB (size unknown)"
+    assert human_bytes(0) == "0.0 B"
+    assert human_bytes(512).endswith("B")
+    assert human_bytes(1536) == "1.5 KB"
+    assert human_bytes(2 * 1024 * 1024) == "2.0 MB"
+    assert human_bytes(3 * 1024**3) == "3.0 GB"
+    assert fmt_transfer(1536, 4096) == "1.5 KB / 4.0 KB"
+    assert fmt_transfer(9999, None) == "9.8 KB (size unknown)"
 
 
 async def test_input_screen_ok_cancel_and_enter(monkeypatch):
@@ -4184,28 +4184,28 @@ async def test_main_screen_list_error_shows_placeholder(monkeypatch):
 
 
 def test_reconnect_backoff_is_bounded():
-    """_reconnect_backoff stays within [0, _MAX_BACKOFF_SECONDS] for every
+    """reconnect_backoff stays within [0, MAX_BACKOFF_SECONDS] for every
     attempt and respects the cap once the exponential ramp exceeds it (#2012)."""
-    delays = [scr_main._reconnect_backoff(a) for a in range(1, 30)]
-    assert all(0.0 <= d <= scr_main._MAX_BACKOFF_SECONDS for d in delays)
+    delays = [scr_main.reconnect_backoff(a) for a in range(1, 30)]
+    assert all(0.0 <= d <= scr_main.MAX_BACKOFF_SECONDS for d in delays)
     # The exponential base (1 << attempt) quickly exceeds the cap; the cap
     # (not the raw exponential) must bound the result from there on.
-    assert scr_main._reconnect_backoff(50) <= scr_main._MAX_BACKOFF_SECONDS
+    assert scr_main.reconnect_backoff(50) <= scr_main.MAX_BACKOFF_SECONDS
 
 
 def test_is_unreachable_classifies_transport_errors():
     """Only transport-layer failures count as 'server down' — auth and HTTP
     status errors mean the server responded, so they are reachable (#2012)."""
-    assert scr_main._is_unreachable(httpx.ConnectError("refused"))
-    assert scr_main._is_unreachable(httpx.ConnectTimeout("slow"))
-    assert scr_main._is_unreachable(ConnectionRefusedError())  # OSError
+    assert scr_main.is_unreachable(httpx.ConnectError("refused"))
+    assert scr_main.is_unreachable(httpx.ConnectTimeout("slow"))
+    assert scr_main.is_unreachable(ConnectionRefusedError())  # OSError
     req = httpx.Request("GET", "https://x.example/")
     resp = httpx.Response(500, request=req)
-    assert not scr_main._is_unreachable(
+    assert not scr_main.is_unreachable(
         httpx.HTTPStatusError("boom", request=req, response=resp)
     )
-    assert not scr_main._is_unreachable(RuntimeError("net"))
-    assert not scr_main._is_unreachable(scr_main.AuthError("expired"))
+    assert not scr_main.is_unreachable(RuntimeError("net"))
+    assert not scr_main.is_unreachable(scr_main.AuthError("expired"))
 
 
 async def test_main_screen_server_down_shows_indicator(monkeypatch):
@@ -4322,12 +4322,12 @@ async def test_main_screen_http_error_is_not_unreachable(monkeypatch):
 
 async def _fast_reconnect(monkeypatch):
     """Make the reconnect loop instant: zero backoff + no real sleep."""
-    monkeypatch.setattr(scr_main, "_reconnect_backoff", lambda attempt: 0.0)
+    monkeypatch.setattr(scr_main, "reconnect_backoff", lambda attempt: 0.0)
 
     async def _nowait(_t):
         return None
 
-    monkeypatch.setattr(scr_main, "_reconnect_sleep", _nowait)
+    monkeypatch.setattr(scr_main, "reconnect_sleep", _nowait)
 
 
 async def test_reconnect_recovers_when_server_returns(monkeypatch):
@@ -4399,7 +4399,7 @@ async def test_reconnect_gives_up_after_cap(monkeypatch):
         raise RuntimeError("ws refused")
 
     monkeypatch.setattr(scr_main, "listen_for_status", fail)
-    monkeypatch.setattr(scr_main, "_MAX_RECONNECT_ATTEMPTS", 2)
+    monkeypatch.setattr(scr_main, "MAX_RECONNECT_ATTEMPTS", 2)
     await _fast_reconnect(monkeypatch)
 
     def down():
@@ -4437,7 +4437,7 @@ async def test_server_down_overlay_dismiss_then_no_repop(monkeypatch):
         return None
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
-    monkeypatch.setattr(scr_main, "_reconnect_backoff", lambda attempt: 999.0)
+    monkeypatch.setattr(scr_main, "reconnect_backoff", lambda attempt: 999.0)
 
     def down():
         raise httpx.ConnectError("refused")
@@ -4467,7 +4467,7 @@ async def test_server_down_overlay_c_opens_switch_server(monkeypatch):
         return None
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
-    monkeypatch.setattr(scr_main, "_reconnect_backoff", lambda attempt: 999.0)
+    monkeypatch.setattr(scr_main, "reconnect_backoff", lambda attempt: 999.0)
 
     def down():
         raise httpx.ConnectError("refused")
@@ -4619,7 +4619,7 @@ async def test_status_loop_exits_when_screen_popped_during_backoff(
         raise RuntimeError("ws died")
 
     monkeypatch.setattr(scr_main, "listen_for_status", fail)
-    monkeypatch.setattr(scr_main, "_reconnect_backoff", lambda attempt: 0.0)
+    monkeypatch.setattr(scr_main, "reconnect_backoff", lambda attempt: 0.0)
     rendered: list = []
     app = KlangkApp(_ws())
     async with app.run_test():
@@ -4634,7 +4634,7 @@ async def test_status_loop_exits_when_screen_popped_during_backoff(
                 _App, "screen_stack", property(lambda self: [])
             )
 
-        monkeypatch.setattr(scr_main, "_reconnect_sleep", pop_during_sleep)
+        monkeypatch.setattr(scr_main, "reconnect_sleep", pop_during_sleep)
         monkeypatch.setattr(
             screen, "_render_unreachable", lambda *a, **k: rendered.append(1)
         )
@@ -11851,7 +11851,7 @@ async def test_add_server_event_handlers(monkeypatch):
 def test_is_interactive_returns_bool():
     from klangk.cli import main as cli_main
 
-    assert isinstance(cli_main._is_interactive(), bool)
+    assert isinstance(cli_main.is_interactive(), bool)
 
 
 def test_run_tui_invokes_app_run(monkeypatch):
@@ -11877,7 +11877,7 @@ def test_bare_klangk_non_tty_prints_help(monkeypatch):
         "run_tui",
         lambda server_url=None: launched.__setitem__("v", True),
     )
-    monkeypatch.setattr(cli_main, "_is_interactive", lambda: False)
+    monkeypatch.setattr(cli_main, "is_interactive", lambda: False)
 
     result = CliRunner().invoke(app, [])
     assert result.exit_code == 0
@@ -11897,7 +11897,7 @@ def test_bare_klangk_tty_launches_tui(monkeypatch):
         "run_tui",
         lambda server_url=None: seen.__setitem__("s", server_url),
     )
-    monkeypatch.setattr(cli_main, "_is_interactive", lambda: True)
+    monkeypatch.setattr(cli_main, "is_interactive", lambda: True)
 
     result = CliRunner().invoke(app, [])
     assert result.exit_code == 0
@@ -11914,7 +11914,7 @@ def test_bare_klangk_tty_crash_surfaces_error(monkeypatch):
         raise RuntimeError("kaboom")
 
     monkeypatch.setattr(tui_pkg, "run_tui", boom)
-    monkeypatch.setattr(cli_main, "_is_interactive", lambda: True)
+    monkeypatch.setattr(cli_main, "is_interactive", lambda: True)
 
     result = CliRunner().invoke(app, [])
     assert result.exit_code == 1
@@ -12252,8 +12252,8 @@ async def test_run_token_refresh_loop_returns_expired_on_failure(monkeypatch):
     """run_token_refresh_loop returns 'expired' when refresh fails."""
     import time as _time
 
-    monkeypatch.setattr(scr_main, "_TOKEN_REFRESH_POLL", 0)
-    monkeypatch.setattr(scr_main, "_TOKEN_REFRESH_MARGIN", 99999)
+    monkeypatch.setattr(scr_main, "TOKEN_REFRESH_POLL", 0)
+    monkeypatch.setattr(scr_main, "TOKEN_REFRESH_MARGIN", 99999)
 
     fake_token_payload = {
         "sub": "uid",
@@ -12282,7 +12282,7 @@ async def test_run_token_refresh_loop_returns_expired_on_failure(monkeypatch):
 
 async def test_run_token_refresh_loop_returns_no_token(monkeypatch):
     """run_token_refresh_loop returns 'no_token' when token disappears."""
-    monkeypatch.setattr(scr_main, "_TOKEN_REFRESH_POLL", 0)
+    monkeypatch.setattr(scr_main, "TOKEN_REFRESH_POLL", 0)
 
     class FakeState:
         def current_url(self):
@@ -12308,7 +12308,7 @@ def _fake_jwt(exp=None):
 
 async def test_run_token_refresh_loop_skips_when_exp_missing(monkeypatch):
     """A token with no ``exp`` claim is skipped (continue); exits on no-token."""
-    monkeypatch.setattr(scr_main, "_TOKEN_REFRESH_POLL", 0)
+    monkeypatch.setattr(scr_main, "TOKEN_REFRESH_POLL", 0)
     tokens = iter([_fake_jwt(exp=None), None])
 
     class FakeState:
@@ -12326,7 +12326,7 @@ async def test_run_token_refresh_loop_skips_when_far_from_expiry(monkeypatch):
     """A token not near expiry is skipped (continue); exits on no-token."""
     import time as _time
 
-    monkeypatch.setattr(scr_main, "_TOKEN_REFRESH_POLL", 0)
+    monkeypatch.setattr(scr_main, "TOKEN_REFRESH_POLL", 0)
     tokens = iter([_fake_jwt(exp=int(_time.time()) + 3600), None])
 
     class FakeState:
@@ -12344,7 +12344,7 @@ async def test_run_token_refresh_loop_refreshes_near_expiry(monkeypatch):
     """A near-expiry token is refreshed (success branch); exits on no-token."""
     import time as _time
 
-    monkeypatch.setattr(scr_main, "_TOKEN_REFRESH_POLL", 0)
+    monkeypatch.setattr(scr_main, "TOKEN_REFRESH_POLL", 0)
     tokens = iter([_fake_jwt(exp=int(_time.time()) + 60), None])
 
     class FakeState:
@@ -12721,7 +12721,7 @@ async def test_run_token_refresh_loop_concurrent_rotation(monkeypatch):
     """If the token was rotated concurrently, don't expire — keep running."""
     import time as _time
 
-    monkeypatch.setattr(scr_main, "_TOKEN_REFRESH_POLL", 0)
+    monkeypatch.setattr(scr_main, "TOKEN_REFRESH_POLL", 0)
     near = _fake_jwt(exp=int(_time.time()) + 60)
     # token() returns: the near-expiry token, then a *different* one (the
     # mitigation re-reads state and sees the rotation), then None (exit).
@@ -13282,7 +13282,7 @@ def test_render_detail_label_column_bold_and_right_aligned():
 
 async def test_create_screen_collects_settings(monkeypatch):
     """Resource fields on the create form populate the settings dict (#2217)."""
-    from klangk.cli.tui.screens.workspace_form import _collect_settings
+    from klangk.cli.tui.screens.workspace_form import collect_settings
 
     async def noop(*a, **k):
         return None
@@ -13298,14 +13298,14 @@ async def test_create_screen_collects_settings(monkeypatch):
         await pilot.pause()
         cs = app.screen
         # Empty fields → None
-        assert _collect_settings(cs) is None
+        assert collect_settings(cs) is None
         # Fill in resource fields
         cs.query_one("#idle_timeout", Input).value = "600"
         cs.query_one("#cpu_limit", Input).value = "1.5"
         cs.query_one("#memory_limit", Input).value = "4g"
         cs.query_one("#pids_limit", Input).value = "256"
         cs.query_one("#tmp_size", Input).value = "2g"
-        result = _collect_settings(cs)
+        result = collect_settings(cs)
         assert result == {
             "idle_timeout": 600,
             "cpu_limit": 1.5,
@@ -13420,7 +13420,7 @@ def test_server_schedule_line_formats():
     soon = (
         datetime.now(timezone.utc) + timedelta(minutes=2, seconds=30)
     ).isoformat()
-    line = scr_main._server_schedule_line(
+    line = scr_main.server_schedule_line(
         {"action": "recycle", "fire_at": soon}
     )
     assert line.startswith("server: recycle at ")
@@ -13428,28 +13428,28 @@ def test_server_schedule_line_formats():
     hours = (
         datetime.now(timezone.utc) + timedelta(hours=2, minutes=3, seconds=45)
     ).isoformat()
-    assert "(in 2h 3m)" in scr_main._server_schedule_line(
+    assert "(in 2h 3m)" in scr_main.server_schedule_line(
         {"action": "stop", "fire_at": hours}
     )
     # Bad/absent fire_at degrades to a static line, never raises.
     assert (
-        scr_main._server_schedule_line({"action": "stop", "fire_at": "x"})
+        scr_main.server_schedule_line({"action": "stop", "fire_at": "x"})
         == "server: stop scheduled"
     )
     assert (
-        scr_main._server_schedule_line({"action": "recycle"})
+        scr_main.server_schedule_line({"action": "recycle"})
         == "server: recycle scheduled"
     )
     # Naive (no-tz) fire_at is treated as local time, not rejected.
     naive = (datetime.now() + timedelta(minutes=2, seconds=30)).isoformat()
-    assert "(in 2m)" in scr_main._server_schedule_line(
+    assert "(in 2m)" in scr_main.server_schedule_line(
         {"action": "stop", "fire_at": naive}
     )
     # Sub-minute remaining renders seconds.
     seconds = (datetime.now(timezone.utc) + timedelta(seconds=45)).isoformat()
     assert re.search(
         r"\(in 4\ds\)",
-        scr_main._server_schedule_line({"action": "stop", "fire_at": seconds}),
+        scr_main.server_schedule_line({"action": "stop", "fire_at": seconds}),
     )
 
 
@@ -13846,7 +13846,7 @@ def test_oidc_login_drops_stamp_cache_on_save_failure(
         state.set_credentials(url, "ghost@x", "ghost-token")
         return None
 
-    monkeypatch.setattr(tui_state_mod, "_oidc_browser_login", fake_flow)
+    monkeypatch.setattr(tui_state_mod, "oidc_browser_login", fake_flow)
     st = TuiState("https://x.example")
     st.oidc_login("google")
     # Cache dropped: state() reloaded from disk and does NOT serve the
@@ -13866,7 +13866,7 @@ def test_oidc_login_keeps_credentials_after_successful_save(
         state.set_credentials(url, "real@x", "real-token")
         state.save()
 
-    monkeypatch.setattr(tui_state_mod, "_oidc_browser_login", fake_flow)
+    monkeypatch.setattr(tui_state_mod, "oidc_browser_login", fake_flow)
     st = TuiState("https://x.example")
     st.oidc_login("google")
     assert st.token() == "real-token"

@@ -24,7 +24,7 @@ _err = Console(stderr=True)
 _out = Console()
 
 
-_UNREACHABLE = "unreachable"
+UNREACHABLE = "unreachable"
 
 
 def fetch_config(server_url: str) -> dict | str | None:
@@ -32,7 +32,7 @@ def fetch_config(server_url: str) -> dict | str | None:
 
     Returns:
         dict — valid klangk config
-        _UNREACHABLE — server is down or unreachable
+        UNREACHABLE — server is down or unreachable
         None — server responded but is not a klangk instance
     """
     try:
@@ -41,7 +41,7 @@ def fetch_config(server_url: str) -> dict | str | None:
             return resp.json()
         return None
     except httpx.HTTPError:
-        return _UNREACHABLE
+        return UNREACHABLE
 
 
 def local_login(server_url: str) -> tuple[str, str]:
@@ -78,7 +78,7 @@ def local_login(server_url: str) -> tuple[str, str]:
     return email, token
 
 
-def _oidc_browser_login(  # pragma: no cover
+def oidc_browser_login(  # pragma: no cover
     server_url: str,
     provider_id: str,
     state: CLIState,
@@ -222,7 +222,7 @@ def fetch_config_or_exit(server_url: str):
             " (e.g. https://host/klangk)"
         )
         raise SystemExit(1)
-    if config == _UNREACHABLE:
+    if config == UNREACHABLE:
         _err.print(f"[red]Error:[/red] could not reach {server_url}")
         raise SystemExit(1)
     return config
@@ -261,7 +261,7 @@ def try_oidc_login(server_url, email, password, config, state) -> bool:
     if not use_oidc:
         return False
     provider = select_oidc_provider(providers)
-    _oidc_browser_login(server_url, provider["id"], state)
+    oidc_browser_login(server_url, provider["id"], state)
     return True
 
 

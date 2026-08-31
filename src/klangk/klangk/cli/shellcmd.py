@@ -48,7 +48,7 @@ def resolve_forward_agent(
         result = config_default
     if result:
         if not os.environ.get("SSH_AUTH_SOCK"):
-            context._err.print(
+            context.err.print(
                 "[yellow]Warning: forward-agent is enabled but SSH_AUTH_SOCK"
                 " is not set. Agent forwarding will be skipped.[/yellow]"
             )
@@ -60,12 +60,12 @@ def resolve_forward_agent(
 # ---------------------------------------------------------------------------
 
 
-def _klangk_argv(*args: str) -> list[str]:
+def klangk_argv(*args: str) -> list[str]:
     """Argv re-invoking this klangk CLI (same interpreter + module)."""
     return [sys.executable, "-m", "klangk.cli.main", *args]
 
 
-def _popup_inner_shell_argv(
+def popup_inner_shell_argv(
     server: str, ws_name: str, target: str | None, forward_agent: bool
 ) -> list[str]:
     """The normal ``klangk shell`` that runs inside the outer tmux window.
@@ -73,7 +73,7 @@ def _popup_inner_shell_argv(
     Adds ``--no-consent-popup`` as a recursion guard so the inner does the
     plain attach instead of re-wrapping.
     """
-    argv = _klangk_argv("--server", server, "shell", ws_name)
+    argv = klangk_argv("--server", server, "shell", ws_name)
     if target:
         argv.append(target)
     argv.append("--no-consent-popup")
@@ -81,11 +81,11 @@ def _popup_inner_shell_argv(
     return argv
 
 
-def _popup_decider_argv(
+def popup_decider_argv(
     server: str, ws_arg: str, socket: str, hidden: str
 ) -> list[str]:
     """The ``klangk consent-decide`` invocation for the hidden decider session."""
-    return _klangk_argv(
+    return klangk_argv(
         "--server",
         server,
         "consent-decide",
@@ -97,7 +97,7 @@ def _popup_decider_argv(
     )
 
 
-def _consent_popup_enabled(ws, no_consent_popup: bool) -> bool:
+def consent_popup_enabled(ws, no_consent_popup: bool) -> bool:
     """True when ``klangk shell`` should wrap in the consent-popup russian-doll."""
     # Cheap checks first so non-interactive / non-tty contexts (incl. the test
     # suite, which calls shell() directly) never spawn `tmux -V`.
@@ -114,7 +114,7 @@ def _consent_popup_enabled(ws, no_consent_popup: bool) -> bool:
     )
 
 
-def _run_consent_popup(ws, terminal: str | None, forward_agent: bool) -> int:
+def run_consent_popup(ws, terminal: str | None, forward_agent: bool) -> int:
     """Bring up the consent-popup russian-doll + attach the user to it (#2383)."""
     server = context.server_url()
     socket = socket_path(ws.id)
@@ -122,12 +122,12 @@ def _run_consent_popup(ws, terminal: str | None, forward_agent: bool) -> int:
     # decider argv — deterministic per-workspace names made a concurrent
     # second shell attach to the FIRST shell's session (#2692).
     names = popup_session_names(ws.id)
-    inner = _popup_inner_shell_argv(server, ws.name, terminal, forward_agent)
-    decider = _popup_decider_argv(server, ws.name, socket, names[1])
-    context._err.print(
+    inner = popup_inner_shell_argv(server, ws.name, terminal, forward_agent)
+    decider = popup_decider_argv(server, ws.name, socket, names[1])
+    context.err.print(
         f"Connecting to [bold]{ws.name}[/bold] with consent popup…"
     )
-    context._err.print(
+    context.err.print(
         f"[dim]A consent popup appears when an egress request is held; "
         f"{OUTER_PREFIX} {REOPEN_KEY} reopens  ·  q/Q hides  ·  "
         f"Enter, then ~. exits[/dim]"
@@ -138,7 +138,7 @@ def _run_consent_popup(ws, terminal: str | None, forward_agent: bool) -> int:
         decider_argv=decider,
         session_names=names,
     )
-    context._err.print(f"Disconnected from [bold]{ws.name}[/bold].")
+    context.err.print(f"Disconnected from [bold]{ws.name}[/bold].")
     return rc
 
 
@@ -205,31 +205,31 @@ def shell(
         no_consent_popup = False
     token = context.session_token()
     if not token:  # pragma: no cover
-        context._err.print(
+        context.err.print(
             "[red]Not logged in[/red] — run [bold]klangk login[/bold] first."
         )  # pragma: no cover
         raise typer.Exit(code=1)  # pragma: no cover
 
-    client = context._client()
+    client = context.client()
 
     # Resolve workspace
     ws = resolve_shell_workspace(client, workspace)
 
-    context._err.print(f"Connecting to [bold]{ws.name}[/bold]...")
-    context._err.print(
+    context.err.print(f"Connecting to [bold]{ws.name}[/bold]...")
+    context.err.print(
         "[dim]Exit this shell: press Enter, then ~. (like ssh).[/dim]"
     )
     forward_agent = resolve_forward_agent(
         forward_agent,
-        config_default=context._cfg().get_forward_agent(context.server_url())
+        config_default=context.cfg().get_forward_agent(context.server_url())
         or False,
     )
-    if _consent_popup_enabled(ws, no_consent_popup):
+    if consent_popup_enabled(ws, no_consent_popup):
         # Wrap the normal shell in the consent-popup russian-doll (#2383).
         # Falls back to the plain attach below when tmux is prevented, opted
         # out (--no-consent-popup / the inner re-invocation), or the workspace
         # is not interactive-egress.
-        raise typer.Exit(code=_run_consent_popup(ws, terminal, forward_agent))
+        raise typer.Exit(code=run_consent_popup(ws, terminal, forward_agent))
     try:
         asyncio.run(
             ws_shell(
@@ -241,20 +241,20 @@ def shell(
                 max_size=context.ws_max_size(),
             )
         )
-        context._err.print(f"Disconnected from [bold]{ws.name}[/bold].")
+        context.err.print(f"Disconnected from [bold]{ws.name}[/bold].")
     except websockets.InvalidStatus as e:
         reset_terminal()
         drain_stdin()
         if e.response.status_code in (4001, 4002):
-            context._err.print(
+            context.err.print(
                 "[red]Session expired. Run `klangk login`"
                 " to re-authenticate.[/red]"
             )
         else:
-            context._err.print(f"[red]Connection rejected: {e}[/red]")
+            context.err.print(f"[red]Connection rejected: {e}[/red]")
         raise typer.Exit(code=1) from None
     except ConnectionError as e:
         reset_terminal()
         drain_stdin()
-        context._err.print(f"[red]{e}[/red]")
+        context.err.print(f"[red]{e}[/red]")
         raise typer.Exit(code=1) from None

@@ -70,7 +70,7 @@ def _cpu_setting(screen: Screen) -> float | None:
     return cpu
 
 
-def _collect_settings(screen: Screen) -> dict | None:
+def collect_settings(screen: Screen) -> dict | None:
     """Read the resource-limit inputs and return a settings dict, or None.
 
     Raises ``ValueError`` (field-named) on invalid input so the form can
@@ -949,7 +949,7 @@ class CreateWorkspaceScreen(WorkspaceFormMixin, TabSkipMixin, StatusScreen):
             return
         p = self._create_payload()
         try:
-            settings = _collect_settings(self)
+            settings = collect_settings(self)
         except ValueError as exc:
             self._msg(str(exc), error=True)
             return
@@ -1432,9 +1432,9 @@ class EditWorkspaceScreen(WorkspaceFormMixin, TabSkipMixin, StatusScreen):
         }
 
     def _merged_save_settings(self) -> dict:
-        """The settings bag for the PUT body: _collect_settings merged over
+        """The settings bag for the PUT body: collect_settings merged over
         the existing bag, plus the shown nix/sudo toggles."""
-        settings = _collect_settings(self)
+        settings = collect_settings(self)
         # PUT settings is a full-replace bag, so seed from the existing
         # bag unconditionally — API-only keys the form does not represent
         # (e.g. bridge_timeout) and toggle-gated keys (nix, allow_sudo)

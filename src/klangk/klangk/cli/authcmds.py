@@ -35,7 +35,7 @@ def login_cmd(
     ),
 ) -> None:
     """Authenticate with a Klangk server."""
-    cfg = context._cfg()
+    cfg = context.cfg()
     resolved_url = cfg.resolve_server(server)
     # Default user from config if not provided on command line
     email = user or cfg.get_user(resolved_url)
@@ -54,11 +54,11 @@ def logout(
 ) -> None:
     """Clear stored credentials."""
     if server is not None:
-        resolved_url = context._cfg().resolve_server(server)
+        resolved_url = context.cfg().resolve_server(server)
     else:
-        active = context._state().active_server
+        active = context.state().active_server
         if active is None:
-            context._err.print(
+            context.err.print(
                 "[red]No active server[/red] — pass a server argument"
                 " or log in first."
             )
@@ -75,7 +75,7 @@ def admin_status(token: str | None) -> bool | None:
     is_admin: bool | None = None
     if token:
         try:
-            client = context._client()
+            client = context.client()
             resp = client.get("/api/v1/my-permissions")
             client.check_auth(resp)
             if resp.status_code == 200:
@@ -123,8 +123,8 @@ def status(
 ) -> None:
     """Show connection info (server, user, admin status)."""
     # status works even with no active server (unlike other commands).
-    url = context._server_override or context._state().active_server
-    state = context._state()
+    url = context.server_override or context.state().active_server
+    state = context.state()
     token = state.get_token(url) if url else None
     email = state.get_email(url) if url else None
     user_id = decode_token_claims(token).get("sub") if token else None
@@ -149,7 +149,7 @@ context.app.add_typer(account_app, name="account")
 def account_show() -> None:
     """Show your current handle and email."""
     context.require_auth()
-    me = context._client().get_me()
+    me = context.client().get_me()
     handle = me.get("handle") or "(none)"
     email = me.get("email") or "(unknown)"
     last_login = _fmt_last_login(me.get("last_login_at"))
@@ -183,22 +183,22 @@ def account_passwd() -> None:
     """Change your password."""
     context.require_auth()
     url = context.server_url()
-    client = context._client()
+    client = context.client()
     current = Prompt.ask("[bold]Current password[/bold]", password=True)
     new = Prompt.ask("[bold]New password[/bold]", password=True)
     confirm = Prompt.ask("[bold]Confirm new password[/bold]", password=True)
     if new != confirm:
-        context._err.print("[red]Passwords do not match[/red]")
+        context.err.print("[red]Passwords do not match[/red]")
         raise typer.Exit(code=1)
     policy = account.password_policy(url)
     if len(new) < policy.min_length:
-        context._err.print(
+        context.err.print(
             f"[red]Password must be at least {policy.min_length} characters[/red]"
         )
         raise typer.Exit(code=1)
     complexity_error = policy.complexity_error(new)
     if complexity_error:
-        context._err.print(f"[red]{complexity_error}[/red]")
+        context.err.print(f"[red]{complexity_error}[/red]")
         raise typer.Exit(code=1)
     try:
         client.change_password(current, new)
@@ -208,10 +208,10 @@ def account_passwd() -> None:
         # verbatim. change-password doesn't itself trigger the /auth/login
         # brute-force lockout; a future global rate limit (429) would show
         # up here as a raw HTTP error until given dedicated handling.
-        context._err.print(f"[red]{exc}[/red]")
+        context.err.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=1) from exc
     # Success goes to stdout (scripting-friendly: `klangk account passwd &&
-    # ...`); errors above go to stderr via context._err.
+    # ...`); errors above go to stderr via context.err.
     Console().print("[green]Password updated.[/green]")
 
 
@@ -219,23 +219,23 @@ def account_passwd() -> None:
 def account_handle() -> None:
     """Change your handle (requires password confirmation)."""
     context.require_auth()
-    client = context._client()
+    client = context.client()
     current = client.get_me().get("handle") or ""
     new = Prompt.ask("[bold]New handle[/bold]").strip()
     err = account.validate_handle(new)
     if err:
-        context._err.print(f"[red]{err}[/red]")
+        context.err.print(f"[red]{err}[/red]")
         raise typer.Exit(code=1)
     if not Confirm.ask(
         f"Change your handle from @{current} to @{new}?", default=False
     ):
-        context._err.print("[yellow]Cancelled.[/yellow]")
+        context.err.print("[yellow]Cancelled.[/yellow]")
         raise typer.Exit(code=0)
     password = Prompt.ask("[bold]Password (to confirm)[/bold]", password=True)
     try:
         client.change_handle(new, password)
     except httpx.HTTPStatusError as exc:
-        context._err.print(f"[red]{exc}[/red]")
+        context.err.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=1) from exc
     Console().print(f"[green]Handle updated to @{new}.[/green]")
 
@@ -245,21 +245,21 @@ def account_email() -> None:
     """Change your email (requires password confirmation)."""
     context.require_auth()
     url = context.server_url()
-    client = context._client()
+    client = context.client()
     new = Prompt.ask("[bold]New email[/bold]").strip()
     err = account.validate_email(new)
     if err:
-        context._err.print(f"[red]{err}[/red]")
+        context.err.print(f"[red]{err}[/red]")
         raise typer.Exit(code=1)
     password = Prompt.ask("[bold]Password (to confirm)[/bold]", password=True)
     try:
         client.change_email(new, password)
     except httpx.HTTPStatusError as exc:
-        context._err.print(f"[red]{exc}[/red]")
+        context.err.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=1) from exc
     # The JWT subject is the user id, so the cached token stays valid; only
     # the key it's filed under changes. Re-key it rather than dropping it.
-    state = context._state()
+    state = context.state()
     old = state.get_email(url)
     if old is not None and old != new:
         state.rename_user(url, old, new)

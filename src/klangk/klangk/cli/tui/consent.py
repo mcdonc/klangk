@@ -114,7 +114,7 @@ _DURATION_SECONDS = {
 }
 
 
-def _fmt_duration(secs: float) -> str:
+def fmt_duration(secs: float) -> str:
     """Compact remaining-time label: ``5m``, ``2h``, ``3d``, ``1w`` (#2335 B)."""
     s = int(secs)
     if s < 60:
@@ -146,27 +146,27 @@ _FLASH_TTL = 5.0
 # decider still self-heals if the workspace flips back to interactive (or
 # permissions are restored) mid-session instead of staying dead until the
 # shell is restarted.
-_REFUSED_RETRY_INTERVAL = 60.0
+REFUSED_RETRY_INTERVAL = 60.0
 
 # Popup-show retry (#2699 review): how many times a worker re-attempts a
 # show that targeted nothing (no outer client found — e.g. a contended tmux
 # server timing out ``list-clients``), and how long it waits between
 # attempts. Without a retry, requests that arrived during the failed
 # attempt's dedupe window would never get a popup (holds auto-deny unseen).
-_POPUP_SHOW_ATTEMPTS = 3
-_POPUP_SHOW_RETRY_DELAY = 1.0
+POPUP_SHOW_ATTEMPTS = 3
+POPUP_SHOW_RETRY_DELAY = 1.0
 
 
 # Sent as the WS handshake User-Agent so klangkd's refusal log (#2490) can
 # attribute a 403 to this client (vs a browser or anything else).
-def _user_agent() -> str:
+def user_agent() -> str:
     try:
         return f"klangk-consent-decide/{_pkg_version('klangk')}"
     except PackageNotFoundError:  # running from source, not installed
         return "klangk-consent-decide/dev"
 
 
-_USER_AGENT = _user_agent()
+USER_AGENT = user_agent()
 
 # Frame-application outcomes returned by ConsentDeciderController.apply_frame.
 ADDED = (
@@ -806,9 +806,9 @@ class ConsentDeciderApp(App):
                 logger.warning(
                     "consent-decide: registration refused (403) "
                     "repeatedly; retrying every %.0fs",
-                    _REFUSED_RETRY_INTERVAL,
+                    REFUSED_RETRY_INTERVAL,
                 )
-            delay = _REFUSED_RETRY_INTERVAL
+            delay = REFUSED_RETRY_INTERVAL
         else:
             delay = self._backoff(1)
         await self._rotate_token()
@@ -833,7 +833,7 @@ class ConsentDeciderApp(App):
         refreshes the JWT and retries fast (recovering the expired-token
         case); once refusals pile up (the counter resets only on a
         successful connect) the loop backs off to a fixed slow interval
-        (:data:`_REFUSED_RETRY_INTERVAL`) instead of stopping -- bounded
+        (:data:`REFUSED_RETRY_INTERVAL`) instead of stopping -- bounded
         log spam, but the decider still self-heals if the refusal cause
         goes away mid-session (workspace flipped back to interactive,
         permissions restored).
@@ -850,7 +850,7 @@ class ConsentDeciderApp(App):
                     max_size=self.max_size,
                     path="/ws/consent-decider",
                     query={"workspace": self.workspace_id},
-                    user_agent_header=_USER_AGENT,
+                    user_agent_header=USER_AGENT,
                 ) as ws:
                     self._ws = ws
                     self._connected = True
@@ -1053,7 +1053,7 @@ class ConsentDeciderApp(App):
         if self._connected:
             conn = "connected"
         elif self._refused:
-            conn = f"refused — retrying every {int(_REFUSED_RETRY_INTERVAL)}s"
+            conn = f"refused — retrying every {int(REFUSED_RETRY_INTERVAL)}s"
         else:
             conn = "reconnecting"
         return (
@@ -1249,7 +1249,7 @@ class ConsentDeciderApp(App):
             countdown.update(
                 "paused until restart"
                 if rem is None
-                else f"paused {_fmt_duration(rem)}"
+                else f"paused {fmt_duration(rem)}"
             )
         else:
             countdown.update("")
@@ -1396,18 +1396,18 @@ class ConsentDeciderApp(App):
         ``list-clients`` timeout) must not strand requests that arrived
         during the attempt's dedupe window — without a retry they would
         sit unpopup'd until the next ADDED frame or a reconnect, and
-        auto-deny unseen. Bounded by ``_POPUP_SHOW_ATTEMPTS``; once the
+        auto-deny unseen. Bounded by ``POPUP_SHOW_ATTEMPTS``; once the
         worker ends the slot frees and the next ADDED frame schedules a
         fresh one. :meth:`_show_popup` swallows its subprocess errors;
         this guard keeps the fire-and-forget task from surfacing anything
         (an unretrieved task exception would just log noise).
         """
         try:
-            for _ in range(_POPUP_SHOW_ATTEMPTS):
+            for _ in range(POPUP_SHOW_ATTEMPTS):
                 shown = await asyncio.to_thread(self._show_popup)
                 if shown or not self.controller.pending:
                     return
-                await asyncio.sleep(_POPUP_SHOW_RETRY_DELAY)
+                await asyncio.sleep(POPUP_SHOW_RETRY_DELAY)
         except Exception:  # noqa: BLE001
             logger.exception("consent-decide popup show failed")
 
@@ -1811,7 +1811,7 @@ class RulesScreen(Screen):
         else:
             lines.append(
                 "  [yellow]Filtering paused "
-                f"(resumes in {_fmt_duration(rem)})[/yellow]"
+                f"(resumes in {fmt_duration(rem)})[/yellow]"
             )
         return lines
 
@@ -1844,13 +1844,13 @@ class RulesScreen(Screen):
             rem = controller.rule_remaining(rule)
             # Guard None before formatting: a timed verdict with a null
             # decided_at or an unknown duration has no countdown. Both allow
-            # and deny must degrade the same way (else _fmt_duration(None)
+            # and deny must degrade the same way (else fmt_duration(None)
             # raises TypeError on a deny) -- the parser permits these rows, so
             # rendering must too.
             if rem is None:
                 label = ""
             elif deny:
-                label = f"{_fmt_duration(rem)} left"
+                label = f"{fmt_duration(rem)} left"
             else:
-                label = f"expires in {_fmt_duration(rem)}"
+                label = f"expires in {fmt_duration(rem)}"
         return f"{escape(host)}{escape(proc)}  [dim]{escape(label)}[/dim]"

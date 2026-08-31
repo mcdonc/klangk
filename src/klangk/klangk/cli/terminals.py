@@ -23,7 +23,7 @@ from .client import (
     WorkspaceNotFoundError,
 )
 from . import context
-from .sandboxcmd import _resolve_workspace_and_url
+from .sandboxcmd import resolve_workspace_and_url
 
 
 async def recv_until_event(conn, timeout: float, on_message=None):
@@ -88,7 +88,7 @@ def terminals(
     workspace: str = typer.Argument(help="Workspace name"),
 ) -> None:
     """List all terminals (own + shared) in a workspace."""
-    ws, sspec, token = _resolve_workspace_and_url(workspace)
+    ws, sspec, token = resolve_workspace_and_url(workspace)
     max_size = context.ws_max_size()
 
     # We need to start a terminal to get the window list, then also
@@ -136,7 +136,7 @@ def terminals(
                     "shared",
                     t.get("handle", ""),
                 )
-            context._err.print(table)
+            context.err.print(table)
 
             await send_ignore_closed(
                 conn, json.dumps({"cmd": "terminal_stop"})
@@ -165,18 +165,18 @@ def share_workspace(
     """Share a workspace with a user."""
     context.require_auth()
     if role not in _VALID_ROLES:
-        context._err.print(
+        context.err.print(
             f"[red]Invalid role '{role}'[/red]."
             f" Choose from: {', '.join(_VALID_ROLES)}"
         )
         raise typer.Exit(code=1)
     group_suffix = _ROLE_TO_GROUP[role]
     try:
-        result = context._client().add_workspace_member(
+        result = context.client().add_workspace_member(
             workspace, email, role=group_suffix
         )
     except WorkspaceNotFoundError:
-        context._err.print(f"[red]No workspace named[/red] '{workspace}'")
+        context.err.print(f"[red]No workspace named[/red] '{workspace}'")
         raise typer.Exit(code=1) from None
     typer.echo(
         f"Shared workspace {workspace} with {result['email']} as {role}"
@@ -191,14 +191,14 @@ def unshare_workspace(
     """Remove a user's access to a workspace."""
     context.require_auth()
     try:
-        context._client().remove_workspace_member(workspace, email)
+        context.client().remove_workspace_member(workspace, email)
     except WorkspaceNotFoundError as e:
-        context._err.print(f"[red]{e}[/red]")
+        context.err.print(f"[red]{e}[/red]")
         raise typer.Exit(code=1) from None
     typer.echo(f"Removed {email} from workspace {workspace}")
 
 
-def _resolve_own_window(
+def resolve_own_window(
     own_windows: list[dict], terminal: str
 ) -> tuple[dict | None, str | None]:
     """Resolve a terminal reference to one own window.
@@ -274,7 +274,7 @@ def _set_terminal_shared(
     or ``unshare_window``) for it, waits for the refreshed
     shared-terminals list, then stops the scratch terminal.
     """
-    ws, sspec, token = _resolve_workspace_and_url(workspace)
+    ws, sspec, token = resolve_workspace_and_url(workspace)
     max_size = context.ws_max_size()
 
     async def run() -> None:
@@ -294,9 +294,9 @@ def _set_terminal_shared(
                 )
             )
             msg = await recv_until(conn, frame_is("terminal_windows"), 30)
-            match, err = _resolve_own_window(msg.get("windows", []), terminal)
+            match, err = resolve_own_window(msg.get("windows", []), terminal)
             if err is not None:
-                context._err.print(f"[red]{err}[/red]")
+                context.err.print(f"[red]{err}[/red]")
                 raise typer.Exit(code=1)
 
             await conn.send(json.dumps({"cmd": cmd, "window_id": match["id"]}))
@@ -304,7 +304,7 @@ def _set_terminal_shared(
             await recv_until(
                 conn, frame_is("shared_terminals"), CONFIRM_TIMEOUT
             )
-            context._err.print(f"[green]{done_msg}[/green]")
+            context.err.print(f"[green]{done_msg}[/green]")
 
             await send_ignore_closed(
                 conn, json.dumps({"cmd": "terminal_stop"})

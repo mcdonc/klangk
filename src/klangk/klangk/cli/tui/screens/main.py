@@ -53,21 +53,21 @@ from .workspace_form import (
 
 logger = logging.getLogger(__name__)
 
-_TOKEN_REFRESH_MARGIN = 600  # refresh 10 minutes before expiry
-_TOKEN_REFRESH_POLL = 60  # check every 60 seconds
+TOKEN_REFRESH_MARGIN = 600  # refresh 10 minutes before expiry
+TOKEN_REFRESH_POLL = 60  # check every 60 seconds
 
 # Auto-reconnect for the workspaces list when the backend is unreachable
 # (#2012). Mirrors the Flutter WS client
 # (src/frontend/lib/ws/ws_client.dart: ``_scheduleReconnect`` / ``_backoffDelay``):
 # bounded exponential backoff with jitter and a hard attempt cap, after which
 # we give up and tell the user to switch server / restart.
-_MAX_RECONNECT_ATTEMPTS = 25
-_MAX_BACKOFF_SECONDS = 5
+MAX_RECONNECT_ATTEMPTS = 25
+MAX_BACKOFF_SECONDS = 5
 
 # Indirection so tests can advance the WS reconnect loop without real delays
 # (and without patching the global ``asyncio.sleep``, which Textual's own
 # event loop depends on).
-_reconnect_sleep = asyncio.sleep
+reconnect_sleep = asyncio.sleep
 
 
 class ServerUnreachable(Exception):
@@ -80,7 +80,7 @@ class ServerUnreachable(Exception):
     """
 
 
-def _is_unreachable(exc: BaseException) -> bool:
+def is_unreachable(exc: BaseException) -> bool:
     """True for transport-layer failures (server down / unreachable).
 
     Covers httpx connect/timeout/protocol errors and raw socket errors, but
@@ -90,7 +90,7 @@ def _is_unreachable(exc: BaseException) -> bool:
     return isinstance(exc, (httpx.TransportError, OSError))
 
 
-def _server_schedule_line(schedule: dict) -> str:
+def server_schedule_line(schedule: dict) -> str:
     """Status-line text for the next pending server action (#2661).
 
     Shows fire time (local) plus a coarse remaining duration, e.g.
@@ -119,14 +119,14 @@ def _server_schedule_line(schedule: dict) -> str:
     return f"server: {action} at {fire_at:%H:%M} (in {left})"
 
 
-def _reconnect_backoff(attempt: int) -> float:
+def reconnect_backoff(attempt: int) -> float:
     """Backoff delay (seconds) for reconnect *attempt* (1-based).
 
     Ported from ``WsClient._backoffDelay``: an exponential base capped at
-    ``_MAX_BACKOFF_SECONDS``, halved with random jitter so retries spread out
+    ``MAX_BACKOFF_SECONDS``, halved with random jitter so retries spread out
     instead of stampeding a just-restarted server.
     """
-    base = min(1 << attempt, _MAX_BACKOFF_SECONDS)
+    base = min(1 << attempt, MAX_BACKOFF_SECONDS)
     jitter = random.random() * base
     return (base + jitter) / 2.0
 
@@ -139,7 +139,7 @@ async def run_token_refresh_loop(state) -> str:
     Runs indefinitely until the token can't be refreshed.
     """
     while True:
-        await asyncio.sleep(_TOKEN_REFRESH_POLL)
+        await asyncio.sleep(TOKEN_REFRESH_POLL)
         url = state.current_url()
         token = state.token()
         if not url or not token:
@@ -148,7 +148,7 @@ async def run_token_refresh_loop(state) -> str:
         if exp is None:
             continue
         remaining = exp - time.time()
-        if remaining > _TOKEN_REFRESH_MARGIN:
+        if remaining > TOKEN_REFRESH_MARGIN:
             continue
         logger.debug("Token expires in %.0fs, refreshing", remaining)
         new = await asyncio.to_thread(_refresh_token, url, token)
@@ -1018,7 +1018,7 @@ class MainScreen(StatusScreen):
         return (
             f"server: unreachable, retrying "
             f"(attempt {self._reconnect_attempt}/"
-            f"{_MAX_RECONNECT_ATTEMPTS})…"
+            f"{MAX_RECONNECT_ATTEMPTS})…"
         )
 
     def _refresh_unreachable_display(self) -> None:
@@ -1035,7 +1035,7 @@ class MainScreen(StatusScreen):
         Resets the reconnect counter on a confirmed connection. Note a
         flapping backend (one that completes the WS handshake then drops)
         resets on every connect, so it stays in the silent grace retry and
-        never reaches ``_MAX_RECONNECT_ATTEMPTS`` — the cap is hit only by a
+        never reaches ``MAX_RECONNECT_ATTEMPTS`` — the cap is hit only by a
         backend that can't establish a connection at all (#2052).
         """
         self._reconnect_attempt = 0
@@ -1064,7 +1064,7 @@ class MainScreen(StatusScreen):
         return (
             f"⏳ Server unreachable\n\nReconnecting "
             f"(attempt {self._reconnect_attempt}/"
-            f"{_MAX_RECONNECT_ATTEMPTS})…\n"
+            f"{MAX_RECONNECT_ATTEMPTS})…\n"
             "The page will reload when the backend returns.\n"
             "[c] switch server   [Esc] dismiss"
         )
@@ -1080,7 +1080,7 @@ class MainScreen(StatusScreen):
         except AuthError:
             raise
         except Exception as exc:
-            if _is_unreachable(exc):
+            if is_unreachable(exc):
                 raise ServerUnreachable(
                     str(exc) or "server unreachable"
                 ) from exc
@@ -1200,7 +1200,7 @@ class MainScreen(StatusScreen):
         """(Re)start the status-WS loop worker (#2704).
 
         The loop terminates itself once it exhausts
-        ``_MAX_RECONNECT_ATTEMPTS`` — the give-up overlay tells the user to
+        ``MAX_RECONNECT_ATTEMPTS`` — the give-up overlay tells the user to
         "switch server … to reconnect" — and a switch reuses this screen
         (no re-mount, so ``on_mount`` doesn't run). Without a restart here
         the switched-to server would get no live updates and no WS
@@ -1359,10 +1359,10 @@ class MainScreen(StatusScreen):
         if self not in self.app.screen_stack:
             return "exit"
         self._reconnect_attempt += 1
-        if self._reconnect_attempt > _MAX_RECONNECT_ATTEMPTS:
+        if self._reconnect_attempt > MAX_RECONNECT_ATTEMPTS:
             self._give_up_reconnect()
             return "exit"
-        delay = _reconnect_backoff(self._reconnect_attempt)
+        delay = reconnect_backoff(self._reconnect_attempt)
         if self._reconnect_attempt == 1:
             # Grace: a transient drop / clean close (server restart, idle
             # timeout) gets one silent quick retry before the overlay
@@ -1373,7 +1373,7 @@ class MainScreen(StatusScreen):
             self._enter_unreachable()
             self._refresh_unreachable_display()
         if await self._wait_drop_or(
-            asyncio.create_task(_reconnect_sleep(delay))
+            asyncio.create_task(reconnect_sleep(delay))
         ):
             return "switched"
         return "elapsed"
@@ -1462,7 +1462,7 @@ class MainScreen(StatusScreen):
                 self._refresh_status()
             return
         next_up = schedules[0]
-        self.app.live_extra = _server_schedule_line(next_up)
+        self.app.live_extra = server_schedule_line(next_up)
         self._refresh_status()
 
     def _on_status_event(self, event: dict) -> None:

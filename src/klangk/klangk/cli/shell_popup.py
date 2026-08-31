@@ -177,7 +177,7 @@ def sweep_dead_sessions(
     sessions, foreign sessions) → left alone. Best-effort: never raises.
     """
     socket = socket_path(workspace_id)
-    runner = run or _default_run
+    runner = run or default_run
     try:
         proc = subprocess.run(
             _tmux(socket, "list-sessions", "-F", "#{session_name}"),
@@ -425,7 +425,7 @@ def should_use_popup(
 # ---------------------------------------------------------------------------
 
 
-def _default_run(argv: list[str], quiet: bool = False) -> int:
+def default_run(argv: list[str], quiet: bool = False) -> int:
     """Run a tmux control command, logging failures (never raising).
 
     Output is captured, never shown: post-exit cleanup commands
@@ -458,7 +458,7 @@ def _default_run(argv: list[str], quiet: bool = False) -> int:
     return proc.returncode
 
 
-def _default_attach(argv: list[str]) -> int:
+def default_attach(argv: list[str]) -> int:
     """Attach the user's terminal to the outer session (blocks until detach)."""
     return subprocess.call(argv)
 
@@ -470,8 +470,8 @@ def run_consent_shell(
     decider_argv: list[str],
     popup_size: tuple[int, int] = DEFAULT_POPUP_SIZE,
     term_size: tuple[int, int] | None = None,
-    run=_default_run,
-    attach=_default_attach,
+    run=default_run,
+    attach=default_attach,
     session_names: tuple[str, str] | None = None,
 ) -> int:
     """Bring up the consent-popup russian-doll and attach the user to it.
@@ -526,7 +526,7 @@ def run_consent_shell(
     #    KeyboardInterrupt/OSError must not strand the detached sessions
     #    (per-invocation names are never reused, so leaks accumulate, #2693
     #    review).
-    with _cleanup_on_signal(cleanup):
+    with cleanup_on_signal(cleanup):
         try:
             rc = attach(attach_cmd(socket, outer))
         except BaseException:
@@ -551,7 +551,7 @@ def _term_size() -> tuple[int, int]:
 
 
 @contextmanager
-def _cleanup_on_signal(cleanup: Callable[[], None]):
+def cleanup_on_signal(cleanup: Callable[[], None]):
     """Run *cleanup* if SIGHUP arrives inside the block.
 
     The wrapper's attach blocks in ``tmux attach``; closing the terminal

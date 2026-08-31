@@ -551,7 +551,7 @@ class DuplicateScreen(ButtonRowModalScreen):
         self.dismiss(name or None)
 
 
-def _human_bytes(n: float) -> str:
+def human_bytes(n: float) -> str:
     """Format a byte count as e.g. ``"12.3 MB"``."""
     value = float(n)
     for unit in ("B", "KB", "MB"):
@@ -561,10 +561,10 @@ def _human_bytes(n: float) -> str:
     return f"{value:.1f} GB"
 
 
-def _fmt_transfer(done: float, total: float | None) -> str:
+def fmt_transfer(done: float, total: float | None) -> str:
     """Render a progress counter, tolerating an unknown total."""
-    d = _human_bytes(done)
-    return f"{d} / {_human_bytes(total)}" if total else f"{d} (size unknown)"
+    d = human_bytes(done)
+    return f"{d} / {human_bytes(total)}" if total else f"{d} (size unknown)"
 
 
 class InputScreen(ButtonRowModalScreen):
@@ -762,5 +762,5 @@ class TransferScreen(ModalScreen):
             # carry the real progress, mirroring the CLI's estimate trick.
             bar.update(total=max(done, 1), progress=done)
         self.query_one("#xfer_status", Static).update(
-            Text(_fmt_transfer(done, total))
+            Text(fmt_transfer(done, total))
         )
