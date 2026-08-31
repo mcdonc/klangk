@@ -114,7 +114,7 @@ def _ensure_shared_home_dir_sync(
     return created or not any(shared_dir.iterdir())
 
 
-async def _async_rmtree(path: Path | str, label: str = "") -> None:
+async def async_rmtree(path: Path | str, label: str = "") -> None:
     """Remove a directory tree in a thread, logging errors."""
     await asyncio.to_thread(rmtree, path, label)
 
@@ -385,7 +385,7 @@ class Workspaces:
             )
             return False
         finally:
-            await _async_rmtree(tmpdir, "build_workspace_archive tmpdir")
+            await async_rmtree(tmpdir, "build_workspace_archive tmpdir")
 
     async def archive_user_data(self, user_id: str, email: str) -> list[Path]:
         """Archive each workspace to a .tar.gz in the export/import format.
@@ -446,7 +446,7 @@ class Workspaces:
             await self.app.state.nix.destroy_workspace_nix(ws_id)
             ws_dir = self.safe_path(ws_id)
             if ws_dir.exists():
-                await _async_rmtree(ws_dir, f"workspace data {ws_id}")
+                await async_rmtree(ws_dir, f"workspace data {ws_id}")
         return archives
 
     # --- CRUD ---
@@ -502,7 +502,7 @@ class Workspaces:
             await self.app.state.model.workspaces.delete_workspace(
                 workspace["id"], user_id
             )
-            await _async_rmtree(home, f"workspace {workspace['id']} rollback")
+            await async_rmtree(home, f"workspace {workspace['id']} rollback")
             raise
         # #2762: fire the deployment's workspace-created hook
         # (KLANGKD_WORKSPACE_CREATED_HOOK) on every creation path —
@@ -562,7 +562,7 @@ class Workspaces:
             # (no-op otherwise).
             await self.app.state.nix.destroy_workspace_nix(workspace_id)
             ws_dir = self.safe_path(workspace_id)
-            await _async_rmtree(ws_dir, f"workspace {workspace_id}")
+            await async_rmtree(ws_dir, f"workspace {workspace_id}")
         return deleted
 
     # --- home symlink ---

@@ -37,7 +37,7 @@ logger = logging.getLogger("klangk.seed")
 
 # Throwaway build image tag. The image is a build sandbox only — its /nix is
 # extracted, the image is not shipped.
-_IMAGE = "klangk-nix-seed:latest"
+IMAGE = "klangk-nix-seed:latest"
 # Bundled-data dir inside the wheel: site-packages/klangk/nix-seed/Dockerfile.
 _BUNDLE_DIR = "nix-seed"
 
@@ -60,7 +60,7 @@ def resolve_podman_bin(env: Mapping[str, str] | None = None) -> str:
     ).podman_bin or ("podman")
 
 
-def _sig_policy_args() -> list[str]:
+def sig_policy_args() -> list[str]:
     """``--signature-policy`` args when ``CONTAINERS_SIGNATURE_POLICY`` is set.
 
     Mirrors ``scripts/_podman_common.sh``: Nix's rootless podman ships no
@@ -81,7 +81,7 @@ def _sig_policy_args() -> list[str]:
 # --- subprocess helper -----------------------------------------------------
 
 
-async def _run(
+async def run(
     binary: str,
     args: list[str],
     *,
@@ -126,7 +126,7 @@ async def _run(
 # --- build steps -----------------------------------------------------------
 
 
-async def _build_image(
+async def build_image(
     podman_bin: str, dockerfile_text: str, *, no_cache: bool
 ) -> None:
     """Build the seed sandbox image from the bundled Dockerfile text."""
@@ -134,7 +134,7 @@ async def _build_image(
     with tempfile.TemporaryDirectory() as ctx:
         (Path(ctx) / "Dockerfile").write_text(dockerfile_text)
         args: list[str] = ["build"]
-        args += _sig_policy_args()
+        args += sig_policy_args()
         # Prevent OCI maskedPaths/readonlyPaths overmounts on /proc inside
         # the build container — without this, the kernel rejects proc
         # mounts in nested user namespaces ("VFS: Mount too revealing").
@@ -146,9 +146,9 @@ async def _build_image(
             args += ["--platform", platform]
         if no_cache:
             args.append("--no-cache")
-        args += ["-f", str(Path(ctx) / "Dockerfile"), "-t", _IMAGE, ctx]
+        args += ["-f", str(Path(ctx) / "Dockerfile"), "-t", IMAGE, ctx]
         logger.info("building seed image (podman build ...)")
-        await _run(podman_bin, args, timeout=2400.0)
+        await run(podman_bin, args, timeout=2400.0)
 
 
 def _extract_seed_members(tar, out: str) -> None:
@@ -165,7 +165,7 @@ def _extract_seed_members(tar, out: str) -> None:
             tar.extract(member, out, filter="fully_trusted")
 
 
-def _export_to_dir_sync(podman_bin: str, cid: str, out: str) -> None:
+def export_to_dir_sync(podman_bin: str, cid: str, out: str) -> None:
     """Stream ``podman export <cid>`` into :mod:`tarfile`, extracting only
     ``nix`` + ``etc/nix/nix.conf`` into *out*.
 
@@ -207,20 +207,20 @@ def _export_to_dir_sync(podman_bin: str, cid: str, out: str) -> None:
         )
 
 
-async def _export_and_extract(podman_bin: str, image: str, out: Path) -> None:
+async def export_and_extract(podman_bin: str, image: str, out: Path) -> None:
     """Create a throwaway container from *image*, stream its ``/nix`` +
     ``/etc/nix/nix.conf`` out into *out*, then remove the container.
     """
-    rc, cid_out, _ = await _run(
+    rc, cid_out, _ = await run(
         podman_bin, ["create", "--entrypoint", "/bin/true", image]
     )
     cid = cid_out.strip().splitlines()[-1] if cid_out.strip() else ""
     if not cid:
         raise SeedError("podman create returned no container id")
     try:
-        await asyncio.to_thread(_export_to_dir_sync, podman_bin, cid, str(out))
+        await asyncio.to_thread(export_to_dir_sync, podman_bin, cid, str(out))
     finally:
-        await _run(podman_bin, ["rm", cid], check=False)
+        await run(podman_bin, ["rm", cid], check=False)
 
     # tar wrote etc/nix/nix.conf; flatten it to <out>/nix.conf + drop etc/.
     conf = out / "etc" / "nix" / "nix.conf"
@@ -237,7 +237,7 @@ async def _export_and_extract(podman_bin: str, image: str, out: Path) -> None:
             pass
 
 
-async def _verify(podman_bin: str, image: str, out: Path) -> None:
+async def verify(podman_bin: str, image: str, out: Path) -> None:
     """Run ``nix --version`` (and ``devenv --version``) against the extracted
     store, mounted read-only into a plain base — proves the seed is self-
     contained."""
@@ -247,7 +247,7 @@ async def _verify(podman_bin: str, image: str, out: Path) -> None:
         "test -f /nix/nix-profile/etc/profile.d/nix.sh; "
         "nix --version && devenv --version"
     )
-    await _run(
+    await run(
         podman_bin,
         [
             "run",
@@ -269,7 +269,7 @@ async def _verify(podman_bin: str, image: str, out: Path) -> None:
 # --- tree helpers ----------------------------------------------------------
 
 
-def _chmod_w(path: Path) -> None:
+def chmod_w(path: Path) -> None:
     """Recursively grant the owner u+rwx so read-only nix store files can be
     removed/moved by the host owner."""
     for root, dirs, files in os.walk(path):
@@ -284,7 +284,7 @@ def _chmod_w(path: Path) -> None:
                 pass
 
 
-def _cp_a(src: Path, dst: Path) -> None:
+def cp_a(src: Path, dst: Path) -> None:
     """``cp -a`` semantics: recursive copy preserving mode/time/symlinks (used
     to populate the seed subvolume from the build output)."""
     if src.is_dir():
@@ -293,7 +293,7 @@ def _cp_a(src: Path, dst: Path) -> None:
         shutil.copy2(src, dst)
 
 
-def _clear_seed_dir(out: Path) -> None:
+def clear_seed_dir(out: Path) -> None:
     """Remove an existing ``nix/`` + ``nix.conf`` + ``etc/`` (chmod read-only
     store files first so rmdir/unlink can proceed)."""
     for name in ("nix", "nix.conf", "etc"):
@@ -301,7 +301,7 @@ def _clear_seed_dir(out: Path) -> None:
         if not p.exists() and not p.is_symlink():
             continue
         if p.is_dir():
-            _chmod_w(p)
+            chmod_w(p)
             shutil.rmtree(p, ignore_errors=True)
         else:
             try:
@@ -336,16 +336,16 @@ async def build_nix_seed(
                 f"{out} already contains a seed (nix/ or nix.conf); pass "
                 "--update to rebuild in place"
             )
-        _clear_seed_dir(out)
+        clear_seed_dir(out)
 
-    await _build_image(podman_bin, dockerfile_text, no_cache=no_cache)
+    await build_image(podman_bin, dockerfile_text, no_cache=no_cache)
     try:
-        await _export_and_extract(podman_bin, _IMAGE, out)
+        await export_and_extract(podman_bin, IMAGE, out)
     finally:
         # Store files extract read-only; make them writable whether or not
         # extraction succeeded so the operator can clean up / re-run.
-        _chmod_w(out / "nix")
-    await _verify(podman_bin, _IMAGE, out)
+        chmod_w(out / "nix")
+    await verify(podman_bin, IMAGE, out)
     logger.info("seed written to %s", out)
 
 
@@ -382,10 +382,10 @@ async def load_nix_seed_btrfs(
             f"{btrfs_bin} subvolume delete {seed}"
         )
     logger.info("creating seed subvolume %s", seed)
-    await _run(btrfs_bin, ["subvolume", "create", str(seed)], timeout=60.0)
-    _chmod_w(tree)
-    _cp_a(tree / "nix", seed / "nix")
-    _cp_a(tree / "nix.conf", seed / "nix.conf")
+    await run(btrfs_bin, ["subvolume", "create", str(seed)], timeout=60.0)
+    chmod_w(tree)
+    cp_a(tree / "nix", seed / "nix")
+    cp_a(tree / "nix.conf", seed / "nix.conf")
     logger.info("loaded seed into %s", seed)
     return seed
 
@@ -393,7 +393,7 @@ async def load_nix_seed_btrfs(
 # --- bundled Dockerfile location ------------------------------------------
 
 
-def _bundled_dockerfile() -> Path | None:
+def bundled_dockerfile() -> Path | None:
     """The Dockerfile shipped in the wheel (``klangk/nix-seed/Dockerfile``), or
     ``None`` if absent (a dev/editable install where the bundle isn't present)."""
     try:
@@ -404,7 +404,7 @@ def _bundled_dockerfile() -> Path | None:
         return None
 
 
-def _source_dockerfile() -> Path | None:
+def source_dockerfile() -> Path | None:
     """Dev fallback: the Dockerfile in the source tree
     (``src/containers/nix-seed/Dockerfile``)."""
     p = (
@@ -418,7 +418,7 @@ def _source_dockerfile() -> Path | None:
 
 def read_dockerfile() -> str:
     """The seed Dockerfile text: bundled (wheel) first, then source (dev)."""
-    for finder in (_bundled_dockerfile, _source_dockerfile):
+    for finder in (bundled_dockerfile, source_dockerfile):
         p = finder()
         if p is not None:
             return p.read_text()

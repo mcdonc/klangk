@@ -28,8 +28,8 @@ from .crash import CrashRecoveryMonitor
 from .health import HealthMonitor
 from .idle import IdleMonitor
 from .identity import (
-    _workspace_container_name,
-    _workspace_name_slug,
+    workspace_container_name,
+    workspace_name_slug,
     BrowserRouter,
 )
 from .ports import (
@@ -41,8 +41,8 @@ from .sidecar import NetworkSidecarMixin, container_ident
 from .spec import (
     ContainerStartSpec,
     SHARED_HOME,
-    _is_named_volume,
-    _split_csv,
+    is_named_volume,
+    split_csv,
     build_create_kwargs,
     build_env,
     build_mounts,
@@ -73,7 +73,7 @@ _PROTECTED_PATHS = [
 ]
 
 
-def _pid_alive(pid: int) -> bool:
+def pid_alive(pid: int) -> bool:
     """Return True if a process with ``pid`` is currently running.
 
     Used by the dead-owner container reap
@@ -104,7 +104,7 @@ def _pid_alive(pid: int) -> bool:
     return True
 
 
-def _reap_sort_key(c: dict) -> int:
+def reap_sort_key(c: dict) -> int:
     """Sort key: remove netns *dependents* (workspaces) before sidecars.
 
     A workspace joins its network sidecar's netns via
@@ -259,7 +259,7 @@ class ContainerRegistry(NetworkSidecarMixin):
 
     @property
     def allowed_images(self) -> set[str]:
-        imgs = set(_split_csv(self.app.state.settings.allowed_images))
+        imgs = set(split_csv(self.app.state.settings.allowed_images))
         imgs.add(self.image_name)
         return imgs
 
@@ -267,7 +267,7 @@ class ContainerRegistry(NetworkSidecarMixin):
     def allowed_mount_roots(self) -> list[str]:
         return [
             os.path.realpath(p)
-            for p in _split_csv(self.app.state.settings.allowed_mount_roots)
+            for p in split_csv(self.app.state.settings.allowed_mount_roots)
         ]
 
     @property
@@ -295,11 +295,11 @@ class ContainerRegistry(NetworkSidecarMixin):
 
     def container_dns_config(self) -> list[str]:
         """Return DNS server list from settings.dns_servers."""
-        return _split_csv(self.app.state.settings.dns_servers)
+        return split_csv(self.app.state.settings.dns_servers)
 
     def container_dns_search_config(self) -> list[str]:
         """Return DNS search-domain list from settings.dns_search (#2055)."""
-        return _split_csv(self.app.state.settings.dns_search)
+        return split_csv(self.app.state.settings.dns_search)
 
     def image_pull_policy(self) -> str:
         """Resolve the workspace-image pull policy from settings."""
@@ -330,7 +330,7 @@ class ContainerRegistry(NetworkSidecarMixin):
             for opt in options.split(","):
                 if opt and opt not in _VALID_MOUNT_OPTIONS:
                     return f"Invalid mount {spec!r}: unknown option {opt!r}"
-        if _is_named_volume(source):
+        if is_named_volume(source):
             return None
         return self._validate_bind_source(spec, source)
 
@@ -1329,7 +1329,7 @@ class ContainerRegistry(NetworkSidecarMixin):
         ws_row = await self.app.state.model.workspaces.get_workspace_by_id(
             spec.workspace_id
         )
-        slug = _workspace_name_slug((ws_row or {}).get("name") or "")
+        slug = workspace_name_slug((ws_row or {}).get("name") or "")
         # #2017: sudo posture. The deploy-wide allow_sudo is a ceiling; a
         # per-workspace settings-bag override (allow_sudo: false) may only
         # lock the workspace down further, never enable sudo on a deploy
@@ -1634,7 +1634,7 @@ class ContainerRegistry(NetworkSidecarMixin):
             time.monotonic() - t_env,
         )
 
-        container_name = _workspace_container_name(
+        container_name = workspace_container_name(
             self.app.state.util.instance_id(), workspace_id, slug
         )
 
@@ -2041,8 +2041,8 @@ class ContainerRegistry(NetworkSidecarMixin):
             logger.warning("Error scanning for leftover containers: %s", e)
             return
         # Remove dependents (workspaces) before the sidecars they reference,
-        # or every sidecar is skipped this pass (#2476 — see _reap_sort_key).
-        containers.sort(key=_reap_sort_key)
+        # or every sidecar is skipped this pass (#2476 — see reap_sort_key).
+        containers.sort(key=reap_sort_key)
         for c in containers:
             cid = container_ident(c)
             if not cid:
@@ -2090,7 +2090,7 @@ class ContainerRegistry(NetworkSidecarMixin):
           one of the racers).
 
         Liveness is a plain "is there a process with this PID?" check
-        (:func:`_pid_alive`), not a process-identity check. PID recycling can
+        (:func:`pid_alive`), not a process-identity check. PID recycling can
         make a dead owner's PID read falsely alive, but that only ever
         *misses* a reap; it never reaps a live owner's containers. See #2342
         for the full rationale.
@@ -2103,8 +2103,8 @@ class ContainerRegistry(NetworkSidecarMixin):
             logger.warning("Error scanning for dead-owner containers: %s", e)
             return
         # Remove dependents (workspaces) before the sidecars they reference,
-        # or every sidecar is skipped this pass (#2476 — see _reap_sort_key).
-        containers.sort(key=_reap_sort_key)
+        # or every sidecar is skipped this pass (#2476 — see reap_sort_key).
+        containers.sort(key=reap_sort_key)
         for c in containers:
             cid = container_ident(c)
             if not cid:
@@ -2118,7 +2118,7 @@ class ContainerRegistry(NetworkSidecarMixin):
                 owner_pid = int(pid_label)
             except (TypeError, ValueError):
                 continue  # unparseable pid → treat as no label → leave it
-            if owner_pid <= 0 or _pid_alive(owner_pid):
+            if owner_pid <= 0 or pid_alive(owner_pid):
                 continue  # owner still running → leave it (#1556)
             logger.info(
                 "Reaping dead-owner container %s "

@@ -15,7 +15,7 @@ Design (see #1392, #1394):
   the ``_resolve_indirections`` model validator on :class:`KlangkSettings`
   (#1461). Every ``settings.field`` read thereafter returns the already-
   resolved value — no caller wraps in ``resolve_indirection``. The private
-  ``_resolve_indirection`` survives for two callers: that validator, and the
+  ``resolve_indirection`` survives for two callers: that validator, and the
   non-``KLANGKD_`` path of :func:`resolve_env_value` (feature-declared dynamic
   keys discovered from ``package.json``, which are not settings fields and so
   cannot be resolved at construction).
@@ -100,7 +100,7 @@ _CONTAINER_MEM_LIMIT_RE = re.compile(
 # user tokens. Splitting at the filesystem level mirrors the code-level
 # isolation rule (``klangk.cli`` must not import from the server). See
 # #1607 / #1644 / #1646.
-_XDG_SUBDIR = "klangkd"
+XDG_SUBDIR = "klangkd"
 
 
 def _coerce_prune_int(v, name: str, *, default: int) -> int:
@@ -217,7 +217,7 @@ def _resolve_numeric_indirection(v, name: str):
     ``_resolve_indirections`` posture).
     """
     if isinstance(v, str) and v.startswith(("file:", "cmd:")):
-        resolved = _resolve_indirection(v, name)
+        resolved = resolve_indirection(v, name)
         if resolved is None:
             raise ValueError(
                 f"KLANGKD_{name.upper()} could not be resolved: the "
@@ -358,7 +358,7 @@ def _xdg_dir(var: str, fallback: str) -> str:
     return os.environ.get(var) or os.path.expanduser(fallback)
 
 
-def _xdg_config_home() -> str:
+def xdg_config_home() -> str:
     """``$XDG_CONFIG_HOME`` (→ ``~/.config``).
 
     Used for the config-tree default of ``config_dir`` (→ ``customize_dir``,
@@ -398,7 +398,7 @@ def _safe_getuser() -> str:
 # Re-exported for backward compat — callers that ``from ..util import ...``
 # still work because util.py re-exports these.  ``resolve_indirection`` is
 # NOT exported: ``file:``/``cmd:`` resolution now happens once, inside
-# ``KlangkSettings`` at construction (#1461).  The private ``_resolve_indirection``
+# ``KlangkSettings`` at construction (#1461).  The private ``resolve_indirection``
 # is shared by the model validator and the non-KLANGK path of
 # ``resolve_env_value`` (feature-declared dynamic keys).
 __all__ = [
@@ -436,7 +436,7 @@ def _read_file(value: str) -> tuple[str | None, OSError | None]:
         return None, e
 
 
-def _resolve_indirection(value: str | None, key: str = "") -> str | None:
+def resolve_indirection(value: str | None, key: str = "") -> str | None:
     """Resolve ``file:`` / ``cmd:`` prefixes on a raw config value.
 
     If *value* starts with ``file:`` the remainder is a file path (contents
@@ -495,8 +495,6 @@ def _resolve_indirection(value: str | None, key: str = "") -> str | None:
 # The insecure default JWT secret. Single source of truth — auth.py's
 # Auth.jwt_secret_is_secure() compares against this (#1501).
 INSECURE_DEFAULT_SECRET = "change-this-to-a-random-secret"
-# Back-compat alias (was the private name).
-_INSECURE_DEFAULT_SECRET = INSECURE_DEFAULT_SECRET
 
 
 # --- Env-source override for injectable env dicts (#1426 Slice 1) ---
@@ -737,7 +735,7 @@ class KlangkSettings(BaseSettings):
 
     # --- Auth / identity ---
     auth_modes: str | None = None
-    jwt_secret: str | None = _INSECURE_DEFAULT_SECRET
+    jwt_secret: str | None = INSECURE_DEFAULT_SECRET
     prevent_insecure_jwt_secret: str = ""
     default_user: str | None = None
     default_password: str | None = None
@@ -1279,7 +1277,7 @@ class KlangkSettings(BaseSettings):
     def _resolve_indirections(self) -> "KlangkSettings":
         """Resolve ``file:``/``cmd:`` prefixes once, at construction (#1461).
 
-        Every string field is run through :func:`_resolve_indirection` before
+        Every string field is run through :func:`resolve_indirection` before
         the object is handed to anything. Thereafter ``settings.field`` returns
         the already-resolved value — no caller wraps in ``resolve_indirection``.
         A field set to ``file:/nonexistent`` or ``cmd:false`` fails *here*
@@ -1290,7 +1288,7 @@ class KlangkSettings(BaseSettings):
         no-op. This keeps the legacy ``resolve_env_value`` path (still used by
         feature-declared dynamic keys and not-yet-migrated modules) correct —
         it reads the already-resolved field and the redundant
-        ``_resolve_indirection`` call it makes is a harmless no-op.
+        ``resolve_indirection`` call it makes is a harmless no-op.
 
         Only ``str`` fields are candidates: ``list[dict]`` (``oidc_providers``)
         and any non-string field are skipped. ``None`` (unset) is left alone.
@@ -1298,7 +1296,7 @@ class KlangkSettings(BaseSettings):
         for name in type(self).model_fields:
             val = getattr(self, name)
             if isinstance(val, str):
-                resolved = _resolve_indirection(val, name)
+                resolved = resolve_indirection(val, name)
                 if resolved is None:
                     raise ValueError(
                         f"KLANGKD_{name.upper()} could not be resolved: the "
@@ -1352,13 +1350,13 @@ class KlangkSettings(BaseSettings):
                     "are both unset. Set KLANGKD_STATE_DIR to the runtime state "
                     "directory (UDS socket, rendered proxy config, pid file)."
                 )
-            self.state_dir = os.path.join(_xdg_state_home(), _XDG_SUBDIR)
+            self.state_dir = os.path.join(_xdg_state_home(), XDG_SUBDIR)
         if not self.data_dir:
             self.data_dir = os.path.join(self.state_dir, "data")
         # config_dir is the config-tree root (the state_tree analogue of
         # state_dir, #1649): customize_dir derives from it.
         if not self.config_dir:
-            self.config_dir = os.path.join(_xdg_config_home(), _XDG_SUBDIR)
+            self.config_dir = os.path.join(xdg_config_home(), XDG_SUBDIR)
         # customize_dir is config (user-edited, durable) — derive from
         # config_dir, not state_dir (#1644/#1649).
         if not self.customize_dir:
@@ -2069,7 +2067,7 @@ def resolve_dynamic_config(
     Feature config keys (discovered from each feature's ``package.json``) are
     outside the ``KLANGKD_`` settings model — they are not known at settings
     construction, so they can't be resolved by the model validator. This
-    reads ``os.environ`` directly and applies :func:`_resolve_indirection`
+    reads ``os.environ`` directly and applies :func:`resolve_indirection`
     so feature config honors ``file:``/``cmd:`` prefixes (a feature-declared
     key may itself be a secret, e.g. an API token).
 
@@ -2105,7 +2103,7 @@ def resolve_dynamic_config(
     """
     raw = os.environ.get(key)
     if raw is not None:
-        resolved = _resolve_indirection(raw, key)
+        resolved = resolve_indirection(raw, key)
         return resolved if resolved is not None else default
     if features_config is not None:
         fc_raw = features_config.get(key)
@@ -2119,10 +2117,10 @@ def resolve_dynamic_config(
                 key.removeprefix(_FEATURE_CONFIG_PREFIX).lower()
             )
         if fc_raw is not None:
-            resolved = _resolve_indirection(fc_raw, key)
+            resolved = resolve_indirection(fc_raw, key)
             if resolved is not None:
                 return resolved
-            # A bad file:/cmd: ref in the YAML value: _resolve_indirection
+            # A bad file:/cmd: ref in the YAML value: resolve_indirection
             # already logged it; fall through to the feature default rather
             # than silently treating the broken ref as the value.
     return default

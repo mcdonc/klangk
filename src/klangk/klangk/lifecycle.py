@@ -26,7 +26,7 @@ from . import (
     wshandler,
 )
 from . import static
-from .auth import _PASSWORD_CLASSES, password_class_counts
+from .auth import PASSWORD_CLASSES, password_class_counts
 from .bind_safety import enforce_no_auth_bind_safety
 from .exceptions import ConfigurationError
 from .settings import KlangkSettings
@@ -339,7 +339,7 @@ class Lifecycle:
                 f"is shorter than KLANGKD_MIN_PASSWORD_LENGTH={min_len}"
             )
         _counts = password_class_counts(password)
-        for _key, _name in _PASSWORD_CLASSES:
+        for _key, _name in PASSWORD_CLASSES:
             _need = getattr(settings, f"password_require_{_key}")
             if _need > 0 and _counts[_key] < _need:
                 _policy_errors.append(

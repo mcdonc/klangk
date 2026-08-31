@@ -353,7 +353,7 @@ async def test_fuse_destroy_missing_is_noop(monkeypatch, tmp_path):
 async def test_fuse_destroy_removes_readonly_store_files(
     monkeypatch, tmp_path
 ):
-    # nix store paths are read-only (0444 files / 0555 dirs); _rmtree_rw must
+    # nix store paths are read-only (0444 files / 0555 dirs); rmtree_rw must
     # chmod them away so destroy completes.
     seed = _fuse_seed(tmp_path)
     ws = tmp_path / "ws-ws1"
@@ -434,7 +434,7 @@ async def test_run_timeout_raises_nixerror_and_kills(monkeypatch):
 
 async def test_rmtree_rw_logs_when_retry_fails(monkeypatch, tmp_path, caplog):
     # Cover the onerror's except branch: a retry that still fails logs a warning
-    # instead of raising (best-effort cleanup). We capture the onerror _rmtree_rw
+    # instead of raising (best-effort cleanup). We capture the onerror rmtree_rw
     # hands to shutil.rmtree and invoke it with a failing op.
     target = tmp_path / "tree"
     target.mkdir()
@@ -445,7 +445,7 @@ async def test_rmtree_rw_logs_when_retry_fails(monkeypatch, tmp_path, caplog):
 
     monkeypatch.setattr(nix.shutil, "rmtree", fake_rmtree)
     with caplog.at_level("WARNING", logger="klangk.nix"):
-        nix._rmtree_rw(str(target))
+        nix.rmtree_rw(str(target))
         # Simulate rmtree hitting a stuck entry: onerror retries, the retry fails.
 
         def _boom(_p):
@@ -496,7 +496,7 @@ async def test_rmtree_onerror_root_path_skips_parent_chmod(tmp_path):
     # -> the parent chmod is skipped (not ours to touch).
     parent.chmod(0o555)
     try:
-        nix._rmtree_rw(str(root))
+        nix.rmtree_rw(str(root))
         # The seed parent was left at its original mode: the guard held.
         assert stat_mod.S_IMODE(parent.stat().st_mode) == 0o555
     finally:

@@ -95,7 +95,7 @@ MIGRATIONS: list[Migration] = [
 ]
 
 
-def _validate_migrations(
+def validate_migrations(
     migrations: list[Migration] | None = None,
 ) -> None:
     """Assert ids are contiguous 1..N and names unique (fail fast at
@@ -112,7 +112,7 @@ def _validate_migrations(
         raise RuntimeError(f"Duplicate migration names: {names}")
 
 
-_validate_migrations()
+validate_migrations()
 
 
 async def run_migrations(db) -> list[str]:

@@ -17,8 +17,8 @@ from .. import podman
 logger = logging.getLogger(__name__)
 
 # fail-open window. Module-level so the timeout path is unit-testable fast.
-_NETWORK_SIDECAR_READY_TIMEOUT = 30.0
-_NETWORK_SIDECAR_READY_POLL = 0.3
+NETWORK_SIDECAR_READY_TIMEOUT = 30.0
+NETWORK_SIDECAR_READY_POLL = 0.3
 _NETWORK_SIDECAR_READY_TOKEN = "dns-proxy listening"
 # fwmark the sidecar's proxy stamps on its upstream socket and the entrypoint
 # matches in its nat/filter rules (#2264). Single source of truth, passed to the
@@ -335,7 +335,7 @@ class NetworkSidecarMixin:
         # "dns-proxy listening" once bound; poll its logs. Fail-closed: if
         # the sidecar exits first or the proxy never binds, raise so the
         # caller refuses to start the workspace rather than run it unfiltered.
-        deadline = time.monotonic() + _NETWORK_SIDECAR_READY_TIMEOUT
+        deadline = time.monotonic() + NETWORK_SIDECAR_READY_TIMEOUT
         ready = False
         while time.monotonic() < deadline:
             logs = await self.app.state.podman.container_logs(cid)
@@ -350,12 +350,12 @@ class NetworkSidecarMixin:
                     f"network sidecar {name} exited before the DNS proxy "
                     f"was ready; logs:\n{logs}",
                 )
-            await asyncio.sleep(_NETWORK_SIDECAR_READY_POLL)
+            await asyncio.sleep(NETWORK_SIDECAR_READY_POLL)
         if not ready:
             raise podman.PodmanError(
                 500,
                 f"network sidecar {name} DNS proxy did not become ready "
-                f"within {_NETWORK_SIDECAR_READY_TIMEOUT:.0f}s; the "
+                f"within {NETWORK_SIDECAR_READY_TIMEOUT:.0f}s; the "
                 "workspace would join an unfiltered netns",
             )
 

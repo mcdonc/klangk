@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 # Commands dispatched to a Connection method. The boolean is True when
 # the handler takes the message dict, False when it takes no arguments.
-_WS_CONNECTION_COMMANDS: dict[str, tuple[str, bool]] = {
+WS_CONNECTION_COMMANDS: dict[str, tuple[str, bool]] = {
     "workspace_connect": ("handle_workspace_connect", True),
     "workspace_disconnect": ("handle_workspace_disconnect", False),
     "ui_ready": ("handle_ui_ready", False),
@@ -55,7 +55,7 @@ _WS_CONNECTION_COMMANDS: dict[str, tuple[str, bool]] = {
 
 # Commands dispatched to the shared `state` object instead of a
 # Connection. These are synchronous and take (msg, sender).
-_WS_STATE_COMMANDS: dict[str, str] = {
+WS_STATE_COMMANDS: dict[str, str] = {
     "browser_response": "handle_browser_response",
     "browser_chunk": "handle_browser_chunk",
     "subscribe_health_heartbeat": "handle_subscribe_health_heartbeat",
@@ -93,7 +93,7 @@ async def dispatch_ws_loop(conn, safe_ws, user: dict, app) -> None:
         log_ws_msg("RECV", msg, user)
 
         cmd = msg.get("cmd")
-        entry = _WS_CONNECTION_COMMANDS.get(cmd)
+        entry = WS_CONNECTION_COMMANDS.get(cmd)
         if entry is not None:
             method_name, takes_msg = entry
             method = getattr(conn, method_name)
@@ -102,7 +102,7 @@ async def dispatch_ws_loop(conn, safe_ws, user: dict, app) -> None:
             else:
                 await method()
         else:
-            state_method = _WS_STATE_COMMANDS.get(cmd)
+            state_method = WS_STATE_COMMANDS.get(cmd)
             if state_method is not None:
                 getattr(app.state.sockets, state_method)(msg, safe_ws)
             else:

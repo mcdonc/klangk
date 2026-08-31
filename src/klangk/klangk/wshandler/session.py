@@ -151,14 +151,14 @@ def _shared_set_changed(old: list[dict], new_entries: list[dict]) -> bool:
     return old_shared != new_shared or old_shared_names != new_shared_names
 
 
-def _iso_utc(ts: float | None) -> str | None:
+def iso_utc(ts: float | None) -> str | None:
     """Render an epoch timestamp as an ISO-8601 UTC string, or ``None``."""
     if ts is None:
         return None
     return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
 
 
-def _service_health_frame(
+def service_health_frame(
     workspace_id: str,
     *,
     healthy: bool,
@@ -199,7 +199,7 @@ def _service_health_frame(
         "healthy": healthy,
         "health_message": message,
         "running": running,
-        "health_checked_at": _iso_utc(health_checked_at),
+        "health_checked_at": iso_utc(health_checked_at),
         "seq": seq,
     }
 
@@ -1046,7 +1046,7 @@ class WebSocketState:
         3a); ``seq`` is the per-workspace monotonic counter (#1175 item
         4).  All additive -- defaults preserve the legacy shape.
         """
-        message_dict = _service_health_frame(
+        message_dict = service_health_frame(
             workspace_id,
             healthy=healthy,
             message=message,
@@ -1131,7 +1131,7 @@ class WebSocketState:
         self.fanout(
             {
                 "type": "service_health_heartbeat",
-                "timestamp": _iso_utc(time.time()),
+                "timestamp": iso_utc(time.time()),
             },
             predicate=lambda conn: getattr(
                 conn, "wants_health_heartbeat", False
@@ -1203,7 +1203,7 @@ class WebSocketState:
             return True
         try:
             sock.send_json(
-                _service_health_frame(
+                service_health_frame(
                     cs.workspace_id,
                     healthy=cs.health_status == "healthy",
                     message=cs.health_message,

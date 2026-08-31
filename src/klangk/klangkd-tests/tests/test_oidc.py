@@ -600,7 +600,7 @@ class TestDiscovery:
             await o.discover(provider)
             # Expire the cache
             o.discovery_cache[provider.id].fetched_at = (
-                time.time() - oidc._DISCOVERY_TTL - 1
+                time.time() - oidc.DISCOVERY_TTL - 1
             )
             await o.discover(provider)
             assert client_instance.get.call_count == 2
@@ -685,7 +685,7 @@ class TestGetJWKS:
         with patch("httpx.AsyncClient", return_value=client_instance):
             await o.get_jwks(provider)
             o.jwks_cache[provider.id].fetched_at = (
-                time.time() - oidc._JWKS_TTL - 1
+                time.time() - oidc.JWKS_TTL - 1
             )
             await o.get_jwks(provider)
             assert client_instance.get.call_count == 2
@@ -784,17 +784,17 @@ class TestBuildLogoutUrl:
 
 class TestParseHookValue:
     def test_path_with_func(self):
-        path, func = oidc._parse_hook_value("/etc/klangk/hook.py:my_func")
+        path, func = oidc.parse_hook_value("/etc/klangk/hook.py:my_func")
         assert path == "/etc/klangk/hook.py"
         assert func == "my_func"
 
     def test_path_without_func(self):
-        path, func = oidc._parse_hook_value("/etc/klangk/hook.py")
+        path, func = oidc.parse_hook_value("/etc/klangk/hook.py")
         assert path == "/etc/klangk/hook.py"
         assert func == "on_login"
 
     def test_colon_in_path(self):
-        path, func = oidc._parse_hook_value("/a/b:c/hook.py:check")
+        path, func = oidc.parse_hook_value("/a/b:c/hook.py:check")
         assert path == "/a/b:c/hook.py"
         assert func == "check"
 

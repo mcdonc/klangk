@@ -2,7 +2,7 @@
 
 import logging
 
-from ..container import _workspace_container_name, _workspace_name_slug
+from ..container import workspace_container_name, workspace_name_slug
 from .safe_websocket import SafeWebSocket
 from .constants import log_ws_msg
 from .session import (
@@ -101,8 +101,8 @@ def format_container_info(
     id[:8], #2286) so an operator can ``podman ps | grep`` the name shown here
     and find the container.
     """
-    slug = _workspace_name_slug(workspace_name)
-    name = _workspace_container_name(instance_id, workspace_id, slug)
+    slug = workspace_name_slug(workspace_name)
+    name = workspace_container_name(instance_id, workspace_id, slug)
     ports_str = f" (ports {','.join(str(p) for p in ports)})" if ports else ""
     return name, ports_str
 

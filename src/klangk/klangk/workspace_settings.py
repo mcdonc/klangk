@@ -175,7 +175,7 @@ def _coerce_memory(key: str, value: Any) -> str:
     return value
 
 
-def _coerce_bool(key: str, value: Any) -> bool:
+def coerce_bool(key: str, value: Any) -> bool:
     """Coerce a settings value to a bool.
 
     Accepts a real bool, 0/1, or the strings true/false/yes/no/on/off
@@ -210,13 +210,13 @@ SCHEMA: dict[str, Callable[[str, Any], Any]] = {
     # #2202: per-workspace nix flag — triggers the per-workspace /nix mount
     # (Nix.ensure_workspace_nix) when a backend is configured (``nix_seed``,
     # #2219/#2220).
-    "nix": _coerce_bool,
+    "nix": coerce_bool,
     # #2017: per-workspace sudo flag. The deploy-wide ``allow_sudo`` is a
     # *ceiling*: the workspace value may only further restrict (see
     # :func:`resolve_allow_sudo`). Defaults to True (follow the deploy
     # posture); an explicit False locks the workspace down with ``!ALL``
     # even on a deploy where sudo is on.
-    "allow_sudo": _coerce_bool,
+    "allow_sudo": coerce_bool,
 }
 
 # The known setting keys, exported for callers that want to enumerate the

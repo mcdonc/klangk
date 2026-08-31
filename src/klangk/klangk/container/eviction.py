@@ -145,9 +145,7 @@ def _v2_memory_limit(cgroup_dir: str) -> int | None:
 def _cgroup_v2_usage(cgroup_dir: str, limit: int) -> tuple[int, int, int]:
     """(limit, current, inactive_file) from cgroup-v2 files."""
     current = _read_int_file(f"{cgroup_dir}/memory.current")
-    inactive_file = _stat_value(
-        f"{cgroup_dir}/memory.stat", ("inactive_file",)
-    )
+    inactive_file = stat_value(f"{cgroup_dir}/memory.stat", ("inactive_file",))
     return limit, current, inactive_file
 
 
@@ -158,14 +156,14 @@ def _cgroup_v1_usage(cgroup_dir: str) -> tuple[int, int, int]:
     if limit >= _CGROUP_LIMIT_UNLIMITED:
         raise ValueError("unlimited cgroup v1 memory limit")
     current = _read_int_file(f"{cgroup_dir}/memory/memory.usage_in_bytes")
-    inactive_file = _stat_value(
+    inactive_file = stat_value(
         f"{cgroup_dir}/memory/memory.stat",
         ("total_inactive_file", "inactive_file"),
     )
     return limit, current, inactive_file
 
 
-def _stat_value(stat_path: str, names: tuple[str, ...]) -> int:
+def stat_value(stat_path: str, names: tuple[str, ...]) -> int:
     """The value of the first matching counter in a memory.stat file, 0 when
     absent or unreadable."""
     try:
@@ -233,7 +231,7 @@ def vm_stat_page_size(vm_stat_output: str) -> int:
     return page_size
 
 
-async def _run_command(*cmd: str) -> str:
+async def run_command(*cmd: str) -> str:
     """Run a short command, return stdout, raise OSError on failure."""
     proc = await asyncio.create_subprocess_exec(
         *cmd,
@@ -257,7 +255,7 @@ async def macos_measure(runner=None) -> tuple[int, int]:
     raises — callers treat unmeasurable as "skip" / "fail open".
     """
     if runner is None:
-        runner = _run_command
+        runner = run_command
     total = int((await runner("sysctl", "-n", "hw.memsize")).strip())
     vm_stat = await runner("vm_stat")
     fraction = parse_vm_stat(vm_stat, vm_stat_page_size(vm_stat), total)
@@ -270,7 +268,7 @@ async def macos_available_fraction(runner=None) -> float:
     Two short subprocesses every poll interval; run through
     :mod:`asyncio` so the event loop is never blocked. *runner* injects
     the command transport (tests); the real one is
-    :func:`_run_command`. Any failure raises — the caller treats
+    :func:`run_command`. Any failure raises — the caller treats
     unmeasurable as "skip this cycle".
     """
     total, available = await macos_measure(runner)

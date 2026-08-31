@@ -121,11 +121,11 @@ _MIN_MACHINE_MEMORY_BYTES = 64 * 1024 * 1024
 # only changes via ``podman machine set`` / re-init — rare enough that
 # a 5-minute cache keeps the per-start cost at one ``vm_stat`` pair
 # plus an occasional short ``podman machine ls``.
-_MACHINE_MEMORY_TTL_SECONDS = 300.0
+MACHINE_MEMORY_TTL_SECONDS = 300.0
 
 # (podman_bin) -> (monotonic_ts, cap_bytes | None); None results are
 # cached too (a machine-less Mac shouldn't shell out per start).
-_machine_memory_cache: dict[str, tuple[float, int | None]] = {}
+machine_memory_cache: dict[str, tuple[float, int | None]] = {}
 
 
 def _pick_machine_memory(machines) -> int | None:
@@ -165,7 +165,7 @@ def _pick_machine_memory(machines) -> int | None:
     return None
 
 
-async def _run_podman_json(*cmd: str):
+async def run_podman_json(*cmd: str):
     """Run a short podman command, return parsed JSON stdout.
 
     Raises ``OSError`` on a spawn failure / non-zero exit and
@@ -196,20 +196,20 @@ async def podman_machine_memory_bytes(
     is capped by the machine's ceiling. Read via
     ``<podman_bin> machine ls --format json`` (works while the machine
     is stopped; does not start it) and cached for
-    :data:`_MACHINE_MEMORY_TTL_SECONDS`.
+    :data:`MACHINE_MEMORY_TTL_SECONDS`.
 
     *runner* injects the command transport (tests; the real one is
-    :func:`_run_podman_json`). Any failure — no podman, no machine,
+    :func:`run_podman_json`). Any failure — no podman, no machine,
     unparseable output — returns None: no cap, the Mac measurement
     governs (the gate's fail-open posture at large).
     """
     if _now is None:
         _now = time.monotonic
-    cached = _machine_memory_cache.get(podman_bin)
-    if cached is not None and _now() - cached[0] < _MACHINE_MEMORY_TTL_SECONDS:
+    cached = machine_memory_cache.get(podman_bin)
+    if cached is not None and _now() - cached[0] < MACHINE_MEMORY_TTL_SECONDS:
         return cached[1]
     if runner is None:
-        runner = _run_podman_json
+        runner = run_podman_json
     try:
         machines = await runner(
             podman_bin, "machine", "ls", "--format", "json"
@@ -218,7 +218,7 @@ async def podman_machine_memory_bytes(
         cap = None
     else:
         cap = _pick_machine_memory(machines)
-    _machine_memory_cache[podman_bin] = (_now(), cap)
+    machine_memory_cache[podman_bin] = (_now(), cap)
     return cap
 
 

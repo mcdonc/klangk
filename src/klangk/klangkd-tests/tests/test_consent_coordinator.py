@@ -183,7 +183,7 @@ class TestConsentCoordinatorRevoke:
         # A sidecar that never acks -> wait_for times out -> leave enforced.
         import klangk.consent.coordinator as cc
 
-        monkeypatch.setattr(cc, "_REVOKE_ACK_TIMEOUT", 0.05)
+        monkeypatch.setattr(cc, "REVOKE_ACK_TIMEOUT", 0.05)
         app = _app()
         app.state.model.egress_consent.get_request = AsyncMock(
             return_value=_active_row()

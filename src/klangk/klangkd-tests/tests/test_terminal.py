@@ -2333,9 +2333,9 @@ class TestTerminalBranchGaps2834:
     condition-exit + tail flush."""
 
     def test_parse_windows_skips_malformed_line(self):
-        from klangk.terminal import _parse_windows
+        from klangk.terminal import parse_windows
 
-        windows = _parse_windows(
+        windows = parse_windows(
             "@0|||1|||main|||1\nbroken-line-without-separators\n"
         )
         assert len(windows) == 1

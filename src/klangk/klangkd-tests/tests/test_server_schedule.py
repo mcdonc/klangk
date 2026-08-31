@@ -17,7 +17,7 @@ import pytest
 from klangk.server_schedule import (
     ServerScheduler,
     resolve_fire_at,
-    _parse_fire_at,
+    parse_fire_at,
 )
 from klangk.model.migrations import MIGRATIONS
 
@@ -160,7 +160,7 @@ class TestResolveFireAt:
             resolve_fire_at({})
 
     def test_parse_fire_at_naive(self):
-        assert _parse_fire_at("2030-01-01T12:00:00").tzinfo is not None
+        assert parse_fire_at("2030-01-01T12:00:00").tzinfo is not None
 
 
 def test_migrations_registered():
@@ -434,7 +434,7 @@ class TestLoop:
             asyncio.current_task().cancel()
 
         scheduler.sweep = flaky_tick
-        with patch("klangk.server_schedule._POLL_INTERVAL_SECONDS", 0.01):
+        with patch("klangk.server_schedule.POLL_INTERVAL_SECONDS", 0.01):
             with pytest.raises(asyncio.CancelledError):
                 await asyncio.wait_for(scheduler._run(), timeout=5)
         assert calls["n"] >= 2

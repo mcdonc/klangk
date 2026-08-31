@@ -40,7 +40,7 @@ import os
 from datetime import datetime
 from pathlib import Path
 
-from klangk.settings import _XDG_SUBDIR, _xdg_config_home
+from klangk.settings import XDG_SUBDIR, xdg_config_home
 
 # The filename inside ``config_dir``. Renamed from ``klangkd.conf`` in #1654.
 _CONFIG_FILENAME = "klangkd.yaml"
@@ -61,7 +61,7 @@ def default_config_path() -> str:
     locate the file.
     """
     config_dir = os.environ.get("KLANGKD_CONFIG_DIR") or os.path.join(
-        _xdg_config_home(), _XDG_SUBDIR
+        xdg_config_home(), XDG_SUBDIR
     )
     return os.path.join(config_dir, _CONFIG_FILENAME)
 

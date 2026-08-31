@@ -59,7 +59,7 @@ logger = logging.getLogger(__name__)
 _VALID_PULL_POLICIES = {"never", "missing", "always", "newer"}
 
 
-def _split_csv(raw: str | None) -> list[str]:
+def split_csv(raw: str | None) -> list[str]:
     """Split a comma-separated settings string into stripped parts.
 
     Shared by the registry's CSV-shaped settings accessors
@@ -71,7 +71,7 @@ def _split_csv(raw: str | None) -> list[str]:
     return [p.strip() for p in raw.split(",") if p.strip()]
 
 
-def _is_named_volume(source: str) -> bool:
+def is_named_volume(source: str) -> bool:
     """A mount source with no '/' that doesn't start with '.' is a volume."""
     return "/" not in source and not source.startswith(".")
 
@@ -184,7 +184,7 @@ def resolve_tmp_size(app, workspace_settings: dict | None) -> str | None:
     )
 
 
-def _hosting_floor(
+def hosting_floor(
     app,
     hosting_hostname: str | None,
     hosting_proto: str | None,
@@ -274,7 +274,7 @@ def build_env(
     (the same resolver the request paths use), so a deployer's
     ``KLANGKD_HOSTING_HOSTNAME`` is honored on every start — eager or not.
     """
-    hosting_hostname, hosting_proto, hosting_base_path = _hosting_floor(
+    hosting_hostname, hosting_proto, hosting_base_path = hosting_floor(
         app, hosting_hostname, hosting_proto, hosting_base_path
     )
     env_vars: list[str] = []
@@ -376,7 +376,7 @@ async def ensure_volumes(
         return
     for mount_spec in extra_mounts:
         source = mount_spec.split(":")[0]
-        if _is_named_volume(source):
+        if is_named_volume(source):
             await _ensure_named_volume(app, user_id, podman, source)
         elif not os.path.exists(source):
             raise ValueError(f"Bind mount source does not exist: {source}")
@@ -464,8 +464,8 @@ def build_create_kwargs(
         },
         publish=publish,
         add_hosts=["host.containers.internal:host-gateway"],
-        dns=_split_csv(app.state.settings.dns_servers) or None,
-        dns_search=_split_csv(app.state.settings.dns_search) or None,
+        dns=split_csv(app.state.settings.dns_servers) or None,
+        dns_search=split_csv(app.state.settings.dns_search) or None,
         env=env_vars,
         init=True,
         interactive=True,

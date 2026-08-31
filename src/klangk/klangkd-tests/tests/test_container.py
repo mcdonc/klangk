@@ -626,7 +626,7 @@ def _sudo_call(p):
 
 
 class TestWorkspaceNameSlug:
-    """Pure-function tests for container._workspace_name_slug (#2286)."""
+    """Pure-function tests for container.workspace_name_slug (#2286)."""
 
     @pytest.mark.parametrize(
         "name,expected",
@@ -644,10 +644,10 @@ class TestWorkspaceNameSlug:
         ],
     )
     def test_slug(self, name, expected):
-        assert container._workspace_name_slug(name) == expected
+        assert container.workspace_name_slug(name) == expected
 
     def test_slug_none_is_empty(self):
-        assert container._workspace_name_slug(None) == ""
+        assert container.workspace_name_slug(None) == ""
 
 
 class TestStartContainer:
@@ -745,7 +745,7 @@ class TestStartContainer:
                 container.ContainerStartSpec(workspace["id"], "/tmp/home")
             )
         iid = self.registry.app.state.util.instance_id()
-        slug = container._workspace_name_slug(workspace["name"])
+        slug = container.workspace_name_slug(workspace["name"])
         kwargs = p.create_container.call_args.kwargs
         assert p.create_container.call_args.args[0] == (
             f"klangk-{iid}-{slug}-{workspace['id'][:8]}"
@@ -786,7 +786,7 @@ class TestStartContainer:
         from klangk import netfilter as _nf_mod
 
         monkeypatch.setattr(
-            _nf_mod, "_detect_host_resolvers", lambda: ["8.8.8.8"]
+            _nf_mod, "detect_host_resolvers", lambda: ["8.8.8.8"]
         )
         creates = []
 
@@ -807,7 +807,7 @@ class TestStartContainer:
         assert len(creates) == 2
         sidecar, ws_container = creates[0], creates[1]
         iid = self.registry.app.state.util.instance_id()
-        slug = container._workspace_name_slug(workspace["name"])
+        slug = container.workspace_name_slug(workspace["name"])
         tail = workspace["id"][:8]
         # Both names carry the slug and the same id[:8] tail.
         assert sidecar["name"] == f"klangk-net-{slug}-{tail}"
@@ -853,7 +853,7 @@ class TestStartContainer:
         )
         from klangk import netfilter as _nf
 
-        monkeypatch.setattr(_nf, "_detect_host_resolvers", lambda: ["8.8.8.8"])
+        monkeypatch.setattr(_nf, "detect_host_resolvers", lambda: ["8.8.8.8"])
         with patch_podman(self.registry) as p:
             cid = await self.registry._start_network_sidecar(
                 ws_id, ["github.com:443"]
@@ -897,7 +897,7 @@ class TestStartContainer:
         )
         from klangk import netfilter as _nf
 
-        monkeypatch.setattr(_nf, "_detect_host_resolvers", lambda: ["8.8.8.8"])
+        monkeypatch.setattr(_nf, "detect_host_resolvers", lambda: ["8.8.8.8"])
         monkeypatch.setenv("KLANGKNETWORK_EGRESS_MIN_TTL", "1")
         monkeypatch.setenv("KLANGKNETWORK_EGRESS_SWEEP_INTERVAL", "1")
         with patch_podman(self.registry) as p:
@@ -925,7 +925,7 @@ class TestStartContainer:
         from klangk import netfilter as _nf
 
         # Detection would return 8.8.8.8; the override must win.
-        monkeypatch.setattr(_nf, "_detect_host_resolvers", lambda: ["8.8.8.8"])
+        monkeypatch.setattr(_nf, "detect_host_resolvers", lambda: ["8.8.8.8"])
         monkeypatch.setenv("KLANGKNETWORK_EGRESS_UPSTREAM", "10.88.0.23")
         with patch_podman(self.registry) as p:
             await self.registry._start_network_sidecar(
@@ -952,7 +952,7 @@ class TestStartContainer:
         )
         from klangk import netfilter as _nf
 
-        monkeypatch.setattr(_nf, "_detect_host_resolvers", lambda: ["8.8.8.8"])
+        monkeypatch.setattr(_nf, "detect_host_resolvers", lambda: ["8.8.8.8"])
         with patch_podman(self.registry) as p:
             cid = await self.registry._start_network_sidecar(
                 ws_id, ["github.com:443"], publish=[(18080, 8000)]
@@ -974,7 +974,7 @@ class TestStartContainer:
         )
         from klangk import netfilter as _nf
 
-        monkeypatch.setattr(_nf, "_detect_host_resolvers", lambda: ["8.8.8.8"])
+        monkeypatch.setattr(_nf, "detect_host_resolvers", lambda: ["8.8.8.8"])
         with patch_podman(self.registry) as p:
             await self.registry._start_network_sidecar(
                 ws_id, ["github.com:443"]
@@ -997,7 +997,7 @@ class TestStartContainer:
         )
         from klangk import netfilter as _nf
 
-        monkeypatch.setattr(_nf, "_detect_host_resolvers", lambda: ["8.8.8.8"])
+        monkeypatch.setattr(_nf, "detect_host_resolvers", lambda: ["8.8.8.8"])
 
         start_calls = []
 
@@ -1057,7 +1057,7 @@ class TestStartContainer:
         )
         from klangk import netfilter as _nf
 
-        monkeypatch.setattr(_nf, "_detect_host_resolvers", lambda: ["8.8.8.8"])
+        monkeypatch.setattr(_nf, "detect_host_resolvers", lambda: ["8.8.8.8"])
         stale = {
             "Id": "stale-cid",
             "Names": ["klangk-net-oldslug-abcdef12"],
@@ -1096,7 +1096,7 @@ class TestStartContainer:
         )
         from klangk import netfilter as _nf
 
-        monkeypatch.setattr(_nf, "_detect_host_resolvers", lambda: ["8.8.8.8"])
+        monkeypatch.setattr(_nf, "detect_host_resolvers", lambda: ["8.8.8.8"])
         stale = {
             "Id": "stale-cid",
             "Names": ["klangk-net-abcdef12"],
@@ -1139,7 +1139,7 @@ class TestStartContainer:
         )
         from klangk import netfilter as _nf
 
-        monkeypatch.setattr(_nf, "_detect_host_resolvers", lambda: ["8.8.8.8"])
+        monkeypatch.setattr(_nf, "detect_host_resolvers", lambda: ["8.8.8.8"])
         sidecar = {
             "Id": "sidecar-cid",
             "Names": ["klangk-net-abcdef12"],
@@ -1420,7 +1420,7 @@ class TestStartContainer:
         )
         from klangk import netfilter as _nf
 
-        monkeypatch.setattr(_nf, "_detect_host_resolvers", lambda: ["8.8.8.8"])
+        monkeypatch.setattr(_nf, "detect_host_resolvers", lambda: ["8.8.8.8"])
         with patch_podman(self.registry) as p:
             await self.registry._start_network_sidecar(
                 "abcdef12", ["github.com:443"], egress_mode="interactive"
@@ -1463,7 +1463,7 @@ class TestStartContainer:
         )
         from klangk import netfilter as _nf
 
-        monkeypatch.setattr(_nf, "_detect_host_resolvers", lambda: ["8.8.8.8"])
+        monkeypatch.setattr(_nf, "detect_host_resolvers", lambda: ["8.8.8.8"])
         with patch_podman(self.registry) as p:
             await self.registry._start_network_sidecar(
                 WS, ["github.com:443"], egress_mode="interactive"
@@ -1586,7 +1586,7 @@ class TestStartContainer:
         from klangk import netfilter as _nf_mod
 
         monkeypatch.setattr(
-            _nf_mod, "_detect_host_resolvers", lambda: ["8.8.8.8"]
+            _nf_mod, "detect_host_resolvers", lambda: ["8.8.8.8"]
         )
 
         creates = []
@@ -1646,7 +1646,7 @@ class TestStartContainer:
         from klangk import netfilter as _nf_mod
 
         monkeypatch.setattr(
-            _nf_mod, "_detect_host_resolvers", lambda: ["8.8.8.8"]
+            _nf_mod, "detect_host_resolvers", lambda: ["8.8.8.8"]
         )
 
         creates = []
@@ -1691,7 +1691,7 @@ class TestStartContainer:
         from klangk import netfilter as _nf_mod
 
         monkeypatch.setattr(
-            _nf_mod, "_detect_host_resolvers", lambda: ["8.8.8.8"]
+            _nf_mod, "detect_host_resolvers", lambda: ["8.8.8.8"]
         )
 
         creates = []
@@ -1732,7 +1732,7 @@ class TestStartContainer:
         from klangk import netfilter as _nf_mod
 
         monkeypatch.setattr(
-            _nf_mod, "_detect_host_resolvers", lambda: ["8.8.8.8"]
+            _nf_mod, "detect_host_resolvers", lambda: ["8.8.8.8"]
         )
         creates = []
 
@@ -1772,7 +1772,7 @@ class TestStartContainer:
         from klangk import netfilter as _nf_mod
 
         monkeypatch.setattr(
-            _nf_mod, "_detect_host_resolvers", lambda: ["8.8.8.8"]
+            _nf_mod, "detect_host_resolvers", lambda: ["8.8.8.8"]
         )
         creates = []
 
@@ -1811,7 +1811,7 @@ class TestStartContainer:
         from klangk import netfilter as _nf_mod
 
         monkeypatch.setattr(
-            _nf_mod, "_detect_host_resolvers", lambda: ["8.8.8.8"]
+            _nf_mod, "detect_host_resolvers", lambda: ["8.8.8.8"]
         )
         creates = []
 
@@ -1850,7 +1850,7 @@ class TestStartContainer:
         from klangk import netfilter as _nf_mod
 
         monkeypatch.setattr(
-            _nf_mod, "_detect_host_resolvers", lambda: ["8.8.8.8"]
+            _nf_mod, "detect_host_resolvers", lambda: ["8.8.8.8"]
         )
         creates = []
 
@@ -1888,7 +1888,7 @@ class TestStartContainer:
         from klangk import netfilter as _nf_mod
 
         monkeypatch.setattr(
-            _nf_mod, "_detect_host_resolvers", lambda: ["8.8.8.8"]
+            _nf_mod, "detect_host_resolvers", lambda: ["8.8.8.8"]
         )
         creates = []
 
@@ -1974,7 +1974,7 @@ class TestStartContainer:
         from klangk import netfilter as _nf_mod
 
         monkeypatch.setattr(
-            _nf_mod, "_detect_host_resolvers", lambda: ["8.8.8.8"]
+            _nf_mod, "detect_host_resolvers", lambda: ["8.8.8.8"]
         )
         creates = []
 
@@ -2040,7 +2040,7 @@ class TestStartContainer:
         from klangk import netfilter as _nf_mod
 
         monkeypatch.setattr(
-            _nf_mod, "_detect_host_resolvers", lambda: ["8.8.8.8"]
+            _nf_mod, "detect_host_resolvers", lambda: ["8.8.8.8"]
         )
 
         # Deterministic host ports (the workspace requests two).
@@ -2088,7 +2088,7 @@ class TestStartContainer:
         from klangk import netfilter as _nf_mod
 
         monkeypatch.setattr(
-            _nf_mod, "_detect_host_resolvers", lambda: ["8.8.8.8"]
+            _nf_mod, "detect_host_resolvers", lambda: ["8.8.8.8"]
         )
 
         async def _fake_reconcile(workspace_id, num_ports):
@@ -2138,7 +2138,7 @@ class TestStartContainer:
         from klangk import netfilter as _nf_mod
 
         monkeypatch.setattr(
-            _nf_mod, "_detect_host_resolvers", lambda: ["8.8.8.8"]
+            _nf_mod, "detect_host_resolvers", lambda: ["8.8.8.8"]
         )
 
         creates = []
@@ -2209,7 +2209,7 @@ class TestStartContainer:
         from klangk import netfilter as _nf_mod
 
         monkeypatch.setattr(
-            _nf_mod, "_detect_host_resolvers", lambda: ["8.8.8.8"]
+            _nf_mod, "detect_host_resolvers", lambda: ["8.8.8.8"]
         )
 
         creates = []
@@ -2254,7 +2254,7 @@ class TestStartContainer:
         from klangk import netfilter as _nf_mod
 
         monkeypatch.setattr(
-            _nf_mod, "_detect_host_resolvers", lambda: ["8.8.8.8"]
+            _nf_mod, "detect_host_resolvers", lambda: ["8.8.8.8"]
         )
 
         creates = []
@@ -2293,7 +2293,7 @@ class TestStartContainer:
         from klangk import netfilter as _nf_mod
 
         monkeypatch.setattr(
-            _nf_mod, "_detect_host_resolvers", lambda: ["8.8.8.8"]
+            _nf_mod, "detect_host_resolvers", lambda: ["8.8.8.8"]
         )
 
         async def _fake_create(name, image, **kw):
@@ -2324,8 +2324,8 @@ class TestStartContainer:
         # timeout/poll constants small so the test doesn't wait 30s.
         import klangk.container.sidecar as _c_mod
 
-        monkeypatch.setattr(_c_mod, "_NETWORK_SIDECAR_READY_TIMEOUT", 0.05)
-        monkeypatch.setattr(_c_mod, "_NETWORK_SIDECAR_READY_POLL", 0.01)
+        monkeypatch.setattr(_c_mod, "NETWORK_SIDECAR_READY_TIMEOUT", 0.05)
+        monkeypatch.setattr(_c_mod, "NETWORK_SIDECAR_READY_POLL", 0.01)
         monkeypatch.setattr(
             self.registry.app.state.settings,
             "network_sidecar_image",
@@ -2334,7 +2334,7 @@ class TestStartContainer:
         from klangk import netfilter as _nf_mod
 
         monkeypatch.setattr(
-            _nf_mod, "_detect_host_resolvers", lambda: ["8.8.8.8"]
+            _nf_mod, "detect_host_resolvers", lambda: ["8.8.8.8"]
         )
 
         async def _fake_create(name, image, **kw):
@@ -2370,7 +2370,7 @@ class TestStartContainer:
         )
         from klangk import netfilter as _nf_mod
 
-        monkeypatch.setattr(_nf_mod, "_detect_host_resolvers", lambda: [])
+        monkeypatch.setattr(_nf_mod, "detect_host_resolvers", lambda: [])
 
         async def _fake_create(name, image, **kw):
             if "klangk-net-" in name:
@@ -2402,7 +2402,7 @@ class TestStartContainer:
         )
         from klangk import netfilter as _nf_mod
 
-        monkeypatch.setattr(_nf_mod, "_detect_host_resolvers", lambda: [])
+        monkeypatch.setattr(_nf_mod, "detect_host_resolvers", lambda: [])
 
         async def _fake_create(name, image, **kw):
             # Sidecar create succeeds; workspace create fails.
@@ -5386,18 +5386,18 @@ class TestReapInstanceContainers:
 
 
 class TestPidAlive:
-    """Unit tests for ``container._pid_alive`` — the liveness check the
+    """Unit tests for ``container.pid_alive`` — the liveness check the
     dead-owner reap keys on (#2342)."""
 
     def test_alive_when_process_exists(self):
         with patch("klangk.container.registry.os.kill", return_value=None):
-            assert container._pid_alive(12345) is True
+            assert container.pid_alive(12345) is True
 
     def test_dead_when_no_such_process(self):
         with patch(
             "klangk.container.registry.os.kill", side_effect=ProcessLookupError
         ):
-            assert container._pid_alive(12345) is False
+            assert container.pid_alive(12345) is False
 
     def test_alive_when_permission_denied(self):
         # EPERM: the process exists but belongs to another user (e.g. a
@@ -5406,13 +5406,13 @@ class TestPidAlive:
         with patch(
             "klangk.container.registry.os.kill", side_effect=PermissionError
         ):
-            assert container._pid_alive(12345) is True
+            assert container.pid_alive(12345) is True
 
     def test_current_process_is_alive_without_mock(self):
         # The real liveness check (no os.kill mock) must see the running test
         # process as alive — the property the dead-owner reap relies on to
         # never self-reap (#1556).
-        assert container._pid_alive(os.getpid()) is True
+        assert container.pid_alive(os.getpid()) is True
 
 
 class TestReapDeadOwnerContainers:
@@ -5446,7 +5446,7 @@ class TestReapDeadOwnerContainers:
             remove_container=AsyncMock(),
         ) as mocks:
             with patch(
-                "klangk.container.registry._pid_alive", return_value=False
+                "klangk.container.registry.pid_alive", return_value=False
             ):
                 await self.registry.reap_dead_owner_containers()
         mocks.remove_container.assert_awaited_once_with("dead-owner-1")
@@ -5488,7 +5488,7 @@ class TestReapDeadOwnerContainers:
             remove_container=AsyncMock(),
         ) as mocks:
             with patch(
-                "klangk.container.registry._pid_alive", return_value=False
+                "klangk.container.registry.pid_alive", return_value=False
             ):
                 await self.registry.reap_dead_owner_containers()
         order = [c.args[0] for c in mocks.remove_container.await_args_list]
@@ -5514,15 +5514,15 @@ class TestReapDeadOwnerContainers:
             remove_container=AsyncMock(),
         ) as mocks:
             with patch(
-                "klangk.container.registry._pid_alive", return_value=True
+                "klangk.container.registry.pid_alive", return_value=True
             ):
                 await self.registry.reap_dead_owner_containers()
         mocks.remove_container.assert_not_awaited()
 
     async def test_never_reaps_current_instance_own_pid(self):
         # Security property (#1556): a container stamped with THIS daemon's
-        # pid is skipped via the REAL liveness check — no _pid_alive mock —
-        # so a startup sweep can never self-reap. An inverted _pid_alive or a
+        # pid is skipped via the REAL liveness check — no pid_alive mock —
+        # so a startup sweep can never self-reap. An inverted pid_alive or a
         # pid-label mis-parse would fail here.
         mine = str(os.getpid())
         with patch_podman(
@@ -5616,7 +5616,7 @@ class TestReapDeadOwnerContainers:
             remove_container=AsyncMock(),
         ) as mocks:
             with patch(
-                "klangk.container.registry._pid_alive", return_value=False
+                "klangk.container.registry.pid_alive", return_value=False
             ):
                 await self.registry.reap_dead_owner_containers()
         mocks.remove_container.assert_awaited_once_with("real-1")
@@ -5657,7 +5657,7 @@ class TestReapDeadOwnerContainers:
             ),
         ) as mocks:
             with patch(
-                "klangk.container.registry._pid_alive", return_value=False
+                "klangk.container.registry.pid_alive", return_value=False
             ):
                 await self.registry.reap_dead_owner_containers()
         mocks.remove_container.assert_awaited_once_with("dead-owner-bad")
@@ -6969,7 +6969,7 @@ class TestContainerBranchGaps2834:
     def test_hosting_floor_partial_values_get_floors(self):
         # Only the omitted hosting values take the resolver floor; each
         # explicit one survives (including an empty base_path, #2722).
-        from klangk.container.spec import _hosting_floor
+        from klangk.container.spec import hosting_floor
 
         app = types.SimpleNamespace(
             state=types.SimpleNamespace(util=MagicMock())
@@ -6978,7 +6978,7 @@ class TestContainerBranchGaps2834:
             return_value=("floor.example", "https", "/floor")
         )
         # Hostname given, proto + base omitted.
-        assert _hosting_floor(app, "ext.example", None, None) == (
+        assert hosting_floor(app, "ext.example", None, None) == (
             "ext.example",
             "https",
             "/floor",
@@ -6987,7 +6987,7 @@ class TestContainerBranchGaps2834:
             return_value=("floor.example", "https", "/floor")
         )
         # Proto given, hostname + base omitted.
-        assert _hosting_floor(app, None, "http", None) == (
+        assert hosting_floor(app, None, "http", None) == (
             "floor.example",
             "http",
             "/floor",
@@ -6997,7 +6997,7 @@ class TestContainerBranchGaps2834:
         )
         # Base given (empty string is legitimate), hostname + proto
         # omitted.
-        assert _hosting_floor(app, None, None, "") == (
+        assert hosting_floor(app, None, None, "") == (
             "floor.example",
             "https",
             "",

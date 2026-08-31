@@ -263,7 +263,7 @@ _WINDOW_FMT = (
 )
 
 
-def _parse_windows(output: str) -> list[dict]:
+def parse_windows(output: str) -> list[dict]:
     """Parse tmux ``list-windows -F _WINDOW_FMT`` output into dicts."""
     windows = []
     for line in output.strip().splitlines():
@@ -866,7 +866,7 @@ class Terminal:
             session_name,
             ["list-windows", "-t", session_name, "-F", _WINDOW_FMT],
         )
-        return _parse_windows(output)
+        return parse_windows(output)
 
     async def new_window(
         self,
@@ -907,7 +907,7 @@ class Terminal:
         )
         if rc != 0:
             raise TerminalError(f"new_window failed: {stderr.strip()}")
-        return _parse_windows(output)
+        return parse_windows(output)
 
     async def rename_window(
         self,

@@ -55,7 +55,7 @@ VERDICT_DENY = "deny"
 # How long revoke() waits for the sidecar's drop-rule ack before giving up
 # (fail-closed: leave the row enforced). The sidecar's rule-drop is a single
 # iptables delete, so this is generous.
-_REVOKE_ACK_TIMEOUT = 5.0
+REVOKE_ACK_TIMEOUT = 5.0
 
 # Consent-pause durations (#2332): how long interactive prompting is silenced
 # workspace-wide. While paused, a destination with no allow-list rule and no
@@ -598,7 +598,7 @@ class ConsentCoordinator:
         )
         if fut is not None:
             try:
-                ok = await asyncio.wait_for(fut, _REVOKE_ACK_TIMEOUT)
+                ok = await asyncio.wait_for(fut, REVOKE_ACK_TIMEOUT)
             except asyncio.TimeoutError:
                 ok = False
             if not ok:

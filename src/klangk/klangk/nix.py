@@ -48,7 +48,7 @@ class NixError(RuntimeError):
     """A btrfs/fuse operation or configuration problem in the nix subsystem."""
 
 
-def _rmtree_rw(path: str) -> None:
+def rmtree_rw(path: str) -> None:
     """``shutil.rmtree`` that survives read-only store files/dirs.
 
     nix store paths are 0444 files inside 0555 dirs; a plain ``rmtree`` aborts
@@ -307,8 +307,8 @@ class Nix:
                         rc2,
                         err2.strip(),
                     )
-        # upper holds read-only store paths; _rmtree_rw chmods them away. If
+        # upper holds read-only store paths; rmtree_rw chmods them away. If
         # the mount is still live (both unmounts failed), rmtree best-effort-
         # skips the busy mountpoint (logged via _onerror) — the ws dir is then
         # an orphan the operator must clean up (umount + rm).
-        _rmtree_rw(ws)
+        rmtree_rw(ws)

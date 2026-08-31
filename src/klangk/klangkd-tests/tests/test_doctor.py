@@ -137,7 +137,7 @@ class TestCheckBinary:
     def test_present_but_check_fails(self):
         with (
             patch("shutil.which", return_value="/usr/bin/broken"),
-            patch("klangk.doctor._run", return_value=(1, "", "segfault")),
+            patch("klangk.doctor.run", return_value=(1, "", "segfault")),
         ):
             r = check_binary("broken", ["broken", "--version"], "apt")
             assert not r.ok
@@ -146,7 +146,7 @@ class TestCheckBinary:
     def test_present_and_functional(self):
         with (
             patch("shutil.which", return_value="/usr/bin/good"),
-            patch("klangk.doctor._run", return_value=(0, "v1.0", "")),
+            patch("klangk.doctor.run", return_value=(0, "v1.0", "")),
         ):
             r = check_binary("good", ["good", "--version"], "apt")
             assert r.ok
@@ -182,7 +182,7 @@ class TestCheckTmuxVersion:
     def test_new_enough_is_ok(self):
         with (
             patch("klangk.doctor.shutil.which", return_value="/usr/bin/tmux"),
-            patch("klangk.doctor._run", return_value=(0, "tmux 3.6a", "")),
+            patch("klangk.doctor.run", return_value=(0, "tmux 3.6a", "")),
         ):
             r = check_tmux_version("apt")
         assert r.ok
@@ -192,7 +192,7 @@ class TestCheckTmuxVersion:
     def test_boundary_3_2_is_ok(self):
         with (
             patch("klangk.doctor.shutil.which", return_value="/usr/bin/tmux"),
-            patch("klangk.doctor._run", return_value=(0, "tmux 3.2", "")),
+            patch("klangk.doctor.run", return_value=(0, "tmux 3.2", "")),
         ):
             r = check_tmux_version("apt")
         assert r.ok
@@ -200,7 +200,7 @@ class TestCheckTmuxVersion:
     def test_old_version_is_warning(self):
         with (
             patch("klangk.doctor.shutil.which", return_value="/usr/bin/tmux"),
-            patch("klangk.doctor._run", return_value=(0, "tmux 3.1", "")),
+            patch("klangk.doctor.run", return_value=(0, "tmux 3.1", "")),
         ):
             r = check_tmux_version("apt")
         assert not r.ok
@@ -211,7 +211,7 @@ class TestCheckTmuxVersion:
     def test_unparseable_version_is_warning(self):
         with (
             patch("klangk.doctor.shutil.which", return_value="/usr/bin/tmux"),
-            patch("klangk.doctor._run", return_value=(0, "weird output", "")),
+            patch("klangk.doctor.run", return_value=(0, "weird output", "")),
         ):
             r = check_tmux_version("apt")
         assert not r.ok
@@ -220,7 +220,7 @@ class TestCheckTmuxVersion:
     def test_tmux_v_fails_is_warning(self):
         with (
             patch("klangk.doctor.shutil.which", return_value="/usr/bin/tmux"),
-            patch("klangk.doctor._run", return_value=(1, "", "segfault")),
+            patch("klangk.doctor.run", return_value=(1, "", "segfault")),
         ):
             r = check_tmux_version("apt")
         assert not r.ok
@@ -239,7 +239,7 @@ class TestCheckGnuTar:
         with (
             patch("shutil.which", return_value="/usr/bin/tar"),
             patch(
-                "klangk.doctor._run",
+                "klangk.doctor.run",
                 return_value=(0, "tar (GNU tar) 1.35", ""),
             ),
         ):
@@ -250,7 +250,7 @@ class TestCheckGnuTar:
         with (
             patch("shutil.which", return_value="/usr/bin/tar"),
             patch(
-                "klangk.doctor._run",
+                "klangk.doctor.run",
                 return_value=(0, "bsdtar 3.6.2", ""),
             ),
         ):
@@ -269,7 +269,7 @@ class TestCheckGnuDu:
     def test_gnu_du(self):
         with (
             patch("shutil.which", return_value="/usr/bin/du"),
-            patch("klangk.doctor._run", return_value=(0, "0\t/dev/null", "")),
+            patch("klangk.doctor.run", return_value=(0, "0\t/dev/null", "")),
         ):
             r = check_gnu_du("apt")
             assert r.ok
@@ -278,7 +278,7 @@ class TestCheckGnuDu:
         with (
             patch("shutil.which", return_value="/usr/bin/du"),
             patch(
-                "klangk.doctor._run",
+                "klangk.doctor.run",
                 return_value=(1, "", "illegal option -- b"),
             ),
         ):
@@ -297,7 +297,7 @@ class TestCheckGnuStat:
     def test_gnu_stat(self):
         with (
             patch("shutil.which", return_value="/usr/bin/stat"),
-            patch("klangk.doctor._run", return_value=(0, "ext4\n", "")),
+            patch("klangk.doctor.run", return_value=(0, "ext4\n", "")),
         ):
             r = check_gnu_stat("apt")
             assert r.ok
@@ -306,7 +306,7 @@ class TestCheckGnuStat:
         with (
             patch("shutil.which", return_value="/usr/bin/stat"),
             patch(
-                "klangk.doctor._run",
+                "klangk.doctor.run",
                 return_value=(1, "", "stat: illegal option -- f"),
             ),
         ):
@@ -559,7 +559,7 @@ class TestDoctorBranchGaps2834:
         with (
             patch("shutil.which", return_value="/usr/bin/tar"),
             patch(
-                "klangk.doctor._run",
+                "klangk.doctor.run",
                 return_value=(0, "bsdtar 3.6.2", ""),
             ),
         ):
@@ -573,7 +573,7 @@ class TestDoctorBranchGaps2834:
         with (
             patch("shutil.which", return_value="/usr/bin/du"),
             patch(
-                "klangk.doctor._run",
+                "klangk.doctor.run",
                 return_value=(1, "", ""),
             ),
         ):
@@ -604,10 +604,10 @@ class TestDoctorBranchGaps2834:
 
     def test_failure_block_without_hint(self):
         # A hintless failing result renders without a "Run:" line.
-        from klangk.doctor import CheckResult, _append_failure_block
+        from klangk.doctor import CheckResult, append_failure_block
 
         lines: list[str] = []
-        _append_failure_block(
+        append_failure_block(
             lines,
             [CheckResult(name="x", ok=False, message="broke")],
             "-",

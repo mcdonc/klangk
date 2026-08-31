@@ -274,15 +274,15 @@ class TestMacOsMeasurement:
         async def fake_run(*cmd: str) -> str:
             return str(total) if cmd[0] == "sysctl" else self._VM_STAT
 
-        monkeypatch.setattr("klangk.container.eviction._run_command", fake_run)
+        monkeypatch.setattr("klangk.container.eviction.run_command", fake_run)
         assert await macos_available_fraction() == pytest.approx(0.35)
 
     async def test_run_command_success_and_failure(self):
-        from klangk.container.eviction import _run_command
+        from klangk.container.eviction import run_command
 
-        assert (await _run_command("true")).strip() == ""
+        assert (await run_command("true")).strip() == ""
         with pytest.raises(OSError):
-            await _run_command("false")
+            await run_command("false")
 
 
 class TestMeasureAvailableFraction:
@@ -1036,11 +1036,11 @@ class TestEvictionBranchGaps2834:
         assert "Other" not in info
 
     def test_stat_value_without_match_returns_zero(self, tmp_path):
-        from klangk.container.eviction import _stat_value
+        from klangk.container.eviction import stat_value
 
         path = tmp_path / "memory.stat"
         path.write_text("anon 5\nkernel 7\n")
-        assert _stat_value(str(path), ("file", "inactive_file")) == 0
+        assert stat_value(str(path), ("file", "inactive_file")) == 0
 
     async def test_stop_when_never_started_is_noop(self):
         from klangk.container.eviction import MemoryPressureEvictor

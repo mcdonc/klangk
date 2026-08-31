@@ -78,14 +78,14 @@ class TestParseOpensslList:
         # Defensive branch: has_sha2 and not has_md5 and not has_sha2
         # cannot coexist — the final ``return None`` is unreachable by
         # construction; call it directly for coverage.
-        assert fips._parse_openssl_list("sha256") == (
+        assert fips.parse_openssl_list("sha256") == (
             True,
             "approved set has SHA-2 and no MD5",
         )
 
 
 def _run_parse(stdout):
-    return fips._parse_openssl_list(stdout)
+    return fips.parse_openssl_list(stdout)
 
 
 class TestRunOpensslList:
@@ -95,7 +95,7 @@ class TestRunOpensslList:
             "run",
             side_effect=OSError("no such file"),
         ):
-            ok, detail = fips._run_openssl_list()
+            ok, detail = fips.run_openssl_list()
         assert ok is False
         assert "openssl-cli-unavailable" in detail
 
@@ -105,7 +105,7 @@ class TestRunOpensslList:
             "run",
             side_effect=subprocess.TimeoutExpired("openssl", 15),
         ):
-            ok, detail = fips._run_openssl_list()
+            ok, detail = fips.run_openssl_list()
         assert ok is False
         assert "openssl-cli-unavailable" in detail
 
@@ -117,7 +117,7 @@ class TestRunOpensslList:
                 returncode=1, stdout="", stderr="propquery not found"
             ),
         ):
-            ok, detail = fips._run_openssl_list()
+            ok, detail = fips.run_openssl_list()
         assert ok is False
         assert "openssl-cli-failed rc=1" in detail
 
@@ -129,7 +129,7 @@ class TestRunOpensslList:
                 returncode=0, stdout="", stderr=""
             ),
         ):
-            ok, detail = fips._run_openssl_list()
+            ok, detail = fips.run_openssl_list()
         assert ok is False
         assert "unparseable" in detail
 
@@ -141,7 +141,7 @@ class TestRunOpensslList:
                 returncode=0, stdout="SHA2-256\n", stderr=""
             ),
         ):
-            assert fips._run_openssl_list()[0] is True
+            assert fips.run_openssl_list()[0] is True
 
     def test_md5_leak(self):
         with patch.object(
@@ -151,7 +151,7 @@ class TestRunOpensslList:
                 returncode=0, stdout="MD5\nSHA2-256\n", stderr=""
             ),
         ):
-            ok, detail = fips._run_openssl_list()
+            ok, detail = fips.run_openssl_list()
         assert ok is False
         assert "MD5 appears" in detail
 
@@ -160,37 +160,37 @@ class TestProbeHashlib:
     def test_fips_enforcing(self):
         stub = _hashlib_stub(md5_behavior=ValueError)
         with patch.dict(sys.modules, {"_hashlib": stub}):
-            ok, detail = fips._probe_hashlib()
+            ok, detail = fips.probe_hashlib()
         assert ok is True
         assert "md5 rejected" in detail
 
     def test_fips_enforcing_but_sha_broken(self):
         stub = _hashlib_stub(md5_behavior=ValueError, sha_ok=False)
         with patch.dict(sys.modules, {"_hashlib": stub}):
-            ok, detail = fips._probe_hashlib()
+            ok, detail = fips.probe_hashlib()
         assert ok is False
         assert "SHA-256 unavailable too" in detail
 
     def test_not_enforcing(self):
         stub = _hashlib_stub(md5_behavior=None)
         with patch.dict(sys.modules, {"_hashlib": stub}):
-            ok, detail = fips._probe_hashlib()
+            ok, detail = fips.probe_hashlib()
         assert ok is False
         assert "not rejected" in detail
 
     def test_unexpected_error_is_inconclusive(self):
         stub = _hashlib_stub(md5_behavior=RuntimeError)
         with patch.dict(sys.modules, {"_hashlib": stub}):
-            assert fips._probe_hashlib() is None
+            assert fips.probe_hashlib() is None
 
     def test_no_openssl_attrs(self):
         stub = _hashlib_stub(omit_attrs=True)
         with patch.dict(sys.modules, {"_hashlib": stub}):
-            assert fips._probe_hashlib() is None
+            assert fips.probe_hashlib() is None
 
     def test_no_hashlib_module(self):
         with patch.dict(sys.modules, {"_hashlib": None}):
-            assert fips._probe_hashlib() is None
+            assert fips.probe_hashlib() is None
 
 
 class TestProbeProcess:
@@ -200,9 +200,9 @@ class TestProbeProcess:
             assert fips.probe_process()[0] is True
 
     def test_falls_through_to_cli(self):
-        with patch.object(fips, "_probe_hashlib", return_value=None):
+        with patch.object(fips, "probe_hashlib", return_value=None):
             with patch.object(
-                fips, "_run_openssl_list", return_value=(True, "cli-ok")
+                fips, "run_openssl_list", return_value=(True, "cli-ok")
             ):
                 assert fips.probe_process() == (True, "cli-ok")
 
@@ -480,7 +480,7 @@ class TestRegistryFipsFailClosed:
 
 class TestProbeScriptSyntax:
     def test_embedded_script_compiles(self):
-        compile(fips._PROBE_SCRIPT, "<fips-probe>", "exec")
+        compile(fips.PROBE_SCRIPT, "<fips-probe>", "exec")
 
 
 class TestFipsGateExpectedStopProtocol:

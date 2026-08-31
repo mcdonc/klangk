@@ -76,7 +76,7 @@ class TestRunCmdValue:
     def test_timeout_returns_error(self, monkeypatch):
         import klangk.util as util
 
-        monkeypatch.setattr(util, "_CMD_TIMEOUT_SECONDS", 0.1)
+        monkeypatch.setattr(util, "CMD_TIMEOUT_SECONDS", 0.1)
         contents, err = run_cmd_value("cmd:sleep 1")
         assert contents is None
         assert err is not None

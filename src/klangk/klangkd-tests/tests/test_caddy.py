@@ -23,8 +23,8 @@ import pytest
 from klangk.caddy import (
     CaddyRenderer,
     CaddyWatchdog,
-    _classify_caddy_line,
-    _is_bind_error,
+    classify_caddy_line,
+    is_bind_error,
 )
 from klangk.caddy import (
     CADDYFILE_CONTENT_TYPE,
@@ -257,7 +257,7 @@ class TestContainerSourceLists:
 
 
 class TestCaddySupportsFullGlobalBlock:
-    """_caddy_supports_full_global_block probes the binary so klangkd's config
+    """caddy_supports_full_global_block probes the binary so klangkd's config
     loads on both the devenv's current caddy and the older system caddy a stock
     CI runner apt-installs (Ubuntu 24.04 -> 2.6.2; #1709)."""
 
@@ -268,7 +268,7 @@ class TestCaddySupportsFullGlobalBlock:
             returncode = 0
 
         monkeypatch.setattr(caddy_mod.subprocess, "run", lambda *a, **k: _R())
-        assert caddy_mod._caddy_supports_full_global_block("/x/caddy") is True
+        assert caddy_mod.caddy_supports_full_global_block("/x/caddy") is True
 
     def test_false_when_adapt_rejects_the_probe(self, monkeypatch):
         from klangk import caddy as caddy_mod
@@ -279,7 +279,7 @@ class TestCaddySupportsFullGlobalBlock:
             )
 
         monkeypatch.setattr(caddy_mod.subprocess, "run", lambda *a, **k: _R())
-        assert caddy_mod._caddy_supports_full_global_block("/x/caddy") is False
+        assert caddy_mod.caddy_supports_full_global_block("/x/caddy") is False
 
     def test_true_when_probe_cannot_run(self, monkeypatch):
         from klangk import caddy as caddy_mod
@@ -289,7 +289,7 @@ class TestCaddySupportsFullGlobalBlock:
 
         monkeypatch.setattr(caddy_mod.subprocess, "run", _boom)
         # conservative default: assume supported (rare; preserves features)
-        assert caddy_mod._caddy_supports_full_global_block("/nope") is True
+        assert caddy_mod.caddy_supports_full_global_block("/nope") is True
 
 
 class TestGlobalBlock:
@@ -1119,7 +1119,7 @@ class TestWatchdogReconfigure:
 
 
 # ---------------------------------------------------------------------------
-# _classify_caddy_line
+# classify_caddy_line
 # ---------------------------------------------------------------------------
 
 
@@ -1128,51 +1128,51 @@ class TestClassifyCaddyLine:
 
     def test_info_maps_to_debug(self):
         line = '{"level":"info","ts":1,"msg":"serving initial configuration"}'
-        level, msg = _classify_caddy_line(line)
+        level, msg = classify_caddy_line(line)
         assert level == logging.DEBUG
         assert "serving initial configuration" in msg
 
     def test_warn_maps_to_debug(self):
         line = '{"level":"warn","ts":1,"msg":"HTTP/2 skipped because it requires TLS"}'
-        level, msg = _classify_caddy_line(line)
+        level, msg = classify_caddy_line(line)
         assert level == logging.DEBUG
 
     def test_error_maps_to_error(self):
         line = '{"level":"error","ts":1,"msg":"listener closed"}'
-        level, msg = _classify_caddy_line(line)
+        level, msg = classify_caddy_line(line)
         assert level == logging.ERROR
         assert "listener closed" in msg
 
     def test_fatal_maps_to_error(self):
         line = '{"level":"fatal","ts":1,"msg":"caddy process crash"}'
-        level, msg = _classify_caddy_line(line)
+        level, msg = classify_caddy_line(line)
         assert level == logging.ERROR
 
     def test_panic_maps_to_error(self):
         line = '{"level":"panic","ts":1,"msg":"unexpected nil pointer"}'
-        level, msg = _classify_caddy_line(line)
+        level, msg = classify_caddy_line(line)
         assert level == logging.ERROR
 
     def test_logger_field_included_in_message(self):
         line = '{"level":"info","ts":1,"logger":"admin.api","msg":"received request"}'
-        level, msg = _classify_caddy_line(line)
+        level, msg = classify_caddy_line(line)
         assert level == logging.DEBUG
         assert "[admin.api] received request" == msg
 
     def test_non_json_treated_as_error(self):
         line = "panic: runtime error: index out of range"
-        level, msg = _classify_caddy_line(line)
+        level, msg = classify_caddy_line(line)
         assert level == logging.ERROR
         assert msg == line
 
     def test_missing_level_defaults_to_debug(self):
         line = '{"ts":1,"msg":"something"}'
-        level, msg = _classify_caddy_line(line)
+        level, msg = classify_caddy_line(line)
         assert level == logging.DEBUG
 
     def test_missing_msg_falls_back_to_raw_line(self):
         line = '{"level":"error","ts":1}'
-        level, msg = _classify_caddy_line(line)
+        level, msg = classify_caddy_line(line)
         assert level == logging.ERROR
         assert msg == line
 
@@ -1181,7 +1181,7 @@ class TestClassifyCaddyLine:
             '{"level":"debug","ts":1,"logger":"http",'
             '"msg":"starting server loop","address":":8995","tls":false}'
         )
-        level, msg = _classify_caddy_line(line)
+        level, msg = classify_caddy_line(line)
         assert level == logging.DEBUG
 
 
@@ -1224,7 +1224,7 @@ class TestLogListeners:
 
 
 # ---------------------------------------------------------------------------
-# _is_bind_error (#1917)
+# is_bind_error (#1917)
 # ---------------------------------------------------------------------------
 
 
@@ -1236,39 +1236,39 @@ class TestIsBindError:
             '{"level":"error","logger":"admin",'
             '"msg":"listen unix //tmp/caddy.sock: bind: address already in use"}'
         )
-        assert _is_bind_error(line) is True
+        assert is_bind_error(line) is True
 
     def test_http_bind_address_in_use(self):
         line = (
             '{"level":"error","logger":"http",'
             '"msg":"listen tcp :8443: bind: address already in use"}'
         )
-        assert _is_bind_error(line) is True
+        assert is_bind_error(line) is True
 
     def test_bind_permission_denied(self):
         line = (
             '{"level":"error","logger":"admin",'
             '"msg":"listen unix //run/caddy.sock: bind: permission denied"}'
         )
-        assert _is_bind_error(line) is True
+        assert is_bind_error(line) is True
 
     def test_non_bind_error_is_false(self):
         line = '{"level":"error","logger":"admin","msg":"listener closed"}'
-        assert _is_bind_error(line) is False
+        assert is_bind_error(line) is False
 
     def test_info_level_is_false(self):
         line = (
             '{"level":"info","logger":"admin",'
             '"msg":"admin endpoint started, bind to unix socket"}'
         )
-        assert _is_bind_error(line) is False
+        assert is_bind_error(line) is False
 
     def test_non_json_is_false(self):
-        assert _is_bind_error("panic: something broke") is False
+        assert is_bind_error("panic: something broke") is False
 
     def test_no_msg_field_is_false(self):
         line = '{"level":"error","logger":"admin"}'
-        assert _is_bind_error(line) is False
+        assert is_bind_error(line) is False
 
 
 # ---------------------------------------------------------------------------

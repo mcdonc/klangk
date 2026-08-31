@@ -538,7 +538,7 @@ class TestReadOnlyInputWhitelist:
         ],
     )
     def test_allows_init_responses(self, data):
-        assert _ws_controllers._is_allowed_read_only_input(data)
+        assert _ws_controllers.is_allowed_read_only_input(data)
 
     @pytest.mark.parametrize(
         "data",
@@ -568,7 +568,7 @@ class TestReadOnlyInputWhitelist:
         ],
     )
     def test_blocks_everything_else(self, data):
-        assert not _ws_controllers._is_allowed_read_only_input(data)
+        assert not _ws_controllers.is_allowed_read_only_input(data)
 
 
 class TestHandleTerminalInput:
@@ -3643,7 +3643,7 @@ class TestSSHAgentHandlers:
                 "asyncio.create_subprocess_exec",
                 new=AsyncMock(return_value=mock_proc),
             ),
-            patch("klangk.wshandler.controllers._SSH_AGENT_READY_POLL", 0.0),
+            patch("klangk.wshandler.controllers.SSH_AGENT_READY_POLL", 0.0),
         ):
             await conn.handle_ssh_agent_start()
             assert conn.ssh_agent.task is not None
@@ -3677,9 +3677,9 @@ class TestSSHAgentHandlers:
                 new=AsyncMock(return_value=mock_proc),
             ),
             patch(
-                "klangk.wshandler.controllers._SSH_AGENT_READY_TIMEOUT", 0.05
+                "klangk.wshandler.controllers.SSH_AGENT_READY_TIMEOUT", 0.05
             ),
-            patch("klangk.wshandler.controllers._SSH_AGENT_READY_POLL", 0.01),
+            patch("klangk.wshandler.controllers.SSH_AGENT_READY_POLL", 0.01),
         ):
             await conn.handle_ssh_agent_start()
             assert conn.ssh_agent.task is not None
@@ -5402,15 +5402,15 @@ class TestServiceHealthSnapshot:
 
 
 class TestServiceHealthFrame:
-    """_service_health_frame: the additive contract fields (#1175)."""
+    """service_health_frame: the additive contract fields (#1175)."""
 
     def test_defaults_preserve_legacy_shape(self):
         # Only the required healthy/message need to be supplied; the new
         # fields default so an old-style caller produces a superset of
         # the legacy frame (additive, non-breaking).
-        from klangk.wshandler.session import _service_health_frame
+        from klangk.wshandler.session import service_health_frame
 
-        out = _service_health_frame("ws-1", healthy=True, message=None)
+        out = service_health_frame("ws-1", healthy=True, message=None)
         assert out["type"] == "service_health"
         assert out["workspace_id"] == "ws-1"
         assert out["healthy"] is True
@@ -5421,23 +5421,23 @@ class TestServiceHealthFrame:
 
     def test_health_checked_at_serialized_as_iso(self):
         from klangk.wshandler.session import (
-            _service_health_frame,
-            _iso_utc,
+            service_health_frame,
+            iso_utc,
         )
 
         # A known epoch renders as a fixed ISO-8601 UTC string.
         ts = 1_700_000_000.0
-        assert _iso_utc(ts) == "2023-11-14T22:13:20+00:00"
-        assert _iso_utc(None) is None
-        out = _service_health_frame(
+        assert iso_utc(ts) == "2023-11-14T22:13:20+00:00"
+        assert iso_utc(None) is None
+        out = service_health_frame(
             "ws-1", healthy=False, message="x", health_checked_at=ts
         )
         assert out["health_checked_at"] == "2023-11-14T22:13:20+00:00"
 
     def test_running_false_and_seq_forwarded(self):
-        from klangk.wshandler.session import _service_health_frame
+        from klangk.wshandler.session import service_health_frame
 
-        out = _service_health_frame(
+        out = service_health_frame(
             "ws-1",
             healthy=False,
             message=None,
@@ -7056,7 +7056,7 @@ class TestTerminalController:
         ctrl.session = session
         big = "\x1b[?6c" + "x" * (_ws_constants.MAX_INPUT_SIZE + 1)
         with patch(
-            "klangk.wshandler.controllers._is_allowed_read_only_input"
+            "klangk.wshandler.controllers.is_allowed_read_only_input"
         ) as allow:
             await ctrl.input({"data": big})
         # Size guard returned early, so the whitelist was never consulted.
@@ -10625,8 +10625,8 @@ class TestFormatContainerInfo:
 
     def test_named_workspace_matches_real_container_name(self):
         from klangk.container import (
-            _workspace_container_name,
-            _workspace_name_slug,
+            workspace_container_name,
+            workspace_name_slug,
         )
         from klangk.wshandler import format_container_info
 
@@ -10635,8 +10635,8 @@ class TestFormatContainerInfo:
         name, ports_str = format_container_info(
             ws_id, [9000, 9001], iid, "My Dev Env"
         )
-        slug = _workspace_name_slug("My Dev Env")
-        assert name == _workspace_container_name(iid, ws_id, slug)
+        slug = workspace_name_slug("My Dev Env")
+        assert name == workspace_container_name(iid, ws_id, slug)
         assert name == f"klangk-{iid}-{slug}-{ws_id[:8]}"
         assert ports_str == " (ports 9000,9001)"
 

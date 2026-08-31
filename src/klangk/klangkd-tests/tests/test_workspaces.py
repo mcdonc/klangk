@@ -1166,7 +1166,7 @@ class TestWorkspacesServiceBranchGaps2834:
         async def _spy_rmtree(path, label):
             removed.append(label)
 
-        monkeypatch.setattr(ws_mod, "_async_rmtree", _spy_rmtree)
+        monkeypatch.setattr(ws_mod, "async_rmtree", _spy_rmtree)
         archives = await wsvc.archive_user_data(user["id"], user["email"])
         assert archives  # the archive was still built
         # No "workspace data" teardown ran (the dir read as absent).
@@ -1193,6 +1193,6 @@ class TestWorkspacesServiceBranchGaps2834:
         async def _spy_rmtree(path, label):
             removed.append(path)
 
-        monkeypatch.setattr(ws_mod, "_async_rmtree", _spy_rmtree)
+        monkeypatch.setattr(ws_mod, "async_rmtree", _spy_rmtree)
         assert await wsvc.delete_workspace("ws-gone", user["id"]) is False
         assert removed == []

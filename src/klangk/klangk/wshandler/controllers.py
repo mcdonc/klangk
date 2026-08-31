@@ -41,8 +41,8 @@ logger = logging.getLogger(__name__)
 # for), so the readiness signal is the bound socket file: ``unlink-early``
 # removes any stale file and ``bind()`` creates this one, so its existence
 # means a live listener.
-_SSH_AGENT_READY_TIMEOUT = 10.0
-_SSH_AGENT_READY_POLL = 0.1
+SSH_AGENT_READY_TIMEOUT = 10.0
+SSH_AGENT_READY_POLL = 0.1
 
 # Read-only ("spectate") terminal-input whitelist (issue #1716).
 #
@@ -112,7 +112,7 @@ _READ_ONLY_INPUT = re.compile(
 )
 
 
-def _is_allowed_read_only_input(data: str) -> bool:
+def is_allowed_read_only_input(data: str) -> bool:
     """True only for the terminal-protocol responses a read-only client
     may legitimately send during tmux initialization.
 
@@ -229,7 +229,7 @@ class SshAgentForwarder:
                 "SSH agent socket %s not bound after %.0fs; "
                 "continuing anyway (relay may still be starting)",
                 sock_path,
-                _SSH_AGENT_READY_TIMEOUT,
+                SSH_AGENT_READY_TIMEOUT,
             )
         self._conn.sock.send_json(
             {
@@ -254,7 +254,7 @@ class SshAgentForwarder:
         relay is dead either way, and ``stop()`` (on disconnect or the
         next start) handles teardown.
         """
-        deadline = time.monotonic() + _SSH_AGENT_READY_TIMEOUT
+        deadline = time.monotonic() + SSH_AGENT_READY_TIMEOUT
         while True:
             try:
                 (
@@ -270,7 +270,7 @@ class SshAgentForwarder:
                 return True
             if time.monotonic() >= deadline:
                 return False
-            await asyncio.sleep(_SSH_AGENT_READY_POLL)
+            await asyncio.sleep(SSH_AGENT_READY_POLL)
 
     async def forward_output(self) -> None:
         """Read from socat stdout and send to the CLI as ssh_agent_response."""
@@ -903,7 +903,7 @@ class TerminalController:
                 "terminal_input too large (%d bytes), dropping", len(data)
             )
             return
-        if session.read_only and not _is_allowed_read_only_input(data):
+        if session.read_only and not is_allowed_read_only_input(data):
             # Read-only spectators may only send the terminal-protocol
             # responses tmux needs to complete initialization (DA,
             # color, cursor-position, XTVERSION, XTGETTCAP reports).

@@ -14,59 +14,59 @@ from _helpers import make_settings
 from klangk.settings import (
     BOOL_STRING_FIELDS,
     KlangkSettings,
-    _resolve_indirection,
+    resolve_indirection,
     parse_bool_setting,
     resolve_dynamic_config,
 )
 
 
 class TestResolveIndirection:
-    """The private ``_resolve_indirection`` is the core ``file:``/``cmd:``
+    """The private ``resolve_indirection`` is the core ``file:``/``cmd:``
     resolver — shared by the ``_resolve_indirections`` model validator on
     ``KlangkSettings`` (construction-time, #1461) and
     ``resolve_dynamic_config`` (feature-declared dynamic keys)."""
 
     def test_none_returns_none(self):
-        assert _resolve_indirection(None) is None
+        assert resolve_indirection(None) is None
 
     def test_plain_value(self):
-        assert _resolve_indirection("hello") == "hello"
+        assert resolve_indirection("hello") == "hello"
 
     def test_file_prefix(self, tmp_path):
         secret = tmp_path / "secret.txt"
         secret.write_text("the-secret\n")
-        assert _resolve_indirection(f"file:{secret}") == "the-secret"
+        assert resolve_indirection(f"file:{secret}") == "the-secret"
 
     def test_file_failure_returns_none(self):
-        result = _resolve_indirection("file:/nonexistent/path/to/secret")
+        result = resolve_indirection("file:/nonexistent/path/to/secret")
         assert result is None
 
     def test_cmd_prefix(self):
-        result = _resolve_indirection("cmd:echo hello")
+        result = resolve_indirection("cmd:echo hello")
         assert result == "hello"
 
     def test_cmd_failure_returns_none(self):
-        result = _resolve_indirection("cmd:false")
+        result = resolve_indirection("cmd:false")
         assert result is None
 
     def test_cmd_nonzero_exit_returns_none(self):
-        result = _resolve_indirection("cmd:exit 1")
+        result = resolve_indirection("cmd:exit 1")
         assert result is None
 
     def test_cmd_oserror(self):
         # A command that can't be spawned (no such binary)
-        result = _resolve_indirection("cmd:/nonexistent/binary/path")
+        result = resolve_indirection("cmd:/nonexistent/binary/path")
         assert result is None
 
     def test_cmd_timeout(self, monkeypatch):
         # Patch the timeout short so we don't actually wait the default
-        # _CMD_TIMEOUT_SECONDS (10s); the test only asserts the timeout
+        # CMD_TIMEOUT_SECONDS (10s); the test only asserts the timeout
         # path fires. ``sleep 5`` outlasts the patched 0.5s timeout
         # (#1989). The constant lives in klangk.util since the cmd:
         # runner was consolidated there (shared with
         # util.resolve_file_value).
-        monkeypatch.setattr("klangk.util._CMD_TIMEOUT_SECONDS", 0.5)
-        result = _resolve_indirection("cmd:sleep 5")
+        monkeypatch.setattr("klangk.util.CMD_TIMEOUT_SECONDS", 0.5)
+        result = resolve_indirection("cmd:sleep 5")
         assert result is None
 
 
@@ -1110,9 +1110,9 @@ class TestResolveIndirectionsValidator:
     def test_idempotent_re_resolution(self):
         # A plain (already-resolved) value survives a second pass unchanged —
         # the legacy resolve_env_value path reads the resolved field and its
-        # redundant _resolve_indirection call is a no-op.
+        # redundant resolve_indirection call is a no-op.
         s = make_settings({"KLANGKD_EGRESS_PORT": "8995"})
-        assert _resolve_indirection(s.egress_port) == "8995"
+        assert resolve_indirection(s.egress_port) == "8995"
 
     def test_non_string_field_skipped(self):
         # oidc_providers is list[dict] | None — not a str, skipped by the
@@ -1938,7 +1938,7 @@ class TestPasswordRequireCounts:
 class TestCoerceBoolBranchGaps2834:
     def test_non_bool_like_value_raises(self):
         # Neither bool, 0/1, nor string: rejected as a settings error.
-        from klangk.workspace_settings import _coerce_bool
+        from klangk.workspace_settings import coerce_bool
 
         with pytest.raises(ValueError, match="not a boolean"):
-            _coerce_bool("nix", 5)
+            coerce_bool("nix", 5)

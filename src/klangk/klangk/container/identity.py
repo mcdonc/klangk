@@ -15,7 +15,7 @@ import re
 # ---------------------------------------------------------------------------
 
 
-def _workspace_name_slug(name: str, *, limit: int = 24) -> str:
+def workspace_name_slug(name: str, *, limit: int = 24) -> str:
     """Sanitize a workspace name for embedding in a container name (#2286).
 
     Podman container names must match ``[a-zA-Z0-9][a-zA-Z0-9_.-]*``. Lowercase,
@@ -28,7 +28,7 @@ def _workspace_name_slug(name: str, *, limit: int = 24) -> str:
     return slug[:limit].strip("-")
 
 
-def _workspace_container_name(iid: str, workspace_id: str, slug: str) -> str:
+def workspace_container_name(iid: str, workspace_id: str, slug: str) -> str:
     """The workspace container name: iid + slugified name + id[:8] (#2286).
 
     Falls back to an id-only name when the slug is empty (all-symbol / missing
