@@ -113,7 +113,15 @@ async def version(app=Depends(get_app_dep)):
 
 # --- Test/debug endpoints (only when KLANGKD_TEST_MODE is set) ---
 
-if os.environ.get("KLANGKD_TEST_MODE"):  # pragma: no cover
+
+def register_test_endpoints(router: APIRouter) -> None:
+    """Register the KLANGKD_TEST_MODE-only test/debug endpoints.
+
+    Covers what the Playwright e2e suite drives remotely: idle-timeout
+    read/set, workspace-token forging, and browser-bridge registration
+    introspection. Registered at import time only when the env var is
+    set; the unit tests exercise them via this function directly.
+    """
 
     @router.get("/test/idle-timeout")
     async def get_idle_timeout(
@@ -178,6 +186,10 @@ if os.environ.get("KLANGKD_TEST_MODE"):  # pragma: no cover
                         email = conn.user.get("email")
                 browsers.append({"browser_id": bid, "email": email})
         return browsers
+
+
+if os.environ.get("KLANGKD_TEST_MODE"):
+    register_test_endpoints(router)
 
 
 @router.get("/config")
