@@ -189,7 +189,7 @@ def run_sandbox_setup(
                 client=client,
             )
         )
-    except websockets.InvalidStatus as e:  # pragma: no cover
+    except websockets.InvalidStatus as e:
         if e.response.status_code in (4001, 4002):
             context.err.print(
                 "[red]Session expired.[/red] Run"
@@ -222,7 +222,7 @@ def sandbox(
     ``klangk shell`` afterwards to connect.
     """
     token = context.session_token()
-    if not token:  # pragma: no cover
+    if not token:
         context.err.print(
             "[red]Not logged in[/red] — run [bold]klangk login[/bold] first."
         )
@@ -275,7 +275,7 @@ async def mark_setup_state(client, workspace_id: str, new_state: str) -> None:
         await asyncio.to_thread(
             client.set_setup_state, workspace_id, new_state
         )
-    except Exception as e:  # pragma: no cover
+    except Exception as e:
         context.err.print(
             f"[yellow]Warning: could not mark setup_state"
             f" = {new_state}: {e}[/yellow]"
@@ -309,7 +309,7 @@ async def decide_egress_reset(config, client) -> tuple[bool, str | None]:
         return False, None
     try:
         cfg = await asyncio.to_thread(client.config)
-    except Exception as e:  # pragma: no cover
+    except Exception as e:
         cfg = {}
         context.err.print(
             "[yellow]Warning: could not read server config"
@@ -335,14 +335,14 @@ async def reset_egress_and_stop(client, workspace_id: str) -> None:
             workspace_id,
             egress_mode="interactive",
         )
-    except Exception as e:  # pragma: no cover
+    except Exception as e:
         context.err.print(
             "[yellow]Warning: could not reset egress_mode"
             f" to interactive: {e}[/yellow]"
         )
     try:
         await asyncio.to_thread(client.stop_workspace_by_id, workspace_id)
-    except Exception as e:  # pragma: no cover
+    except Exception as e:
         context.err.print(
             f"[yellow]Warning: could not stop container"
             f" after setup: {e}[/yellow]"
@@ -353,7 +353,9 @@ async def reset_egress_and_stop(client, workspace_id: str) -> None:
     )
 
 
-async def fire_service_command(ws, config, setup_ok: bool) -> None:
+async def fire_service_command(
+    ws, config, setup_ok: bool, timeout: float = 30
+) -> None:
     """Fire the service command via terminal_start so it's up (#1033:
     deferred until setup_state is complete, then launched in the
     dedicated service-cmd tmux window). Skipped on setup failure -- the
@@ -366,10 +368,10 @@ async def fire_service_command(ws, config, setup_ok: bool) -> None:
     )
     # Wait (bounded) for the terminal to start so the command actually
     # runs before we disconnect. Other messages are ignored.
-    deadline = asyncio.get_event_loop().time() + 30
+    deadline = asyncio.get_event_loop().time() + timeout
     while True:
         remaining = deadline - asyncio.get_event_loop().time()
-        if remaining <= 0:  # pragma: no cover
+        if remaining <= 0:
             break
         try:
             raw = await asyncio.wait_for(ws.recv(), timeout=remaining)

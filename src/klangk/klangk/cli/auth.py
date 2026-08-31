@@ -78,7 +78,7 @@ def local_login(server_url: str) -> tuple[str, str]:
     return email, token
 
 
-def oidc_browser_login(  # pragma: no cover
+def oidc_browser_login(
     server_url: str,
     provider_id: str,
     state: CLIState,
@@ -375,7 +375,7 @@ def refresh_token(server_url: str, token: str) -> str | None:
         return None
 
 
-def _log_logout_caller() -> None:  # pragma: no cover
+def _log_logout_caller() -> None:
     """Diagnostic: log the parent-process chain that invoked logout.
 
     Walks /proc upward so the next spurious logout reveals its spawner

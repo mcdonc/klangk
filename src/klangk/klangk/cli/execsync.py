@@ -163,7 +163,7 @@ def sync(
     context.require_auth()
 
     klangk_bin = shutil.which("klangk")
-    if not klangk_bin:  # pragma: no cover
+    if not klangk_bin:
         context.err.print("[red]Cannot find klangk in PATH[/red]")
         raise typer.Exit(code=1)
 
@@ -218,7 +218,7 @@ def images() -> None:
     context.require_auth()
     try:
         data = context.client().list_images()
-    except httpx.HTTPStatusError as exc:  # pragma: no cover
+    except httpx.HTTPStatusError as exc:
         detail = exc.response.json().get("detail", exc.response.text)
         context.err.print(f"[red]Failed to list images:[/red] {detail}")
         raise typer.Exit(code=1) from None

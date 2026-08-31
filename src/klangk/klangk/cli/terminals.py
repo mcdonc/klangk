@@ -39,7 +39,7 @@ async def recv_until_event(conn, timeout: float, on_message=None):
     deadline = asyncio.get_event_loop().time() + timeout
     while True:
         remaining = deadline - asyncio.get_event_loop().time()
-        if remaining <= 0:  # pragma: no cover
+        if remaining <= 0:
             raise asyncio.TimeoutError
         raw = await asyncio.wait_for(conn.recv(), timeout=remaining)
         msg = json.loads(raw)

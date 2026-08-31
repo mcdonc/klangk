@@ -74,16 +74,16 @@ def run_ws_command(body):
 
 
 def cfg() -> CLIConfig:
-    global cfg_cache  # pragma: no cover
-    if cfg_cache is None:  # pragma: no cover
-        cfg_cache = CLIConfig.load()  # pragma: no cover
+    global cfg_cache
+    if cfg_cache is None:
+        cfg_cache = CLIConfig.load()
     return cfg_cache
 
 
 def state() -> CLIState:
-    global state_cache  # pragma: no cover
-    if state_cache is None:  # pragma: no cover
-        state_cache = CLIState.load()  # pragma: no cover
+    global state_cache
+    if state_cache is None:
+        state_cache = CLIState.load()
     return state_cache
 
 
@@ -115,7 +115,7 @@ def server_url() -> str:
     raise typer.Exit(code=1)
 
 
-def client() -> KlangkClient:  # pragma: no cover
+def client() -> KlangkClient:
     return KlangkClient(server_url(), state().get_token(server_url()))
 
 

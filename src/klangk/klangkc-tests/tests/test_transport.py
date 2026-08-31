@@ -286,6 +286,6 @@ class TestWsConnect:
             pytest.raises(OSError, match="connection refused"),
         ):
             async with ws_connect("/tmp/klangk.sock", token="tok"):
-                pass  # pragma: no cover
+                pass  # pragma: no cover — __aenter__ raises before the body runs
 
         mock_sock.close.assert_called_once()

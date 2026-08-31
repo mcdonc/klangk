@@ -157,12 +157,12 @@ def resolve_shell_workspace(client, workspace: str | None):
     for i, w in enumerate(workspaces, 1):
         typer.echo(f"  {i}. {w.name}")
     choice = input("> ").strip()
-    if not choice:  # pragma: no cover
+    if not choice:
         raise typer.Exit()
     try:
         idx = int(choice) - 1
-    except ValueError:  # pragma: no cover
-        raise typer.Exit(code=1)  # pragma: no cover
+    except ValueError:
+        raise typer.Exit(code=1)
     return workspaces[idx]
 
 
@@ -204,11 +204,11 @@ def shell(
     if not isinstance(no_consent_popup, bool):
         no_consent_popup = False
     token = context.session_token()
-    if not token:  # pragma: no cover
+    if not token:
         context.err.print(
             "[red]Not logged in[/red] — run [bold]klangk login[/bold] first."
-        )  # pragma: no cover
-        raise typer.Exit(code=1)  # pragma: no cover
+        )
+        raise typer.Exit(code=1)
 
     client = context.client()
 
