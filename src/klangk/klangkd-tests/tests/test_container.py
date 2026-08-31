@@ -7002,3 +7002,15 @@ class TestContainerBranchGaps2834:
             "https",
             "",
         )
+
+
+class TestRegistryIdleDelegation2910:
+    def test_cleanup_wake_property_roundtrip(self, app_state):
+        """The container registry delegates cleanup_wake to the idle
+        monitor (property getter + setter)."""
+        registry = app_state.state.container_registry
+        wake = asyncio.Event()
+        registry.cleanup_wake = wake
+        assert registry.cleanup_wake is wake
+        registry.cleanup_wake = None
+        assert registry.cleanup_wake is None

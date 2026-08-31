@@ -397,3 +397,28 @@ class TestNoConfigDivergenceRegression:
         assert (config_data / "klangk.db").exists()
         # Nothing was written under the ambient env data_dir.
         assert not list(ambient_data.glob("*.db"))
+
+
+class TestLegacyBlocklistMigration2910:
+    async def test_old_table_without_new_token_gains_column(self, tmp_path):
+        """A token_blocklist created before #2583 (no new_token column)
+        is migrated in place by init_core_tables."""
+        import aiosqlite
+
+        from klangk.model.schema import init_core_tables
+
+        db_path = tmp_path / "legacy.db"
+        async with aiosqlite.connect(db_path) as db:
+            await db.execute(
+                """
+                CREATE TABLE token_blocklist (
+                    jti TEXT PRIMARY KEY,
+                    expires_at TEXT NOT NULL
+                )
+                """
+            )
+            await db.commit()
+            await init_core_tables(db)
+            cursor = await db.execute("PRAGMA table_info(token_blocklist)")
+            cols = {row[1] for row in await cursor.fetchall()}
+        assert "new_token" in cols

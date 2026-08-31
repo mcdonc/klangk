@@ -327,7 +327,7 @@ async def create_workspace(
             status_code=409,
             detail=f"A workspace named {body.name!r} already exists",
         )
-    except OSError as e:  # pragma: no cover
+    except OSError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
     # Eagerly start the container so it's running by the time the
@@ -671,7 +671,7 @@ async def duplicate_workspace(
     # Defense-in-depth: the Depends check above already walks to
     # /workspaces, so this branch is unreachable in practice.
     principals = await app.state.acl.get_principals(user["id"])
-    if not await app.state.acl.check_permission(  # pragma: no cover
+    if not await app.state.acl.check_permission(
         "/workspaces", principals, "create"
     ):
         raise HTTPException(
@@ -1061,7 +1061,7 @@ async def export_workspace(
                     yield chunk
                 await proc.wait()
             finally:
-                if proc.returncode is None:  # pragma: no cover
+                if proc.returncode is None:
                     proc.kill()
                     await proc.wait()
         finally:

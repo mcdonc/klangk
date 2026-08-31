@@ -203,7 +203,7 @@ async def upload_file(
     cid = _require_container(workspace_id, app.state.container_registry)
 
     filename = path if path else posixpath.basename(file.filename or "")
-    if not filename:  # pragma: no cover
+    if not filename:
         raise HTTPException(status_code=400, detail="No filename provided")
 
     max_upload = app.state.settings.file_upload_size_max

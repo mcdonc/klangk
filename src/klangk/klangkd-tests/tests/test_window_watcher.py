@@ -1,7 +1,7 @@
 """Tests for the tmux control-mode window watcher."""
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -68,3 +68,113 @@ async def test_read_loop_propagates_cancellation():
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
+
+
+# --- No-cover audit tests (#2910, part 3) --------------------------------
+
+
+class TestTerminateWatcherProc:
+    def _proc(self, **kwargs):
+        proc = MagicMock()
+        proc.returncode = kwargs.get("returncode")
+        proc.terminate = MagicMock(side_effect=kwargs.get("terminate_error"))
+        proc.kill = MagicMock(side_effect=kwargs.get("kill_error"))
+        proc.wait = AsyncMock(side_effect=kwargs.get("wait_error"))
+        return proc
+
+    async def test_already_exited_returns(self):
+        from klangk.wshandler.window_watcher import _terminate_watcher_proc
+
+        proc = self._proc(returncode=0)
+        await _terminate_watcher_proc(proc)
+        proc.terminate.assert_not_called()
+
+    async def test_clean_terminate_waits(self):
+        from klangk.wshandler.window_watcher import _terminate_watcher_proc
+
+        proc = self._proc()
+        await _terminate_watcher_proc(proc)
+        proc.terminate.assert_called_once()
+        proc.kill.assert_not_called()
+
+    async def test_vanished_pid_is_tolerated(self):
+        from klangk.wshandler.window_watcher import _terminate_watcher_proc
+
+        proc = self._proc(terminate_error=ProcessLookupError())
+        await _terminate_watcher_proc(proc)
+
+    async def test_wait_timeout_falls_back_to_kill(self):
+        import asyncio
+
+        from klangk.wshandler.window_watcher import _terminate_watcher_proc
+
+        proc = self._proc(wait_error=asyncio.TimeoutError())
+        await _terminate_watcher_proc(proc)
+        proc.kill.assert_called_once()
+
+    async def test_kill_race_is_tolerated(self):
+        import asyncio
+
+        from klangk.wshandler.window_watcher import _terminate_watcher_proc
+
+        proc = self._proc(
+            wait_error=asyncio.TimeoutError(), kill_error=ProcessLookupError()
+        )
+        await _terminate_watcher_proc(proc)
+
+
+class TestWatcherLifecycle:
+    def _watcher(self, podman=None):
+        return WindowEventWatcher(podman or MagicMock(), "cid", lambda: None)
+
+    async def test_start_spawns_and_is_idempotent(self):
+        watcher = self._watcher()
+        proc = MagicMock(returncode=None)
+        stdout = MagicMock()
+        stdout.readline = AsyncMock(return_value=b"")  # immediate EOF
+        proc.stdout = stdout
+        with patch(
+            "asyncio.create_subprocess_exec", return_value=proc
+        ) as spawn:
+            await watcher.start()
+            await watcher.start()  # live task: no second spawn
+            spawn.assert_called_once()
+
+        watcher2 = self._watcher()
+        watcher2._task = asyncio.ensure_future(asyncio.sleep(3600))
+        with patch("asyncio.create_subprocess_exec") as spawn:
+            await watcher2.start()  # pre-existing live task: no spawn
+            spawn.assert_not_called()
+
+    async def test_read_loop_swallows_reader_crash(self):
+        watcher = self._watcher()
+        stdout = MagicMock()
+        stdout.readline = AsyncMock(side_effect=RuntimeError("pty gone"))
+        watcher._proc = MagicMock(stdout=stdout, returncode=None)
+        await watcher.read_loop()  # must not raise
+
+    async def test_stop_cancels_task_and_terminates_proc(self):
+        watcher = self._watcher()
+        watcher._task = asyncio.ensure_future(asyncio.sleep(3600))
+        proc = MagicMock(returncode=None)
+        proc.wait = AsyncMock()
+        watcher._proc = proc
+        podman = MagicMock()
+        podman.exec_container = AsyncMock()
+        watcher.podman = podman
+        await watcher.stop()
+        assert watcher._task is None and watcher._proc is None
+        proc.terminate.assert_called_once()
+
+    async def test_stop_without_task_or_proc(self):
+        await self._watcher().stop()  # no-arg teardown must not raise
+
+    async def test_kill_ctrl_session_swallows_errors(self):
+        watcher = self._watcher()
+        watcher.podman.exec_container = AsyncMock(
+            side_effect=RuntimeError("container gone")
+        )
+        await watcher._kill_ctrl_session()  # best-effort: must not raise
+        watcher.podman.exec_container = AsyncMock()
+        await watcher._kill_ctrl_session()
+        watcher.podman.exec_container.assert_awaited_once()

@@ -645,13 +645,11 @@ class ContainerRegistry(NetworkSidecarMixin):
         self.idle.cleanup_task = value
 
     @property
-    def cleanup_wake(self) -> asyncio.Event | None:  # pragma: no cover
+    def cleanup_wake(self) -> asyncio.Event | None:
         return self.idle.cleanup_wake
 
     @cleanup_wake.setter
-    def cleanup_wake(
-        self, value: asyncio.Event | None
-    ) -> None:  # pragma: no cover
+    def cleanup_wake(self, value: asyncio.Event | None) -> None:
         self.idle.cleanup_wake = value
 
     def get_cleanup_wake(self) -> asyncio.Event:
