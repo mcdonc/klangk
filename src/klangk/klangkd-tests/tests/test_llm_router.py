@@ -577,3 +577,16 @@ class TestParseModelEntryBranchGaps2834:
         params = entry["litellm_params"]
         assert params["model"] == "my-gateway/model-x"
         assert "api_base" not in params
+
+
+class TestConfigureOutsideEventLoop2910:
+    def test_client_close_without_loop_is_swallowed(self):
+        """Configuring from a sync context (no running loop, e.g. early
+        boot or atexit): the get_event_loop RuntimeError arm is a no-op."""
+        router = LLMRouter(_app())
+        router._http_client = AsyncMock()
+        settings = make_settings(
+            {"KLANGKD_LLM_MODELS": "openai/gpt-4o::sk-xxx"}
+        )
+        router._configure_from_settings(settings)
+        assert router._http_client is None

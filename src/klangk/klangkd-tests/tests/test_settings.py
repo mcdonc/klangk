@@ -1942,3 +1942,11 @@ class TestCoerceBoolBranchGaps2834:
 
         with pytest.raises(ValueError, match="not a boolean"):
             coerce_bool("nix", 5)
+
+
+class TestLlmModelEntriesTypeGuard2910:
+    def test_wrong_type_raises_value_error(self):
+        from klangk.settings import _llm_model_entries
+
+        with pytest.raises(ValueError, match="must be a list"):
+            _llm_model_entries(123)

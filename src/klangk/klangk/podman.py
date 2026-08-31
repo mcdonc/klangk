@@ -143,7 +143,7 @@ class Podman:
             t3 - t2,
             elapsed,
         )
-        if elapsed > 2.0 and err.strip():  # pragma: no cover
+        if elapsed > 2.0 and err.strip():
             logger.debug(
                 "podman-timing: %s stderr: %s", cmd_label, err.strip()
             )
@@ -662,7 +662,7 @@ class Podman:
         args.append(name)
         await self.run(args)
         info = await self.inspect_volume(name)
-        if info is None:  # pragma: no cover
+        if info is None:
             raise PodmanError(500, f"volume {name!r} vanished after create")
         return info
 
@@ -793,7 +793,7 @@ class ExecSession:
                 asyncio.TimeoutError,
                 ProcessLookupError,
                 OSError,
-            ):  # pragma: no cover
+            ):
                 pass
         self._output_queue.send_sentinel()
 
@@ -815,7 +815,7 @@ class ExecSession:
                 BrokenPipeError,
                 ConnectionResetError,
                 OSError,
-            ):  # pragma: no cover
+            ):
                 pass  # Process already exited
 
     async def close_stdin(self) -> None:
@@ -834,7 +834,7 @@ class ExecSession:
                 # Producer finished but sentinel was dropped (queue was full).
                 if self._read_task is not None and self._read_task.done():
                     break
-                continue  # pragma: no cover
+                continue
             if data is None:
                 break
             yield data
@@ -849,7 +849,7 @@ class ExecSession:
                 await self._read_task
             except asyncio.CancelledError:
                 pass
-            except Exception:  # pragma: no cover
+            except Exception:
                 logger.exception("Error awaiting exec read task")
             self._read_task = None
 
@@ -863,8 +863,8 @@ class ExecSession:
                 await asyncio.wait_for(self._proc.wait(), timeout=5)
             except (ProcessLookupError, asyncio.TimeoutError, OSError):
                 try:
-                    self._proc.kill()  # pragma: no cover
-                except (ProcessLookupError, OSError):  # pragma: no cover
+                    self._proc.kill()
+                except (ProcessLookupError, OSError):
                     pass
             if self._proc.returncode is not None:
                 self._returncode = self._proc.returncode

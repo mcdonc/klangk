@@ -7,6 +7,7 @@ import pytest
 import types
 
 
+from klangk.podman import PodmanError
 from klangk.podman import ExecSession, Podman
 from _helpers import make_settings
 
@@ -485,3 +486,92 @@ class TestExecOutputBranchGaps2834:
         result = await asyncio.wait_for(task, timeout=3.0)
         assert result == [b"tail"]
         await session.stop()
+
+
+# --- No-cover audit tests (#2910, part 2) --------------------------------
+
+
+class TestFinishPodmanRunSlowStderr:
+    def test_slow_run_logs_stderr(self):
+        """elapsed > 2s with stderr hits the extra debug log (no raise)."""
+        rc = Podman._finish_podman_run(
+            proc=MagicMock(returncode=0),
+            timed_out=False,
+            err="boom",
+            cmd_label="label",
+            timeout=None,
+            args=[],
+            check=False,
+            timings=(0.0, 0.0, 0.0, 3.0),
+        )
+        assert rc == (0, "boom")
+
+
+class TestCreateVolumeVanished:
+    async def test_inspect_none_after_create_raises(self):
+        with (
+            patch.object(Podman, "run", new_callable=AsyncMock),
+            patch.object(
+                Podman, "inspect_volume", new_callable=AsyncMock
+            ) as inspect_volume,
+        ):
+            inspect_volume.return_value = None
+            with pytest.raises(PodmanError):
+                await podman.create_volume("vol")
+
+
+class TestExecSessionCleanupGuards:
+    def _session(self):
+        return ExecSession("cid", podman)
+
+    async def test_read_stdout_wait_failure_is_swallowed(self):
+        """EOF then proc.wait() timing out must not crash the read loop."""
+        proc = _mock_proc(b"")
+        proc.returncode = None
+        proc.wait = AsyncMock(side_effect=asyncio.TimeoutError)
+        session = self._session()
+        session._proc = proc
+        await session._read_stdout()
+        assert session._output_queue.get_nowait() is None  # sentinel sent
+
+    async def test_write_to_dead_process_swallowed(self):
+        session = self._session()
+        proc = _mock_proc(b"")
+        proc.stdin.write = MagicMock(side_effect=BrokenPipeError)
+        session._proc = proc
+        await session.write(b"x")  # must not raise
+
+    async def test_output_continues_when_read_task_alive(self):
+        session = self._session()
+        session._running = True
+        session._read_task = asyncio.ensure_future(asyncio.sleep(3600))
+        await asyncio.sleep(0)  # let the task start (not done)
+        consumed = []
+
+        async def consume():
+            async for data in session.output():
+                consumed.append(data)
+
+        task = asyncio.create_task(consume())
+        await asyncio.sleep(1.15)  # first 1.0s poll times out -> continue
+        assert not consumed
+        session._output_queue.put_nowait(None)  # sentinel ends the stream
+        session._running = True  # sentinel breaks via data is None
+        await asyncio.wait_for(task, 5)
+
+    async def test_stop_swallows_read_task_exception(self):
+        session = self._session()
+        bad_task = AsyncMock()
+        bad_task.cancel = MagicMock()
+        bad_task.side_effect = RuntimeError("read task broke")
+        session._read_task = bad_task
+        await session.stop()  # must not raise
+
+    async def test_stop_kill_race_swallowed(self):
+        session = self._session()
+        proc = _mock_proc(b"", returncode=None)
+        proc.terminate = MagicMock(side_effect=ProcessLookupError)
+        proc.kill = MagicMock(side_effect=ProcessLookupError)
+        session._proc = proc
+        await session.stop()  # must not raise
+        proc.kill.assert_called_once()

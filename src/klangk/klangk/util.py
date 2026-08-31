@@ -747,5 +747,5 @@ class BoundedOutputQueue(asyncio.Queue[T | None]):
         check in the ``output()`` generator."""
         try:
             self.put_nowait(None)
-        except asyncio.QueueFull:  # pragma: no cover
+        except asyncio.QueueFull:
             pass

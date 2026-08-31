@@ -494,7 +494,7 @@ class Lifecycle:
         registry.start_health_loop()
         registry.start_crash_loop()
         n = await state.workspaces.auto_start_workspaces()
-        if n:  # pragma: no cover
+        if n:
             logger.info("Auto-started %d workspace(s)", n)
 
     async def runtime_shutdown(self) -> None:
@@ -901,7 +901,7 @@ class Lifecycle:
             return
         try:
             loop = asyncio.get_running_loop()
-        except RuntimeError:  # pragma: no cover - no loop during shutdown
+        except RuntimeError:  # no running loop during shutdown
             return
         task = loop.create_task(self.recycle_runtime())
         self._recycle_tasks.add(task)
@@ -926,7 +926,7 @@ class Lifecycle:
         logger.error("SIGHUP: recycle failed: %s", exc, exc_info=exc)
         try:
             loop = asyncio.get_running_loop()
-        except RuntimeError:  # pragma: no cover - loop already gone
+        except RuntimeError:  # loop already gone
             return
         recovery = loop.create_task(self._recover_failed_recycle())
         self._recycle_tasks.add(recovery)

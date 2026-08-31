@@ -1008,3 +1008,16 @@ class TestOIDCBranchGaps2834:
             user["id"]
         )
         assert ids == [group["id"]]
+
+
+class TestLoadLoginHookBadModule2910:
+    def test_unloadable_extension_raises_configuration_error(self, tmp_path):
+        """A file that exists but cannot produce an importable module spec
+        (no recognized extension) fails loudly."""
+        hook_file = tmp_path / "hook.txt"
+        hook_file.write_text(
+            "def on_login(provider, claims, email, tokens):\n"
+        )
+        o = _oidc(make_settings({"KLANGKD_OIDC_LOGIN_HOOK": str(hook_file)}))
+        with pytest.raises(oidc.ConfigurationError, match="could not load"):
+            o.load_login_hook()

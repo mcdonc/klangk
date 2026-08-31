@@ -533,5 +533,5 @@ def load_main(argv: list[str] | None = None) -> int:
     return 0
 
 
-if __name__ == "__main__":  # pragma: no cover
+if __name__ == "__main__":  # pragma: no cover — module-exec arm
     sys.exit(main())

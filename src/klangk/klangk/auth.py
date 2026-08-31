@@ -964,7 +964,7 @@ class Auth:
             email = payload.get("email")
             jti = payload.get("jti")
             exp = payload.get("exp")
-            if not all([user_id, email, jti, exp]):  # pragma: no cover
+            if not all([user_id, email, jti, exp]):
                 raise HTTPException(status_code=401, detail="Invalid token")
 
             if await self.app.state.model.tokens.is_token_blocklisted(jti):
@@ -1026,7 +1026,7 @@ class Auth:
                 if cached is not None:
                     return TokenResponse(access_token=cached)
             raise HTTPException(status_code=401, detail="Token expired")
-        except JWTError:  # pragma: no cover
+        except JWTError:
             raise HTTPException(status_code=401, detail="Invalid token")
 
     async def get_user_from_token(self, token: str) -> dict | str | None:

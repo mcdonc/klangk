@@ -215,7 +215,7 @@ class LLMRouter:
                 asyncio.get_event_loop().create_task(
                     self._http_client.aclose()
                 )
-            except RuntimeError:  # pragma: no cover
+            except RuntimeError:
                 pass
             self._http_client = None
 
