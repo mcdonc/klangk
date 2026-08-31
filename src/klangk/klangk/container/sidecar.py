@@ -14,6 +14,7 @@ import time
 
 from .. import podman
 from ..model.container_events import (
+    CAUSE_SIDECAR_DEPENDENT,
     CAUSE_SIDECAR_START,
     CAUSE_SIDECAR_STOP,
     EVENT_START,
@@ -79,8 +80,11 @@ class NetworkSidecarMixin:
 
     All state lives on ``self`` (the registry): ``self.app`` for
     settings/podman/workspaces, and the registry's own dicts for
-    tracking. See the method docstrings (carried over verbatim from
-    the old container.py) for the #NNNN history.
+    tracking. The lifecycle-audit hooks (#2915) call
+    ``self.record_container_event`` — a ContainerRegistry method, part
+    of this mixin's implicit contract (it is only ever mixed into
+    ContainerRegistry). See the method docstrings (carried over
+    verbatim from the old container.py) for the #NNNN history.
     """
 
     def network_sidecar_enabled(self) -> bool:
@@ -268,6 +272,19 @@ class NetworkSidecarMixin:
             cid = await self.app.state.podman.create_container(
                 name, image, **sidecar_kwargs
             )
+            # Lifecycle audit (#2915 review): record at CREATION, before
+            # start/readiness — a sidecar that fails to become ready still
+            # exists and its eventual removal records sidecar_stop, so the
+            # pair must balance even on the failure path. Sidecar rows are
+            # system-caused and never carry a netns owner (the sidecar IS
+            # the owner).
+            await self.record_container_event(
+                workspace_id,
+                cid,
+                EVENT_START,
+                cause=CAUSE_SIDECAR_START,
+                container_role=ROLE_SIDECAR,
+            )
             await self.start_with_port_conflict_retry(cid, publish or [], name)
             await self._wait_sidecar_proxy_ready(cid, name)
             logger.info(
@@ -275,15 +292,6 @@ class NetworkSidecarMixin:
                 workspace_id[:8],
                 name,
                 cid[:12],
-            )
-            # Lifecycle audit (#2915): sidecar rows are system-caused and
-            # never carry a netns owner — the sidecar IS the owner.
-            await self.record_container_event(
-                workspace_id,
-                cid,
-                EVENT_START,
-                cause=CAUSE_SIDECAR_START,
-                container_role=ROLE_SIDECAR,
             )
             return cid
         except podman.PodmanError as exc:
@@ -623,6 +631,15 @@ class NetworkSidecarMixin:
                     "network sidecar for %s",
                     ident[:12],
                     workspace_id[:8],
+                )
+                # Lifecycle audit (#2915 review): these are workspace
+                # containers destroyed to unblock a sidecar removal —
+                # without a row their start rows would dangle forever.
+                await self.record_container_event(
+                    workspace_id,
+                    ident,
+                    EVENT_STOP,
+                    cause=CAUSE_SIDECAR_DEPENDENT,
                 )
             except podman.PodmanError as exc:
                 logger.warning(

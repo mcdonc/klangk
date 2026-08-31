@@ -314,10 +314,11 @@ sync` report a clear permission-denied error.
   (sidecar create/teardown lands as system-caused `sidecar_start`/
   `sidecar_stop` rows; workspace rows carry the sidecar container id
   as `network_namespace` for egress-filtered workspaces). Labeled
-  containers stopped by the shutdown/drain orphan sweeps are
-  attributed too (by their `klangk.workspace` label). Recording is
-  best-effort and never fails the start/stop itself; rows accumulate
-  under `data_dir`'s SQLite DB (retention is #2924).
+  containers stopped by the shutdown/drain orphan sweeps, the boot
+  reaps, and the sidecar dependent-container teardowns are attributed
+  too (by their `klangk.workspace` label). Recording is best-effort
+  and never fails the start/stop itself; rows accumulate under
+  `data_dir`'s SQLite DB (retention is #2924).
 
 - **Super-E2E suite (#2561).** A new pytest suite
   (`src/klangk/klangkd-tests/super-e2e/`, run via `test-super-e2e`)

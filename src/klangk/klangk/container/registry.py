@@ -22,6 +22,7 @@ from ..model.workspaces import EGRESS_MODE_ALLOW, EGRESS_MODE_INTERACTIVE
 from ..model.container_events import (
     CAUSE_DRAIN,
     CAUSE_LOGOUT,
+    CAUSE_REAP,
     CAUSE_SHUTDOWN,
     EVENT_START,
     EVENT_STOP,
@@ -2144,28 +2145,56 @@ class ContainerRegistry(NetworkSidecarMixin):
 
         Workspace-labeled containers pass their label-resolved
         workspace_id (stop row + #2286 sidecar teardown); sidecar-labeled
-        ones get a system-caused sidecar stop row; unlabeled containers
-        record nothing.
+        ones route through the label-based removal choke point
+        (:meth:`_remove_network_sidecar`) so the ``sidecar_stop`` row is
+        written exactly once — a sidecar already torn down by its
+        workspace's stop is simply absent from that listing, instead of
+        producing a second row from a 404-tolerant sweep stop (#2915
+        review). Label-less containers record nothing.
         """
         cid = container_ident(c)
         if not cid:
             return False
         labels = c.get("Labels") or {}
+        ws_id = labels.get("klangk.workspace")
         if labels.get("klangk.role") == "network-sidecar":
-            ok = await self.stop_and_remove_container(cid, cause=cause)
-            ws_id = labels.get("klangk.workspace")
-            if ok and ws_id:
-                await self.record_container_event(
-                    ws_id,
-                    cid,
-                    EVENT_STOP,
-                    cause=cause,
-                    container_role=ROLE_SIDECAR,
+            if not ws_id:
+                logger.info(
+                    "Sweep: stopping label-less sidecar container %s",
+                    cid[:12],
                 )
-            return ok
+                return await self.stop_and_remove_container(cid, cause=cause)
+            logger.info(
+                "Sweep: stopping leftover sidecar %s for %s",
+                cid[:12],
+                ws_id[:8],
+            )
+            return await self._remove_network_sidecar(ws_id)
         logger.info("Sweep: stopping leftover klangk container %s", cid[:12])
         return await self.stop_and_remove_container(
             cid, workspace_id=labeled_workspace_id(c), cause=cause
+        )
+
+    async def record_reap(self, c: dict) -> None:
+        """Audit row for a reaped labeled container (#2915 review).
+
+        The boot reaps are the mass teardown an audit trail exists for:
+        after an unclean klangkd death, every reaped container's start
+        row would otherwise dangle with no matching stop. Label-less
+        containers record nothing (nothing to correlate them to).
+        """
+        labels = c.get("Labels") or {}
+        ws_id = labels.get("klangk.workspace")
+        cid = container_ident(c)
+        if not ws_id or not cid:
+            return
+        role = (
+            ROLE_SIDECAR
+            if labels.get("klangk.role") == "network-sidecar"
+            else ROLE_WORKSPACE
+        )
+        await self.record_container_event(
+            ws_id, cid, EVENT_STOP, cause=CAUSE_REAP, container_role=role
         )
 
     # --- Pre-warm ---
@@ -2231,9 +2260,10 @@ class ContainerRegistry(NetworkSidecarMixin):
             if not cid:
                 continue
             logger.info("Reaping leftover container %s on startup", cid[:12])
-            await safe_remove(
+            if await safe_remove(
                 self.app.state.podman, cid, what="leftover container"
-            )
+            ):
+                await self.record_reap(c)
 
     async def reap_dead_owner_containers(self) -> None:
         """Reap managed containers whose owning klangkd is no longer running.
@@ -2309,9 +2339,10 @@ class ContainerRegistry(NetworkSidecarMixin):
                 cid[:12],
                 owner_pid,
             )
-            await safe_remove(
+            if await safe_remove(
                 self.app.state.podman, cid, what="dead-owner container"
-            )
+            ):
+                await self.record_reap(c)
 
     # --- Shutdown ---
 

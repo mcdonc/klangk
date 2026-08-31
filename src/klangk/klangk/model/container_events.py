@@ -52,6 +52,10 @@ CAUSE_DRAIN = "drain"  # graceful-restart / scheduled drain
 CAUSE_SHUTDOWN = "shutdown"  # klangkd shutdown orphan sweep
 CAUSE_SIDECAR_START = "sidecar_start"  # network sidecar created for a start
 CAUSE_SIDECAR_STOP = "sidecar_stop"  # network sidecar torn down
+CAUSE_SIDECAR_DEPENDENT = (
+    "sidecar_dependent"  # workspace container force-removed to free a sidecar
+)
+CAUSE_REAP = "reap"  # boot reaps (instance leftovers / dead owners)
 
 # Which klangk-managed container a row describes. Workspace rows carry
 # actor attribution; sidecar rows are always system-caused (their

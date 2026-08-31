@@ -556,8 +556,12 @@ class TestSweepSidecarAttribution:
             await app_state.state.model.container_events.list_events("ws-sc")
         )[0]
         assert row["event"] == EVENT_STOP
-        assert row["cause"] == CAUSE_DRAIN
+        # Sidecar sweep stops route through the label-based choke point,
+        # so their cause is sidecar_stop (not the sweep's cause).
+        assert row["cause"] == "sidecar_stop"
         assert row["container_role"] == "network-sidecar"
+        assert row["network_namespace"] is None
+        assert row["actor_type"] == ACTOR_SYSTEM
 
     async def test_drain_sweep_unlabeled_sidecar_records_nothing(
         self, app_state, db, registry
@@ -573,3 +577,169 @@ class TestSweepSidecarAttribution:
         ):
             assert await registry._sweep_drain_leftovers() == 1
         assert await app_state.state.model.container_events.count_events() == 0
+
+
+class TestSweepSidecarSingleRow:
+    async def test_workspace_then_sidecar_sweep_records_each_once(
+        self, app_state, db, registry
+    ):
+        """The blocking double-record from review: a drain sweep whose
+        leftover list holds a workspace container AND its sidecar must
+        produce exactly one stop row per container — the sidecar routes
+        through the label-based choke point, so the already-removed
+        sidecar's stale sweep entry finds nothing to record."""
+        ws_leftover = {
+            "Id": "cid-ws",
+            "Labels": {
+                "klangk.workspace": "ws-pair",
+                "klangk.role": "workspace",
+            },
+        }
+        sidecar = {
+            "Id": "net-cid",
+            "Labels": {
+                "klangk.workspace": "ws-pair",
+                "klangk.role": "network-sidecar",
+            },
+        }
+        label_lists = [[sidecar], []]
+
+        async def fake_list(filter_arg):
+            if "klangk.instance=" in filter_arg:
+                return [ws_leftover, sidecar]
+            # workspace-label listing: the sidecar once, then gone
+            # (removed by the workspace stop's teardown).
+            return label_lists.pop(0) if label_lists else []
+
+        with patch_podman(
+            registry, list_containers=AsyncMock(side_effect=fake_list)
+        ):
+            assert await registry._sweep_drain_leftovers() == 2
+        rows = await app_state.state.model.container_events.list_events(
+            "ws-pair"
+        )
+        stops = [r for r in rows if r["event"] == EVENT_STOP]
+        assert len(stops) == 2
+        by_role = {r["container_role"]: r for r in stops}
+        assert by_role["workspace"]["cause"] == CAUSE_DRAIN
+        assert by_role["workspace"]["container_id"] == "cid-ws"
+        assert by_role["network-sidecar"]["cause"] == "sidecar_stop"
+        assert by_role["network-sidecar"]["container_id"] == "net-cid"
+        assert by_role["network-sidecar"]["network_namespace"] is None
+        assert by_role["network-sidecar"]["actor_type"] == ACTOR_SYSTEM
+
+
+class TestReaperAttribution:
+    async def test_instance_reap_records_both_roles(
+        self, app_state, db, registry
+    ):
+        leftover_ws = {
+            "Id": "cid-reap-ws",
+            "Labels": {
+                "klangk.workspace": "ws-reap",
+                "klangk.role": "workspace",
+            },
+        }
+        leftover_sc = {
+            "Id": "cid-reap-sc",
+            "Labels": {
+                "klangk.workspace": "ws-reap",
+                "klangk.role": "network-sidecar",
+            },
+        }
+        with patch_podman(
+            registry,
+            list_containers=AsyncMock(return_value=[leftover_ws, leftover_sc]),
+        ):
+            await registry.reap_instance_containers()
+        rows = {
+            r["container_id"]: r
+            for r in await app_state.state.model.container_events.list_events(
+                "ws-reap"
+            )
+        }
+        assert rows["cid-reap-ws"]["cause"] == "reap"
+        assert rows["cid-reap-ws"]["container_role"] == "workspace"
+        assert rows["cid-reap-sc"]["cause"] == "reap"
+        assert rows["cid-reap-sc"]["container_role"] == "network-sidecar"
+
+    async def test_labelless_reap_records_nothing(
+        self, app_state, db, registry
+    ):
+        leftover = {"Id": "cid-anon", "Labels": {"klangk.managed": "true"}}
+        with patch_podman(
+            registry, list_containers=AsyncMock(return_value=[leftover])
+        ):
+            await registry.reap_instance_containers()
+        assert await app_state.state.model.container_events.count_events() == 0
+
+
+class TestDependentRemovalAttribution:
+    async def test_dependent_teardown_records_workspace_stop(
+        self, app_state, db, registry
+    ):
+        dependent = {
+            "Id": "cid-dep",
+            "Labels": {
+                "klangk.workspace": "ws-dep",
+                "klangk.role": "workspace",
+            },
+        }
+        with patch_podman(
+            registry, list_containers=AsyncMock(return_value=[dependent])
+        ):
+            await registry._remove_dependent_workspace_containers("ws-dep")
+        row = (
+            await app_state.state.model.container_events.list_events("ws-dep")
+        )[0]
+        assert row["event"] == EVENT_STOP
+        assert row["cause"] == "sidecar_dependent"
+        assert row["container_role"] == "workspace"
+        assert row["container_id"] == "cid-dep"
+
+
+class TestSidecarStartFailureBackstop:
+    async def test_start_row_survives_start_failure(
+        self, app_state, db, registry
+    ):
+        from klangk.podman import PodmanError
+
+        with patch_podman(registry):
+            with patch.object(
+                registry,
+                "start_with_port_conflict_retry",
+                AsyncMock(side_effect=PodmanError(500, "port clash")),
+            ):
+                with pytest.raises(PodmanError):
+                    await registry.start_network_sidecar(
+                        "ws-fail", ["allow.example.com"]
+                    )
+        row = (
+            await app_state.state.model.container_events.list_events("ws-fail")
+        )[0]
+        assert row["event"] == EVENT_START
+        assert row["cause"] == "sidecar_start"
+        assert row["container_id"] == "new-cid"
+
+    async def test_start_row_survives_readiness_timeout(
+        self, app_state, db, registry
+    ):
+        from klangk.podman import PodmanError
+
+        with patch_podman(registry):
+            with patch.object(
+                registry,
+                "_wait_sidecar_proxy_ready",
+                AsyncMock(side_effect=PodmanError(500, "never ready")),
+            ):
+                with pytest.raises(PodmanError):
+                    await registry.start_network_sidecar(
+                        "ws-fail2", ["allow.example.com"]
+                    )
+        row = (
+            await app_state.state.model.container_events.list_events(
+                "ws-fail2"
+            )
+        )[0]
+        assert row["event"] == EVENT_START
+        assert row["container_id"] == "new-cid"
