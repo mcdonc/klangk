@@ -6890,7 +6890,9 @@ class TestContainerBranchGaps2834:
                 AsyncMock(return_value=[leftover]),
             ):
                 assert await self.registry._sweep_drain_leftovers() == 0
-        stop.assert_awaited_once_with("cid-left", cause=CAUSE_DRAIN)
+        stop.assert_awaited_once_with(
+            "cid-left", workspace_id=None, cause=CAUSE_DRAIN
+        )
 
     # --- health ---
 

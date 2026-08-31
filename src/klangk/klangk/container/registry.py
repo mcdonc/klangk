@@ -43,7 +43,11 @@ from .basics import (
     workspace_container_name,
     workspace_name_slug,
 )
-from .sidecar import NetworkSidecarMixin, container_ident
+from .sidecar import (
+    NetworkSidecarMixin,
+    container_ident,
+    labeled_workspace_id,
+)
 from .spec import (
     ContainerStartSpec,
     SHARED_HOME,
@@ -794,24 +798,55 @@ class ContainerRegistry(NetworkSidecarMixin):
             await self.app.state.workspaces.ensure_shared_home_dir(
                 spec.workspace_id
             )
-            result = await self.start_container_inner(spec)
+            result = await self.start_container_inner_or_audited(spec)
             bag = spec.workspace_settings or {}
             if "idle_timeout" in bag:
                 self.idle.set_workspace_idle_timeout(
                     spec.workspace_id, bag["idle_timeout"]
                 )
-            # Lifecycle audit (#2915): a real transition (created or
-            # restarted) is recorded; 'connected' attached to an already-
-            # running container and is no transition at all.
-            if result[1] != "connected":
+            return result
+
+    async def start_container_inner_or_audited(
+        self, spec: ContainerStartSpec
+    ) -> tuple[str, str]:
+        """Run the under-lock start, backstopping the audit row (#2915
+        review).
+
+        If the inner start raises *after* the container was created and
+        tracked (e.g. the bringup exec fails), the container is real and
+        running — the crash monitor can later tear it down, and a stop
+        row with no matching start row would be a lie by omission. On
+        failure a start row is recorded (best-effort) for the tracked
+        container, then the exception propagates unchanged. Failures
+        before any container exists (drain gate, admission, port
+        allocation) leave no state and record nothing — no container,
+        no start.
+        """
+        try:
+            result = await self.start_container_inner(spec)
+        except BaseException:
+            state = self.states.get(spec.workspace_id)
+            if state is not None and state.container_id:
                 await self.record_container_event(
                     spec.workspace_id,
-                    result[0],
+                    state.container_id,
                     EVENT_START,
                     cause=spec.audit_cause,
                     actor_id=spec.audit_actor_id,
                 )
-            return result
+            raise
+        # Success: a real transition (created / restarted) is recorded;
+        # 'connected' attached to an already-running container and is no
+        # transition at all.
+        if result[1] != "connected":
+            await self.record_container_event(
+                spec.workspace_id,
+                result[0],
+                EVENT_START,
+                cause=spec.audit_cause,
+                actor_id=spec.audit_actor_id,
+            )
+        return result
 
     async def record_container_event(
         self,
@@ -1550,6 +1585,10 @@ class ContainerRegistry(NetworkSidecarMixin):
             if workspace_id in self._ws_with_network_sidecar:
                 await self.stop_network_sidecar(workspace_id)
                 self._ws_with_network_sidecar.discard(workspace_id)
+                # The sidecar's id is no longer a live netns owner —
+                # drop it or a later stop row would name a removed
+                # sidecar (#2915 review).
+                self._ws_netns_owner.pop(workspace_id, None)
             raise
         return container_id
 
@@ -2092,7 +2131,15 @@ class ContainerRegistry(NetworkSidecarMixin):
             if not cid:
                 continue
             logger.info("Drain: sweeping racing-start container %s", cid[:12])
-            if await self.stop_and_remove_container(cid, cause=CAUSE_DRAIN):
+            # Labeled workspace containers keep their stop row (#2915
+            # review): the label says which workspace owns them even when
+            # the registry never tracked them. Sidecars / unlabeled stay
+            # unattributed.
+            if await self.stop_and_remove_container(
+                cid,
+                workspace_id=labeled_workspace_id(c),
+                cause=CAUSE_DRAIN,
+            ):
                 stopped += 1
         return stopped
 
@@ -2278,9 +2325,14 @@ class ContainerRegistry(NetworkSidecarMixin):
                         "Removing orphaned klangk container %s",
                         cid,
                     )
+                    # Labeled workspace containers keep their stop row
+                    # (#2915 review) — a prior-session workspace stopped
+                    # at shutdown must not vanish from the audit trail.
                     tasks.append(
                         self.stop_and_remove_container(
-                            cid, cause=CAUSE_SHUTDOWN
+                            cid,
+                            workspace_id=labeled_workspace_id(c),
+                            cause=CAUSE_SHUTDOWN,
                         )
                     )
         except (

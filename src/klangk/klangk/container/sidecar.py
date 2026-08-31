@@ -50,6 +50,23 @@ def container_ident(c: dict) -> str:
     return ident
 
 
+def labeled_workspace_id(c: dict) -> str | None:
+    """The workspace id a ``podman ps`` dict is labeled for, when the
+    container is the workspace container itself (#2915).
+
+    Both the workspace container and its network sidecar carry
+    ``klangk.workspace=<id>``; ``klangk.role`` is the discriminator
+    (same check as ``_adopt_labeled_container`` and the sidecar
+    sweeps). Used by the shutdown/drain orphan sweeps so a labeled
+    workspace container stopped without registry tracking still gets
+    its stop row — and its sidecar teardown (#2286 semantics).
+    """
+    labels = c.get("Labels") or {}
+    if labels.get("klangk.role") != "workspace":
+        return None
+    return labels.get("klangk.workspace") or None
+
+
 class NetworkSidecarMixin:
     """Sidecar lifecycle methods mixed into ``ContainerRegistry``.
 

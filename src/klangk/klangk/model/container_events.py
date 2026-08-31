@@ -35,14 +35,14 @@ ACTOR_AGENT = "agent"
 ACTOR_SYSTEM = "system"
 
 # Canonical causes. Start causes:
-CAUSE_API = "api"  # POST /start (or the start half of /restart)
+CAUSE_API = "api"  # POST /start
 CAUSE_CREATE = "create"  # eager start at workspace create (auto_start body)
 CAUSE_WS_CONNECT = "ws_connect"  # first WS connection started the container
 CAUSE_AUTO_START = "auto_start"  # boot-time auto_start_workspaces sweep
 CAUSE_CRASH_RESTART = "crash_restart"  # crash monitor's delayed restart
 # Stop causes:
 CAUSE_STOP = "stop"  # POST /stop
-CAUSE_RESTART = "restart"  # the stop half of POST /restart
+CAUSE_RESTART = "restart"  # either half of POST /restart (stop + fresh start)
 CAUSE_DELETE = "delete"  # workspace deletion cascade
 CAUSE_IDLE_TIMEOUT = "idle_timeout"  # inactivity stop (container/idle.py)
 CAUSE_EVICTION = "eviction"  # memory-pressure eviction (container/eviction.py)

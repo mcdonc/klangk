@@ -13,14 +13,19 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from test_container import patch_podman
+from test_wshandler import _base_conn
 from klangk.container.spec import ContainerStartSpec
 from klangk.model.container_events import (
     ACTOR_AGENT,
     ACTOR_SYSTEM,
     ACTOR_USER,
     CAUSE_AUTO_START,
+    CAUSE_DRAIN,
     CAUSE_IDLE_TIMEOUT,
+    CAUSE_LOGOUT,
+    CAUSE_SHUTDOWN,
     CAUSE_STOP,
+    CAUSE_WS_CONNECT,
     EVENT_START,
     EVENT_STOP,
     actor_type_for,
@@ -275,3 +280,197 @@ class TestStartWorkspaceThreading:
             )
         assert captured["spec"].audit_actor_id is None
         assert captured["spec"].audit_cause == "api"
+
+
+class TestWsConnectAttribution:
+    async def test_ws_connect_start_carries_connecting_user(
+        self, app_state, db, registry, user, workspace
+    ):
+        """The normal web-UI start path (first WS connection) records the
+        connecting user with the ws_connect cause (#2915 review)."""
+        from klangk.wshandler import WebSocketState
+
+        app_state.state.sockets = WebSocketState(app_state)
+        conn = _base_conn(user=user, app_state=app_state)
+        captured = {}
+
+        async def fake_start(spec):
+            captured["spec"] = spec
+            return "cid-ws", "created"
+
+        with patch.object(
+            app_state.state.container_registry,
+            "start_container",
+            fake_start,
+        ):
+            await conn.start_workspace_container(workspace["id"], workspace)
+        assert captured["spec"].audit_cause == CAUSE_WS_CONNECT
+        assert captured["spec"].audit_actor_id == user["id"]
+
+
+class TestLogoutAttribution:
+    async def _stop_user_containers(self, app_state, db, registry, uid):
+        with patch.object(
+            app_state.state.model.workspaces,
+            "get_user_workspaces_with_containers",
+            AsyncMock(
+                return_value=[{"id": "ws-lo", "container_id": "cid-lo"}]
+            ),
+        ):
+            with patch_podman(registry):
+                await registry.stop_user_containers(uid)
+        return (
+            await app_state.state.model.container_events.list_events("ws-lo")
+        )[0]
+
+    async def test_logout_stop_attributes_the_user(
+        self, app_state, db, registry
+    ):
+        row = await self._stop_user_containers(app_state, db, registry, "u-1")
+        assert row["event"] == EVENT_STOP
+        assert row["cause"] == CAUSE_LOGOUT
+        assert row["actor_type"] == ACTOR_USER
+        assert row["actor_id"] == "u-1"
+
+    async def test_logout_stop_attributes_the_agent(
+        self, app_state, db, registry
+    ):
+        row = await self._stop_user_containers(
+            app_state, db, registry, AGENT_USER_ID
+        )
+        assert row["actor_type"] == ACTOR_AGENT
+        assert row["actor_id"] == AGENT_USER_ID
+
+
+class TestLabeledSweepAttribution:
+    async def test_drain_sweep_records_labeled_workspace_stop(
+        self, app_state, db, registry
+    ):
+        from klangk.container.sidecar import labeled_workspace_id
+
+        leftover = {
+            "Id": "cid-sweep",
+            "Labels": {
+                "klangk.workspace": "ws-sweep",
+                "klangk.role": "workspace",
+            },
+        }
+        assert labeled_workspace_id(leftover) == "ws-sweep"
+        with patch_podman(
+            registry, list_containers=AsyncMock(return_value=[leftover])
+        ):
+            assert await registry._sweep_drain_leftovers() == 1
+        row = (
+            await app_state.state.model.container_events.list_events(
+                "ws-sweep"
+            )
+        )[0]
+        assert row["event"] == EVENT_STOP
+        assert row["cause"] == CAUSE_DRAIN
+        assert row["actor_type"] == ACTOR_SYSTEM
+
+    async def test_sidecar_label_is_not_a_workspace(self):
+        from klangk.container.sidecar import labeled_workspace_id
+
+        sidecar = {
+            "Id": "net-cid",
+            "Labels": {
+                "klangk.workspace": "ws-x",
+                "klangk.role": "network-sidecar",
+            },
+        }
+        assert labeled_workspace_id(sidecar) is None
+        assert labeled_workspace_id({"Id": "x"}) is None
+
+    async def test_shutdown_sweep_records_labeled_workspace_stop(
+        self, app_state, db, registry, monkeypatch
+    ):
+        """The shutdown orphan loop attributes labeled workspace containers
+        (#2915 review): a prior-session workspace stopped at shutdown
+        keeps its stop row."""
+        orphan = {
+            "Id": "cid-orphan",
+            "Labels": {
+                "klangk.workspace": "ws-orphan",
+                "klangk.role": "workspace",
+            },
+        }
+        registry._cid_to_wsid.pop("cid-orphan", None)
+        with patch_podman(
+            registry, list_containers=AsyncMock(return_value=[orphan])
+        ):
+            with patch.object(
+                registry, "notify_workspace_killed", AsyncMock()
+            ):
+                await registry.shutdown()
+        row = (
+            await app_state.state.model.container_events.list_events(
+                "ws-orphan"
+            )
+        )[0]
+        assert row["event"] == EVENT_STOP
+        assert row["cause"] == CAUSE_SHUTDOWN
+
+
+class TestFailedStartBackstop:
+    async def test_bringup_failure_still_records_start(
+        self, app_state, db, registry, workspace
+    ):
+        """A container created but whose bringup raises is real and
+        tracked — the start row must exist (#2915 review) so a later
+        crash_teardown stop is not an orphan in the audit trail."""
+        ws_id = workspace["id"]
+        from klangk import ssl_trust
+        from klangk.terminal import Terminal
+
+        app_state.state.ssl_trust = ssl_trust.SSLTrust(app_state)
+        app_state.state.terminal = Terminal(app_state)
+        with patch_podman(registry):
+            with patch.object(
+                registry,
+                "bringup",
+                AsyncMock(side_effect=RuntimeError("exec failed")),
+            ):
+                with pytest.raises(RuntimeError):
+                    await registry.start_container(
+                        ContainerStartSpec(
+                            workspace_id=ws_id,
+                            home_path="/tmp/home",
+                            audit_cause=CAUSE_WS_CONNECT,
+                            audit_actor_id="u-9",
+                        )
+                    )
+        row = (
+            await app_state.state.model.container_events.list_events(ws_id)
+        )[0]
+        assert row["event"] == EVENT_START
+        assert row["cause"] == CAUSE_WS_CONNECT
+        assert row["actor_id"] == "u-9"
+        assert row["container_id"] == "new-cid"
+
+    async def test_pre_create_refusal_records_nothing(
+        self, app_state, db, registry, workspace
+    ):
+        """A refusal before any container exists (drain gate) leaves no
+        start row — no container, no start."""
+        with patch_podman(registry):
+            with patch.object(
+                registry,
+                "new_starts_blocked_reason",
+                return_value="node is draining",
+            ):
+                from klangk.exceptions import NodeDrainingError
+
+                with pytest.raises(NodeDrainingError):
+                    await registry.start_container(
+                        ContainerStartSpec(
+                            workspace_id=workspace["id"],
+                            home_path="/tmp/home",
+                        )
+                    )
+        assert (
+            await app_state.state.model.container_events.count_events(
+                workspace["id"]
+            )
+            == 0
+        )
