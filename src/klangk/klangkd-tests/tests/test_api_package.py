@@ -311,3 +311,17 @@ def test_all_permissions_single_source():
     # #2923's container-events history gate must be reportable the
     # same way (the admin Events tab keys off /my-permissions).
     assert "container-events" in api.ALL_PERMISSIONS
+
+
+def test_static_resources_single_source():
+    """``STATIC_RESOURCES`` must have exactly one definition — the live
+    one in ``api/__init__.py`` (it feeds /my-permissions). A duplicate in
+    api/admin.py drifted silently once (same failure class as the
+    ``ALL_PERMISSIONS`` copy #2765 removed); it was deleted for #2923 —
+    keep it deleted."""
+    import klangk.api.admin as api_admin
+
+    assert not hasattr(api_admin, "STATIC_RESOURCES")
+    # #2923's events resource must be reported so the frontend can gate
+    # the Events tab on the dedicated permission.
+    assert "/admin/container-events" in api.STATIC_RESOURCES

@@ -11,7 +11,13 @@ import '../utils/system_agent.dart';
 class AclEditor extends StatefulWidget {
   final String resource;
 
-  const AclEditor({super.key, required this.resource});
+  /// Permission vocabulary for the permission dropdown. Defaults to the
+  /// workspace-sphere list ([AclEditorState.workspacePermissions]);
+  /// admin-resource callers pass [AclEditorState.adminPermissions] to
+  /// also offer the admin-scoped `container-events` (#2923).
+  final List<String>? permissions;
+
+  const AclEditor({super.key, required this.resource, this.permissions});
 
   @override
   State<AclEditor> createState() => AclEditorState();
@@ -26,7 +32,12 @@ class AclEditorState extends State<AclEditor> {
 
   static const _actionLabels = {0: 'Deny', 1: 'Allow'};
   static const _principalTypeLabels = {0: 'System', 1: 'User', 2: 'Group'};
-  static const _permissions = [
+
+  /// Workspace-sphere permissions: the curated dropdown for workspace
+  /// ACLs (the Sharing tab's Advanced editor). Admin-sphere strings
+  /// (`admin`, `manage_users`, …) are deliberately absent — they are
+  /// meaningless on `/workspaces/{id}`.
+  static const List<String> workspacePermissions = [
     'view',
     'monitor',
     'terminal',
@@ -45,9 +56,18 @@ class AclEditorState extends State<AclEditor> {
     'delete',
     'create',
     'export',
-    'container-events',
     '*',
   ];
+
+  /// Admin-resource vocabulary: the workspace list plus the
+  /// admin-scoped `container-events` history gate (#2923), offered only
+  /// where it is meaningful (the admin ACL browser).
+  static const List<String> adminPermissions = [
+    ...workspacePermissions,
+    'container-events',
+  ];
+
+  List<String> get _permissions => widget.permissions ?? workspacePermissions;
 
   @override
   void initState() {

@@ -55,7 +55,7 @@ class AppBarActions extends StatelessWidget {
               ),
             ),
           ),
-        if (context.watch<AuthService>().isAdmin)
+        if (context.watch<AuthService>().canAdminSection)
           IconButton(
             icon:
                 const Icon(Icons.manage_accounts, color: KColors.textSecondary),

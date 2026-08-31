@@ -471,7 +471,12 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     if (_canInvitations) types.add('invitations');
     if (_canServer) types.add('server');
     if (_canEvents) types.add('events');
-    if (types.isNotEmpty) types.add('acl');
+    // The Access Control browser reads /admin/acl/tree, which needs full
+    // admin — a delegated container-events auditor (#2923) gets only the
+    // Events tab, not a dead ACL tab.
+    if (_canUsers || _canGroups || _canInvitations || _canServer) {
+      types.add('acl');
+    }
     return types;
   }
 
@@ -479,7 +484,6 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     final pendingCount = _invitationsPending;
     final tabs = <SkeuoTab>[];
     final views = <Widget>[];
-    final tabTypes = _tabTypes;
 
     void addTab({
       required String label,
@@ -539,7 +543,7 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
         view: const ContainerEventsPanel(),
       );
     }
-    if (tabTypes.isNotEmpty) {
+    if (_canUsers || _canGroups || _canInvitations || _canServer) {
       addTab(
         label: 'Access Control',
         icon: Icons.security,
@@ -1984,6 +1988,10 @@ class _AclBrowserTabState extends State<_AclBrowserTab> {
                     child: AclEditor(
                       key: ValueKey(_selectedResource),
                       resource: _selectedResource,
+                      // The admin browser is where the admin-scoped
+                      // `container-events` grant is creatable (#2923);
+                      // the workspace editor keeps the curated list.
+                      permissions: AclEditorState.adminPermissions,
                     ),
                   ),
                 ),

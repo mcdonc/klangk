@@ -870,18 +870,6 @@ async def replace_resource_acl(
     return await app.state.model.acl.get_acl_entries_resolved(resource)
 
 
-STATIC_RESOURCES = [
-    "/",
-    "/workspaces",
-    "/groups",
-    "/admin",
-    "/admin/users",
-    "/admin/invitations",
-    "/admin/groups",
-    "/admin/container-events",
-]
-
-
 class ServerScheduleRequest(BaseModel):
     """Body for scheduling a server stop/recycle (#2661)."""
 

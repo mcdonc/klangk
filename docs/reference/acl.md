@@ -169,7 +169,9 @@ To let a non-admin audit the history without granting full admin, add an
 `Allow` ACE for `container-events` on `/admin/container-events`
 targeting that principal (Admin → Access Control → Container Events) —
 the more-specific resource wins the ACL walk ahead of the `/admin`
-Deny-everyone entry.
+Deny-everyone entry. A delegated auditor then gets the app-bar admin
+icon and the admin section with the Events tab as their only section
+(the Access Control browser and the other tabs stay admin-only).
 
 ## Checking Your Permissions
 

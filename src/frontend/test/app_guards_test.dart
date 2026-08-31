@@ -123,7 +123,7 @@ void main() {
           loc: '/login',
           publicRoutes: routes,
           featurePaths: featurePaths,
-          isAdmin: false,
+          canAccessAdmin: false,
         ),
         '/workspace/abc',
       );
@@ -136,7 +136,7 @@ void main() {
           loc: '/login',
           publicRoutes: routes,
           featurePaths: featurePaths,
-          isAdmin: false,
+          canAccessAdmin: false,
         ),
         '/workspaces',
       );
@@ -149,7 +149,7 @@ void main() {
           loc: '/celebrate',
           publicRoutes: routes,
           featurePaths: featurePaths,
-          isAdmin: false,
+          canAccessAdmin: false,
         ),
         isNull,
       );
@@ -162,7 +162,7 @@ void main() {
           loc: '/workspaces',
           publicRoutes: routes,
           featurePaths: featurePaths,
-          isAdmin: false,
+          canAccessAdmin: false,
         ),
         isNull,
       );
@@ -175,7 +175,7 @@ void main() {
           loc: '/login',
           publicRoutes: routes,
           featurePaths: featurePaths,
-          isAdmin: false,
+          canAccessAdmin: false,
         ),
         isNull,
       );
@@ -192,14 +192,14 @@ void main() {
         loc: '/login',
         publicRoutes: routes,
         featurePaths: featurePaths,
-        isAdmin: false,
+        canAccessAdmin: false,
       );
       final second = guardLoggedInPublicRoute(
         isLoggedIn: true,
         loc: '/login',
         publicRoutes: routes,
         featurePaths: featurePaths,
-        isAdmin: false,
+        canAccessAdmin: false,
       );
       expect(first, '/workspace/abc');
       expect(second, '/workspace/abc');
@@ -218,7 +218,7 @@ void main() {
             loc: '/login',
             publicRoutes: routes,
             featurePaths: featurePaths,
-            isAdmin: false,
+            canAccessAdmin: false,
           ),
           '/workspaces',
         );
@@ -234,7 +234,7 @@ void main() {
           loc: '/login',
           publicRoutes: routes,
           featurePaths: featurePaths,
-          isAdmin: false,
+          canAccessAdmin: false,
         ),
         '/workspaces',
       );
@@ -248,7 +248,23 @@ void main() {
           loc: '/login',
           publicRoutes: routes,
           featurePaths: featurePaths,
-          isAdmin: true,
+          canAccessAdmin: true,
+        ),
+        '/admin/users',
+      );
+    });
+
+    test('allows an admin target for a delegated events auditor (#2923)', () {
+      // The auditor's my-permissions carries container-events on
+      // /admin/container-events, so the stashed admin URL is honored.
+      pendingRedirect = '/admin/users';
+      expect(
+        guardLoggedInPublicRoute(
+          isLoggedIn: true,
+          loc: '/login',
+          publicRoutes: routes,
+          featurePaths: featurePaths,
+          canAccessAdmin: true,
         ),
         '/admin/users',
       );
@@ -262,7 +278,7 @@ void main() {
           loc: '/login',
           publicRoutes: routes,
           featurePaths: featurePaths,
-          isAdmin: false,
+          canAccessAdmin: false,
         ),
         '/workspace/abc?file=main.dart',
       );
@@ -272,14 +288,27 @@ void main() {
   group('guardAdminRoute', () {
     test('logged-in non-admin on /admin/users -> /workspaces (#2669)', () {
       expect(
-        guardAdminRoute(isLoggedIn: true, isAdmin: false, loc: '/admin/users'),
+        guardAdminRoute(
+            isLoggedIn: true, canAccessAdmin: false, loc: '/admin/users'),
         '/workspaces',
       );
     });
 
     test('logged-in admin on /admin/users -> allowed (null)', () {
       expect(
-        guardAdminRoute(isLoggedIn: true, isAdmin: true, loc: '/admin/users'),
+        guardAdminRoute(
+            isLoggedIn: true, canAccessAdmin: true, loc: '/admin/users'),
+        isNull,
+      );
+    });
+
+    test('delegated events auditor on /admin/users -> allowed (null)', () {
+      // #2923: a non-wildcard principal holding only `container-events`
+      // on /admin/container-events can still enter the admin section —
+      // the Events tab is their only section there.
+      expect(
+        guardAdminRoute(
+            isLoggedIn: true, canAccessAdmin: true, loc: '/admin/users'),
         isNull,
       );
     });
@@ -289,14 +318,16 @@ void main() {
       // (stash + /login), and firing here would strand them on the
       // workspace list without ever seeing the login form.
       expect(
-        guardAdminRoute(isLoggedIn: false, isAdmin: false, loc: '/admin/users'),
+        guardAdminRoute(
+            isLoggedIn: false, canAccessAdmin: false, loc: '/admin/users'),
         isNull,
       );
     });
 
     test('non-admin on non-admin route -> allowed (null)', () {
       expect(
-        guardAdminRoute(isLoggedIn: true, isAdmin: false, loc: '/workspaces'),
+        guardAdminRoute(
+            isLoggedIn: true, canAccessAdmin: false, loc: '/workspaces'),
         isNull,
       );
     });
@@ -306,9 +337,9 @@ void main() {
       // refreshListenable notification; the guard must answer every
       // evaluation identically (the #2670 lesson).
       final first = guardAdminRoute(
-          isLoggedIn: true, isAdmin: false, loc: '/admin/users');
+          isLoggedIn: true, canAccessAdmin: false, loc: '/admin/users');
       final second = guardAdminRoute(
-          isLoggedIn: true, isAdmin: false, loc: '/admin/users');
+          isLoggedIn: true, canAccessAdmin: false, loc: '/admin/users');
       expect(first, second);
       expect(first, '/workspaces');
     });
@@ -343,7 +374,7 @@ void main() {
           currentUri: '/workspaces',
           publicRoutes: routes,
           featurePaths: featurePaths,
-          isAdmin: false,
+          canAccessAdmin: false,
         ),
         '/consent',
       );
@@ -363,7 +394,7 @@ void main() {
           currentUri: '/consent',
           publicRoutes: routes,
           featurePaths: featurePaths,
-          isAdmin: false,
+          canAccessAdmin: false,
         ),
         isNull,
       );
@@ -378,7 +409,7 @@ void main() {
           currentUri: '/workspaces',
           publicRoutes: routes,
           featurePaths: featurePaths,
-          isAdmin: false,
+          canAccessAdmin: false,
         ),
         '/consent',
       );
@@ -393,7 +424,7 @@ void main() {
           currentUri: '/workspace/abc?x=1',
           publicRoutes: routes,
           featurePaths: featurePaths,
-          isAdmin: false,
+          canAccessAdmin: false,
         ),
         '/login',
       );
@@ -410,7 +441,7 @@ void main() {
           currentUri: '/login',
           publicRoutes: routes,
           featurePaths: featurePaths,
-          isAdmin: false,
+          canAccessAdmin: false,
         ),
         '/workspace/zzz',
       );
@@ -430,7 +461,7 @@ void main() {
           currentUri: '/login',
           publicRoutes: routes,
           featurePaths: featurePaths,
-          isAdmin: false,
+          canAccessAdmin: false,
         ),
         '/workspaces',
       );
@@ -450,7 +481,7 @@ void main() {
           currentUri: '/login',
           publicRoutes: routes,
           featurePaths: featurePaths,
-          isAdmin: true,
+          canAccessAdmin: true,
         ),
         '/admin/users',
       );
@@ -465,7 +496,7 @@ void main() {
           currentUri: '/admin/users',
           publicRoutes: routes,
           featurePaths: featurePaths,
-          isAdmin: false,
+          canAccessAdmin: false,
         ),
         '/workspaces',
       );
@@ -480,7 +511,7 @@ void main() {
           currentUri: '/admin/users',
           publicRoutes: routes,
           featurePaths: featurePaths,
-          isAdmin: true,
+          canAccessAdmin: true,
         ),
         isNull,
       );
@@ -498,7 +529,7 @@ void main() {
           currentUri: '/admin/users',
           publicRoutes: routes,
           featurePaths: featurePaths,
-          isAdmin: false,
+          canAccessAdmin: false,
         ),
         '/login',
       );
@@ -516,7 +547,7 @@ void main() {
           currentUri: '/',
           publicRoutes: routes,
           featurePaths: featurePaths,
-          isAdmin: false,
+          canAccessAdmin: false,
         ),
         '/workspaces',
       );
@@ -531,7 +562,7 @@ void main() {
           currentUri: '/workspaces',
           publicRoutes: routes,
           featurePaths: featurePaths,
-          isAdmin: false,
+          canAccessAdmin: false,
         ),
         isNull,
       );
@@ -546,7 +577,7 @@ void main() {
           currentUri: '/celebrate',
           publicRoutes: routes,
           featurePaths: featurePaths,
-          isAdmin: false,
+          canAccessAdmin: false,
         ),
         isNull,
       );
@@ -561,7 +592,7 @@ void main() {
           currentUri: '/consent',
           publicRoutes: routes,
           featurePaths: featurePaths,
-          isAdmin: false,
+          canAccessAdmin: false,
         ),
         '/login',
       );

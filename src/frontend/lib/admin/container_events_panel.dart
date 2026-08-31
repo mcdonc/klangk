@@ -17,6 +17,7 @@ import 'package:provider/provider.dart';
 
 import '../auth/auth_service.dart';
 import '../theme/colors.dart';
+import '../utils/system_agent.dart';
 
 /// The Admin → Events tab body: filter field, paging controls, and the
 /// history table.
@@ -137,13 +138,15 @@ class _ContainerEventsPanelState extends State<ContainerEventsPanel> {
         '${localizations.formatTimeOfDay(TimeOfDay.fromDateTime(dt))}';
   }
 
-  /// 'user someone@example.com' / 'agent' / 'system' — email when the
-  /// backend resolved one, raw id otherwise (a purged user).
+  /// 'user someone@example.com' / 'system agent' / 'system' — email when
+  /// the backend resolved one, a friendly label for the fixed agent
+  /// identity, raw id otherwise (a purged user).
   String _actorLabel(Map<String, dynamic> row) {
     final type = row['actor_type'] as String? ?? 'system';
+    final id = row['actor_id'] as String?;
+    if (id != null && id == agentUserId) return 'system agent';
     final email = row['actor_email'] as String?;
     if (email != null && email.isNotEmpty) return '$type $email';
-    final id = row['actor_id'] as String?;
     if (id != null && id.isNotEmpty) return '$type $id';
     return type;
   }

@@ -307,5 +307,42 @@ void main() {
       expect(find.text('Events'), findsNothing);
       expect(find.text('Users'), findsOneWidget);
     });
+
+    testWidgets('delegated auditor gets the Events tab as their only tab',
+        (tester) async {
+      // #2923 review: a principal whose only admin-sphere grant is
+      // `container-events` on /admin/container-events can enter the
+      // admin section and sees exactly one tab — Events. No Users tab
+      // (no view on /admin/users) and no Access Control browser (it
+      // reads /admin/acl/tree, which needs full admin).
+      testAuthHttpClientOverride = _mockClient(
+        {
+          '/admin/container-events': ['container-events'],
+        },
+        (request) async {
+          if (request.url.path == '/api/v1/admin/container-events') {
+            return http.Response(
+              _eventsEnvelope(
+                [
+                  _event('ws-a', workspaceName: 'audit-ws', actorType: 'system')
+                ],
+                total: 1,
+              ),
+              200,
+            );
+          }
+          return http.Response('Not found', 404);
+        },
+      );
+
+      await pumpPage(tester, toEvents: false);
+      expect(find.text('Events'), findsOneWidget);
+      expect(find.text('Users'), findsNothing);
+      expect(find.text('Access Control'), findsNothing);
+
+      await tester.tap(find.text('Events'));
+      await tester.pumpAndSettle();
+      expect(find.text('audit-ws'), findsOneWidget);
+    });
   });
 }
