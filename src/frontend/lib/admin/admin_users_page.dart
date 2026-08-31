@@ -17,6 +17,7 @@ import '../widgets/obscure_toggle.dart';
 import '../widgets/skeuo_tab.dart';
 import '../utils/system_agent.dart';
 import '../utils/validators.dart';
+import 'container_events_panel.dart';
 import 'server_schedule_panel.dart';
 
 class AdminUsersPage extends StatefulWidget {
@@ -46,6 +47,7 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
   bool _canGroups = false;
   bool _canInvitations = false;
   bool _canServer = false;
+  bool _canEvents = false;
 
   // Pending invitation count for the tab badge — updated by the
   // _InvitationsTab widget via callback.
@@ -97,6 +99,12 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     // The schedule API needs the `admin` permission on /admin (ancestors
     // included), so gate the tab on exactly that.
     _canServer = auth.hasPermission('/admin', 'admin');
+    // The events history (#2923) is gated on the dedicated
+    // `container-events` permission over /admin/container-events — admins
+    // hold it via the /admin `*` wildcard, delegated auditors via an
+    // explicit ACE on the resource.
+    _canEvents =
+        auth.hasPermission('/admin/container-events', 'container-events');
   }
 
   Future<void> _loadUsers({int page = 1}) async {
@@ -462,6 +470,7 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     if (_canGroups) types.add('groups');
     if (_canInvitations) types.add('invitations');
     if (_canServer) types.add('server');
+    if (_canEvents) types.add('events');
     if (types.isNotEmpty) types.add('acl');
     return types;
   }
@@ -523,6 +532,13 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
         view: const ServerSchedulePanel(),
       );
     }
+    if (_canEvents) {
+      addTab(
+        label: 'Events',
+        icon: Icons.history,
+        view: const ContainerEventsPanel(),
+      );
+    }
     if (tabTypes.isNotEmpty) {
       addTab(
         label: 'Access Control',
@@ -550,7 +566,11 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
           tooltip: 'Add user',
           child: const Icon(Icons.person_add),
         ),
-      'invitations' || 'groups' || 'server' => null, // FABs inside tabs
+      'invitations' ||
+      'groups' ||
+      'server' ||
+      'events' =>
+        null, // FABs inside tabs
       _ => null,
     };
   }
@@ -1844,6 +1864,7 @@ class _AclBrowserTabState extends State<_AclBrowserTab> {
     ('/admin/users', 'Users', Icons.people),
     ('/admin/invitations', 'Invitations', Icons.mail_outline),
     ('/admin/groups', 'Admin Groups', Icons.group),
+    ('/admin/container-events', 'Container Events', Icons.history),
   ];
 
   String _selectedResource = '/';

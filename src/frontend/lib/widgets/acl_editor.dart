@@ -45,6 +45,7 @@ class AclEditorState extends State<AclEditor> {
     'delete',
     'create',
     'export',
+    'container-events',
     '*',
   ];
 

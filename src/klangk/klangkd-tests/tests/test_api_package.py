@@ -35,17 +35,17 @@ api_auth = sys.modules["klangk.api.auth"]
 
 # Total HTTP route operations the monolith exposed (per the issue).  The
 # split must preserve this exactly — no dropped or duplicated handlers.
-EXPECTED_ROUTE_COUNT = 96
+EXPECTED_ROUTE_COUNT = 97
 
-# Per-domain submodules and the number of routes each owns.  91 sub-routes
+# Per-domain submodules and the number of routes each owns.  92 sub-routes
 # + 3 routes defined directly on the main router (version, config,
-# my-permissions) + 2 on the root router (health, empty) == 96.
+# my-permissions) + 2 on the root router (health, empty) == 97.
 SUBMODULE_ROUTES = {
     "auth": 17,  # 15 + the 2 OIDC login/callback routes (merged from oidc_auth)
     "workspaces": 27,
     "resources": 10,  # 6 files + 4 images/volumes (merged submodules)
     "browser_delegate": 2,
-    "admin": 33,
+    "admin": 34,
     "llm_proxy": 2,
 }
 
@@ -247,8 +247,8 @@ class TestSubmoduleStructure:
         total = 0
         for submod in SUBMODULE_ROUTES:
             total += len(import_module(f"klangk.api.{submod}").router.routes)
-        # 91 sub-routes + 3 direct (version/config/my-permissions) + 2
-        # root (health/empty) == 96.
+        # 92 sub-routes + 3 direct (version/config/my-permissions) + 2
+        # root (health/empty) == 97.
         assert total == EXPECTED_ROUTE_COUNT - 3 - 2
 
     def test_common_module_has_no_router(self):
@@ -308,3 +308,6 @@ def test_all_permissions_single_source():
     assert "change-acls" in api.ALL_PERMISSIONS
     # #2883's egress-consent gate must be reportable the same way.
     assert "egress-consent" in api.ALL_PERMISSIONS
+    # #2923's container-events history gate must be reportable the
+    # same way (the admin Events tab keys off /my-permissions).
+    assert "container-events" in api.ALL_PERMISSIONS

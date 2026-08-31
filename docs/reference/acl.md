@@ -149,10 +149,11 @@ all, #2886).
 
 Not every permission is checked on a workspace resource:
 
-| Permission | Where it is checked | Controls                                        |
-| ---------- | ------------------- | ----------------------------------------------- |
-| `create`   | `/workspaces`       | Create/import workspaces                        |
-| `admin`    | `/admin`            | Instance admin functions (`/admin/*` endpoints) |
+| Permission         | Where it is checked       | Controls                                                                                              |
+| ------------------ | ------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `create`           | `/workspaces`             | Create/import workspaces                                                                              |
+| `admin`            | `/admin`                  | Instance admin functions (`/admin/*` endpoints)                                                       |
+| `container-events` | `/admin/container-events` | Read the container start/stop history: `GET /admin/container-events` and the admin Events tab (#2923) |
 
 `PUT /admin/acl/resource` additionally requires `change-acls` on the
 target when that target is an individual workspace (`/workspaces/{id}`)
@@ -160,6 +161,15 @@ target when that target is an individual workspace (`/workspaces/{id}`)
 ACE rewrite of a workspace always carries the workspace's own grant.
 Collection and static resources (`/`, `/workspaces`, `/groups`,
 `/admin/*`) stay admin-only.
+
+`container-events` is the delegation-friendly read path over the
+`container_events` audit table (#2915): the admin group holds it via
+its `/admin` `*` wildcard, so admins see the Events tab out of the box.
+To let a non-admin audit the history without granting full admin, add an
+`Allow` ACE for `container-events` on `/admin/container-events`
+targeting that principal (Admin → Access Control → Container Events) —
+the more-specific resource wins the ACL walk ahead of the `/admin`
+Deny-everyone entry.
 
 ## Checking Your Permissions
 
