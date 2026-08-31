@@ -1,9 +1,15 @@
 """Tests for WorkspaceSession's tmux window-sync (debounce + re-broadcast)."""
 
 import asyncio
+import gc
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from klangk.wshandler.session import WorkspaceSession, WebSocketState
+from klangk.wshandler.session import (
+    WorkspaceSession,
+    WebSocketState,
+    _session_tasks,
+    spawn_session_task,
+)
 
 
 def _session_with_user(user_id: str = "u1", handle: str | None = None):
@@ -474,3 +480,68 @@ async def test_token_renewal_loop_exits_without_container():
     sess.container_id = None
     with patch("klangk.wshandler.session.asyncio.sleep", new=AsyncMock()):
         await sess._token_renewal_loop()  # renewal unreachable: exit
+
+
+# --- #2913: fire-and-forget tasks must be strongly referenced ---------
+
+
+async def test_spawn_session_task_holds_strong_reference_until_done():
+    """A spawned task stays referenced while in flight, is discarded on done.
+
+    An unreferenced task suspended in an await is GC-eligible
+    mid-execution (#2913); the module-level set must hold it until it
+    completes, then drop it so the set cannot grow unboundedly.
+    """
+    started = asyncio.Event()
+
+    async def hangs() -> None:
+        started.set()
+        await asyncio.sleep(30)
+
+    task = spawn_session_task(hangs())
+    await started.wait()
+    assert task in _session_tasks  # referenced while suspended in an await
+
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    assert task not in _session_tasks  # done-callback discarded it
+
+
+async def test_reset_stop_task_survives_session_drop():
+    """The ``watcher.stop()`` task outlives the dying session (#2913).
+
+    ``reset()`` runs after the session is popped from the sockets map,
+    so an instance-attribute reference set would be collected with the
+    session and strand the teardown task again. The module-level set
+    keeps the still-in-flight stop alive even with no other reference.
+    """
+    sess, _, _ = _session_with_user()
+    watcher = MagicMock()
+    stopping = asyncio.Event()
+    before = set(_session_tasks)
+
+    async def slow_stop() -> None:
+        stopping.set()
+        await asyncio.sleep(30)
+
+    watcher.stop = slow_stop
+    sess._window_watcher = watcher
+
+    await sess.reset()
+    del watcher, sess  # no external references to the session or watcher
+    gc.collect()
+    await stopping.wait()
+    # The stop task is still alive and referenced module-level even
+    # though its session (and every local reference) is gone; finish it.
+    pending = {t for t in _session_tasks if t not in before and not t.done()}
+    assert pending, "the in-flight watcher.stop() task lost its reference"
+    for t in pending:
+        t.cancel()
+        try:
+            await t
+        except asyncio.CancelledError:
+            pass
+        assert t not in _session_tasks  # discarded by the done-callback

@@ -22,6 +22,33 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Strong references to the session's fire-and-forget tasks (#2913): the
+# event loop only keeps strong references to tasks while they are
+# scheduled, so an unreferenced task suspended in an await is
+# GC-eligible mid-execution — the same hazard guarded against by
+# ``lifecycle._status_broadcast_tasks`` (#1714 review) and
+# ``consent._activity_tasks`` in klangksidecar. Module-level, NOT an
+# instance attribute: the ``reset()`` case spawns ``watcher.stop()``
+# (the per-workspace tmux ``-C`` control-mode teardown), which must
+# finish after its session has been dropped and popped from the
+# sockets map — an instance set would die with the session and leave
+# the teardown task unreferenced again. The done-callback discard
+# keeps the set from growing without bound.
+_session_tasks: set[asyncio.Task] = set()
+
+
+def spawn_session_task(coro) -> asyncio.Task:
+    """Schedule *coro* in the background, holding a strong reference (#2913).
+
+    See ``_session_tasks`` above: the caller may drop every other
+    reference (fire-and-forget) without exposing the task to
+    mid-execution garbage collection.
+    """
+    task = asyncio.create_task(coro)
+    _session_tasks.add(task)
+    task.add_done_callback(_session_tasks.discard)
+    return task
+
 
 def merge_window_entries(old: list[dict], windows: list[dict]) -> list[dict]:
     """Fold a fresh tmux ``list_windows`` result into the session map.
@@ -269,7 +296,7 @@ class WorkspaceSession:
         watcher = self._window_watcher
         self._window_watcher = None
         if watcher is not None:
-            asyncio.create_task(watcher.stop())
+            spawn_session_task(watcher.stop())
         self._last_windows.clear()
         self._window_generations.clear()
 
@@ -374,7 +401,7 @@ class WorkspaceSession:
             self.container_id,
             self._schedule_window_sync,
         )
-        asyncio.create_task(self._window_watcher.start())
+        spawn_session_task(self._window_watcher.start())
 
     def _schedule_window_sync(self) -> None:
         """Debounce a burst of control-mode events into one re-sync."""
@@ -410,7 +437,7 @@ class WorkspaceSession:
 
     def _dispatch_window_sync(self) -> None:
         self._window_sync_handle = None
-        asyncio.create_task(self._sync_windows_once())
+        spawn_session_task(self._sync_windows_once())
 
     async def _sync_windows_once(self) -> None:
         """Re-broadcast ``terminal_windows`` to each connected user when tmux's
