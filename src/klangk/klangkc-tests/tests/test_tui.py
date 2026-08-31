@@ -204,6 +204,23 @@ def _wsobj(name, **k):
     return Workspace(id="id-" + name, name=name, created_at="x", **k)
 
 
+async def _drain_workers(app, pilot) -> None:
+    """Wait until every app worker — including ones spawned mid-wait — has
+    finished, then flush the pending UI messages.
+
+    ``app.workers.wait_for_complete()`` gathers only the workers present at
+    call time, so a worker that spawns more workers at its end (the detail
+    screen's ``_mount_async`` spawns the terminal/shared loaders) can be
+    missed by a single call. Loop on the live count instead. Needed because
+    the render pipelines' ``clear()`` transiently resets the ListView index
+    to None before the re-seed, and on slow runners (macOS CI, #2932) a bare
+    ``pilot.pause()`` can observe that window.
+    """
+    while len(app.workers):
+        await app.workers.wait_for_complete()
+    await pilot.pause()
+
+
 def _attach_notify_spy(app) -> list:
     """Spy on ``app.notify`` and return the list of toasted messages (#2019).
 
@@ -14830,6 +14847,9 @@ class TestFinalBranchGaps2834:
             async with app.run_test() as pilot:
                 app.push_screen(WorkspaceDetailScreen("sel"))
                 await pilot.pause()
+                await _drain_workers(
+                    app, pilot
+                )  # first mount pipeline settles
                 screen = app.screen
                 tl = screen.query_one("#term_list")
                 sh = screen.query_one("#shared_term_list")
@@ -14838,7 +14858,7 @@ class TestFinalBranchGaps2834:
                 if sh.index is None:
                     sh.index = 0
                 screen.on_mount()  # re-seed keeps both selections
-                await pilot.pause()
+                await _drain_workers(app, pilot)  # second pipeline settles
                 assert tl.index == 0
                 assert sh.index == 0
 
