@@ -5,7 +5,7 @@ import logging
 
 from fastapi import WebSocket, WebSocketDisconnect
 
-from .constants import SEND_QUEUE_SIZE
+from .support import SEND_QUEUE_SIZE
 
 logger = logging.getLogger(__name__)
 

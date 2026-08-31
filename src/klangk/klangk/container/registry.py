@@ -27,15 +27,14 @@ from .admission import AdmissionControl
 from .crash import CrashRecoveryMonitor
 from .health import HealthMonitor
 from .idle import IdleMonitor
-from .identity import (
-    workspace_container_name,
-    workspace_name_slug,
-    BrowserRouter,
-)
-from .ports import (
+from .basics import (
     CONTAINER_PORT_START,
     DEFAULT_PORTS_PER_WORKSPACE,
+    BrowserRouter,
+    ContainerState,
     PortAllocator,
+    workspace_container_name,
+    workspace_name_slug,
 )
 from .sidecar import NetworkSidecarMixin, container_ident
 from .spec import (
@@ -50,7 +49,6 @@ from .spec import (
     image_pull_policy,
     nix_binds,
 )
-from .state import ContainerState
 
 logger = logging.getLogger(__name__)
 

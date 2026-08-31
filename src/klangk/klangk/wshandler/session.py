@@ -15,7 +15,7 @@ from ..acl import check_permission_inmemory, resource_ancestors
 from ..terminal import SERVICE_CMD_WINDOW
 from .window_watcher import WindowEventWatcher
 from .safe_websocket import SafeWebSocket, WS_ERRORS, broadcast_to_set
-from .constants import log_ws_msg
+from .support import log_ws_msg
 
 if TYPE_CHECKING:
     from .connection import Connection

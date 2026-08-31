@@ -36,7 +36,7 @@ from textual.widgets import (
 )
 
 from klangk.cli import config as cfgmod
-from klangk.cli import tui as tui_pkg
+from klangk.cli.tui import app as tui_pkg
 from klangk.cli.client import AuthError, Workspace, WorkspaceNotFoundError
 from klangk.cli.tui import screens as scr
 from klangk.cli.tui.screens import main as scr_main

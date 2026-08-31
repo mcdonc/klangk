@@ -1,16 +1,61 @@
-"""Module-level helper functions for the wshandler package."""
+"""Shared constants and helper functions used across the wshandler package.
 
+Merges the former ``constants`` and ``helpers`` submodules (#2908).
+This module is the dependency root of the wshandler package: apart from
+``..container`` it has no runtime intra-package imports — ``SafeWebSocket``
+and ``WebSocketState`` appear only in annotations (TYPE_CHECKING), and
+``log_ws_msg`` lives here (with the constants it reads) so ``session``
+and ``safe_websocket`` can import it without a cycle.  Any sibling
+module can import from here without creating a circular dependency.
+"""
+
+from __future__ import annotations
+
+import json
 import logging
+import os
+from typing import TYPE_CHECKING
 
 from ..container import workspace_container_name, workspace_name_slug
-from .safe_websocket import SafeWebSocket
-from .constants import log_ws_msg
-from .session import (
-    WebSocketState,
-    get_shared_terminals as get_shared_terminals,
-)
+
+if TYPE_CHECKING:
+    from .safe_websocket import SafeWebSocket
+    from .session import WebSocketState
 
 logger = logging.getLogger(__name__)
+
+# Plain debug flag (not a KlangkSettings field): read straight from the
+# environment, no file:/cmd: resolution (#1516).
+WS_DEBUG = bool(os.environ.get("KLANGKD_WEBSOCKET_DEBUG"))
+
+# Max size for terminal/exec input data (base64-decoded bytes).
+# Matches uvicorn's --ws-max-size (16 MB) so the app-level cap isn't
+# stricter than the transport cap — see #1257.
+MAX_INPUT_SIZE = 16777216
+
+# Max outbound messages before we declare the client too slow and close.
+SEND_QUEUE_SIZE = 256
+
+
+def log_ws_msg(direction: str, msg: dict, user: dict | None = None) -> None:
+    """Log a WebSocket message for debugging (KLANGKD_WEBSOCKET_DEBUG=1)."""
+    if not WS_DEBUG:
+        return
+    msg_type = msg.get("type") or msg.get("cmd") or "?"
+    # Truncate terminal_output/terminal_input data to avoid log spam
+    if msg_type in ("terminal_output", "terminal_input"):
+        data = msg.get("data", "")
+        preview = repr(data[:80]) + ("..." if len(data) > 80 else "")
+        who = f" [{user['email']}]" if user else ""
+        logger.debug("WS %s%s: %s data=%s", direction, who, msg_type, preview)
+    else:
+        who = f" [{user['email']}]" if user else ""
+        logger.debug("WS %s%s: %s", direction, who, json.dumps(msg)[:200])
+
+
+# ---------------------------------------------------------------------------
+# Helpers (former ``helpers`` submodule).
+# ---------------------------------------------------------------------------
 
 
 async def reset_workspace_state(
@@ -112,7 +157,7 @@ def send_error(
 ) -> None:
     """Send an error frame; *code* adds a machine-readable kind.
 
-    The optional ``code`` (e.g. ``"capacity"``, #2525; ``"forbidden"`` /
+    The optional *code* (e.g. ``"capacity"``, #2525; ``"forbidden"`` /
     ``"not_found"``, #2891) lets clients tell a *class* of failure apart
     from other start errors without parsing the message text — the WS
     counterpart of the API's 503. Omitted for legacy callers; unknown

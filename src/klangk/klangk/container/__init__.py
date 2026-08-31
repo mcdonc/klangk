@@ -5,9 +5,9 @@ single-responsibility modules; this package ``__init__`` re-exports the
 previous public surface (plus the private names tests and sibling modules
 patch/import) so callers keep working unchanged:
 
-- :mod:`.state`    - ``ContainerState``
-- :mod:`.ports`    - ``PortAllocator`` + port constants
-- :mod:`.identity` - container-name helpers + ``BrowserRouter``
+- :mod:`.basics`   - vocabulary module: port constants +
+  ``PortAllocator``, ``ContainerState``, container-name helpers +
+  ``BrowserRouter`` (#2908 merge of the former ports/state/identity)
 - :mod:`.idle`     - ``IdleMonitor``
 - :mod:`.eviction` - ``MemoryPressureEvictor`` (host memory-pressure
   eviction, #2526) + ``read_meminfo``/``available_fraction``
@@ -44,15 +44,14 @@ from .health import (
     unhealthy_message as unhealthy_message,
 )
 from .idle import IdleMonitor as IdleMonitor
-from .identity import (
-    workspace_container_name as workspace_container_name,
-    workspace_name_slug as workspace_name_slug,
-    BrowserRouter as BrowserRouter,
-)
-from .ports import (
+from .basics import (
     CONTAINER_PORT_START as CONTAINER_PORT_START,
     DEFAULT_PORTS_PER_WORKSPACE as DEFAULT_PORTS_PER_WORKSPACE,
+    BrowserRouter as BrowserRouter,
+    ContainerState as ContainerState,
     PortAllocator as PortAllocator,
+    workspace_container_name as workspace_container_name,
+    workspace_name_slug as workspace_name_slug,
 )
 from .registry import (
     ContainerRegistry as ContainerRegistry,
@@ -65,4 +64,3 @@ from .spec import (
     SHARED_HOME as SHARED_HOME,
     SHARED_HOME_NAME as SHARED_HOME_NAME,
 )
-from .state import ContainerState as ContainerState

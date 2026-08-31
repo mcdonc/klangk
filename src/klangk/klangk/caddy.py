@@ -54,7 +54,7 @@ from pathlib import Path
 
 import httpx
 
-from .container.ports import DEFAULT_PORTS_PER_WORKSPACE
+from .container.basics import DEFAULT_PORTS_PER_WORKSPACE
 
 # Pure host-IP / loopback probes + fallback subnets, folded into caddy (the
 # sole engine) from the former proxy_common.py (#2088). Both auto-detect the

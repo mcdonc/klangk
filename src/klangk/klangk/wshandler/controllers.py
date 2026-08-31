@@ -21,8 +21,8 @@ from ..terminal import (
     SERVICE_SESSION,
 )
 from .safe_websocket import SlowClientError, WS_ERRORS
-from .constants import MAX_INPUT_SIZE
-from .helpers import send_error, send_event, get_shared_terminals
+from .session import get_shared_terminals
+from .support import MAX_INPUT_SIZE, send_error, send_event
 
 if TYPE_CHECKING:
     from .connection import Connection

@@ -26,7 +26,7 @@ from ..podman import (
     SHARED_HOME_NAME as SHARED_HOME_NAME,
 )
 from ..ssl_trust import SSL_MOUNT_DEST as _SSL_MOUNT_DEST, ssl_env_vars
-from .ports import CONTAINER_PORT_START, DEFAULT_PORTS_PER_WORKSPACE
+from .basics import CONTAINER_PORT_START, DEFAULT_PORTS_PER_WORKSPACE
 
 logger = logging.getLogger(__name__)
 

@@ -62,7 +62,7 @@ class TestDrainingGate:
     async def test_existing_workspace_untouched(self, app_state, db):
         """Tracked state is not torn down by the flag alone: a tracked
         workspace's state survives until the drain actually stops it."""
-        from klangk.container.state import ContainerState
+        from klangk.container.basics import ContainerState
 
         registry = app_state.state.container_registry
         state = ContainerState("ws-live", "cid-live", app_state)
@@ -153,7 +153,7 @@ class TestCrashRestartSuppressed:
 
 class TestDrain:
     def _track(self, app_state, registry, n):
-        from klangk.container.state import ContainerState
+        from klangk.container.basics import ContainerState
 
         for i in range(n):
             ws_id = f"ws-{i}"
@@ -398,7 +398,7 @@ class TestDrain:
 
     async def test_drain_skips_cidless_state(self, app_state, db):
         """A tracked state with no container id is skipped, not stopped."""
-        from klangk.container.state import ContainerState
+        from klangk.container.basics import ContainerState
 
         registry = app_state.state.container_registry
         from klangk.wshandler.session import WebSocketState
