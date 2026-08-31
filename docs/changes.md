@@ -1278,6 +1278,12 @@ stop)`) and a `server: stop at 23:00 (in 1h 12m)` status line in the
 
 ### Changed
 
+- **Password-field visibility toggle (#2893).** The "eye" toggle on
+  password fields (login, settings, invitations, password reset, admin
+  user forms) is no longer a Tab stop — Tab moves only between input
+  fields. The toggle is now mouse/touch-only: it has no keyboard
+  activation path (screen-reader semantics navigation still reaches it).
+
 - **The devenv Flutter toolchain is now 3.47.0 (#2869).** Flutter (and its
   Dart SDK) come from a pinned `nixpkgs-unstable` input while the rest of
   the toolchain stays on `nixos-26.05`. Contributors get Flutter 3.47 /

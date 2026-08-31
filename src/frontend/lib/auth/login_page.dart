@@ -1,14 +1,17 @@
 import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
+
 import 'auth_service.dart';
 import 'pending_redirect.dart';
 import '../branding.dart';
 import '../utils/page_title.dart';
 import '../utils/validators.dart';
+import '../widgets/obscure_toggle.dart';
 import '../utils/web_helpers_stub.dart'
     if (dart.library.js_interop) '../utils/web_helpers_web.dart';
 import '../widgets/klangk_logo.dart';
@@ -236,15 +239,10 @@ class _LoginPageState extends State<LoginPage> {
         decoration: InputDecoration(
           labelText: 'Password',
           border: const OutlineInputBorder(),
-          suffixIcon: IconButton(
-            icon: Icon(
-              _obscurePassword ? Icons.visibility_off : Icons.visibility,
-            ),
-            onPressed: () {
-              setState(() {
-                _obscurePassword = !_obscurePassword;
-              });
-            },
+          suffixIcon: KObscureToggle(
+            obscured: _obscurePassword,
+            onToggle: () =>
+                setState(() => _obscurePassword = !_obscurePassword),
           ),
         ),
         obscureText: _obscurePassword,
