@@ -214,11 +214,15 @@ class Lifecycle:
         logger.info("Seeded default ACL entries")
 
     async def ensure_admin_group(self) -> str:
-        """Ensure the 'admin' group exists. Returns the group ID."""
-        group = await self.app.state.model.users.get_group_by_name("admin")
+        """Ensure the 'admins' group exists. Returns the group ID.
+
+        Named ``admins`` since #2934 (migration 0020 renames legacy
+        deployments' ``admin`` row); everything else keys on the id.
+        """
+        group = await self.app.state.model.users.get_group_by_name("admins")
         if group is None:
             group = await self.app.state.model.users.create_group(
-                "admin", description="Administrators"
+                "admins", description="Administrators"
             )
             logger.info("Created admin group: %s", group["id"])
         return group["id"]
@@ -265,7 +269,7 @@ class Lifecycle:
         await self.seed_default_acls(admin_group_id)
 
         # Once an admin exists, startup must not touch users (#1622). The
-        # gate is group membership, not a row id: "admin" is a group, and a
+        # gate is group membership, not a row id: "admins" is a group, and a
         # deployer can promote more than one admin, so keying on a fixed
         # seeded-admin id would be the wrong concept. Emptying the admin
         # group + restart re-seeds (delete-resurrection at the group level).

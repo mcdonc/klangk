@@ -11,7 +11,8 @@ validation), migration 0001's shape (password_history + cascade),
 0012's (`files-write` mirror of Allow `files-download` ACEs), and
 0013's (exec-and-sync role-group backfill, #2706/#2712), 0014's
 (/groups create ACE tightened to the admin group, #2770), and
-0015's (workspaces.classification_banner, #2768).
+0015's (workspaces.classification_banner, #2768), and
+0020's (the ``admin`` group renamed to ``admins``, #2934).
 """
 
 import aiosqlite
@@ -71,6 +72,7 @@ class TestRunner:
             (17, "0017_change_acls_permission"),
             (18, "0018_egress_consent_permission"),
             (19, "0019_container_events"),
+            (20, "0020_rename_admin_group"),
         ]
         async with aiosqlite.connect(str(app_state.state.db.db_path)) as db:
             assert await _recorded(db) == expected
@@ -156,6 +158,7 @@ class TestRunner:
                 (17, "0017_change_acls_permission"),
                 (18, "0018_egress_consent_permission"),
                 (19, "0019_container_events"),
+                (20, "0020_rename_admin_group"),
             ]
 
     async def test_m0008_agent_identity_and_human_collision(
@@ -1654,5 +1657,125 @@ class TestM0017ChangeAclsPermission:
             await m0017_change_acls_permission.migration.apply(db)
             cursor = await db.execute("SELECT COUNT(*) FROM acl_entries")
             assert (await cursor.fetchone())[0] == 0
+        finally:
+            await db.__aexit__(None, None, None)
+
+
+class TestM0020RenameAdminGroup:
+    """m0020: rename the seeded ``admin`` group to ``admins`` (#2934).
+
+    The rename is in-place (same row id), so memberships and ACL
+    principals survive; a pre-existing ``admins`` group is a collision
+    the migration refuses rather than merges.
+    """
+
+    async def _db(self, tmp_path):
+        db = aiosqlite.connect(str(tmp_path / "m0020.db"))
+        db = await db.__aenter__()
+        await db.execute(
+            "CREATE TABLE groups ("
+            " id TEXT PRIMARY KEY, name TEXT UNIQUE NOT NULL,"
+            " description TEXT, created_at TEXT NOT NULL"
+            " DEFAULT (datetime('now')))"
+        )
+        await db.execute(
+            "CREATE TABLE user_groups ("
+            " user_id TEXT NOT NULL, group_id TEXT NOT NULL,"
+            " source TEXT NOT NULL DEFAULT 'manual',"
+            " PRIMARY KEY (user_id, group_id))"
+        )
+        await db.execute(
+            "CREATE TABLE acl_entries ("
+            " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            " resource TEXT NOT NULL, position INTEGER NOT NULL,"
+            " action INTEGER NOT NULL, principal_type INTEGER NOT NULL,"
+            " user_id TEXT, group_id TEXT, system_principal INTEGER,"
+            " permission TEXT NOT NULL)"
+        )
+        return db
+
+    async def _seed_legacy_admin(self, db):
+        await db.execute(
+            "INSERT INTO groups (id, name) VALUES ('g1', 'admin')"
+        )
+        await db.execute(
+            "INSERT INTO user_groups (user_id, group_id) VALUES ('u1', 'g1')"
+        )
+        await db.execute(
+            "INSERT INTO acl_entries"
+            " (resource, position, action, principal_type, user_id,"
+            "  group_id, system_principal, permission)"
+            " VALUES ('/admin', 0, 1, 2, NULL, 'g1', NULL, '*')"
+        )
+
+    async def _names(self, db) -> dict:
+        cursor = await db.execute("SELECT id, name FROM groups")
+        return {r[0]: r[1] for r in await cursor.fetchall()}
+
+    async def test_renames_keeping_id_and_foreign_keys(self, tmp_path):
+        from klangk.model.migrations import m0020_rename_admin_group
+
+        db = await self._db(tmp_path)
+        try:
+            await self._seed_legacy_admin(db)
+            await m0020_rename_admin_group.migration.apply(db)
+
+            # Same row id, new name.
+            assert await self._names(db) == {"g1": "admins"}
+            # Membership and ACL principal still point at the id.
+            cursor = await db.execute(
+                "SELECT group_id FROM user_groups WHERE user_id = 'u1'"
+            )
+            assert (await cursor.fetchone())[0] == "g1"
+            cursor = await db.execute(
+                "SELECT group_id FROM acl_entries WHERE resource = '/admin'"
+            )
+            assert (await cursor.fetchone())[0] == "g1"
+        finally:
+            await db.__aexit__(None, None, None)
+
+    async def test_no_admin_group_is_noop(self, tmp_path):
+        """Fresh (pre-seed), already-migrated, and custom-renamed
+        deployments all lack an ``admin`` row — nothing to do."""
+        from klangk.model.migrations import m0020_rename_admin_group
+
+        db = await self._db(tmp_path)
+        try:
+            await db.execute(
+                "INSERT INTO groups (id, name) VALUES ('g9', 'custom')"
+            )
+            await m0020_rename_admin_group.migration.apply(db)
+            assert await self._names(db) == {"g9": "custom"}
+        finally:
+            await db.__aexit__(None, None, None)
+
+    async def test_collision_fails_fast(self, tmp_path):
+        """A manually created ``admins`` group blocks the rename; the
+        error tells the operator how to resolve it."""
+        from klangk.model.migrations import m0020_rename_admin_group
+
+        db = await self._db(tmp_path)
+        try:
+            await self._seed_legacy_admin(db)
+            await db.execute(
+                "INSERT INTO groups (id, name) VALUES ('g2', 'admins')"
+            )
+            with pytest.raises(RuntimeError, match="'admins'"):
+                await m0020_rename_admin_group.migration.apply(db)
+            # Nothing was renamed.
+            assert await self._names(db) == {"g1": "admin", "g2": "admins"}
+        finally:
+            await db.__aexit__(None, None, None)
+
+    async def test_already_renamed_is_noop(self, tmp_path):
+        from klangk.model.migrations import m0020_rename_admin_group
+
+        db = await self._db(tmp_path)
+        try:
+            await db.execute(
+                "INSERT INTO groups (id, name) VALUES ('g1', 'admins')"
+            )
+            await m0020_rename_admin_group.migration.apply(db)
+            assert await self._names(db) == {"g1": "admins"}
         finally:
             await db.__aexit__(None, None, None)

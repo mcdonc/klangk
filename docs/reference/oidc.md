@@ -162,7 +162,7 @@ def on_login(provider, claims, email, tokens):
     groups = set()
     roles = claims.get("realm_access", {}).get("roles", [])
     if "klangk-admin" in roles:
-        groups.add("admin")
+        groups.add("admins")
     return groups or None
 ```
 
@@ -175,6 +175,12 @@ Async hooks are also supported (`async def`). The hook script can import from `k
 - **Return** `None` — login allowed, no group sync
 - **Return** a `set[str]` — login allowed, memberships synced to those groups
 - Groups returned by the hook are auto-created if they don't exist
+- Group names are literal and must match existing groups to have effect:
+  the seeded admin group is named `admins` (#2934) — return `"admins"`,
+  not `"admin"`, to grant admin. Deployments upgrading past the rename
+  must update hooks **before** users log in again: an unchanged
+  `"admin"` return auto-creates a permissionless `admin` group, and the
+  membership diff-sync removes the user's synced `admins` membership.
 - Memberships are tracked with `source='oidc_sync'` — only these are added/removed
 - Manual group memberships (`source='manual'`) are never touched
 

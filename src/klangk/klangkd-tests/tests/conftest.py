@@ -147,7 +147,7 @@ async def admin_group(app_state):
 
     await app_state.state.model.init_db()
     group = await app_state.state.model.users.create_group(
-        "admin", description="Administrators"
+        "admins", description="Administrators"
     )
     acl = app_state.state.model.acl
     # Seed default ACLs

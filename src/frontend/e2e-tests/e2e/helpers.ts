@@ -77,7 +77,7 @@ async function makeUserAdmin(
   const body = await groupsResp.json();
   const groups = body.groups || body;
   const adminGroup = Array.isArray(groups)
-    ? groups.find((g: any) => g.name === "admin")
+    ? groups.find((g: any) => g.name === "admins")
     : undefined;
   if (!adminGroup) return;
   // Add the user (ignore 409 if already a member).

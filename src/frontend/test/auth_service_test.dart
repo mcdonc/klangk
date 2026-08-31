@@ -876,7 +876,7 @@ void main() {
           '/admin': ['*'],
         },
         groups: [
-          {'id': 'g1', 'name': 'admin'},
+          {'id': 'g1', 'name': 'admins'},
         ],
       );
       final token = makeJwt({'sub': 'user-1'});

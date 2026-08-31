@@ -221,7 +221,7 @@ class TestSeedDefaultUser:
         assert user["password_hash"] is None
         # User is in the admin group
         admin_group = await app_state.state.model.users.get_group_by_name(
-            "admin"
+            "admins"
         )
         assert admin_group is not None
         group_ids = await app_state.state.model.users.get_user_group_ids(
@@ -509,7 +509,7 @@ class TestSeedDefaultUserGating:
             "resurrect@example.com"
         )
         admin_group = await app_state.state.model.users.get_group_by_name(
-            "admin"
+            "admins"
         )
         assert admin is not None and admin_group is not None
 
@@ -543,12 +543,12 @@ class TestSeedDefaultUserGating:
         """Fresh install (empty admin group) → seed creates, mirroring
         pre-#1622 first-boot behavior."""
         admin_group = await app_state.state.model.users.get_group_by_name(
-            "admin"
+            "admins"
         )
         # admin group may not exist yet; ensure it then assert empty.
         if admin_group is None:
             admin_group = await app_state.state.model.users.create_group(
-                "admin", description="Administrators"
+                "admins", description="Administrators"
             )
         assert (
             await app_state.state.model.users.get_group_members(

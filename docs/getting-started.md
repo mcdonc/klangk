@@ -106,7 +106,7 @@ instructions.
 With the Docker examples above (`KLANGKD_AUTH_MODES=password`) and the
 seeded devenv config (also `password` mode), log in with the email you
 configured (`admin@example.com` / `admin123abc` in dev) and the password
-you set. The default user is in the `admin` group and can manage other
+you set. The default user is in the `admins` group and can manage other
 users and groups via the Admin page.
 
 A bare `klangkd` (e.g. a `pip install klangk` install with no config) uses

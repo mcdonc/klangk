@@ -847,7 +847,7 @@ class _GroupsTabState extends State<_GroupsTab> {
             trailing: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                if (name != 'admin')
+                if (name != 'admins')
                   IconButton(
                     icon: const Icon(
                       Icons.delete_outline,

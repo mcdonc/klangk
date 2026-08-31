@@ -775,7 +775,7 @@ test.describe("API", () => {
     const adminAces = await resp.json();
     expect(
       adminAces.some(
-        (a: any) => a.principal === "admin" && a.permission === "*",
+        (a: any) => a.principal === "admins" && a.permission === "*",
       ),
     ).toBeTruthy();
 

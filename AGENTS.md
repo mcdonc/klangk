@@ -425,7 +425,7 @@ The fixture (seeded by `fmtk-up`, or standalone via
 `devenv --quiet shell -- fmtk-seed`) covers every role bucket of the
 `fmtk-verify` workspace's Sharing panel — password `fmtk-Pass123!`:
 
-- `fmtk-admin@example.com` — `admin` group member and workspace owner:
+- `fmtk-admin@example.com` — `admins` group member and workspace owner:
   everything visible (Sharing tab with role buckets AND the Advanced ACL
   editor).
 - `fmtk-collaborator@example.com` — collaborators bucket member.
@@ -468,7 +468,7 @@ UI-driving notes (verified against the harness):
   ones under the "Shared with Me" segment — tap the segment first, then
   the workspace card.
 - The app bar's right edge holds, in order: the email chip (navigates to
-  Settings), an admin icon (only for `admin`-group members), and the
+  Settings), an admin icon (only for `admins`-group members), and the
   logout icon (rightmost). In snapshots these appear as unlabeled
   `button`s — pick by bounds (top-right corner), not label.
 - Icon-only tabs and icon buttons also show up as unlabeled `tappable`/

@@ -1506,7 +1506,7 @@ void main() {
           '/workspaces': ['create'],
         },
         groups: [
-          {'id': 'g1', 'name': 'admin'},
+          {'id': 'g1', 'name': 'admins'},
         ],
       );
 
@@ -1970,7 +1970,7 @@ void main() {
           '/workspaces': ['create'],
         },
         groups: [
-          {'id': 'g1', 'name': 'admin'},
+          {'id': 'g1', 'name': 'admins'},
         ],
       );
 

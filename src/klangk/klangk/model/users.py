@@ -973,7 +973,7 @@ class UsersModel:
             return []
         cutoff = datetime.now(timezone.utc) - timedelta(days=days)
         admin_ids: set[str] = set()
-        admin_group = await self.get_group_by_name("admin")
+        admin_group = await self.get_group_by_name("admins")
         async with self.app.state.db.transaction() as db:
             if admin_group is not None:
                 cursor = await db.execute(

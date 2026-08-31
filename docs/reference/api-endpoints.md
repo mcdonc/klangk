@@ -337,7 +337,7 @@ No request body.
     "disabled": false,
     "last_login_at": "2026-01-15T10:00:00+00:00",
     "last_activity_at": "2026-01-15T10:05:00+00:00",
-    "groups": [{ "id": "uuid", "name": "admin" }]
+    "groups": [{ "id": "uuid", "name": "admins" }]
   }
 ]
 ```
@@ -1345,7 +1345,7 @@ Create a new group. The creator receives full (`*`) access to the new
 group.
 
 **Auth:** JWT required. User must have `create` permission on `/groups`
-(default: the `admin` group only).
+(default: the `admins` group only).
 
 ```json
 { "name": "my-group", "description": "optional description" }
