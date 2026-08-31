@@ -7,8 +7,9 @@ import json
 import logging
 import time
 import uuid
+from collections.abc import Coroutine
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from .. import model
 from ..acl import check_permission_inmemory, resource_ancestors
@@ -32,12 +33,32 @@ logger = logging.getLogger(__name__)
 # (the per-workspace tmux ``-C`` control-mode teardown), which must
 # finish after its session has been dropped and popped from the
 # sockets map — an instance set would die with the session and leave
-# the teardown task unreferenced again. The done-callback discard
-# keeps the set from growing without bound.
+# the teardown task unreferenced again. The done-callback
+# (:func:`_finish_session_task`) discards from the set and logs a
+# failure, since nobody awaits a fire-and-forget task to observe it.
 _session_tasks: set[asyncio.Task] = set()
 
 
-def spawn_session_task(coro) -> asyncio.Task:
+def _finish_session_task(task: asyncio.Task) -> None:
+    """Done-callback for :func:`spawn_session_task` (#2913).
+
+    Discards the strong reference so the set cannot grow without
+    bound, and logs an unobserved failure: these tasks are
+    fire-and-forget, so without this an exception would surface only
+    as asyncio's context-free ``Task exception was never retrieved``
+    at task GC — the same reason ``lifecycle.broadcast_container_status``
+    wraps its broadcast in try/except + logging (#1714). Retrieving the
+    exception here also marks it seen for asyncio.
+    """
+    _session_tasks.discard(task)
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        logger.error("Background session task failed", exc_info=exc)
+
+
+def spawn_session_task(coro: Coroutine[Any, Any, Any]) -> asyncio.Task:
     """Schedule *coro* in the background, holding a strong reference (#2913).
 
     See ``_session_tasks`` above: the caller may drop every other
@@ -46,7 +67,7 @@ def spawn_session_task(coro) -> asyncio.Task:
     """
     task = asyncio.create_task(coro)
     _session_tasks.add(task)
-    task.add_done_callback(_session_tasks.discard)
+    task.add_done_callback(_finish_session_task)
     return task
 
 
