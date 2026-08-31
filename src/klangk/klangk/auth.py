@@ -735,90 +735,92 @@ class Auth:
             options=options,
         )
 
-    # --- email-verification tokens ---
-
-    def create_verification_token(self, user_id: str) -> str:
-        """Create a JWT token for email verification."""
-        expire = datetime.now(timezone.utc) + timedelta(
-            hours=self.verify_token_expire_hours
-        )
-        payload = {"sub": user_id, "purpose": "verify", "exp": expire}
+    def _create_purpose_token(
+        self,
+        subject: str,
+        purpose: str,
+        expire_hours: int,
+        extra: dict[str, str] | None = None,
+    ) -> str:
+        """Create a signed JWT tagged with *purpose*, expiring in
+        *expire_hours*, carrying *extra* claims."""
+        expire = datetime.now(timezone.utc) + timedelta(hours=expire_hours)
+        payload = {"sub": subject, "purpose": purpose, "exp": expire}
+        if extra:
+            payload.update(extra)
         return jwt.encode(payload, self.secret, algorithm=self.algorithm)
 
-    def decode_verification_token(self, token: str) -> str | None:
-        """Decode a verification token. Returns user_id or None if invalid."""
+    def _decode_purpose_token(self, token: str, purpose: str) -> dict | None:
+        """Decode a JWT and require its ``purpose`` claim to match.
+
+        Returns the payload, or None when the token is invalid, expired,
+        or was minted for a different purpose.
+        """
         try:
             payload = jwt.decode(
                 token, self.secret, algorithms=[self.algorithm]
             )
-            if payload.get("purpose") != "verify":
-                return None
-            return payload.get("sub")
         except JWTError:
             return None
+        if payload.get("purpose") != purpose:
+            return None
+        return payload
+
+    # --- email-verification tokens ---
+
+    def create_verification_token(self, user_id: str) -> str:
+        """Create a JWT token for email verification."""
+        return self._create_purpose_token(
+            user_id, "verify", self.verify_token_expire_hours
+        )
+
+    def decode_verification_token(self, token: str) -> str | None:
+        """Decode a verification token. Returns user_id or None if invalid."""
+        payload = self._decode_purpose_token(token, "verify")
+        return payload.get("sub") if payload is not None else None
 
     # --- password-reset tokens ---
 
     def create_password_reset_token(self, user_id: str) -> str:
         """Create a JWT token for password reset."""
-        expire = datetime.now(timezone.utc) + timedelta(
-            hours=self.reset_token_expire_hours
+        return self._create_purpose_token(
+            user_id, "reset", self.reset_token_expire_hours
         )
-        payload = {"sub": user_id, "purpose": "reset", "exp": expire}
-        return jwt.encode(payload, self.secret, algorithm=self.algorithm)
 
     def decode_password_reset_token(self, token: str) -> str | None:
         """Decode a password reset token. Returns user_id or None."""
-        try:
-            payload = jwt.decode(
-                token, self.secret, algorithms=[self.algorithm]
-            )
-            if payload.get("purpose") != "reset":
-                return None
-            return payload.get("sub")
-        except JWTError:
-            return None
+        payload = self._decode_purpose_token(token, "reset")
+        return payload.get("sub") if payload is not None else None
 
     # --- invitation tokens ---
 
     def create_invitation_token(self, invitation_id: str, email: str) -> str:
         """Create a JWT token for an invitation."""
-        expire = datetime.now(timezone.utc) + timedelta(
-            hours=self.invite_token_expire_hours
+        return self._create_purpose_token(
+            invitation_id,
+            "invite",
+            self.invite_token_expire_hours,
+            extra={"email": email},
         )
-        payload = {
-            "sub": invitation_id,
-            "email": email,
-            "purpose": "invite",
-            "exp": expire,
-        }
-        return jwt.encode(payload, self.secret, algorithm=self.algorithm)
 
     def decode_invitation_token(self, token: str) -> tuple[str, str] | None:
         """Decode an invitation token. Returns (invitation_id, email) or None."""
-        try:
-            payload = jwt.decode(
-                token, self.secret, algorithms=[self.algorithm]
-            )
-            if payload.get("purpose") != "invite":
-                return None
-            inv_id = payload.get("sub")
-            email = payload.get("email")
-            if not inv_id or not email:
-                return None
-            return (inv_id, email)
-        except JWTError:
+        payload = self._decode_purpose_token(token, "invite")
+        if payload is None:
             return None
+        invitation_id = payload.get("sub")
+        email = payload.get("email")
+        if not invitation_id or not email:
+            return None
+        return (invitation_id, email)
 
     # --- workspace tokens ---
 
     def create_workspace_token(self, workspace_id: str) -> str:
         """Create a JWT token identifying a workspace for container→host auth."""
-        expire = datetime.now(timezone.utc) + timedelta(
-            hours=self.workspace_token_expire_hours
+        return self._create_purpose_token(
+            workspace_id, "workspace", self.workspace_token_expire_hours
         )
-        payload = {"sub": workspace_id, "purpose": "workspace", "exp": expire}
-        return jwt.encode(payload, self.secret, algorithm=self.algorithm)
 
     def decode_workspace_token(self, token: str) -> str | None:
         """Decode a workspace token.

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+from collections.abc import Callable
 
 import httpx
 
@@ -157,6 +158,47 @@ def render_form_list(
         ol.add_option(Option(Text(fmt(item)), id=f"{id_prefix}{i}"))
 
 
+async def open_edit_screen(screen, state, workspace, on_edited) -> None:
+    """Load image/autostart metadata off-thread and open the edit form.
+
+    Shared by the workspace-list (main) and workspace-detail screens.
+    An image-listing failure degrades to empty defaults (the form's
+    image field then accepts free text); an autostart failure leaves it
+    disabled; ``AuthError`` ends the session via ``session_expired``.
+    """
+    try:
+        data = await asyncio.to_thread(state.list_images)
+        default = data.get("default", "") or ""
+        allowed = list(data.get("allowed") or [])
+        nix_available = data.get("nix_available") is True
+        sudo_available = data.get("sudo_available") is True
+    except AuthError:
+        screen.app.session_expired()
+        return
+    except Exception:
+        default, allowed = "", []
+        nix_available = False
+        sudo_available = False
+    try:
+        allow_autostart = await asyncio.to_thread(state.allow_autostart)
+    except AuthError:
+        screen.app.session_expired()
+        return
+    except Exception:
+        allow_autostart = False
+    screen.app.push_screen(
+        EditWorkspaceScreen(
+            workspace=workspace,
+            allowed=allowed,
+            default=default,
+            allow_autostart=allow_autostart,
+            nix_available=nix_available,
+            sudo_available=sudo_available,
+        ),
+        on_edited,
+    )
+
+
 class WorkspaceFormMixin:
     """Shared body of the create/edit workspace form screens: the four list
     renderers (same widget ids + backing attributes) and the tab strip's
@@ -221,6 +263,88 @@ class WorkspaceFormMixin:
         render_form_list(
             self, "#reject_list", self._rejected_domains, str, "(none)", "r"
         )
+
+    # --- shared string-list editor actions (mounts / allowed /
+    # rejected domains); the env editor stays bespoke (dict-keyed,
+    # #1778 in-place edits track a key rather than an index) ---
+
+    def _add_list_entry(
+        self,
+        input_id: str,
+        entries: list[str],
+        validate: Callable[[str], str | None],
+        render: Callable[[], None],
+        *,
+        dedupe: bool = False,
+        editing_attr: str | None = None,
+    ) -> None:
+        """Add the input's value to *entries*, then re-render.
+
+        With *editing_attr* naming an in-place-edit index attribute
+        (EditWorkspaceScreen, #1778), a valid index updates that entry in
+        place instead of appending. *dedupe* skips the append when the
+        value is already present.
+        """
+        inp = self.query_one(input_id, Input)
+        v = inp.value.strip()
+        if not v:
+            return
+        err = validate(v)
+        if err:
+            self._msg(err, error=True)
+            return
+        idx = getattr(self, editing_attr) if editing_attr else None
+        replacing = idx is not None and 0 <= idx < len(entries)
+        if replacing:
+            entries[idx] = v
+        elif not dedupe or v not in entries:
+            entries.append(v)
+        if replacing and editing_attr:
+            setattr(self, editing_attr, None)
+        inp.value = ""
+        self._msg("")
+        render()
+
+    def _remove_list_entry(
+        self,
+        option_list_id: str,
+        entries: list[str],
+        render: Callable[[], None],
+        editing_attr: str | None = None,
+    ) -> None:
+        """Delete the highlighted entry from *entries*, then re-render.
+
+        Clears the in-place-edit index (*editing_attr*) so a pending edit
+        does not retarget the shifted indices.
+        """
+        ol = self.query_one(option_list_id, OptionList)
+        idx = ol.highlighted
+        if idx is None or not 0 <= idx < len(entries):
+            return
+        del entries[idx]
+        if editing_attr:
+            setattr(self, editing_attr, None)
+        render()
+
+    def _edit_list_entry(
+        self,
+        option_list_id: str,
+        input_id: str,
+        entries: list[str],
+        editing_attr: str,
+        label: str,
+    ) -> None:
+        """Load the highlighted entry into the input for in-place editing
+        (#1778). *label* names the entry kind in the status message."""
+        ol = self.query_one(option_list_id, OptionList)
+        idx = ol.highlighted
+        if idx is None or not 0 <= idx < len(entries):
+            return
+        setattr(self, editing_attr, idx)
+        inp = self.query_one(input_id, Input)
+        inp.value = entries[idx]
+        inp.focus()
+        self._msg(f"Editing {label} — press Add to update.")
 
     def _active_tab(self) -> str:
         """The id of the currently active form tab pane."""
@@ -559,26 +683,17 @@ class CreateWorkspaceScreen(WorkspaceFormMixin, TabSkipMixin, StatusScreen):
     # --- mounts list editor ---
 
     def _add_mount(self) -> None:
-        inp = self.query_one("#mount_input", Input)
-        v = inp.value.strip()
-        if not v:
-            return
-        err = validate_mount_spec(v)
-        if err:
-            self._msg(err, error=True)
-            return
-        self._mounts.append(v)
-        inp.value = ""
-        self._msg("")
-        self._render_mounts()
+        self._add_list_entry(
+            "#mount_input",
+            self._mounts,
+            validate_mount_spec,
+            self._render_mounts,
+        )
 
     def _remove_mount(self) -> None:
-        ol = self.query_one("#mount_list", OptionList)
-        idx = ol.highlighted
-        if idx is None or not 0 <= idx < len(self._mounts):
-            return
-        del self._mounts[idx]
-        self._render_mounts()
+        self._remove_list_entry(
+            "#mount_list", self._mounts, self._render_mounts
+        )
 
     # --- env list editor ---
 
@@ -609,53 +724,37 @@ class CreateWorkspaceScreen(WorkspaceFormMixin, TabSkipMixin, StatusScreen):
     # --- allowed-domains list editor (#1745) ---
 
     def _add_allowed_domain(self) -> None:
-        inp = self.query_one("#allow_input", Input)
-        v = inp.value.strip()
-        if not v:
-            return
-        err = validate_allowed_domain_spec(v)
-        if err:
-            self._msg(err, error=True)
-            return
-        if v not in self._allowed_domains:
-            self._allowed_domains.append(v)
-        inp.value = ""
-        self._msg("")
-        self._render_allowed_domains()
+        self._add_list_entry(
+            "#allow_input",
+            self._allowed_domains,
+            validate_allowed_domain_spec,
+            self._render_allowed_domains,
+            dedupe=True,
+        )
 
     def _remove_allowed_domain(self) -> None:
-        ol = self.query_one("#allow_list", OptionList)
-        idx = ol.highlighted
-        if idx is None or not 0 <= idx < len(self._allowed_domains):
-            return
-        del self._allowed_domains[idx]
-        self._render_allowed_domains()
+        self._remove_list_entry(
+            "#allow_list", self._allowed_domains, self._render_allowed_domains
+        )
 
     # --- rejected-domains list editor (#2386, mirrors allowed-domains) ---
 
     def _add_rejected_domain(self) -> None:
-        inp = self.query_one("#reject_input", Input)
-        v = inp.value.strip()
-        if not v:
-            return
         # CIDR is meaningless for a name-level NXDOMAIN deny-list (#2367).
-        err = validate_allowed_domain_spec(v, allow_cidr=False)
-        if err:
-            self._msg(err, error=True)
-            return
-        if v not in self._rejected_domains:
-            self._rejected_domains.append(v)
-        inp.value = ""
-        self._msg("")
-        self._render_rejected_domains()
+        self._add_list_entry(
+            "#reject_input",
+            self._rejected_domains,
+            lambda spec: validate_allowed_domain_spec(spec, allow_cidr=False),
+            self._render_rejected_domains,
+            dedupe=True,
+        )
 
     def _remove_rejected_domain(self) -> None:
-        ol = self.query_one("#reject_list", OptionList)
-        idx = ol.highlighted
-        if idx is None or not 0 <= idx < len(self._rejected_domains):
-            return
-        del self._rejected_domains[idx]
-        self._render_rejected_domains()
+        self._remove_list_entry(
+            "#reject_list",
+            self._rejected_domains,
+            self._render_rejected_domains,
+        )
 
     # --- tab + keyboard navigation (#1891) ---
 
@@ -1210,32 +1309,21 @@ class EditWorkspaceScreen(WorkspaceFormMixin, TabSkipMixin, StatusScreen):
     # --- list editors: add / remove / in-place edit (#1778) ---
 
     def _add_mount(self) -> None:
-        inp = self.query_one("#mount_input", Input)
-        v = inp.value.strip()
-        if not v:
-            return
-        err = validate_mount_spec(v)
-        if err:
-            self._msg(err, error=True)
-            return
-        idx = self._editing_mount
-        if idx is not None and 0 <= idx < len(self._mounts):
-            self._mounts[idx] = v
-            self._editing_mount = None
-        else:
-            self._mounts.append(v)
-        inp.value = ""
-        self._msg("")
-        self._render_mounts()
+        self._add_list_entry(
+            "#mount_input",
+            self._mounts,
+            validate_mount_spec,
+            self._render_mounts,
+            editing_attr="_editing_mount",
+        )
 
     def _remove_mount(self) -> None:
-        ol = self.query_one("#mount_list", OptionList)
-        idx = ol.highlighted
-        if idx is None or not 0 <= idx < len(self._mounts):
-            return
-        del self._mounts[idx]
-        self._editing_mount = None
-        self._render_mounts()
+        self._remove_list_entry(
+            "#mount_list",
+            self._mounts,
+            self._render_mounts,
+            editing_attr="_editing_mount",
+        )
 
     def _add_env(self) -> None:
         inp = self.query_one("#env_input", Input)
@@ -1267,45 +1355,33 @@ class EditWorkspaceScreen(WorkspaceFormMixin, TabSkipMixin, StatusScreen):
         self._render_env()
 
     def _add_allowed_domain(self) -> None:
-        inp = self.query_one("#allow_input", Input)
-        v = inp.value.strip()
-        if not v:
-            return
-        err = validate_allowed_domain_spec(v)
-        if err:
-            self._msg(err, error=True)
-            return
-        idx = self._editing_allow
-        if idx is not None and 0 <= idx < len(self._allowed_domains):
-            self._allowed_domains[idx] = v
-            self._editing_allow = None
-        elif v not in self._allowed_domains:
-            self._allowed_domains.append(v)
-        inp.value = ""
-        self._msg("")
-        self._render_allowed_domains()
+        self._add_list_entry(
+            "#allow_input",
+            self._allowed_domains,
+            validate_allowed_domain_spec,
+            self._render_allowed_domains,
+            dedupe=True,
+            editing_attr="_editing_allow",
+        )
 
     def _remove_allowed_domain(self) -> None:
-        ol = self.query_one("#allow_list", OptionList)
-        idx = ol.highlighted
-        if idx is None or not 0 <= idx < len(self._allowed_domains):
-            return
-        del self._allowed_domains[idx]
-        self._editing_allow = None
-        self._render_allowed_domains()
+        self._remove_list_entry(
+            "#allow_list",
+            self._allowed_domains,
+            self._render_allowed_domains,
+            editing_attr="_editing_allow",
+        )
 
     # --- in-place edit: load the highlighted item into the input (#1778) ---
 
     def _edit_mount(self) -> None:
-        ol = self.query_one("#mount_list", OptionList)
-        idx = ol.highlighted
-        if idx is None or not 0 <= idx < len(self._mounts):
-            return
-        self._editing_mount = idx
-        inp = self.query_one("#mount_input", Input)
-        inp.value = self._mounts[idx]
-        inp.focus()
-        self._msg("Editing mount — press Add to update.")
+        self._edit_list_entry(
+            "#mount_list",
+            "#mount_input",
+            self._mounts,
+            "_editing_mount",
+            "mount",
+        )
 
     def _edit_env(self) -> None:
         ol = self.query_one("#env_list", OptionList)
@@ -1321,57 +1397,43 @@ class EditWorkspaceScreen(WorkspaceFormMixin, TabSkipMixin, StatusScreen):
         self._msg("Editing env var — press Add to update.")
 
     def _edit_allowed_domain(self) -> None:
-        ol = self.query_one("#allow_list", OptionList)
-        idx = ol.highlighted
-        if idx is None or not 0 <= idx < len(self._allowed_domains):
-            return
-        self._editing_allow = idx
-        inp = self.query_one("#allow_input", Input)
-        inp.value = self._allowed_domains[idx]
-        inp.focus()
-        self._msg("Editing allowed-domain — press Add to update.")
+        self._edit_list_entry(
+            "#allow_list",
+            "#allow_input",
+            self._allowed_domains,
+            "_editing_allow",
+            "allowed-domain",
+        )
 
     # --- rejected-domains list editor (#2386, mirrors allowed-domains) ---
 
     def _add_rejected_domain(self) -> None:
-        inp = self.query_one("#reject_input", Input)
-        v = inp.value.strip()
-        if not v:
-            return
         # CIDR is meaningless for a name-level NXDOMAIN deny-list (#2367).
-        err = validate_allowed_domain_spec(v, allow_cidr=False)
-        if err:
-            self._msg(err, error=True)
-            return
-        idx = self._editing_reject
-        if idx is not None and 0 <= idx < len(self._rejected_domains):
-            self._rejected_domains[idx] = v
-            self._editing_reject = None
-        elif v not in self._rejected_domains:
-            self._rejected_domains.append(v)
-        inp.value = ""
-        self._msg("")
-        self._render_rejected_domains()
+        self._add_list_entry(
+            "#reject_input",
+            self._rejected_domains,
+            lambda spec: validate_allowed_domain_spec(spec, allow_cidr=False),
+            self._render_rejected_domains,
+            dedupe=True,
+            editing_attr="_editing_reject",
+        )
 
     def _remove_rejected_domain(self) -> None:
-        ol = self.query_one("#reject_list", OptionList)
-        idx = ol.highlighted
-        if idx is None or not 0 <= idx < len(self._rejected_domains):
-            return
-        del self._rejected_domains[idx]
-        self._editing_reject = None
-        self._render_rejected_domains()
+        self._remove_list_entry(
+            "#reject_list",
+            self._rejected_domains,
+            self._render_rejected_domains,
+            editing_attr="_editing_reject",
+        )
 
     def _edit_rejected_domain(self) -> None:
-        ol = self.query_one("#reject_list", OptionList)
-        idx = ol.highlighted
-        if idx is None or not 0 <= idx < len(self._rejected_domains):
-            return
-        self._editing_reject = idx
-        inp = self.query_one("#reject_input", Input)
-        inp.value = self._rejected_domains[idx]
-        inp.focus()
-        self._msg("Editing rejected-domain — press Add to update.")
+        self._edit_list_entry(
+            "#reject_list",
+            "#reject_input",
+            self._rejected_domains,
+            "_editing_reject",
+            "rejected-domain",
+        )
 
     # --- tab + keyboard navigation (#1891) ---
 

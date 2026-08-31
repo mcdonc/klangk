@@ -226,38 +226,3 @@ def images() -> None:
     for img in data["allowed"]:
         prefix = "*" if img == data["default"] else " "
         console.print(f"  {prefix} {img}")
-
-
-vol_app = typer.Typer(
-    name="volumes",
-    help="Manage container volumes for workspaces.",
-    rich_markup_mode="rich",
-)
-context.app.add_typer(vol_app, name="volumes")
-
-
-# --- Admin commands (site-wide admin privilege required) ---
-# Grouped under `admin` to separate site-wide management (users,
-# invitations, access control) from workspace-scoped commands. Every
-# command here hits an endpoint gated by the admin ACL permission
-# (acl.has_permission("admin")), so non-admins get a clear 403.
-admin_app = typer.Typer(
-    name="admin",
-    help="Site-wide administration (requires admin privileges).",
-    rich_markup_mode="rich",
-)
-context.app.add_typer(admin_app, name="admin")
-
-# Nested noun subgroups, matching the existing `volumes`/`terminal`
-# precedent so `admin --help` stays scannable as `admin <noun> <verb>`.
-admin_users_app = typer.Typer(
-    name="users", help="Manage user accounts.", rich_markup_mode="rich"
-)
-admin_app.add_typer(admin_users_app, name="users")
-
-admin_invitations_app = typer.Typer(
-    name="invitations",
-    help="Manage user invitations.",
-    rich_markup_mode="rich",
-)
-admin_app.add_typer(admin_invitations_app, name="invitations")

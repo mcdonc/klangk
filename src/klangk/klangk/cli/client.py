@@ -652,11 +652,15 @@ class KlangkClient:
             )
         self._raise_for_status(resp)
 
-    def restart_workspace(self, name: str) -> None:
-        ws = self.resolve_workspace(name)
-        resp = self.post(f"/api/v1/workspaces/{ws.id}/restart")
+    def _post_workspace_action(self, workspace_id: str, action: str) -> None:
+        """POST /api/v1/workspaces/{id}/{action} (start/stop/restart)."""
+        resp = self.post(f"/api/v1/workspaces/{workspace_id}/{action}")
         self.check_auth(resp)
         self._raise_for_status(resp)
+
+    def restart_workspace(self, name: str) -> None:
+        ws = self.resolve_workspace(name)
+        self._post_workspace_action(ws.id, "restart")
 
     def restart_workspace_by_id(self, workspace_id: str) -> None:
         """Restart a workspace container by id.
@@ -664,15 +668,11 @@ class KlangkClient:
         Id-based counterpart to :meth:`restart_workspace` for callers (the
         sandbox driver) that already hold the workspace id.
         """
-        resp = self.post(f"/api/v1/workspaces/{workspace_id}/restart")
-        self.check_auth(resp)
-        self._raise_for_status(resp)
+        self._post_workspace_action(workspace_id, "restart")
 
     def stop_workspace(self, name: str) -> None:
         ws = self.resolve_workspace(name)
-        resp = self.post(f"/api/v1/workspaces/{ws.id}/stop")
-        self.check_auth(resp)
-        self._raise_for_status(resp)
+        self._post_workspace_action(ws.id, "stop")
 
     def stop_workspace_by_id(self, workspace_id: str) -> None:
         """Stop a running workspace container by id.
@@ -681,15 +681,11 @@ class KlangkClient:
         sandbox driver) that already hold the workspace id and want to
         skip the name→id resolution round-trip.
         """
-        resp = self.post(f"/api/v1/workspaces/{workspace_id}/stop")
-        self.check_auth(resp)
-        self._raise_for_status(resp)
+        self._post_workspace_action(workspace_id, "stop")
 
     def start_workspace(self, name: str) -> None:
         ws = self.resolve_workspace(name)
-        resp = self.post(f"/api/v1/workspaces/{ws.id}/start")
-        self.check_auth(resp)
-        self._raise_for_status(resp)
+        self._post_workspace_action(ws.id, "start")
 
     def duplicate_workspace(self, name: str, new_name: str) -> dict:
         ws = self.resolve_workspace(name)

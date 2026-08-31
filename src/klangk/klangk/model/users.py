@@ -493,12 +493,12 @@ class UsersModel:
                 "source": source,
             }
 
-    async def get_group_by_name(self, name: str) -> dict | None:
-        """Find a group by name."""
+    async def _get_group_by(self, where: str, value: str) -> dict | None:
+        """Fetch one group row matching *where* and map it to a dict."""
         row = await self.app.state.db.fetchone(
             "SELECT id, name, description, source, created_at"
-            " FROM groups WHERE name = ?",
-            (name,),
+            f" FROM groups WHERE {where}",
+            (value,),
         )
         if row is None:
             return None
@@ -510,22 +510,13 @@ class UsersModel:
             "created_at": row["created_at"],
         }
 
+    async def get_group_by_name(self, name: str) -> dict | None:
+        """Find a group by name."""
+        return await self._get_group_by("name = ?", name)
+
     async def get_group_by_id(self, group_id: str) -> dict | None:
         """Find a group by ID."""
-        row = await self.app.state.db.fetchone(
-            "SELECT id, name, description, source, created_at"
-            " FROM groups WHERE id = ?",
-            (group_id,),
-        )
-        if row is None:
-            return None
-        return {
-            "id": row["id"],
-            "name": row["name"],
-            "description": row["description"],
-            "source": row["source"],
-            "created_at": row["created_at"],
-        }
+        return await self._get_group_by("id = ?", group_id)
 
     async def list_groups(
         self,

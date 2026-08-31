@@ -39,7 +39,10 @@ from typing import Any, Callable
 from .container import ContainerRegistry
 from .exceptions import ConfigurationError
 from .model import EGRESS_MODES, SETUP_STATES
-from .model.workspaces import normalize_classification_banner
+from .model.workspaces import (
+    UPDATABLE_WORKSPACE_FIELDS,
+    normalize_classification_banner,
+)
 from .netfilter import parse_allowed_domains
 from .workspace_settings import validate_nix_optin, validate_settings
 
@@ -54,25 +57,10 @@ logger = logging.getLogger(__name__)
 # ``create_workspace_with_acl``. Keys outside this set (id, user_id,
 # container_id, num_ports, created_at) are not persisted — they are
 # provisioned, not declarative. Deleting a mutable key from the handle
-# clears the column (``del workspace["env"]`` persists NULL).
-_HOOK_MUTABLE_FIELDS = frozenset(
-    {
-        "name",
-        "image",
-        "service_command",
-        "auto_start",
-        "setup_state",
-        "health_check",
-        "mounts",
-        "env",
-        "allowed_domains",
-        "rejected_domains",
-        "settings",
-        "egress_mode",
-        "per_handle_home",
-        "classification_banner",
-    }
-)
+# clears the column (``del workspace["env"]`` persists NULL). Shared
+# constant (model.workspaces owns it — the same set gates
+# ``update_workspace``).
+_HOOK_MUTABLE_FIELDS = UPDATABLE_WORKSPACE_FIELDS
 
 
 def _parse_hook_value(raw: str) -> tuple[str, str]:
