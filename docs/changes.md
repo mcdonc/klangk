@@ -305,6 +305,16 @@ sync` report a clear permission-denied error.
 
 ### Added
 
+- **Container lifecycle audit trail (#2915).** Every workspace
+  container start/stop is now recorded in a new `container_events`
+  table with the acting principal (user, agent, or system), the cause
+  (api/create/ws_connect/auto_start/crash_restart/stop/restart/delete/
+  idle_timeout/eviction/logout/drain/shutdown), the podman container
+  id, and — for egress-filtered workspaces — the network sidecar
+  container whose netns the workspace shares. Recording is
+  best-effort and never fails the start/stop itself; rows accumulate
+  under `data_dir`'s SQLite DB (retention is a follow-up).
+
 - **Super-E2E suite (#2561).** A new pytest suite
   (`src/klangk/klangkd-tests/super-e2e/`, run via `test-super-e2e`)
   exercises the real Docker host container (supervisord + klangkd +

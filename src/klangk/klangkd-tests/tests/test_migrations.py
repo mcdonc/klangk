@@ -70,6 +70,7 @@ class TestRunner:
             (16, "0016_monitor_permission"),
             (17, "0017_change_acls_permission"),
             (18, "0018_egress_consent_permission"),
+            (19, "0019_container_events"),
         ]
         async with aiosqlite.connect(str(app_state.state.db.db_path)) as db:
             assert await _recorded(db) == expected
@@ -154,6 +155,7 @@ class TestRunner:
                 (16, "0016_monitor_permission"),
                 (17, "0017_change_acls_permission"),
                 (18, "0018_egress_consent_permission"),
+                (19, "0019_container_events"),
             ]
 
     async def test_m0008_agent_identity_and_human_collision(

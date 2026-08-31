@@ -1,0 +1,144 @@
+"""Container lifecycle audit events (#2915).
+
+Every container start and stop is recorded with the acting principal
+(the user / agent who fired it, or ``system`` for autonomous causes
+like idle timeouts, evictions, drains, and the boot auto-start) plus
+the identifiers an operator needs to correlate the event with podman:
+the workspace container id and, for egress-filtered workspaces, the
+network sidecar container whose netns the workspace shares.
+
+Recording is best-effort: an audit write failure is logged and never
+fails the start/stop path it annotates (see
+``ContainerRegistry.record_container_event``).
+
+Retention/bounding (like the egress-consent table) is deliberately not
+implemented here — tracked as a follow-up in #2915. An admin-facing
+paged view is tracked separately.
+"""
+
+import logging
+import time
+
+from .users import AGENT_USER_ID
+
+logger = logging.getLogger(__name__)
+
+# Event kinds.
+EVENT_START = "start"
+EVENT_STOP = "stop"
+
+# Actor classification, derived from ``actor_id`` at record time:
+# the fixed system-agent identity is its own class; a missing actor is
+# an autonomous (system) cause.
+ACTOR_USER = "user"
+ACTOR_AGENT = "agent"
+ACTOR_SYSTEM = "system"
+
+# Canonical causes. Start causes:
+CAUSE_API = "api"  # POST /start (or the start half of /restart)
+CAUSE_CREATE = "create"  # eager start at workspace create (auto_start body)
+CAUSE_WS_CONNECT = "ws_connect"  # first WS connection started the container
+CAUSE_AUTO_START = "auto_start"  # boot-time auto_start_workspaces sweep
+CAUSE_CRASH_RESTART = "crash_restart"  # crash monitor's delayed restart
+# Stop causes:
+CAUSE_STOP = "stop"  # POST /stop
+CAUSE_RESTART = "restart"  # the stop half of POST /restart
+CAUSE_DELETE = "delete"  # workspace deletion cascade
+CAUSE_IDLE_TIMEOUT = "idle_timeout"  # inactivity stop (container/idle.py)
+CAUSE_EVICTION = "eviction"  # memory-pressure eviction (container/eviction.py)
+CAUSE_LOGOUT = "logout"  # owner logged out (stop_user_containers)
+CAUSE_CRASH_TEARDOWN = "crash_teardown"  # crash monitor removing a corpse
+CAUSE_DRAIN = "drain"  # graceful-restart / scheduled drain
+CAUSE_SHUTDOWN = "shutdown"  # klangkd shutdown orphan sweep
+
+# Canonical column list so the read shape cannot drift from the schema
+# (a column added to the table is added here once).
+_EVENT_COLUMNS = (
+    "id, workspace_id, event, actor_type, actor_id, cause,"
+    " container_id, network_namespace, created_at"
+)
+
+
+def actor_type_for(actor_id: str | None) -> str:
+    """Classify an acting principal id into an ``actor_type``."""
+    if actor_id is None:
+        return ACTOR_SYSTEM
+    if actor_id == AGENT_USER_ID:
+        return ACTOR_AGENT
+    return ACTOR_USER
+
+
+def row_to_dict(row) -> dict:
+    """Row-tuple -> dict with the column names of ``_EVENT_COLUMNS``."""
+    keys = [c.strip() for c in _EVENT_COLUMNS.split(",")]
+    return dict(zip(keys, row, strict=True))
+
+
+class ContainerEventsModel:
+    """CRUD for the ``container_events`` table."""
+
+    def __init__(self, app):
+        self.app = app
+
+    def reconfigure(self, app) -> None:
+        self.app = app
+
+    async def record(
+        self,
+        workspace_id: str,
+        event: str,
+        cause: str,
+        *,
+        actor_id: str | None = None,
+        container_id: str | None = None,
+        network_namespace: str | None = None,
+    ) -> None:
+        """Insert one lifecycle event row.
+
+        ``actor_type`` is derived from ``actor_id`` (None -> system,
+        the agent identity -> agent, anything else -> user).
+        """
+        async with self.app.state.db.transaction() as db:
+            await db.execute(
+                "INSERT INTO container_events"
+                " (workspace_id, event, actor_type, actor_id, cause,"
+                "  container_id, network_namespace, created_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    workspace_id,
+                    event,
+                    actor_type_for(actor_id),
+                    actor_id,
+                    cause,
+                    container_id,
+                    network_namespace,
+                    time.time(),
+                ),
+            )
+
+    async def list_events(
+        self,
+        workspace_id: str | None = None,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[dict]:
+        """Newest-first event history, optionally filtered to a workspace."""
+        sql = f"SELECT {_EVENT_COLUMNS} FROM container_events"
+        params: list = []
+        if workspace_id is not None:
+            sql += " WHERE workspace_id = ?"
+            params.append(workspace_id)
+        sql += " ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?"
+        rows = await self.app.state.db.fetchall(sql, (*params, limit, offset))
+        return [row_to_dict(row) for row in rows]
+
+    async def count_events(self, workspace_id: str | None = None) -> int:
+        """Row count for paging, with the same optional workspace filter."""
+        sql = "SELECT COUNT(*) FROM container_events"
+        params: tuple = ()
+        if workspace_id is not None:
+            sql += " WHERE workspace_id = ?"
+            params = (workspace_id,)
+        row = await self.app.state.db.fetchone(sql, params)
+        return row[0] if row else 0

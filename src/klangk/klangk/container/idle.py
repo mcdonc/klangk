@@ -9,6 +9,7 @@ import asyncio
 import logging
 import time
 
+from ..model.container_events import CAUSE_IDLE_TIMEOUT
 from .sidecar import ORPHAN_TOKEN_SWEEP_INTERVAL
 
 logger = logging.getLogger(__name__)
@@ -83,7 +84,9 @@ class IdleMonitor:
                 if state:
                     await self._run_idle_callbacks(state, wid)
                 await registry.notify_workspace_killed(wid, container_id=cid)
-                await registry.stop_and_remove_container(cid)
+                await registry.stop_and_remove_container(
+                    cid, cause=CAUSE_IDLE_TIMEOUT
+                )
 
             # Periodic orphan sidecar-token sweep (#2309): reclaim
             # ws-tokens/<id> files whose workspace row is gone. Piggybacks

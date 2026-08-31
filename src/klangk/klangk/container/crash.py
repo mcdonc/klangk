@@ -34,6 +34,10 @@ import time
 from datetime import datetime, timezone
 
 from .. import podman
+from ..model.container_events import (
+    CAUSE_CRASH_RESTART,
+    CAUSE_CRASH_TEARDOWN,
+)
 from .sidecar import container_ident
 from .spec import resolve_memory_limit
 
@@ -457,7 +461,7 @@ class CrashRecoveryMonitor:
         # Teardown under the expected-stop marker (this stop is on
         # purpose — the restart, if any, is scheduled after it).
         await registry.stop_and_remove_container(
-            container_id, workspace_id=ws_id
+            container_id, workspace_id=ws_id, cause=CAUSE_CRASH_TEARDOWN
         )
         # Post-teardown sync guards (#2524 review): NO await between these
         # checks and either the tracker insert or the create_task inside
@@ -619,7 +623,7 @@ class CrashRecoveryMonitor:
                 return
             try:
                 cid, _status = await self.app.state.workspaces.start_workspace(
-                    ws
+                    ws, cause=CAUSE_CRASH_RESTART
                 )
                 tracker.last_started_at = time.time()
                 tracker.next_attempt_at = None

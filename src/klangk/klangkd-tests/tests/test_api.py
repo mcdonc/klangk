@@ -28,6 +28,11 @@ from klangk import util as util_mod
 from klangk import netfilter as netfilter_mod
 from klangk import oidc as oidc_mod
 from klangk import features as features_mod
+from klangk.model.container_events import (
+    CAUSE_DELETE,
+    CAUSE_RESTART,
+    CAUSE_STOP,
+)
 from _helpers import make_settings
 from klangk.wshandler.session import WebSocketState
 import types
@@ -2689,7 +2694,10 @@ class TestWorkspaceRoutes:
             )
         assert resp.status_code == 200
         mock_rm.assert_awaited_once_with(
-            "fake-container-id", workspace_id=ws_id
+            "fake-container-id",
+            workspace_id=ws_id,
+            cause=CAUSE_DELETE,
+            actor_id=user["id"],
         )
 
     async def test_delete_workspace_cleans_up_groups(
@@ -2809,7 +2817,12 @@ class TestWorkspaceRoutes:
             )
         assert resp.status_code == 200
         assert resp.json()["status"] == "restarted"
-        mock_stop.assert_awaited_once_with("cid-restart", workspace_id=ws_id)
+        mock_stop.assert_awaited_once_with(
+            "cid-restart",
+            workspace_id=ws_id,
+            cause=CAUSE_RESTART,
+            actor_id=user["id"],
+        )
         # #1244: restart re-starts the container (not just stop+remove),
         # so the service command re-fires at the create choke point and
         # the workspace recovers.
@@ -2900,7 +2913,12 @@ class TestWorkspaceRoutes:
         assert resp.status_code == 200
         assert resp.json()["status"] == "stopped"
         mock_killed.assert_awaited_once_with(ws_id, container_id="cid-stop")
-        mock_stop.assert_awaited_once_with("cid-stop", workspace_id=ws_id)
+        mock_stop.assert_awaited_once_with(
+            "cid-stop",
+            workspace_id=ws_id,
+            cause=CAUSE_STOP,
+            actor_id=user["id"],
+        )
         # Re-homed from the retired WS shutdown_container handler: REST /stop
         # broadcasts container_stopped so live viewers show "stopped".
         mock_session.broadcast.assert_called_once()

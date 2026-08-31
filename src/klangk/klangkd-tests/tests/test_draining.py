@@ -178,7 +178,7 @@ class TestDrain:
         self._stub_sweep(app_state)
         stopped = []
 
-        async def fake_stop(cid, workspace_id=None):
+        async def fake_stop(cid, workspace_id=None, cause=None, actor_id=None):
             stopped.append(workspace_id)
             return True
 
@@ -203,7 +203,7 @@ class TestDrain:
         in_flight: list[str] = []
         overlapped: list[str] = []
 
-        async def fake_stop(cid, workspace_id=None):
+        async def fake_stop(cid, workspace_id=None, cause=None, actor_id=None):
             in_flight.append(workspace_id)
             await asyncio.sleep(0.02)
             if len(in_flight) > 1:
@@ -230,7 +230,7 @@ class TestDrain:
         self._track(app_state, registry, 2)
         self._stub_sweep(app_state)
 
-        async def fake_stop(cid, workspace_id=None):
+        async def fake_stop(cid, workspace_id=None, cause=None, actor_id=None):
             return workspace_id == "ws-0"
 
         with (
@@ -249,7 +249,7 @@ class TestDrain:
         self._track(app_state, registry, 2)
         self._stub_sweep(app_state)
 
-        async def fake_stop(cid, workspace_id=None):
+        async def fake_stop(cid, workspace_id=None, cause=None, actor_id=None):
             if workspace_id == "ws-1":
                 raise RuntimeError("podman exploded")
             return True
@@ -280,7 +280,7 @@ class TestDrain:
         )
         swept = []
 
-        async def fake_stop(cid, workspace_id=None):
+        async def fake_stop(cid, workspace_id=None, cause=None, actor_id=None):
             swept.append(cid)
             return True
 
@@ -312,7 +312,7 @@ class TestDrain:
             )
         )
 
-        async def fake_stop(cid, workspace_id=None):
+        async def fake_stop(cid, workspace_id=None, cause=None, actor_id=None):
             return True
 
         with (
@@ -438,7 +438,7 @@ class TestDrain:
 
         registry.on_workspace_killed = on_killed
 
-        async def fake_stop(cid, workspace_id=None):
+        async def fake_stop(cid, workspace_id=None, cause=None, actor_id=None):
             return True
 
         # No patch on notify_workspace_killed — the real wrapper is the

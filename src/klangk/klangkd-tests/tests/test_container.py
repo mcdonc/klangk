@@ -21,6 +21,7 @@ from klangk import (
     util as util_mod,
 )
 from klangk.container.spec import nix_binds
+from klangk.model.container_events import CAUSE_API, CAUSE_DRAIN
 from _helpers import make_settings
 
 
@@ -4431,7 +4432,9 @@ class TestStopContainer:
         lock = self.registry._get_workspace_lock("ws")
 
         with patch_podman(self.registry) as p:
-            await self.registry.stop_and_remove_container("cid")
+            await self.registry.stop_and_remove_container(
+                "cid", cause=CAUSE_API
+            )
         p.remove_container.assert_awaited_once_with("cid")
         assert "ws" not in self.registry.states
         assert "cid" not in self.registry._cid_to_wsid
@@ -4464,7 +4467,9 @@ class TestStopContainer:
             self.registry,
             list_containers=AsyncMock(return_value=[net_sidecar]),
         ) as p:
-            await self.registry.stop_and_remove_container("cid")
+            await self.registry.stop_and_remove_container(
+                "cid", cause=CAUSE_API
+            )
         removes = [c.args[0] for c in p.remove_container.await_args_list]
         assert "cid" in removes  # the workspace container
         # #2286: the sidecar is removed by id (label-based), not by name.
@@ -4500,7 +4505,7 @@ class TestStopContainer:
             list_containers=AsyncMock(return_value=[net_sidecar]),
         ) as p:
             await self.registry.stop_and_remove_container(
-                "cid-from-db", workspace_id=ws_id
+                "cid-from-db", workspace_id=ws_id, cause=CAUSE_API
             )
         removes = [c.args[0] for c in p.remove_container.await_args_list]
         # The workspace container is removed ...
@@ -4523,7 +4528,9 @@ class TestStopContainer:
             assert len(locks) == 3
 
             with patch_podman(self.registry):
-                await self.registry.stop_and_remove_container("alive")
+                await self.registry.stop_and_remove_container(
+                    "alive", cause=CAUSE_API
+                )
 
             # The stopped container's entry and the orphans are gone; the dict
             # is empty because no container remains tracked.
@@ -4541,7 +4548,9 @@ class TestStopContainer:
                 side_effect=podman.PodmanError(404, "gone")
             ),
         ):
-            await self.registry.stop_and_remove_container("cid")
+            await self.registry.stop_and_remove_container(
+                "cid", cause=CAUSE_API
+            )
         # Should still remove from tracking
         assert "ws" not in self.registry.states
         assert "cid" not in self.registry._cid_to_wsid
@@ -4555,7 +4564,9 @@ class TestStopContainer:
         # Tracked + clean remove → True.
         self.registry.track_activity("cid-a", "ws-a")
         with patch_podman(self.registry):
-            ok = await self.registry.stop_and_remove_container("cid-a")
+            ok = await self.registry.stop_and_remove_container(
+                "cid-a", cause=CAUSE_API
+            )
         assert ok is True
 
         # Tracked + podman failure → False.
@@ -4566,7 +4577,9 @@ class TestStopContainer:
                 side_effect=podman.PodmanError(500, "boom")
             ),
         ):
-            ok = await self.registry.stop_and_remove_container("cid-b")
+            ok = await self.registry.stop_and_remove_container(
+                "cid-b", cause=CAUSE_API
+            )
         assert ok is False
 
         # Re-bound by a racing start → the fresh container is left alone;
@@ -4575,7 +4588,7 @@ class TestStopContainer:
         self.registry.track_activity("cid-new", "ws-c")  # re-bind
         with patch_podman(self.registry):
             ok = await self.registry.stop_and_remove_container(
-                "cid-old", workspace_id="ws-c"
+                "cid-old", workspace_id="ws-c", cause=CAUSE_API
             )
         assert ok is False
         # The fresh container's state survived.
@@ -4583,7 +4596,9 @@ class TestStopContainer:
 
         # Untracked container (no workspace) + clean remove → True.
         with patch_podman(self.registry):
-            ok = await self.registry.stop_and_remove_container("cid-x")
+            ok = await self.registry.stop_and_remove_container(
+                "cid-x", cause=CAUSE_API
+            )
         assert ok is True
 
     async def test_stop_serializes_under_workspace_lock(self):
@@ -4598,7 +4613,9 @@ class TestStopContainer:
                 # While the lock is held (as start_container would hold
                 # it), stop must not be able to remove state.
                 task = asyncio.create_task(
-                    self.registry.stop_and_remove_container("cid")
+                    self.registry.stop_and_remove_container(
+                        "cid", cause=CAUSE_API
+                    )
                 )
                 # Yield repeatedly so the stop task has a chance to run;
                 # it should be blocked on the lock.
@@ -4633,7 +4650,9 @@ class TestStopContainer:
                 # Start stop; it runs podman (instant), peeks cid-old->ws,
                 # then blocks on the lock we hold.
                 task = asyncio.create_task(
-                    self.registry.stop_and_remove_container("cid-old")
+                    self.registry.stop_and_remove_container(
+                        "cid-old", cause=CAUSE_API
+                    )
                 )
                 for _ in range(5):
                     await asyncio.sleep(0)
@@ -4676,7 +4695,9 @@ class TestStopContainer:
                 # Start stop; it removes the old workspace container, peeks
                 # cid-old->ws, then blocks on the lock we hold.
                 task = asyncio.create_task(
-                    self.registry.stop_and_remove_container("cid-old")
+                    self.registry.stop_and_remove_container(
+                        "cid-old", cause=CAUSE_API
+                    )
                 )
                 for _ in range(5):
                     await asyncio.sleep(0)
@@ -4706,7 +4727,9 @@ class TestStopContainer:
         lock_before = self.registry._get_workspace_lock("ws")
 
         with patch_podman(self.registry):
-            await self.registry.stop_and_remove_container("cid")
+            await self.registry.stop_and_remove_container(
+                "cid", cause=CAUSE_API
+            )
         assert "ws" in self.registry._workspace_locks
         lock_after = self.registry._get_workspace_lock("ws")
         assert lock_after is lock_before
@@ -4722,7 +4745,9 @@ class TestRemoveContainer:
         lock = self.registry._get_workspace_lock("ws")
 
         with patch_podman(self.registry) as p:
-            await self.registry.stop_and_remove_container("cid")
+            await self.registry.stop_and_remove_container(
+                "cid", cause=CAUSE_API
+            )
         p.remove_container.assert_awaited_once_with("cid")
         assert "ws" not in self.registry.states
         assert "cid" not in self.registry._cid_to_wsid
@@ -4740,7 +4765,9 @@ class TestRemoveContainer:
                 side_effect=podman.PodmanError(404, "gone")
             ),
         ):
-            await self.registry.stop_and_remove_container("cid")
+            await self.registry.stop_and_remove_container(
+                "cid", cause=CAUSE_API
+            )
         assert "ws" not in self.registry.states
         assert "cid" not in self.registry._cid_to_wsid
         # The workspace lock entry is deliberately retained (#1258).
@@ -6863,7 +6890,7 @@ class TestContainerBranchGaps2834:
                 AsyncMock(return_value=[leftover]),
             ):
                 assert await self.registry._sweep_drain_leftovers() == 0
-        stop.assert_awaited_once_with("cid-left")
+        stop.assert_awaited_once_with("cid-left", cause=CAUSE_DRAIN)
 
     # --- health ---
 
@@ -6931,7 +6958,13 @@ class TestContainerBranchGaps2834:
                     )
                     await asyncio.sleep(0.05)
                     self.registry.get_cleanup_wake().set()
-                    await asyncio.sleep(0.05)
+                    # Both reaps must land before the cancel; each now
+                    # carries a container_events audit write (#2915), so
+                    # poll for the second stop instead of a fixed sleep.
+                    for _ in range(200):
+                        if p.remove_container.await_count >= 2:
+                            break
+                        await asyncio.sleep(0.01)
                     task.cancel()
                     try:
                         await task
