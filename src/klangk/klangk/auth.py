@@ -730,9 +730,10 @@ class Auth:
         """Drop the user's activity-throttle stamp (#2914).
 
         Called from the user-delete path so ``activity_stamps`` does not
-        retain ids of deleted users for the process lifetime. A stale
-        stamp only suppresses one throttled ``last_activity_at`` write,
-        so a user deleted mid-interval loses nothing.
+        retain ids of deleted users for the process lifetime. The stamp
+        is a write throttle only — pruning it is hygiene, not a
+        correctness concern (every ``record_activity`` call site drops
+        out on the missing user row anyway).
         """
         self.activity_stamps.pop(user_id, None)
 
