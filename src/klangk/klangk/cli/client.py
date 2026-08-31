@@ -988,6 +988,22 @@ def is_container_ready_event(msg) -> bool:
     )
 
 
+async def recv_json_messages(ws, timeout: float):
+    """Yield decoded server messages until *timeout* elapses overall.
+
+    The shared bounded receive loop of the terminal command paths
+    (#2546): each caller breaks on the frame it needs (and buffers or
+    ignores the rest) while one deadline caps the whole exchange.
+    Raises asyncio.TimeoutError when the deadline passes first."""
+    deadline = asyncio.get_event_loop().time() + timeout
+    while True:
+        remaining = deadline - asyncio.get_event_loop().time()
+        if remaining <= 0:  # pragma: no cover
+            raise asyncio.TimeoutError
+        raw = await asyncio.wait_for(ws.recv(), timeout=remaining)
+        yield json.loads(raw)
+
+
 @asynccontextmanager
 async def workspace_ws(server_spec, token, workspace_id, max_size=None):
     """Connected workspace WebSocket, ready for commands.
@@ -1125,13 +1141,7 @@ async def start_ssh_agent_forward(
     if forward_agent and local_agent_sock and os.path.exists(local_agent_sock):
         await ws.send(json.dumps({"cmd": "ssh_agent_start"}))
         try:
-            deadline = asyncio.get_event_loop().time() + 10
-            while True:
-                remaining = deadline - asyncio.get_event_loop().time()
-                if remaining <= 0:  # pragma: no cover
-                    break
-                raw = await asyncio.wait_for(ws.recv(), timeout=remaining)
-                msg = json.loads(raw)
+            async for msg in recv_json_messages(ws, 10):
                 if msg.get("type") == "ssh_agent_started":
                     ssh_agent_active = True
                     break
@@ -1159,13 +1169,12 @@ async def drain_terminal_startup(
     shared_terminals: list[dict] = []
     buffered_output: list[str] = []
     try:
-        deadline = asyncio.get_event_loop().time() + 30
-        while True:
-            remaining = deadline - asyncio.get_event_loop().time()
-            if remaining <= 0:  # pragma: no cover
-                raise asyncio.TimeoutError
-            raw = await asyncio.wait_for(ws.recv(), timeout=remaining)
-            msg = json.loads(raw)
+        # recv_json_messages only ends by raising (deadline), so the
+        # async-for can never complete normally — break/raise are the
+        # only exits.
+        async for msg in recv_json_messages(  # pragma: no branch
+            ws, 30
+        ):
             if msg.get("type") == "terminal_windows":
                 own_windows = msg.get("windows", [])
                 if not needs_shared:
@@ -1206,14 +1215,11 @@ async def join_shared_terminal(
             }
         )
     )
-    # Wait for terminal_started confirmation
-    deadline = asyncio.get_event_loop().time() + 10
-    while True:
-        remaining = deadline - asyncio.get_event_loop().time()
-        if remaining <= 0:  # pragma: no cover
-            raise asyncio.TimeoutError
-        raw = await asyncio.wait_for(ws.recv(), timeout=remaining)
-        msg = json.loads(raw)
+    # Wait for terminal_started confirmation (the generator only ends
+    # by raising — break/raise are the only exits).
+    async for msg in recv_json_messages(  # pragma: no branch
+        ws, 10
+    ):
         if msg.get("type") == "terminal_started":
             break
         if msg.get("type") == "terminal_output":
@@ -1305,13 +1311,8 @@ async def create_own_window(
             }
         )
     )
-    deadline = asyncio.get_event_loop().time() + 10
-    while True:
-        remaining = deadline - asyncio.get_event_loop().time()
-        if remaining <= 0:  # pragma: no cover
-            raise asyncio.TimeoutError
-        raw = await asyncio.wait_for(ws.recv(), timeout=remaining)
-        msg = json.loads(raw)
+    match: dict | None = None
+    async for msg in recv_json_messages(ws, 10):
         if msg.get("type") == "terminal_windows":
             new_windows = msg.get("windows", [])
             match = next(

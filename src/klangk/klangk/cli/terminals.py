@@ -240,48 +240,12 @@ def share_terminal(
     ),
 ) -> None:
     """Share a terminal with other workspace members."""
-    ws, sspec, token = _resolve_workspace_and_url(workspace)
-    max_size = context.ws_max_size()
-
-    async def _share() -> None:
-        async with workspace_ws(
-            sspec, token, ws.id, max_size=max_size
-        ) as conn:
-            await conn.send(json.dumps({"cmd": "ui_ready"}))
-
-            # Wait for container_ready
-            await recv_until_event(conn, 60)
-
-            # Start terminal to get window list
-            cols, rows = get_terminal_size()
-            await conn.send(
-                json.dumps(
-                    {"cmd": "terminal_start", "cols": cols, "rows": rows}
-                )
-            )
-            msg = await recv_until(conn, frame_is("terminal_windows"), 30)
-            own_windows: list[dict] = msg.get("windows", [])
-            match, err = _resolve_own_window(own_windows, terminal)
-            if err is not None:
-                context._err.print(f"[red]{err}[/red]")
-                raise typer.Exit(code=1)
-
-            await conn.send(
-                json.dumps({"cmd": "share_window", "window_id": match["id"]})
-            )
-            # Wait for shared_terminals confirmation
-            await recv_until(
-                conn, frame_is("shared_terminals"), CONFIRM_TIMEOUT
-            )
-            context._err.print(
-                f"[green]Terminal '{terminal}' is now shared[/green]"
-            )
-
-            await send_ignore_closed(
-                conn, json.dumps({"cmd": "terminal_stop"})
-            )
-
-    context.run_ws_command(_share)
+    _set_terminal_shared(
+        workspace,
+        terminal,
+        cmd="share_window",
+        done_msg=f"Terminal '{terminal}' is now shared",
+    )
 
 
 @terminal_app.command("unshare")
@@ -292,10 +256,28 @@ def unshare_terminal(
     ),
 ) -> None:
     """Stop sharing a terminal."""
+    _set_terminal_shared(
+        workspace,
+        terminal,
+        cmd="unshare_window",
+        done_msg=f"Terminal '{terminal}' is no longer shared",
+    )
+
+
+def _set_terminal_shared(
+    workspace: str, terminal: str, *, cmd: str, done_msg: str
+) -> None:
+    """Shared body of ``klangk terminal share`` / ``unshare``.
+
+    Connects, starts a scratch terminal to enumerate the own-window
+    list, resolves *terminal* to one window, sends *cmd* (``share_window``
+    or ``unshare_window``) for it, waits for the refreshed
+    shared-terminals list, then stops the scratch terminal.
+    """
     ws, sspec, token = _resolve_workspace_and_url(workspace)
     max_size = context.ws_max_size()
 
-    async def _unshare() -> None:
+    async def run() -> None:
         async with workspace_ws(
             sspec, token, ws.id, max_size=max_size
         ) as conn:
@@ -312,26 +294,20 @@ def unshare_terminal(
                 )
             )
             msg = await recv_until(conn, frame_is("terminal_windows"), 30)
-            own_windows: list[dict] = msg.get("windows", [])
-
-            match, err = _resolve_own_window(own_windows, terminal)
+            match, err = _resolve_own_window(msg.get("windows", []), terminal)
             if err is not None:
                 context._err.print(f"[red]{err}[/red]")
                 raise typer.Exit(code=1)
 
-            await conn.send(
-                json.dumps({"cmd": "unshare_window", "window_id": match["id"]})
-            )
+            await conn.send(json.dumps({"cmd": cmd, "window_id": match["id"]}))
             # Wait for shared_terminals confirmation
             await recv_until(
                 conn, frame_is("shared_terminals"), CONFIRM_TIMEOUT
             )
-            context._err.print(
-                f"[green]Terminal '{terminal}' is no longer shared[/green]"
-            )
+            context._err.print(f"[green]{done_msg}[/green]")
 
             await send_ignore_closed(
                 conn, json.dumps({"cmd": "terminal_stop"})
             )
 
-    context.run_ws_command(_unshare)
+    context.run_ws_command(run)

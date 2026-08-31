@@ -128,6 +128,195 @@ def dispatch_editor_button(screen, bid: str) -> None:
         getattr(screen, handler)()
 
 
+# Enter in an editor input is an Add (mirrors _EDITOR_BUTTON_HANDLERS).
+_EDITOR_INPUT_HANDLERS = {
+    "mount_input": "_add_mount",
+    "env_input": "_add_env",
+    "allow_input": "_add_allowed_domain",
+    "reject_input": "_add_rejected_domain",
+}
+
+
+def compose_general_pane(
+    image_select, *, name="", auto_start=False, nix=False, allow_sudo=True
+) -> ComposeResult:
+    """The General tab: identity + the three deploy-gated toggles.
+
+    Shared by the create and edit forms (#1891, #2904) — the panes build
+    the same widget tree; the seeds differ (create defaults vs the
+    workspace's current values)."""
+    with TabPane("General", id="general_pane"):
+        yield Horizontal(
+            Static("Name"), Input(value=name, id="name"), classes="field-row"
+        )
+        yield Horizontal(Static("Image"), image_select, classes="field-row")
+        yield Checkbox("Auto start", value=auto_start, id="auto_start")
+        yield Checkbox("Mount /nix dir", value=nix, id="nix")
+        yield Checkbox(
+            "Allow sudo (uncheck to lock down)",
+            value=allow_sudo,
+            id="allow_sudo",
+        )
+
+
+def compose_mounts_pane() -> ComposeResult:
+    """The Mounts tab: string-list editor (shared by both forms)."""
+    with TabPane("Mounts", id="mounts_pane"):
+        yield Static(
+            "Mounts  (source:/container/path[:opts])",
+            classes="editor-label",
+        )
+        yield Horizontal(
+            Input(
+                id="mount_input",
+                placeholder="/host/path:/container/path",
+            ),
+            Button("Add", id="add_mount"),
+            Button("Remove", id="rm_mount"),
+        )
+        yield OptionList(id="mount_list", classes="editor-list")
+
+
+def compose_environment_pane() -> ComposeResult:
+    """The Environment tab: KEY=VALUE list editor (shared by both forms)."""
+    with TabPane("Environment", id="env_pane"):
+        yield Static("Environment  (KEY=VALUE)", classes="editor-label")
+        yield Horizontal(
+            Input(id="env_input", placeholder="KEY=VALUE"),
+            Button("Add", id="add_env"),
+            Button("Remove", id="rm_env"),
+        )
+        yield OptionList(id="env_list", classes="editor-list")
+
+
+def compose_netfilter_pane(egress_mode: str) -> ComposeResult:
+    """The Netfilter tab: egress-mode picker + allow/reject editors
+    (shared by both forms)."""
+    with TabPane("Netfilter", id="netfilter_pane"):
+        yield Horizontal(
+            Static("Egress mode"),
+            Select(
+                _EGRESS_MODE_OPTIONS,
+                value=egress_mode,
+                id="egress_mode",
+            ),
+            classes="field-row",
+        )
+        yield Static(
+            "Allowed Domains  (host or host:port; empty = unrestricted)",
+            classes="editor-label",
+        )
+        yield Horizontal(
+            Input(id="allow_input", placeholder="github.com:443"),
+            Button("Add", id="add_allow"),
+            Button("Remove", id="rm_allow"),
+        )
+        yield OptionList(id="allow_list", classes="editor-list")
+        yield Static(
+            "Rejected Domains  "
+            "(host or host:port; NXDOMAIN'd unconditionally)",
+            classes="editor-label",
+        )
+        yield Horizontal(
+            Input(id="reject_input", placeholder="evil.example.com"),
+            Button("Add", id="add_reject"),
+            Button("Remove", id="rm_reject"),
+        )
+        yield OptionList(id="reject_list", classes="editor-list")
+
+
+def compose_resources_pane(seeded: dict[str, str]) -> ComposeResult:
+    """The Resources tab: the five limit inputs (shared by both forms;
+    *seeded* carries the edit form's current values, all-empty on
+    create)."""
+    with TabPane("Resources", id="resources_pane"):
+        yield Horizontal(
+            Static("Idle timeout (s)"),
+            Input(
+                value=seeded["idle_timeout"],
+                id="idle_timeout",
+                placeholder="seconds (0 = never)",
+            ),
+            classes="field-row",
+        )
+        yield Horizontal(
+            Static("CPU limit"),
+            Input(
+                value=seeded["cpu_limit"],
+                id="cpu_limit",
+                placeholder="e.g. 2.0",
+            ),
+            classes="field-row",
+        )
+        yield Horizontal(
+            Static("Memory limit"),
+            Input(
+                value=seeded["memory_limit"],
+                id="memory_limit",
+                placeholder="e.g. 4g, 512m",
+            ),
+            classes="field-row",
+        )
+        yield Horizontal(
+            Static("PIDs limit"),
+            Input(
+                value=seeded["pids_limit"],
+                id="pids_limit",
+                placeholder="e.g. 512",
+            ),
+            classes="field-row",
+        )
+        yield Horizontal(
+            Static("/tmp size"),
+            Input(
+                value=seeded["tmp_size"],
+                id="tmp_size",
+                placeholder="e.g. 2g, 512m",
+            ),
+            classes="field-row",
+        )
+
+
+def compose_advanced_pane(
+    *,
+    per_handle_home: bool,
+    classification_banner: str = "",
+    service_command: str = "",
+    health_check: str = "",
+) -> ComposeResult:
+    """The Advanced tab: home layout, marking, service command, health
+    check (shared by both forms; the seeds differ)."""
+    with TabPane("Advanced", id="advanced_pane"):
+        yield Horizontal(
+            Static("Home layout"),
+            Checkbox(
+                "per-handle (off = shared home)",
+                value=per_handle_home,
+                id="per_handle_home",
+            ),
+            classes="field-row",
+        )
+        yield Horizontal(
+            Static("Marking"),
+            Input(
+                value=classification_banner,
+                id="classification_banner",
+                placeholder=("e.g. CUI (empty = server default)"),
+            ),
+            classes="field-row",
+        )
+        yield Horizontal(
+            Static("Command"),
+            Input(value=service_command, id="command"),
+            classes="field-row",
+        )
+        yield Horizontal(
+            Static("Health"),
+            Input(value=health_check, id="health_check"),
+            classes="field-row",
+        )
+
+
 # Egress-mode picker options for the create/edit Netfilter tab (#2409).
 # The CLI is an isolated client (AGENTS.md "CLI subpackage isolation") and
 # cannot import the server's EGRESS_MODE_* constants, so the mode strings are
@@ -346,6 +535,116 @@ class WorkspaceFormMixin:
         inp.focus()
         self._msg(f"Editing {label} — press Add to update.")
 
+    # --- env (dict-keyed) editor actions, the analogue of the string
+    # list editors above; #1778 in-place edits track a key rather than
+    # an index, so the edit form passes its _editing_env attr ---
+
+    def add_env_entry(self, editing_attr: str | None = None) -> None:
+        """Add the env input's KEY=VALUE to the map, then re-render.
+
+        With *editing_attr* naming an in-place-edit key attribute
+        (EditWorkspaceScreen, #1778), a pending edit of another key is
+        removed first so the update lands under the (possibly renamed)
+        new key."""
+        inp = self.query_one("#env_input", Input)
+        v = inp.value.strip()
+        if not v:
+            return
+        err = validate_env_entry(v)
+        if err:
+            self._msg(err, error=True)
+            return
+        key, _, value = v.partition("=")
+        if editing_attr:
+            old = getattr(self, editing_attr)
+            if old is not None:
+                self._env.pop(old, None)
+                setattr(self, editing_attr, None)
+        self._env[key] = value
+        inp.value = ""
+        self._msg("")
+        self._render_env()
+
+    def remove_env_entry(self, editing_attr: str | None = None) -> None:
+        """Delete the highlighted env key from the map, then re-render.
+
+        Clears a pending in-place edit (*editing_attr*) along with it."""
+        ol = self.query_one("#env_list", OptionList)
+        idx = ol.highlighted
+        keys = list(self._env)
+        if idx is None or not 0 <= idx < len(keys):
+            return
+        del self._env[keys[idx]]
+        if editing_attr:
+            setattr(self, editing_attr, None)
+        self._render_env()
+
+    # --- shared on_mount / event dispatch (create + edit) ---
+
+    def image_select(self) -> Select:
+        """The image picker: preselected when a default is available,
+        blank otherwise (the server applies its default image)."""
+        if self._select_value is not None:
+            return Select(
+                self._select_options, value=self._select_value, id="image"
+            )
+        return Select(self._select_options, id="image")
+
+    def form_on_mount(self) -> None:
+        """Shared on_mount: apply deploy-gated toggle visibility, seed
+        the list editors, and focus Name (General is the entry tab).
+        Screens with extra toggles (create's home-layout default)
+        handle theirs before/after calling this."""
+        shown = self._allow_autostart
+        cb = self.query_one("#auto_start", Checkbox)
+        cb.display = shown
+        cb.disabled = not shown
+        # The nix toggle is shown only when the server has a nix backend
+        # (#2233); otherwise hidden + disabled so Tab skips it.
+        nix_cb = self.query_one("#nix", Checkbox)
+        nix_cb.display = self._nix_available
+        nix_cb.disabled = not self._nix_available
+        # #2017: the sudo toggle is shown only when the deploy allows
+        # sudo; hidden otherwise (the knob could only ever be a no-op).
+        sudo_cb = self.query_one("#allow_sudo", Checkbox)
+        sudo_cb.display = self._sudo_available
+        sudo_cb.disabled = not self._sudo_available
+        self._skip_editors_on_tab()
+        self._render_mounts()
+        self._render_env()
+        self._render_allowed_domains()
+        self._render_rejected_domains()
+        # General tab is active on entry — focus Name so the user can
+        # start typing immediately (the tab strip is one Up away, #1891).
+        self.query_one("#name", Input).focus()
+
+    def handle_form_button(
+        self, event: Button.Pressed, *, submit_id: str, cancel_result, submit
+    ) -> None:
+        """Shared button dispatch: cancel dismisses (with
+        *cancel_result*), the screen's submit button runs *submit*, and
+        anything else falls through to the editor buttons."""
+        bid = event.button.id
+        if bid == "cancel":
+            self.dismiss(cancel_result)
+            return
+        if bid == submit_id:
+            submit()
+            return
+        dispatch_editor_button(self, bid)
+
+    def handle_form_input_submitted(
+        self, event: Input.Submitted, *, submit_ids, submit
+    ) -> None:
+        """Shared Enter dispatch: an editor input Adds its entry; a
+        scalar input in *submit_ids* submits the form."""
+        eid = event.input.id
+        action = _EDITOR_INPUT_HANDLERS.get(eid)
+        if action is not None:
+            getattr(self, action)()
+        elif eid in submit_ids:
+            submit()
+
     def _active_tab(self) -> str:
         """The id of the currently active form tab pane."""
         return self.query_one("#form_tabs", TabbedContent).active
@@ -494,150 +793,18 @@ class CreateWorkspaceScreen(WorkspaceFormMixin, TabSkipMixin, StatusScreen):
         yield from super().compose()
 
     def compose_body(self) -> ComposeResult:
-        if self._select_value is not None:
-            image_select = Select(
-                self._select_options, value=self._select_value, id="image"
-            )
-        else:
-            # No valid default to preselect — leave the picker unselected
-            # (the server applies its default image if none is chosen).
-            image_select = Select(self._select_options, id="image")
         with NonFocusableVerticalScroll(id="create_box"):
             yield Static("New workspace", classes="title")
             yield Static("", id="create_msg")
             with TabbedContent(id="form_tabs"):
-                with TabPane("General", id="general_pane"):
-                    yield Horizontal(
-                        Static("Name"), Input(id="name"), classes="field-row"
-                    )
-                    yield Horizontal(
-                        Static("Image"), image_select, classes="field-row"
-                    )
-                    yield Checkbox("Auto start", id="auto_start")
-                    yield Checkbox("Mount /nix dir", id="nix")
-                    yield Checkbox(
-                        "Allow sudo (uncheck to lock down)",
-                        value=True,
-                        id="allow_sudo",
-                    )
-                with TabPane("Mounts", id="mounts_pane"):
-                    yield Static(
-                        "Mounts  (source:/container/path[:opts])",
-                        classes="editor-label",
-                    )
-                    yield Horizontal(
-                        Input(
-                            id="mount_input",
-                            placeholder="/host/path:/container/path",
-                        ),
-                        Button("Add", id="add_mount"),
-                        Button("Remove", id="rm_mount"),
-                    )
-                    yield OptionList(id="mount_list", classes="editor-list")
-                with TabPane("Environment", id="env_pane"):
-                    yield Static(
-                        "Environment  (KEY=VALUE)", classes="editor-label"
-                    )
-                    yield Horizontal(
-                        Input(id="env_input", placeholder="KEY=VALUE"),
-                        Button("Add", id="add_env"),
-                        Button("Remove", id="rm_env"),
-                    )
-                    yield OptionList(id="env_list", classes="editor-list")
-                with TabPane("Netfilter", id="netfilter_pane"):
-                    yield Horizontal(
-                        Static("Egress mode"),
-                        Select(
-                            _EGRESS_MODE_OPTIONS,
-                            value=EGRESS_MODE_DEFAULT,
-                            id="egress_mode",
-                        ),
-                        classes="field-row",
-                    )
-                    yield Static(
-                        "Allowed Domains  "
-                        "(host or host:port; empty = unrestricted)",
-                        classes="editor-label",
-                    )
-                    yield Horizontal(
-                        Input(id="allow_input", placeholder="github.com:443"),
-                        Button("Add", id="add_allow"),
-                        Button("Remove", id="rm_allow"),
-                    )
-                    yield OptionList(id="allow_list", classes="editor-list")
-                    yield Static(
-                        "Rejected Domains  "
-                        "(host or host:port; NXDOMAIN'd unconditionally)",
-                        classes="editor-label",
-                    )
-                    yield Horizontal(
-                        Input(
-                            id="reject_input", placeholder="evil.example.com"
-                        ),
-                        Button("Add", id="add_reject"),
-                        Button("Remove", id="rm_reject"),
-                    )
-                    yield OptionList(id="reject_list", classes="editor-list")
-                with TabPane("Resources", id="resources_pane"):
-                    yield Horizontal(
-                        Static("Idle timeout (s)"),
-                        Input(
-                            id="idle_timeout",
-                            placeholder="seconds (0 = never)",
-                        ),
-                        classes="field-row",
-                    )
-                    yield Horizontal(
-                        Static("CPU limit"),
-                        Input(id="cpu_limit", placeholder="e.g. 2.0"),
-                        classes="field-row",
-                    )
-                    yield Horizontal(
-                        Static("Memory limit"),
-                        Input(
-                            id="memory_limit",
-                            placeholder="e.g. 4g, 512m",
-                        ),
-                        classes="field-row",
-                    )
-                    yield Horizontal(
-                        Static("PIDs limit"),
-                        Input(id="pids_limit", placeholder="e.g. 512"),
-                        classes="field-row",
-                    )
-                    yield Horizontal(
-                        Static("/tmp size"),
-                        Input(id="tmp_size", placeholder="e.g. 2g, 512m"),
-                        classes="field-row",
-                    )
-                with TabPane("Advanced", id="advanced_pane"):
-                    yield Horizontal(
-                        Static("Home layout"),
-                        Checkbox(
-                            "per-handle (off = shared home)",
-                            value=bool(self._default_per_handle_home),
-                            id="per_handle_home",
-                        ),
-                        classes="field-row",
-                    )
-                    yield Horizontal(
-                        Static("Marking"),
-                        Input(
-                            id="classification_banner",
-                            placeholder=("e.g. CUI (empty = server default)"),
-                        ),
-                        classes="field-row",
-                    )
-                    yield Horizontal(
-                        Static("Command"),
-                        Input(id="command"),
-                        classes="field-row",
-                    )
-                    yield Horizontal(
-                        Static("Health"),
-                        Input(id="health_check"),
-                        classes="field-row",
-                    )
+                yield from compose_general_pane(self.image_select())
+                yield from compose_mounts_pane()
+                yield from compose_environment_pane()
+                yield from compose_netfilter_pane(EGRESS_MODE_DEFAULT)
+                yield from compose_resources_pane(_seeded_setting_values({}))
+                yield from compose_advanced_pane(
+                    per_handle_home=bool(self._default_per_handle_home),
+                )
             yield Horizontal(
                 Button("Cancel", id="cancel"),
                 Button("Create", id="create", variant="primary"),
@@ -645,20 +812,7 @@ class CreateWorkspaceScreen(WorkspaceFormMixin, TabSkipMixin, StatusScreen):
             )
 
     def on_mount(self) -> None:
-        shown = self._allow_autostart
-        cb = self.query_one("#auto_start", Checkbox)
-        cb.display = shown
-        cb.disabled = not shown
-        # The nix toggle is shown only when the server has a nix backend
-        # (#2233); otherwise hidden + disabled so Tab skips it.
-        nix_cb = self.query_one("#nix", Checkbox)
-        nix_cb.display = self._nix_available
-        nix_cb.disabled = not self._nix_available
-        # #2017: the sudo toggle is shown only when the deploy allows sudo;
-        # hidden otherwise (the knob could only ever be a no-op).
-        sudo_cb = self.query_one("#allow_sudo", Checkbox)
-        sudo_cb.display = self._sudo_available
-        sudo_cb.disabled = not self._sudo_available
+        self.form_on_mount()
         # The home-layout toggle is hidden when the deploy default is
         # unknown (fetch failure): an offered choice we can't pre-reflect
         # would pin a possibly-wrong value, so the field is omitted and
@@ -666,14 +820,6 @@ class CreateWorkspaceScreen(WorkspaceFormMixin, TabSkipMixin, StatusScreen):
         phh_cb = self.query_one("#per_handle_home", Checkbox)
         phh_cb.display = self._default_per_handle_home is not None
         phh_cb.disabled = self._default_per_handle_home is None
-        self._skip_editors_on_tab()
-        self._render_mounts()
-        self._render_env()
-        self._render_allowed_domains()
-        self._render_rejected_domains()
-        # General tab is active on entry — focus Name so the user can start
-        # typing immediately (the tab strip is one Up away, #1891).
-        self.query_one("#name", Input).focus()
 
     def _msg(self, text: str, *, error: bool = False) -> None:
         self.query_one("#create_msg", Static).update(
@@ -698,28 +844,10 @@ class CreateWorkspaceScreen(WorkspaceFormMixin, TabSkipMixin, StatusScreen):
     # --- env list editor ---
 
     def _add_env(self) -> None:
-        inp = self.query_one("#env_input", Input)
-        v = inp.value.strip()
-        if not v:
-            return
-        err = validate_env_entry(v)
-        if err:
-            self._msg(err, error=True)
-            return
-        key, _, value = v.partition("=")
-        self._env[key] = value
-        inp.value = ""
-        self._msg("")
-        self._render_env()
+        self.add_env_entry()
 
     def _remove_env(self) -> None:
-        ol = self.query_one("#env_list", OptionList)
-        idx = ol.highlighted
-        keys = list(self._env)
-        if idx is None or not 0 <= idx < len(keys):
-            return
-        del self._env[keys[idx]]
-        self._render_env()
+        self.remove_env_entry()
 
     # --- allowed-domains list editor (#1745) ---
 
@@ -905,37 +1033,29 @@ class CreateWorkspaceScreen(WorkspaceFormMixin, TabSkipMixin, StatusScreen):
     # --- event handlers ---
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        bid = event.button.id
-        if bid == "cancel":
-            self.dismiss(None)
-            return
-        if bid == "create":
-            self._create()
-            return
-        dispatch_editor_button(self, bid)
+        self.handle_form_button(
+            event,
+            submit_id="create",
+            cancel_result=None,
+            submit=self._create,
+        )
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
-        eid = event.input.id
-        if eid == "mount_input":
-            self._add_mount()
-        elif eid == "env_input":
-            self._add_env()
-        elif eid == "allow_input":
-            self._add_allowed_domain()
-        elif eid == "reject_input":
-            self._add_rejected_domain()
-        elif eid in (
-            "name",
-            "command",
-            "health_check",
-            "classification_banner",
-            "idle_timeout",
-            "cpu_limit",
-            "memory_limit",
-            "pids_limit",
-            "tmp_size",
-        ):
-            self._create()
+        self.handle_form_input_submitted(
+            event,
+            submit_ids=(
+                "name",
+                "command",
+                "health_check",
+                "classification_banner",
+                "idle_timeout",
+                "cpu_limit",
+                "memory_limit",
+                "pids_limit",
+                "tmp_size",
+            ),
+            submit=self._create,
+        )
 
 
 def _edit_picker_options(
@@ -1095,183 +1215,35 @@ class EditWorkspaceScreen(WorkspaceFormMixin, TabSkipMixin, StatusScreen):
         yield from super().compose()
 
     def compose_body(self) -> ComposeResult:
-        if self._select_value is not None:
-            image_select = Select(
-                self._select_options, value=self._select_value, id="image"
-            )
-        else:  # pragma: no cover
-            image_select = Select(self._select_options, id="image")
         with NonFocusableVerticalScroll(id="edit_box"):
             yield Static(
                 Text(f"Edit workspace: {self._ws.name}"), classes="title"
             )
             yield Static("", id="edit_msg")
             with TabbedContent(id="form_tabs"):
-                with TabPane("General", id="general_pane"):
-                    yield Horizontal(
-                        Static("Name"),
-                        Input(value=self._ws.name or "", id="name"),
-                        classes="field-row",
-                    )
-                    yield Horizontal(
-                        Static("Image"), image_select, classes="field-row"
-                    )
-                    yield Checkbox(
-                        "Auto start",
-                        value=self._ws.auto_start,
-                        id="auto_start",
-                    )
-                    yield Checkbox(
-                        "Mount /nix dir",
-                        value=bool((self._ws.settings or {}).get("nix")),
-                        id="nix",
-                    )
-                    yield Checkbox(
-                        "Allow sudo (uncheck to lock down)",
-                        value=bool(
-                            (self._ws.settings or {}).get("allow_sudo", True)
-                        ),
-                        id="allow_sudo",
-                    )
-                with TabPane("Mounts", id="mounts_pane"):
-                    yield Static(
-                        "Mounts  (source:/container/path[:opts])",
-                        classes="editor-label",
-                    )
-                    yield Horizontal(
-                        Input(
-                            id="mount_input",
-                            placeholder="/host/path:/container/path",
-                        ),
-                        Button("Add", id="add_mount"),
-                        Button("Remove", id="rm_mount"),
-                    )
-                    yield OptionList(id="mount_list", classes="editor-list")
-                with TabPane("Environment", id="env_pane"):
-                    yield Static(
-                        "Environment  (KEY=VALUE)", classes="editor-label"
-                    )
-                    yield Horizontal(
-                        Input(id="env_input", placeholder="KEY=VALUE"),
-                        Button("Add", id="add_env"),
-                        Button("Remove", id="rm_env"),
-                    )
-                    yield OptionList(id="env_list", classes="editor-list")
-                with TabPane("Netfilter", id="netfilter_pane"):
-                    yield Horizontal(
-                        Static("Egress mode"),
-                        Select(
-                            _EGRESS_MODE_OPTIONS,
-                            value=self._egress_mode,
-                            id="egress_mode",
-                        ),
-                        classes="field-row",
-                    )
-                    yield Static(
-                        "Allowed Domains  "
-                        "(host or host:port; empty = unrestricted)",
-                        classes="editor-label",
-                    )
-                    yield Horizontal(
-                        Input(id="allow_input", placeholder="github.com:443"),
-                        Button("Add", id="add_allow"),
-                        Button("Remove", id="rm_allow"),
-                    )
-                    yield OptionList(id="allow_list", classes="editor-list")
-                    yield Static(
-                        "Rejected Domains  "
-                        "(host or host:port; NXDOMAIN'd unconditionally)",
-                        classes="editor-label",
-                    )
-                    yield Horizontal(
-                        Input(
-                            id="reject_input", placeholder="evil.example.com"
-                        ),
-                        Button("Add", id="add_reject"),
-                        Button("Remove", id="rm_reject"),
-                    )
-                    yield OptionList(id="reject_list", classes="editor-list")
-                with TabPane("Resources", id="resources_pane"):
-                    seeded = _seeded_setting_values(self._ws.settings or {})
-                    yield Horizontal(
-                        Static("Idle timeout (s)"),
-                        Input(
-                            value=seeded["idle_timeout"],
-                            id="idle_timeout",
-                            placeholder="seconds (0 = never)",
-                        ),
-                        classes="field-row",
-                    )
-                    yield Horizontal(
-                        Static("CPU limit"),
-                        Input(
-                            value=seeded["cpu_limit"],
-                            id="cpu_limit",
-                            placeholder="e.g. 2.0",
-                        ),
-                        classes="field-row",
-                    )
-                    yield Horizontal(
-                        Static("Memory limit"),
-                        Input(
-                            value=seeded["memory_limit"],
-                            id="memory_limit",
-                            placeholder="e.g. 4g, 512m",
-                        ),
-                        classes="field-row",
-                    )
-                    yield Horizontal(
-                        Static("PIDs limit"),
-                        Input(
-                            value=seeded["pids_limit"],
-                            id="pids_limit",
-                            placeholder="e.g. 512",
-                        ),
-                        classes="field-row",
-                    )
-                    yield Horizontal(
-                        Static("/tmp size"),
-                        Input(
-                            value=seeded["tmp_size"],
-                            id="tmp_size",
-                            placeholder="e.g. 2g, 512m",
-                        ),
-                        classes="field-row",
-                    )
-                with TabPane("Advanced", id="advanced_pane"):
-                    yield Horizontal(
-                        Static("Home layout"),
-                        Checkbox(
-                            "per-handle (off = shared home)",
-                            value=self._per_handle_home,
-                            id="per_handle_home",
-                        ),
-                        classes="field-row",
-                    )
-                    yield Horizontal(
-                        Static("Marking"),
-                        Input(
-                            value=self._ws.classification_banner or "",
-                            id="classification_banner",
-                            placeholder="e.g. CUI (empty = server default)",
-                        ),
-                        classes="field-row",
-                    )
-                    yield Horizontal(
-                        Static("Command"),
-                        Input(
-                            value=self._ws.service_command or "", id="command"
-                        ),
-                        classes="field-row",
-                    )
-                    yield Horizontal(
-                        Static("Health"),
-                        Input(
-                            value=self._ws.health_check or "",
-                            id="health_check",
-                        ),
-                        classes="field-row",
-                    )
+                yield from compose_general_pane(
+                    self.image_select(),
+                    name=self._ws.name or "",
+                    auto_start=self._ws.auto_start,
+                    nix=bool((self._ws.settings or {}).get("nix")),
+                    allow_sudo=bool(
+                        (self._ws.settings or {}).get("allow_sudo", True)
+                    ),
+                )
+                yield from compose_mounts_pane()
+                yield from compose_environment_pane()
+                yield from compose_netfilter_pane(self._egress_mode)
+                yield from compose_resources_pane(
+                    _seeded_setting_values(self._ws.settings or {})
+                )
+                yield from compose_advanced_pane(
+                    per_handle_home=self._per_handle_home,
+                    classification_banner=(
+                        self._ws.classification_banner or ""
+                    ),
+                    service_command=self._ws.service_command or "",
+                    health_check=self._ws.health_check or "",
+                )
             yield Horizontal(
                 Button("Cancel", id="cancel"),
                 Button("Save", id="save", variant="primary"),
@@ -1279,27 +1251,7 @@ class EditWorkspaceScreen(WorkspaceFormMixin, TabSkipMixin, StatusScreen):
             )
 
     def on_mount(self) -> None:
-        shown = self._allow_autostart
-        cb = self.query_one("#auto_start", Checkbox)
-        cb.display = shown
-        cb.disabled = not shown
-        # The nix toggle is shown only when the server has a nix backend
-        # (#2233); otherwise hidden + disabled so Tab skips it.
-        nix_cb = self.query_one("#nix", Checkbox)
-        nix_cb.display = self._nix_available
-        nix_cb.disabled = not self._nix_available
-        # #2017: the sudo toggle is shown only when the deploy allows sudo.
-        sudo_cb = self.query_one("#allow_sudo", Checkbox)
-        sudo_cb.display = self._sudo_available
-        sudo_cb.disabled = not self._sudo_available
-        self._skip_editors_on_tab()
-        self._render_mounts()
-        self._render_env()
-        self._render_allowed_domains()
-        self._render_rejected_domains()
-        # General tab is active on entry — focus Name so the user can start
-        # typing immediately (the tab strip is one Up away, #1891).
-        self.query_one("#name", Input).focus()
+        self.form_on_mount()
 
     def _msg(self, text: str, *, error: bool = False) -> None:
         self.query_one("#edit_msg", Static).update(
@@ -1326,33 +1278,10 @@ class EditWorkspaceScreen(WorkspaceFormMixin, TabSkipMixin, StatusScreen):
         )
 
     def _add_env(self) -> None:
-        inp = self.query_one("#env_input", Input)
-        v = inp.value.strip()
-        if not v:
-            return
-        err = validate_env_entry(v)
-        if err:
-            self._msg(err, error=True)
-            return
-        key, _, value = v.partition("=")
-        old = self._editing_env
-        if old is not None:
-            self._env.pop(old, None)
-            self._editing_env = None
-        self._env[key] = value
-        inp.value = ""
-        self._msg("")
-        self._render_env()
+        self.add_env_entry(editing_attr="_editing_env")
 
     def _remove_env(self) -> None:
-        ol = self.query_one("#env_list", OptionList)
-        idx = ol.highlighted
-        keys = list(self._env)
-        if idx is None or not 0 <= idx < len(keys):
-            return
-        del self._env[keys[idx]]
-        self._editing_env = None
-        self._render_env()
+        self.remove_env_entry(editing_attr="_editing_env")
 
     def _add_allowed_domain(self) -> None:
         self._add_list_entry(
@@ -1692,36 +1621,28 @@ class EditWorkspaceScreen(WorkspaceFormMixin, TabSkipMixin, StatusScreen):
     # --- event handlers ---
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        bid = event.button.id
-        if bid == "cancel":
-            self.dismiss(False)
-            return
-        if bid == "save":
-            self._save()
-            return
-        dispatch_editor_button(self, bid)
+        self.handle_form_button(
+            event,
+            submit_id="save",
+            cancel_result=False,
+            submit=self._save,
+        )
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
-        eid = event.input.id
-        if eid == "mount_input":
-            self._add_mount()
-        elif eid == "env_input":
-            self._add_env()
-        elif eid == "allow_input":
-            self._add_allowed_domain()
-        elif eid == "reject_input":
-            self._add_rejected_domain()
-        elif eid in (
-            "name",
-            "command",
-            "health_check",
-            "classification_banner",
-            "idle_timeout",
-            "cpu_limit",
-            "memory_limit",
-            "pids_limit",
-        ):
-            self._save()
+        self.handle_form_input_submitted(
+            event,
+            submit_ids=(
+                "name",
+                "command",
+                "health_check",
+                "classification_banner",
+                "idle_timeout",
+                "cpu_limit",
+                "memory_limit",
+                "pids_limit",
+            ),
+            submit=self._save,
+        )
 
 
 # ---------------------------------------------------------------------------

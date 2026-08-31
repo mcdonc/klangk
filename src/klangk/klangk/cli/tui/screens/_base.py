@@ -131,6 +131,20 @@ class ButtonRowModalScreen(ModalScreen[_ScreenResult]):
         value (False for ConfirmScreen; None for Input/Duplicate)."""
         self.dismiss(None)
 
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """OK commits, anything else cancels. Subclasses with other
+        button sets override (ConfirmScreen dismisses by which button
+        it was)."""
+        if event.button.id == "ok":
+            self._commit()
+        elif event.button.id == "cancel":
+            self._dismiss_cancel()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Enter in the input field is an OK."""
+        if event.input.id == self._INPUT:
+            self._commit()
+
 
 def confirm_then(screen, work):
     """A ConfirmScreen callback that runs *work* on *screen*'s worker when
@@ -536,16 +550,6 @@ class DuplicateScreen(ButtonRowModalScreen):
         name = self.query_one("#dup_name", Input).value.strip()
         self.dismiss(name or None)
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "ok":
-            self._commit()
-        elif event.button.id == "cancel":
-            self.dismiss(None)
-
-    def on_input_submitted(self, event: Input.Submitted) -> None:
-        if event.input.id == "dup_name":
-            self._commit()
-
 
 def _human_bytes(n: float) -> str:
     """Format a byte count as e.g. ``"12.3 MB"``."""
@@ -627,16 +631,6 @@ class InputScreen(ButtonRowModalScreen):
     def _commit(self) -> None:
         val = self.query_one("#inp_value", Input).value.strip()
         self.dismiss(val or None)
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "ok":
-            self._commit()
-        elif event.button.id == "cancel":
-            self.dismiss(None)
-
-    def on_input_submitted(self, event: Input.Submitted) -> None:
-        if event.input.id == "inp_value":
-            self._commit()
 
 
 class CheatsheetScreen(ModalScreen):

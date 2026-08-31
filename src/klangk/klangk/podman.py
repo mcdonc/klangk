@@ -161,7 +161,25 @@ class Podman:
         stdin_data: bytes | None = None,
         timeout: float | None = 30.0,
     ) -> tuple[int, str, str]:
-        """Run ``podman <args>`` and return ``(returncode, stdout, stderr)``.
+        """Run ``podman <args>`` and return ``(returncode, stdout, stderr)``
+        (stdout decoded as UTF-8 text).
+
+        See :meth:`run_raw` — this is the text-decoding wrapper over it.
+        """
+        rc, out_bytes, err = await self.run_raw(
+            args, check=check, stdin_data=stdin_data, timeout=timeout
+        )
+        return rc, out_bytes.decode("utf-8", errors="replace"), err
+
+    async def run_raw(
+        self,
+        args: list[str],
+        *,
+        check: bool = True,
+        stdin_data: bytes | None = None,
+        timeout: float | None = 30.0,
+    ) -> tuple[int, bytes, str]:
+        """Like ``run`` but returns raw stdout bytes (for binary data).
 
         Output is captured to temp files rather than ``stdout=PIPE`` +
         ``communicate()``.  Lifecycle commands such as ``podman start`` can
@@ -172,55 +190,6 @@ class Podman:
         On timeout the process is killed and a ``PodmanError(500, ...)`` is
         raised (unless *check* is False, in which case rc=-1 is returned).
         """
-        cmd_label = f"podman {args[0]}" if args else "podman"
-        t0 = time.monotonic()
-        with (
-            tempfile.TemporaryFile() as out_f,
-            tempfile.TemporaryFile() as err_f,
-        ):
-            t1 = time.monotonic()
-            proc = await asyncio.create_subprocess_exec(
-                self._bin,
-                *args,
-                stdin=(
-                    asyncio.subprocess.PIPE if stdin_data is not None else None
-                ),
-                stdout=out_f,
-                stderr=err_f,
-                env=subprocess_env(),
-            )
-            t2 = time.monotonic()
-            if stdin_data is not None:
-                proc.stdin.write(stdin_data)
-                await proc.stdin.drain()
-                proc.stdin.close()
-            timed_out = await self._wait_podman(proc, timeout, cmd_label)
-            t3 = time.monotonic()
-            out_f.seek(0)
-            err_f.seek(0)
-            out = out_f.read().decode("utf-8", errors="replace")
-            err = err_f.read().decode("utf-8", errors="replace")
-        rc, err = self._finish_podman_run(
-            proc,
-            timed_out,
-            err,
-            cmd_label,
-            timeout,
-            args,
-            check,
-            (t0, t1, t2, t3),
-        )
-        return rc, out, err
-
-    async def run_raw(
-        self,
-        args: list[str],
-        *,
-        check: bool = True,
-        stdin_data: bytes | None = None,
-        timeout: float | None = 30.0,
-    ) -> tuple[int, bytes, str]:
-        """Like ``run`` but returns raw stdout bytes (for binary data)."""
         cmd_label = f"podman {args[0]}" if args else "podman"
         t0 = time.monotonic()
         with (

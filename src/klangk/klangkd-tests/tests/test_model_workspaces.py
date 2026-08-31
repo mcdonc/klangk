@@ -164,7 +164,9 @@ async def test_classification_banner_roundtrip(ws, user):
 
 
 async def test_classification_banner_empty_normalizes_to_inherit(ws, user):
-    created = await ws.create_workspace(user["id"], "inherit", "")
+    created = await ws.create_workspace(
+        user["id"], "inherit", classification_banner=""
+    )
     assert created["classification_banner"] is None
     got = await ws.get_workspace_by_id(created["id"])
     assert got["classification_banner"] is None

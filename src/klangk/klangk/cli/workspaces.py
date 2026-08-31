@@ -28,6 +28,16 @@ from .client import KlangkClient  # noqa: F401 (type annotations)
 from .client import WorkspaceNotFoundError
 from . import context
 from .mount import validate_allowed_domain_spec, validate_mount_spec
+from .options import (
+    ALLOW_OPTION,
+    CPU_LIMIT_OPTION,
+    ENV_OPTION,
+    IDLE_TIMEOUT_OPTION,
+    MEMORY_LIMIT_OPTION,
+    MOUNT_OPTION,
+    PIDS_LIMIT_OPTION,
+    REJECT_OPTION,
+)
 
 
 def workspace_status(ws) -> tuple[str, str]:
@@ -234,43 +244,14 @@ def create(
         "-c",
         help="Service shell command (see `klangk edit --command`).",
     ),
-    mount: list[str] | None = typer.Option(
-        None,
-        "--mount",
-        help="Mount, repeatable (e.g. /home/me/src:/work/src, nix-vol:/nix)",
-    ),
-    env: list[str] | None = typer.Option(
-        None,
-        "--env",
-        help="Environment variable, repeatable (e.g. KEY=VALUE)",
-    ),
-    allow: list[str] | None = typer.Option(
-        None,
-        "--allow",
-        help="Allowed egress domain, repeatable (e.g. github.com:443, pypi.org)",
-    ),
-    reject: list[str] | None = typer.Option(
-        None,
-        "--reject",
-        help=(
-            "Rejected egress domain (NXDOMAIN'd), repeatable "
-            "(e.g. evil.example.com). CIDR ranges are not supported."
-        ),
-    ),
-    idle_timeout: int | None = typer.Option(
-        None,
-        "--idle-timeout",
-        help="Idle timeout in seconds (0 = never idle out)",
-    ),
-    cpu_limit: float | None = typer.Option(
-        None, "--cpu-limit", help="CPU limit (e.g. 2.0)"
-    ),
-    memory_limit: str | None = typer.Option(
-        None, "--memory-limit", help="Memory limit (e.g. 4g, 512m)"
-    ),
-    pids_limit: int | None = typer.Option(
-        None, "--pids-limit", help="PIDs limit (e.g. 512)"
-    ),
+    mount: list[str] | None = MOUNT_OPTION,
+    env: list[str] | None = ENV_OPTION,
+    allow: list[str] | None = ALLOW_OPTION,
+    reject: list[str] | None = REJECT_OPTION,
+    idle_timeout: int | None = IDLE_TIMEOUT_OPTION,
+    cpu_limit: float | None = CPU_LIMIT_OPTION,
+    memory_limit: str | None = MEMORY_LIMIT_OPTION,
+    pids_limit: int | None = PIDS_LIMIT_OPTION,
     allow_sudo: bool | None = typer.Option(
         None,
         "--sudo/--no-sudo",

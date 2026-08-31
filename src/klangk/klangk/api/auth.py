@@ -467,6 +467,27 @@ class ChangePasswordRequest(BaseModel):
     new_password: str
 
 
+async def verify_password_confirmation(
+    app, user: dict, password: str, *, incorrect_detail: str
+) -> None:
+    """Re-check the caller's password for a sensitive account change.
+
+    Shared by change-password / change-email / change-handle. OIDC-only
+    users have no password; their credentials are managed by their
+    identity provider and must not crash on a NULL hash.
+    """
+    stored = await app.state.model.users.get_user_by_email(user["email"])
+    if stored is not None and not stored.get("password_hash"):
+        raise HTTPException(
+            status_code=403,
+            detail="Account is managed by your identity provider",
+        )
+    if stored is None or not await asyncio.to_thread(
+        auth.verify_password, password, stored["password_hash"]
+    ):
+        raise HTTPException(status_code=401, detail=incorrect_detail)
+
+
 @router.post("/auth/change-password")
 async def change_password(
     req: ChangePasswordRequest,
@@ -474,24 +495,12 @@ async def change_password(
     user: dict = Depends(auth.get_current_user),
 ):
     """Change password. Requires current password."""
-    stored = await request.app.state.model.users.get_user_by_email(
-        user["email"]
-    )
-    # OIDC-only users have no password; their credentials are managed
-    # by their identity provider and must not crash on a NULL hash.
-    if stored is not None and not stored.get("password_hash"):
-        raise HTTPException(
-            status_code=403,
-            detail="Account is managed by your identity provider",
-        )
-    if stored is None or not await asyncio.to_thread(
-        auth.verify_password,
+    await verify_password_confirmation(
+        request.app,
+        user,
         req.current_password,
-        stored["password_hash"],
-    ):
-        raise HTTPException(
-            status_code=401, detail="Current password is incorrect"
-        )
+        incorrect_detail="Current password is incorrect",
+    )
     request.app.state.auth.validate_password(req.new_password)
     await request.app.state.auth.validate_password_not_reused(
         user["id"], req.new_password
@@ -518,18 +527,9 @@ async def change_email(
     app=Depends(get_app_dep),
 ):
     """Change email. Requires password. Marks account as unverified."""
-    stored = await app.state.model.users.get_user_by_email(user["email"])
-    # OIDC-only users have no password; their credentials are managed
-    # by their identity provider and must not crash on a NULL hash.
-    if stored is not None and not stored.get("password_hash"):
-        raise HTTPException(
-            status_code=403,
-            detail="Account is managed by your identity provider",
-        )
-    if stored is None or not await asyncio.to_thread(
-        auth.verify_password, req.password, stored["password_hash"]
-    ):
-        raise HTTPException(status_code=401, detail="Password is incorrect")
+    await verify_password_confirmation(
+        app, user, req.password, incorrect_detail="Password is incorrect"
+    )
     auth.validate_email(req.email)
     existing = await app.state.model.users.get_user_by_email(req.email)
     if existing is not None and existing["id"] != user["id"]:
@@ -567,18 +567,9 @@ async def change_handle(
     app=Depends(get_app_dep),
 ):
     """Change the current user's handle. Requires password confirmation."""
-    stored = await app.state.model.users.get_user_by_email(user["email"])
-    # OIDC-only users have no password; their credentials are managed
-    # by their identity provider and must not crash on a NULL hash.
-    if stored is not None and not stored.get("password_hash"):
-        raise HTTPException(
-            status_code=403,
-            detail="Account is managed by your identity provider",
-        )
-    if stored is None or not await asyncio.to_thread(
-        auth.verify_password, req.password, stored["password_hash"]
-    ):
-        raise HTTPException(status_code=401, detail="Password is incorrect")
+    await verify_password_confirmation(
+        app, user, req.password, incorrect_detail="Password is incorrect"
+    )
     try:
         await app.state.model.users.set_user_handle(user["id"], req.handle)
     except ValueError as e:
