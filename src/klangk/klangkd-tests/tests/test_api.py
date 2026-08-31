@@ -2640,6 +2640,31 @@ class TestWorkspaceRoutes:
         assert resp.status_code == 200
         assert resp.json()["status"] == "deleted"
 
+    async def test_delete_workspace_prunes_registry_entries(
+        self, client, app, user, registry, app_state
+    ):
+        """#2912: delete drops the per-workspace lock + stop-epoch entries
+        (the id can never be started again)."""
+        headers = await _auth_headers(client)
+        create_resp = await client.post(
+            "/api/v1/workspaces", headers=headers, json={"name": "pruned"}
+        )
+        ws_id = create_resp.json()["id"]
+        registry._get_workspace_lock(ws_id)
+        registry.stop_epoch[ws_id] = 4
+
+        with patch.object(
+            registry,
+            "stop_and_remove_container",
+            new_callable=AsyncMock,
+        ):
+            resp = await client.delete(
+                f"/api/v1/workspaces/{ws_id}", headers=headers
+            )
+        assert resp.status_code == 200
+        assert ws_id not in registry._workspace_locks
+        assert ws_id not in registry.stop_epoch
+
     async def test_delete_no_permission(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.delete(
@@ -8793,6 +8818,52 @@ class TestAdminEndpoints:
             user["id"]
         )
         assert len(ws_list) == 0
+
+    async def test_delete_user_prunes_workspace_registry_entries(
+        self, client, app, admin_user, ws_admin, registry, app_state
+    ):
+        """#2912: the user-delete cascade prunes the per-workspace lock +
+        stop-epoch entries for every workspace the user owned."""
+        user = ws_admin  # ws_admin returns the user dict
+        headers = await self._admin_headers(client)
+        user_login = await client.post(
+            "/api/v1/auth/login",
+            json={
+                "identifier": "testuser@example.com",
+                "password": "testpass",
+            },
+        )
+        user_headers = {
+            "Authorization": f"Bearer {user_login.json()['access_token']}"
+        }
+        ws_resp = await client.post(
+            "/api/v1/workspaces",
+            headers=user_headers,
+            json={"name": "cascade-prune"},
+        )
+        assert ws_resp.status_code == 200
+        ws_id = ws_resp.json()["id"]
+        registry._get_workspace_lock(ws_id)
+        registry.stop_epoch[ws_id] = 1
+
+        with (
+            patch.object(
+                registry,
+                "stop_user_containers",
+                new_callable=AsyncMock,
+            ),
+            patch.object(
+                app.state.workspaces,
+                "archive_user_data",
+                new_callable=AsyncMock,
+            ),
+        ):
+            resp = await client.delete(
+                f"/api/v1/admin/users/{user['id']}", headers=headers
+            )
+        assert resp.status_code == 200
+        assert ws_id not in registry._workspace_locks
+        assert ws_id not in registry.stop_epoch
 
     async def test_list_user_workspaces_admin(
         self, client, admin_user, ws_admin

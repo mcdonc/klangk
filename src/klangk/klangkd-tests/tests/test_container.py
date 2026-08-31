@@ -7014,3 +7014,31 @@ class TestRegistryIdleDelegation2910:
         assert registry.cleanup_wake is wake
         registry.cleanup_wake = None
         assert registry.cleanup_wake is None
+
+
+class TestRegistryWorkspaceEntryPrune2912:
+    """#2912: workspace *delete* is the only release path for the
+    per-workspace lock and stop-epoch entries -- stops must retain them
+    (#1258: a racing start has to serialize against the in-flight stop's
+    lock object), but a deleted id can never be started again."""
+
+    def setup_method(self):
+        app_state = _make_app_state()
+        self.registry = app_state.state.container_registry
+
+    def test_prune_drops_lock_and_epoch_entries(self):
+        reg = self.registry
+        lock = reg._get_workspace_lock("ws-prune")
+        reg.stop_epoch["ws-prune"] = 3
+        reg.prune_workspace_registry_entries("ws-prune")
+        assert "ws-prune" not in reg._workspace_locks
+        assert "ws-prune" not in reg.stop_epoch
+        # The popped lock object itself is untouched -- an in-flight
+        # holder keeps a working lock; only the dict entry is dropped.
+        assert not lock.locked()
+
+    def test_prune_is_noop_for_never_started_workspace(self):
+        reg = self.registry
+        reg.prune_workspace_registry_entries("ws-never")
+        assert "ws-never" not in reg._workspace_locks
+        assert "ws-never" not in reg.stop_epoch

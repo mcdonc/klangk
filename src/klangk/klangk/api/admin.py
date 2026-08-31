@@ -345,6 +345,10 @@ async def delete_user(
     await app.state.container_registry.stop_user_containers(user_id)
     # Archive workspace data before deletion
     await app.state.workspaces.archive_user_data(user_id, user["email"])
+    # Capture the user's workspace ids before the DB cascade removes the
+    # rows, so the per-workspace registry entries can be pruned after the
+    # delete (#2912).
+    ws_ids = await app.state.model.workspaces.get_user_workspace_ids(user_id)
     deleted = await app.state.model.users.delete_user(user_id)
     # Prune the per-user activity-throttle stamp (#2914): placed before
     # the not-deleted race check so even a lost race (user already gone)
@@ -352,6 +356,11 @@ async def delete_user(
     app.state.auth.forget_user(user_id)
     if not deleted:  # pragma: no cover — race between get and delete
         raise HTTPException(status_code=404, detail="User not found")
+    # #2912: the cascade-deleted ids can never be started again -- drop
+    # their registry entries (per-workspace lock + stop epoch).
+    registry = app.state.container_registry
+    for ws_id in ws_ids:
+        registry.prune_workspace_registry_entries(ws_id)
     return {"status": "deleted"}
 
 

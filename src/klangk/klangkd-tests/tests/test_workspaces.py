@@ -1196,3 +1196,18 @@ class TestWorkspacesServiceBranchGaps2834:
         monkeypatch.setattr(ws_mod, "async_rmtree", _spy_rmtree)
         assert await wsvc.delete_workspace("ws-gone", user["id"]) is False
         assert removed == []
+
+    async def test_delete_workspace_prunes_registry_entries(
+        self, user, app_state
+    ):
+        # #2912: a successful delete drops the per-workspace registry
+        # entries (lock + stop epoch) -- the id can never be started
+        # again, so the #1258 retention reason no longer applies.
+        wsvc = app_state.state.workspaces
+        ws = await wsvc.create_workspace(user["id"], "prune-me")
+        registry = app_state.state.container_registry
+        registry._get_workspace_lock(ws["id"])
+        registry.stop_epoch[ws["id"]] = 2
+        assert await wsvc.delete_workspace(ws["id"], user["id"]) is True
+        assert ws["id"] not in registry._workspace_locks
+        assert ws["id"] not in registry.stop_epoch

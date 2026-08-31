@@ -563,6 +563,11 @@ class Workspaces:
             await self.app.state.nix.destroy_workspace_nix(workspace_id)
             ws_dir = self.safe_path(workspace_id)
             await async_rmtree(ws_dir, f"workspace {workspace_id}")
+            # #2912: the id can never be started again -- drop the
+            # per-workspace registry entries (lock + stop epoch).
+            self.app.state.container_registry.prune_workspace_registry_entries(
+                workspace_id
+            )
         return deleted
 
     # --- home symlink ---

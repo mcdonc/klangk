@@ -482,6 +482,23 @@ class ContainerRegistry(NetworkSidecarMixin):
         lock = self._workspace_locks.get(workspace_id)
         return lock is not None and lock.locked()
 
+    def prune_workspace_registry_entries(self, workspace_id: str) -> None:
+        """Drop the per-workspace lock and stop-epoch entries (#2912).
+
+        Called **only** from workspace *delete* paths (the workspace
+        delete endpoint and the admin user-delete cascade), after the
+        DB row is gone: the id can never be started again, so the
+        #1258 reason the lock entry outlives every stop (a racing start
+        must serialize against the in-flight stop's lock object) no
+        longer applies. Bounds ``_workspace_locks`` and ``stop_epoch``
+        against unbounded growth from workspace create/delete churn,
+        mirroring how :meth:`prune_service_session_locks` bounds the
+        per-container lock dict (#1351). A no-op when neither entry
+        exists (the workspace was never started in this process).
+        """
+        self._workspace_locks.pop(workspace_id, None)
+        self.stop_epoch.pop(workspace_id, None)
+
     # --- State tracking ---
 
     def track_activity(
@@ -1694,7 +1711,9 @@ class ContainerRegistry(NetworkSidecarMixin):
         create a brand-new lock object that does not serialize against the
         in-flight one -- reopening the very race this method exists to
         prevent. The retained entry is a single small object per workspace
-        ever seen and is cleared on process restart.
+        ever seen and is cleared on process restart, or on workspace
+        *delete* (:meth:`prune_workspace_registry_entries`, #2912) -- the
+        only path on which the id can never be started again.
 
         Every caller of this method is an *expected* stop (user stop, idle
         stop, delete, logout, shutdown — plus the crash monitor's own
