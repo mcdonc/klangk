@@ -495,6 +495,25 @@ class AddGroupMemberRequest(BaseModel):
 # --- User-accessible group endpoints (ACL-gated per group) ---
 
 
+async def get_group_or_404(app, group_id: str) -> dict:
+    """Fetch a group or raise the shared 404 (every group endpoint)."""
+    group = await app.state.model.users.get_group_by_id(group_id)
+    if group is None:
+        raise HTTPException(status_code=404, detail="Group not found")
+    return group
+
+
+async def update_group_fields(app, group_id: str, req) -> dict:
+    """Apply a group PATCH (both the permission-gated and admin routes)."""
+    await get_group_or_404(app, group_id)
+    updated = await app.state.model.users.update_group(
+        group_id, name=req.name, description=req.description
+    )
+    if not updated:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    return {"status": "updated"}
+
+
 async def _group_resource(request: Request, user: dict) -> str:  # noqa: ARG001
     """Resource function for group-level permission checks."""
     group_id = request.path_params.get("group_id")
@@ -570,15 +589,7 @@ async def user_update_group(
     app=Depends(get_app_dep),
 ):
     """Update a group (requires edit permission on the group)."""
-    group = await app.state.model.users.get_group_by_id(group_id)
-    if group is None:
-        raise HTTPException(status_code=404, detail="Group not found")
-    updated = await app.state.model.users.update_group(
-        group_id, name=req.name, description=req.description
-    )
-    if not updated:
-        raise HTTPException(status_code=400, detail="No fields to update")
-    return {"status": "updated"}
+    return await update_group_fields(app, group_id, req)
 
 
 @router.delete("/groups/{group_id}")
@@ -588,9 +599,7 @@ async def user_delete_group(
     app=Depends(get_app_dep),
 ):
     """Delete a group (requires delete permission on the group)."""
-    group = await app.state.model.users.get_group_by_id(group_id)
-    if group is None:
-        raise HTTPException(status_code=404, detail="Group not found")
+    await get_group_or_404(app, group_id)
     await app.state.model.users.delete_group(group_id)
     await app.state.model.acl.delete_acl_entries_for_resource(
         f"/groups/{group_id}"
@@ -605,9 +614,7 @@ async def user_list_group_members(
     app=Depends(get_app_dep),
 ):
     """List group members (requires view permission on the group)."""
-    group = await app.state.model.users.get_group_by_id(group_id)
-    if group is None:
-        raise HTTPException(status_code=404, detail="Group not found")
+    await get_group_or_404(app, group_id)
     return await app.state.model.users.get_group_members(group_id)
 
 
@@ -621,9 +628,7 @@ async def user_add_group_member(
     app=Depends(get_app_dep),
 ):
     """Add a member (requires manage_members permission on the group)."""
-    group = await app.state.model.users.get_group_by_id(group_id)
-    if group is None:
-        raise HTTPException(status_code=404, detail="Group not found")
+    await get_group_or_404(app, group_id)
     target = await app.state.model.users.get_user_by_id(req.user_id)
     if target is None:
         raise HTTPException(status_code=404, detail="User not found")
@@ -708,15 +713,7 @@ async def update_group(
     admin: dict = Depends(acl.has_permission("admin")),
     app=Depends(get_app_dep),
 ):
-    group = await app.state.model.users.get_group_by_id(group_id)
-    if group is None:
-        raise HTTPException(status_code=404, detail="Group not found")
-    updated = await app.state.model.users.update_group(
-        group_id, name=req.name, description=req.description
-    )
-    if not updated:
-        raise HTTPException(status_code=400, detail="No fields to update")
-    return {"status": "updated"}
+    return await update_group_fields(app, group_id, req)
 
 
 @router.delete("/admin/groups/{group_id}")
@@ -725,9 +722,7 @@ async def delete_group(
     admin: dict = Depends(acl.has_permission("admin")),
     app=Depends(get_app_dep),
 ):
-    group = await app.state.model.users.get_group_by_id(group_id)
-    if group is None:
-        raise HTTPException(status_code=404, detail="Group not found")
+    await get_group_or_404(app, group_id)
     await app.state.model.users.delete_group(group_id)
     return {"status": "deleted"}
 
@@ -738,9 +733,7 @@ async def list_group_members(
     admin: dict = Depends(acl.has_permission("admin")),
     app=Depends(get_app_dep),
 ):
-    group = await app.state.model.users.get_group_by_id(group_id)
-    if group is None:
-        raise HTTPException(status_code=404, detail="Group not found")
+    await get_group_or_404(app, group_id)
     return await app.state.model.users.get_group_members(group_id)
 
 
@@ -751,9 +744,7 @@ async def add_group_member(
     admin: dict = Depends(acl.has_permission("admin")),
     app=Depends(get_app_dep),
 ):
-    group = await app.state.model.users.get_group_by_id(group_id)
-    if group is None:
-        raise HTTPException(status_code=404, detail="Group not found")
+    await get_group_or_404(app, group_id)
     user = await app.state.model.users.get_user_by_id(req.user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")

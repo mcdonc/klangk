@@ -44,6 +44,44 @@ let
       install -Dm555 -t $out/bin flutter_mcp_${flutterMcpToolkitVersion}_*/bin/*
     '';
   };
+  # jscpd token-clone scanner (#2904): 5.x ships a prebuilt Rust binary
+  # via platform-specific npm packages (esbuild-style), so it is not in
+  # nixpkgs; pin the binary per platform with fixed hashes (the fmtk
+  # pattern). One pinned version keeps clone reports reproducible across
+  # contributors and CI. The `klangk:jscpd` task runs it over the backend.
+  jscpdBinaryVersion = "5.0.16";
+  jscpd = pkgs.stdenv.mkDerivation {
+    pname = "jscpd";
+    version = jscpdBinaryVersion;
+    src = pkgs.fetchurl {
+      url =
+        if pkgs.stdenv.isDarwin then
+          "https://registry.npmjs.org/jscpd-darwin-"
+          + (if pkgs.stdenv.hostPlatform.darwinArch == "arm64" then "arm64" else "x64")
+          + "/-/jscpd-darwin-"
+          + (if pkgs.stdenv.hostPlatform.darwinArch == "arm64" then "arm64" else "x64")
+          + "-${jscpdBinaryVersion}.tgz"
+        else
+          "https://registry.npmjs.org/jscpd-linux-x64-gnu/-/jscpd-linux-x64-gnu-${jscpdBinaryVersion}.tgz";
+      hash =
+        if pkgs.stdenv.isDarwin then
+          (
+            if pkgs.stdenv.hostPlatform.darwinArch == "arm64" then
+              "sha256-vntXwMkns8HqtHwVzxthzun0tpRAe755YKB5k4c3Wqg="
+            else
+              "sha256-X2hK+EAgrXGRLUymdo5qgTuWoFQ3U0cz9J064UFQppM="
+          )
+        else
+          "sha256-+6PhbDzUn0e4sQgsUs/kF0C5HlMOixZvlNolO9a4VdI=";
+    };
+    sourceRoot = ".";
+    dontConfigure = true;
+    dontBuild = true;
+    dontStrip = true;
+    installPhase = ''
+      install -Dm555 -t $out/bin package/bin/jscpd
+    '';
+  };
   # klangkd binds a UDS and owns the Caddy reverse proxy as a child
   # (#1396, #1642); the old two-process layout (uvicorn + scripts/nginx.sh)
   # is collapsed into this single entry. Dev config lives in klangkd.yaml
@@ -146,6 +184,7 @@ in
       gzip
       gnutar
       caddy # reverse-proxy engine (Caddy, sole engine in 2.X, #1559/#1642)
+      jscpd # token-clone scanner (#2904), pinned rust binary (see above)
       podman
       ruff
       sqlite.bin
@@ -227,6 +266,13 @@ in
     # stricter or equal, never more lenient.
     "klangk:xenon" = {
       exec = "xenon --max-absolute B --max-modules B --max-average B $(git ls-files 'src/klangk/klangk/*.py' 'src/klangksidecar/klangksidecar/*.py' 'scripts/*.py')";
+    };
+    # Token-clone scan of the backend (#2904): the same invocation the
+    # consolidation issues used (--min-tokens 70). Advisory only — the
+    # residual clones (frozen migrations, cross-boundary signatures,
+    # pydantic field lists) are deliberate; see #2904 for the rationale.
+    "klangk:jscpd" = {
+      exec = "jscpd src/klangk/klangk --min-tokens 70 --silent";
     };
     "klangk:flutter-build" = {
       exec = ''exec bash "$DEVENV_ROOT/scripts/flutterbuildweb.sh"'';

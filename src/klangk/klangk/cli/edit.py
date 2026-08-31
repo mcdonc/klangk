@@ -11,6 +11,16 @@ from __future__ import annotations
 import typer
 
 from . import context
+from .options import (
+    ALLOW_OPTION,
+    CPU_LIMIT_OPTION,
+    ENV_OPTION,
+    IDLE_TIMEOUT_OPTION,
+    MEMORY_LIMIT_OPTION,
+    MOUNT_OPTION,
+    PIDS_LIMIT_OPTION,
+    REJECT_OPTION,
+)
 from .workspaces import _build_settings, _parse_env_list, _prompt, _SENTINEL
 from .mount import validate_allowed_domain_spec, validate_mount_spec
 
@@ -431,53 +441,6 @@ def merged_flag_settings(
     return merged
 
 
-def flag_edit_body(
-    ws,
-    *,
-    name: str | None,
-    image: str | None,
-    command: str | None,
-    auto_start: bool | None,
-    per_handle_home: bool | None,
-    health_check: str | None,
-    classification_banner: str | None,
-    mount: list[str] | None,
-    env: list[str] | None,
-    allow: list[str] | None,
-    reject: list[str] | None,
-    idle_timeout: int | None,
-    cpu_limit: float | None,
-    memory_limit: str | None,
-    pids_limit: int | None,
-    allow_sudo: bool | None,
-) -> dict:
-    """Build the PATCH body from only the flags the user provided."""
-    body = flag_scalar_body(
-        name=name,
-        image=image,
-        command=command,
-        auto_start=auto_start,
-        per_handle_home=per_handle_home,
-        health_check=health_check,
-        classification_banner=classification_banner,
-    )
-    body.update(
-        flag_list_body(
-            ws,
-            mount=mount,
-            env=env,
-            allow=allow,
-            reject=reject,
-            idle_timeout=idle_timeout,
-            cpu_limit=cpu_limit,
-            memory_limit=memory_limit,
-            pids_limit=pids_limit,
-            allow_sudo=allow_sudo,
-        )
-    )
-    return body
-
-
 def restart_needed(ws, body: dict) -> bool:
     """True if any create-time field changed on a running workspace."""
     if ws.running and bool(body.keys() & CREATE_TIME_KEYS):
@@ -540,43 +503,14 @@ def edit(
             "health (exit 0 = healthy). Use '' to clear."
         ),
     ),
-    mount: list[str] | None = typer.Option(
-        None,
-        "--mount",
-        help="Mount, repeatable (e.g. /home/me/src:/work/src, nix-vol:/nix)",
-    ),
-    env: list[str] | None = typer.Option(
-        None,
-        "--env",
-        help="Environment variable, repeatable (e.g. KEY=VALUE)",
-    ),
-    allow: list[str] | None = typer.Option(
-        None,
-        "--allow",
-        help="Allowed egress domain, repeatable (e.g. github.com:443, pypi.org)",
-    ),
-    reject: list[str] | None = typer.Option(
-        None,
-        "--reject",
-        help=(
-            "Rejected egress domain (NXDOMAIN'd), repeatable "
-            "(e.g. evil.example.com). CIDR ranges are not supported."
-        ),
-    ),
-    idle_timeout: int | None = typer.Option(
-        None,
-        "--idle-timeout",
-        help="Idle timeout in seconds (0 = never idle out)",
-    ),
-    cpu_limit: float | None = typer.Option(
-        None, "--cpu-limit", help="CPU limit (e.g. 2.0)"
-    ),
-    memory_limit: str | None = typer.Option(
-        None, "--memory-limit", help="Memory limit (e.g. 4g, 512m)"
-    ),
-    pids_limit: int | None = typer.Option(
-        None, "--pids-limit", help="PIDs limit (e.g. 512)"
-    ),
+    mount: list[str] | None = MOUNT_OPTION,
+    env: list[str] | None = ENV_OPTION,
+    allow: list[str] | None = ALLOW_OPTION,
+    reject: list[str] | None = REJECT_OPTION,
+    idle_timeout: int | None = IDLE_TIMEOUT_OPTION,
+    cpu_limit: float | None = CPU_LIMIT_OPTION,
+    memory_limit: str | None = MEMORY_LIMIT_OPTION,
+    pids_limit: int | None = PIDS_LIMIT_OPTION,
     allow_sudo: bool | None = typer.Option(
         None,
         "--sudo/--no-sudo",
@@ -624,8 +558,7 @@ def edit(
         allow_sudo=allow_sudo,
         classification_banner=classification_banner,
     ):
-        body = flag_edit_body(
-            ws,
+        body = flag_scalar_body(
             name=name,
             image=image,
             command=command,
@@ -633,15 +566,20 @@ def edit(
             per_handle_home=per_handle_home,
             health_check=health_check,
             classification_banner=classification_banner,
-            mount=mount,
-            env=env,
-            allow=allow,
-            reject=reject,
-            idle_timeout=idle_timeout,
-            cpu_limit=cpu_limit,
-            memory_limit=memory_limit,
-            pids_limit=pids_limit,
-            allow_sudo=allow_sudo,
+        )
+        body.update(
+            flag_list_body(
+                ws,
+                mount=mount,
+                env=env,
+                allow=allow,
+                reject=reject,
+                idle_timeout=idle_timeout,
+                cpu_limit=cpu_limit,
+                memory_limit=memory_limit,
+                pids_limit=pids_limit,
+                allow_sudo=allow_sudo,
+            )
         )
     else:
         body = interactive_edit_body(ws)

@@ -196,31 +196,56 @@ _WORKSPACE_FULL_COLUMNS = (
 )
 
 
-def _workspace_row_to_dict(row, *, auto_start=True) -> dict:
-    return {
+# JSON-blob columns decoded by the shared row mappers (one decode
+# rule, #2551/#2904).
+_JSON_BLOB_COLUMNS = (
+    "mounts",
+    "env",
+    "allowed_domains",
+    "rejected_domains",
+    "settings",
+)
+
+
+def _workspace_core_fields(row, *, auto_start=True) -> dict:
+    """Workspace fields shared by every API item shape: scalar columns
+    plus the JSON-blob columns decoded. The full-row, listing, and
+    shared-listing mappers build on this so the field list cannot drift
+    (#2551)."""
+    fields = {
         "id": row["id"],
-        "user_id": row["user_id"],
         "name": row["name"],
         "container_id": row["container_id"],
-        "num_ports": row["num_ports"],
         "image": row["image"],
         "service_command": row["service_command"],
         "auto_start": bool(row["auto_start"]) if auto_start else True,
         "setup_state": row["setup_state"],
         "health_check": row["health_check"],
-        "mounts": json.loads(row["mounts"]) if row["mounts"] else None,
-        "env": json.loads(row["env"]) if row["env"] else None,
-        "allowed_domains": json.loads(row["allowed_domains"])
-        if row["allowed_domains"]
-        else None,
-        "rejected_domains": json.loads(row["rejected_domains"])
-        if row["rejected_domains"]
-        else None,
-        "settings": json.loads(row["settings"]) if row["settings"] else None,
         "egress_mode": row["egress_mode"],
         "per_handle_home": bool(row["per_handle_home"]),
         "classification_banner": row["classification_banner"],
     }
+    for col in _JSON_BLOB_COLUMNS:
+        fields[col] = json.loads(row[col]) if row[col] else None
+    return fields
+
+
+def _workspace_row_to_dict(row, *, auto_start=True) -> dict:
+    """The full-row shape: core fields plus the owner-only columns."""
+    return {
+        **_workspace_core_fields(row, auto_start=auto_start),
+        "user_id": row["user_id"],
+        "num_ports": row["num_ports"],
+    }
+
+
+def _workspace_list_item(row, *, owner_email: bool = False) -> dict:
+    """The listing shape: core fields plus ``created_at`` (and
+    ``owner_email`` for the shared-with-me listing)."""
+    item = {**_workspace_core_fields(row), "created_at": row["created_at"]}
+    if owner_email:
+        item["owner_email"] = row["owner_email"]
+    return item
 
 
 def coerce_workspace_field(key: str, value) -> object:
@@ -267,6 +292,52 @@ def mutate_domain_entries(current: list, spec: str, add: bool) -> bool:
         return True
     current.pop(idx)
     return False
+
+
+def _validated_create_kwargs(
+    *,
+    image: str | None = None,
+    service_command: str | None = None,
+    auto_start: bool = False,
+    mounts: list[str] | None = None,
+    env: dict[str, str] | None = None,
+    setup_state: str = SETUP_STATE_COMPLETE,
+    health_check: str | None = None,
+    allowed_domains: list[str] | None = None,
+    rejected_domains: list[str] | None = None,
+    settings: dict | None = None,
+    egress_mode: str = EGRESS_MODE_DEFAULT,
+    per_handle_home: bool = True,
+    classification_banner: str | None = None,
+) -> dict:
+    """Validate the create params shared by both create methods and
+    return the :meth:`_insert_workspace_row` kwargs (banner normalized).
+
+    Defaults mirror the public create signatures. Raises ``ValueError``
+    on invalid enum values (checked before any write)."""
+    if setup_state not in SETUP_STATES:
+        raise ValueError(f"Invalid setup_state: {setup_state!r}")
+    if egress_mode not in EGRESS_MODES:
+        raise ValueError(f"Invalid egress_mode: {egress_mode!r}")
+    if not isinstance(per_handle_home, bool):
+        raise ValueError(f"Invalid per_handle_home: {per_handle_home!r}")
+    return dict(
+        image=image,
+        service_command=service_command,
+        auto_start=auto_start,
+        mounts=mounts,
+        env=env,
+        setup_state=setup_state,
+        health_check=health_check,
+        allowed_domains=allowed_domains,
+        rejected_domains=rejected_domains,
+        settings=settings,
+        egress_mode=egress_mode,
+        per_handle_home=per_handle_home,
+        classification_banner=normalize_classification_banner(
+            classification_banner
+        ),
+    )
 
 
 class WorkspacesModel:
@@ -496,89 +567,47 @@ class WorkspacesModel:
                 " wildcard owner ACE + owners-group membership makes its"
                 " UUID a privileged principal) — system agent"
             )
-        if setup_state not in SETUP_STATES:
-            raise ValueError(f"Invalid setup_state: {setup_state!r}")
-        if egress_mode not in EGRESS_MODES:
-            raise ValueError(f"Invalid egress_mode: {egress_mode!r}")
-        if not isinstance(per_handle_home, bool):
-            raise ValueError(f"Invalid per_handle_home: {per_handle_home!r}")
-        classification_banner = normalize_classification_banner(
-            classification_banner
+        insert = _validated_create_kwargs(
+            image=image,
+            service_command=service_command,
+            auto_start=auto_start,
+            mounts=mounts,
+            env=env,
+            setup_state=setup_state,
+            health_check=health_check,
+            allowed_domains=allowed_domains,
+            rejected_domains=rejected_domains,
+            settings=settings,
+            egress_mode=egress_mode,
+            per_handle_home=per_handle_home,
+            classification_banner=classification_banner,
         )
         async with self.app.state.db.transaction() as db:
-            ws = await self._insert_workspace_row(
-                db,
-                user_id,
-                name,
-                image=image,
-                service_command=service_command,
-                auto_start=auto_start,
-                mounts=mounts,
-                env=env,
-                setup_state=setup_state,
-                health_check=health_check,
-                allowed_domains=allowed_domains,
-                rejected_domains=rejected_domains,
-                settings=settings,
-                egress_mode=egress_mode,
-                per_handle_home=per_handle_home,
-                classification_banner=classification_banner,
-            )
+            ws = await self._insert_workspace_row(db, user_id, name, **insert)
             await self._seed_workspace_acl(db, ws, user_id)
             return ws
 
     async def create_workspace(
-        self,
-        user_id: str,
-        name: str,
-        image: str | None = None,
-        service_command: str | None = None,
-        auto_start: bool = False,
-        mounts: list[str] | None = None,
-        env: dict[str, str] | None = None,
-        setup_state: str = SETUP_STATE_COMPLETE,
-        health_check: str | None = None,
-        allowed_domains: list[str] | None = None,
-        rejected_domains: list[str] | None = None,
-        settings: dict | None = None,
-        egress_mode: str = EGRESS_MODE_DEFAULT,
-        per_handle_home: bool = True,
-        classification_banner: str | None = None,
+        self, user_id: str, name: str, **create_kwargs
     ) -> dict:
         """Insert a workspace row only (no ACL seeding).
+
+        Takes the same keyword arguments as
+        :meth:`create_workspace_with_acl` (``image``, ``service_command``,
+        ``auto_start``, ``mounts``, ``env``, ``setup_state``,
+        ``health_check``, ``allowed_domains``, ``rejected_domains``,
+        ``settings``, ``egress_mode``, ``per_handle_home``,
+        ``classification_banner``); validation is shared with it.
 
         Prefer :meth:`create_workspace_with_acl` for normal workspace
         creation — it seeds the owner ACE and role groups atomically and is
         what the service layer uses. This row-only primitive is kept for
         callers that manage ACLs separately.
         """
-        if setup_state not in SETUP_STATES:
-            raise ValueError(f"Invalid setup_state: {setup_state!r}")
-        if egress_mode not in EGRESS_MODES:
-            raise ValueError(f"Invalid egress_mode: {egress_mode!r}")
-        if not isinstance(per_handle_home, bool):
-            raise ValueError(f"Invalid per_handle_home: {per_handle_home!r}")
-        classification_banner = normalize_classification_banner(
-            classification_banner
-        )
+        insert = _validated_create_kwargs(**create_kwargs)
         async with self.app.state.db.transaction() as db:
             return await self._insert_workspace_row(
-                db,
-                user_id,
-                name,
-                image=image,
-                service_command=service_command,
-                auto_start=auto_start,
-                mounts=mounts,
-                env=env,
-                setup_state=setup_state,
-                health_check=health_check,
-                allowed_domains=allowed_domains,
-                rejected_domains=rejected_domains,
-                settings=settings,
-                egress_mode=egress_mode,
-                per_handle_home=per_handle_home,
-                classification_banner=classification_banner,
+                db, user_id, name, **insert
             )
 
     async def list_workspaces(
@@ -614,34 +643,7 @@ class WorkspacesModel:
             f" {where} {order_by} LIMIT ? OFFSET ?",
             tuple(params),
         )
-        items = [
-            {
-                "id": row["id"],
-                "name": row["name"],
-                "container_id": row["container_id"],
-                "image": row["image"],
-                "service_command": row["service_command"],
-                "auto_start": bool(row["auto_start"]),
-                "setup_state": row["setup_state"],
-                "health_check": row["health_check"],
-                "mounts": json.loads(row["mounts"]) if row["mounts"] else None,
-                "env": json.loads(row["env"]) if row["env"] else None,
-                "allowed_domains": json.loads(row["allowed_domains"])
-                if row["allowed_domains"]
-                else None,
-                "rejected_domains": json.loads(row["rejected_domains"])
-                if row["rejected_domains"]
-                else None,
-                "settings": json.loads(row["settings"])
-                if row["settings"]
-                else None,
-                "egress_mode": row["egress_mode"],
-                "per_handle_home": bool(row["per_handle_home"]),
-                "classification_banner": row["classification_banner"],
-                "created_at": row["created_at"],
-            }
-            for row in rows
-        ]
+        items = [_workspace_list_item(row) for row in rows]
         has_more = len(items) > limit
         items = items[:limit]
         return {
@@ -706,37 +708,6 @@ class WorkspacesModel:
         )
         return rows
 
-    @staticmethod
-    def _shared_workspace_item(row) -> dict:
-        """One shared-workspaces row as an API item (JSON columns
-        parsed)."""
-        return {
-            "id": row["id"],
-            "name": row["name"],
-            "container_id": row["container_id"],
-            "image": row["image"],
-            "service_command": row["service_command"],
-            "auto_start": bool(row["auto_start"]),
-            "setup_state": row["setup_state"],
-            "health_check": row["health_check"],
-            "mounts": json.loads(row["mounts"]) if row["mounts"] else None,
-            "env": json.loads(row["env"]) if row["env"] else None,
-            "allowed_domains": json.loads(row["allowed_domains"])
-            if row["allowed_domains"]
-            else None,
-            "rejected_domains": json.loads(row["rejected_domains"])
-            if row["rejected_domains"]
-            else None,
-            "settings": json.loads(row["settings"])
-            if row["settings"]
-            else None,
-            "egress_mode": row["egress_mode"],
-            "per_handle_home": bool(row["per_handle_home"]),
-            "classification_banner": row["classification_banner"],
-            "created_at": row["created_at"],
-            "owner_email": row["owner_email"],
-        }
-
     async def list_shared_workspaces(
         self,
         user_id: str,
@@ -756,7 +727,7 @@ class WorkspacesModel:
         rows = await self._shared_workspace_rows(
             user_id, sort, order, q, limit, offset
         )
-        items = [self._shared_workspace_item(row) for row in rows]
+        items = [_workspace_list_item(row, owner_email=True) for row in rows]
         has_more = len(items) > limit
         items = items[:limit]
         return {

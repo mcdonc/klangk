@@ -951,9 +951,32 @@ class WebSocketState:
         ``server_schedule`` / ``server_schedule_fired`` frames. Dead sockets
         are dropped (dispatch.py owns cleanup on disconnect).
         """
+        self.fanout(message)
+
+    def fanout(
+        self,
+        message: dict,
+        *,
+        user_id: str | None = None,
+        predicate=None,
+    ) -> None:
+        """Send *message* to every (matching) connection; drop dead ones.
+
+        The shared broadcast core of the typed ``notify_*`` methods
+        (host shutdown/recycle/started, per-user workspace/terminal
+        changes, the heartbeat opt-in). ``user_id`` restricts delivery
+        to that user's connections (None = every authenticated
+        connection); *predicate* further filters on the connection (the
+        heartbeat opt-in flag). A socket that errors on send is
+        discarded from the registry — dispatch.py owns the rest of
+        disconnect cleanup.
+        """
         dead = []
         for sock, conn in self.connections.items():
-            if conn.user.get("id") is None:
+            uid = conn.user.get("id")
+            if uid is None or (user_id is not None and uid != user_id):
+                continue
+            if predicate is not None and not predicate(conn):
                 continue
             try:
                 sock.send_json(message)
@@ -973,17 +996,7 @@ class WebSocketState:
         :meth:`notify_host_started` instead, because its runtime comes
         back.
         """
-        message: dict = {"type": "host_shutdown"}
-        dead = []
-        for sock, conn in self.connections.items():
-            if conn.user.get("id") is None:
-                continue
-            try:
-                sock.send_json(message)
-            except WS_ERRORS:
-                dead.append((sock, conn))
-        for sock, _ in dead:
-            self.connections.pop(sock, None)
+        self.fanout({"type": "host_shutdown"})
 
     def notify_server_recycle(self, phase: str) -> None:
         """Broadcast a server-recycle progress event (#2527, #2661).
@@ -993,20 +1006,7 @@ class WebSocketState:
         can show a "server recycling" notice before the per-workspace
         stop frames and the 1012 disconnect arrive.
         """
-        message: dict = {
-            "type": "server_recycle",
-            "phase": phase,
-        }
-        dead = []
-        for sock, conn in self.connections.items():
-            if conn.user.get("id") is None:
-                continue
-            try:
-                sock.send_json(message)
-            except WS_ERRORS:
-                dead.append((sock, conn))
-        for sock, _ in dead:
-            self.connections.pop(sock, None)
+        self.fanout({"type": "server_recycle", "phase": phase})
 
     def notify_host_started(self) -> None:
         """Broadcast host-started to all connections (#2527).
@@ -1015,17 +1015,7 @@ class WebSocketState:
         reconnecting (the recycle drops every WebSocket with 1012); it is
         the all-clear counterpart to :meth:`notify_server_recycle`.
         """
-        message: dict = {"type": "host_started"}
-        dead = []
-        for sock, conn in self.connections.items():
-            if conn.user.get("id") is None:
-                continue
-            try:
-                sock.send_json(message)
-            except WS_ERRORS:
-                dead.append((sock, conn))
-        for sock, _ in dead:
-            self.connections.pop(sock, None)
+        self.fanout({"type": "host_started"})
 
     async def notify_service_health(
         self,
@@ -1138,22 +1128,15 @@ class WebSocketState:
         each tick, so the heartbeat's presence proves the health loop
         itself is alive -- if the loop stalls, heartbeats stop.
         """
-        frame = {
-            "type": "service_health_heartbeat",
-            "timestamp": _iso_utc(time.time()),
-        }
-        dead = []
-        for sock, conn in self.connections.items():
-            if conn.user.get("id") is None:
-                continue
-            if not getattr(conn, "wants_health_heartbeat", False):
-                continue
-            try:
-                sock.send_json(frame)
-            except WS_ERRORS:
-                dead.append((sock, conn))
-        for sock, _ in dead:
-            self.connections.pop(sock, None)
+        self.fanout(
+            {
+                "type": "service_health_heartbeat",
+                "timestamp": _iso_utc(time.time()),
+            },
+            predicate=lambda conn: getattr(
+                conn, "wants_health_heartbeat", False
+            ),
+        )
 
     def handle_subscribe_health_heartbeat(
         self, msg: dict, sock: SafeWebSocket
@@ -1178,17 +1161,7 @@ class WebSocketState:
         tab without a manual refresh.  Fire-and-forget like the other
         per-connection sends; a dead socket is simply discarded.
         """
-        message = {"type": "workspaces_changed"}
-        dead = []
-        for sock, conn in self.connections.items():
-            if conn.user.get("id") != user_id:
-                continue
-            try:
-                sock.send_json(message)
-            except WS_ERRORS:
-                dead.append((sock, conn))
-        for sock, _ in dead:
-            self.connections.pop(sock, None)
+        self.fanout({"type": "workspaces_changed"}, user_id=user_id)
 
     def notify_user_terminals_changed(
         self,
@@ -1209,16 +1182,7 @@ class WebSocketState:
         message = {"type": "terminals_changed", "workspace_id": workspace_id}
         if windows is not None:
             message["windows"] = windows
-        dead = []
-        for sock, conn in self.connections.items():
-            if conn.user.get("id") != user_id:
-                continue
-            try:
-                sock.send_json(message)
-            except WS_ERRORS:
-                dead.append((sock, conn))
-        for sock, _ in dead:
-            self.connections.pop(sock, None)
+        self.fanout(message, user_id=user_id)
 
     def _replay_service_health(
         self, sock, registry, cs, seq: int, allowed: set

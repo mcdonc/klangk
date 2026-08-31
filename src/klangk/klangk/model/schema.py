@@ -11,6 +11,29 @@ from .users import AGENT_USER_ID, backfill_handles
 _DURATION_CHECK_VALUES = ", ".join(f"'{d}'" for d in sorted(DURATIONS))
 _DECISION_CHECK_VALUES = ", ".join(f"'{d}'" for d in sorted(DECISIONS))
 
+# egress_consent column DDL (#2239 baseline + #2339 revoked columns):
+# the baseline CREATE and the in-place-migration rebuild must describe
+# the same shape, so the column list is written once and the two CREATE
+# statements differ only in table name / IF NOT EXISTS.
+_EGRESS_CONSENT_COLUMNS = f"""(
+            id TEXT PRIMARY KEY,
+            workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+            dest_host TEXT NOT NULL,
+            dest_port INTEGER,
+            pid INTEGER,
+            process_name TEXT,
+            decision TEXT NOT NULL DEFAULT 'pending'
+                CHECK (decision IN ({_DECISION_CHECK_VALUES})),
+            duration TEXT
+                CHECK (duration IS NULL OR duration IN
+                    ({_DURATION_CHECK_VALUES})),
+            requested_at REAL NOT NULL,
+            decided_at REAL,
+            decided_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+            revoked_at REAL,
+            revoked_by TEXT REFERENCES users(id) ON DELETE SET NULL
+        )"""
+
 
 async def init_users_table(db) -> None:
     """users table: baseline CREATE, the pre-migrations-era table
@@ -363,26 +386,12 @@ async def init_egress_consent_table(db) -> None:
     # connections that need human approval. CHECK constraints enforce
     # the decision state machine at the storage layer — the same
     # DB-backstop philosophy as the agent-user triggers above.
-    await db.execute(f"""
-        CREATE TABLE IF NOT EXISTS egress_consent (
-            id TEXT PRIMARY KEY,
-            workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-            dest_host TEXT NOT NULL,
-            dest_port INTEGER,
-            pid INTEGER,
-            process_name TEXT,
-            decision TEXT NOT NULL DEFAULT 'pending'
-                CHECK (decision IN ({_DECISION_CHECK_VALUES})),
-            duration TEXT
-                CHECK (duration IS NULL OR duration IN
-                    ({_DURATION_CHECK_VALUES})),
-            requested_at REAL NOT NULL,
-            decided_at REAL,
-            decided_by TEXT REFERENCES users(id) ON DELETE SET NULL,
-            revoked_at REAL,
-            revoked_by TEXT REFERENCES users(id) ON DELETE SET NULL
-        )
-    """)
+    await db.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS egress_consent
+        {_EGRESS_CONSENT_COLUMNS}
+        """
+    )
     # egress_consent: add the `revoked` decision (#2339) + the
     # `revoked_at`/`revoked_by` audit columns (and attach the CHECKs). The
     # table may already exist from #2338 (has the duration CHECK but not
@@ -396,26 +405,12 @@ async def init_egress_consent_table(db) -> None:
     )
     ec_sql_row = await ec_sql_cur.fetchone()
     if ec_sql_row and "revoked_at" not in ec_sql_row[0]:
-        await db.execute(f"""
-            CREATE TABLE egress_consent_new (
-                id TEXT PRIMARY KEY,
-                workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-                dest_host TEXT NOT NULL,
-                dest_port INTEGER,
-                pid INTEGER,
-                process_name TEXT,
-                decision TEXT NOT NULL DEFAULT 'pending'
-                    CHECK (decision IN ({_DECISION_CHECK_VALUES})),
-                duration TEXT
-                    CHECK (duration IS NULL OR duration IN
-                        ({_DURATION_CHECK_VALUES})),
-                requested_at REAL NOT NULL,
-                decided_at REAL,
-                decided_by TEXT REFERENCES users(id) ON DELETE SET NULL,
-                revoked_at REAL,
-                revoked_by TEXT REFERENCES users(id) ON DELETE SET NULL
-            )
-        """)
+        await db.execute(
+            f"""
+            CREATE TABLE egress_consent_new
+            {_EGRESS_CONSENT_COLUMNS}
+            """
+        )
         ec_info = await db.execute("PRAGMA table_info(egress_consent)")
         ec_old_cols = {r[1] for r in await ec_info.fetchall()}
         ec_shared = [

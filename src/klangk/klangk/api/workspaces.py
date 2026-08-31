@@ -9,7 +9,7 @@ import subprocess
 import tempfile
 import time
 from datetime import datetime, timezone
-from typing import Literal
+from typing import Annotated, Literal
 
 from fastapi import (
     APIRouter,
@@ -182,6 +182,17 @@ def _annotate_running(items: list[dict], container_registry) -> list[dict]:
     return items
 
 
+# Shared list-endpoint query parameters (owned/shared listings): the
+# Annotated aliases keep the two endpoints' OpenAPI contract identical
+# while declaring the pagination controls once (#2904). Defaults stay
+# on the ``=`` in each signature (FastAPI's rule for Annotated params).
+LimitQuery = Annotated[int | None, Query(ge=1, le=100)]
+OffsetQuery = Annotated[int | None, Query(ge=0)]
+SortQuery = Annotated[Literal["name", "created"], Query()]
+OrderQuery = Annotated[Literal["asc", "desc"], Query()]
+SearchQuery = Annotated[str | None, Query()]
+
+
 async def _list_response(fetch, app, limit, offset):
     """Shared list-endpoint body (#2553): bare/envelope shape + running
     annotation. *fetch* is a callable(limit, offset) returning the model's
@@ -203,11 +214,11 @@ async def _list_response(fetch, app, limit, offset):
 async def list_workspaces(
     user: dict = Depends(auth.get_current_user),
     app=Depends(get_app_dep),
-    limit: int | None = Query(None, ge=1, le=100),
-    offset: int | None = Query(None, ge=0),
-    sort: Literal["name", "created"] = Query("created"),
-    order: Literal["asc", "desc"] = Query("desc"),
-    q: str | None = Query(None),
+    limit: LimitQuery = None,
+    offset: OffsetQuery = None,
+    sort: SortQuery = "created",
+    order: OrderQuery = "desc",
+    q: SearchQuery = None,
 ):
     """List workspaces owned by the user.
 
@@ -231,11 +242,11 @@ async def list_workspaces(
 async def list_shared_workspaces(
     user: dict = Depends(auth.get_current_user),
     app=Depends(get_app_dep),
-    limit: int | None = Query(None, ge=1, le=100),
-    offset: int | None = Query(None, ge=0),
-    sort: Literal["name", "created"] = Query("created"),
-    order: Literal["asc", "desc"] = Query("desc"),
-    q: str | None = Query(None),
+    limit: LimitQuery = None,
+    offset: OffsetQuery = None,
+    sort: SortQuery = "created",
+    order: OrderQuery = "desc",
+    q: SearchQuery = None,
 ):
     """List workspaces shared with the user.
 
