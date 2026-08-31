@@ -51,6 +51,51 @@ from klangk.settings import resolve_indirection
 
 logger = logging.getLogger(__name__)
 
+# Strong references for the fire-and-forget passthrough-client close
+# tasks (#2928): an unreferenced task suspended in an await is
+# GC-eligible mid-execution (CPython semantics), which would leave the
+# replaced client's connections unclosed. Mirrors
+# ``lifecycle._status_broadcast_tasks`` (#1714) and
+# ``wshandler.session._session_tasks`` (#2913). Module-level, not an
+# instance attribute: the close must outlive the router whose
+# ``_configure_from_settings`` (re)spawned it.
+_aclose_tasks: set[asyncio.Task] = set()
+
+
+def _finish_aclose_task(task: asyncio.Task) -> None:
+    """Done callback for :func:`_spawn_aclose` (#2928).
+
+    Discards the strong reference so the set cannot grow without
+    bound, and logs an unobserved failure: the close is fire-and-forget,
+    so without this an exception would surface only as asyncio's
+    context-free ``Task exception was never retrieved`` at task GC.
+    Retrieving the exception here also marks it seen for asyncio
+    (same as ``_finish_session_task``, #2913).
+    """
+    _aclose_tasks.discard(task)
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        logger.error("LLM passthrough client close failed", exc_info=exc)
+
+
+def _spawn_aclose(client: httpx.AsyncClient) -> None:
+    """Schedule *client*'s ``aclose()`` holding a strong reference (#2928).
+
+    No-op outside a running event loop (sync boot order / sync test
+    harnesses): there is nothing to schedule on then, and the process
+    exit path closes the sockets anyway.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    task = loop.create_task(client.aclose())
+    _aclose_tasks.add(task)
+    task.add_done_callback(_finish_aclose_task)
+
+
 # Provider defaults: well-known providers whose api_base can be omitted.
 _PROVIDER_DEFAULTS: dict[str, str] = {
     "openai": "https://api.openai.com/v1",
@@ -211,12 +256,7 @@ class LLMRouter:
 
         # Close any previous passthrough client before switching modes.
         if self._http_client is not None:
-            try:
-                asyncio.get_event_loop().create_task(
-                    self._http_client.aclose()
-                )
-            except RuntimeError:
-                pass
+            _spawn_aclose(self._http_client)
             self._http_client = None
 
         if is_passthrough(model_list):

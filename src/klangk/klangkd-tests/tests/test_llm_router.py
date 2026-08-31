@@ -1,5 +1,7 @@
 """Unit tests for the in-process LLM router (#2071, #2072)."""
 
+import asyncio
+import logging
 import os
 import tempfile
 import types
@@ -7,6 +9,7 @@ from unittest.mock import AsyncMock, patch
 
 import httpx
 
+from klangk import llm_router as llm_router_mod
 from klangk.llm_router import (
     LLMRouter,
     is_passthrough,
@@ -590,3 +593,91 @@ class TestConfigureOutsideEventLoop2910:
         )
         router._configure_from_settings(settings)
         assert router._http_client is None
+
+
+class TestAcloseTaskRefs2928:
+    """The replaced client's aclose runs as a strongly-referenced
+    fire-and-forget task (#2928): held while pending, discarded on
+    completion, failures logged, cancellation silent."""
+
+    async def _drain_aclose_tasks(self) -> None:
+        """Yield until the done callbacks have drained the module set.
+
+        A task's done callbacks run one loop turn after the task itself
+        completes, so a single ``sleep(0)`` races the discard.
+        """
+        for _ in range(100):
+            if not llm_router_mod._aclose_tasks:
+                return
+            await asyncio.sleep(0)
+        raise AssertionError("aclose tasks did not drain")
+
+    def _passthrough_router(self):
+        app = _app()
+        app.state.settings.llm_models = [
+            {"model_name": "*", "litellm_params": {"api_base": "http://x:1"}}
+        ]
+        return LLMRouter(app)
+
+    def _reconfigure_to_router_mode(self, router, client):
+        router._http_client = client
+        router.reconfigure(
+            _app({"KLANGKD_LLM_MODELS": "openai/gpt-4o::sk-xxx"})
+        )
+        assert router._http_client is None
+
+    async def test_aclose_task_holds_strong_reference(self):
+        """While the close is pending the task lives in the module set
+        (the only strong reference); after completion it is discarded."""
+        router = self._passthrough_router()
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def slow_aclose():
+            started.set()
+            await release.wait()
+
+        client = AsyncMock()
+        client.aclose.side_effect = slow_aclose
+        self._reconfigure_to_router_mode(router, client)
+
+        await started.wait()
+        assert llm_router_mod._aclose_tasks
+        release.set()
+        await self._drain_aclose_tasks()
+        client.aclose.assert_called_once()
+
+    async def test_aclose_failure_is_logged_not_lost(self, caplog):
+        router = self._passthrough_router()
+        client = AsyncMock()
+        client.aclose.side_effect = RuntimeError("boom")
+        self._reconfigure_to_router_mode(router, client)
+
+        await self._drain_aclose_tasks()
+        errors = [
+            r
+            for r in caplog.records
+            if r.levelno == logging.ERROR
+            and "client close failed" in r.getMessage()
+        ]
+        assert errors, "expected the aclose failure to be logged"
+
+    async def test_cancelled_aclose_task_is_silent(self, caplog):
+        """A cancelled close logs nothing and still drains the set."""
+        caplog.set_level(logging.DEBUG)
+        router = self._passthrough_router()
+        started = asyncio.Event()
+
+        async def hanging_aclose():
+            started.set()
+            await asyncio.Event().wait()
+
+        client = AsyncMock()
+        client.aclose.side_effect = hanging_aclose
+        self._reconfigure_to_router_mode(router, client)
+        await started.wait()
+
+        (task,) = tuple(llm_router_mod._aclose_tasks)
+        task.cancel()
+        await self._drain_aclose_tasks()
+        assert not [r for r in caplog.records if r.levelno >= logging.ERROR]

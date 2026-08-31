@@ -1648,6 +1648,13 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   counter per workspace id ever started, previously retained for the
   process lifetime. Found by the long-lived-process memory audit (#2911).
 
+- **LLM router: replaced upstream clients are now closed reliably
+  (#2928).** Reconfiguring the passthrough LLM provider (e.g. on SIGHUP)
+  closed the old upstream HTTP client via an unreferenced background
+  task that CPython could garbage-collect mid-execution, leaving its
+  connections open; a failing close was also silently dropped. The close
+  is now strongly referenced and its failure logged.
+
 - **`klangkd doctor` names the right package for a missing `ip` command
   (#2921).** The warning hint now says `sudo dnf install iproute` on the
   Red Hat family and `sudo apt install iproute2` elsewhere (zypper, apk,
