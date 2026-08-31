@@ -6128,6 +6128,29 @@ class TestLogLogoutCaller:
         self._patch_open(monkeypatch, b"cmd\0", OSError("gone"))
         auth_mod._log_logout_caller()
 
+    def test_walk_exhausts_eight_iterations(self, monkeypatch):
+        """A deep chain (never reaching init, never repeating) exhausts
+        the 8-iteration budget and falls out of the loop normally."""
+        import builtins
+
+        import klangk.cli.auth as auth_mod
+
+        real_open = builtins.open
+        stat_ppid = iter(range(1000, 1020))
+
+        def deep_chain_open(file, *args, **kwargs):
+            name = str(file)
+            if name.endswith("/cmdline"):
+                return BytesIO(b"proc\0")
+            if name.endswith("/stat"):
+                ppid = next(stat_ppid)
+                return BytesIO(f"42 (proc) S {ppid}".encode())
+            return real_open(file, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "open", deep_chain_open)
+        monkeypatch.setattr(auth_mod.os, "getppid", lambda: 100)
+        auth_mod._log_logout_caller()  # must not raise
+
     def test_stat_malformed_stops(self, monkeypatch):
         import klangk.cli.auth as auth_mod
 
