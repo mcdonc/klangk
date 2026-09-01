@@ -104,7 +104,7 @@ A production-ready config file covering all common settings:
 # --- Auth / identity ---
 auth_modes: both
 jwt_secret: "file:/run/secrets/jwt"
-prevent_insecure_jwt_secret: "1"
+prevent_insecure_jwt_secret: true
 default_user: admin@example.com
 default_password: "file:/run/secrets/admin-pw"
 access_token_hours: 24
