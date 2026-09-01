@@ -177,7 +177,7 @@ class Lifecycle:
             "/workspaces",
             0,
             ACTION_ALLOW,
-            "create",
+            "create-workspace",
             PRINCIPAL_GROUP,
             group_id=admin_group_id,
         )
@@ -187,8 +187,36 @@ class Lifecycle:
         # resources never passes through /admin, so each needs its own
         # rows (migration 0021 inserts the same pair on existing
         # deployments).
+        # /users: manage-users for admins, search-users for every
+        # authenticated user (member-picker type-ahead, #2946), then the
+        # blanket Deny — order matters, first-match-wins. (m0023 inserts
+        # the search-users row on existing deployments, shifting their
+        # Deny to position 2.)
+        await self.app.state.model.acl.add_acl_entry(
+            "/users",
+            0,
+            ACTION_ALLOW,
+            "manage-users",
+            PRINCIPAL_GROUP,
+            group_id=admin_group_id,
+        )
+        await self.app.state.model.acl.add_acl_entry(
+            "/users",
+            1,
+            ACTION_ALLOW,
+            "search-users",
+            PRINCIPAL_SYSTEM,
+            system_principal=SYSTEM_AUTHENTICATED,
+        )
+        await self.app.state.model.acl.add_acl_entry(
+            "/users",
+            2,
+            ACTION_DENY,
+            "*",
+            PRINCIPAL_SYSTEM,
+            system_principal=SYSTEM_EVERYONE,
+        )
         for resource, permission in (
-            ("/users", "manage-users"),
             ("/groups", "manage-groups"),
             ("/invitations", "manage-invitations"),
             ("/server", "manage-server-schedule"),
@@ -202,6 +230,35 @@ class Lifecycle:
                 permission,
                 PRINCIPAL_GROUP,
                 group_id=admin_group_id,
+            )
+            await self.app.state.model.acl.add_acl_entry(
+                resource,
+                1,
+                ACTION_DENY,
+                "*",
+                PRINCIPAL_SYSTEM,
+                system_principal=SYSTEM_EVERYONE,
+            )
+        # #2946 self-service surfaces, granted to every authenticated
+        # user by default (a deploy that wants them restricted denies
+        # or scopes these rows in the ACL editor):
+        #   /volumes    manage-volumes — user-owned volumes (label-
+        #                               scoped per user at runtime)
+        #   /images     view-images    — the image/nix/sudo capability
+        #                               listing (create/edit UIs)
+        #   /llm-proxy  use-llm-proxy  — the chat proxy (#2072)
+        for resource, permission in (
+            ("/volumes", "manage-volumes"),
+            ("/images", "view-images"),
+            ("/llm-proxy", "use-llm-proxy"),
+        ):
+            await self.app.state.model.acl.add_acl_entry(
+                resource,
+                0,
+                ACTION_ALLOW,
+                permission,
+                PRINCIPAL_SYSTEM,
+                system_principal=SYSTEM_AUTHENTICATED,
             )
             await self.app.state.model.acl.add_acl_entry(
                 resource,

@@ -305,7 +305,7 @@ class CreateWorkspaceRequest(BaseModel):
 async def create_workspace(
     body: CreateWorkspaceRequest,
     user: dict = Depends(
-        acl.has_permission("create", workspace_collection_resource)
+        acl.has_permission("create-workspace", workspace_collection_resource)
     ),
     app=Depends(get_app_dep),
 ):
@@ -574,7 +574,9 @@ async def _apply_live_state_updates(
 async def update_workspace(
     workspace_id: str,
     body: UpdateWorkspaceRequest,
-    user: dict = Depends(acl.has_permission("edit", workspace_resource)),
+    user: dict = Depends(
+        acl.has_permission("edit-workspace", workspace_resource)
+    ),
     app=Depends(get_app_dep),
 ):
     fields = body.model_dump(exclude_unset=True)
@@ -625,7 +627,9 @@ class UpdateWorkspaceSettingsRequest(BaseModel):
 async def update_workspace_settings(
     workspace_id: str,
     body: UpdateWorkspaceSettingsRequest,
-    user: dict = Depends(acl.has_permission("edit", workspace_resource)),
+    user: dict = Depends(
+        acl.has_permission("edit-workspace", workspace_resource)
+    ),
     app=Depends(get_app_dep),
 ):
     """Partial-merge update of the per-workspace ``settings`` bag (#864).
@@ -671,7 +675,9 @@ class DuplicateWorkspaceRequest(BaseModel):
 async def duplicate_workspace(
     workspace_id: str,
     body: DuplicateWorkspaceRequest,
-    user: dict = Depends(acl.has_permission("create", workspace_resource)),
+    user: dict = Depends(
+        acl.has_permission("duplicate-workspace", workspace_resource)
+    ),
     app=Depends(get_app_dep),
 ):
     # #2569: duplicating creates a new workspace — check collection-level
@@ -680,7 +686,7 @@ async def duplicate_workspace(
     # /workspaces, so this branch is unreachable in practice.
     principals = await app.state.acl.get_principals(user["id"])
     if not await app.state.acl.check_permission(
-        "/workspaces", principals, "create"
+        "/workspaces", principals, "create-workspace"
     ):
         raise HTTPException(
             status_code=403,
@@ -720,7 +726,9 @@ async def duplicate_workspace(
 @router.delete("/workspaces/{workspace_id}")
 async def delete_workspace(
     workspace_id: str,
-    user: dict = Depends(acl.has_permission("delete", workspace_resource)),
+    user: dict = Depends(
+        acl.has_permission("delete-workspace", workspace_resource)
+    ),
     app=Depends(get_app_dep),
 ):
     workspace = await app.state.model.workspaces.get_workspace(workspace_id)
@@ -776,7 +784,9 @@ async def delete_workspace(
 @router.post("/workspaces/{workspace_id}/restart")
 async def restart_workspace(
     workspace_id: str,
-    user: dict = Depends(acl.has_permission("terminal", workspace_resource)),
+    user: dict = Depends(
+        acl.has_permission("restart-workspace", workspace_resource)
+    ),
     app=Depends(get_app_dep),
 ):
     """Restart a workspace container.
@@ -839,7 +849,9 @@ async def restart_workspace(
 @router.post("/workspaces/{workspace_id}/stop")
 async def stop_workspace(
     workspace_id: str,
-    user: dict = Depends(acl.has_permission("terminal", workspace_resource)),
+    user: dict = Depends(
+        acl.has_permission("stop-workspace", workspace_resource)
+    ),
     app=Depends(get_app_dep),
 ):
     """Stop a running workspace container.
@@ -894,7 +906,9 @@ async def stop_workspace(
 @router.post("/workspaces/{workspace_id}/start")
 async def start_workspace(
     workspace_id: str,
-    user: dict = Depends(acl.has_permission("terminal", workspace_resource)),
+    user: dict = Depends(
+        acl.has_permission("start-workspace", workspace_resource)
+    ),
     app=Depends(get_app_dep),
 ):
     """Start a stopped workspace container.
@@ -930,7 +944,9 @@ async def start_workspace(
 @router.get("/workspaces/{workspace_id}/status")
 async def workspace_status(
     workspace_id: str,
-    user: dict = Depends(acl.has_permission("monitor", workspace_resource)),
+    user: dict = Depends(
+        acl.has_permission("monitor-workspace", workspace_resource)
+    ),
     app=Depends(get_app_dep),
 ):
     """Return container status for a workspace.
@@ -1003,7 +1019,9 @@ async def workspace_status(
 @router.get("/workspaces/{workspace_id}/export")
 async def export_workspace(
     workspace_id: str,
-    user: dict = Depends(acl.has_permission("export", workspace_resource)),
+    user: dict = Depends(
+        acl.has_permission("export-workspace", workspace_resource)
+    ),
     app=Depends(get_app_dep),
 ):
     """Export a workspace as a .tar.gz archive.
@@ -1310,7 +1328,7 @@ async def import_workspace(
     file: UploadFile,
     name: str | None = None,
     user: dict = Depends(
-        acl.has_permission("create", workspace_collection_resource)
+        acl.has_permission("create-workspace", workspace_collection_resource)
     ),
     app=Depends(get_app_dep),
 ):
@@ -1403,7 +1421,9 @@ async def import_workspace(
 @router.get("/workspaces/{workspace_id}/members")
 async def get_workspace_members(
     workspace_id: str,
-    user: dict = Depends(acl.has_permission("share", workspace_resource)),
+    user: dict = Depends(
+        acl.has_permission("share-workspace", workspace_resource)
+    ),
     app=Depends(get_app_dep),
 ):
     return await app.state.model.workspaces.get_workspace_members(workspace_id)
@@ -1417,7 +1437,9 @@ class AddMemberRequest(BaseModel):
 async def add_workspace_member(
     workspace_id: str,
     body: AddMemberRequest,
-    user: dict = Depends(acl.has_permission("share", workspace_resource)),
+    user: dict = Depends(
+        acl.has_permission("share-workspace", workspace_resource)
+    ),
     app=Depends(get_app_dep),
 ):
     target = await app.state.model.users.get_user_by_identifier(body.email)
@@ -1437,9 +1459,9 @@ async def add_workspace_member(
     next_pos = max((e["position"] for e in existing), default=-1) + 1
     for perm in (
         "view",
-        "monitor",
+        "monitor-workspace",
         "terminal",
-        "files",
+        "files-view",
         "files-download",
         "files-write",
     ):
@@ -1479,7 +1501,9 @@ async def _remove_principals(app, workspace_id: str, predicate) -> None:
 async def remove_workspace_member(
     workspace_id: str,
     member_id: str,
-    user: dict = Depends(acl.has_permission("share", workspace_resource)),
+    user: dict = Depends(
+        acl.has_permission("share-workspace", workspace_resource)
+    ),
     app=Depends(get_app_dep),
 ):
     # Remove all ACL entries for this user on this workspace
@@ -1501,7 +1525,9 @@ ROLE_GROUP_SUFFIXES = ["owners", "coders", "collaborators", "spectators"]
 @router.get("/workspaces/{workspace_id}/roles")
 async def get_workspace_roles(
     workspace_id: str,
-    user: dict = Depends(acl.has_permission("share", workspace_resource)),
+    user: dict = Depends(
+        acl.has_permission("share-workspace", workspace_resource)
+    ),
     app=Depends(get_app_dep),
 ):
     """Return the workspace's role groups with their members."""
@@ -1534,7 +1560,7 @@ class AddToRoleRequest(BaseModel):
 # ACL change in effect — a bare ``share`` holder must not be able to mint
 # an owner (#2764). Both permissions are required.
 ROLE_WRITE_GATE = acl.has_permissions(
-    ["share", "change-acls"], workspace_resource
+    ["share-workspace", "share-advanced"], workspace_resource
 )
 
 
@@ -1638,7 +1664,9 @@ async def change_workspace_role(
 @router.get("/workspaces/{workspace_id}/groups")
 async def get_workspace_groups(
     workspace_id: str,
-    user: dict = Depends(acl.has_permission("share", workspace_resource)),
+    user: dict = Depends(
+        acl.has_permission("share-workspace", workspace_resource)
+    ),
     app=Depends(get_app_dep),
 ):
     """Get groups with access to this workspace via ACL."""
@@ -1663,7 +1691,9 @@ class AddGroupShareRequest(BaseModel):
 async def add_workspace_group(
     workspace_id: str,
     body: AddGroupShareRequest,
-    user: dict = Depends(acl.has_permission("share", workspace_resource)),
+    user: dict = Depends(
+        acl.has_permission("share-workspace", workspace_resource)
+    ),
     app=Depends(get_app_dep),
 ):
     """Share a workspace with a group (view/terminal/files(+dl/ul))."""
@@ -1674,7 +1704,13 @@ async def add_workspace_group(
     existing = await app.state.model.acl.get_acl_entries(resource)
     max_pos = max((e["position"] for e in existing), default=-1)
     for i, perm in enumerate(
-        ["view", "terminal", "files", "files-download", "files-write"]
+        [
+            "view",
+            "terminal",
+            "files-view",
+            "files-download",
+            "files-write",
+        ]
     ):
         await app.state.model.acl.add_acl_entry(
             resource,
@@ -1691,7 +1727,9 @@ async def add_workspace_group(
 async def remove_workspace_group(
     workspace_id: str,
     group_id: str,
-    user: dict = Depends(acl.has_permission("share", workspace_resource)),
+    user: dict = Depends(
+        acl.has_permission("share-workspace", workspace_resource)
+    ),
     app=Depends(get_app_dep),
 ):
     """Remove all ACL entries for a group on this workspace."""
@@ -1713,7 +1751,7 @@ async def remove_workspace_group(
 async def get_workspace_acl(
     workspace_id: str,
     user: dict = Depends(
-        acl.has_permission("change-acls", workspace_resource)
+        acl.has_permission("share-advanced", workspace_resource)
     ),
     app=Depends(get_app_dep),
 ):
@@ -1732,7 +1770,7 @@ async def replace_workspace_acl(
     workspace_id: str,
     entries: list[WorkspaceAclEntry],
     user: dict = Depends(
-        acl.has_permission("change-acls", workspace_resource)
+        acl.has_permission("share-advanced", workspace_resource)
     ),
     app=Depends(get_app_dep),
 ):
@@ -1761,7 +1799,9 @@ class TransferOwnershipRequest(BaseModel):
 async def transfer_workspace_ownership(
     workspace_id: str,
     body: TransferOwnershipRequest,
-    user: dict = Depends(acl.has_permission("admin", workspace_resource)),
+    user: dict = Depends(
+        acl.has_permission("transfer-workspace", workspace_resource)
+    ),
     app=Depends(get_app_dep),
 ):
     """Transfer workspace ownership to another user."""
@@ -1790,7 +1830,7 @@ async def transfer_workspace_ownership(
 @router.get("/users/search")
 async def search_users(
     q: str,
-    _user: dict = Depends(auth.get_current_user),
+    _user: dict = Depends(acl.has_permission("search-users")),
     app=Depends(get_app_dep),
 ):
     if len(q) < 1:

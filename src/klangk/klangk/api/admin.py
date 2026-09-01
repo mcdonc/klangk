@@ -69,7 +69,7 @@ def _validate_admin_acl(entries, resource: str) -> None:
     has_admin_group = any(
         e.action == ACTION_ALLOW
         and e.principal_type == PRINCIPAL_GROUP
-        and e.permission in ("*", "admin")
+        and e.permission == "*"
         for e in entries
     )
     if not has_admin_group:
@@ -714,7 +714,7 @@ async def replace_resource_acl(
     """Replace ACL entries for any resource (admin only).
 
     #2764: when the target is an individual workspace, the write also
-    requires ``change-acls`` on it — the same resource-level gate as
+    requires ``share-advanced`` on it — the same resource-level gate as
     ``PUT /workspaces/{id}/acl`` — so a raw ACE rewrite of a workspace
     always carries the workspace's own grant.
     """
@@ -725,11 +725,11 @@ async def replace_resource_acl(
     if workspace is not None:
         principals = await app.state.acl.get_principals(admin["id"])
         if not await app.state.acl.check_permission(
-            workspace, principals, "change-acls"
+            workspace, principals, "share-advanced"
         ):
             raise HTTPException(
                 status_code=403,
-                detail=f"change-acls permission required on {workspace}",
+                detail=f"share-advanced permission required on {workspace}",
             )
 
     acl_entries = serialize_acl_entries(entries)

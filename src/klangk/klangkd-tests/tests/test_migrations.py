@@ -74,6 +74,8 @@ class TestRunner:
             (19, "0019_container_events"),
             (20, "0020_rename_admin_group"),
             (21, "0021_first_class_resource_acls"),
+            (22, "0022_workspace_permission_renames"),
+            (23, "0023_self_service_resources"),
         ]
         async with aiosqlite.connect(str(app_state.state.db.db_path)) as db:
             assert await _recorded(db) == expected
@@ -161,6 +163,8 @@ class TestRunner:
                 (19, "0019_container_events"),
                 (20, "0020_rename_admin_group"),
                 (21, "0021_first_class_resource_acls"),
+                (22, "0022_workspace_permission_renames"),
+                (23, "0023_self_service_resources"),
             ]
 
     async def test_m0008_agent_identity_and_human_collision(
@@ -1960,5 +1964,225 @@ class TestM0021FirstClassResourceAcls:
                 (0, 1, "manage-groups", gid, None),
                 (1, 0, "*", None, 0),
             ]
+        finally:
+            await db.__aexit__(None, None, None)
+
+
+class TestM0022WorkspacePermissionRenames:
+    """m0022 renames the stored workspace-sphere ACEs to the specific
+    #2946 names — without it, every existing workspace's grants
+    (including the role groups) stop matching the new checks."""
+
+    async def _db(self, tmp_path):
+        db = aiosqlite.connect(str(tmp_path / "m0022.db"))
+        db = await db.__aenter__()
+        await db.execute(
+            "CREATE TABLE acl_entries ("
+            " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            " resource TEXT, position INTEGER, action INTEGER,"
+            " principal_type INTEGER, user_id TEXT, group_id TEXT,"
+            " system_principal INTEGER, permission TEXT,"
+            " UNIQUE(resource, position))"
+        )
+        return db
+
+    async def _seed_legacy(self, db):
+        """An old-shape deployment: collection create + a workspace
+        carrying every renamed name plus the untouched ones."""
+
+        await db.execute(
+            "INSERT INTO acl_entries"
+            " (resource, position, action, principal_type, group_id,"
+            "  permission) VALUES ('/workspaces', 0, 1, 2, 'g-a', 'create')"
+        )
+        # per-workspace row: one ACE per legacy permission
+        renames = [
+            "create",
+            "edit",
+            "delete",
+            "monitor",
+            "export",
+            "share",
+            "change-acls",
+            "admin",
+            "files",
+            "view",
+            "terminal",
+            "files-download",
+            "files-write",
+        ]
+        for i, perm in enumerate(renames):
+            await db.execute(
+                "INSERT INTO acl_entries"
+                " (resource, position, action, principal_type, user_id,"
+                "  permission)"
+                " VALUES ('/workspaces/ws-1', ?, 1, 1, 'u-1', ?)",
+                (i, perm),
+            )
+        await db.commit()
+
+    async def _perms(self, db, resource) -> list:
+        cursor = await db.execute(
+            "SELECT permission FROM acl_entries WHERE resource = ?"
+            " ORDER BY position",
+            (resource,),
+        )
+        return [r[0] for r in await cursor.fetchall()]
+
+    async def test_renames_by_scope(self, tmp_path):
+        from klangk.model.migrations import m0022_workspace_permission_renames
+
+        db = await self._db(tmp_path)
+        try:
+            await self._seed_legacy(db)
+            await m0022_workspace_permission_renames.migration.apply(db)
+
+            assert await self._perms(db, "/workspaces") == ["create-workspace"]
+            assert await self._perms(db, "/workspaces/ws-1") == [
+                # renamed
+                "duplicate-workspace",
+                "edit-workspace",
+                "delete-workspace",
+                "monitor-workspace",
+                "export-workspace",
+                "share-workspace",
+                "share-advanced",
+                "transfer-workspace",
+                "files-view",
+                # untouched
+                "view",
+                "terminal",
+                "files-download",
+                "files-write",
+            ]
+            # Idempotent: a re-run matches nothing.
+            await m0022_workspace_permission_renames.migration.apply(db)
+            perms = await self._perms(db, "/workspaces/ws-1")
+            assert perms[:1] == ["duplicate-workspace"]
+        finally:
+            await db.__aexit__(None, None, None)
+
+    async def test_unmapped_names_left_alone(self, tmp_path):
+        """A legacy ``admin`` row on /workspaces itself has no mapping
+        (the transfer gate is per-workspace) and must survive."""
+        from klangk.model.migrations import m0022_workspace_permission_renames
+
+        db = await self._db(tmp_path)
+        try:
+            await db.execute(
+                "INSERT INTO acl_entries"
+                " (resource, position, action, principal_type, group_id,"
+                "  permission) VALUES ('/workspaces', 0, 1, 2, 'g-a',"
+                " 'admin')"
+            )
+            await db.commit()
+            await m0022_workspace_permission_renames.migration.apply(db)
+            assert await self._perms(db, "/workspaces") == ["admin"]
+        finally:
+            await db.__aexit__(None, None, None)
+
+
+class TestM0023SelfServiceResources:
+    """m0023 seeds the #2946 self-service pairs (Allow Authenticated +
+    Deny Everyone on /volumes, /images, /llm-proxy) and the /users
+    search-users row on existing deployments."""
+
+    async def _db(self, tmp_path):
+        db = aiosqlite.connect(str(tmp_path / "m0023.db"))
+        db = await db.__aenter__()
+        await db.execute(
+            "CREATE TABLE acl_entries ("
+            " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            " resource TEXT, position INTEGER, action INTEGER,"
+            " principal_type INTEGER, user_id TEXT, group_id TEXT,"
+            " system_principal INTEGER, permission TEXT,"
+            " UNIQUE(resource, position))"
+        )
+        return db
+
+    async def _rows(self, db, resource) -> list:
+        cursor = await db.execute(
+            "SELECT position, action, permission, system_principal"
+            " FROM acl_entries WHERE resource = ? ORDER BY position",
+            (resource,),
+        )
+        return list(await cursor.fetchall())
+
+    async def test_upgraded_db_gets_the_pairs(self, tmp_path):
+        from klangk.model import ACTION_ALLOW, ACTION_DENY
+        from klangk.model.migrations import m0023_self_service_resources
+
+        db = await self._db(tmp_path)
+        try:
+            # Existing deployment: some rows elsewhere (skips the
+            # fresh-DB gate) plus a /users pair from #2944 seeds.
+            await db.execute(
+                "INSERT INTO acl_entries"
+                " (resource, position, action, principal_type, group_id,"
+                "  permission)"
+                " VALUES ('/users', 0, 1, 2, 'g-a', 'manage-users')"
+            )
+            await db.execute(
+                "INSERT INTO acl_entries"
+                " (resource, position, action, principal_type,"
+                "  system_principal, permission)"
+                " VALUES ('/users', 1, 0, 3, 0, '*')"
+            )
+            await db.commit()
+            await m0023_self_service_resources.migration.apply(db)
+
+            for resource, permission in (
+                ("/volumes", "manage-volumes"),
+                ("/images", "view-images"),
+                ("/llm-proxy", "use-llm-proxy"),
+            ):
+                assert await self._rows(db, resource) == [
+                    (0, ACTION_ALLOW, permission, 1),
+                    (1, ACTION_DENY, "*", 0),
+                ]
+            # /users: search-users inserted at 1, Deny shifted to 2.
+            assert await self._rows(db, "/users") == [
+                (0, ACTION_ALLOW, "manage-users", None),
+                (1, ACTION_ALLOW, "search-users", 1),
+                (2, ACTION_DENY, "*", 0),
+            ]
+            # Idempotent: re-run changes nothing.
+            await m0023_self_service_resources.migration.apply(db)
+            assert await self._rows(db, "/users") == [
+                (0, ACTION_ALLOW, "manage-users", None),
+                (1, ACTION_ALLOW, "search-users", 1),
+                (2, ACTION_DENY, "*", 0),
+            ]
+        finally:
+            await db.__aexit__(None, None, None)
+
+    async def test_fresh_db_is_noop(self, tmp_path):
+        """An empty acl_entries table belongs to the boot seeds."""
+        from klangk.model.migrations import m0023_self_service_resources
+
+        db = await self._db(tmp_path)
+        try:
+            await m0023_self_service_resources.migration.apply(db)
+            cursor = await db.execute("SELECT COUNT(*) FROM acl_entries")
+            assert (await cursor.fetchone())[0] == 0
+        finally:
+            await db.__aexit__(None, None, None)
+
+    async def test_operator_staged_resource_skipped(self, tmp_path):
+        """A resource someone pre-populated is left untouched."""
+        from klangk.model.migrations import m0023_self_service_resources
+
+        db = await self._db(tmp_path)
+        try:
+            await db.execute(
+                "INSERT INTO acl_entries"
+                " (resource, position, action, principal_type, group_id,"
+                "  permission)"
+                " VALUES ('/volumes', 0, 1, 2, 'g-a', 'custom'),"
+                "        ('/', 0, 1, 3, NULL, 'view')"
+            )
+            await db.commit()
+            await m0023_self_service_resources.migration.apply(db)
+            assert await self._rows(db, "/volumes") == [(0, 1, "custom", None)]
         finally:
             await db.__aexit__(None, None, None)

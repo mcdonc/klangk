@@ -32,7 +32,7 @@ const DEMO_URL = process.env.KLANGKBUILD_TEST_URL || "http://localhost:8996";
 
 // Bootstrap admin = the server's KLANGKD_DEFAULT_USER. Used for the destructive
 // reset and user/group management. MUST differ from the hero (you can't delete
-// yourself) and holds the `admin` permission to manage users + groups.
+// yourself) and holds manage-users/manage-groups (instance admin).
 const BOOTSTRAP_EMAIL = process.env.KLANGKD_DEFAULT_USER || "admin@plope.com";
 // Must satisfy the boot-time password-policy gate (#2581, #2604);
 // keep in sync with run-demo-backend.sh DEMO_BOOTSTRAP_PASSWORD.
@@ -306,7 +306,7 @@ async function seed() {
     );
     for (const [user, role] of Object.entries(ws.shares ?? {})) {
       const email = USERS[user as keyof typeof USERS];
-      // Grant via the owner's token (owners hold the `share` permission).
+      // Grant via the owner's token (owners hold the `*` wildcard).
       const ok = await grantRole(id, role as Role, email, ownerToken);
       console.log(`      ${ok ? "✓" : "·"} ${user} → ${role} (${email})`);
     }

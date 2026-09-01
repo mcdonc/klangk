@@ -6,7 +6,9 @@ Klangk uses an Access Control List (ACL) system to manage permissions. Instead o
 
 - **Resources**: paths in a tree that mirror the URL structure (`/`, `/workspaces`, `/workspaces/{id}`, `/users`, `/groups`, etc.)
 - **Principals**: who the ACE applies to — a specific user, a group, or a system principal (`Everyone` or `Authenticated`)
-- **Permissions**: what action is allowed or denied (e.g., `view`, `create`, `edit`, `delete`, `terminal`, `files`, `share`, `*`)
+- **Permissions**: what action is allowed or denied — specific,
+  self-describing names (`view`, `create-workspace`, `edit-workspace`,
+  `terminal`, `files-view`, `share-workspace`, `*`; #2946)
 - **ACEs**: `(Allow/Deny, principal, permission)` entries ordered by position on a resource
 - **ACL walk**: when checking permission, the system walks from the target resource up to `/`, checking each node's ACEs in order. First match wins. If no match after reaching root, access is denied.
 
@@ -31,8 +33,9 @@ Klangk uses an Access Control List (ACL) system to manage permissions. Instead o
 | -------------- | ------ | ------------- | ------------------------ |
 | `/`            | Allow  | Authenticated | `view`                   |
 | `/`            | Deny   | Everyone      | `*`                      |
-| `/workspaces`  | Allow  | group:admins  | `create`                 |
+| `/workspaces`  | Allow  | group:admins  | `create-workspace`       |
 | `/users`       | Allow  | group:admins  | `manage-users`           |
+| `/users`       | Allow  | Authenticated | `search-users`           |
 | `/users`       | Deny   | Everyone      | `*`                      |
 | `/groups`      | Allow  | group:admins  | `manage-groups`          |
 | `/groups`      | Deny   | Everyone      | `*`                      |
@@ -44,6 +47,12 @@ Klangk uses an Access Control List (ACL) system to manage permissions. Instead o
 | `/events`      | Deny   | Everyone      | `*`                      |
 | `/acl`         | Allow  | group:admins  | `manage-acls`            |
 | `/acl`         | Deny   | Everyone      | `*`                      |
+| `/volumes`     | Allow  | Authenticated | `manage-volumes`         |
+| `/volumes`     | Deny   | Everyone      | `*`                      |
+| `/images`      | Allow  | Authenticated | `view-images`            |
+| `/images`      | Deny   | Everyone      | `*`                      |
+| `/llm-proxy`   | Allow  | Authenticated | `use-llm-proxy`          |
+| `/llm-proxy`   | Deny   | Everyone      | `*`                      |
 | `/admin`       | Allow  | group:admins  | `*` (admin marker only)  |
 | `/admin`       | Deny   | Everyone      | `*`                      |
 
@@ -61,7 +70,7 @@ other users or groups to create workspaces, add an ACL entry on the
 
 1. Navigate to **Admin → ACL** (or the Advanced ACL editor).
 2. Select the `/workspaces` resource.
-3. Add an **Allow** entry for the `create` permission, targeting either:
+3. Add an **Allow** entry for the `create-workspace` permission, targeting either:
    - A specific **group** (e.g., a "developers" group you've created) — all
      members of that group can then create workspaces.
    - The **Authenticated** system principal — restores the pre-#2569
@@ -70,14 +79,14 @@ other users or groups to create workspaces, add an ACL entry on the
    same resource (lower position = checked first).
 
 The create button in the web UI automatically appears/disappears based
-on the user's effective `create` permission on `/workspaces`.
+on the user's effective `create-workspace` permission on `/workspaces`.
 
 ## Groups
 
 Groups replace the old role system. A group is a named collection of users. Two built-in groups are created automatically on first startup:
 
 - **`admins`** — the default admin user is added to it; members can create workspaces and access admin functions.
-- **`members`** — every new user (registration, invitation, OIDC first login, admin-created) is added automatically. Has no permissions by default, but deployers can grant `create` on `/workspaces` to this group to let all members create workspaces.
+- **`members`** — every new user (registration, invitation, OIDC first login, admin-created) is added automatically. Has no permissions by default, but deployers can grant `create-workspace` on `/workspaces` to this group to let all members create workspaces.
 
 **Admin UI**: Admin > Groups tab — create/delete groups, add/remove members.
 
@@ -106,31 +115,36 @@ other resource) are rejected with a 400 error.
 
 ## Workspace Permissions
 
-When a workspace is created, the owner gets a `(Allow, user:{id}, *)` ACE on `/workspaces/{id}`. This grants full access: view, edit, delete, share, terminal, files, export — every permission, including `change-acls`.
+When a workspace is created, the owner gets a `(Allow, user:{id}, *)` ACE on `/workspaces/{id}`. This grants full access — every permission, including `share-advanced` and `transfer-workspace`.
 
-**Sharing**: the owner can share a workspace with users or groups. The simple sharing UI (Sharing tab) assigns the four role buckets — `owners`, `collaborators`, `coders`, `spectators` (#2750) — which seed per-workspace role groups carrying: **coders** `monitor`, `terminal`, `egress-consent`, `code-in-isolation`, `exec-and-sync`, `spectate-on-shared-terminals`, `files`, `files-download`, `files-write`; **collaborators** the same plus `code-in-shared-terminals` and `share-terminals`; **spectators** `monitor`, `terminal`, `spectate-on-shared-terminals` (watch-only). For finer control, the Advanced ACL editor lets you add/remove/reorder individual ACEs — gated on `change-acls`, a separate power from `share` (#2764): rewriting the raw ACE list can grant `*` and add Deny entries, so a member who can invite collaborators does not thereby gain raw ACL editing or role assignment. Role-group writes (`POST`/`DELETE`/`PATCH /workspaces/{id}/roles*`) require `share` **and** `change-acls` — the `owners-{id}` group holds the `*` wildcard, so assigning roles is an ACL change in effect. Owners hold `change-acls` through their `*` wildcard ACE.
+**Sharing**: the owner can share a workspace with users or groups. The simple sharing UI (Sharing tab) assigns the four role buckets — `owners`, `collaborators`, `coders`, `spectators` (#2750) — which seed per-workspace role groups carrying: **coders** `monitor-workspace`, `terminal`, the lifecycle trio `start-workspace`/`stop-workspace`/`restart-workspace`, `egress-consent`, `code-in-isolation`, `exec-and-sync`, `spectate-on-shared-terminals`, `files-view`, `files-download`, `files-write`; **collaborators** the same plus `code-in-shared-terminals` and `share-terminals`; **spectators** `monitor-workspace` and `spectate-on-shared-terminals` (watch-only — no lifecycle control, #2946). For finer control, the Advanced ACL editor lets you add/remove/reorder individual ACEs — gated on `share-advanced`, a separate power from `share-workspace` (#2764): rewriting the raw ACE list can grant `*` and add Deny entries, so a member who can invite collaborators does not thereby gain raw ACL editing or role assignment. Role-group writes (`POST`/`DELETE`/`PATCH /workspaces/{id}/roles*`) require `share-workspace` **and** `share-advanced` — the `owners-{id}` group holds the `*` wildcard, so assigning roles is an ACL change in effect. Owners hold `share-advanced` through their `*` wildcard ACE.
 
 **Permissions checked on workspace resources**:
 
 | Permission                     | Controls                                                                                                                                                                                                                                          |
 | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `view`                         | Can see the workspace exists                                                                                                                                                                                                                      |
-| `monitor`                      | Can observe health/status: `GET /workspaces/{id}/status` and the `container_status` / `service_health` WebSocket frames (#2783)                                                                                                                   |
+| `monitor-workspace`            | Can observe health/status: `GET /workspaces/{id}/status` and the `container_status` / `service_health` WebSocket frames (#2783)                                                                                                                   |
+| `start-workspace`              | Can start a stopped workspace container                                                                                                                                                                                                           |
+| `stop-workspace`               | Can stop a running workspace container                                                                                                                                                                                                            |
+| `restart-workspace`            | Can restart the container (HTTP route and the WS `restart_container` command)                                                                                                                                                                     |
 | `terminal`                     | Can open a terminal / exec commands                                                                                                                                                                                                               |
 | `code-in-isolation`            | Own terminal windows (the "+" tab in the web terminal and new `klangk shell` windows) — spectators get none                                                                                                                                       |
 | `code-in-shared-terminals`     | Can type into a shared terminal someone else started                                                                                                                                                                                              |
 | `spectate-on-shared-terminals` | Can watch (read-only) shared terminals                                                                                                                                                                                                            |
 | `share-terminals`              | Can share one of their terminals with workspace members (the `klangk terminal share` command / web UI toggle)                                                                                                                                     |
 | `egress-consent`               | Can decide held egress requests in interactive mode: register a decider (web Network tab, consent banner, `klangk consent-decide`), send verdicts, revoke, and pause prompting — owners/coders/collaborators by default, spectators never (#2883) |
-| `files`                        | Can browse file listings (metadata) and gets the Files tab; reading file bodies additionally needs `files-download`                                                                                                                               |
-| `files-download`               | Can fetch file bytes: `/files/download` (raw stream/tar) and `/files/content` (text reader) — needs `files` too                                                                                                                                   |
-| `files-write`                  | Can mutate files: upload, rename, delete (needs `files` too)                                                                                                                                                                                      |
+| `files-view`                   | Can browse file listings (metadata) and gets the Files tab; reading file bodies additionally needs `files-download`                                                                                                                               |
+| `files-download`               | Can fetch file bytes: `/files/download` (raw stream/tar) and `/files/content` (text reader) — needs `files-view` too                                                                                                                              |
+| `files-write`                  | Can mutate files: upload, rename, delete (needs `files-view` too)                                                                                                                                                                                 |
 | `exec-and-sync`                | Can run one-shot commands (`klangk exec`) and sync (`klangk sync`) against the workspace                                                                                                                                                          |
-| `edit`                         | Can change workspace settings (name, image, command, mounts, env)                                                                                                                                                                                 |
-| `share`                        | Can manage who has access (Sharing tab: member and group shares)                                                                                                                                                                                  |
-| `change-acls`                  | Can rewrite the raw ACE list (`GET`/`PUT /workspaces/{id}/acl`, the Advanced ACL editor) and assign roles (#2764); owners hold it via `*`                                                                                                         |
-| `delete`                       | Can delete the workspace                                                                                                                                                                                                                          |
-| `export`                       | Can export the workspace as a `.tar.gz` archive (#2707)                                                                                                                                                                                           |
+| `edit-workspace`               | Can change workspace settings (name, image, command, mounts, env)                                                                                                                                                                                 |
+| `share-workspace`              | Can manage who has access (Sharing tab: member and group shares)                                                                                                                                                                                  |
+| `share-advanced`               | Can rewrite the raw ACE list (`GET`/`PUT /workspaces/{id}/acl`, the Advanced ACL editor) and assign roles (#2764); owners hold it via `*`                                                                                                         |
+| `delete-workspace`             | Can delete the workspace                                                                                                                                                                                                                          |
+| `export-workspace`             | Can export the workspace as a `.tar.gz` archive (#2707)                                                                                                                                                                                           |
+| `duplicate-workspace`          | Can duplicate the workspace                                                                                                                                                                                                                       |
+| `transfer-workspace`           | Can transfer ownership to another user                                                                                                                                                                                                            |
 | `*`                            | All of the above                                                                                                                                                                                                                                  |
 
 Withholding `files-download` hides every download affordance and returns
@@ -143,7 +157,7 @@ bytes through the download endpoint, cannot render.
 
 Withholding `files-write` disables every mutating route — upload
 (`/files/upload`), rename (`/files/rename`), and delete (`DELETE
-/files`) — so a `files`-only member can browse listings but not read
+/files`) — so a `files-view`-only member can browse listings but not read
 file bodies or modify the workspace. In the file viewer the matching affordances disappear: no
 drag-and-drop zone or upload hints, no Rename/Delete in the context menu,
 and text-editor renderers go read-only (their Save uploads through that
@@ -152,7 +166,7 @@ endpoint).
 The download gate covers every files endpoint that moves file bytes
 out of the workspace — byte-perfect, unbounded export (any file size,
 whole directories as tar.gz) via `/files/download`, and lossy text
-reads (up to 1 MB per file) via `/files/content`. A member with `files`
+reads (up to 1 MB per file) via `/files/content`. A member with `files-view`
 but not
 `files-download` can browse listings and metadata only. To grant viewing
 without bulk export there is no longer a middle setting: grant both
@@ -160,7 +174,7 @@ without bulk export there is no longer a middle setting: grant both
 (browsing itself is denied — the web UI's Files tab does not mount at
 all, #2886).
 
-`export` is a workspace permission checked on `/workspaces/{id}`: the owner's wildcard ACE and the seeded `owners-<id>` role group both cover it, so owners can export their own workspaces without any extra grant, and a **Deny** `export` ACE for **Everyone** on the workspace resource (positioned ahead of the wildcards) revokes it per workspace. Admins do **not** get export implicitly — they must be an owner or hold an explicit grant. See [Export & Import](../features/export-import.md#export).
+`export-workspace` is a workspace permission checked on `/workspaces/{id}`: the owner's wildcard ACE and the seeded `owners-<id>` role group both cover it, so owners can export their own workspaces without any extra grant, and a **Deny** `export-workspace` ACE for **Everyone** on the workspace resource (positioned ahead of the wildcards) revokes it per workspace. Admins do **not** get export implicitly — they must be an owner or hold an explicit grant. See [Export & Import](../features/export-import.md#export).
 
 ### First-class resource permissions
 
@@ -168,18 +182,22 @@ Every governed surface is a first-class top-level resource (#2944);
 each carries **one** flat `manage-*` permission covering all of its
 actions — no per-action splits:
 
-| Permission               | Where it is checked | Controls                                                                                                                                                                                                                            |
-| ------------------------ | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `create`                 | `/workspaces`       | Create/import workspaces (renamed `create-workspace` in the workspaces tranche)                                                                                                                                                     |
-| `manage-users`           | `/users`            | The whole Users surface: list users and their workspaces, create, edit, unlock, delete, read active login sessions. `GET /users/search` stays authenticated (pickers)                                                               |
-| `manage-groups`          | `/groups`           | The whole Groups surface: create, edit, delete, manage members. `GET /groups` stays authenticated (pickers)                                                                                                                         |
-| `manage-invitations`     | `/invitations`      | List, send, resend, revoke invitations                                                                                                                                                                                              |
-| `manage-server-schedule` | `/server`           | Server stop/recycle schedules: list, create, cancel — plus the drain/consent decider WS handshake                                                                                                                                   |
-| `manage-events`          | `/events`           | Read the container start/stop history (`GET /events`) — read-only audit                                                                                                                                                             |
-| `manage-acls`            | `/acl`              | The Access Control browser: read and rewrite ACL entries on **any** resource via `GET/PUT /acl/*` — root-equivalent, see below                                                                                                      |
-| `admin`                  | `/admin`            | The instance-administrator **marker** only (`*` row); nothing checks it on `/admin` anymore (#2944) — but the workspace-transfer gate still checks the name `admin` on each `/workspaces/{id}` until the workspaces tranche (#2946) |
+| Permission               | Where it is checked | Controls                                                                                                                                                                          |
+| ------------------------ | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `create-workspace`       | `/workspaces`       | Create/import workspaces (#2946 rename)                                                                                                                                           |
+| `manage-users`           | `/users`            | The whole Users surface: list users and their workspaces, create, edit, unlock, delete, read active login sessions. `GET /users/search` stays authenticated (pickers)             |
+| `manage-groups`          | `/groups`           | The whole Groups surface: create, edit, delete, manage members. `GET /groups` stays authenticated (pickers)                                                                       |
+| `manage-invitations`     | `/invitations`      | List, send, resend, revoke invitations                                                                                                                                            |
+| `manage-server-schedule` | `/server`           | Server stop/recycle schedules: list, create, cancel — plus the drain/consent decider WS handshake                                                                                 |
+| `manage-events`          | `/events`           | Read the container start/stop history (`GET /events`) — read-only audit                                                                                                           |
+| `manage-acls`            | `/acl`              | The Access Control browser: read and rewrite ACL entries on **any** resource via `GET/PUT /acl/*` — root-equivalent, see below                                                    |
+| `manage-volumes`         | `/volumes`          | Self-service volumes (still label-scoped to the caller at runtime) — Allow Authenticated by default (#2946)                                                                       |
+| `view-images`            | `/images`           | The image/nix/sudo capability listing the create/edit UIs read (#2946)                                                                                                            |
+| `use-llm-proxy`          | `/llm-proxy`        | The in-process LLM proxy: user JWTs are checked directly; workspace tokens (the container path via the egress caddy) are checked against the workspace owner's principals (#2946) |
+| `search-users`           | `/users`            | The member-picker type-ahead (`GET /users/search`) — Allow Authenticated by default (#2946)                                                                                       |
+| `admin`                  | `/admin`            | The instance-administrator **marker** only (`*` row); nothing checks it anywhere anymore (#2944, #2946 — the transfer gate now checks `transfer-workspace`)                       |
 
-`PUT /acl/resource` additionally requires `change-acls` on the target
+`PUT /acl/resource` additionally requires `share-advanced` on the target
 when that target is an individual workspace (`/workspaces/{id}`) — the
 same resource-level gate as `PUT /workspaces/{id}/acl`, so a raw ACE
 rewrite of a workspace always carries the workspace's own grant.
@@ -190,7 +208,7 @@ it to a principal is granting instance-wide control, exactly like
 adding them to the admins group. Grant it only to administrators.
 (Until the workspaces tranche renames the workspace-scoped
 `change-acls` to `share-advanced`, the two names coexist:
-`change-acls` on a workspace resource is the workspace-level gate;
+`share-advanced` on a workspace resource is the workspace-level gate;
 `manage-acls` is the global editor.)
 
 Delegation is per-resource (the same recipe as the Events auditor,

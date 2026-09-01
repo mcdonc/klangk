@@ -2902,7 +2902,7 @@ class TestWorkspaceRoutes:
             f"/workspaces/{fake_id}",
             0,
             model.ACTION_ALLOW,
-            "terminal",
+            "restart-workspace",
             model.PRINCIPAL_USER,
             user_id=user["id"],
         )
@@ -3050,7 +3050,7 @@ class TestWorkspaceRoutes:
             f"/workspaces/{fake_id}",
             0,
             model.ACTION_ALLOW,
-            "terminal",
+            "stop-workspace",
             model.PRINCIPAL_USER,
             user_id=user["id"],
         )
@@ -3066,7 +3066,7 @@ class TestWorkspaceRoutes:
             f"/workspaces/{fake_id}",
             0,
             model.ACTION_ALLOW,
-            "terminal",
+            "start-workspace",
             model.PRINCIPAL_USER,
             user_id=user["id"],
         )
@@ -3193,7 +3193,7 @@ class TestWorkspaceRoutes:
             resource,
             pos + 1,
             model.ACTION_ALLOW,
-            "monitor",
+            "monitor-workspace",
             model.PRINCIPAL_USER,
             user_id=other["id"],
         )
@@ -3259,7 +3259,7 @@ class TestWorkspaceRoutes:
             f"/workspaces/{fake_id}",
             0,
             model.ACTION_ALLOW,
-            "monitor",
+            "monitor-workspace",
             model.PRINCIPAL_USER,
             user_id=user["id"],
         )
@@ -3562,7 +3562,7 @@ class TestWorkspaceRoutes:
             f"/workspaces/{ws_id}",
             100,
             ACTION_ALLOW,
-            "edit",
+            "edit-workspace",
             PRINCIPAL_USER,
             user_id=other["id"],
         )
@@ -3764,7 +3764,7 @@ class TestWorkspaceRoutes:
             f"/workspaces/{ws_id}",
             other["id"],
             model.ACTION_ALLOW,
-            "edit",
+            "edit-workspace",
             model.PRINCIPAL_USER,
             user_id=other["id"],
         )
@@ -4051,7 +4051,7 @@ class TestWorkspaceRoutes:
     ):
         """ACL grants edit but the workspace doesn't exist -> 404 (#864).
 
-        Mirrors ``test_delete_not_found``: the ``edit`` ACE on a nonexistent
+        Mirrors ``test_delete_not_found``: the ``edit-workspace`` ACE on a nonexistent
         resource lets the caller past the ACL guard, then the handler's
         owner resolution finds no row and returns 404 (a race / stale id,
         not a normal path).
@@ -4062,7 +4062,7 @@ class TestWorkspaceRoutes:
             f"/workspaces/{fake_id}",
             0,
             model.ACTION_ALLOW,
-            "edit",
+            "edit-workspace",
             model.PRINCIPAL_USER,
             user_id=user["id"],
         )
@@ -4815,10 +4815,10 @@ class TestWorkspaceSharingRoutes:
             and e["user_id"] == other["id"]
         )
         assert member_perms == [
-            "files",
             "files-download",
+            "files-view",
             "files-write",
-            "monitor",
+            "monitor-workspace",
             "terminal",
             "view",
         ]
@@ -5245,7 +5245,7 @@ class TestWorkspaceACL:
         )
         entries = await app_state.state.model.acl.get_acl_entries(resource)
         next_pos = max(e["position"] for e in entries) + 1
-        for i, perm in enumerate(("view", "share")):
+        for i, perm in enumerate(("view", "share-workspace")):
             await app_state.state.model.acl.add_acl_entry(
                 resource,
                 next_pos + i,
@@ -5294,7 +5294,7 @@ class TestWorkspaceACL:
             resource,
             next_pos + 2,
             model.ACTION_ALLOW,
-            "change-acls",
+            "share-advanced",
             model.PRINCIPAL_USER,
             user_id=member["id"],
         )
@@ -5348,7 +5348,7 @@ class TestWorkspaceRoles:
         )
         entries = await app_state.state.model.acl.get_acl_entries(resource)
         next_pos = max(e["position"] for e in entries) + 1
-        for i, perm in enumerate(("view", "share")):
+        for i, perm in enumerate(("view", "share-workspace")):
             await app_state.state.model.acl.add_acl_entry(
                 resource,
                 next_pos + i,
@@ -5401,7 +5401,7 @@ class TestWorkspaceRoles:
             resource,
             next_pos + 2,
             model.ACTION_ALLOW,
-            "change-acls",
+            "share-advanced",
             model.PRINCIPAL_USER,
             user_id=member["id"],
         )
@@ -6025,8 +6025,8 @@ class TestWorkspaceGroupSharing:
             and e["group_id"] == group["id"]
         )
         assert group_perms == [
-            "files",
             "files-download",
+            "files-view",
             "files-write",
             "terminal",
             "view",
@@ -7409,7 +7409,7 @@ class TestFileRoutes:
         ws_id = await self._create_workspace(client, headers)
         try:
             other = await self._member_headers_with_perms(
-                app_state, client, ws_id, ["view", "terminal", "files"]
+                app_state, client, ws_id, ["view", "terminal", "files-view"]
             )
             with patch.object(
                 _mock_pod,
@@ -7441,7 +7441,7 @@ class TestFileRoutes:
                 app_state,
                 client,
                 ws_id,
-                ["view", "terminal", "files", "files-download"],
+                ["view", "terminal", "files-view", "files-download"],
             )
 
             async def fake_stream(*a, **kw):
@@ -7499,7 +7499,7 @@ class TestFileRoutes:
         ws_id = await self._create_workspace(client, headers)
         try:
             other = await self._member_headers_with_perms(
-                app_state, client, ws_id, ["view", "terminal", "files"]
+                app_state, client, ws_id, ["view", "terminal", "files-view"]
             )
             with patch.object(
                 _mock_pod,
@@ -7531,7 +7531,7 @@ class TestFileRoutes:
                 app_state,
                 client,
                 ws_id,
-                ["view", "terminal", "files", "files-download"],
+                ["view", "terminal", "files-view", "files-download"],
             )
             with patch.object(
                 _mock_pod,
@@ -7581,7 +7581,7 @@ class TestFileRoutes:
         ws_id = await self._create_workspace(client, headers)
         try:
             other = await self._member_headers_with_perms(
-                app_state, client, ws_id, ["view", "terminal", "files"]
+                app_state, client, ws_id, ["view", "terminal", "files-view"]
             )
             with patch.object(
                 _mock_pod,
@@ -7614,7 +7614,7 @@ class TestFileRoutes:
         ws_id = await self._create_workspace(client, headers)
         try:
             other = await self._member_headers_with_perms(
-                app_state, client, ws_id, ["view", "terminal", "files"]
+                app_state, client, ws_id, ["view", "terminal", "files-view"]
             )
             resp = await client.delete(
                 f"/api/v1/workspaces/{ws_id}/files?path=/home/klangk/victim.txt",
@@ -7643,7 +7643,7 @@ class TestFileRoutes:
                 app_state,
                 client,
                 ws_id,
-                ["view", "terminal", "files", "files-write"],
+                ["view", "terminal", "files-view", "files-write"],
             )
             with patch.object(
                 _mock_pod,
@@ -7694,7 +7694,7 @@ class TestFileRoutes:
                 app_state,
                 client,
                 ws_id,
-                ["view", "terminal", "files", "files-write"],
+                ["view", "terminal", "files-view", "files-write"],
             )
             with patch.object(
                 _mock_pod,
@@ -9212,8 +9212,8 @@ class TestAdminResourceACL:
         )
         assert resp.status_code == 200
         entries = resp.json()
-        # Default ACL has Authenticated create on /workspaces
-        assert any(e["permission"] == "create" for e in entries)
+        # Default ACL has the admins group create-workspace on /workspaces
+        assert any(e["permission"] == "create-workspace" for e in entries)
 
     async def test_replace_resource_acl(self, client, admin_user):
         headers = await self._admin_headers(client)
@@ -9322,7 +9322,7 @@ class TestAdminResourceACL:
             resource,
             next_pos,
             model.ACTION_ALLOW,
-            "change-acls",
+            "share-advanced",
             model.PRINCIPAL_USER,
             user_id=admin_user["id"],
         )
@@ -10017,7 +10017,7 @@ class TestWorkspaceExportImport:
             f"/workspaces/{ws['id']}",
             -1,
             ACTION_DENY,
-            "export",
+            "export-workspace",
             PRINCIPAL_SYSTEM,
             system_principal=SYSTEM_EVERYONE,
         )
@@ -10056,7 +10056,7 @@ class TestWorkspaceExportImport:
             "/workspaces/nonexistent-id",
             0,
             ACTION_ALLOW,
-            "export",
+            "export-workspace",
             PRINCIPAL_USER,
             user_id=admin["id"],
         )
@@ -14047,7 +14047,7 @@ class TestBranchGaps2834:
                 {
                     "action": model.ACTION_ALLOW,
                     "principal_type": model.PRINCIPAL_GROUP,
-                    "permission": "admin",
+                    "permission": "*",
                     "group_id": group["id"],
                 },
             ],

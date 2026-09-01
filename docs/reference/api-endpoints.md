@@ -181,8 +181,8 @@ No request body.
 Get the ACL entries for a specific resource. Query param: `resource`
 (e.g. `/workspaces/uuid`).
 
-**Auth:** JWT required. User must have `admin` permission on the
-requested resource.
+**Auth:** JWT required. User must have `manage-acls` permission on
+`/acl`.
 
 No request body.
 
@@ -675,7 +675,7 @@ field.
 
 Get the resolved ACL entries for a workspace.
 
-**Auth:** JWT required. User must have `change-acls` permission on
+**Auth:** JWT required. User must have `share-advanced` permission on
 `/workspaces/{id}` (#2764).
 
 No request body.
@@ -701,7 +701,7 @@ No request body.
 Export a workspace as a `.tar.gz` archive. The archive contains the
 workspace configuration and container filesystem.
 
-**Auth:** JWT required. User must have the `export` permission on the
+**Auth:** JWT required. User must have the `export-workspace` permission on the
 workspace resource (`/workspaces/{id}`) — the owner's wildcard ACE and
 the seeded `owners-<id>` role group both cover it (#2707).
 
@@ -716,7 +716,7 @@ Headers: `Content-Disposition: attachment; filename="<name>.tar.gz"`,
 List files and directories inside the workspace container. Requires a
 running container (returns 409 if stopped).
 
-**Auth:** JWT required. User must have `files` permission on
+**Auth:** JWT required. User must have `files-view` permission on
 `/workspaces/{id}`. Query param: `path` (absolute container path,
 default `/`).
 
@@ -742,7 +742,7 @@ No request body.
 Read the contents of a file inside the workspace container. Requires a
 running container (returns 409 if stopped).
 
-**Auth:** JWT required. User must have both `files` and `files-download`
+**Auth:** JWT required. User must have both `files-view` and `files-download`
 permissions on `/workspaces/{id}` (#2713). Query param: `path` (absolute
 container path).
 
@@ -760,7 +760,7 @@ Download a file or directory from the workspace container. Single files
 are streamed directly; directories are streamed as `.tar.gz` archives.
 Requires a running container (returns 409 if stopped).
 
-**Auth:** JWT required. User must have both `files` and `files-download`
+**Auth:** JWT required. User must have both `files-view` and `files-download`
 permissions on `/workspaces/{id}`. Query param: `path` (absolute container
 path).
 
@@ -773,7 +773,7 @@ file) or `application/gzip` (directory archive).
 
 List groups that have been granted access to a workspace.
 
-**Auth:** JWT required. User must have `share` permission on `/workspaces/{id}`.
+**Auth:** JWT required. User must have `share-workspace` permission on `/workspaces/{id}`.
 
 No request body.
 
@@ -787,7 +787,7 @@ No request body.
 
 List individual users who have been granted access to a workspace.
 
-**Auth:** JWT required. User must have `share` permission on `/workspaces/{id}`.
+**Auth:** JWT required. User must have `share-workspace` permission on `/workspaces/{id}`.
 
 No request body.
 
@@ -802,7 +802,7 @@ No request body.
 List role groups for a workspace and their members. Each workspace has
 four roles: `owners`, `coders`, `collaborators`, `spectators`.
 
-**Auth:** JWT required. User must have `share` permission on `/workspaces/{id}`.
+**Auth:** JWT required. User must have `share-workspace` permission on `/workspaces/{id}`.
 
 No request body.
 
@@ -868,7 +868,7 @@ disabled.
 Change a user's role in a workspace. Set `role` to `null` to remove the
 user from all roles.
 
-**Auth:** JWT required. User must have `share` **and** `change-acls` permission on
+**Auth:** JWT required. User must have `share-workspace` **and** `share-advanced` permission on
 `/workspaces/{id}` (#2764).
 
 ```json
@@ -889,7 +889,7 @@ the key (reverting it to the deploy-wide default); keys not present
 are left untouched. See the `settings` field on
 [POST `/api/v1/workspaces`](#post-apiv1workspaces) for the known keys.
 
-**Auth:** JWT required. User must have `edit` permission on `/workspaces/{id}`.
+**Auth:** JWT required. User must have `edit-workspace` permission on `/workspaces/{id}`.
 
 ```json
 { "idle_timeout": 0 }
@@ -1376,8 +1376,8 @@ the workspace's `owners` role; connected clients of both users get a
 workspaces-changed refresh. The caller must be a workspace admin (the
 owner's wildcard ACE covers it).
 
-**Auth:** JWT required. User must have `admin` permission on
-`/workspaces/{id}`.
+**Auth:** JWT required. User must have `transfer-workspace` permission
+on `/workspaces/{id}`.
 
 ```json
 { "email": "newowner@example.com" }
@@ -1406,8 +1406,8 @@ shown under [GET /api/v1/workspaces](#get-apiv1workspaces)).
 
 Clone an existing workspace's configuration into a new workspace.
 
-**Auth:** JWT required. User must have `create` permission on
-`/workspaces/{id}`.
+**Auth:** JWT required. User must have `duplicate-workspace` permission
+on `/workspaces/{id}`.
 
 ```json
 { "name": "cloned-workspace" }
@@ -1455,7 +1455,7 @@ optional `path` query param (absolute container path).
 
 Grant a group access to a workspace.
 
-**Auth:** JWT required. User must have `share` permission on `/workspaces/{id}`.
+**Auth:** JWT required. User must have `share-workspace` permission on `/workspaces/{id}`.
 
 ```json
 { "group_id": "uuid" }
@@ -1469,12 +1469,13 @@ Grant a group access to a workspace.
 
 ### POST `/api/v1/workspaces/{id}/members`
 
-Grant a user access to a workspace. The user receives `view`, `monitor`,
+Grant a user access to a workspace. The user receives `view`,
+`monitor-workspace`,
 `terminal`, `files`, `files-download`, and `files-write` permissions
 (a direct user share — the role-bucket sharing UI uses
 `POST /workspaces/{id}/roles/{role}` instead).
 
-**Auth:** JWT required. User must have `share` permission on `/workspaces/{id}`.
+**Auth:** JWT required. User must have `share-workspace` permission on `/workspaces/{id}`.
 
 ```json
 { "email": "user@example.com" }
@@ -1548,7 +1549,7 @@ No request body.
 
 Return the container status for a workspace.
 
-**Auth:** JWT required. User must have `monitor` permission on
+**Auth:** JWT required. User must have `monitor-workspace` permission on
 `/workspaces/{id}` (#2783 — the dedicated status-observation permission,
 granted alongside `terminal` by every share path).
 
@@ -1614,7 +1615,7 @@ failing check isn't a black box.
 Add a user to a workspace role. Valid roles: `owners`, `coders`,
 `collaborators`, `spectators`.
 
-**Auth:** JWT required. User must have `share` **and** `change-acls` permission on
+**Auth:** JWT required. User must have `share-workspace` **and** `share-advanced` permission on
 `/workspaces/{id}` (#2764).
 
 ```json
@@ -1631,9 +1632,10 @@ Add a user to a workspace role. Valid roles: `owners`, `coders`,
 
 Replace all ACL entries for a specific resource. Query param: `resource`.
 
-**Auth:** JWT required. User must have `admin` permission on `/admin`.
-When the target is an individual workspace (`/workspaces/{id}`), the
-user must additionally hold `change-acls` on that workspace (#2764).
+**Auth:** JWT required. User must have `manage-acls` permission on
+`/acl`. When the target is an individual workspace (`/workspaces/{id}`),
+the user must additionally hold `share-advanced` on that workspace
+(#2764).
 
 ```json
 [
@@ -1671,7 +1673,7 @@ user must additionally hold `change-acls` on that workspace (#2764).
 Update a workspace's configuration (name, container image, default
 command, volume mounts, environment variables). All fields optional.
 
-**Auth:** JWT required. User must have `edit` permission on
+**Auth:** JWT required. User must have `edit-workspace` permission on
 `/workspaces/{id}`.
 
 ```json
@@ -1712,8 +1714,8 @@ no container restart is needed and the web UI updates it live.
 
 Replace all ACL entries for a workspace.
 
-**Auth:** JWT required. User must have `change-acls` permission on
-`/workspaces/{id}` (#2764) — `share` no longer suffices.
+**Auth:** JWT required. User must have `share-advanced` permission on
+`/workspaces/{id}` (#2764) — `share-workspace` no longer suffices.
 
 ```json
 [
@@ -1762,7 +1764,7 @@ No request body.
 
 Delete a workspace and stop its container.
 
-**Auth:** JWT required. User must have `delete` permission on
+**Auth:** JWT required. User must have `delete-workspace` permission on
 `/workspaces/{id}`.
 
 No request body.
@@ -1794,7 +1796,7 @@ No request body.
 
 Revoke a group's access to a workspace.
 
-**Auth:** JWT required. User must have `share` permission on `/workspaces/{id}`.
+**Auth:** JWT required. User must have `share-workspace` permission on `/workspaces/{id}`.
 
 No request body.
 
@@ -1808,7 +1810,7 @@ No request body.
 
 Revoke a user's access to a workspace.
 
-**Auth:** JWT required. User must have `share` permission on `/workspaces/{id}`.
+**Auth:** JWT required. User must have `share-workspace` permission on `/workspaces/{id}`.
 
 No request body.
 
@@ -1822,7 +1824,7 @@ No request body.
 
 Remove a user from a workspace role.
 
-**Auth:** JWT required. User must have `share` **and** `change-acls` permission on
+**Auth:** JWT required. User must have `share-workspace` **and** `share-advanced` permission on
 `/workspaces/{id}` (#2764).
 
 No request body.

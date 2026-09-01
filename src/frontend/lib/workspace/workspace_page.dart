@@ -704,7 +704,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
       // #2886: no `files` permission → no Files tab at all (spectators,
       // terminal-only shares) — same my-permissions gate as Sharing/Network,
       // so the panel never fetches a listing the backend will 403.
-      fileViewer: _hasPerm('files')
+      fileViewer: _hasPerm('files-view')
           ? FileViewerPanel(
               key: _fileViewerKey,
               wsClient: wsClient,
@@ -727,21 +727,21 @@ class _WorkspacePageState extends State<WorkspacePage> {
         onSwitchToIsolated: _switchToIsolated,
         onJoinShared: _joinShared,
       ),
-      settings: _hasPerm('edit')
+      settings: _hasPerm('edit-workspace')
           ? WorkspaceSettingsPanel(
               workspaceId: widget.workspaceId,
-              canExport: _hasPerm('export'),
+              canExport: _hasPerm('export-workspace'),
               onRestart: _restartContainer,
             )
           : null,
       // #2764: the Sharing tab serves both sharing powers — `share`
       // holders get the role buckets, `change-acls` holders (at least)
       // the Advanced ACL editor.
-      sharing: _hasPerm('share') || _hasPerm('change-acls')
+      sharing: _hasPerm('share-workspace') || _hasPerm('share-advanced')
           ? WorkspaceSharingPanel(
               workspaceId: widget.workspaceId,
-              canShare: _hasPerm('share'),
-              canEditAcl: _hasPerm('change-acls'),
+              canShare: _hasPerm('share-workspace'),
+              canEditAcl: _hasPerm('share-advanced'),
             )
           : null,
       consentRules:

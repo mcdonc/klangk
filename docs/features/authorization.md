@@ -19,7 +19,7 @@ friendlier interfaces:
 - **Admin panel** — the Admin page lets you manage users, groups,
   and global access rules.
 - **UI visibility** — tabs and buttons appear or disappear based on
-  your permissions. If you don't have `files` permission on a
+  your permissions. If you don't have `files-view` permission on a
   workspace, the Files tab won't show up.
 
 For advanced use cases, the **Advanced ACL editor** in the Sharing
@@ -57,8 +57,8 @@ share workspaces with an entire group instead of individual users.
 
 Manage groups from the Admin panel under the Groups tab. By default,
 only members of the `admins` group can create groups (the `/groups`
-resource grants `create` to the admins group). To let other users create
-groups, add an **Allow** entry for the `create` permission on the
+resource grants `create-workspace` to the admins group). To let other users create
+groups, add an **Allow** entry for the `create-workspace` permission on the
 `/groups` resource targeting the `members` group (or any other group)
 via the ACL editor — the same recipe as
 [workspace creation](#granting-workspace-creation-to-non-admin-users).
@@ -78,13 +78,13 @@ To let members (or another group) create workspaces:
 
 1. Open the **Admin** panel and navigate to the **ACL** editor.
 2. Select the `/workspaces` resource.
-3. Add an **Allow** entry for the `create` permission, targeting the
+3. Add an **Allow** entry for the `create-workspace` permission, targeting the
    `members` group (or any other group).
 4. Ensure the new entry's position is lower (checked first) than any
    Deny entry on the same resource.
 
 The create and import buttons in the web UI will automatically appear
-for users who gain the `create` permission.
+for users who gain the `create-workspace` permission.
 
 ## Learn more
 

@@ -303,9 +303,9 @@ def test_all_permissions_single_source():
     # #2765's transfer permissions must be present too.
     assert {"files-download", "files-write"} <= set(api.ALL_PERMISSIONS)
     # #2783's health/status gate must be reportable the same way.
-    assert "monitor" in api.ALL_PERMISSIONS
+    assert "monitor-workspace" in api.ALL_PERMISSIONS
     # #2764's raw-ACL-editing gate must be reportable the same way.
-    assert "change-acls" in api.ALL_PERMISSIONS
+    assert "share-advanced" in api.ALL_PERMISSIONS
     # #2883's egress-consent gate must be reportable the same way.
     assert "egress-consent" in api.ALL_PERMISSIONS
     # #2923's events history gate (renamed `manage-events` in #2940)

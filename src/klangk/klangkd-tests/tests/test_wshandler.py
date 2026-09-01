@@ -154,7 +154,7 @@ async def _grant_monitor(app_state, user_id: str, workspace_id: str) -> None:
         resource,
         position,
         model.ACTION_ALLOW,
-        "monitor",
+        "monitor-workspace",
         model.PRINCIPAL_USER,
         user_id=user_id,
     )
