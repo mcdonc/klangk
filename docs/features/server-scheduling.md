@@ -44,24 +44,24 @@ another session (or via the API) appears and disappears immediately.
 
 For scripting, the same operations are available through the API (see
 [API Reference](../reference/api-endpoints.md) —
-`/api/v1/admin/server/schedule`):
+`/api/v1/server/schedule`):
 
 ```bash
 # Stop the server tonight at 23:00 (server-local time of the fire_at)
-curl -X POST https://klangk.example.com/api/v1/admin/server/schedule \
+curl -X POST https://klangk.example.com/api/v1/server/schedule \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"action": "stop", "at": "2026-08-24T23:00:00+02:00"}'
 
 # Recycle the server after a 30-minute grace window
-curl -X POST https://klangk.example.com/api/v1/admin/server/schedule \
+curl -X POST https://klangk.example.com/api/v1/server/schedule \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"action": "recycle", "in_seconds": 1800}'
 
 # List pending schedules / cancel one
-curl https://klangk.example.com/api/v1/admin/server/schedule -H "Authorization: Bearer $TOKEN"
-curl -X DELETE https://klangk.example.com/api/v1/admin/server/schedule/<id> \
+curl https://klangk.example.com/api/v1/server/schedule -H "Authorization: Bearer $TOKEN"
+curl -X DELETE https://klangk.example.com/api/v1/server/schedule/<id> \
   -H "Authorization: Bearer $TOKEN"
 ```
 

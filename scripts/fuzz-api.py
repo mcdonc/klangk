@@ -459,89 +459,88 @@ ENDPOINTS: list[tuple[str, str, dict | None, dict | None]] = [
     ("GET", f"{P}/users/search", None, {"q": "string"}),
     ("GET", f"{P}/my-permissions", None, {"resource": "string"}),
     # Groups: the authenticated listing; the management surface at
-    # /admin/groups is covered in the Admin section below (#2941-fold
-    # — the /groups writes are gone).
+    # /groups is covered in the section below (#2944).
     ("GET", f"{P}/groups", None, None),
     # Admin
-    ("GET", f"{P}/admin/users", None, None),
+    ("GET", f"{P}/users", None, None),
     (
         "POST",
-        f"{P}/admin/users",
+        f"{P}/users",
         {"email": "email", "password": "password"},
         None,
     ),
-    ("DELETE", f"{P}/admin/users/{{user_id}}", None, None),
+    ("DELETE", f"{P}/users/{{user_id}}", None, None),
     (
         "PATCH",
-        f"{P}/admin/users/{{user_id}}",
+        f"{P}/users/{{user_id}}",
         {"email": "email", "password": "password", "handle": "string"},
         None,
     ),
     (
         "GET",
-        f"{P}/admin/users/{{user_id}}/workspaces",
+        f"{P}/users/{{user_id}}/workspaces",
         None,
         {"limit": "int", "offset": "int"},
     ),
-    ("POST", f"{P}/admin/users/{{user_id}}/unlockout", None, None),
-    ("GET", f"{P}/admin/users/{{user_id}}/sessions", None, None),
-    ("GET", f"{P}/admin/groups", None, None),
+    ("POST", f"{P}/users/{{user_id}}/unlockout", None, None),
+    ("GET", f"{P}/users/{{user_id}}/sessions", None, None),
+    ("GET", f"{P}/groups", None, None),
     (
         "POST",
-        f"{P}/admin/groups",
+        f"{P}/groups",
         {"name": "string", "description": "string"},
         None,
     ),
     (
         "PATCH",
-        f"{P}/admin/groups/{{group_id}}",
+        f"{P}/groups/{{group_id}}",
         {"name": "string", "description": "string"},
         None,
     ),
-    ("DELETE", f"{P}/admin/groups/{{group_id}}", None, None),
-    ("GET", f"{P}/admin/groups/{{group_id}}/members", None, None),
+    ("DELETE", f"{P}/groups/{{group_id}}", None, None),
+    ("GET", f"{P}/groups/{{group_id}}/members", None, None),
     (
         "POST",
-        f"{P}/admin/groups/{{group_id}}/members",
+        f"{P}/groups/{{group_id}}/members",
         {"user_id": "uuid"},
         None,
     ),
     (
         "DELETE",
-        f"{P}/admin/groups/{{group_id}}/members/{{user_id}}",
+        f"{P}/groups/{{group_id}}/members/{{user_id}}",
         None,
         None,
     ),
-    ("GET", f"{P}/admin/invitations", None, None),
-    ("POST", f"{P}/admin/invitations", {"email": "email"}, None),
-    ("DELETE", f"{P}/admin/invitations/{{invitation_id}}", None, None),
-    ("POST", f"{P}/admin/invitations/{{invitation_id}}/resend", None, None),
+    ("GET", f"{P}/invitations", None, None),
+    ("POST", f"{P}/invitations", {"email": "email"}, None),
+    ("DELETE", f"{P}/invitations/{{invitation_id}}", None, None),
+    ("POST", f"{P}/invitations/{{invitation_id}}/resend", None, None),
     # Container lifecycle events history (#2923): `limit`/`offset` page
     # through newest-first rows, `workspace_id` narrows to one workspace;
     # the fuzzer's out-of-range ints mostly hit the 422 paths, which is
     # the point.
     (
         "GET",
-        f"{P}/admin/container-events",
+        f"{P}/events",
         None,
         {"limit": "int", "offset": "int", "workspace_id": "string"},
     ),
     # Server scheduling (#2661). `action` is "stop"|"recycle"; `at` is
     # absolute ISO-8601 and `in_seconds` a positive delay — the fuzzer's
     # generic values mostly hit the 422 paths, which is the point.
-    ("GET", f"{P}/admin/server/schedule", None, None),
+    ("GET", f"{P}/server/schedule", None, None),
     (
         "POST",
-        f"{P}/admin/server/schedule",
+        f"{P}/server/schedule",
         {"action": "string", "at": "string", "in_seconds": "int"},
         None,
     ),
-    ("DELETE", f"{P}/admin/server/schedule/{{schedule_id}}", None, None),
-    ("GET", f"{P}/admin/acl/tree", None, None),
-    ("GET", f"{P}/admin/acl/by-principal/user/{{user_id}}", None, None),
-    ("GET", f"{P}/admin/acl/by-principal/group/{{group_id}}", None, None),
-    ("GET", f"{P}/admin/acl/resource", None, {"resource": "string"}),
-    ("PUT", f"{P}/admin/acl/resource", {"entries": "value"}, None),
+    ("DELETE", f"{P}/server/schedule/{{schedule_id}}", None, None),
+    ("GET", f"{P}/acl/tree", None, None),
+    ("GET", f"{P}/acl/by-principal/user/{{user_id}}", None, None),
+    ("GET", f"{P}/acl/by-principal/group/{{group_id}}", None, None),
+    ("GET", f"{P}/acl/resource", None, {"resource": "string"}),
+    ("PUT", f"{P}/acl/resource", {"entries": "value"}, None),
     # Browser delegate
     ("POST", f"{P}/browser-delegate", {"action": "string", "data": "value"}, None),
     (
@@ -874,7 +873,7 @@ def seed_fuzz_fixtures(
         uid = create_fixture_id(
             uds_path,
             headers,
-            "/api/v1/admin/users",
+            "/api/v1/users",
             {
                 "email": f"fuzzuser{i}@example.com",
                 "password": "fuzzpass",
@@ -886,7 +885,7 @@ def seed_fuzz_fixtures(
         gid = create_fixture_id(
             uds_path,
             headers,
-            "/api/v1/admin/groups",
+            "/api/v1/groups",
             {"name": f"fuzz-group-{i}"},
             ok_codes=(200, 201),
         )

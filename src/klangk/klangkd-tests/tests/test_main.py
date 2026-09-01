@@ -231,20 +231,33 @@ class TestSeedDefaultUser:
 
 
 class TestSeedDefaultAcls:
-    """Seeded-ACL shape. The /groups `create` seed (tightened in #2770)
-    was removed entirely in #2940 — group management rides the /admin
-    `*` wildcard; fresh installs seed nothing on /groups."""
+    """Seeded-ACL shape (#2944): the first-class trees each seed an
+    Allow manage-* (admins) + Deny everyone pair; /admin remains as
+    the wildcard-admin marker."""
 
-    async def test_groups_create_not_seeded(self, db, app_state):
-        """#2941-fold: the /groups `create` seed is gone — the write
-        surface is /admin/groups behind manage-groups, covered for
-        admins by the /admin * wildcard (no per-resource seed needed)."""
+    async def test_first_class_resources_seeded(self, db, app_state):
+        """#2944: each first-class tree seeds Allow manage-* (admins) +
+        Deny everyone; /admin remains as the wildcard-admin marker."""
         lifecycle = _lifecycle(make_settings({}))
         admin_group_id = await lifecycle.ensure_admin_group()
         await lifecycle.seed_default_acls(admin_group_id)
 
-        entries = await app_state.state.model.acl.get_acl_entries("/groups")
-        assert entries == []
+        for resource, permission in (
+            ("/users", "manage-users"),
+            ("/groups", "manage-groups"),
+            ("/invitations", "manage-invitations"),
+            ("/server", "manage-server-schedule"),
+            ("/events", "manage-events"),
+            ("/acl", "manage-acls"),
+        ):
+            entries = await app_state.state.model.acl.get_acl_entries(resource)
+            assert len(entries) == 2, resource
+            allow, deny = entries
+            assert allow["permission"] == permission
+            assert allow["group_id"] == admin_group_id
+            assert deny["permission"] == "*"
+            assert deny["system_principal"] == model.SYSTEM_EVERYONE
+
         admin_entries = await app_state.state.model.acl.get_acl_entries(
             "/admin"
         )

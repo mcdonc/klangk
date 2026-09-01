@@ -4,7 +4,7 @@ Klangk uses an Access Control List (ACL) system to manage permissions. Instead o
 
 ## Core Concepts
 
-- **Resources**: paths in a tree that mirror the URL structure (`/`, `/workspaces`, `/workspaces/{id}`, `/admin`, `/admin/users`, etc.)
+- **Resources**: paths in a tree that mirror the URL structure (`/`, `/workspaces`, `/workspaces/{id}`, `/users`, `/groups`, etc.)
 - **Principals**: who the ACE applies to — a specific user, a group, or a system principal (`Everyone` or `Authenticated`)
 - **Permissions**: what action is allowed or denied (e.g., `view`, `create`, `edit`, `delete`, `terminal`, `files`, `share`, `*`)
 - **ACEs**: `(Allow/Deny, principal, permission)` entries ordered by position on a resource
@@ -16,25 +16,42 @@ Klangk uses an Access Control List (ACL) system to manage permissions. Instead o
 /                              (root)
 ├── /workspaces                (workspace collection)
 │   └── /workspaces/{id}       (specific workspace)
-├── /admin
-│   ├── /admin/users
-│   ├── /admin/invitations
-│   └── /admin/groups
-└── /auth                      (public — no ACL checks)
+├── /users                     (flat — no per-id nodes)
+├── /groups                    (flat)
+├── /invitations               (flat)
+├── /server                    (flat — lifecycle schedules)
+├── /events                    (flat — read-only audit)
+├── /acl                       (flat — the ACL editor itself)
+└── /admin                     (marker only — nothing checks here, #2944)
 ```
 
 ## Default ACEs (seeded on first startup)
 
-| Resource      | Action | Principal     | Permission |
-| ------------- | ------ | ------------- | ---------- |
-| `/`           | Allow  | Authenticated | `view`     |
-| `/`           | Deny   | Everyone      | `*`        |
-| `/workspaces` | Allow  | group:admins  | `create`   |
-| `/groups`     | Allow  | group:admins  | `create`   |
-| `/admin`      | Allow  | group:admins  | `*`        |
-| `/admin`      | Deny   | Everyone      | `*`        |
+| Resource       | Action | Principal     | Permission               |
+| -------------- | ------ | ------------- | ------------------------ |
+| `/`            | Allow  | Authenticated | `view`                   |
+| `/`            | Deny   | Everyone      | `*`                      |
+| `/workspaces`  | Allow  | group:admins  | `create`                 |
+| `/users`       | Allow  | group:admins  | `manage-users`           |
+| `/users`       | Deny   | Everyone      | `*`                      |
+| `/groups`      | Allow  | group:admins  | `manage-groups`          |
+| `/groups`      | Deny   | Everyone      | `*`                      |
+| `/invitations` | Allow  | group:admins  | `manage-invitations`     |
+| `/invitations` | Deny   | Everyone      | `*`                      |
+| `/server`      | Allow  | group:admins  | `manage-server-schedule` |
+| `/server`      | Deny   | Everyone      | `*`                      |
+| `/events`      | Allow  | group:admins  | `manage-events`          |
+| `/events`      | Deny   | Everyone      | `*`                      |
+| `/acl`         | Allow  | group:admins  | `manage-acls`            |
+| `/acl`         | Deny   | Everyone      | `*`                      |
+| `/admin`       | Allow  | group:admins  | `*` (admin marker only)  |
+| `/admin`       | Deny   | Everyone      | `*`                      |
 
-These defaults mean: any logged-in user can view pages; only members of the `admins` group can create workspaces, create groups, or access admin functions; unauthenticated users are denied everything.
+These defaults mean: any logged-in user can view pages; only members of
+the `admins` group can create workspaces or hold a `manage-*`
+permission; unauthenticated users are denied everything. `/admin`
+checks nothing anymore (#2944) — its `*` row only marks "instance
+administrator" for permission-map consumers.
 
 ### Granting workspace creation to non-admin users
 
@@ -66,11 +83,11 @@ Groups replace the old role system. A group is a named collection of users. Two 
 
 **API endpoints**:
 
-- `GET /api/v1/admin/groups` — list all groups
-- `POST /api/v1/admin/groups` — create group `{"name": "...", "description": "..."}`
-- `DELETE /api/v1/admin/groups/{id}` — delete group (cascades: removes all ACEs referencing it)
-- `POST /api/v1/admin/groups/{id}/members` — add user `{"user_id": "..."}`
-- `DELETE /api/v1/admin/groups/{id}/members/{user_id}` — remove user
+- `GET /api/v1/groups` — list all groups (authenticated)
+- `POST /api/v1/groups` — create group `{"name": "...", "description": "..."}` (manage-groups)
+- `DELETE /api/v1/groups/{id}` — delete group (cascades: removes all ACEs referencing it)
+- `POST /api/v1/groups/{id}/members` — add user `{"user_id": "..."}`
+- `DELETE /api/v1/groups/{id}/members/{user_id}` — remove user
 
 ### Per-workspace role groups (#2750)
 
@@ -145,53 +162,51 @@ all, #2886).
 
 `export` is a workspace permission checked on `/workspaces/{id}`: the owner's wildcard ACE and the seeded `owners-<id>` role group both cover it, so owners can export their own workspaces without any extra grant, and a **Deny** `export` ACE for **Everyone** on the workspace resource (positioned ahead of the wildcards) revokes it per workspace. Admins do **not** get export implicitly — they must be an owner or hold an explicit grant. See [Export & Import](../features/export-import.md#export).
 
-### Collection- and admin-scoped permissions
+### First-class resource permissions
 
-Not every permission is checked on a workspace resource:
+Every governed surface is a first-class top-level resource (#2944);
+each carries **one** flat `manage-*` permission covering all of its
+actions — no per-action splits:
 
-| Permission               | Where it is checked                                  | Controls                                                                                                                                                                                                                                               |
-| ------------------------ | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `create`                 | `/workspaces`                                        | Create/import workspaces                                                                                                                                                                                                                               |
-| `admin`                  | `/admin`                                             | Legacy catch-all — nothing in the HTTP API checks it anymore (the `/admin/*` routes all moved to `manage-*` names, #2940); still checked by the drain/consent decider WS (`wshandler/decider.py`) and the workspace-transfer gate until their tranches |
-| `manage-events`          | `/admin/container-events`                            | Read the container start/stop history: `GET /admin/container-events` and the admin Events tab (#2923; renamed from `container-events` in #2940)                                                                                                        |
-| `manage-users`           | `/admin/users` (and `/admin/users/{id}` via walk-up) | The whole Users tab: list users and their workspaces, create, edit, unlock, delete, and read active login sessions (#2940)                                                                                                                             |
-| `manage-groups`          | `/admin/groups`                                      | The whole Groups tab: list, create, edit, delete, manage members (#2940; the `/groups` writes were removed and their semantics — creator ACL grant, ACE cleanup — ported here)                                                                         |
-| `manage-invitations`     | `/admin/invitations`                                 | The whole Invitations tab: list, send, resend, revoke (#2940)                                                                                                                                                                                          |
-| `manage-acls`            | `/admin/acl`                                         | The Access Control browser: read and rewrite ACL entries on **any** resource via `GET/PUT /admin/acl/*` (#2940) — root-equivalent, see below                                                                                                           |
-| `manage-server-schedule` | `/admin/server`                                      | Server stop/recycle schedules: list, create, cancel (#2940)                                                                                                                                                                                            |
+| Permission               | Where it is checked | Controls                                                                                                                                                                                                                            |
+| ------------------------ | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `create`                 | `/workspaces`       | Create/import workspaces (renamed `create-workspace` in the workspaces tranche)                                                                                                                                                     |
+| `manage-users`           | `/users`            | The whole Users surface: list users and their workspaces, create, edit, unlock, delete, read active login sessions. `GET /users/search` stays authenticated (pickers)                                                               |
+| `manage-groups`          | `/groups`           | The whole Groups surface: create, edit, delete, manage members. `GET /groups` stays authenticated (pickers)                                                                                                                         |
+| `manage-invitations`     | `/invitations`      | List, send, resend, revoke invitations                                                                                                                                                                                              |
+| `manage-server-schedule` | `/server`           | Server stop/recycle schedules: list, create, cancel — plus the drain/consent decider WS handshake                                                                                                                                   |
+| `manage-events`          | `/events`           | Read the container start/stop history (`GET /events`) — read-only audit                                                                                                                                                             |
+| `manage-acls`            | `/acl`              | The Access Control browser: read and rewrite ACL entries on **any** resource via `GET/PUT /acl/*` — root-equivalent, see below                                                                                                      |
+| `admin`                  | `/admin`            | The instance-administrator **marker** only (`*` row); nothing checks it on `/admin` anymore (#2944) — but the workspace-transfer gate still checks the name `admin` on each `/workspaces/{id}` until the workspaces tranche (#2946) |
 
-Each admin tab has **one** permission covering all of its actions — there
-are no per-action splits: `manage-users` grants list + create + edit +
-delete + sessions, not a read-only view. The read-only exception is
-`manage-events`, which only pages through history.
-
-`PUT /admin/acl/resource` additionally requires `change-acls` on the
-target when that target is an individual workspace (`/workspaces/{id}`)
-— the same resource-level gate as `PUT /workspaces/{id}/acl`, so a raw
-ACE rewrite of a workspace always carries the workspace's own grant.
-Collection and static resources (`/`, `/workspaces`, `/groups`,
-`/admin/*`) are governed by the `manage-acls` check on `/admin/acl`
-(#2940).
+`PUT /acl/resource` additionally requires `change-acls` on the target
+when that target is an individual workspace (`/workspaces/{id}`) — the
+same resource-level gate as `PUT /workspaces/{id}/acl`, so a raw ACE
+rewrite of a workspace always carries the workspace's own grant.
 
 **`manage-acls` is root-equivalent.** A holder can rewrite ACLs on any
-resource — including `/admin` and `/` — so granting it to a principal
-is granting instance-wide control, exactly like adding them to the
-admins group. Grant it only to administrators. (Until the workspaces
-tranche renames the workspace-scoped `change-acls` to `share-advanced`,
-the two names coexist: `change-acls` on a workspace resource is the
-workspace-level gate; `manage-acls` is the global editor.)
+resource — including `/` and the other first-class trees — so granting
+it to a principal is granting instance-wide control, exactly like
+adding them to the admins group. Grant it only to administrators.
+(Until the workspaces tranche renames the workspace-scoped
+`change-acls` to `share-advanced`, the two names coexist:
+`change-acls` on a workspace resource is the workspace-level gate;
+`manage-acls` is the global editor.)
 
-Every admin tab permission follows the same delegation recipe as
-`manage-events` (#2923, generalized in #2940): the admin group holds it
-via its `/admin` `*` wildcard, so admins see every tab out of the box.
-To delegate a whole tab to a non-admin, add an `Allow` ACE for the
-permission on its sub-resource (Admin → Access Control) — the
-more-specific resource wins the ACL walk ahead of the `/admin`
-Deny-everyone entry. A delegated user then gets the app-bar admin icon
-and the admin section showing exactly the tabs their ACEs grant (e.g.
-`manage-users` on `/admin/users` alone: the Users tab, all of it).
-`GET /groups` remains an authenticated-user listing (pickers, share
-dialogs) — it is not part of the admin section.
+Delegation is per-resource (the same recipe as the Events auditor,
+issue #2923): the admin group holds each `manage-*` via its seeded
+Allow row.
+To delegate a whole surface to a non-admin, add an `Allow` ACE for the
+permission on that resource (Admin → Access Control) — it wins the ACL
+walk ahead of the resource's Deny-everyone row. A delegated user then
+gets the app-bar admin icon and the admin section showing exactly the
+tabs their ACEs grant (e.g. `manage-users` on `/users`: the Users tab,
+all of it). `GET /groups` and `GET /users/search` remain
+authenticated-user reads (pickers, share dialogs).
+
+Upgrading from a pre-#2944 deployment: migration 0021 inserts the six
+Allow/Deny pairs for the admins group. If you had pre-staged rows on
+one of those resources, the migration leaves it untouched.
 
 ## Checking Your Permissions
 

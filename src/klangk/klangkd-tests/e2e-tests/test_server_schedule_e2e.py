@@ -67,7 +67,7 @@ async def test_scheduled_stop_fires_graceful_exit():
         token = _login(own)
         async with await _open_ws(own, token) as ws:
             resp = own["client"].post(
-                "/api/v1/admin/server/schedule",
+                "/api/v1/server/schedule",
                 headers={"Authorization": f"Bearer {token}"},
                 json={"action": "stop", "in_seconds": 3},
                 timeout=10,
@@ -120,7 +120,7 @@ async def test_scheduled_recycle_stays_up():
         token = _login(own)
         async with await _open_ws(own, token) as ws:
             resp = own["client"].post(
-                "/api/v1/admin/server/schedule",
+                "/api/v1/server/schedule",
                 headers={"Authorization": f"Bearer {token}"},
                 json={"action": "recycle", "in_seconds": 3},
                 timeout=10,
@@ -170,7 +170,7 @@ async def test_past_due_stop_fires_on_boot():
     # Create a schedule 1s out, then stop the server before it fires:
     # stop it by killing the process hard so the row survives unfired.
     resp = own["client"].post(
-        "/api/v1/admin/server/schedule",
+        "/api/v1/server/schedule",
         headers={"Authorization": f"Bearer {token}"},
         json={"action": "stop", "in_seconds": 1},
         timeout=10,

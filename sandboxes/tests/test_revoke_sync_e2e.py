@@ -100,7 +100,7 @@ class TestRevokeSyncBlocksExec:
         # Non-admin member (the site admin's '*' on '/' inherits sync
         # everywhere, so the member is the population the gate targets).
         r = httpx.post(
-            f"{server['url']}/api/v1/admin/users",
+            f"{server['url']}/api/v1/users",
             headers=request.cls._admin_headers,
             json={"email": MEMBER_EMAIL, "password": MEMBER_PASSWORD},
             timeout=30,
@@ -151,7 +151,7 @@ class TestRevokeSyncBlocksExec:
 
     def _member_id(self):
         r = httpx.get(
-            f"{self._base_url}/api/v1/admin/users",
+            f"{self._base_url}/api/v1/users",
             headers=self._admin_headers,
             timeout=30,
         )

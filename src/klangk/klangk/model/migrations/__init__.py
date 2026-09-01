@@ -68,6 +68,7 @@ from klangk.model.migrations import m0017_change_acls_permission
 from klangk.model.migrations import m0018_egress_consent_permission
 from klangk.model.migrations import m0019_container_events
 from klangk.model.migrations import m0020_rename_admin_group
+from klangk.model.migrations import m0021_first_class_resource_acls
 from klangk.model.migrations.base import Migration
 
 __all__ = ["MIGRATIONS", "Migration", "run_migrations"]
@@ -96,6 +97,7 @@ MIGRATIONS: list[Migration] = [
     m0018_egress_consent_permission.migration,
     m0019_container_events.migration,
     m0020_rename_admin_group.migration,
+    m0021_first_class_resource_acls.migration,
 ]
 
 

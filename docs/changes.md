@@ -32,6 +32,20 @@ operators or integrators to act when upgrading.
 
 ### Breaking
 
+- **`/admin/*` API paths moved to first-class resources (#2944).**
+  Scripts and clients calling `/api/v1/users*`,
+  `/api/v1/groups*`, `/api/v1/invitations*`,
+  `/api/v1/server/schedule*`, `/api/v1/events`,
+  or `/api/v1/acl/*` must switch to `/api/v1/users*`,
+  `/api/v1/groups*`, `/api/v1/invitations*`, `/api/v1/server/schedule*`,
+  `/api/v1/events`, and `/api/v1/acl/*` respectively. The CLI, web
+  frontend, e2e suites, and seeds are already migrated. Delegations
+  granted on the old `/admin/users`, `/admin/groups`, … sub-resources
+  match nothing anymore — re-grant the `manage-*` permission on the
+  new first-class resource. The pre-existing `/groups` Allow `create`
+  seed is migrated automatically (m0021); any other custom `/groups`
+  rows are left for a manual re-grant.
+
 - **Hand-crafted `admin` ACEs stop matching split routes (#2940).** ACLs
   granting the literal `admin` permission on `/admin` (rather than the
   seeded `*` wildcard) no longer satisfy the per-tab endpoints — grant
@@ -341,7 +355,7 @@ sync` report a clear permission-denied error.
   [ACLs](reference/acl.md).
 
 - **Container events history API + admin Events tab (#2923).** New
-  `GET /api/v1/admin/container-events` endpoint pages through the
+  `GET /api/v1/events` endpoint pages through the
   `container_events` audit table (#2915) newest-first, with an optional
   `workspace_id` filter and a total count, and the admin section gains
   an Events tab rendering it (when, workspace, event, actor, cause,
@@ -389,7 +403,7 @@ sync` report a clear permission-denied error.
   `GET`/`PUT /api/v1/workspaces/{id}/acl` (the Advanced ACL editor) and
   the role-group writes (`POST`/`DELETE`/`PATCH
 /api/v1/workspaces/{id}/roles*`, which can mint an `owners-` member)
-  require `change-acls`; `PUT /api/v1/admin/acl/resource` additionally
+  require `change-acls`; `PUT /api/v1/acl/resource` additionally
   requires it when the target is an individual workspace. The simple
   sharing surface (member and group shares with the fixed permission
   set) stays on `share`. Owners are covered by their `*` wildcard, and
@@ -613,7 +627,7 @@ last login` status line — including live segments such as the
   `no server running on …sock` into the terminal after the shell ends.
 - **Scheduled server stop/recycle (#2661).** Admins can schedule a
   server stop or recycle at an absolute time or after a delay
-  (`POST /api/v1/admin/server/schedule` with
+  (`POST /api/v1/server/schedule` with
   `{action: "stop" | "recycle", at | in_seconds}`; list/cancel via
   `GET`/`DELETE` on the same resource). Schedules persist in the DB
   across `klangkd` restarts and fire without anyone connected. A
@@ -725,7 +739,7 @@ stop)`) and a `server: stop at 23:00 (in 1h 12m)` status line in the
   Login, token refresh, and authenticated requests then fail with
   `403 Account disabled` and live WebSocket connections are closed
   (4001 → client logout) until an admin re-enables the account via
-  `PATCH /api/v1/admin/users/{id}`. Admin-group members and the system
+  `PATCH /api/v1/users/{id}`. Admin-group members and the system
   agent are exempt; the setting is reloadable on SIGHUP. See
   [Authentication](features/authentication.md).
 
@@ -742,7 +756,7 @@ stop)`) and a `server: stop at 23:00 (in 1h 12m)` status line in the
   concurrent with an active session from a different workstation,
   klangkd writes an audit record to the server log — the signal to
   review for shared or stolen credentials. The new
-  `GET /api/v1/admin/users/{id}/sessions` endpoint lists a user's
+  `GET /api/v1/users/{id}/sessions` endpoint lists a user's
   active sessions with their workstations. See
   [Authentication](features/authentication.md).
 
@@ -1635,7 +1649,7 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 ### Removed
 
 - **`/groups` write endpoints (#2940, closing #2941).** Group
-  management consolidates onto `/api/v1/admin/groups` behind
+  management consolidates onto `/api/v1/groups` behind
   `manage-groups`: `POST/PATCH/DELETE /api/v1/groups` and the
   `/groups/{id}/members` write/read endpoints are gone (their
   semantics — creator ACL grant on create, ACE cleanup on delete —
@@ -1643,7 +1657,7 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   authenticated listing. The seeded `/groups` Allow `create` ACE is no
   longer emitted; rows already in upgraded deployments are inert.
   Scripts calling the removed endpoints must switch to
-  `/api/v1/admin/groups`.
+  `/api/v1/groups`.
 
 - **`KLANGKD_TRUST_OUTER_PROXY` (#2596).** Dead setting removed: it was
   never read by any code (a leftover from the old nginx renderer). No

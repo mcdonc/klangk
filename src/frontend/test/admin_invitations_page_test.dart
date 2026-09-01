@@ -77,11 +77,11 @@ http.Client _mockClient(
           'email': 'admin@example.com',
           'permissions': {
             '/admin': ['*'],
-            '/admin/users': ['manage-users'],
-            '/admin/groups': ['manage-groups'],
-            '/admin/invitations': ['manage-invitations'],
-            '/admin/server': ['manage-server-schedule'],
-            '/admin/acl': ['manage-acls'],
+            '/users': ['manage-users'],
+            '/groups': ['manage-groups'],
+            '/invitations': ['manage-invitations'],
+            '/server': ['manage-server-schedule'],
+            '/acl': ['manage-acls'],
           },
           'groups': [
             {'id': 'g1', 'name': 'admin'}
@@ -90,7 +90,7 @@ http.Client _mockClient(
         200,
       );
     }
-    if (request.url.path == '/api/v1/admin/server/schedule' &&
+    if (request.url.path == '/api/v1/server/schedule' &&
         request.method == 'GET') {
       return http.Response(jsonEncode({'schedules': []}), 200);
     }
@@ -165,7 +165,7 @@ void main() {
     int pendingCount = 0,
   }) {
     testAuthHttpClientOverride = _mockClient((request) async {
-      if (request.url.path == '/api/v1/admin/invitations') {
+      if (request.url.path == '/api/v1/invitations') {
         final page = int.parse(request.url.queryParameters['page'] ?? '1');
         final pageSize =
             int.parse(request.url.queryParameters['page_size'] ?? '10');
@@ -183,7 +183,7 @@ void main() {
           200,
         );
       }
-      if (request.url.path == '/api/v1/admin/users') {
+      if (request.url.path == '/api/v1/users') {
         // Paged users envelope expected by the page.
         return http.Response(
           jsonEncode({
@@ -195,7 +195,7 @@ void main() {
           200,
         );
       }
-      if (request.url.path == '/api/v1/admin/groups') {
+      if (request.url.path == '/api/v1/groups') {
         return http.Response(jsonEncode([]), 200);
       }
       return http.Response('Not found', 404);
@@ -277,7 +277,7 @@ void main() {
       String? capturedSort;
       String? capturedOrder;
       testAuthHttpClientOverride = _mockClient((request) async {
-        if (request.url.path == '/api/v1/admin/invitations') {
+        if (request.url.path == '/api/v1/invitations') {
           capturedSort = request.url.queryParameters['sort'];
           capturedOrder = request.url.queryParameters['order'];
           final page = int.parse(request.url.queryParameters['page'] ?? '1');
@@ -290,7 +290,7 @@ void main() {
             200,
           );
         }
-        if (request.url.path == '/api/v1/admin/users') {
+        if (request.url.path == '/api/v1/users') {
           return http.Response(
             jsonEncode({
               'users': <Map<String, dynamic>>[],
@@ -301,7 +301,7 @@ void main() {
             200,
           );
         }
-        if (request.url.path == '/api/v1/admin/groups') {
+        if (request.url.path == '/api/v1/groups') {
           return http.Response(jsonEncode([]), 200);
         }
         return http.Response('Not found', 404);
@@ -336,7 +336,7 @@ void main() {
     testWidgets('sends email filter query live (debounced)', (tester) async {
       String? capturedQ;
       testAuthHttpClientOverride = _mockClient((request) async {
-        if (request.url.path == '/api/v1/admin/invitations') {
+        if (request.url.path == '/api/v1/invitations') {
           capturedQ = request.url.queryParameters['q'];
           final page = int.parse(request.url.queryParameters['page'] ?? '1');
           return http.Response(
@@ -348,7 +348,7 @@ void main() {
             200,
           );
         }
-        if (request.url.path == '/api/v1/admin/users') {
+        if (request.url.path == '/api/v1/users') {
           return http.Response(
             jsonEncode({
               'users': <Map<String, dynamic>>[],
@@ -359,7 +359,7 @@ void main() {
             200,
           );
         }
-        if (request.url.path == '/api/v1/admin/groups') {
+        if (request.url.path == '/api/v1/groups') {
           return http.Response(jsonEncode([]), 200);
         }
         return http.Response('Not found', 404);
@@ -392,7 +392,7 @@ void main() {
     /// [posts].
     void serveInvitationsCapturePosts(List<Map<String, dynamic>> posts) {
       testAuthHttpClientOverride = _mockClient((request) async {
-        if (request.url.path == '/api/v1/admin/invitations') {
+        if (request.url.path == '/api/v1/invitations') {
           if (request.method == 'POST') {
             posts.add(jsonDecode(request.body) as Map<String, dynamic>);
             return http.Response(
@@ -405,7 +405,7 @@ void main() {
             200,
           );
         }
-        if (request.url.path == '/api/v1/admin/users') {
+        if (request.url.path == '/api/v1/users') {
           return http.Response(
             jsonEncode({
               'users': <Map<String, dynamic>>[],
@@ -416,7 +416,7 @@ void main() {
             200,
           );
         }
-        if (request.url.path == '/api/v1/admin/groups') {
+        if (request.url.path == '/api/v1/groups') {
           return http.Response(jsonEncode([]), 200);
         }
         return http.Response('Not found', 404);

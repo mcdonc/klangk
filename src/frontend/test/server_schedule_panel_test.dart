@@ -228,7 +228,7 @@ void main() {
     testWidgets('renders pending schedules soonest first with countdowns',
         (tester) async {
       testAuthHttpClientOverride = _mockClient((request) async {
-        if (request.url.path == '/api/v1/admin/server/schedule') {
+        if (request.url.path == '/api/v1/server/schedule') {
           return http.Response(
             _schedulesEnvelope([
               _schedule('s2', 'recycle', const Duration(hours: 5, seconds: 30)),
@@ -262,7 +262,7 @@ void main() {
     testWidgets('shows the empty state when nothing is scheduled',
         (tester) async {
       testAuthHttpClientOverride = _mockClient((request) async {
-        if (request.url.path == '/api/v1/admin/server/schedule') {
+        if (request.url.path == '/api/v1/server/schedule') {
           return http.Response(_schedulesEnvelope([]), 200);
         }
         return http.Response('Not found', 404);
@@ -277,7 +277,7 @@ void main() {
         (tester) async {
       var calls = 0;
       testAuthHttpClientOverride = _mockClient((request) async {
-        if (request.url.path == '/api/v1/admin/server/schedule') {
+        if (request.url.path == '/api/v1/server/schedule') {
           calls++;
           return http.Response('boom', 500);
         }
@@ -298,7 +298,7 @@ void main() {
         (tester) async {
       var gets = 0;
       testAuthHttpClientOverride = _mockClient((request) async {
-        if (request.url.path == '/api/v1/admin/server/schedule') {
+        if (request.url.path == '/api/v1/server/schedule') {
           gets++;
           return http.Response(
             _schedulesEnvelope(
@@ -331,11 +331,10 @@ void main() {
       var pending = [_schedule('s1', 'stop', const Duration(hours: 1))];
       testAuthHttpClientOverride = _mockClient((request) async {
         final path = request.url.path;
-        if (path == '/api/v1/admin/server/schedule' &&
-            request.method == 'GET') {
+        if (path == '/api/v1/server/schedule' && request.method == 'GET') {
           return http.Response(_schedulesEnvelope(pending), 200);
         }
-        if (path == '/api/v1/admin/server/schedule/s1' &&
+        if (path == '/api/v1/server/schedule/s1' &&
             request.method == 'DELETE') {
           deleted.add('s1');
           pending = [];
@@ -365,15 +364,14 @@ void main() {
       var deleted = 0;
       testAuthHttpClientOverride = _mockClient((request) async {
         final path = request.url.path;
-        if (path == '/api/v1/admin/server/schedule' &&
-            request.method == 'GET') {
+        if (path == '/api/v1/server/schedule' && request.method == 'GET') {
           return http.Response(
             _schedulesEnvelope(
                 [_schedule('s1', 'recycle', const Duration(hours: 2))]),
             200,
           );
         }
-        if (path == '/api/v1/admin/server/schedule/s1' &&
+        if (path == '/api/v1/server/schedule/s1' &&
             request.method == 'DELETE') {
           deleted++;
           return http.Response('{}', 200);
@@ -395,15 +393,14 @@ void main() {
     testWidgets('a failed cancel surfaces the API detail', (tester) async {
       testAuthHttpClientOverride = _mockClient((request) async {
         final path = request.url.path;
-        if (path == '/api/v1/admin/server/schedule' &&
-            request.method == 'GET') {
+        if (path == '/api/v1/server/schedule' && request.method == 'GET') {
           return http.Response(
             _schedulesEnvelope(
                 [_schedule('s1', 'stop', const Duration(hours: 1))]),
             200,
           );
         }
-        if (path == '/api/v1/admin/server/schedule/s1' &&
+        if (path == '/api/v1/server/schedule/s1' &&
             request.method == 'DELETE') {
           return http.Response(
               jsonEncode({'detail': 'Schedule not found'}), 404);
@@ -424,7 +421,7 @@ void main() {
 
     testWidgets('a past-due schedule shows "happening now"', (tester) async {
       testAuthHttpClientOverride = _mockClient((request) async {
-        if (request.url.path == '/api/v1/admin/server/schedule') {
+        if (request.url.path == '/api/v1/server/schedule') {
           return http.Response(
             _schedulesEnvelope(
                 [_schedule('s1', 'stop', const Duration(seconds: -10))]),
@@ -442,7 +439,7 @@ void main() {
 
     testWidgets('a malformed fire_at degrades to "fires soon"', (tester) async {
       testAuthHttpClientOverride = _mockClient((request) async {
-        if (request.url.path == '/api/v1/admin/server/schedule') {
+        if (request.url.path == '/api/v1/server/schedule') {
           return http.Response(
             jsonEncode({
               'schedules': [
@@ -475,8 +472,7 @@ void main() {
       final hangingGet = Completer<http.Response>();
       testAuthHttpClientOverride = _mockClient((request) async {
         final path = request.url.path;
-        if (path == '/api/v1/admin/server/schedule' &&
-            request.method == 'GET') {
+        if (path == '/api/v1/server/schedule' && request.method == 'GET') {
           gets++;
           if (gets == 1) {
             return http.Response(
@@ -487,7 +483,7 @@ void main() {
           }
           return hangingGet.future;
         }
-        if (path == '/api/v1/admin/server/schedule/s1' &&
+        if (path == '/api/v1/server/schedule/s1' &&
             request.method == 'DELETE') {
           return http.Response(jsonEncode({'cancelled': 's1'}), 200);
         }
@@ -528,11 +524,10 @@ void main() {
       var pending = [_schedule('s1', 'stop', const Duration(hours: 1))];
       testAuthHttpClientOverride = _mockClient((request) async {
         final path = request.url.path;
-        if (path == '/api/v1/admin/server/schedule' &&
-            request.method == 'GET') {
+        if (path == '/api/v1/server/schedule' && request.method == 'GET') {
           return http.Response(_schedulesEnvelope(pending), 200);
         }
-        if (path == '/api/v1/admin/server/schedule/s1' &&
+        if (path == '/api/v1/server/schedule/s1' &&
             request.method == 'DELETE') {
           pending = [];
           return http.Response(jsonEncode({'cancelled': 's1'}), 200);
@@ -604,7 +599,7 @@ void main() {
         (tester) async {
       Map<String, dynamic>? posted;
       testAuthHttpClientOverride = _mockClient((request) async {
-        if (request.url.path == '/api/v1/admin/server/schedule' &&
+        if (request.url.path == '/api/v1/server/schedule' &&
             request.method == 'POST') {
           posted = jsonDecode(request.body) as Map<String, dynamic>;
           return http.Response(
@@ -636,7 +631,7 @@ void main() {
     testWidgets('shows the API 422 detail inline and stays open',
         (tester) async {
       testAuthHttpClientOverride = _mockClient((request) async {
-        if (request.url.path == '/api/v1/admin/server/schedule' &&
+        if (request.url.path == '/api/v1/server/schedule' &&
             request.method == 'POST') {
           return http.Response(
             jsonEncode({'detail': "'in_seconds' must be positive"}),
@@ -662,7 +657,7 @@ void main() {
         (tester) async {
       Map<String, dynamic>? posted;
       testAuthHttpClientOverride = _mockClient((request) async {
-        if (request.url.path == '/api/v1/admin/server/schedule' &&
+        if (request.url.path == '/api/v1/server/schedule' &&
             request.method == 'POST') {
           posted = jsonDecode(request.body) as Map<String, dynamic>;
           return http.Response(

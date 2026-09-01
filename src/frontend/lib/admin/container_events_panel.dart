@@ -2,7 +2,7 @@
 /// Admin → Events tab: paged container start/stop history (#2923).
 ///
 /// Reads the `container_events` audit table (#2915) through
-/// `GET /api/v1/admin/container-events` — newest first, optional
+/// `GET /api/v1/events` — newest first, optional
 /// workspace-id filter, offset-based paging. The tab itself is gated on
 /// the dedicated `manage-events` permission over
 /// `/admin/container-events` (see [AdminUsersPage]); admins hold it via
@@ -90,7 +90,7 @@ class _ContainerEventsPanelState extends State<ContainerEventsPanel> {
       };
       final auth = context.read<AuthService>();
       final resp = await auth.authGet(
-        '/api/v1/admin/container-events?${_encodeQuery(query)}',
+        '/api/v1/events?${_encodeQuery(query)}',
       );
       if (!mounted) return;
       if (resp.statusCode == 200) {

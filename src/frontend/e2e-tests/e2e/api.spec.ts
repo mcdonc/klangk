@@ -365,7 +365,7 @@ test.describe("API", () => {
     );
 
     // Admin can list users
-    const listResp = await request.get(`${API_BASE}/api/v1/admin/users`, {
+    const listResp = await request.get(`${API_BASE}/api/v1/users`, {
       headers: adminHeaders,
     });
     expect(listResp.ok()).toBeTruthy();
@@ -376,24 +376,21 @@ test.describe("API", () => {
     expect(testUser).toBeTruthy();
 
     // Non-admin cannot list users
-    const forbiddenResp = await request.get(`${API_BASE}/api/v1/admin/users`, {
+    const forbiddenResp = await request.get(`${API_BASE}/api/v1/users`, {
       headers: userHeaders,
     });
     expect(forbiddenResp.status()).toBe(403);
 
     // Create a group and add the user to it
-    const createGroupResp = await request.post(
-      `${API_BASE}/api/v1/admin/groups`,
-      {
-        headers: adminHeaders,
-        data: { name: "editor" },
-      },
-    );
+    const createGroupResp = await request.post(`${API_BASE}/api/v1/groups`, {
+      headers: adminHeaders,
+      data: { name: "editor" },
+    });
     expect(createGroupResp.ok()).toBeTruthy();
     const editorGroup = await createGroupResp.json();
 
     const addMemberResp = await request.post(
-      `${API_BASE}/api/v1/admin/groups/${editorGroup.id}/members`,
+      `${API_BASE}/api/v1/groups/${editorGroup.id}/members`,
       { headers: adminHeaders, data: { user_id: testUser.id } },
     );
     expect(addMemberResp.ok()).toBeTruthy();
@@ -401,7 +398,7 @@ test.describe("API", () => {
     // Verify group membership was added (via the group's members endpoint,
     // since per-user groups are no longer embedded in the users list)
     const membersResp = await request.get(
-      `${API_BASE}/api/v1/admin/groups/${editorGroup.id}/members`,
+      `${API_BASE}/api/v1/groups/${editorGroup.id}/members`,
       { headers: adminHeaders },
     );
     expect(membersResp.ok()).toBeTruthy();
@@ -410,20 +407,20 @@ test.describe("API", () => {
 
     // Admin can remove user from group
     const removeMemberResp = await request.delete(
-      `${API_BASE}/api/v1/admin/groups/${editorGroup.id}/members/${testUser.id}`,
+      `${API_BASE}/api/v1/groups/${editorGroup.id}/members/${testUser.id}`,
       { headers: adminHeaders },
     );
     expect(removeMemberResp.ok()).toBeTruthy();
 
     // Admin can delete a user
     const deleteResp = await request.delete(
-      `${API_BASE}/api/v1/admin/users/${testUser.id}`,
+      `${API_BASE}/api/v1/users/${testUser.id}`,
       { headers: adminHeaders },
     );
     expect(deleteResp.ok()).toBeTruthy();
 
     // Verify user is gone
-    const listResp3 = await request.get(`${API_BASE}/api/v1/admin/users`, {
+    const listResp3 = await request.get(`${API_BASE}/api/v1/users`, {
       headers: adminHeaders,
     });
     const deletedUser = (await listResp3.json()).users.find(
@@ -433,7 +430,7 @@ test.describe("API", () => {
 
     // Clean up the test group
     const deleteGroupResp = await request.delete(
-      `${API_BASE}/api/v1/admin/groups/${editorGroup.id}`,
+      `${API_BASE}/api/v1/groups/${editorGroup.id}`,
       { headers: adminHeaders },
     );
     expect(deleteGroupResp.ok()).toBeTruthy();
@@ -452,7 +449,7 @@ test.describe("API", () => {
     const adminHeaders = { Authorization: `Bearer ${adminToken}` };
 
     // Verify the admin API returns users
-    const resp = await request.get(`${API_BASE}/api/v1/admin/users`, {
+    const resp = await request.get(`${API_BASE}/api/v1/users`, {
       headers: adminHeaders,
     });
     expect(resp.ok()).toBeTruthy();
@@ -468,7 +465,7 @@ test.describe("API", () => {
     });
     expect(regResp.ok()).toBeTruthy();
 
-    const resp2 = await request.get(`${API_BASE}/api/v1/admin/users`, {
+    const resp2 = await request.get(`${API_BASE}/api/v1/users`, {
       headers: adminHeaders,
     });
     const updatedUsers = (await resp2.json()).users;
@@ -479,7 +476,7 @@ test.describe("API", () => {
 
     // Update email via API
     const patchResp = await request.patch(
-      `${API_BASE}/api/v1/admin/users/${newUser.id}`,
+      `${API_BASE}/api/v1/users/${newUser.id}`,
       {
         headers: adminHeaders,
         data: { email: "e2e-admin-renamed@test.example.com" },
@@ -488,7 +485,7 @@ test.describe("API", () => {
     expect(patchResp.ok()).toBeTruthy();
 
     // Verify rename
-    const resp3 = await request.get(`${API_BASE}/api/v1/admin/users`, {
+    const resp3 = await request.get(`${API_BASE}/api/v1/users`, {
       headers: adminHeaders,
     });
     expect(
@@ -499,13 +496,13 @@ test.describe("API", () => {
 
     // Delete via API
     const deleteResp = await request.delete(
-      `${API_BASE}/api/v1/admin/users/${newUser.id}`,
+      `${API_BASE}/api/v1/users/${newUser.id}`,
       { headers: adminHeaders },
     );
     expect(deleteResp.ok()).toBeTruthy();
 
     // Verify deleted
-    const resp4 = await request.get(`${API_BASE}/api/v1/admin/users`, {
+    const resp4 = await request.get(`${API_BASE}/api/v1/users`, {
       headers: adminHeaders,
     });
     expect(
@@ -748,12 +745,9 @@ test.describe("API", () => {
     };
 
     // Read the root resource ACL
-    let resp = await request.get(
-      `${API_BASE}/api/v1/admin/acl/resource?resource=/`,
-      {
-        headers: adminHeaders,
-      },
-    );
+    let resp = await request.get(`${API_BASE}/api/v1/acl/resource?resource=/`, {
+      headers: adminHeaders,
+    });
     expect(resp.ok()).toBeTruthy();
     const rootAces = await resp.json();
     expect(rootAces.length).toBeGreaterThan(0);
@@ -766,7 +760,7 @@ test.describe("API", () => {
 
     // Read /admin resource ACL
     resp = await request.get(
-      `${API_BASE}/api/v1/admin/acl/resource?resource=/admin`,
+      `${API_BASE}/api/v1/acl/resource?resource=/admin`,
       {
         headers: adminHeaders,
       },
@@ -781,7 +775,7 @@ test.describe("API", () => {
 
     // Modify /admin/groups ACL: add a view entry, then restore
     resp = await request.get(
-      `${API_BASE}/api/v1/admin/acl/resource?resource=/admin/groups`,
+      `${API_BASE}/api/v1/acl/resource?resource=/admin/groups`,
       { headers: adminHeaders },
     );
     const originalGroupsAces = await resp.json();
@@ -806,7 +800,7 @@ test.describe("API", () => {
     ];
 
     resp = await request.put(
-      `${API_BASE}/api/v1/admin/acl/resource?resource=/admin/groups`,
+      `${API_BASE}/api/v1/acl/resource?resource=/admin/groups`,
       { headers: adminHeaders, data: newEntries },
     );
     expect(resp.ok()).toBeTruthy();
@@ -822,7 +816,7 @@ test.describe("API", () => {
       system_principal: a.system_principal ?? null,
     }));
     resp = await request.put(
-      `${API_BASE}/api/v1/admin/acl/resource?resource=/admin/groups`,
+      `${API_BASE}/api/v1/acl/resource?resource=/admin/groups`,
       { headers: adminHeaders, data: restore },
     );
     expect(resp.ok()).toBeTruthy();
@@ -841,15 +835,18 @@ test.describe("API", () => {
     const resources = [
       "/",
       "/workspaces",
-      "/admin",
-      "/admin/users",
-      "/admin/invitations",
-      "/admin/groups",
+      "/users",
+      "/invitations",
+      "/groups",
+      "/server",
+      "/events",
+      "/acl",
+      "/admin", // instance-admin wildcard marker (#2944)
     ];
 
     for (const resource of resources) {
       const resp = await request.get(
-        `${API_BASE}/api/v1/admin/acl/resource?resource=${encodeURIComponent(resource)}`,
+        `${API_BASE}/api/v1/acl/resource?resource=${encodeURIComponent(resource)}`,
         { headers: adminHeaders },
       );
       expect(resp.ok()).toBeTruthy();
@@ -1044,7 +1041,7 @@ test.describe("API", () => {
     );
 
     const resp = await request.get(
-      `${API_BASE}/api/v1/admin/acl/resource?resource=/`,
+      `${API_BASE}/api/v1/acl/resource?resource=/`,
       { headers: userHeaders },
     );
     expect(resp.status()).toBe(403);

@@ -150,7 +150,7 @@ class TestNoneToPasswordUpgrade:
     async def test_free_token_is_admin_and_can_set_password(
         self, mode_server, monkeypatch
     ):
-        """Steps 1-2: get the free token, then ``PATCH /admin/users/{id}``
+        """Steps 1-2: get the free token, then ``PATCH /users/{id}``
         with a new password — succeeds because the seeded default user is an
         admin."""
         client, user = mode_server
@@ -169,7 +169,7 @@ class TestNoneToPasswordUpgrade:
 
         # admin set-password equivalent.
         resp = await client.patch(
-            f"/api/v1/admin/users/{user['id']}",
+            f"/api/v1/users/{user['id']}",
             headers=h,
             json={"password": NEW_PASSWORD},
         )
@@ -186,7 +186,7 @@ class TestNoneToPasswordUpgrade:
             "access_token"
         ]
         await client.patch(
-            f"/api/v1/admin/users/{user['id']}",
+            f"/api/v1/users/{user['id']}",
             headers={"Authorization": f"Bearer {token}"},
             json={"password": NEW_PASSWORD},
         )
@@ -210,7 +210,7 @@ class TestNoneToPasswordUpgrade:
             "access_token"
         ]
         await client.patch(
-            f"/api/v1/admin/users/{user['id']}",
+            f"/api/v1/users/{user['id']}",
             headers={"Authorization": f"Bearer {token}"},
             json={"password": NEW_PASSWORD},
         )

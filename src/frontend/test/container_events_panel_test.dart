@@ -101,8 +101,8 @@ http.Client _mockClient(
 /// `/my-permissions`, so the Events resource is listed alongside it.
 Map<String, List<String>> get _adminPermissions => {
       '/admin': ['*'],
-      '/admin/users': ['manage-users'],
-      '/admin/container-events': ['view', 'manage-events'],
+      '/users': ['manage-users'],
+      '/events': ['view', 'manage-events'],
     };
 
 void main() {
@@ -152,14 +152,14 @@ void main() {
     final requests = <http.Request>[];
     testAuthHttpClientOverride =
         _mockClient(_adminPermissions, (request) async {
-      if (request.url.path == '/api/v1/admin/container-events') {
+      if (request.url.path == '/api/v1/events') {
         requests.add(request);
         final limit = int.parse(request.url.queryParameters['limit'] ?? '50');
         final offset = int.parse(request.url.queryParameters['offset'] ?? '0');
         final workspaceId = request.url.queryParameters['workspace_id'];
         return eventsFor(limit, offset, workspaceId);
       }
-      if (request.url.path == '/api/v1/admin/users') {
+      if (request.url.path == '/api/v1/users') {
         return http.Response(
           jsonEncode({
             'users': <Map<String, dynamic>>[],
@@ -170,10 +170,10 @@ void main() {
           200,
         );
       }
-      if (request.url.path == '/api/v1/admin/groups') {
+      if (request.url.path == '/api/v1/groups') {
         return http.Response(jsonEncode([]), 200);
       }
-      if (request.url.path == '/api/v1/admin/server/schedule' &&
+      if (request.url.path == '/api/v1/server/schedule' &&
           request.method == 'GET') {
         return http.Response(jsonEncode({'schedules': []}), 200);
       }
@@ -296,9 +296,9 @@ void main() {
       // /admin/container-events — so no Events tab.
       testAuthHttpClientOverride = _mockClient(
         {
-          '/admin/users': ['manage-users'],
-          '/admin/groups': ['manage-groups'],
-          '/admin/invitations': ['manage-invitations'],
+          '/users': ['manage-users'],
+          '/groups': ['manage-groups'],
+          '/invitations': ['manage-invitations'],
           '/admin': ['admin'],
         },
         (request) async => http.Response('Not found', 404),
@@ -318,10 +318,10 @@ void main() {
       // reads /admin/acl/tree, which needs full admin).
       testAuthHttpClientOverride = _mockClient(
         {
-          '/admin/container-events': ['manage-events'],
+          '/events': ['manage-events'],
         },
         (request) async {
-          if (request.url.path == '/api/v1/admin/container-events') {
+          if (request.url.path == '/api/v1/events') {
             return http.Response(
               _eventsEnvelope(
                 [

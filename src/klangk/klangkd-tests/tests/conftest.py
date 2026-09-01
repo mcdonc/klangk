@@ -175,6 +175,32 @@ async def admin_group(app_state):
         PRINCIPAL_GROUP,
         group_id=group["id"],
     )
+    # First-class resource seeds (#2944), mirroring seed_default_acls.
+    for resource, permission in (
+        ("/users", "manage-users"),
+        ("/groups", "manage-groups"),
+        ("/invitations", "manage-invitations"),
+        ("/server", "manage-server-schedule"),
+        ("/events", "manage-events"),
+        ("/acl", "manage-acls"),
+    ):
+        await acl.add_acl_entry(
+            resource,
+            0,
+            ACTION_ALLOW,
+            permission,
+            PRINCIPAL_GROUP,
+            group_id=group["id"],
+        )
+        await acl.add_acl_entry(
+            resource,
+            1,
+            ACTION_DENY,
+            "*",
+            PRINCIPAL_SYSTEM,
+            system_principal=SYSTEM_EVERYONE,
+        )
+    # /admin stays as the instance-admin wildcard marker (#2944).
     await acl.add_acl_entry(
         "/admin",
         0,

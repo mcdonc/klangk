@@ -181,13 +181,40 @@ class Lifecycle:
             PRINCIPAL_GROUP,
             group_id=admin_group_id,
         )
-        # /groups: no seed — the write surface moved to /admin/groups
-        # behind manage-groups (#2941-fold), covered for admins by the
-        # /admin * wildcard above. Deployers delegate whole-tab access
-        # with an Allow manage-groups ACE on /admin/groups. Upgraded
-        # deployments keep their old /groups `create` ACE; it is inert
-        # (nothing checks permissions on /groups writes anymore).
-        # /admin: admin group gets full access, deny everyone else
+        # First-class resources (#2944): each governed surface is a
+        # top-level tree with one flat manage-* permission — Allow for
+        # the admins group, Deny everyone. The walk from these
+        # resources never passes through /admin, so each needs its own
+        # rows (migration 0021 inserts the same pair on existing
+        # deployments).
+        for resource, permission in (
+            ("/users", "manage-users"),
+            ("/groups", "manage-groups"),
+            ("/invitations", "manage-invitations"),
+            ("/server", "manage-server-schedule"),
+            ("/events", "manage-events"),
+            ("/acl", "manage-acls"),
+        ):
+            await self.app.state.model.acl.add_acl_entry(
+                resource,
+                0,
+                ACTION_ALLOW,
+                permission,
+                PRINCIPAL_GROUP,
+                group_id=admin_group_id,
+            )
+            await self.app.state.model.acl.add_acl_entry(
+                resource,
+                1,
+                ACTION_DENY,
+                "*",
+                PRINCIPAL_SYSTEM,
+                system_principal=SYSTEM_EVERYONE,
+            )
+        # /admin: kept as the instance-administrator marker — Allow *
+        # for admins, deny everyone. No route checks a permission here
+        # anymore (#2944); the wildcard marks "is an instance admin"
+        # for /my-permissions consumers (the frontend's isAdmin).
         await self.app.state.model.acl.add_acl_entry(
             "/admin",
             0,

@@ -73,6 +73,7 @@ class TestRunner:
             (18, "0018_egress_consent_permission"),
             (19, "0019_container_events"),
             (20, "0020_rename_admin_group"),
+            (21, "0021_first_class_resource_acls"),
         ]
         async with aiosqlite.connect(str(app_state.state.db.db_path)) as db:
             assert await _recorded(db) == expected
@@ -159,6 +160,7 @@ class TestRunner:
                 (18, "0018_egress_consent_permission"),
                 (19, "0019_container_events"),
                 (20, "0020_rename_admin_group"),
+                (21, "0021_first_class_resource_acls"),
             ]
 
     async def test_m0008_agent_identity_and_human_collision(
@@ -1777,5 +1779,186 @@ class TestM0020RenameAdminGroup:
             )
             await m0020_rename_admin_group.migration.apply(db)
             assert await self._names(db) == {"g1": "admins"}
+        finally:
+            await db.__aexit__(None, None, None)
+
+
+class TestM0021FirstClassResourceAcls:
+    """m0021 seeds Allow manage-* (admins) + Deny everyone on each
+    first-class resource (#2944) — without the rows, admins lock out of
+    users/groups/invitations/server/events/acl the moment the checks
+    move off the /admin wildcard."""
+
+    RESOURCE_PERMS = {
+        "/users": "manage-users",
+        "/groups": "manage-groups",
+        "/invitations": "manage-invitations",
+        "/server": "manage-server-schedule",
+        "/events": "manage-events",
+        "/acl": "manage-acls",
+    }
+
+    async def _db(self, tmp_path):
+        db = aiosqlite.connect(str(tmp_path / "m0021.db"))
+        db = await db.__aenter__()
+        # Minimal shape the migration touches (mirrors the m0013 test's
+        # harness): groups + acl_entries only.
+        await db.execute(
+            "CREATE TABLE groups (id TEXT PRIMARY KEY, name TEXT)"
+        )
+        await db.execute(
+            "CREATE TABLE acl_entries ("
+            " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            " resource TEXT, position INTEGER, action INTEGER,"
+            " principal_type INTEGER, user_id TEXT, group_id TEXT,"
+            " system_principal INTEGER, permission TEXT,"
+            " UNIQUE(resource, position))"
+        )
+        return db
+
+    async def _admins(self, db) -> str:
+        await db.execute(
+            "INSERT INTO groups (id, name) VALUES ('g-admins', 'admins')"
+        )
+        await db.commit()
+        return "g-admins"
+
+    async def _entries(self, db, resource) -> list:
+        cursor = await db.execute(
+            "SELECT position, action, permission, group_id,"
+            " system_principal FROM acl_entries WHERE resource = ?"
+            " ORDER BY position",
+            (resource,),
+        )
+        return list(await cursor.fetchall())
+
+    async def test_upgraded_db_gets_all_six_pairs(self, tmp_path):
+        from klangk.model.migrations import m0021_first_class_resource_acls
+
+        db = await self._db(tmp_path)
+        try:
+            gid = await self._admins(db)
+            # An "upgraded" DB has some ACL rows already (the old seeds).
+            await db.execute(
+                "INSERT INTO acl_entries"
+                " (resource, position, action, principal_type, group_id,"
+                "  permission) VALUES ('/', 0, 1, 2, ?, 'view')",
+                (gid,),
+            )
+            await db.commit()
+            await m0021_first_class_resource_acls.migration.apply(db)
+
+            for resource, permission in self.RESOURCE_PERMS.items():
+                assert await self._entries(db, resource) == [
+                    (0, 1, permission, gid, None),
+                    (1, 0, "*", None, 0),
+                ], resource
+        finally:
+            await db.__aexit__(None, None, None)
+
+    async def test_empty_table_is_a_noop(self, tmp_path):
+        """Fresh DBs are the boot seed's job — inserting here would trip
+        the seed's empty-table gate and lose the / and /workspaces rows."""
+        from klangk.model.migrations import m0021_first_class_resource_acls
+
+        db = await self._db(tmp_path)
+        try:
+            await self._admins(db)
+            await m0021_first_class_resource_acls.migration.apply(db)
+            for resource in self.RESOURCE_PERMS:
+                assert await self._entries(db, resource) == []
+        finally:
+            await db.__aexit__(None, None, None)
+
+    async def test_pre_staged_resource_is_untouched(self, tmp_path):
+        """An operator who pre-staged grants on one resource keeps them
+        verbatim — the migration never half-merges onto unknown rows."""
+        from klangk.model.migrations import m0021_first_class_resource_acls
+
+        db = await self._db(tmp_path)
+        try:
+            gid = await self._admins(db)
+            await db.execute(
+                "INSERT INTO acl_entries"
+                " (resource, position, action, principal_type, group_id,"
+                "  permission) VALUES ('/users', 5, 1, 2, ?,"
+                " 'manage-users')",
+                (gid,),
+            )
+            await db.execute(
+                "INSERT INTO acl_entries"
+                " (resource, position, action, principal_type,"
+                "  system_principal, permission)"
+                " VALUES ('/groups', 0, 1, 0, 1, 'custom')"
+            )
+            await db.commit()
+            await m0021_first_class_resource_acls.migration.apply(db)
+
+            # /users: exactly the operator's row.
+            assert await self._entries(db, "/users") == [
+                (5, 1, "manage-users", gid, None)
+            ]
+            # /groups: skipped too (any rows present -> skip).
+            assert await self._entries(db, "/groups") == [
+                (0, 1, "custom", None, 1)
+            ]
+            # Untouched resources still get the pair.
+            assert await self._entries(db, "/acl") == [
+                (0, 1, "manage-acls", gid, None),
+                (1, 0, "*", None, 0),
+            ]
+        finally:
+            await db.__aexit__(None, None, None)
+
+    async def test_no_admins_group_still_denies_everyone(self, tmp_path):
+        """A deployment with no 'admins' group (custom topology) gets the
+        Deny rows only — the Allow rows have no principal to name, and
+        default-deny applies either way."""
+        from klangk.model.migrations import m0021_first_class_resource_acls
+
+        db = await self._db(tmp_path)
+        try:
+            # No groups row at all; some existing ACL rows so the
+            # migration is not in fresh-skip territory.
+            await db.execute(
+                "INSERT INTO acl_entries"
+                " (resource, position, action, principal_type,"
+                "  system_principal, permission)"
+                " VALUES ('/', 0, 1, 0, 1, 'view')"
+            )
+            await db.commit()
+            await m0021_first_class_resource_acls.migration.apply(db)
+
+            for resource in self.RESOURCE_PERMS:
+                assert await self._entries(db, resource) == [
+                    (1, 0, "*", None, 0)
+                ], resource
+        finally:
+            await db.__aexit__(None, None, None)
+
+    async def test_legacy_groups_seed_is_replaced(self, tmp_path):
+        """The blocker the #2945 review proved: every pre-#2943
+        deployment carries the m0014-rewritten Allow create row on
+        /groups. The migration must replace it with the manage-groups
+        pair — leaving it locks admins out of group management."""
+        from klangk.model.migrations import m0021_first_class_resource_acls
+
+        db = await self._db(tmp_path)
+        try:
+            gid = await self._admins(db)
+            # The m0014 output shape: single Allow create for the group.
+            await db.execute(
+                "INSERT INTO acl_entries"
+                " (resource, position, action, principal_type, group_id,"
+                "  permission) VALUES ('/groups', 0, 1, 2, ?, 'create')",
+                (gid,),
+            )
+            await db.commit()
+            await m0021_first_class_resource_acls.migration.apply(db)
+
+            assert await self._entries(db, "/groups") == [
+                (0, 1, "manage-groups", gid, None),
+                (1, 0, "*", None, 0),
+            ]
         finally:
             await db.__aexit__(None, None, None)

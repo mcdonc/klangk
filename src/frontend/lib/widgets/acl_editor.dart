@@ -125,7 +125,7 @@ class AclEditorState extends State<AclEditor> {
     if (parts.length >= 3 && parts[1] == 'workspaces') {
       return '/api/v1/workspaces/${parts[2]}/acl';
     }
-    return '/api/v1/admin/acl/resource?resource=${Uri.encodeQueryComponent(widget.resource)}';
+    return '/api/v1/acl/resource?resource=${Uri.encodeQueryComponent(widget.resource)}';
   }
 
   void _removeEntry(int index) {
@@ -177,7 +177,7 @@ class AclEditorState extends State<AclEditor> {
   Future<List<Map<String, dynamic>>> _loadPickerGroups(AuthService auth) async {
     final groups = await _fetchEnvelopeAll(
       auth,
-      '/api/v1/admin/groups',
+      '/api/v1/groups',
       'groups',
       query: const {'source': 'manual'},
     );
@@ -205,7 +205,7 @@ class AclEditorState extends State<AclEditor> {
     List<Map<String, dynamic>> users = [];
     List<Map<String, dynamic>> groups = [];
     try {
-      users = await _fetchEnvelopeAll(auth, '/api/v1/admin/users', 'users');
+      users = await _fetchEnvelopeAll(auth, '/api/v1/users', 'users');
     } catch (e) {
       debugPrint('[AclEditor] fetch users failed: $e');
     }

@@ -128,7 +128,7 @@ class TestConcurrentLogonAudit:
 
         admin = _login(api, "admin@example.com", "127.0.0.1", "adminpass")
         resp = api.get(
-            f"/api/v1/admin/users/{user_id}/sessions",
+            f"/api/v1/users/{user_id}/sessions",
             headers=_bearer(admin),
         )
         assert resp.status_code == 200, resp.text
@@ -151,7 +151,7 @@ class TestConcurrentLogonAudit:
             "id"
         ]
         resp = api.get(
-            f"/api/v1/admin/users/{user_id}/sessions",
+            f"/api/v1/users/{user_id}/sessions",
             headers=_bearer(token),
         )
         assert resp.status_code == 403

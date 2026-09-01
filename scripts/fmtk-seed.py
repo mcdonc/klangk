@@ -92,7 +92,7 @@ def login(base: str, email: str, password: str) -> str:
 
 def ensure_users(base: str, token: str) -> dict[str, str]:
     """Create missing fixture users; returns email -> user_id."""
-    _, listing = api(base, token, "GET", "/api/v1/admin/users")
+    _, listing = api(base, token, "GET", "/api/v1/users")
     ids = {u["email"]: u["id"] for u in listing["users"]}
     for name in FIXTURES:
         email = f"{name}@example.com"
@@ -102,7 +102,7 @@ def ensure_users(base: str, token: str) -> dict[str, str]:
             base,
             token,
             "POST",
-            "/api/v1/admin/users",
+            "/api/v1/users",
             {"email": email, "password": FIXTURE_PASSWORD},
         )
         if status != 200:
@@ -114,16 +114,16 @@ def ensure_users(base: str, token: str) -> dict[str, str]:
 
 def ensure_admin_group_member(base: str, token: str, user_id: str) -> None:
     """Idempotently add fmtk-admin to the ``admins`` group."""
-    _, listing = api(base, token, "GET", "/api/v1/admin/groups?page_size=100")
+    _, listing = api(base, token, "GET", "/api/v1/groups?page_size=100")
     group = next(g for g in listing["groups"] if g["name"] == "admins")
-    _, members = api(base, token, "GET", f"/api/v1/admin/groups/{group['id']}/members")
+    _, members = api(base, token, "GET", f"/api/v1/groups/{group['id']}/members")
     if any(m["id"] == user_id for m in members):
         return
     status, body = api(
         base,
         token,
         "POST",
-        f"/api/v1/admin/groups/{group['id']}/members",
+        f"/api/v1/groups/{group['id']}/members",
         {"user_id": user_id},
     )
     if status != 200:
