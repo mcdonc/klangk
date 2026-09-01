@@ -38,6 +38,10 @@ Config-file keys map directly to `KLANGK_*` environment variable names with the 
 
 Every config-file key accepts **either** `snake_case` or `kebab-case` — `jwt_secret` and `jwt-secret` resolve to the same setting, as do `egress_port` / `egress-port`, `auth_modes` / `auth-modes`, and so on ([#1538](https://github.com/mcdonc/klangk/issues/1538)). This matches the dual-form lookup the OIDC provider dicts already had and is forgiving of either style, but **`snake_case` is the preferred/documented form** — all examples in this chapter (and the field names they map to) use `snake_case`.
 
+### Native scalar types
+
+Numeric, boolean, and list fields accept their natural YAML scalar types — a bare number for numeric fields (`access_token_hours: 48`, `port: 8997`), a bare `true`/`false` for boolean fields (`allow_sudo: true`), and a bare list for list fields. Quoted strings (`port: "8997"`) keep working everywhere; both forms parse identically ([#2603](https://github.com/mcdonc/klangk/issues/2603), [#2796](https://github.com/mcdonc/klangk/issues/2796), [#2967](https://github.com/mcdonc/klangk/issues/2967)). Env vars are always strings and behave exactly as before.
+
 ## `file:` and `cmd:` resolution
 
 Any value — whether from the config file or an env var — can use `file:` or `cmd:` prefixes to resolve secrets at **construction time** (not per-call at use time):
@@ -92,7 +96,7 @@ Each key may be written as the **stripped, lowercased short form** — e.g. `sol
 
 This block is read at boot and on `SIGHUP` (reloadable, like the rest of the file). It supplies values only; it does **not** change which features are compiled in (build-time, [#1655](https://github.com/mcdonc/klangk/issues/1655)) or which are turned on (`KLANGKD_FEATURES_ENABLE`, deploy-time).
 
-> **Quote non-string values.** The block's values are strings, so quote numerics and booleans the way you would for any other config-file field — `port: "8080"`, not `8080` (the unquoted form is parsed as an int and rejected at construction). This matches the rest of `klangkd.yaml` (the complete example quotes every numeric).
+> **Quote non-string values.** The block is typed as a plain string map and is resolved outside the typed settings model (`resolve_dynamic_config`), so quote numerics and booleans here — `soliplex_port: "8080"`, not `8080`. (Top-level settings fields, unlike this block, accept their native YAML scalar types — see above.)
 
 ## Complete example
 
@@ -117,8 +121,8 @@ password_history_count: 5
 
 # --- Server / network ---
 listen: "127.0.0.1"
-port: "8997"
-egress_port: "8995"
+port: 8997
+egress_port: 8995
 hosting_hostname: klangk.example.com
 hosting_proto: https
 trusted_proxy_cidrs: "127.0.0.1,::1,10.0.0.0/8"
@@ -216,7 +220,7 @@ since #1642):
 # --- Deployment shape ---
 # port is the browser/proxy port. Unset ⇒ headless (no browser listener).
 # Set ⇒ full/browser mode (UI + API + hosted apps).
-port: "8997"
+port: 8997
 # listen is the browser interface address (rendered only when port is set).
 # listen: "127.0.0.1"  # browser interface address (default loopback; set 0.0.0.0 for all interfaces)
 # egress_listen is the egress interface address. Defaults to 0.0.0.0 (all

@@ -381,6 +381,14 @@ sync` report a clear permission-denied error.
 
 ### Added
 
+- **Native YAML integers for `port`, `egress_port`,
+  `bridge_timeout_seconds`, and `idle_timeout_seconds` (#2967).** A
+  bare YAML integer (`port: 8997`) now parses the same as the quoted
+  string form — previously it was rejected at construction unless
+  quoted. The deprecated `proxy_port` alias accepts a bare integer
+  too. Env vars, quoted strings, and `file:`/`cmd:` indirection are
+  unaffected.
+
 - **Granular `/admin` tab permissions (#2940).** The admin endpoints
   split off the monolithic `admin` gate onto one permission per tab:
   `manage-users` (Users), `manage-invitations` (Invitations),
