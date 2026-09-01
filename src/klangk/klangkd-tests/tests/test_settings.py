@@ -13,6 +13,7 @@ import pytest
 from _helpers import make_settings
 from klangk.settings import (
     BOOL_STRING_FIELDS,
+    INT_STRING_FIELDS,
     KlangkSettings,
     resolve_indirection,
     parse_bool_setting,
@@ -1897,6 +1898,105 @@ class TestBoolStringSettingCoercion:
         assert s.reject_proxy_headers is None
         assert s.smtp_use_tls == "true"
         assert s.test_mode is None
+
+
+class TestIntStringSettingCoercion:
+    """Str-typed port/timeout settings accept native YAML ints (#2967).
+
+    The int sibling of the #2796 bool-string coercion: fields stay
+    str-typed (env vars are always strings; consumers int()/float()
+    the value), but a bare ``port: 8997`` in YAML parses as an int and
+    used to fail validation with ``Input should be a valid string``.
+    """
+
+    # Imported from settings so the validator's family and this test
+    # class can't drift apart (same guard as BOOL_STRING_FIELDS).
+    FIELDS = list(INT_STRING_FIELDS)
+
+    @pytest.mark.parametrize("field", FIELDS)
+    @pytest.mark.parametrize("value", [8997, 0])
+    def test_yaml_native_int(self, field, value, tmp_path):
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(f"{field}: {value}\n")
+        s = make_settings({}, config_file=str(cfg))
+        assert getattr(s, field) == str(value)
+
+    @pytest.mark.parametrize(
+        "field,value",
+        [(f, v) for f in FIELDS for v in ("8997", "0", " 30", "")],
+    )
+    def test_env_strings_unchanged(self, field, value):
+        s = make_settings({f"KLANGKD_{field.upper()}": value})
+        assert getattr(s, field) == value
+
+    def test_yaml_quoted_strings_unchanged(self, tmp_path):
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(
+            'port: "8997"\n'
+            "egress_port: '8995'\n"
+            'bridge_timeout_seconds: "30"\n'
+            "idle_timeout_seconds: '1800'\n"
+        )
+        s = make_settings({}, config_file=str(cfg))
+        assert s.port == "8997"
+        assert s.egress_port == "8995"
+        assert s.bridge_timeout_seconds == "30"
+        assert s.idle_timeout_seconds == "1800"
+
+    def test_file_indirection_still_works(self, tmp_path):
+        secret = tmp_path / "port"
+        secret.write_text("9464\n")
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(f"port: file:{secret}\n")
+        s = make_settings({}, config_file=str(cfg))
+        assert s.port == "9464"
+
+    @pytest.mark.parametrize("field", FIELDS)
+    def test_native_bool_rejected(self, field, tmp_path):
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(f"{field}: true\n")
+        with pytest.raises(Exception, match="must be an integer"):
+            make_settings({}, config_file=str(cfg))
+
+    @pytest.mark.parametrize("field", FIELDS)
+    def test_native_float_rejected(self, field, tmp_path):
+        # A float must fail with the field named (the #2603 posture),
+        # not pydantic's generic str error — which steers the operator
+        # to *quote* the value instead of fixing the typo.
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(f"{field}: 8997.5\n")
+        with pytest.raises(Exception, match="not a float"):
+            make_settings({}, config_file=str(cfg))
+
+    def test_unset_keeps_defaults(self):
+        s = make_settings({})
+        assert s.port is None
+        assert s.egress_port == "8995"
+        assert s.bridge_timeout_seconds is None
+        assert s.idle_timeout_seconds is None
+
+    def test_coerced_values_flow_into_port_invariants(self, tmp_path):
+        """Native ints must land as strings *before* the downstream
+        model validators run: the egress≠browser guard compares the
+        str fields, and the port-collision probe int()s them (#2967)."""
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("port: 8995\n")  # same as the default egress port
+        with pytest.raises(Exception, match="must differ"):
+            make_settings({}, config_file=str(cfg))
+        cfg.write_text("port: 8997\negress_port: 8996\n")
+        s = make_settings({}, config_file=str(cfg))
+        assert s.port == "8997"
+        assert s.egress_port == "8996"
+
+    def test_deprecated_proxy_port_native_int_folds(self, tmp_path):
+        """The deprecated alias takes the natural bare int too: its
+        coerced string must flow through the proxy_port→egress_port
+        fold in ``_resolve_socket_and_ports`` (#2967)."""
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("proxy_port: 8996\n")
+        s = make_settings({}, config_file=str(cfg))
+        assert s.proxy_port == "8996"
+        assert s.egress_port == "8996"
 
 
 class TestParseBoolSetting:

@@ -595,6 +595,24 @@ BOOL_STRING_FIELDS = (
     "test_mode",
 )
 
+# The str-typed settings consumed as port numbers / second counts (their
+# consumers int()/float() the string). They stay str-typed — env vars are
+# always strings, ``file:``/``cmd:`` indirection keeps working — but a
+# native YAML int is translated to its string form at construction so a
+# bare ``port: 8997`` parses the same as ``port: "8997"`` (#2967). The
+# deprecated ``proxy_port`` alias is included: it is still folded into
+# ``egress_port`` by ``_resolve_socket_and_ports``, so its natural form
+# must parse too. One tuple feeds the field validator below and the
+# tests, so the family can't drift (same shape as BOOL_STRING_FIELDS,
+# #2796).
+INT_STRING_FIELDS = (
+    "port",
+    "egress_port",
+    "proxy_port",
+    "bridge_timeout_seconds",
+    "idle_timeout_seconds",
+)
+
 
 class KlangkSettings(BaseSettings):
     """Typed configuration for all ``KLANGKD_*`` environment variables.
@@ -1646,6 +1664,38 @@ class KlangkSettings(BaseSettings):
             return "true"
         if v is False:
             return "false"
+        return v
+
+    @field_validator(*INT_STRING_FIELDS, mode="before")
+    @classmethod
+    def _coerce_int_string_fields(cls, v, info):
+        """Accept a native YAML int for the str-typed port/timeout
+        settings, including the deprecated ``proxy_port`` alias (#2967
+        — the int sibling of ``_coerce_bool_string_fields``, #2796).
+
+        The family is :data:`INT_STRING_FIELDS`. A bare
+        ``port: 8997`` in YAML parses as an int and used to fail
+        validation with ``Input should be a valid string``. Translate a
+        native int to its string form. A bool (``port: true``) or a
+        float (``port: 8997.5`` — silently truncating would hide a
+        typo) raises naming the field, matching the strict-on-malformed
+        posture of the #2603 numeric coercers instead of pydantic's
+        generic str error (which steers the operator to *quote* the
+        value). Everything else (strings, ``None``) passes through
+        unchanged — env vars, quoted YAML, and ``file:``/``cmd:``
+        references are unaffected.
+        """
+        if isinstance(v, bool):
+            raise ValueError(
+                f"{info.field_name}={v!r} must be an integer, not a boolean."
+            )
+        if isinstance(v, float):
+            raise ValueError(
+                f"{info.field_name}={v!r} must be an integer, not a float "
+                "(use 8997, not 8997.5)."
+            )
+        if isinstance(v, int):
+            return str(v)
         return v
 
     @field_validator("log_level")
