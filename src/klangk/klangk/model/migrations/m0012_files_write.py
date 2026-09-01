@@ -34,73 +34,14 @@ the source and target permission strings.
 """
 
 from klangk.model.migrations.base import Migration
+from klangk.model.migrations.shared import mirror_permission_aces
 
 _SOURCE = "files-download"
 _TARGET = "files-write"
-_ALLOW = 1
-
-
-def _mirror_row(row: tuple, position: int) -> tuple:
-    """Build an INSERT tuple mirroring *row* (minus id) for the new perm.
-
-    ``row`` is ``(id, resource, position, action, principal_type,
-    user_id, group_id, system_principal, permission)``.
-    """
-    return (
-        row[1],  # resource
-        position,
-        row[3],  # action (Allow)
-        row[4],  # principal_type
-        row[5],  # user_id
-        row[6],  # group_id
-        row[7],  # system_principal
-        _TARGET,
-    )
 
 
 async def apply(db) -> None:
-    cursor = await db.execute(
-        "SELECT DISTINCT resource FROM acl_entries"
-        " WHERE action = ? AND permission = ?",
-        (_ALLOW, _SOURCE),
-    )
-    resources = [row[0] for row in await cursor.fetchall()]
-    for resource in resources:
-        cursor = await db.execute(
-            "SELECT id, resource, position, action, principal_type,"
-            " user_id, group_id, system_principal, permission"
-            " FROM acl_entries WHERE resource = ? ORDER BY position",
-            (resource,),
-        )
-        await _resequence_with_mirrors(db, await cursor.fetchall())
-
-
-async def _resequence_with_mirrors(db, rows) -> None:
-    """Park existing rows at unique negative positions (ids are unique,
-    so -1 - id never collides), then rewrite the sequence inserting each
-    mirror directly after its source entry so evaluation order vs. `*`
-    ACEs is kept."""
-    for row in rows:
-        await db.execute(
-            "UPDATE acl_entries SET position = ? WHERE id = ?",
-            (-1 - row[0], row[0]),
-        )
-    position = 0
-    for row in rows:
-        await db.execute(
-            "UPDATE acl_entries SET position = ? WHERE id = ?",
-            (position, row[0]),
-        )
-        position += 1
-        if row[3] == _ALLOW and row[8] == _SOURCE:  # action, permission
-            await db.execute(
-                "INSERT INTO acl_entries"
-                " (resource, position, action, principal_type,"
-                "  user_id, group_id, system_principal, permission)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                _mirror_row(row, position),
-            )
-            position += 1
+    await mirror_permission_aces(db, _SOURCE, _TARGET)
 
 
 migration = Migration(12, "0012_files_write", apply)

@@ -25,50 +25,14 @@ Admins who granted ``terminal`` to other principals via custom ACEs
 preserve deciding for them.
 """
 
-import re
-
-from klangk.model.acl import ACTION_ALLOW, PRINCIPAL_GROUP
 from klangk.model.migrations.base import Migration
+from klangk.model.migrations.shared import grant_role_group_permission
 
-_CONSENT_ROLES = ("coders", "collaborators")
-_ROLE_GROUP_RE = re.compile(r"^(%s)-(.+)$" % "|".join(_CONSENT_ROLES))
+_EGRESS_CONSENT = "egress-consent"
 
 
 async def apply(db) -> None:
-    cursor = await db.execute(
-        "SELECT name FROM groups WHERE source = 'workspace-role'"
-    )
-    role_groups = [row[0] for row in await cursor.fetchall()]
-    for name in role_groups:
-        m = _ROLE_GROUP_RE.match(name)
-        if m is None:
-            continue  # owners/spectators (and unknown suffixes) untouched
-        ws_id = m.group(2)
-        resource = f"/workspaces/{ws_id}"
-        existing = await db.execute(
-            "SELECT 1 FROM acl_entries"
-            " WHERE resource = ? AND group_id = ("
-            "   SELECT id FROM groups WHERE name = ?)"
-            " AND permission = 'egress-consent' LIMIT 1",
-            (resource, name),
-        )
-        if await existing.fetchone() is not None:
-            continue
-        max_pos = await db.execute(
-            "SELECT COALESCE(MAX(position), -1) FROM acl_entries"
-            " WHERE resource = ?",
-            (resource,),
-        )
-        pos = (await max_pos.fetchone())[0] + 1
-        await db.execute(
-            "INSERT INTO acl_entries"
-            " (resource, position, action, principal_type,"
-            "  user_id, group_id, system_principal, permission)"
-            " VALUES (?, ?, ?, ?, NULL,"
-            "  (SELECT id FROM groups WHERE name = ?), NULL,"
-            "  'egress-consent')",
-            (resource, pos, ACTION_ALLOW, PRINCIPAL_GROUP, name),
-        )
+    await grant_role_group_permission(db, _EGRESS_CONSENT)
 
 
 migration = Migration(18, "0018_egress_consent_permission", apply)
