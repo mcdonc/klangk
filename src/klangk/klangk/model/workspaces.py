@@ -44,34 +44,47 @@ UPDATABLE_WORKSPACE_FIELDS = frozenset(
 # ordered list of permissions granted to that group on ``/workspaces/{id}``.
 # Seeded atomically with the row in :meth:`WorkspacesModel.create_workspace_with_acl`
 # so a failure mid-seed can never leave orphaned ACEs/groups (#128).
+# #2946: specific names throughout. Lifecycle control (start/stop/
+# restart-workspace) is separate from `terminal` (the WS connect gate)
+# and is granted to the operating roles (coders, collaborators) — not
+# spectators, who watch.
 _ROLE_GROUP_PERMISSIONS: dict[str, list[str]] = {
     "owners": ["*"],
     "coders": [
-        "monitor",
+        "monitor-workspace",
         "terminal",
+        "start-workspace",
+        "stop-workspace",
+        "restart-workspace",
         "egress-consent",
         "code-in-isolation",
         "exec-and-sync",
         "spectate-on-shared-terminals",
-        "files",
+        "files-view",
         "files-download",
         "files-write",
     ],
     "collaborators": [
-        "monitor",
+        "monitor-workspace",
         "terminal",
+        "start-workspace",
+        "stop-workspace",
+        "restart-workspace",
         "egress-consent",
         "code-in-isolation",
         "exec-and-sync",
         "code-in-shared-terminals",
         "spectate-on-shared-terminals",
         "share-terminals",
-        "files",
+        "files-view",
         "files-download",
         "files-write",
     ],
     "spectators": [
-        "monitor",
+        "monitor-workspace",
+        # terminal = the WS connect gate only (#2946 lifecycle split):
+        # spectators connect to watch shared terminals; own-terminal UI
+        # stays gated on code-in-isolation, which they lack.
         "terminal",
         "spectate-on-shared-terminals",
     ],

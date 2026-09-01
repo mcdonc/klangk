@@ -32,19 +32,50 @@ operators or integrators to act when upgrading.
 
 ### Breaking
 
+- **Workspace-sphere permission names (#2946).** Every stored ACE and
+  every client that checks a workspace permission must use the new
+  specific names: `create-workspace` (on `/workspaces`),
+  `edit-workspace`, `delete-workspace`, `duplicate-workspace`,
+  `transfer-workspace` (replaces `admin` on the workspace),
+  `monitor-workspace`, `export-workspace`, `share-workspace`,
+  `share-advanced` (replaces `change-acls`), and `files-view`
+  (replaces `files`). Migration m0022 renames the stored ACE rows
+  automatically, including per-workspace role groups; `view`,
+  `terminal`, `files-download`, `files-write`, and the egress/shared-
+  terminal names are unchanged. Scripts and hand-built clients that
+  check or grant the old names must rename them the same way.
+  Lifecycle control also splits out of `terminal`: `start-workspace`,
+  `stop-workspace`, and `restart-workspace` are now checked on their
+  own. m0022 grants the trio to every existing workspace's
+  `coders-*`/`collaborators-*` role groups (matching the fresh seeds);
+  spectators no longer hold lifecycle control — re-grant the trio
+  manually if a spectator group should keep it.
+
+- **Self-service surfaces are permission-gated (#2946).** The volumes
+  API and the images listing now check `manage-volumes` and
+  `view-images` on their own resources — seeded Allow for
+  Authenticated (m0023 seeds existing deployments), so default
+  behavior is unchanged; a deploy can now deny them per user/group
+  via the ACL editor. `GET /users/search` (member-picker type-ahead)
+  checks `search-users` on `/users`, also Allow Authenticated by
+  default. The LLM proxy is gated separately by its own
+  workspace-token requirement (#2959).
+
 - **`/admin/*` API paths moved to first-class resources (#2944).**
-  Scripts and clients calling `/api/v1/users*`,
-  `/api/v1/groups*`, `/api/v1/invitations*`,
-  `/api/v1/server/schedule*`, `/api/v1/events`,
-  or `/api/v1/acl/*` must switch to `/api/v1/users*`,
+  Scripts and clients calling the old `/api/v1/admin/users*`,
+  `/api/v1/admin/groups*`, `/api/v1/admin/invitations*`,
+  `/api/v1/admin/schedule*`, `/api/v1/admin/events`, or
+  `/api/v1/admin/acl*` paths must switch to `/api/v1/users*`,
   `/api/v1/groups*`, `/api/v1/invitations*`, `/api/v1/server/schedule*`,
-  `/api/v1/events`, and `/api/v1/acl/*` respectively. The CLI, web
-  frontend, e2e suites, and seeds are already migrated. Delegations
-  granted on the old `/admin/users`, `/admin/groups`, … sub-resources
-  match nothing anymore — re-grant the `manage-*` permission on the
-  new first-class resource. The pre-existing `/groups` Allow `create`
-  seed is migrated automatically (m0021); any other custom `/groups`
-  rows are left for a manual re-grant.
+  `/api/v1/events`, and `/api/v1/acl/*` respectively (the old paths
+  404). The CLI, web frontend, e2e suites, and seeds are already
+  migrated. The `/admin` `*` wildcard no longer covers these surfaces —
+  the walk from the new resources never passes through `/admin` — so
+  delegations granted on the old `/admin/users`, `/admin/groups`, …
+  sub-resources match nothing anymore: re-grant the `manage-*`
+  permission on the new first-class resource. The pre-existing
+  `/groups` Allow `create` seed is migrated automatically (m0021); any
+  other custom `/groups` rows are left for a manual re-grant.
 
 - **Hand-crafted `admin` ACEs stop matching split routes (#2940).** ACLs
   granting the literal `admin` permission on `/admin` (rather than the

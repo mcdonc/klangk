@@ -57,7 +57,7 @@ const INSTALL_FSA_SHIM = `
 `;
 
 // Admin account provisioned by global-setup (KLANGKD_DEFAULT_USER / PASSWORD).
-// The export endpoint is admin-only (workspaces.py: has_permission("admin")).
+// The export endpoint is owner/grant-gated (has_permission("export-workspace")).
 const ADMIN_EMAIL = "admin@example.com";
 import { ADMIN_PASSWORD } from "../e2e-env";
 

@@ -243,7 +243,8 @@ class TestSeedDefaultAcls:
         await lifecycle.seed_default_acls(admin_group_id)
 
         for resource, permission in (
-            ("/users", "manage-users"),
+            # NB: /users is checked separately below — it carries the
+            # #2946 search-users row (3 entries, not 2).
             ("/groups", "manage-groups"),
             ("/invitations", "manage-invitations"),
             ("/server", "manage-server-schedule"),
@@ -265,6 +266,30 @@ class TestSeedDefaultAcls:
             e["permission"] == "*" and e["group_id"] == admin_group_id
             for e in admin_entries
         )
+
+        # #2946: /users carries the search-users row for Authenticated
+        # between the admins' Allow and the blanket Deny.
+        users = await app_state.state.model.acl.get_acl_entries("/users")
+        assert [(e["position"], e["permission"]) for e in users] == [
+            (0, "manage-users"),
+            (1, "search-users"),
+            (2, "*"),
+        ]
+        assert users[1]["system_principal"] == model.SYSTEM_AUTHENTICATED
+        assert users[2]["action"] == model.ACTION_DENY
+        # ...and the self-service trio seeds Allow Authenticated +
+        # Deny Everyone.
+        for resource, permission in (
+            ("/volumes", "manage-volumes"),
+            ("/images", "view-images"),
+        ):
+            entries = await app_state.state.model.acl.get_acl_entries(resource)
+            assert len(entries) == 2, resource
+            allow, deny = entries
+            assert allow["permission"] == permission
+            assert allow["system_principal"] == model.SYSTEM_AUTHENTICATED
+            assert deny["permission"] == "*"
+            assert deny["system_principal"] == model.SYSTEM_EVERYONE
 
 
 class TestSeedDefaultUserAuthModeGating:

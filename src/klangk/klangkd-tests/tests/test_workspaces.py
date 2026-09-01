@@ -200,12 +200,13 @@ async def test_create_workspace_with_acl_seeds_owner_and_role_groups(
     # Position counter is global across all groups (no collisions).
     positions = sorted(e["position"] for e in entries)
     assert positions == list(range(len(entries)))
-    # 1 owner ACE + 1 + 9 + 11 + 3 group ACEs (coders/collaborators carry
-    # `files-download`/`files-write` alongside `files` (#2705),
-    # `exec-and-sync` (#2706/#2712), `monitor` (#2783) joins every
-    # role that has `terminal`, spectators included, and
-    # `egress-consent` (#2883) joins coders/collaborators).
-    assert len(entries) == 1 + 1 + 9 + 11 + 3
+    # 1 owner ACE + 1 + 12 + 14 + 3 group ACEs (#2946 names:
+    # monitor-workspace, files-view, and the start/stop/restart
+    # lifecycle split — granted to coders/collaborators, not
+    # spectators; coders/collaborators keep files-download/files-write
+    # (#2705), exec-and-sync (#2706/#2712), and egress-consent
+    # (#2883)).
+    assert len(entries) == 1 + 1 + 12 + 14 + 3
     # Coder/collaborator grants include both transfer permissions and
     # the exec-channel permission.
     for suffix in ["coders", "collaborators"]:
@@ -219,11 +220,14 @@ async def test_create_workspace_with_acl_seeds_owner_and_role_groups(
             and e["group_id"] == group["id"]
         }
         assert {
-            "files",
+            "files-view",
             "files-download",
             "files-write",
             "exec-and-sync",
             "egress-consent",
+            "start-workspace",
+            "stop-workspace",
+            "restart-workspace",
         } <= perms
 
     # Spectators are watch-only: no consent permission is seeded (#2883).
@@ -236,7 +240,11 @@ async def test_create_workspace_with_acl_seeds_owner_and_role_groups(
         if e["principal_type"] == model.PRINCIPAL_GROUP
         and e["group_id"] == spectator_group["id"]
     }
-    assert "egress-consent" not in spectator_perms
+    assert spectator_perms == {
+        "monitor-workspace",
+        "terminal",
+        "spectate-on-shared-terminals",
+    }
 
 
 async def test_create_workspace_with_acl_rollback_on_seeding_failure(

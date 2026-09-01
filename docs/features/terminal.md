@@ -187,7 +187,7 @@ handles of all current viewers.
 | `share-terminals`              | \*     |        | yes           |            |
 | `code-in-shared-terminals`     | \*     |        | yes           |            |
 | `spectate-on-shared-terminals` | \*     | yes    | yes           | yes        |
-| `files`                        | \*     | yes    | yes           |            |
+| `files-view`                   | \*     | yes    | yes           |            |
 | `exec-and-sync`                | \*     | yes    | yes           |            |
 | `egress-consent`               | \*     | yes    | yes           |            |
 

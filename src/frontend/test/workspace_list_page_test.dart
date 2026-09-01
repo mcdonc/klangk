@@ -127,7 +127,7 @@ void main() {
             'permissions': permissions ??
                 {
                   '/': ['view'],
-                  '/workspaces': ['create'],
+                  '/workspaces': ['create-workspace'],
                 },
             'groups': groups ?? [],
           }),
@@ -1503,7 +1503,7 @@ void main() {
         },
         permissions: {
           '/admin': ['*'],
-          '/workspaces': ['create'],
+          '/workspaces': ['create-workspace'],
         },
         groups: [
           {'id': 'g1', 'name': 'admins'},
@@ -1967,7 +1967,7 @@ void main() {
         },
         permissions: {
           '/admin': ['*'],
-          '/workspaces': ['create'],
+          '/workspaces': ['create-workspace'],
         },
         groups: [
           {'id': 'g1', 'name': 'admins'},

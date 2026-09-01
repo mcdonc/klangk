@@ -31,7 +31,7 @@ Notify, in this order:
 ## Before shutdown: get the data out
 
 - **Export workspaces that must survive.** Export requires the
-  `export` permission on the workspace — owners have it out of the box
+  `export-workspace` permission on the workspace — owners have it out of the box
   (#2707), and admins must be granted it (or be added to a workspace's
   owners role) to export: `klangk export <workspace>` writes a `.tar.gz`
   of the workspace's home directory and metadata (see

@@ -915,7 +915,7 @@ class TestNotifyWorkspaceEvicted:
             resource,
             position,
             model.ACTION_ALLOW,
-            "monitor",
+            "monitor-workspace",
             model.PRINCIPAL_USER,
             user_id=user_id,
         )

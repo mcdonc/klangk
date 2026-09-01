@@ -20,7 +20,6 @@ from pydantic import BaseModel
 
 from .. import (
     acl,
-    auth,
 )
 from ..podman import PodmanError as PodmanError
 from ..settings import parse_bool_setting
@@ -79,7 +78,7 @@ def _files_http_error(
 async def list_files(
     workspace_id: str,
     path: str = "/",
-    user: dict = Depends(acl.has_permission("files", workspace_resource)),
+    user: dict = Depends(acl.has_permission("files-view", workspace_resource)),
     app=Depends(get_app_dep),
 ):
     cid = _require_container(workspace_id, app.state.container_registry)
@@ -93,7 +92,7 @@ async def list_files(
 async def read_file(
     workspace_id: str,
     path: str,
-    user: dict = Depends(acl.has_permission("files", workspace_resource)),
+    user: dict = Depends(acl.has_permission("files-view", workspace_resource)),
     _download: dict = Depends(
         acl.has_permission("files-download", workspace_resource)
     ),
@@ -115,7 +114,7 @@ async def read_file(
 async def delete_file(
     workspace_id: str,
     path: str,
-    user: dict = Depends(acl.has_permission("files", workspace_resource)),
+    user: dict = Depends(acl.has_permission("files-view", workspace_resource)),
     _write: dict = Depends(
         acl.has_permission("files-write", workspace_resource)
     ),
@@ -138,7 +137,7 @@ class RenameFileRequest(BaseModel):
 async def rename_file(
     workspace_id: str,
     body: RenameFileRequest,
-    user: dict = Depends(acl.has_permission("files", workspace_resource)),
+    user: dict = Depends(acl.has_permission("files-view", workspace_resource)),
     _write: dict = Depends(
         acl.has_permission("files-write", workspace_resource)
     ),
@@ -158,7 +157,7 @@ async def rename_file(
 async def download_file(
     workspace_id: str,
     path: str,
-    user: dict = Depends(acl.has_permission("files", workspace_resource)),
+    user: dict = Depends(acl.has_permission("files-view", workspace_resource)),
     _download: dict = Depends(
         acl.has_permission("files-download", workspace_resource)
     ),
@@ -194,7 +193,7 @@ async def upload_file(
     workspace_id: str,
     file: UploadFile,
     path: str = "",
-    user: dict = Depends(acl.has_permission("files", workspace_resource)),
+    user: dict = Depends(acl.has_permission("files-view", workspace_resource)),
     _write: dict = Depends(
         acl.has_permission("files-write", workspace_resource)
     ),
@@ -237,7 +236,7 @@ async def upload_file(
 
 @router.get("/images")
 async def list_images(
-    _user: dict = Depends(auth.get_current_user),
+    _user: dict = Depends(acl.has_permission("view-images")),
     app=Depends(get_app_dep),
 ):
     return {
@@ -264,7 +263,7 @@ async def list_images(
 
 @router.get("/volumes")
 async def list_volumes(
-    user: dict = Depends(auth.get_current_user),
+    user: dict = Depends(acl.has_permission("manage-volumes")),
     app=Depends(get_app_dep),
 ):
     volumes = await app.state.podman.list_volumes(
@@ -288,7 +287,7 @@ class CreateVolumeRequest(BaseModel):
 @router.post("/volumes")
 async def create_volume(
     body: CreateVolumeRequest,
-    user: dict = Depends(auth.get_current_user),
+    user: dict = Depends(acl.has_permission("manage-volumes")),
     app=Depends(get_app_dep),
 ):
     if await app.state.podman.inspect_volume(body.name) is not None:
@@ -309,7 +308,7 @@ async def create_volume(
 @router.delete("/volumes/{name}")
 async def delete_volume(
     name: str,
-    user: dict = Depends(auth.get_current_user),
+    user: dict = Depends(acl.has_permission("manage-volumes")),
     app=Depends(get_app_dep),
 ):
     info = await app.state.podman.inspect_volume(name)

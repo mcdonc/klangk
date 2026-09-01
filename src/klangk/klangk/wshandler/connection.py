@@ -469,8 +469,9 @@ class Connection:
         if not self.workspace_id:
             send_error(self.sock, "Not connected to a workspace")
             return
-        # Restarting affects everyone in the workspace; require terminal.
-        if not await self.has_perm("terminal"):
+        # Restarting affects everyone in the workspace; require the
+        # #2946 lifecycle permission (terminal is the connect gate only).
+        if not await self.has_perm("restart-workspace"):
             # #2891: same machine-readable refusal as workspace_connect.
             send_error(self.sock, "Permission denied", code="forbidden")
             return

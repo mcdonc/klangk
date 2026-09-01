@@ -187,7 +187,7 @@ class TestRevokeSyncBlocksExec:
             {
                 "action": 1,
                 "principal_type": 1,
-                "permission": "edit",
+                "permission": "edit-workspace",
                 "user_id": member_id,
                 "group_id": None,
                 "system_principal": None,

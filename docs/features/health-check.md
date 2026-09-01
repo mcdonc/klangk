@@ -47,7 +47,7 @@ For each workspace with a health check configured:
    shared users, role groups) connected over WebSocket gets a
    `service_health` event so the UI can update in real time (#1714:
    the fan-out is scoped server-side — other tenants never see it).
-   Membership here means the `monitor` permission — the dedicated
+   Membership here means the `monitor-workspace` permission — the dedicated
    status-observation permission (#2783), granted alongside `terminal`
    by every share path — so a monitoring-only grantee (no `terminal`)
    receives live deltas, while a view-only grantee does not.

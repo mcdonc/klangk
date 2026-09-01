@@ -495,8 +495,8 @@ class TestACLIntrospection:
         # Should NOT have owner-level permissions
         assert "*" not in perms
         assert "terminal" not in perms
-        assert "files" not in perms
-        assert "share" not in perms
+        assert "files-view" not in perms
+        assert "share-workspace" not in perms
 
     def test_my_permissions_shared_workspace(self, api, user_a, user_b):
         """Shared user gets view/terminal/files but not share or *."""
@@ -521,9 +521,9 @@ class TestACLIntrospection:
         perms = resp.json()["permissions"].get(f"/workspaces/{ws_id}", [])
         assert "view" in perms
         assert "terminal" in perms
-        assert "files" in perms
+        assert "files-view" in perms
         assert "*" not in perms
-        assert "share" not in perms
+        assert "share-workspace" not in perms
 
 
 # --- Workspace sharing via ACL ---
@@ -886,7 +886,7 @@ class TestSharedWorkspaceAccess:
         )
         perms = resp.json()["permissions"].get(f"/workspaces/{ws_id}", [])
         assert "terminal" not in perms
-        assert "files" not in perms
+        assert "files-view" not in perms
         assert "*" not in perms
 
     def test_add_self_as_member_rejected(self, api, user_a):
@@ -933,7 +933,7 @@ class TestAdminResourceACL:
         )
         assert resp.status_code == 200
         entries = resp.json()
-        assert any(e["permission"] == "create" for e in entries)
+        assert any(e["permission"] == "create-workspace" for e in entries)
         # #2569: create on /workspaces is granted to the admin group,
         # not Authenticated.
         assert any(e["principal"] == "admins" for e in entries)

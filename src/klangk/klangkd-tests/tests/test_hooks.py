@@ -289,7 +289,7 @@ class TestFireWorkspaceCreated:
                 for e in entries
                 if not (
                     e["principal"].startswith("coders-")
-                    and e["permission"] == "files"
+                    and e["permission"] == "files-view"
                 )
             ]
             kept.append(
@@ -323,11 +323,11 @@ class TestFireWorkspaceCreated:
         ), "the appended user grant landed"
         coders = [e for e in entries if e["principal"].startswith("coders-")]
         assert coders, "coders role group still holds ACEs"
-        assert all(e["permission"] != "files" for e in coders)
+        assert all(e["permission"] != "files-view" for e in coders)
         collab_files = [
             e
             for e in entries
-            if e["permission"] == "files"
+            if e["permission"] == "files-view"
             and e["principal"].startswith("collaborators-")
         ]
         assert collab_files, "collaborators group untouched by the filter"

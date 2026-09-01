@@ -937,7 +937,7 @@ class WebSocketState:
         for uid, conns in by_user.items():
             principals = await acl.get_principals(uid)
             if not check_permission_inmemory(
-                resource, principals, "monitor", entries
+                resource, principals, "monitor-workspace", entries
             ):
                 continue
             for sock, _conn in conns:
@@ -1152,7 +1152,7 @@ class WebSocketState:
         principals = await acl.get_principals(user_id)
         resources = [f"/workspaces/{cs.workspace_id}" for cs, _ in candidates]
         allowed = await acl.permissions_for_resources(
-            resources, principals, ["monitor"]
+            resources, principals, ["monitor-workspace"]
         )
         for cs, seq in candidates:
             if not self._replay_service_health(

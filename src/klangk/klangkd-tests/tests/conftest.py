@@ -88,6 +88,65 @@ def temp_data_dir(tmp_path, monkeypatch):
     reset_test_db()
 
 
+async def _seed_2946_self_service(app_state):
+    """Seed the #2946 self-service ACL rows (idempotent).
+
+    Mirrors m0023 / seed_default_acls: Allow <perm> for Authenticated
+    plus Deny Everyone on /volumes, /images, /llm-proxy, and the
+    Allow search-users Authenticated row on /users (inserted at
+    position 1, shifting later rows down — m0023's logic). Called by
+    the seed fixtures (user / agent_user / admin_group) so any test
+    reaching the DB gets the production-shaped world.
+    """
+    from klangk.model.acl import (
+        ACTION_ALLOW,
+        ACTION_DENY,
+        PRINCIPAL_SYSTEM,
+        SYSTEM_AUTHENTICATED,
+        SYSTEM_EVERYONE,
+    )
+
+    acl = app_state.state.model.acl
+    for resource, permission in (
+        ("/volumes", "manage-volumes"),
+        ("/images", "view-images"),
+    ):
+        existing = await acl.get_acl_entries(resource)
+        if existing:
+            continue
+        await acl.add_acl_entry(
+            resource,
+            0,
+            ACTION_ALLOW,
+            permission,
+            PRINCIPAL_SYSTEM,
+            system_principal=SYSTEM_AUTHENTICATED,
+        )
+        await acl.add_acl_entry(
+            resource,
+            1,
+            ACTION_DENY,
+            "*",
+            PRINCIPAL_SYSTEM,
+            system_principal=SYSTEM_EVERYONE,
+        )
+    rows = await acl.get_acl_entries("/users")
+    if not any(r["permission"] == "search-users" for r in rows):
+        async with app_state.state.db.transaction() as tx:
+            await tx.execute(
+                "UPDATE acl_entries SET position = position + 1"
+                " WHERE resource = '/users' AND position >= 1"
+            )
+        await acl.add_acl_entry(
+            "/users",
+            1,
+            ACTION_ALLOW,
+            "search-users",
+            PRINCIPAL_SYSTEM,
+            system_principal=SYSTEM_AUTHENTICATED,
+        )
+
+
 @pytest.fixture
 async def db(app_state):
     """Initialize the schema and return the per-test DB."""
@@ -109,15 +168,18 @@ async def agent_user(app_state):
             (AGENT_USER_ID, "klangk@example.com", "klangk"),
         )
     app_state.state.model.users.clear_agent_cache()
+    await _seed_2946_self_service(app_state)
 
 
 @pytest.fixture
 async def user(app_state):
     """Create a test user and return it."""
     await app_state.state.model.init_db()
-    return await app_state.state.model.users.create_user(
+    result = await app_state.state.model.users.create_user(
         "testuser@example.com", _TEST_PASSWORD_HASH, verified=True
     )
+    await _seed_2946_self_service(app_state)
+    return result
 
 
 @pytest.fixture
@@ -171,13 +233,31 @@ async def admin_group(app_state):
         "/workspaces",
         0,
         ACTION_ALLOW,
-        "create",
+        "create-workspace",
         PRINCIPAL_GROUP,
         group_id=group["id"],
     )
     # First-class resource seeds (#2944), mirroring seed_default_acls.
+    # /users manage-users for admins; the Deny lands at a high position
+    # so _seed_2946_self_service's search-users insert (position 1,
+    # shifting >= 1) keeps Allow-Authenticated before it.
+    await acl.add_acl_entry(
+        "/users",
+        0,
+        ACTION_ALLOW,
+        "manage-users",
+        PRINCIPAL_GROUP,
+        group_id=group["id"],
+    )
+    await acl.add_acl_entry(
+        "/users",
+        10,
+        ACTION_DENY,
+        "*",
+        PRINCIPAL_SYSTEM,
+        system_principal=SYSTEM_EVERYONE,
+    )
     for resource, permission in (
-        ("/users", "manage-users"),
         ("/groups", "manage-groups"),
         ("/invitations", "manage-invitations"),
         ("/server", "manage-server-schedule"),
@@ -200,6 +280,7 @@ async def admin_group(app_state):
             PRINCIPAL_SYSTEM,
             system_principal=SYSTEM_EVERYONE,
         )
+    await _seed_2946_self_service(app_state)
     # /admin stays as the instance-admin wildcard marker (#2944).
     await acl.add_acl_entry(
         "/admin",

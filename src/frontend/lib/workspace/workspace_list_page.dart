@@ -824,27 +824,28 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
         title: const AppBarTitle(title: 'Workspaces'),
         actions: const [AppBarActions()],
       ),
-      floatingActionButton:
-          context.watch<AuthService>().hasPermission('/workspaces', 'create')
-              ? Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    FloatingActionButton.small(
-                      heroTag: 'import',
-                      onPressed: _showImportDialog,
-                      tooltip: 'Import Workspace',
-                      child: const Icon(Icons.upload),
-                    ),
-                    const SizedBox(height: 12),
-                    FloatingActionButton(
-                      heroTag: 'create',
-                      onPressed: _createWorkspace,
-                      tooltip: 'New Workspace',
-                      child: const Icon(Icons.add),
-                    ),
-                  ],
-                )
-              : null,
+      floatingActionButton: context
+              .watch<AuthService>()
+              .hasPermission('/workspaces', 'create-workspace')
+          ? Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                FloatingActionButton.small(
+                  heroTag: 'import',
+                  onPressed: _showImportDialog,
+                  tooltip: 'Import Workspace',
+                  child: const Icon(Icons.upload),
+                ),
+                const SizedBox(height: 12),
+                FloatingActionButton(
+                  heroTag: 'create',
+                  onPressed: _createWorkspace,
+                  tooltip: 'New Workspace',
+                  child: const Icon(Icons.add),
+                ),
+              ],
+            )
+          : null,
       body: _buildWorkspacesList(),
     );
   }
