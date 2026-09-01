@@ -475,7 +475,7 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     if (_canServer) types.add('server');
     if (_canEvents) types.add('events');
     // The Access Control browser reads /admin/acl/*, gated on
-    // `change-acls` (#2940) — a delegated container-events auditor
+    // `manage-acls` (#2940) — a delegated container-events auditor
     // (#2923) gets only the Events tab, not a dead ACL tab.
     if (_canAcl) {
       types.add('acl');
@@ -546,7 +546,9 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
         view: const ContainerEventsPanel(),
       );
     }
-    if (_canUsers || _canGroups || _canInvitations || _canServer) {
+    // The Access Control browser reads /admin/acl/*, gated on
+    // `manage-acls` (#2940) — shown exactly to its holders.
+    if (_canAcl) {
       addTab(
         label: 'Access Control',
         icon: Icons.security,
