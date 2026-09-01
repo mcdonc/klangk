@@ -401,7 +401,7 @@ test.describe("API", () => {
     // Verify group membership was added (via the group's members endpoint,
     // since per-user groups are no longer embedded in the users list)
     const membersResp = await request.get(
-      `${API_BASE}/api/v1/groups/${editorGroup.id}/members`,
+      `${API_BASE}/api/v1/admin/groups/${editorGroup.id}/members`,
       { headers: adminHeaders },
     );
     expect(membersResp.ok()).toBeTruthy();
