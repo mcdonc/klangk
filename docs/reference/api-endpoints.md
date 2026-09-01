@@ -1909,8 +1909,12 @@ authenticated with the workspace JWT validated by the egress listener's
 
 Served under `/llm-proxy/` (no `/api/v1` prefix) — on the egress
 listener, gated by the proxy's workspace-JWT `forward_auth` + container
-IP ACL, so only workspace containers can reach them. See
-[LLM Proxy](../architecture/llm-proxy.md).
+IP ACL, so only workspace containers can reach them. The backend
+re-validates the workspace JWT itself (#2959): user login tokens and
+anonymous requests are rejected with `401` even on the backend port.
+See [LLM Proxy](../architecture/llm-proxy.md).
+
+**Auth:** Workspace JWT.
 
 ### GET `/llm-proxy/models`
 

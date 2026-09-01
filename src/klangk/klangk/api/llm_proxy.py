@@ -3,18 +3,33 @@
 Handles ``/llm-proxy/`` requests that were previously forwarded by the
 reverse proxy to an external LLM base URL or a LiteLLM sidecar container.
 Now served in-process by :class:`~klangk.llm_router.LLMRouter`.
+
+#2959: container-internal callers only. Every route requires a
+**workspace JWT** — the in-container path through the egress caddy's
+``forward_auth``, which forwards the original ``Authorization`` header
+on to the backend. User JWTs and anonymous requests are rejected with
+401: the proxy must not be usable from outside workspace containers,
+even by authenticated users. Mirrors the defense-in-depth pattern of
+:func:`klangk.api.common.require_workspace_token` (the egress proxy
+already validated the token; the routes re-validate it).
 """
 
 import inspect
 import json
 import logging
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, StreamingResponse
+
+from .common import require_workspace_token
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/llm-proxy", tags=["llm-proxy"])
+router = APIRouter(
+    prefix="/llm-proxy",
+    tags=["llm-proxy"],
+    dependencies=[Depends(require_workspace_token)],
+)
 
 
 @router.get("/models")

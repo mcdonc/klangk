@@ -19,7 +19,7 @@ Pi container
           → upstream LLM provider(s)
 ```
 
-The reverse proxy's `/llm-proxy/` block validates the workspace JWT via `forward_auth` (Caddy) and enforces the container-source IP ACL. It then forwards the request to the klangkd backend.
+The reverse proxy's `/llm-proxy/` block validates the workspace JWT via `forward_auth` (Caddy) and enforces the container-source IP ACL. It then forwards the request to the klangkd backend, which re-validates the workspace JWT itself (#2959, defense-in-depth): a request arriving without a valid workspace token — including a user login token or no token at all — is rejected with `401`. The proxy is therefore unreachable from outside workspace containers even when the backend port is directly reachable.
 
 ## Operating modes
 
