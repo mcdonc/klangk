@@ -262,6 +262,22 @@ the `features_config:` block as `oauth_providers`, per workspace via the
 workspace `env` map, ad hoc via a shell `export`), and the rest of the
 flow — dialog, cache, PAT fallback — behaves identically.
 
+In `klangkd.yaml` the JSON must arrive as one string. Use a folded block
+scalar (no quote escaping — JSON is whitespace-insensitive) or a `file:`
+reference to a JSON file; a native YAML list as the value is rejected at
+construction:
+
+```yaml
+features_config:
+  oauth_providers: >-
+    [{"host": "gitlab.example.com",
+      "client_id": "abc123",
+      "device_code_url": "https://gitlab.example.com/oauth/authorize_device",
+      "token_url": "https://gitlab.example.com/oauth/token",
+      "scope": "read_repository write_repository",
+      "username": "oauth2"}]
+```
+
 The dialog names the provider ("Sign in to gitlab.com"), only `https`
 verification pages are auto-opened in the browser, and the poll loop is
 the same RFC 8628 state machine, so any compliant provider works
