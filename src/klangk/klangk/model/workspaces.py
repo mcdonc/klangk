@@ -139,6 +139,39 @@ SORT_COLUMNS = {"created": "created_at", "name": "name"}
 CLASSIFICATION_BANNER_MAX_LEN = 120
 
 
+def _banner_character_error(v: str) -> str | None:
+    """Error message for control/invisible characters in a marking.
+
+    Cc (control: newline/tab/DEL/NEL), Cf (format: bidi overrides,
+    zero-width chars, soft hyphen, BOM), Zl/Zp (line/paragraph
+    separators) — all either break the one-line layout or can spoof the
+    displayed marking.
+    """
+    bad = {
+        ch for ch in v if unicodedata.category(ch) in {"Cc", "Cf", "Zl", "Zp"}
+    }
+    if not bad:
+        return None
+    return (
+        "classification_banner must be a single line of printable"
+        " text without control or invisible format characters"
+        f" (found: {', '.join(f'U+{ord(ch):04X}' for ch in sorted(bad))})"
+    )
+
+
+def _validated_banner_text(v: str) -> str:
+    """Length + character validation for an already-stripped marking."""
+    if len(v) > CLASSIFICATION_BANNER_MAX_LEN:
+        raise ValueError(
+            "classification_banner must be at most"
+            f" {CLASSIFICATION_BANNER_MAX_LEN} characters, got {len(v)}"
+        )
+    msg = _banner_character_error(v)
+    if msg:
+        raise ValueError(msg)
+    return v
+
+
 def normalize_classification_banner(value) -> str | None:
     """Validate + normalize a classification marking (#2768).
 
@@ -164,25 +197,7 @@ def normalize_classification_banner(value) -> str | None:
     v = value.strip()
     if not v:
         return None
-    if len(v) > CLASSIFICATION_BANNER_MAX_LEN:
-        raise ValueError(
-            "classification_banner must be at most"
-            f" {CLASSIFICATION_BANNER_MAX_LEN} characters, got {len(v)}"
-        )
-    # Cc (control: newline/tab/DEL/NEL), Cf (format: bidi overrides,
-    # zero-width chars, soft hyphen, BOM), Zl/Zp (line/paragraph
-    # separators) — all either break the one-line layout or can spoof the
-    # displayed marking.
-    bad = {
-        ch for ch in v if unicodedata.category(ch) in {"Cc", "Cf", "Zl", "Zp"}
-    }
-    if bad:
-        raise ValueError(
-            "classification_banner must be a single line of printable"
-            " text without control or invisible format characters"
-            f" (found: {', '.join(f'U+{ord(ch):04X}' for ch in sorted(bad))})"
-        )
-    return v
+    return _validated_banner_text(v)
 
 
 def sort_order_clause(sort: str, order: str, prefix: str = "") -> str:
@@ -261,50 +276,81 @@ def _workspace_list_item(row, *, owner_email: bool = False) -> dict:
     return item
 
 
+def _coerce_enum_field(name: str, valid: frozenset, value) -> object:
+    """Validate one enum workspace field; raises ``ValueError``."""
+    if value not in valid:
+        raise ValueError(f"Invalid {name}: {value!r}")
+    return value
+
+
+def _coerce_json_blob(value) -> str | None:
+    """Encode an optional JSON-blob column (None passes through)."""
+    return json.dumps(value) if value is not None else None
+
+
+def _bool_int(value) -> int:
+    """The SQLite integer for a boolean column."""
+    return 1 if value else 0
+
+
+# Per-key coercers for coerce_workspace_field (dispatch table): each
+# declarative field's stored representation, applied before any write.
+_FIELD_COERCERS: dict[str, object] = {
+    "setup_state": lambda v: _coerce_enum_field(
+        "setup_state", SETUP_STATES, v
+    ),
+    "egress_mode": lambda v: _coerce_enum_field(
+        "egress_mode", EGRESS_MODES, v
+    ),
+    # Empty/whitespace text clears the override (back to inheriting the
+    # deploy default); the validator raises on control characters /
+    # oversize values.
+    "classification_banner": normalize_classification_banner,
+    "auto_start": _bool_int,
+    "per_handle_home": _bool_int,
+    **{col: _coerce_json_blob for col in _JSON_BLOB_COLUMNS},
+}
+
+
 def coerce_workspace_field(key: str, value) -> object:
     """Coerce one workspace-update field to its stored representation.
 
     Raises ``ValueError`` on invalid enum values (checked before any
     write)."""
-    if key == "setup_state":
-        if value not in SETUP_STATES:
-            raise ValueError(f"Invalid setup_state: {value!r}")
+    coercer = _FIELD_COERCERS.get(key)
+    if coercer is None:
         return value
-    if key == "egress_mode":
-        if value not in EGRESS_MODES:
-            raise ValueError(f"Invalid egress_mode: {value!r}")
-        return value
-    if key == "classification_banner":
-        # Empty/whitespace text clears the override (back to
-        # inheriting the deploy default); the validator raises
-        # on control characters / oversize values.
-        return normalize_classification_banner(value)
-    if key in (
-        "mounts",
-        "env",
-        "allowed_domains",
-        "rejected_domains",
-        "settings",
-    ):
-        return json.dumps(value) if value is not None else None
-    if key in ("auto_start", "per_handle_home"):
-        return 1 if value else 0
-    return value
+    return coercer(value)
+
+
+def _domain_entry_index(current: list, spec: str) -> int | None:
+    """Index of the case-insensitive match for *spec*, or None."""
+    return next((i for i, s in enumerate(current) if s.lower() == spec), None)
+
+
+def _add_domain_entry(current: list, spec: str) -> bool:
+    """Append *spec*; True when it was already present (no-op)."""
+    if _domain_entry_index(current, spec) is not None:
+        return True
+    current.append(spec)
+    return False
+
+
+def _remove_domain_entry(current: list, spec: str) -> bool:
+    """Pop the match for *spec*; True when it was absent (no-op)."""
+    idx = _domain_entry_index(current, spec)
+    if idx is None:
+        return True
+    current.pop(idx)
+    return False
 
 
 def mutate_domain_entries(current: list, spec: str, add: bool) -> bool:
     """Apply the add/remove to *current* in place; True when it was a
     no-op (entry already present for an add / absent for a remove)."""
     if add:
-        if spec in (s.lower() for s in current):
-            return True
-        current.append(spec)
-        return False
-    idx = next((i for i, s in enumerate(current) if s.lower() == spec), None)
-    if idx is None:
-        return True
-    current.pop(idx)
-    return False
+        return _add_domain_entry(current, spec)
+    return _remove_domain_entry(current, spec)
 
 
 def _validated_create_kwargs(
@@ -351,6 +397,49 @@ def _validated_create_kwargs(
             classification_banner
         ),
     )
+
+
+def _optional_json(value) -> str | None:
+    """JSON-encode an optional blob column (falsy → NULL)."""
+    return json.dumps(value) if value else None
+
+
+def _decode_settings_blob(blob: str | None) -> dict:
+    """Decode the settings JSON column (NULL/empty → empty dict)."""
+    return json.loads(blob) if blob else {}
+
+
+def _encode_settings_blob(current: dict) -> str | None:
+    """Encode the settings JSON column (empty bag → NULL)."""
+    return json.dumps(current) if current else None
+
+
+def _merge_settings_patch(current: dict, patch: dict) -> None:
+    """Apply one PATCH: each key sets/replaces; a None value deletes."""
+    for key, value in patch.items():
+        if value is None:
+            current.pop(key, None)
+        else:
+            current[key] = value
+
+
+def _normalize_domain_entry(entry: str) -> str | None:
+    """Normalize one domain-list entry; None when malformed or empty."""
+    try:
+        normalized = parse_allowed_domains([entry])
+    except ValueError:
+        return None
+    return normalized[0].lower() if normalized else None
+
+
+def _decode_list_blob(blob: str | None) -> list:
+    """Decode a domain-list JSON column (NULL/empty → empty list)."""
+    return json.loads(blob) if blob else []
+
+
+# Sentinel distinguishing "workspace row gone" (stop, return False) from
+# "CAS lost" (retry) in _mutate_domain_list's loop.
+_DOMAIN_MISSING = object()
 
 
 class WorkspacesModel:
@@ -400,15 +489,11 @@ class WorkspacesModel:
         """
         workspace_id = str(uuid.uuid4())
         created_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-        mounts_json = json.dumps(mounts) if mounts else None
-        env_json = json.dumps(env) if env else None
-        allowed_domains_json = (
-            json.dumps(allowed_domains) if allowed_domains else None
-        )
-        rejected_domains_json = (
-            json.dumps(rejected_domains) if rejected_domains else None
-        )
-        settings_json = json.dumps(settings) if settings else None
+        mounts_json = _optional_json(mounts)
+        env_json = _optional_json(env)
+        allowed_domains_json = _optional_json(allowed_domains)
+        rejected_domains_json = _optional_json(rejected_domains)
+        settings_json = _optional_json(settings)
         await db.execute(
             "INSERT INTO workspaces"
             " (id, user_id, name, image, service_command, auto_start,"
@@ -422,7 +507,7 @@ class WorkspacesModel:
                 name,
                 image,
                 service_command,
-                1 if auto_start else 0,
+                _bool_int(auto_start),
                 setup_state,
                 health_check,
                 mounts_json,
@@ -431,7 +516,7 @@ class WorkspacesModel:
                 rejected_domains_json,
                 settings_json,
                 egress_mode,
-                1 if per_handle_home else 0,
+                _bool_int(per_handle_home),
                 classification_banner,
                 created_at,
             ),
@@ -900,34 +985,60 @@ class WorkspacesModel:
         """
         for _ in range(_SETTINGS_CAS_RETRIES):
             async with self.app.state.db.transaction() as db:
-                cursor = await db.execute(
-                    "SELECT settings FROM workspaces"
-                    " WHERE id = ? AND user_id = ?",
-                    (workspace_id, user_id),
+                current, old_blob = await self._read_merged_settings(
+                    db, workspace_id, user_id, patch
                 )
-                row = await cursor.fetchone()
-                if row is None:
+                if current is None:
                     return None
-                old_blob = row["settings"]
-                current = json.loads(old_blob) if old_blob else {}
-                for key, value in patch.items():
-                    if value is None:
-                        current.pop(key, None)
-                    else:
-                        current[key] = value
-                new_blob = json.dumps(current) if current else None
-                cursor = await db.execute(
-                    "UPDATE workspaces SET settings = ?"
-                    " WHERE id = ? AND user_id = ? AND settings IS ?",
-                    (new_blob, workspace_id, user_id, old_blob),
-                )
-                if cursor.rowcount == 1:
-                    return current if current else None
-                # rowcount 0 — settings changed under us (or the row went
+                if await self._cas_store_settings(
+                    db, workspace_id, user_id, old_blob, current
+                ):
+                    return current or None
+                # CAS lost — settings changed under us (or the row went
                 # away); loop re-reads the latest blob and re-applies.
         raise RuntimeError(  # pragma: no cover - only under extreme contention
             f"settings CAS retry exhausted for workspace {workspace_id}"
         )
+
+    async def _read_merged_settings(
+        self, db, workspace_id: str, user_id: str, patch: dict
+    ) -> tuple[dict | None, str | None]:
+        """Read the settings blob and apply *patch* to it.
+
+        Returns ``(None, None)`` when the workspace row is missing.
+        """
+        cursor = await db.execute(
+            "SELECT settings FROM workspaces WHERE id = ? AND user_id = ?",
+            (workspace_id, user_id),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return None, None
+        old_blob = row["settings"]
+        current = _decode_settings_blob(old_blob)
+        _merge_settings_patch(current, patch)
+        return current, old_blob
+
+    async def _cas_store_settings(
+        self,
+        db,
+        workspace_id: str,
+        user_id: str,
+        old_blob: str | None,
+        current: dict,
+    ) -> bool:
+        """Compare-and-swap the settings blob; True when it committed."""
+        cursor = await db.execute(
+            "UPDATE workspaces SET settings = ?"
+            " WHERE id = ? AND user_id = ? AND settings IS ?",
+            (
+                _encode_settings_blob(current),
+                workspace_id,
+                user_id,
+                old_blob,
+            ),
+        )
+        return cursor.rowcount == 1
 
     async def update_workspace(
         self,
@@ -1002,35 +1113,46 @@ class WorkspacesModel:
         state afterwards (idempotent); False if the workspace is missing
         or *entry* is malformed.
         """
-        try:
-            normalized = parse_allowed_domains([entry])
-        except ValueError:
+        spec = _normalize_domain_entry(entry)
+        if spec is None:
             return False
-        if not normalized:
-            return False
-        spec = normalized[0].lower()
         for _ in range(_SETTINGS_CAS_RETRIES):
             async with self.app.state.db.transaction() as db:
-                cursor = await db.execute(
-                    f"SELECT {column} FROM workspaces WHERE id = ?",
-                    (workspace_id,),
+                outcome = await self._domain_cas_attempt(
+                    db, workspace_id, column, spec, add
                 )
-                row = await cursor.fetchone()
-                if row is None:
+                if outcome is _DOMAIN_MISSING:
                     return False
-                old_blob = row[column]
-                current = json.loads(old_blob) if old_blob else []
-                if mutate_domain_entries(current, spec, add):
-                    return True  # already present/absent (idempotent)
-                new_blob = json.dumps(current)
-                cursor = await db.execute(
-                    f"UPDATE workspaces SET {column} = ?"
-                    f" WHERE id = ? AND {column} IS ?",
-                    (new_blob, workspace_id, old_blob),
-                )
-                if cursor.rowcount == 1:
+                if outcome:
                     return True
         return False  # pragma: no cover - CAS exhausted under contention
+
+    async def _domain_cas_attempt(
+        self, db, workspace_id: str, column: str, spec: str, add: bool
+    ):
+        """One read-modify-write CAS step on a domain-list column.
+
+        Returns ``_DOMAIN_MISSING`` when the workspace row is gone,
+        ``True`` when the wanted state is reached (idempotent no-op or
+        committed write), ``False`` on contention (caller retries).
+        """
+        cursor = await db.execute(
+            f"SELECT {column} FROM workspaces WHERE id = ?",
+            (workspace_id,),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return _DOMAIN_MISSING
+        old_blob = row[column]
+        current = _decode_list_blob(old_blob)
+        if mutate_domain_entries(current, spec, add):
+            return True  # already present/absent (idempotent)
+        cursor = await db.execute(
+            f"UPDATE workspaces SET {column} = ?"
+            f" WHERE id = ? AND {column} IS ?",
+            (json.dumps(current), workspace_id, old_blob),
+        )
+        return cursor.rowcount == 1
 
     async def add_allowed_domain(self, workspace_id: str, entry: str) -> bool:
         """Append ``entry`` (``host[:port]``) to a workspace's
@@ -1154,15 +1276,9 @@ class WorkspacesModel:
                 raise ValueError("Target user is already the owner")
 
             # Check UNIQUE(user_id, name) won't be violated.
-            dup = await db.execute(
-                "SELECT 1 FROM workspaces"
-                " WHERE user_id = ? AND name = ? AND id != ?",
-                (new_owner_id, ws_name, workspace_id),
+            await self._transfer_reject_duplicate(
+                db, new_owner_id, ws_name, workspace_id
             )
-            if await dup.fetchone():
-                raise ValueError(
-                    f"Target user already owns a workspace named {ws_name!r}"
-                )
 
             # 1. Update workspace owner.
             await db.execute(
@@ -1182,29 +1298,54 @@ class WorkspacesModel:
             # 3. Swap owners-group membership: remove old owner, add new.
             # The owners group is found by the source marker + workspace
             # id (#2750), not by reconstructed name.
-            owners_group = next(
-                (
-                    g
-                    for g in await self.get_workspace_role_groups(
-                        db, workspace_id
-                    )
-                    if g["name"].startswith(f"{OWNER_ROLE}-")
-                ),
-                None,
+            await self._swap_owners_group(
+                db, workspace_id, old_owner_id, new_owner_id
             )
-            if owners_group:
-                group_id = owners_group["id"]
-                await db.execute(
-                    "DELETE FROM user_groups WHERE user_id = ? AND group_id = ?",
-                    (old_owner_id, group_id),
-                )
-                await db.execute(
-                    "INSERT OR IGNORE INTO user_groups"
-                    " (user_id, group_id, source) VALUES (?, ?, ?)",
-                    (new_owner_id, group_id, "manual"),
-                )
 
         return await self.get_workspace_by_id(workspace_id)
+
+    async def _transfer_reject_duplicate(
+        self, db, new_owner_id: str, ws_name: str, workspace_id: str
+    ) -> None:
+        """Raise when the target already owns a same-named workspace."""
+        dup = await db.execute(
+            "SELECT 1 FROM workspaces"
+            " WHERE user_id = ? AND name = ? AND id != ?",
+            (new_owner_id, ws_name, workspace_id),
+        )
+        if await dup.fetchone():
+            raise ValueError(
+                f"Target user already owns a workspace named {ws_name!r}"
+            )
+
+    async def _swap_owners_group(
+        self, db, workspace_id: str, old_owner_id: str, new_owner_id: str
+    ) -> None:
+        """Move owners-group membership from the old to the new owner.
+
+        The owners group is found by the source marker + workspace-id
+        suffix of the name (#2750); a no-op when it is missing.
+        """
+        owners_group = next(
+            (
+                g
+                for g in await self.get_workspace_role_groups(db, workspace_id)
+                if g["name"].startswith(f"{OWNER_ROLE}-")
+            ),
+            None,
+        )
+        if owners_group is None:
+            return
+        group_id = owners_group["id"]
+        await db.execute(
+            "DELETE FROM user_groups WHERE user_id = ? AND group_id = ?",
+            (old_owner_id, group_id),
+        )
+        await db.execute(
+            "INSERT OR IGNORE INTO user_groups"
+            " (user_id, group_id, source) VALUES (?, ?, ?)",
+            (new_owner_id, group_id, "manual"),
+        )
 
     async def get_user_workspaces_with_containers(
         self, user_id: str

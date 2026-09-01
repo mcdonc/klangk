@@ -89,16 +89,8 @@ def derive_handle(email: str) -> str:
     return handle[:MAX_HANDLE_LEN]
 
 
-def validate_handle(handle: str) -> str | None:
-    """Return an error message if the handle is invalid, else None.
-
-    Note: this only checks *static* rules (length, charset, the fixed
-    reserved set — which includes the agent's handle `klangk`, #2718).
-    """
-    if not handle:
-        return "Handle cannot be empty"
-    if len(handle) > MAX_HANDLE_LEN:
-        return f"Handle must be {MAX_HANDLE_LEN} characters or fewer"
+def _handle_rule_error(handle: str) -> str | None:
+    """The dot-prefix, reserved-set, and charset static rules."""
     if handle.startswith("."):
         return "Handle cannot start with a dot"
     if handle in RESERVED_HANDLES:
@@ -111,37 +103,67 @@ def validate_handle(handle: str) -> str | None:
     return None
 
 
+def validate_handle(handle: str) -> str | None:
+    """Return an error message if the handle is invalid, else None.
+
+    Note: this only checks *static* rules (length, charset, the fixed
+    reserved set — which includes the agent's handle `klangk`, #2718).
+    """
+    if not handle:
+        return "Handle cannot be empty"
+    if len(handle) > MAX_HANDLE_LEN:
+        return f"Handle must be {MAX_HANDLE_LEN} characters or fewer"
+    return _handle_rule_error(handle)
+
+
+async def _live_agent_handle(db) -> str:
+    """The agent's current handle, or the default pre-seed.
+
+    Resolves on the *passed* connection (not via the cached
+    :func:`agent_handle`, which opens a fresh connection): callers run
+    during DB migration where the ``handle`` column's schema change is
+    uncommitted on *db* but invisible to a new connection.
+    """
+    cursor = await db.execute(
+        "SELECT handle FROM users WHERE id = ?", (AGENT_USER_ID,)
+    )
+    row = await cursor.fetchone()
+    if row and row[0]:
+        return row[0]
+    return _DEFAULT_AGENT_HANDLE
+
+
+async def _handle_taken(db, candidate: str) -> bool:
+    cursor = await db.execute(
+        "SELECT 1 FROM users WHERE handle = ?", (candidate,)
+    )
+    return await cursor.fetchone() is not None
+
+
+def _suffixed_handle(base: str, i: int) -> str:
+    """``base-i``, truncated to fit the handle length cap."""
+    candidate = f"{base}-{i}"
+    if len(candidate) <= MAX_HANDLE_LEN:
+        return candidate
+    return f"{base[: MAX_HANDLE_LEN - len(str(i)) - 1]}-{i}"
+
+
 async def unique_handle(db, base: str) -> str:
     """Return *base* if available, else append -2, -3, … until unique.
 
     The live agent handle is always treated as taken (#1160) — even if
     the agent row hasn't been seeded yet — so a derived handle never
     collides with ``/home/<agent_handle>``.
-
-    Resolves the agent handle on the *passed* connection (not via the
-    cached :func:`agent_handle`, which opens a fresh connection): this
-    runs during DB migration where the ``handle`` column's schema change
-    is uncommitted on *db* but invisible to a new connection.
     """
-    cursor = await db.execute(
-        "SELECT handle FROM users WHERE id = ?", (AGENT_USER_ID,)
-    )
-    row = await cursor.fetchone()
-    agent = row[0] if row and row[0] else _DEFAULT_AGENT_HANDLE
+    agent = await _live_agent_handle(db)
     # Try base, then base-2, base-3, …; skip the agent handle each time.
     candidate = base
     i = 1
     while i < 10000:
-        if candidate != agent:
-            cursor = await db.execute(
-                "SELECT 1 FROM users WHERE handle = ?", (candidate,)
-            )
-            if await cursor.fetchone() is None:
-                return candidate
+        if candidate != agent and not await _handle_taken(db, candidate):
+            return candidate
         i += 1
-        candidate = f"{base}-{i}"
-        if len(candidate) > MAX_HANDLE_LEN:
-            candidate = f"{base[: MAX_HANDLE_LEN - len(str(i)) - 1]}-{i}"
+        candidate = _suffixed_handle(base, i)
     return hash_fallback_handle(base)
 
 
@@ -247,6 +269,41 @@ def _user_is_inactive(row, cutoff) -> bool:
         if ts is not None
     ]
     return bool(stamps) and max(stamps) < cutoff
+
+
+def _group_filter_clause(q: str | None, source: str | None) -> tuple:
+    """WHERE clause + params for the group-list filters.
+
+    *source* filters by the origin marker (#2750): ``None`` shows all,
+    ``'manual'`` hides the seeded workspace-role groups,
+    ``'workspace-role'`` shows only them.
+    """
+    where_parts: list[str] = []
+    params: list = []
+    if q:
+        where_parts.append("name LIKE ?")
+        params.append(f"%{q}%")
+    if source is not None:
+        where_parts.append("source = ?")
+        params.append(source)
+    if not where_parts:
+        return "", []
+    return f" WHERE {' AND '.join(where_parts)}", params
+
+
+def _group_update_fields(name: str | None, description: str | None) -> dict:
+    """The provided (non-None) update fields for update_group."""
+    updates = {}
+    if name is not None:
+        updates["name"] = name
+    if description is not None:
+        updates["description"] = description
+    return updates
+
+
+def _exempt_from_inactivity_sweep(user_id: str, admin_ids: set[str]) -> bool:
+    """The system agent and admins are never auto-disabled (#2588)."""
+    return user_id == AGENT_USER_ID or user_id in admin_ids
 
 
 class UsersModel:
@@ -538,20 +595,9 @@ class UsersModel:
         page = max(1, page)
         page_size = max(1, min(page_size, 200))
         offset = (page - 1) * page_size
+        where_clause, params = _group_filter_clause(q, source)
 
         async with self.app.state.db.transaction() as db:
-            where_parts: list[str] = []
-            params: list = []
-            if q:
-                where_parts.append("name LIKE ?")
-                params.append(f"%{q}%")
-            if source is not None:
-                where_parts.append("source = ?")
-                params.append(source)
-            where_clause = (
-                f" WHERE {' AND '.join(where_parts)}" if where_parts else ""
-            )
-
             count_cursor = await db.execute(
                 f"SELECT COUNT(*) AS c FROM groups{where_clause}",  # noqa: S608
                 params,
@@ -605,23 +651,8 @@ class UsersModel:
         it), so a rename would orphan them on delete or point the guard
         at the wrong workspace. Descriptions stay editable.
         """
-        if name is not None:
-            row = await self.app.state.db.fetchone(
-                "SELECT source FROM groups WHERE id = ?", (group_id,)
-            )
-            if (
-                row is not None
-                and row["source"] == GROUP_SOURCE_WORKSPACE_ROLE
-            ):
-                raise WorkspaceRoleScopeError(
-                    "Workspace role group names are managed by the system"
-                    " and cannot be changed"
-                )
-        updates = {}
-        if name is not None:
-            updates["name"] = name
-        if description is not None:
-            updates["description"] = description
+        await self._reject_role_group_rename(group_id, name)
+        updates = _group_update_fields(name, description)
         if not updates:
             return False
         set_clause = ", ".join(f"{k} = ?" for k in updates)
@@ -632,6 +663,22 @@ class UsersModel:
                 values,
             )
             return cursor.rowcount > 0
+
+    async def _reject_role_group_rename(
+        self, group_id: str, name: str | None
+    ) -> None:
+        """Guard: a workspace-role group's name is system-managed (#2750)."""
+        if name is None:
+            return
+        row = await self.app.state.db.fetchone(
+            "SELECT source FROM groups WHERE id = ?", (group_id,)
+        )
+        if row is None or row["source"] != GROUP_SOURCE_WORKSPACE_ROLE:
+            return
+        raise WorkspaceRoleScopeError(
+            "Workspace role group names are managed by the system"
+            " and cannot be changed"
+        )
 
     async def add_user_to_group(
         self, user_id: str, group_id: str, source: str = "manual"
@@ -972,22 +1019,15 @@ class UsersModel:
         if days <= 0:
             return []
         cutoff = datetime.now(timezone.utc) - timedelta(days=days)
-        admin_ids: set[str] = set()
-        admin_group = await self.get_group_by_name("admins")
         async with self.app.state.db.transaction() as db:
-            if admin_group is not None:
-                cursor = await db.execute(
-                    "SELECT user_id FROM user_groups WHERE group_id = ?",
-                    (admin_group["id"],),
-                )
-                admin_ids = {row[0] for row in await cursor.fetchall()}
+            admin_ids = await self._admin_member_ids(db)
             cursor = await db.execute(
                 "SELECT id, email, created_at, last_login_at,"
                 " last_activity_at FROM users WHERE disabled = 0"
             )
             disabled: list[dict] = []
             for row in await cursor.fetchall():
-                if row["id"] == AGENT_USER_ID or row["id"] in admin_ids:
+                if _exempt_from_inactivity_sweep(row["id"], admin_ids):
                     continue
                 if not _user_is_inactive(row, cutoff):
                     continue
@@ -997,6 +1037,21 @@ class UsersModel:
                 )
                 disabled.append({"id": row["id"], "email": row["email"]})
             return disabled
+
+    async def _admin_member_ids(self, db) -> set[str]:
+        """IDs of ``admins`` group members (empty when unseeded).
+
+        Reads on the caller's connection so the sweep's exemption set
+        and its row scan share one snapshot.
+        """
+        admin_group = await self.get_group_by_name("admins")
+        if admin_group is None:
+            return set()
+        cursor = await db.execute(
+            "SELECT user_id FROM user_groups WHERE group_id = ?",
+            (admin_group["id"],),
+        )
+        return {row[0] for row in await cursor.fetchall()}
 
     async def get_user_by_id(self, user_id: str) -> dict | None:
         row = await self.app.state.db.fetchone(

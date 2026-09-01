@@ -639,18 +639,14 @@ class EgressConsentModel:
         settings = self.app.state.settings
         retention_days = settings.egress_consent_retention_days
         row_cap = settings.egress_consent_row_cap
-        if retention_days <= 0 and row_cap <= 0:
-            return 0
-        if now is None:
-            now = time.time()
+        when = _resolve_prune_now(now)
         deleted = 0
-
         if retention_days > 0:
             deleted += await self._prune_retention(
-                now - retention_days * 86400.0, now
+                when - retention_days * 86400.0, when
             )
         if row_cap > 0:
-            deleted += await self._prune_row_cap(row_cap, now)
+            deleted += await self._prune_row_cap(row_cap, when)
         return deleted
 
     async def _prune_retention(self, cutoff: float, now: float) -> int:
@@ -671,23 +667,25 @@ class EgressConsentModel:
             " WHERE COALESCE(revoked_at, decided_at, requested_at) < ?",
             (cutoff,),
         )
-        pending_ids = [
-            r["id"]
-            for r in rows
-            if r["decision"] == DECISION_PENDING
-            and self._prune_eligible(r, now)
-        ]
-        other_ids = [
-            r["id"]
-            for r in rows
-            if r["decision"] != DECISION_PENDING
-            and self._prune_eligible(r, now)
-        ]
+        pending_ids, decided_ids = self._retention_split_ids(rows, now)
         deleted = await self._delete_ids(
             pending_ids, require_decision=DECISION_PENDING
         )
-        deleted += await self._delete_ids(other_ids)
+        deleted += await self._delete_ids(decided_ids)
         return deleted
+
+    def _retention_split_ids(
+        self, rows: list, now: float
+    ) -> tuple[list[str], list[str]]:
+        """Split prunable rows into ``(pending, decided)`` id lists."""
+        pending: list[str] = []
+        decided: list[str] = []
+        for r in rows:
+            if not self._prune_eligible(r, now):
+                continue
+            bucket = pending if r["decision"] == DECISION_PENDING else decided
+            bucket.append(r["id"])
+        return pending, decided
 
     async def _prune_row_cap(self, row_cap: int, now: float) -> int:
         """Per workspace over the cap, delete the oldest eligible rows down
@@ -743,6 +741,11 @@ class EgressConsentModel:
                 cursor = await db.execute(sql, params)
                 removed += cursor.rowcount
         return removed
+
+
+def _resolve_prune_now(now: float | None) -> float:
+    """The sweep's reference clock (caller-supplied or wall clock)."""
+    return time.time() if now is None else now
 
 
 def _row_to_dict(row) -> dict:

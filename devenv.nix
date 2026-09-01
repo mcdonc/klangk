@@ -191,6 +191,7 @@ in
       rsync
       twine
       xenon # cyclomatic-complexity gate tool (#2828): same pinned build as the hook
+      (python314Packages.radon) # complexity introspection (radon cc) for xenon ratchet work (#2845)
       zensical
     ]
     ++ (

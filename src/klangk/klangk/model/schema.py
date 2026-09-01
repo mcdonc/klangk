@@ -35,6 +35,57 @@ _EGRESS_CONSENT_COLUMNS = f"""(
         )"""
 
 
+def _users_table_needs_recreate(columns: dict) -> bool:
+    """True when the pre-migrations users shape must be rebuilt.
+
+    SQLite can't ALTER COLUMN, so the table is recreated when
+    password_hash is NOT NULL (OIDC users need it nullable) or the
+    provider/handle columns are missing.
+    """
+    if "password_hash" in columns and columns["password_hash"][3]:
+        # password_hash has NOT NULL — need to drop it for OIDC users
+        return True
+    return "provider" not in columns or "handle" not in columns
+
+
+async def _rebuild_users_table(db, columns: dict) -> None:
+    """Recreate users with the modern shape, copying shared data across."""
+    await db.execute(f"""
+        CREATE TABLE users_new (
+            id TEXT PRIMARY KEY,
+            email TEXT UNIQUE NOT NULL,
+            password_hash TEXT,
+            verified INTEGER NOT NULL DEFAULT 0,
+            provider TEXT NOT NULL DEFAULT 'local',
+            external_id TEXT,
+            handle TEXT UNIQUE,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            CHECK (id != '{AGENT_USER_ID}' OR password_hash IS NULL)
+        )
+    """)  # noqa: S608
+    # Copy existing data — old tables may lack some columns
+    shared = [
+        c
+        for c in columns
+        if c
+        in (
+            "id",
+            "email",
+            "password_hash",
+            "verified",
+            "created_at",
+            "handle",
+        )
+    ]
+    cols_str = ", ".join(shared)
+    await db.execute(
+        f"INSERT INTO users_new ({cols_str})"  # noqa: S608
+        f" SELECT {cols_str} FROM users"
+    )
+    await db.execute("DROP TABLE users")
+    await db.execute("ALTER TABLE users_new RENAME TO users")
+
+
 async def init_users_table(db) -> None:
     """users table: baseline CREATE, the pre-migrations-era table
     rebuild (nullable password_hash / provider / handle columns),
@@ -58,50 +109,8 @@ async def init_users_table(db) -> None:
     # SQLite can't ALTER COLUMN, so we recreate the table if needed.
     cursor = await db.execute("PRAGMA table_info(users)")
     columns = {row[1]: row for row in await cursor.fetchall()}
-    needs_recreate = False
-    if "password_hash" in columns and columns["password_hash"][3]:
-        # password_hash has NOT NULL — need to drop it for OIDC users
-        needs_recreate = True
-    if "provider" not in columns:
-        needs_recreate = True
-    if "handle" not in columns:
-        needs_recreate = True
-    if needs_recreate:
-        await db.execute(f"""
-            CREATE TABLE users_new (
-                id TEXT PRIMARY KEY,
-                email TEXT UNIQUE NOT NULL,
-                password_hash TEXT,
-                verified INTEGER NOT NULL DEFAULT 0,
-                provider TEXT NOT NULL DEFAULT 'local',
-                external_id TEXT,
-                handle TEXT UNIQUE,
-                created_at TEXT NOT NULL DEFAULT (datetime('now')),
-                CHECK (id != '{AGENT_USER_ID}' OR password_hash IS NULL)
-            )
-        """)  # noqa: S608
-        # Copy existing data — old tables may lack some columns
-        old_cols = list(columns.keys())
-        shared = [
-            c
-            for c in old_cols
-            if c
-            in (
-                "id",
-                "email",
-                "password_hash",
-                "verified",
-                "created_at",
-                "handle",
-            )
-        ]
-        cols_str = ", ".join(shared)
-        await db.execute(
-            f"INSERT INTO users_new ({cols_str})"  # noqa: S608
-            f" SELECT {cols_str} FROM users"
-        )
-        await db.execute("DROP TABLE users")
-        await db.execute("ALTER TABLE users_new RENAME TO users")
+    if _users_table_needs_recreate(columns):
+        await _rebuild_users_table(db, columns)
     # Backfill handles for existing users that don't have one.
     await backfill_handles(db)
     # --- Data-model belt-and-suspenders for the system agent (#1135) ---
@@ -377,6 +386,62 @@ async def init_core_tables(db) -> None:
     """)
 
 
+def _shared_ec_columns(ec_old_cols: set[str]) -> list[str]:
+    """Columns present in both egress_consent shapes, new-table order."""
+    return [
+        c
+        for c in (
+            "id",
+            "workspace_id",
+            "dest_host",
+            "dest_port",
+            "pid",
+            "process_name",
+            "decision",
+            "duration",
+            "requested_at",
+            "decided_at",
+            "decided_by",
+            "revoked_at",
+            "revoked_by",
+        )
+        if c in ec_old_cols
+    ]
+
+
+async def _rebuild_egress_consent_table(db) -> None:
+    """Rebuild egress_consent to attach the revoked decision + audit
+    columns (#2339) when the pre-#2339 shape is detected.
+
+    Detection is via sqlite_master (PRAGMA table_info doesn't expose
+    CHECK/columns). Data is copied across (mirrors the users rebuild
+    above); the partial unique indexes are recreated by the CREATE INDEX
+    statements in :func:`init_egress_consent_table`.
+    """
+    ec_sql_cur = await db.execute(
+        "SELECT sql FROM sqlite_master"
+        " WHERE type='table' AND name='egress_consent'"
+    )
+    ec_sql_row = await ec_sql_cur.fetchone()
+    if ec_sql_row is None or "revoked_at" in ec_sql_row[0]:
+        return
+    await db.execute(
+        f"""
+        CREATE TABLE egress_consent_new
+        {_EGRESS_CONSENT_COLUMNS}
+        """
+    )
+    ec_info = await db.execute("PRAGMA table_info(egress_consent)")
+    ec_old_cols = {r[1] for r in await ec_info.fetchall()}
+    ec_cols_str = ", ".join(_shared_ec_columns(ec_old_cols))
+    await db.execute(
+        f"INSERT INTO egress_consent_new ({ec_cols_str})"  # noqa: S608
+        f" SELECT {ec_cols_str} FROM egress_consent"
+    )
+    await db.execute("DROP TABLE egress_consent")
+    await db.execute("ALTER TABLE egress_consent_new RENAME TO egress_consent")
+
+
 async def init_egress_consent_table(db) -> None:
     """egress_consent table (#2239): baseline CREATE, the rebuild
     that attaches the revoked decision + audit columns (#2339),
@@ -395,52 +460,8 @@ async def init_egress_consent_table(db) -> None:
     # egress_consent: add the `revoked` decision (#2339) + the
     # `revoked_at`/`revoked_by` audit columns (and attach the CHECKs). The
     # table may already exist from #2338 (has the duration CHECK but not
-    # `revoked`); rebuild it either way so the shape is universal. Detected
-    # via sqlite_master (PRAGMA table_info doesn't expose CHECK/columns).
-    # Data is copied across (mirrors the users rebuild above); the partial
-    # unique indexes are recreated by the CREATE INDEX statements below.
-    ec_sql_cur = await db.execute(
-        "SELECT sql FROM sqlite_master"
-        " WHERE type='table' AND name='egress_consent'"
-    )
-    ec_sql_row = await ec_sql_cur.fetchone()
-    if ec_sql_row and "revoked_at" not in ec_sql_row[0]:
-        await db.execute(
-            f"""
-            CREATE TABLE egress_consent_new
-            {_EGRESS_CONSENT_COLUMNS}
-            """
-        )
-        ec_info = await db.execute("PRAGMA table_info(egress_consent)")
-        ec_old_cols = {r[1] for r in await ec_info.fetchall()}
-        ec_shared = [
-            c
-            for c in (
-                "id",
-                "workspace_id",
-                "dest_host",
-                "dest_port",
-                "pid",
-                "process_name",
-                "decision",
-                "duration",
-                "requested_at",
-                "decided_at",
-                "decided_by",
-                "revoked_at",
-                "revoked_by",
-            )
-            if c in ec_old_cols
-        ]
-        ec_cols_str = ", ".join(ec_shared)
-        await db.execute(
-            f"INSERT INTO egress_consent_new ({ec_cols_str})"  # noqa: S608
-            f" SELECT {ec_cols_str} FROM egress_consent"
-        )
-        await db.execute("DROP TABLE egress_consent")
-        await db.execute(
-            "ALTER TABLE egress_consent_new RENAME TO egress_consent"
-        )
+    # `revoked`); rebuild it either way so the shape is universal.
+    await _rebuild_egress_consent_table(db)
     await db.execute("""
         CREATE INDEX IF NOT EXISTS idx_egress_consent_workspace
         ON egress_consent(workspace_id, decision)
