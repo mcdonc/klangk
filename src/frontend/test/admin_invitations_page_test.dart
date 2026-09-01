@@ -77,9 +77,11 @@ http.Client _mockClient(
           'email': 'admin@example.com',
           'permissions': {
             '/admin': ['*'],
-            '/admin/users': ['view'],
-            '/admin/groups': ['view'],
-            '/admin/invitations': ['view'],
+            '/admin/users': ['manage-users'],
+            '/admin/groups': ['manage-groups'],
+            '/admin/invitations': ['manage-invitations'],
+            '/admin/server': ['manage-server-schedule'],
+            '/admin/acl': ['manage-acls'],
           },
           'groups': [
             {'id': 'g1', 'name': 'admin'}

@@ -6170,182 +6170,168 @@ class TestWorkspaceGroupSharing:
 
 
 class TestUserGroupEndpoints:
-    """Tests for /groups endpoints (user-accessible, ACL-gated)."""
+    """GET /groups (authenticated listing) + the /admin/groups management
+    surface behind manage-groups (#2941-fold: the /groups writes were
+    removed; their semantics — creator ACL grant, ACE cleanup on delete —
+    were ported onto /admin/groups)."""
 
     async def test_list_groups(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.get("/api/v1/groups", headers=headers)
         assert resp.status_code == 200
         body = resp.json()
-        # Paged envelope (#2750), not the legacy bare list.
         assert set(body) == {"groups", "page", "page_size", "total"}
-        assert body["page"] == 1
 
     async def test_list_groups_source_filter_and_pagination(
-        self, client, ws_admin, user, app_state
+        self, client, user, app_state
     ):
-        """#2750: seeded role groups are marked ``workspace-role`` and hide
-        behind ``?source=manual``; the paged envelope walks past the old
-        hard 200-row cap."""
         headers = await _auth_headers(client)
-        for i in range(3):
-            resp = await client.post(
-                "/api/v1/workspaces",
-                headers=headers,
-                json={"name": f"pollute-{i}"},
-            )
-            assert resp.status_code == 200
-
-        all_resp = await client.get("/api/v1/groups", headers=headers)
-        assert all_resp.status_code == 200
-        all_body = all_resp.json()
-        # 12 role groups + the boot-seeded admin/members groups.
-        assert all_body["total"] == 14
-        assert len(all_body["groups"]) == 10  # default page_size
-        role_ids_on_page = {
-            g["id"]
-            for g in all_body["groups"]
-            if g["source"] == "workspace-role"
-        }
-        assert role_ids_on_page
-
-        # Paginate: every page honors page_size and the walk covers all.
-        seen: set[str] = set()
-        page = 1
-        while True:
-            body = (
-                await client.get(
-                    f"/api/v1/groups?page={page}&page_size=5",
-                    headers=headers,
-                )
-            ).json()
-            seen.update(g["id"] for g in body["groups"])
-            if len(seen) >= body["total"]:
-                break
-            page += 1
-        assert len(seen) == 14
-
-        manual = await client.get(
+        for name in ("g-manual-a", "g-manual-b"):
+            await app_state.state.model.users.create_group(name)
+        resp = await client.get(
             "/api/v1/groups?source=manual", headers=headers
         )
-        assert manual.status_code == 200
-        assert manual.json()["total"] == 2
-        assert {g["name"] for g in manual.json()["groups"]} == {
-            "admins",
-            "members",
-        }
-
-        roles = await client.get(
+        assert resp.status_code == 200
+        manual = resp.json()
+        assert manual["total"] >= 2
+        assert all(g["source"] == "manual" for g in manual["groups"])
+        resp = await client.get(
             "/api/v1/groups?source=workspace-role", headers=headers
         )
-        assert roles.json()["total"] == 12
+        assert resp.status_code == 200
+        assert all(
+            g["source"] == "workspace-role" for g in resp.json()["groups"]
+        )
         bad = await client.get("/api/v1/groups?source=nope", headers=headers)
         assert bad.status_code == 422
-
-    async def test_role_group_rename_rejected(
-        self, client, ws_admin, user, app_state, admin_user
-    ):
-        """#2750 review: PATCH (user and admin layers) refuses to rename a
-        workspace-role group — the name is the teardown/scope-guard key.
-        Description edits stay allowed."""
-        headers = await _auth_headers(client)
-        ws_id = (
-            await client.post(
-                "/api/v1/workspaces",
-                headers=headers,
-                json={"name": "rename-guard-ws"},
-            )
-        ).json()["id"]
-        owners = await app_state.state.model.users.get_group_by_name(
-            f"owners-{ws_id}"
+        paged = await client.get(
+            "/api/v1/groups?page=1&page_size=1", headers=headers
         )
-
-        resp = await client.patch(
-            f"/api/v1/groups/{owners['id']}",
-            headers=headers,
-            json={"name": "hijacked"},
-        )
-        assert resp.status_code == 403  # no edit ACE seeded on role groups
-
-        admin_headers = await self._admin_login(client)
-        # Grant the admin edit on this group's resource so the user-layer
-        # endpoint is reachable; the model guard must still refuse.
-        await app_state.state.model.acl.add_acl_entry(
-            f"/groups/{owners['id']}",
-            0,
-            model.ACTION_ALLOW,
-            "edit",
-            model.PRINCIPAL_USER,
-            user_id=admin_user["id"],
-        )
-        resp = await client.patch(
-            f"/api/v1/groups/{owners['id']}",
-            headers=admin_headers,
-            json={"name": "hijacked"},
-        )
-        assert resp.status_code == 400
-        assert "cannot be changed" in resp.json()["detail"]
-
-        resp = await client.patch(
-            f"/api/v1/admin/groups/{owners['id']}",
-            headers=admin_headers,
-            json={"name": "hijacked"},
-        )
-        assert resp.status_code == 400
-        assert "cannot be changed" in resp.json()["detail"]
-
-        # Description edits are still fine on both layers.
-        resp = await client.patch(
-            f"/api/v1/admin/groups/{owners['id']}",
-            headers=admin_headers,
-            json={"description": "still editable"},
-        )
-        assert resp.status_code == 200
-
-        # The name is unchanged.
-        fetched = await app_state.state.model.users.get_group_by_id(
-            owners["id"]
-        )
-        assert fetched["name"] == f"owners-{ws_id}"
+        assert paged.status_code == 200
+        assert len(paged.json()["groups"]) == 1
 
     async def test_admin_list_groups_source_filter(
-        self, client, admin_user, ws_admin, user, app_state
+        self, client, admin_user, app_state
     ):
-        """#2750: the admin group list exposes the same filter and its
-        rows carry the marker."""
-        headers = await _auth_headers(client)
-        resp = await client.post(
-            "/api/v1/workspaces",
-            headers=headers,
-            json={"name": "admin-filter-ws"},
+        headers = await self._admin_login(client)
+        await app_state.state.model.users.create_group("a-manual-g")
+        resp = await client.get(
+            "/api/v1/admin/groups?source=manual", headers=headers
         )
         assert resp.status_code == 200
-        admin_headers = await self._admin_login(client)
-        all_resp = await client.get(
-            "/api/v1/admin/groups", headers=admin_headers
-        )
-        assert all_resp.status_code == 200
-        all_body = all_resp.json()
-        # 4 role groups + admin/members.
-        assert all_body["total"] == 6
-        sources = {g["source"] for g in all_body["groups"]}
-        assert sources == {"manual", "workspace-role"}
-
-        manual = await client.get(
-            "/api/v1/admin/groups?source=manual", headers=admin_headers
-        )
-        assert manual.json()["total"] == 2
-
-        roles = await client.get(
-            "/api/v1/admin/groups?source=workspace-role",
-            headers=admin_headers,
-        )
-        assert roles.json()["total"] == 4
-
+        assert all(g["source"] == "manual" for g in resp.json()["groups"])
         bad = await client.get(
-            "/api/v1/admin/groups?source=nope", headers=admin_headers
+            "/api/v1/admin/groups?source=nope", headers=headers
         )
         assert bad.status_code == 422
+
+    async def test_admin_groups_lifecycle(self, client, app, admin_user):
+        """The single management surface, driven by a wildcard admin."""
+        headers = await self._admin_login(client)
+        resp = await client.post(
+            "/api/v1/admin/groups",
+            headers=headers,
+            json={"name": "lifecycle-group", "description": "d"},
+        )
+        assert resp.status_code == 200, resp.text
+        group = resp.json()
+        gid = group["id"]
+
+        # Ported from POST /groups: the creator gets full ACL access.
+        entries = await app.state.model.acl.get_acl_entries(f"/groups/{gid}")
+        assert any(
+            e["permission"] == "*"
+            and e["principal_type"] == model.PRINCIPAL_USER
+            and e["user_id"] == admin_user["id"]
+            for e in entries
+        )
+
+        resp = await client.patch(
+            f"/api/v1/admin/groups/{gid}",
+            headers=headers,
+            json={"description": "updated"},
+        )
+        assert resp.status_code == 200
+
+        resp = await client.get(
+            f"/api/v1/admin/groups/{gid}/members", headers=headers
+        )
+        assert resp.status_code == 200
+
+        resp = await client.delete(
+            f"/api/v1/admin/groups/{gid}", headers=headers
+        )
+        assert resp.status_code == 200
+        # Ported from DELETE /groups: the group's ACEs are cleaned up.
+        entries = await app.state.model.acl.get_acl_entries(f"/groups/{gid}")
+        assert entries == []
+
+    async def test_admin_create_group_duplicate(self, client, admin_user):
+        headers = await self._admin_login(client)
+        await client.post(
+            "/api/v1/admin/groups",
+            headers=headers,
+            json={"name": "dup-admin-group"},
+        )
+        resp = await client.post(
+            "/api/v1/admin/groups",
+            headers=headers,
+            json={"name": "dup-admin-group"},
+        )
+        assert resp.status_code == 409
+
+    async def test_admin_update_nonexistent_group(self, client, admin_user):
+        headers = await self._admin_login(client)
+        resp = await client.patch(
+            "/api/v1/admin/groups/fake-id",
+            headers=headers,
+            json={"name": "x"},
+        )
+        assert resp.status_code == 404
+
+    async def test_admin_update_group_no_fields(self, client, admin_user):
+        headers = await self._admin_login(client)
+        resp = await client.post(
+            "/api/v1/admin/groups",
+            headers=headers,
+            json={"name": "noupdate-group"},
+        )
+        gid = resp.json()["id"]
+        resp = await client.patch(
+            f"/api/v1/admin/groups/{gid}",
+            headers=headers,
+            json={},
+        )
+        assert resp.status_code == 400
+
+    async def test_old_groups_writes_are_gone(self, client, user):
+        """The /groups write surface is removed (#2941-fold): 404, and
+        GET /groups still works for authenticated listing."""
+        headers = await _auth_headers(client)
+        # The collection path still exists (GET /groups), so a write
+        # method is a 405; the {id}-based write paths are gone entirely.
+        resp = await client.post(
+            "/api/v1/groups", headers=headers, json={"name": "x"}
+        )
+        assert resp.status_code == 405
+        resp = await client.patch(
+            "/api/v1/groups/some-id", headers=headers, json={"name": "x"}
+        )
+        assert resp.status_code == 404
+        resp = await client.delete("/api/v1/groups/some-id", headers=headers)
+        assert resp.status_code == 404
+        resp = await client.post(
+            "/api/v1/groups/some-id/members",
+            headers=headers,
+            json={"user_id": "u"},
+        )
+        assert resp.status_code == 404
+        resp = await client.delete(
+            "/api/v1/groups/some-id/members/u", headers=headers
+        )
+        assert resp.status_code == 404
+        resp = await client.get("/api/v1/groups", headers=headers)
+        assert resp.status_code == 200
 
     async def _admin_login(self, client):
         resp = await client.post(
@@ -6356,343 +6342,6 @@ class TestUserGroupEndpoints:
             },
         )
         return {"Authorization": f"Bearer {resp.json()['access_token']}"}
-
-    async def test_create_group(self, client, admin_user, user, app_state):
-        """Any authenticated user with create permission can create groups."""
-        headers = await _auth_headers(client)
-        # Need create permission on /groups — seed it
-        await app_state.state.model.acl.add_acl_entry(
-            "/groups",
-            0,
-            model.ACTION_ALLOW,
-            "create",
-            model.PRINCIPAL_SYSTEM,
-            system_principal=model.SYSTEM_AUTHENTICATED,
-        )
-        resp = await client.post(
-            "/api/v1/groups",
-            headers=headers,
-            json={"name": "user-group", "description": "My team"},
-        )
-        assert resp.status_code == 200
-        group = resp.json()
-        assert group["name"] == "user-group"
-
-        # Creator should have * ACE on /groups/{id}
-        entries = await app_state.state.model.acl.get_acl_entries(
-            f"/groups/{group['id']}"
-        )
-        assert len(entries) >= 1
-        assert any(
-            e["permission"] == "*" and e["user_id"] == user["id"]
-            for e in entries
-        )
-
-    async def test_create_group_default_seed_admin_only(
-        self, client, admin_user, user, admin_group, app_state
-    ):
-        """#2770: under the real seeded tree (not the fixture's
-        hand-built approximation), POST /groups is admin-only — the
-        conftest admin_group fixture seeds no /groups entry at all, so
-        this is the only test that exercises seed_default_acls' actual
-        /groups default end to end."""
-        from klangk.lifecycle import Lifecycle
-
-        # Replace the fixture's approximation with the real seed.
-        async with app_state.state.db.transaction() as db:
-            await db.execute("DELETE FROM acl_entries")
-        await Lifecycle(app_state).seed_default_acls(admin_group["id"])
-
-        admin_headers = await self._admin_login(client)
-        resp = await client.post(
-            "/api/v1/groups",
-            headers=admin_headers,
-            json={"name": "admin-made-group"},
-        )
-        assert resp.status_code == 200
-
-        # A plain authenticated user is denied: nothing on /groups
-        # matches, and the walk falls through to /'s Deny * → everyone.
-        user_headers = await _auth_headers(client)
-        resp = await client.post(
-            "/api/v1/groups",
-            headers=user_headers,
-            json={"name": "user-made-group"},
-        )
-        assert resp.status_code == 403
-
-    async def test_create_group_duplicate(
-        self, client, admin_user, user, app_state
-    ):
-        headers = await _auth_headers(client)
-        await app_state.state.model.acl.add_acl_entry(
-            "/groups",
-            0,
-            model.ACTION_ALLOW,
-            "create",
-            model.PRINCIPAL_SYSTEM,
-            system_principal=model.SYSTEM_AUTHENTICATED,
-        )
-        await client.post(
-            "/api/v1/groups",
-            headers=headers,
-            json={"name": "dup-user-group"},
-        )
-        resp = await client.post(
-            "/api/v1/groups",
-            headers=headers,
-            json={"name": "dup-user-group"},
-        )
-        assert resp.status_code == 409
-
-    async def test_update_own_group(self, client, admin_user, user, app_state):
-        headers = await _auth_headers(client)
-        await app_state.state.model.acl.add_acl_entry(
-            "/groups",
-            0,
-            model.ACTION_ALLOW,
-            "create",
-            model.PRINCIPAL_SYSTEM,
-            system_principal=model.SYSTEM_AUTHENTICATED,
-        )
-        resp = await client.post(
-            "/api/v1/groups",
-            headers=headers,
-            json={"name": "edit-group"},
-        )
-        group_id = resp.json()["id"]
-        resp = await client.patch(
-            f"/api/v1/groups/{group_id}",
-            headers=headers,
-            json={"description": "updated"},
-        )
-        assert resp.status_code == 200
-
-    async def test_delete_own_group(self, client, admin_user, user, app_state):
-        headers = await _auth_headers(client)
-        await app_state.state.model.acl.add_acl_entry(
-            "/groups",
-            0,
-            model.ACTION_ALLOW,
-            "create",
-            model.PRINCIPAL_SYSTEM,
-            system_principal=model.SYSTEM_AUTHENTICATED,
-        )
-        resp = await client.post(
-            "/api/v1/groups",
-            headers=headers,
-            json={"name": "del-group"},
-        )
-        group_id = resp.json()["id"]
-        resp = await client.delete(
-            f"/api/v1/groups/{group_id}", headers=headers
-        )
-        assert resp.status_code == 200
-        # ACEs should be cleaned up
-        entries = await app_state.state.model.acl.get_acl_entries(
-            f"/groups/{group_id}"
-        )
-        assert entries == []
-
-    async def test_manage_members_own_group(
-        self, client, admin_user, user, app_state
-    ):
-        headers = await _auth_headers(client)
-        await app_state.state.model.acl.add_acl_entry(
-            "/groups",
-            0,
-            model.ACTION_ALLOW,
-            "create",
-            model.PRINCIPAL_SYSTEM,
-            system_principal=model.SYSTEM_AUTHENTICATED,
-        )
-        resp = await client.post(
-            "/api/v1/groups",
-            headers=headers,
-            json={"name": "member-group"},
-        )
-        group_id = resp.json()["id"]
-
-        # Add admin_user as member
-        resp = await client.post(
-            f"/api/v1/groups/{group_id}/members",
-            headers=headers,
-            json={"user_id": admin_user["id"]},
-        )
-        assert resp.status_code == 200
-
-        # List members
-        resp = await client.get(
-            f"/api/v1/groups/{group_id}/members", headers=headers
-        )
-        assert resp.status_code == 200
-        assert len(resp.json()) == 1
-
-        # Remove member
-        resp = await client.delete(
-            f"/api/v1/groups/{group_id}/members/{admin_user['id']}",
-            headers=headers,
-        )
-        assert resp.status_code == 200
-
-    async def test_update_nonexistent_group(self, client, user, app_state):
-        headers = await _auth_headers(client)
-        # Grant * on fake group so ACL passes
-        await app_state.state.model.acl.add_acl_entry(
-            "/groups/fake-id",
-            0,
-            model.ACTION_ALLOW,
-            "*",
-            model.PRINCIPAL_USER,
-            user_id=user["id"],
-        )
-        resp = await client.patch(
-            "/api/v1/groups/fake-id",
-            headers=headers,
-            json={"name": "x"},
-        )
-        assert resp.status_code == 404
-
-    async def test_update_group_no_fields(
-        self, client, admin_user, user, app_state
-    ):
-        headers = await _auth_headers(client)
-        await app_state.state.model.acl.add_acl_entry(
-            "/groups",
-            0,
-            model.ACTION_ALLOW,
-            "create",
-            model.PRINCIPAL_SYSTEM,
-            system_principal=model.SYSTEM_AUTHENTICATED,
-        )
-        resp = await client.post(
-            "/api/v1/groups",
-            headers=headers,
-            json={"name": "noupdate-group"},
-        )
-        group_id = resp.json()["id"]
-        resp = await client.patch(
-            f"/api/v1/groups/{group_id}",
-            headers=headers,
-            json={},
-        )
-        assert resp.status_code == 400
-
-    async def test_delete_nonexistent_group(self, client, user, app_state):
-        headers = await _auth_headers(client)
-        await app_state.state.model.acl.add_acl_entry(
-            "/groups/fake-del",
-            0,
-            model.ACTION_ALLOW,
-            "*",
-            model.PRINCIPAL_USER,
-            user_id=user["id"],
-        )
-        resp = await client.delete("/api/v1/groups/fake-del", headers=headers)
-        assert resp.status_code == 404
-
-    async def test_list_members_nonexistent_group(
-        self, client, user, app_state
-    ):
-        headers = await _auth_headers(client)
-        await app_state.state.model.acl.add_acl_entry(
-            "/groups/fake-mem",
-            0,
-            model.ACTION_ALLOW,
-            "*",
-            model.PRINCIPAL_USER,
-            user_id=user["id"],
-        )
-        resp = await client.get(
-            "/api/v1/groups/fake-mem/members", headers=headers
-        )
-        assert resp.status_code == 404
-
-    async def test_add_member_nonexistent_group(self, client, user, app_state):
-        headers = await _auth_headers(client)
-        await app_state.state.model.acl.add_acl_entry(
-            "/groups/fake-add",
-            0,
-            model.ACTION_ALLOW,
-            "*",
-            model.PRINCIPAL_USER,
-            user_id=user["id"],
-        )
-        resp = await client.post(
-            "/api/v1/groups/fake-add/members",
-            headers=headers,
-            json={"user_id": user["id"]},
-        )
-        assert resp.status_code == 404
-
-    async def test_add_member_nonexistent_user(
-        self, client, admin_user, user, app_state
-    ):
-        headers = await _auth_headers(client)
-        await app_state.state.model.acl.add_acl_entry(
-            "/groups",
-            0,
-            model.ACTION_ALLOW,
-            "create",
-            model.PRINCIPAL_SYSTEM,
-            system_principal=model.SYSTEM_AUTHENTICATED,
-        )
-        resp = await client.post(
-            "/api/v1/groups",
-            headers=headers,
-            json={"name": "baduser-group"},
-        )
-        group_id = resp.json()["id"]
-        resp = await client.post(
-            f"/api/v1/groups/{group_id}/members",
-            headers=headers,
-            json={"user_id": "nonexistent"},
-        )
-        assert resp.status_code == 404
-
-    async def test_remove_nonmember(self, client, admin_user, user, app_state):
-        headers = await _auth_headers(client)
-        await app_state.state.model.acl.add_acl_entry(
-            "/groups",
-            0,
-            model.ACTION_ALLOW,
-            "create",
-            model.PRINCIPAL_SYSTEM,
-            system_principal=model.SYSTEM_AUTHENTICATED,
-        )
-        resp = await client.post(
-            "/api/v1/groups",
-            headers=headers,
-            json={"name": "noremove-group"},
-        )
-        group_id = resp.json()["id"]
-        resp = await client.delete(
-            f"/api/v1/groups/{group_id}/members/nonexistent",
-            headers=headers,
-        )
-        assert resp.status_code == 404
-
-    async def test_non_owner_cannot_manage(self, client, admin_user, user):
-        """User without permission on the group gets 403."""
-        # Admin creates a group (no ACE for regular user)
-        admin_headers = {
-            "Authorization": f"Bearer {(await client.post('/api/v1/auth/login', json={'identifier': 'testadmin@example.com', 'password': 'testpass'})).json()['access_token']}"
-        }
-        resp = await client.post(
-            "/api/v1/admin/groups",
-            headers=admin_headers,
-            json={"name": "admin-only-group"},
-        )
-        group_id = resp.json()["id"]
-
-        # Regular user tries to manage members
-        headers = await _auth_headers(client)
-        resp = await client.post(
-            f"/api/v1/groups/{group_id}/members",
-            headers=headers,
-            json={"user_id": user["id"]},
-        )
-        assert resp.status_code == 403
 
 
 class TestUserSearch:
@@ -14233,7 +13882,7 @@ class TestAdminServerSchedule:
 
 class TestContainerEventsAPI:
     """#2923: the paged container-events history read + its dedicated
-    ``container-events`` permission gate."""
+    ``manage-events`` permission gate."""
 
     async def _admin_headers(self, client):
         resp = await client.post(
@@ -14377,7 +14026,7 @@ class TestContainerEventsAPI:
             "/admin/container-events",
             0,
             model.ACTION_ALLOW,
-            "container-events",
+            "manage-events",
             model.PRINCIPAL_USER,
             user_id=user["id"],
         )
@@ -14399,7 +14048,7 @@ class TestContainerEventsAPI:
         # frontend can show the tab to the delegated auditor.
         resp = await client.get("/api/v1/my-permissions", headers=headers)
         perms = resp.json()["permissions"]
-        assert "container-events" in perms.get("/admin/container-events", [])
+        assert "manage-events" in perms.get("/admin/container-events", [])
 
     async def test_admin_my_permissions_lists_resource(
         self, client, app, admin_user
@@ -14407,7 +14056,7 @@ class TestContainerEventsAPI:
         headers = await self._admin_headers(client)
         resp = await client.get("/api/v1/my-permissions", headers=headers)
         perms = resp.json()["permissions"]
-        assert "container-events" in perms.get("/admin/container-events", [])
+        assert "manage-events" in perms.get("/admin/container-events", [])
 
 
 class TestBranchGaps2834:
@@ -15035,3 +14684,236 @@ class TestNoCoverAudit2910Part3:
             )
         assert caught.value.status_code == 400
         assert "No filename provided" in caught.value.detail
+
+
+class TestAdminTabPermissions:
+    """#2940: one `manage-<thing>` permission per admin tab.
+
+    Admins keep full access via the seeded /admin Allow * wildcard; a
+    delegated user gets exactly the tab their ACE on the sub-resource
+    grants (the same shape as the read-only Events auditor, #2923).
+    A tab permission covers every action of that tab — there are no
+    per-action splits. `manage-acls` is root-equivalent by design: it
+    can rewrite ACLs on any resource, including /admin and / — pinned
+    explicitly below.
+    """
+
+    async def _admin_headers(self, client):
+        resp = await client.post(
+            "/api/v1/auth/login",
+            json={
+                "identifier": "testadmin@example.com",
+                "password": "testpass",
+            },
+        )
+        return {"Authorization": f"Bearer {resp.json()['access_token']}"}
+
+    async def _grant(
+        self, app_state, resource, permission, user_id, priority=0
+    ):
+        await app_state.state.model.acl.add_acl_entry(
+            resource,
+            priority,
+            model.ACTION_ALLOW,
+            permission,
+            model.PRINCIPAL_USER,
+            user_id=user_id,
+        )
+
+    async def test_wildcard_admin_keeps_full_access(
+        self, client, app, admin_user
+    ):
+        """The seeded /admin Allow * satisfies every tab permission."""
+        headers = await self._admin_headers(client)
+        for path in (
+            "/api/v1/admin/users",
+            "/api/v1/admin/invitations",
+            "/api/v1/admin/acl/tree",
+            "/api/v1/admin/server/schedule",
+            "/api/v1/admin/container-events",
+        ):
+            resp = await client.get(path, headers=headers)
+            assert resp.status_code == 200, (path, resp.text)
+
+    async def test_plain_user_locked_out_everywhere(self, client, app, user):
+        headers = await _auth_headers(client)
+        for path in (
+            "/api/v1/admin/users",
+            "/api/v1/admin/groups",
+            "/api/v1/admin/invitations",
+            "/api/v1/admin/acl/tree",
+            "/api/v1/admin/server/schedule",
+            "/api/v1/admin/container-events",
+        ):
+            resp = await client.get(path, headers=headers)
+            assert resp.status_code == 403, path
+
+    async def test_delegated_manage_users_covers_the_whole_tab(
+        self, client, app, user, app_state
+    ):
+        await self._grant(
+            app_state, "/admin/users", "manage-users", user["id"]
+        )
+        headers = await _auth_headers(client)
+
+        resp = await client.get("/api/v1/admin/users", headers=headers)
+        assert resp.status_code == 200, resp.text
+
+        # Sessions (IP/UA rows) are part of the tab, not a separate gate.
+        resp = await client.get(
+            f"/api/v1/admin/users/{user['id']}/sessions", headers=headers
+        )
+        assert resp.status_code == 200, resp.text
+
+        # Writes pass the gate too — one permission, whole tab.
+        resp = await client.patch(
+            f"/api/v1/admin/users/{user['id']}",
+            headers=headers,
+            json={"handle": "helpdesk"},
+        )
+        assert resp.status_code == 200, resp.text
+
+        # ...and nothing outside the tab.
+        for path in (
+            "/api/v1/admin/invitations",
+            "/api/v1/admin/acl/tree",
+            "/api/v1/admin/server/schedule",
+        ):
+            resp = await client.get(path, headers=headers)
+            assert resp.status_code == 403, path
+
+    async def test_delegated_manage_invitations_covers_send_and_list(
+        self, client, app, user, app_state
+    ):
+        await self._grant(
+            app_state, "/admin/invitations", "manage-invitations", user["id"]
+        )
+        headers = await _auth_headers(client)
+
+        resp = await client.get("/api/v1/admin/invitations", headers=headers)
+        assert resp.status_code == 200, resp.text
+
+        # Past the gate: 400 because the email belongs to an existing
+        # user (no email side effect on this branch).
+        resp = await client.post(
+            "/api/v1/admin/invitations",
+            headers=headers,
+            json={"email": "testuser@example.com"},
+        )
+        assert resp.status_code == 400
+        assert "already exists" in resp.json()["detail"]
+
+        resp = await client.get("/api/v1/admin/users", headers=headers)
+        assert resp.status_code == 403
+
+    async def test_delegated_manage_server_schedule_covers_create_and_list(
+        self, client, app, user, app_state
+    ):
+        await self._grant(
+            app_state, "/admin/server", "manage-server-schedule", user["id"]
+        )
+        headers = await _auth_headers(client)
+
+        resp = await client.get(
+            "/api/v1/admin/server/schedule", headers=headers
+        )
+        assert resp.status_code == 200, resp.text
+
+        resp = await client.post(
+            "/api/v1/admin/server/schedule",
+            headers=headers,
+            json={"action": "stop", "in_seconds": 3600},
+        )
+        assert resp.status_code == 200, resp.text
+        schedule_id = resp.json()["id"]
+
+        resp = await client.delete(
+            f"/api/v1/admin/server/schedule/{schedule_id}", headers=headers
+        )
+        assert resp.status_code == 200, resp.text
+
+    async def test_manage_acls_is_root_equivalent_by_design(
+        self, client, app, user, app_state
+    ):
+        """The documented sharp edge (#2940): a manage-acls holder can
+        rewrite ACLs on ANY resource — including collections like
+        /workspaces — so the permission is root-equivalent and granted
+        only to administrators. This pins that deliberately."""
+        await self._grant(app_state, "/admin/acl", "manage-acls", user["id"])
+        headers = await _auth_headers(client)
+
+        resp = await client.get("/api/v1/admin/acl/tree", headers=headers)
+        assert resp.status_code == 200, resp.text
+
+        # Read the current entries, append a self-grant, replace.
+        resp = await client.get(
+            "/api/v1/admin/acl/resource?resource=/workspaces",
+            headers=headers,
+        )
+        assert resp.status_code == 200, resp.text
+        entries = [
+            {
+                "action": e["action"],
+                "principal_type": e["principal_type"],
+                "permission": e["permission"],
+                "user_id": e.get("user_id"),
+                "group_id": e.get("group_id"),
+                "system_principal": e.get("system_principal"),
+            }
+            for e in resp.json()
+        ]
+        entries.append(
+            {
+                "action": 1,
+                "principal_type": 1,
+                "permission": "*",
+                "user_id": user["id"],
+                "group_id": None,
+                "system_principal": None,
+            }
+        )
+        resp = await client.put(
+            "/api/v1/admin/acl/resource?resource=/workspaces",
+            headers=headers,
+            json=entries,
+        )
+        assert resp.status_code == 200, resp.text
+
+        # The self-grant took effect — root over the collection.
+        resp = await client.post(
+            "/api/v1/workspaces",
+            headers=headers,
+            json={"name": "escalated-ws"},
+        )
+        assert resp.status_code == 200, resp.text
+
+        # manage-acls alone opens no other tab.
+        resp = await client.get("/api/v1/admin/users", headers=headers)
+        assert resp.status_code == 403
+
+    async def test_my_permissions_surfaces_tab_names(
+        self, client, app, user, app_state
+    ):
+        await self._grant(
+            app_state, "/admin/users", "manage-users", user["id"]
+        )
+        headers = await _auth_headers(client)
+        resp = await client.get("/api/v1/my-permissions", headers=headers)
+        perms = resp.json()["permissions"]
+        assert "manage-users" in perms.get("/admin/users", [])
+
+    async def test_admin_my_permissions_lists_all_tab_names(
+        self, client, app, admin_user
+    ):
+        headers = await self._admin_headers(client)
+        resp = await client.get("/api/v1/my-permissions", headers=headers)
+        perms = resp.json()["permissions"]
+        for name in (
+            "manage-users",
+            "manage-invitations",
+            "manage-server-schedule",
+            "manage-events",
+        ):
+            assert name in perms.get("/admin", [])
+        assert "manage-acls" in perms.get("/admin/acl", [])
+        assert "manage-events" in perms.get("/admin/container-events", [])

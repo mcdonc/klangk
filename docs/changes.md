@@ -32,6 +32,17 @@ operators or integrators to act when upgrading.
 
 ### Breaking
 
+- **Hand-crafted `admin` ACEs stop matching split routes (#2940).** ACLs
+  granting the literal `admin` permission on `/admin` (rather than the
+  seeded `*` wildcard) no longer satisfy the per-tab endpoints — grant
+  the tab permission (or `*`) instead. Default deployments are
+  unaffected. If you granted `container-events` ACEs while running
+  main, rename them to `manage-events` (the feature was never in a
+  release). Likewise, pre-#2940 `/groups` Allow `create` delegations
+  are now inert: group creation is gated by `manage-groups` on
+  `/admin/groups`, and that permission covers the whole Groups tab
+  (edit, delete, member management) — re-grant accordingly.
+
 - **The seeded admin group is renamed to `admins` (#2934).** Fresh
   installs seed a group named `admins`; upgrading renames the `admin`
   group in place (memberships and ACLs keep pointing at the same
@@ -317,13 +328,26 @@ sync` report a clear permission-denied error.
 
 ### Added
 
+- **Granular `/admin` tab permissions (#2940).** The admin endpoints
+  split off the monolithic `admin` gate onto one permission per tab:
+  `manage-users` (Users), `manage-invitations` (Invitations),
+  `manage-groups` (Groups), `manage-server-schedule` (Server), and
+  `manage-events` (Events; renamed from `container-events`). Admins are
+  unaffected — the seeded `/admin` `*` wildcard covers every name — and
+  a whole tab can now be delegated to a non-admin via an `Allow` ACE on
+  its sub-resource. `manage-acls` (Access Control browser) is
+  root-equivalent: it can rewrite ACLs on any resource including
+  `/admin` and `/`, so it is granted only to administrators. See
+  [ACLs](reference/acl.md).
+
 - **Container events history API + admin Events tab (#2923).** New
   `GET /api/v1/admin/container-events` endpoint pages through the
   `container_events` audit table (#2915) newest-first, with an optional
   `workspace_id` filter and a total count, and the admin section gains
   an Events tab rendering it (when, workspace, event, actor, cause,
-  container, network namespace). Both are gated on the new dedicated
-  `container-events` permission over `/admin/container-events`: admins
+  container, network namespace). Both are gated on the dedicated
+  `manage-events` permission over `/admin/container-events` (renamed
+  from `container-events` in #2940 before any release): admins
   hold it via the `/admin` wildcard, and granting it to another
   principal on that resource delegates read-only audit access without
   full admin.
@@ -1609,6 +1633,17 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   `KLANGKD_EGRESS_PORT` wins (#1542).
 
 ### Removed
+
+- **`/groups` write endpoints (#2940, closing #2941).** Group
+  management consolidates onto `/api/v1/admin/groups` behind
+  `manage-groups`: `POST/PATCH/DELETE /api/v1/groups` and the
+  `/groups/{id}/members` write/read endpoints are gone (their
+  semantics — creator ACL grant on create, ACE cleanup on delete —
+  were ported to the admin surface). `GET /api/v1/groups` remains the
+  authenticated listing. The seeded `/groups` Allow `create` ACE is no
+  longer emitted; rows already in upgraded deployments are inert.
+  Scripts calling the removed endpoints must switch to
+  `/api/v1/admin/groups`.
 
 - **`KLANGKD_TRUST_OUTER_PROXY` (#2596).** Dead setting removed: it was
   never read by any code (a leftover from the old nginx renderer). No

@@ -31,7 +31,6 @@ from ..model import (
 )
 from .common import (
     WorkspaceAclEntry,
-    admin_resource,
     send_email,
     serialize_acl_entries,
 )
@@ -86,7 +85,7 @@ def _validate_admin_acl(entries, resource: str) -> None:
 async def send_invitation(
     req: SendInviteRequest,
     request: Request,
-    admin: dict = Depends(acl.has_permission("admin")),
+    admin: dict = Depends(acl.has_permission("manage-invitations")),
     app=Depends(get_app_dep),
 ):
     """Send an invitation email (admin only)."""
@@ -146,7 +145,7 @@ async def list_invitations(
     sort: str = "created",
     order: str = "desc",
     q: str | None = None,
-    admin: dict = Depends(acl.has_permission("admin")),
+    admin: dict = Depends(acl.has_permission("manage-invitations")),
     app=Depends(get_app_dep),
 ):
     """List invitations (admin only), server-side paginated/sorted/filtered.
@@ -164,7 +163,7 @@ async def list_invitations(
 @router.delete("/admin/invitations/{invitation_id}")
 async def revoke_invitation(
     invitation_id: str,
-    admin: dict = Depends(acl.has_permission("admin")),
+    admin: dict = Depends(acl.has_permission("manage-invitations")),
     app=Depends(get_app_dep),
 ):
     """Revoke a pending invitation (admin only)."""
@@ -183,7 +182,7 @@ async def revoke_invitation(
 async def resend_invitation(
     invitation_id: str,
     request: Request,
-    admin: dict = Depends(acl.has_permission("admin")),
+    admin: dict = Depends(acl.has_permission("manage-invitations")),
     app=Depends(get_app_dep),
 ):
     """Resend an invitation email (admin only)."""
@@ -224,7 +223,7 @@ async def list_users(
     sort: str = "created",
     order: str = "desc",
     q: str | None = None,
-    admin: dict = Depends(acl.has_permission("admin")),
+    admin: dict = Depends(acl.has_permission("manage-users")),
     app=Depends(get_app_dep),
 ):
     return await app.state.model.users.list_users(
@@ -242,7 +241,7 @@ class AdminCreateUserRequest(BaseModel):
 async def admin_create_user(
     req: AdminCreateUserRequest,
     request: Request,
-    admin: dict = Depends(acl.has_permission("admin")),
+    admin: dict = Depends(acl.has_permission("manage-users")),
     app=Depends(get_app_dep),
 ):
     """Create a user (admin only).
@@ -313,7 +312,7 @@ async def list_user_workspaces(
     user_id: str,
     limit: int | None = Query(None, ge=1, le=200),
     offset: int | None = Query(None, ge=0),
-    admin: dict = Depends(acl.has_permission("admin")),
+    admin: dict = Depends(acl.has_permission("manage-users")),
     app=Depends(get_app_dep),
 ):
     """List workspaces owned by a user (admin only).
@@ -333,7 +332,7 @@ async def list_user_workspaces(
 @router.delete("/admin/users/{user_id}")
 async def delete_user(
     user_id: str,
-    admin: dict = Depends(acl.has_permission("admin")),
+    admin: dict = Depends(acl.has_permission("manage-users")),
     app=Depends(get_app_dep),
 ):
     if user_id == admin["id"]:
@@ -375,7 +374,7 @@ class UpdateUserRequest(auth.BaseModel):
 async def update_user(
     user_id: str,
     req: UpdateUserRequest,
-    admin: dict = Depends(acl.has_permission("admin")),
+    admin: dict = Depends(acl.has_permission("manage-users")),
     app=Depends(get_app_dep),
 ):
     user = await app.state.model.users.get_user_by_id(user_id)
@@ -444,7 +443,7 @@ async def _update_user_disabled(
 @router.post("/admin/users/{user_id}/unlockout")
 async def unlock_user(
     user_id: str,
-    admin: dict = Depends(acl.has_permission("admin")),
+    admin: dict = Depends(acl.has_permission("manage-users")),
     app=Depends(get_app_dep),
 ):
     """Reset a user's login lockout so they can log in immediately."""
@@ -458,7 +457,7 @@ async def unlock_user(
 @router.get("/admin/users/{user_id}/sessions")
 async def list_user_sessions(
     user_id: str,
-    admin: dict = Depends(acl.has_permission("admin")),
+    admin: dict = Depends(acl.has_permission("manage-users")),
     app=Depends(get_app_dep),
 ):
     """List a user's active sessions with workstation identity (#2586).
@@ -527,14 +526,6 @@ async def update_group_fields(app, group_id: str, req) -> dict:
     return {"status": "updated"}
 
 
-async def _group_resource(request: Request, user: dict) -> str:  # noqa: ARG001
-    """Resource function for group-level permission checks."""
-    group_id = request.path_params.get("group_id")
-    if group_id:
-        return f"/groups/{group_id}"
-    return "/groups"
-
-
 @router.get("/groups")
 async def user_list_groups(
     page: int = 1,
@@ -552,7 +543,9 @@ async def user_list_groups(
     the same shape as the admin endpoint (#2750; previously a bare list
     hard-capped at 200 rows). ``source=manual`` hides the seeded
     per-workspace role groups; ``source=workspace-role`` shows only
-    them; the default shows all.
+    them; the default shows all. The write side lives at
+    ``/admin/groups`` behind ``manage-groups`` (the ``/groups`` writes
+    were removed, #2941-fold).
     """
     if source is not None and source not in GROUP_SOURCES:
         raise HTTPException(
@@ -569,107 +562,7 @@ async def user_list_groups(
     )
 
 
-@router.post("/groups")
-async def user_create_group(
-    req: CreateGroupRequest,
-    user: dict = Depends(acl.has_permission("create", _group_resource)),
-    app=Depends(get_app_dep),
-):
-    """Create a group. The creator gets full ACL access."""
-    existing = await app.state.model.users.get_group_by_name(req.name)
-    if existing is not None:
-        raise HTTPException(
-            status_code=409, detail="A group with this name already exists"
-        )
-    group = await app.state.model.users.create_group(req.name, req.description)
-    # Grant creator full access via ACL
-    await app.state.model.acl.add_acl_entry(
-        f"/groups/{group['id']}",
-        0,
-        ACTION_ALLOW,
-        "*",
-        PRINCIPAL_USER,
-        user_id=user["id"],
-    )
-    return group
-
-
-@router.patch("/groups/{group_id}")
-async def user_update_group(
-    group_id: str,
-    req: UpdateGroupRequest,
-    user: dict = Depends(acl.has_permission("edit", _group_resource)),
-    app=Depends(get_app_dep),
-):
-    """Update a group (requires edit permission on the group)."""
-    return await update_group_fields(app, group_id, req)
-
-
-@router.delete("/groups/{group_id}")
-async def user_delete_group(
-    group_id: str,
-    user: dict = Depends(acl.has_permission("delete", _group_resource)),
-    app=Depends(get_app_dep),
-):
-    """Delete a group (requires delete permission on the group)."""
-    await get_group_or_404(app, group_id)
-    await app.state.model.users.delete_group(group_id)
-    await app.state.model.acl.delete_acl_entries_for_resource(
-        f"/groups/{group_id}"
-    )
-    return {"status": "deleted"}
-
-
-@router.get("/groups/{group_id}/members")
-async def user_list_group_members(
-    group_id: str,
-    user: dict = Depends(acl.has_permission("view", _group_resource)),
-    app=Depends(get_app_dep),
-):
-    """List group members (requires view permission on the group)."""
-    await get_group_or_404(app, group_id)
-    return await app.state.model.users.get_group_members(group_id)
-
-
-@router.post("/groups/{group_id}/members")
-async def user_add_group_member(
-    group_id: str,
-    req: AddGroupMemberRequest,
-    user: dict = Depends(
-        acl.has_permission("manage_members", _group_resource)
-    ),
-    app=Depends(get_app_dep),
-):
-    """Add a member (requires manage_members permission on the group)."""
-    await get_group_or_404(app, group_id)
-    target = await app.state.model.users.get_user_by_id(req.user_id)
-    if target is None:
-        raise HTTPException(status_code=404, detail="User not found")
-    await app.state.model.users.add_user_to_group(req.user_id, group_id)
-    return {"status": "added"}
-
-
-@router.delete("/groups/{group_id}/members/{user_id}")
-async def user_remove_group_member(
-    group_id: str,
-    user_id: str,
-    user: dict = Depends(
-        acl.has_permission("manage_members", _group_resource)
-    ),
-    app=Depends(get_app_dep),
-):
-    """Remove a member (requires manage_members on the group)."""
-    removed = await app.state.model.users.remove_user_from_group(
-        user_id, group_id
-    )
-    if not removed:
-        raise HTTPException(
-            status_code=404, detail="User is not a member of this group"
-        )
-    return {"status": "removed"}
-
-
-# --- Admin group endpoints (admin-only, kept for backward compat) ---
+# --- Admin group endpoints (single group-management surface, #2941-fold) ---
 
 
 @router.get("/admin/groups")
@@ -680,7 +573,7 @@ async def list_groups(
     order: str = "asc",
     q: str | None = None,
     source: str | None = None,
-    admin: dict = Depends(acl.has_permission("admin")),
+    admin: dict = Depends(acl.has_permission("manage-groups")),
     app=Depends(get_app_dep),
 ):
     """List groups with the paged envelope; rows carry ``source``.
@@ -707,7 +600,7 @@ async def list_groups(
 @router.post("/admin/groups")
 async def create_group(
     req: CreateGroupRequest,
-    admin: dict = Depends(acl.has_permission("admin")),
+    admin: dict = Depends(acl.has_permission("manage-groups")),
     app=Depends(get_app_dep),
 ):
     existing = await app.state.model.users.get_group_by_name(req.name)
@@ -716,6 +609,17 @@ async def create_group(
             status_code=409, detail="A group with this name already exists"
         )
     group = await app.state.model.users.create_group(req.name, req.description)
+    # The creator gets full ACL access to the group (ported from the
+    # removed POST /groups, #2941-fold: a delegated group manager owns
+    # what they create).
+    await app.state.model.acl.add_acl_entry(
+        f"/groups/{group['id']}",
+        0,
+        ACTION_ALLOW,
+        "*",
+        PRINCIPAL_USER,
+        user_id=admin["id"],
+    )
     return group
 
 
@@ -723,7 +627,7 @@ async def create_group(
 async def update_group(
     group_id: str,
     req: UpdateGroupRequest,
-    admin: dict = Depends(acl.has_permission("admin")),
+    admin: dict = Depends(acl.has_permission("manage-groups")),
     app=Depends(get_app_dep),
 ):
     return await update_group_fields(app, group_id, req)
@@ -732,18 +636,23 @@ async def update_group(
 @router.delete("/admin/groups/{group_id}")
 async def delete_group(
     group_id: str,
-    admin: dict = Depends(acl.has_permission("admin")),
+    admin: dict = Depends(acl.has_permission("manage-groups")),
     app=Depends(get_app_dep),
 ):
     await get_group_or_404(app, group_id)
     await app.state.model.users.delete_group(group_id)
+    # Clean up the group's ACL entries (ported from the removed
+    # DELETE /groups — the admin variant used to orphan them).
+    await app.state.model.acl.delete_acl_entries_for_resource(
+        f"/groups/{group_id}"
+    )
     return {"status": "deleted"}
 
 
 @router.get("/admin/groups/{group_id}/members")
 async def list_group_members(
     group_id: str,
-    admin: dict = Depends(acl.has_permission("admin")),
+    admin: dict = Depends(acl.has_permission("manage-groups")),
     app=Depends(get_app_dep),
 ):
     await get_group_or_404(app, group_id)
@@ -754,7 +663,7 @@ async def list_group_members(
 async def add_group_member(
     group_id: str,
     req: AddGroupMemberRequest,
-    admin: dict = Depends(acl.has_permission("admin")),
+    admin: dict = Depends(acl.has_permission("manage-groups")),
     app=Depends(get_app_dep),
 ):
     await get_group_or_404(app, group_id)
@@ -769,7 +678,7 @@ async def add_group_member(
 async def remove_group_member(
     group_id: str,
     user_id: str,
-    admin: dict = Depends(acl.has_permission("admin")),
+    admin: dict = Depends(acl.has_permission("manage-groups")),
     app=Depends(get_app_dep),
 ):
     removed = await app.state.model.users.remove_user_from_group(
@@ -787,7 +696,7 @@ async def remove_group_member(
 
 @router.get("/admin/acl/tree")
 async def get_acl_tree(
-    admin: dict = Depends(acl.has_permission("admin")),
+    admin: dict = Depends(acl.has_permission("manage-acls")),
     app=Depends(get_app_dep),
 ):
     return await app.state.model.acl.get_acl_tree_summary()
@@ -796,7 +705,7 @@ async def get_acl_tree(
 @router.get("/admin/acl/by-principal/user/{user_id}")
 async def get_acl_by_user(
     user_id: str,
-    admin: dict = Depends(acl.has_permission("admin")),
+    admin: dict = Depends(acl.has_permission("manage-acls")),
     app=Depends(get_app_dep),
 ):
     return await app.state.model.acl.get_acl_entries_by_principal_user(user_id)
@@ -805,7 +714,7 @@ async def get_acl_by_user(
 @router.get("/admin/acl/by-principal/group/{group_id}")
 async def get_acl_by_group(
     group_id: str,
-    admin: dict = Depends(acl.has_permission("admin")),
+    admin: dict = Depends(acl.has_permission("manage-acls")),
     app=Depends(get_app_dep),
 ):
     return await app.state.model.acl.get_acl_entries_by_principal_group(
@@ -816,7 +725,7 @@ async def get_acl_by_group(
 @router.get("/admin/acl/resource")
 async def get_resource_acl(
     resource: str,
-    admin: dict = Depends(acl.has_permission("admin", admin_resource)),
+    admin: dict = Depends(acl.has_permission("manage-acls")),
     app=Depends(get_app_dep),
 ):
     """Get resolved ACL entries for any resource (admin only)."""
@@ -841,7 +750,7 @@ def workspace_scope(resource: str) -> str | None:
 async def replace_resource_acl(
     resource: str,
     entries: list[WorkspaceAclEntry],
-    admin: dict = Depends(acl.has_permission("admin", admin_resource)),
+    admin: dict = Depends(acl.has_permission("manage-acls")),
     app=Depends(get_app_dep),
 ):
     """Replace ACL entries for any resource (admin only).
@@ -882,7 +791,7 @@ class ServerScheduleRequest(BaseModel):
 async def schedule_server_action(
     payload: ServerScheduleRequest,
     request: Request,
-    admin: dict = Depends(acl.has_permission("admin")),
+    admin: dict = Depends(acl.has_permission("manage-server-schedule")),
 ):
     """Schedule a server stop or recycle for a future time (#2661).
 
@@ -912,7 +821,7 @@ async def schedule_server_action(
 @router.get("/admin/server/schedule")
 async def list_server_schedules(
     request: Request,
-    admin: dict = Depends(acl.has_permission("admin")),
+    admin: dict = Depends(acl.has_permission("manage-server-schedule")),
 ):
     """List pending server stop/recycle schedules (#2661)."""
     return {
@@ -924,7 +833,7 @@ async def list_server_schedules(
 async def cancel_server_schedule(
     schedule_id: str,
     request: Request,
-    admin: dict = Depends(acl.has_permission("admin")),
+    admin: dict = Depends(acl.has_permission("manage-server-schedule")),
 ):
     """Cancel a pending server stop/recycle schedule (#2661)."""
     app = request.app
@@ -974,13 +883,13 @@ async def list_container_events(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     workspace_id: str | None = None,
-    viewer: dict = Depends(acl.has_permission("container-events")),
+    viewer: dict = Depends(acl.has_permission("manage-events")),
 ):
     """Paged container start/stop history (#2923).
 
     Newest-first rows from the ``container_events`` audit table
     (#2915) plus the filter-matching total, optionally narrowed to one
-    workspace. Gated on the dedicated ``container-events`` permission
+    workspace. Gated on the dedicated ``manage-events`` permission
     over the URL-derived resource ``/admin/container-events``: the
     admin group holds it through its ``/admin`` ``*`` wildcard, and a
     non-admin gets it only via an explicit ACE on that resource —

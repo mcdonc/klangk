@@ -231,23 +231,27 @@ class TestSeedDefaultUser:
 
 
 class TestSeedDefaultAcls:
-    """The tightened /groups seed (#2770): create goes to the admin
-    group, mirroring /workspaces (#2569) — not to system:authenticated."""
+    """Seeded-ACL shape. The /groups `create` seed (tightened in #2770)
+    was removed entirely in #2940 — group management rides the /admin
+    `*` wildcard; fresh installs seed nothing on /groups."""
 
-    async def test_groups_create_seeded_for_admin_group(self, db, app_state):
+    async def test_groups_create_not_seeded(self, db, app_state):
+        """#2941-fold: the /groups `create` seed is gone — the write
+        surface is /admin/groups behind manage-groups, covered for
+        admins by the /admin * wildcard (no per-resource seed needed)."""
         lifecycle = _lifecycle(make_settings({}))
         admin_group_id = await lifecycle.ensure_admin_group()
         await lifecycle.seed_default_acls(admin_group_id)
 
         entries = await app_state.state.model.acl.get_acl_entries("/groups")
-        assert len(entries) == 1
-        from klangk.model import ACTION_ALLOW, PRINCIPAL_GROUP
-
-        entry = entries[0]
-        assert entry["action"] == ACTION_ALLOW
-        assert entry["permission"] == "create"
-        assert entry["principal_type"] == PRINCIPAL_GROUP
-        assert entry["group_id"] == admin_group_id
+        assert entries == []
+        admin_entries = await app_state.state.model.acl.get_acl_entries(
+            "/admin"
+        )
+        assert any(
+            e["permission"] == "*" and e["group_id"] == admin_group_id
+            for e in admin_entries
+        )
 
 
 class TestSeedDefaultUserAuthModeGating:

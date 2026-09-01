@@ -48,6 +48,7 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
   bool _canInvitations = false;
   bool _canServer = false;
   bool _canEvents = false;
+  bool _canAcl = false;
 
   // Pending invitation count for the tab badge — updated by the
   // _InvitationsTab widget via callback.
@@ -90,21 +91,23 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
 
   void _resolvePermissions() {
     final auth = context.read<AuthService>();
-    _canUsers = auth.hasPermission('/admin', '*') ||
-        auth.hasPermission('/admin/users', 'view');
-    _canGroups = auth.hasPermission('/admin', '*') ||
-        auth.hasPermission('/admin/groups', 'view');
-    _canInvitations = auth.hasPermission('/admin', '*') ||
-        auth.hasPermission('/admin/invitations', 'view');
-    // The schedule API needs the `admin` permission on /admin (ancestors
-    // included), so gate the tab on exactly that.
-    _canServer = auth.hasPermission('/admin', 'admin');
-    // The events history (#2923) is gated on the dedicated
-    // `container-events` permission over /admin/container-events — admins
-    // hold it via the /admin `*` wildcard, delegated auditors via an
-    // explicit ACE on the resource.
-    _canEvents =
-        auth.hasPermission('/admin/container-events', 'container-events');
+    // One permission per tab (#2940): `manage-<thing>` grants full
+    // control of that tab's actions — the admin group holds every name
+    // via the /admin * wildcard; a delegated user gets exactly what
+    // their ACE on the sub-resource grants (the Events tab, #2923,
+    // follows the same shape with read-only `manage-events`).
+    _canUsers = auth.hasPermission('/admin/users', 'manage-users');
+    // Groups tab rides /admin/groups behind manage-groups (#2941-fold:
+    // the single group-management surface; the /groups writes are gone).
+    _canGroups = auth.hasPermission('/admin/groups', 'manage-groups');
+    _canInvitations =
+        auth.hasPermission('/admin/invitations', 'manage-invitations');
+    _canServer = auth.hasPermission('/admin/server', 'manage-server-schedule');
+    _canEvents = auth.hasPermission('/admin/container-events', 'manage-events');
+    // The Access Control browser reads /admin/acl/*, gated on
+    // `manage-acls` (#2940) — root-equivalent (it can rewrite ACLs on
+    // any resource), so it is granted only to administrators.
+    _canAcl = auth.hasPermission('/admin/acl', 'manage-acls');
   }
 
   Future<void> _loadUsers({int page = 1}) async {
@@ -471,10 +474,10 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     if (_canInvitations) types.add('invitations');
     if (_canServer) types.add('server');
     if (_canEvents) types.add('events');
-    // The Access Control browser reads /admin/acl/tree, which needs full
-    // admin — a delegated container-events auditor (#2923) gets only the
-    // Events tab, not a dead ACL tab.
-    if (_canUsers || _canGroups || _canInvitations || _canServer) {
+    // The Access Control browser reads /admin/acl/*, gated on
+    // `manage-acls` (#2940) — a delegated container-events auditor
+    // (#2923) gets only the Events tab, not a dead ACL tab.
+    if (_canAcl) {
       types.add('acl');
     }
     return types;
@@ -543,7 +546,9 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
         view: const ContainerEventsPanel(),
       );
     }
-    if (_canUsers || _canGroups || _canInvitations || _canServer) {
+    // The Access Control browser reads /admin/acl/*, gated on
+    // `manage-acls` (#2940) — shown exactly to its holders.
+    if (_canAcl) {
       addTab(
         label: 'Access Control',
         icon: Icons.security,
@@ -945,8 +950,15 @@ class _ManageMembersDialog extends StatefulWidget {
 
 class _ManageMembersDialogState extends State<_ManageMembersDialog> {
   List<Map<String, dynamic>> _members = [];
-  List<Map<String, dynamic>> _allUsers = [];
   bool _loading = true;
+
+  /// Type-ahead picker results from the authenticated
+  /// `GET /users/search` surface: a `manage-groups`-only delegate
+  /// (no `manage-users`) must still be able to add members, so the
+  /// picker never reads `/admin/users` (#2943 review).
+  List<Map<String, dynamic>> _results = [];
+  final _searchController = TextEditingController();
+  Timer? _searchDebounce;
 
   String get _groupId => widget.group['id'] as String;
   String get _groupName => widget.group['name'] as String;
@@ -954,27 +966,56 @@ class _ManageMembersDialogState extends State<_ManageMembersDialog> {
   @override
   void initState() {
     super.initState();
-    _loadData();
+    _loadMembers();
+    _searchController.addListener(() {
+      final q = _searchController.text.trim();
+      _searchDebounce?.cancel();
+      if (q.isEmpty) {
+        if (mounted) setState(() => _results = []);
+        return;
+      }
+      _searchDebounce = Timer(const Duration(milliseconds: 250), () {
+        _search(q);
+      });
+    });
   }
 
-  Future<void> _loadData() async {
+  @override
+  void dispose() {
+    _searchDebounce?.cancel();
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadMembers() async {
     final auth = context.read<AuthService>();
-    final membersResp = await auth.authGet(
+    final resp = await auth.authGet(
       '/api/v1/admin/groups/$_groupId/members',
     );
-    final usersResp = await auth.authGet('/api/v1/admin/users?page_size=200');
     if (!mounted) return;
-    if (membersResp.statusCode != 200 || usersResp.statusCode != 200) {
-      setState(() => _loading = false);
-      return;
-    }
     setState(() {
-      _members = List<Map<String, dynamic>>.from(jsonDecode(membersResp.body));
-      _allUsers = List<Map<String, dynamic>>.from(
-        (jsonDecode(usersResp.body) as Map<String, dynamic>)['users'] as List,
-      );
+      if (resp.statusCode == 200) {
+        _members = List<Map<String, dynamic>>.from(jsonDecode(resp.body));
+      }
       _loading = false;
     });
+  }
+
+  Future<void> _search(String q) async {
+    final auth = context.read<AuthService>();
+    final resp = await auth.authGet(
+      '/api/v1/users/search?q=${Uri.encodeQueryComponent(q)}',
+    );
+    if (!mounted || resp.statusCode != 200) return;
+    final memberIds = _members.map((m) => m['id']).toSet();
+    final found = List<Map<String, dynamic>>.from(
+      (jsonDecode(resp.body) as List).cast<Map<String, dynamic>>(),
+    )
+        .where((u) => !memberIds.contains(u['id']))
+        // The agent can never be a group member (the backend rejects
+        // making it an ACL principal), so don't offer it (#2892).
+        .where((u) => !isSystemAgent(u));
+    setState(() => _results = found.toList());
   }
 
   Future<void> _addMember(String userId) async {
@@ -984,12 +1025,8 @@ class _ManageMembersDialogState extends State<_ManageMembersDialog> {
       body: jsonEncode({'user_id': userId}),
     );
     if (resp.statusCode == 200) {
-      final r = await auth.authGet('/api/v1/admin/groups/$_groupId/members');
-      if (r.statusCode == 200 && mounted) {
-        setState(() {
-          _members = List<Map<String, dynamic>>.from(jsonDecode(r.body));
-        });
-      }
+      _searchController.clear();
+      await _loadMembers();
     }
   }
 
@@ -1015,14 +1052,6 @@ class _ManageMembersDialogState extends State<_ManageMembersDialog> {
       );
     }
 
-    final memberIds = _members.map((m) => m['id']).toSet();
-    final nonMembers = _allUsers
-        .where((u) => !memberIds.contains(u['id']))
-        // The agent can never be a group member (the backend rejects
-        // making it an ACL principal), so don't offer it (#2892).
-        .where((u) => !isSystemAgent(u))
-        .toList();
-
     return AlertDialog(
       title: Text('Members of "$_groupName"'),
       content: SizedBox(
@@ -1031,19 +1060,33 @@ class _ManageMembersDialogState extends State<_ManageMembersDialog> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            if (nonMembers.isNotEmpty)
-              DropdownButton<String>(
-                isExpanded: true,
-                hint: const Text('Add member...'),
-                items: nonMembers.map((u) {
-                  return DropdownMenuItem(
-                    value: u['id'] as String,
-                    child: Text(u['email'] as String),
-                  );
-                }).toList(),
-                onChanged: (userId) {
-                  if (userId != null) _addMember(userId);
-                },
+            TextField(
+              key: const ValueKey('member-search'),
+              controller: _searchController,
+              decoration: const InputDecoration(
+                hintText: 'Add member by email prefix…',
+                prefixIcon: Icon(Icons.person_search),
+                isDense: true,
+              ),
+            ),
+            if (_results.isNotEmpty)
+              SizedBox(
+                height: 112,
+                child: ListView.builder(
+                  itemCount: _results.length,
+                  itemBuilder: (ctx, i) {
+                    final candidate = _results[i];
+                    return ListTile(
+                      dense: true,
+                      title: Text(candidate['email'] as String),
+                      trailing: IconButton(
+                        icon: const Icon(Icons.add_circle_outline),
+                        tooltip: 'Add to group',
+                        onPressed: () => _addMember(candidate['id'] as String),
+                      ),
+                    );
+                  },
+                ),
               ),
             const SizedBox(height: 8),
             Expanded(
@@ -1860,16 +1903,35 @@ class _AclBrowserTab extends StatefulWidget {
 }
 
 class _AclBrowserTabState extends State<_AclBrowserTab> {
+  /// Only top-level resources are listed (#2940): the admin tabs are
+  /// permission *checks*, not ACL-granting destinations — a tab is
+  /// delegated by adding its `manage-*` permission (or `*`) ACE on the
+  /// `/admin` node, which every tab route inherits via walk-up. Listing
+  /// the sub-resources here blurred the endpoint-permission mapping
+  /// into the ACE tree.
   static const _resources = [
     ('/', 'Root', Icons.home),
     ('/workspaces', 'Workspaces', Icons.folder),
     ('/groups', 'Groups', Icons.group),
+    ('/users', 'Users', Icons.people),
     ('/admin', 'Admin', Icons.manage_accounts),
-    ('/admin/users', 'Users', Icons.people),
-    ('/admin/invitations', 'Invitations', Icons.mail_outline),
-    ('/admin/groups', 'Admin Groups', Icons.group),
-    ('/admin/container-events', 'Container Events', Icons.history),
   ];
+
+  /// The permission(s) that matter on each node (#2940): the endpoint
+  /// checks key on these names, so the browser shows the mapping next
+  /// to the ACE list instead of leaving the operator to guess which
+  /// name the server actually asks for on this resource.
+  static const _resourceHints = {
+    '/': 'view — held by every authenticated user via the seed',
+    '/workspaces':
+        'create — workspace creation; per-workspace permissions live on each /workspaces/{id}',
+    '/groups':
+        'No permission — authenticated listing; management is under /admin',
+    '/users':
+        'No permission checked yet — `search-users` arrives with the workspaces tranche (#2890)',
+    '/admin':
+        'manage-users, manage-invitations, manage-groups, manage-server-schedule, manage-events, manage-acls (root-equivalent) — or * for everything',
+  };
 
   String _selectedResource = '/';
 
@@ -1959,25 +2021,34 @@ class _AclBrowserTabState extends State<_AclBrowserTab> {
                     children: [
                       Icon(_selectedIcon, size: 20, color: KColors.accentGreen),
                       const SizedBox(width: 10),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            _selectedLabel,
-                            style: const TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 14,
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              _selectedLabel,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 14,
+                              ),
                             ),
-                          ),
-                          Text(
-                            _selectedResource,
-                            style: const TextStyle(
-                              fontSize: 11,
-                              color: KColors.textMuted,
-                              fontFamily: 'monospace',
+                            Text(
+                              _selectedResource,
+                              style: const TextStyle(
+                                fontSize: 11,
+                                color: KColors.textMuted,
+                                fontFamily: 'monospace',
+                              ),
                             ),
-                          ),
-                        ],
+                            Text(
+                              'Checked permission: ${_resourceHints[_selectedResource]}',
+                              style: const TextStyle(
+                                fontSize: 11,
+                                color: KColors.textMuted,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ],
                   ),
@@ -1989,7 +2060,7 @@ class _AclBrowserTabState extends State<_AclBrowserTab> {
                       key: ValueKey(_selectedResource),
                       resource: _selectedResource,
                       // The admin browser is where the admin-scoped
-                      // `container-events` grant is creatable (#2923);
+                      // `manage-*` grants are creatable (#2940);
                       // the workspace editor keeps the curated list.
                       permissions: AclEditorState.adminPermissions,
                     ),

@@ -35,17 +35,17 @@ api_auth = sys.modules["klangk.api.auth"]
 
 # Total HTTP route operations the monolith exposed (per the issue).  The
 # split must preserve this exactly — no dropped or duplicated handlers.
-EXPECTED_ROUTE_COUNT = 97
+EXPECTED_ROUTE_COUNT = 91
 
-# Per-domain submodules and the number of routes each owns.  92 sub-routes
+# Per-domain submodules and the number of routes each owns.  86 sub-routes
 # + 3 routes defined directly on the main router (version, config,
-# my-permissions) + 2 on the root router (health, empty) == 97.
+# my-permissions) + 2 on the root router (health, empty) == 91.
 SUBMODULE_ROUTES = {
     "auth": 17,  # 15 + the 2 OIDC login/callback routes (merged from oidc_auth)
     "workspaces": 27,
     "resources": 10,  # 6 files + 4 images/volumes (merged submodules)
     "browser_delegate": 2,
-    "admin": 34,
+    "admin": 28,
     "llm_proxy": 2,
 }
 
@@ -247,8 +247,8 @@ class TestSubmoduleStructure:
         total = 0
         for submod in SUBMODULE_ROUTES:
             total += len(import_module(f"klangk.api.{submod}").router.routes)
-        # 92 sub-routes + 3 direct (version/config/my-permissions) + 2
-        # root (health/empty) == 97.
+        # 86 sub-routes + 3 direct (version/config/my-permissions) + 2
+        # root (health/empty) == 91.
         assert total == EXPECTED_ROUTE_COUNT - 3 - 2
 
     def test_common_module_has_no_router(self):
@@ -264,7 +264,6 @@ class TestSubmoduleStructure:
         for name in (
             "send_email",
             "workspace_resource",
-            "admin_resource",
             "require_workspace_token",
             "WorkspaceAclEntry",
             "autostart_allowed",
@@ -308,9 +307,19 @@ def test_all_permissions_single_source():
     assert "change-acls" in api.ALL_PERMISSIONS
     # #2883's egress-consent gate must be reportable the same way.
     assert "egress-consent" in api.ALL_PERMISSIONS
-    # #2923's container-events history gate must be reportable the
-    # same way (the admin Events tab keys off /my-permissions).
-    assert "container-events" in api.ALL_PERMISSIONS
+    # #2923's events history gate (renamed `manage-events` in #2940)
+    # must be reportable the same way (the admin Events tab keys off
+    # /my-permissions).
+    assert "manage-events" in api.ALL_PERMISSIONS
+    # #2940's per-tab admin permissions likewise.
+    for name in (
+        "manage-users",
+        "manage-invitations",
+        "manage-groups",
+        "manage-server-schedule",
+        "manage-acls",
+    ):
+        assert name in api.ALL_PERMISSIONS
 
 
 def test_static_resources_single_source():

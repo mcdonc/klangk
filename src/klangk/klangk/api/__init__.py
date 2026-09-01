@@ -292,11 +292,14 @@ STATIC_RESOURCES = [
     "/",
     "/workspaces",
     "/groups",
+    "/users",
     "/admin",
     "/admin/users",
     "/admin/invitations",
     "/admin/groups",
     "/admin/container-events",
+    "/admin/acl",
+    "/admin/server",
 ]
 
 ALL_PERMISSIONS = [
@@ -317,12 +320,14 @@ ALL_PERMISSIONS = [
     "files-write",
     "share",
     "change-acls",
-    "manage_members",
     "export",
     "admin",
-    "manage_users",
-    "manage_invitations",
-    "container-events",
+    "manage-users",
+    "manage-invitations",
+    "manage-groups",
+    "manage-server-schedule",
+    "manage-acls",
+    "manage-events",
     "*",
 ]
 

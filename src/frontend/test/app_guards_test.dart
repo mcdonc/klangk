@@ -255,7 +255,7 @@ void main() {
     });
 
     test('allows an admin target for a delegated events auditor (#2923)', () {
-      // The auditor's my-permissions carries container-events on
+      // The auditor's my-permissions carries manage-events on
       // /admin/container-events, so the stashed admin URL is honored.
       pendingRedirect = '/admin/users';
       expect(
@@ -303,7 +303,7 @@ void main() {
     });
 
     test('delegated events auditor on /admin/users -> allowed (null)', () {
-      // #2923: a non-wildcard principal holding only `container-events`
+      // #2923: a non-wildcard principal holding only `manage-events`
       // on /admin/container-events can still enter the admin section —
       // the Events tab is their only section there.
       expect(

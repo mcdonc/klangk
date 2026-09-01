@@ -59,11 +59,6 @@ def workstation(request: Request) -> tuple[str | None, str | None]:
     return ip, request.headers.get("user-agent") or None
 
 
-async def admin_resource(request: Request, user: dict) -> str:  # noqa: ARG001
-    """Resource function for admin operations (always checks /admin)."""
-    return "/admin"
-
-
 async def require_workspace_token(request: Request) -> str:
     """FastAPI dependency: validate workspace JWT from Authorization header.
 
