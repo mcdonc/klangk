@@ -10,6 +10,8 @@ as the backstop until #1578 dissolves the ContextVar.
 import uuid
 from datetime import datetime, timezone
 
+from .base import Submodel
+
 
 # Whitelisted sort columns for the admin invitations list. Values are the
 # SQL expressions to ORDER BY; the ``invited_by`` key sorts by the inviter's
@@ -38,7 +40,7 @@ def _invitation_row_to_dict(row) -> dict:
     }
 
 
-class InvitationsModel:
+class InvitationsModel(Submodel):
     """Invitation lifecycle, resolved through ``app_state.db``.
 
     Reached via ``app_state.model.invitations``. Reaches the DB through
@@ -47,12 +49,6 @@ class InvitationsModel:
     the duplication is temporary and removed in #1578 when the free
     functions are deleted.
     """
-
-    def __init__(self, app):
-        self.app = app
-
-    def reconfigure(self, app) -> None:
-        self.app = app
 
     async def create_invitation(self, email: str, invited_by: str) -> dict:
         """Create a new invitation. Returns the invitation dict."""

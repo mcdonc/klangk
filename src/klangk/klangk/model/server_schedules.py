@@ -12,6 +12,8 @@ ownership rule as the sibling models (#1563).
 import uuid
 from datetime import datetime, timezone
 
+from .base import Submodel
+
 _VALID_ACTIONS = ("stop", "recycle")
 
 
@@ -39,14 +41,8 @@ def _row_to_dict(row) -> dict:
     }
 
 
-class ServerSchedulesModel:
+class ServerSchedulesModel(Submodel):
     """CRUD for pending server schedules, resolved through ``app_state.db``."""
-
-    def __init__(self, app):
-        self.app = app
-
-    def reconfigure(self, app) -> None:
-        self.app = app
 
     async def create_schedule(
         self, action: str, fire_at: datetime, created_by: str

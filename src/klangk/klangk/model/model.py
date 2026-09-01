@@ -19,6 +19,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
 from .acl import ACLModel
+from .base import Submodel
 from .container_events import ContainerEventsModel
 from .egress_consent import EgressConsentModel
 from .server_schedules import ServerSchedulesModel
@@ -37,19 +38,13 @@ from .schema import init_db
 # ---------------------------------------------------------------------------
 
 
-class TokensModel:
+class TokensModel(Submodel):
     """Token-blocklist operations, resolved through ``app_state.db``.
 
     Constructed by :class:`~klangk.model.model.Model` and reached
     via ``app_state.model.tokens``. Reaches the DB through
     ``self.app.state.db`` (the single DB instance for the whole app).
     """
-
-    def __init__(self, app):
-        self.app = app
-
-    def reconfigure(self, app) -> None:
-        self.app = app
 
     async def blocklist_token(
         self, jti: str, expires_at: str, new_token: str | None = None
@@ -82,18 +77,12 @@ class TokensModel:
         return row[0] if row else None
 
 
-class LoginAttemptsModel:
+class LoginAttemptsModel(Submodel):
     """Login-attempt storage, resolved through ``app_state.db``.
 
     Reached via ``app_state.model.login_attempts``. Reaches the DB through
     ``self.app.state.db`` (the single DB instance for the whole app).
     """
-
-    def __init__(self, app):
-        self.app = app
-
-    def reconfigure(self, app) -> None:
-        self.app = app
 
     async def record_failed_login(
         self, email: str, *, reset: bool = False

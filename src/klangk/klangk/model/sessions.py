@@ -14,20 +14,16 @@ login and audited later.
 
 from datetime import datetime, timezone
 
+from .base import Submodel
 
-class SessionsModel:
+
+class SessionsModel(Submodel):
     """Active-session storage, resolved through ``app_state.db``.
 
     Constructed by :class:`~klangk.model.model.Model` and reached via
     ``app_state.model.sessions``. Reaches the DB through
     ``self.app.state.db`` (the single DB instance for the whole app).
     """
-
-    def __init__(self, app):
-        self.app = app
-
-    def reconfigure(self, app) -> None:
-        self.app = app
 
     async def record_session(
         self,

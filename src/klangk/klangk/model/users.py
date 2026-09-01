@@ -5,6 +5,8 @@ import re
 import uuid
 from datetime import datetime, timedelta, timezone
 
+from .base import Submodel
+
 
 # Agent identity
 AGENT_USER_ID = "00000000-0000-0000-0000-000000000001"
@@ -306,19 +308,13 @@ def _exempt_from_inactivity_sweep(user_id: str, admin_ids: set[str]) -> bool:
     return user_id == AGENT_USER_ID or user_id in admin_ids
 
 
-class UsersModel:
+class UsersModel(Submodel):
     """User/group/handle operations, resolved through ``app_state.db``.
 
     Constructed by :class:`~klangk.model.model.Model` and reached
     via ``app_state.model.users``. Reaches the DB through
     ``self.app.state.db`` (the single DB instance for the whole app).
     """
-
-    def __init__(self, app):
-        self.app = app
-
-    def reconfigure(self, app) -> None:
-        self.app = app
 
     async def get_agent_user(self) -> dict:
         """Return the agent user dict from DB, cached after first call."""
@@ -1041,8 +1037,8 @@ class UsersModel:
     async def _admin_member_ids(self, db) -> set[str]:
         """IDs of ``admins`` group members (empty when unseeded).
 
-        Reads on the caller's connection so the sweep's exemption set
-        and its row scan share one snapshot.
+        Only the membership query runs on *db* (so it shares the
+        sweep's snapshot); the group lookup uses the pool connection.
         """
         admin_group = await self.get_group_by_name("admins")
         if admin_group is None:

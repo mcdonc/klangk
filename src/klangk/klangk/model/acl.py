@@ -6,6 +6,7 @@ and the pure ``row_to_acl_entry`` helper stay module-level — they are
 imported as literal values by ``workspaces.py`` and ``schema.py``.
 """
 
+from .base import Submodel
 from .users import (
     AGENT_USER_ID,
     AgentPrincipalError,
@@ -94,7 +95,7 @@ def _reject_agent_principal(entry: dict) -> None:
         )
 
 
-class ACLModel:
+class ACLModel(Submodel):
     """ACL data access, through ``app_state.db``.
 
     Reached via ``app_state.model.acl``. Reaches the DB through
@@ -103,12 +104,6 @@ class ACLModel:
     (backstop); the constants and the pure ``row_to_acl_entry`` helper
     stay module-level.
     """
-
-    def __init__(self, app):
-        self.app = app
-
-    def reconfigure(self, app) -> None:
-        self.app = app
 
     async def _check_role_group_scope(
         self, db, resource: str, group_id: str

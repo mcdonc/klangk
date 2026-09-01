@@ -9,6 +9,8 @@ reach while in ``egress_mode='interactive'``.
 import time
 import uuid
 
+from .base import Submodel
+
 
 # Decision lifecycle values.
 DECISION_PENDING = "pending"
@@ -74,14 +76,8 @@ _EC_COLUMNS = (
 )
 
 
-class EgressConsentModel:
+class EgressConsentModel(Submodel):
     """CRUD for the ``egress_consent`` table."""
-
-    def __init__(self, app):
-        self.app = app
-
-    def reconfigure(self, app) -> None:
-        self.app = app
 
     async def create_request(
         self,
@@ -148,39 +144,9 @@ class EgressConsentModel:
         a flooding workspace can't spam denial rows. Returns the row, or
         None if one already exists.
         """
-        request_id = str(uuid.uuid4())
-        now = time.time()
-        async with self.app.state.db.transaction() as db:
-            cursor = await db.execute(
-                "INSERT OR IGNORE INTO egress_consent"
-                " (id, workspace_id, dest_host, dest_port,"
-                "  decision, requested_at, decided_at, decided_by)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    request_id,
-                    workspace_id,
-                    dest_host,
-                    dest_port,
-                    DECISION_DENIED,
-                    now,
-                    now,
-                    None,
-                ),
-            )
-            if cursor.rowcount == 0:
-                return None
-        return {
-            "id": request_id,
-            "workspace_id": workspace_id,
-            "dest_host": dest_host,
-            "dest_port": dest_port,
-            "pid": None,
-            "process_name": None,
-            "decision": DECISION_DENIED,
-            "requested_at": now,
-            "decided_at": now,
-            "decided_by": None,
-        }
+        return await self._record_static_row(
+            DECISION_DENIED, workspace_id, dest_host, dest_port
+        )
 
     async def record_static_allow(
         self,
@@ -199,6 +165,19 @@ class EgressConsentModel:
         flooding workspace can't spam allow rows. Returns the row, or None if
         one already exists.
         """
+        return await self._record_static_row(
+            DECISION_ALLOWED, workspace_id, dest_host, dest_port
+        )
+
+    async def _record_static_row(
+        self,
+        decision: str,
+        workspace_id: str,
+        dest_host: str,
+        dest_port: int | None,
+    ) -> dict | None:
+        """INSERT OR IGNORE one static-mode consent row; the new row, or
+        None when the mode's dedup index already had it."""
         request_id = str(uuid.uuid4())
         now = time.time()
         async with self.app.state.db.transaction() as db:
@@ -212,7 +191,7 @@ class EgressConsentModel:
                     workspace_id,
                     dest_host,
                     dest_port,
-                    DECISION_ALLOWED,
+                    decision,
                     now,
                     now,
                     None,
@@ -227,7 +206,7 @@ class EgressConsentModel:
             "dest_port": dest_port,
             "pid": None,
             "process_name": None,
-            "decision": DECISION_ALLOWED,
+            "decision": decision,
             "requested_at": now,
             "decided_at": now,
             "decided_by": None,
@@ -639,6 +618,8 @@ class EgressConsentModel:
         settings = self.app.state.settings
         retention_days = settings.egress_consent_retention_days
         row_cap = settings.egress_consent_row_cap
+        if retention_days <= 0 and row_cap <= 0:
+            return 0
         when = _resolve_prune_now(now)
         deleted = 0
         if retention_days > 0:

@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 
 from ..netfilter import parse_allowed_domains
 from .acl import ACTION_ALLOW, PRINCIPAL_GROUP, PRINCIPAL_USER
+from .base import Submodel
 from .users import (
     AGENT_USER_ID,
     AgentPrincipalError,
@@ -437,12 +438,18 @@ def _decode_list_blob(blob: str | None) -> list:
     return json.loads(blob) if blob else []
 
 
-# Sentinel distinguishing "workspace row gone" (stop, return False) from
-# "CAS lost" (retry) in _mutate_domain_list's loop.
-_DOMAIN_MISSING = object()
+class _DomainMissing:
+    """Sentinel: the workspace row is gone (stop, return False).
+
+    Distinguishes "row gone" from "CAS lost" (retry) in
+    ``_mutate_domain_list``'s loop.
+    """
 
 
-class WorkspacesModel:
+_DOMAIN_MISSING = _DomainMissing()
+
+
+class WorkspacesModel(Submodel):
     """Workspace CRUD/members/listings, resolved through ``app_state.db``.
 
     Constructed by :class:`~klangk.model.model.Model` and reached
@@ -456,12 +463,6 @@ class WorkspacesModel:
     constraint (the owner ACE + role groups must commit/roll back with the
     row insert) is load-bearing (#128).
     """
-
-    def __init__(self, app):
-        self.app = app
-
-    def reconfigure(self, app) -> None:
-        self.app = app
 
     async def _insert_workspace_row(
         self,
@@ -988,6 +989,8 @@ class WorkspacesModel:
                 current, old_blob = await self._read_merged_settings(
                     db, workspace_id, user_id, patch
                 )
+                # current is None only when the row is missing (empty
+                # patches are rejected upstream).
                 if current is None:
                     return None
                 if await self._cas_store_settings(
@@ -1129,7 +1132,7 @@ class WorkspacesModel:
 
     async def _domain_cas_attempt(
         self, db, workspace_id: str, column: str, spec: str, add: bool
-    ):
+    ) -> _DomainMissing | bool:
         """One read-modify-write CAS step on a domain-list column.
 
         Returns ``_DOMAIN_MISSING`` when the workspace row is gone,
@@ -1225,16 +1228,14 @@ class WorkspacesModel:
         self, workspace_id: str, entry: str
     ) -> bool:
         """Remove ``entry`` from a workspace's ``rejected_domains`` (#2370) --
-        the inverse of :meth:`add_rejected_domain`.
+        the inverse of :meth:`add_rejected_domain`, sharing its mechanics
+        with :meth:`remove_allowed_domain` (compare-and-swap on the JSON
+        blob, case-insensitive match, idempotent; False when the workspace
+        is missing or ``entry`` is malformed).
 
         Revoking a ``forever`` egress-consent deny retracts the durable entry
         it added (so the deny does not re-apply on the next sidecar restart);
         the in-memory REJECT rules are dropped separately by the sidecar.
-        Compare-and-swap on the JSON blob, case-insensitive match, mirroring
-        :meth:`add_rejected_domain`. Returns True if the workspace exists and
-        ``entry`` is absent from the list afterwards (removed or already
-        absent -- idempotent); False if the workspace is missing or ``entry``
-        is malformed.
         """
         return await self._mutate_domain_list(
             workspace_id, "rejected_domains", add=False, entry=entry
