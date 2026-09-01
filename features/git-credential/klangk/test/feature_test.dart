@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:klangk_feature_git_credential/feature.dart';
 
@@ -316,6 +318,88 @@ void main() {
         'host': 'github.com',
       });
       expect(jsonDecode(result)['error'], contains('unknown operation'));
+    });
+  });
+
+  group('credential dialog hints', () {
+    Widget overlayHost(GitCredentialFeature feature) => MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => Stack(
+                children: [feature.buildOverlay(context)!],
+              ),
+            ),
+          ),
+        );
+
+    Future<void> pumpWithPendingGet(
+      WidgetTester tester,
+      GitCredentialFeature feature,
+      String host,
+    ) async {
+      // Cache-miss get blocks on the dialog completer; do not await it.
+      unawaited(feature.handlers['git_credential']!({
+        'operation': 'get',
+        'protocol': 'https',
+        'host': host,
+      }));
+      await tester.pumpWidget(overlayHost(feature));
+      await tester.pump();
+    }
+
+    String? hintOf(WidgetTester tester, int textFieldIndex) {
+      final field =
+          tester.widget<TextField>(find.byType(TextField).at(textFieldIndex));
+      return field.decoration?.hintText;
+    }
+
+    testWidgets('github.com keeps the GitHub hints', (tester) async {
+      await pumpWithPendingGet(tester, feature, 'github.com');
+      expect(hintOf(tester, 0), 'GitHub username');
+      expect(hintOf(tester, 1), 'ghp_... or github_pat_...');
+      expect(find.text('Personal access token (PAT):'), findsOneWidget);
+      expect(find.text('Token or password:'), findsNothing);
+    });
+
+    testWidgets('www.github.com keeps the GitHub hints', (tester) async {
+      await pumpWithPendingGet(tester, feature, 'www.github.com');
+      expect(hintOf(tester, 0), 'GitHub username');
+      expect(hintOf(tester, 1), 'ghp_... or github_pat_...');
+    });
+
+    testWidgets('uppercase GitHub.com host keeps the GitHub hints',
+        (tester) async {
+      await pumpWithPendingGet(tester, feature, 'GitHub.com');
+      expect(hintOf(tester, 0), 'GitHub username');
+      expect(hintOf(tester, 1), 'ghp_... or github_pat_...');
+    });
+
+    testWidgets('github.com with explicit port keeps the GitHub hints',
+        (tester) async {
+      await pumpWithPendingGet(tester, feature, 'github.com:443');
+      expect(hintOf(tester, 0), 'GitHub username');
+      expect(hintOf(tester, 1), 'ghp_... or github_pat_...');
+    });
+
+    testWidgets('github.com with trailing dot keeps the GitHub hints',
+        (tester) async {
+      await pumpWithPendingGet(tester, feature, 'github.com.');
+      expect(hintOf(tester, 0), 'GitHub username');
+      expect(hintOf(tester, 1), 'ghp_... or github_pat_...');
+    });
+
+    testWidgets('gitlab.com gets neutral hints', (tester) async {
+      await pumpWithPendingGet(tester, feature, 'gitlab.com');
+      expect(hintOf(tester, 0), 'Username');
+      expect(hintOf(tester, 1), 'Token or password');
+      expect(find.text('Token or password:'), findsOneWidget);
+      expect(find.text('Personal access token (PAT):'), findsNothing);
+    });
+
+    testWidgets('self-hosted host gets neutral hints', (tester) async {
+      await pumpWithPendingGet(tester, feature, 'git.example.com');
+      expect(hintOf(tester, 0), 'Username');
+      expect(hintOf(tester, 1), 'Token or password');
     });
   });
 

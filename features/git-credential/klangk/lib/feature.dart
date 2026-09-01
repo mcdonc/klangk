@@ -361,6 +361,29 @@ class _CredentialDialog extends StatefulWidget {
     required this.onCancel,
   });
 
+  /// GitHub hosts keep the PAT-flavored wording; every other host gets
+  /// neutral text (gitlab.com, bitbucket.org, gitea, self-hosted, ...).
+  /// Normalizes what git can put in the credential `host` field: case
+  /// (`GitHub.com`), an explicit port (`github.com:443`), and a trailing
+  /// dot (`github.com.`) are all GitHub.
+  bool get isGitHubHost {
+    var normalized = host.toLowerCase();
+    final port = normalized.indexOf(':');
+    if (port >= 0) normalized = normalized.substring(0, port);
+    while (normalized.endsWith('.')) {
+      normalized = normalized.substring(0, normalized.length - 1);
+    }
+    return normalized == 'github.com' || normalized == 'www.github.com';
+  }
+
+  String get usernameHint => isGitHubHost ? 'GitHub username' : 'Username';
+
+  String get tokenLabel =>
+      isGitHubHost ? 'Personal access token (PAT):' : 'Token or password:';
+
+  String get tokenHint =>
+      isGitHubHost ? 'ghp_... or github_pat_...' : 'Token or password';
+
   @override
   State<_CredentialDialog> createState() => _CredentialDialogState();
 }
@@ -444,7 +467,7 @@ class _CredentialDialogState extends State<_CredentialDialog> {
                     focusNode: _usernameFocusNode,
                     style: const TextStyle(color: Colors.white, fontSize: 14),
                     decoration: InputDecoration(
-                      hintText: 'GitHub username',
+                      hintText: widget.usernameHint,
                       hintStyle: const TextStyle(color: Colors.white30),
                       filled: true,
                       fillColor: Colors.black26,
@@ -468,9 +491,9 @@ class _CredentialDialogState extends State<_CredentialDialog> {
                     onSubmitted: (_) => _tokenFocusNode.requestFocus(),
                   ),
                   const SizedBox(height: 12),
-                  const Text(
-                    'Personal access token (PAT):',
-                    style: TextStyle(color: Colors.white70, fontSize: 13),
+                  Text(
+                    widget.tokenLabel,
+                    style: const TextStyle(color: Colors.white70, fontSize: 13),
                   ),
                   const SizedBox(height: 4),
                   TextField(
@@ -479,7 +502,7 @@ class _CredentialDialogState extends State<_CredentialDialog> {
                     obscureText: true,
                     style: const TextStyle(color: Colors.white, fontSize: 14),
                     decoration: InputDecoration(
-                      hintText: 'ghp_... or github_pat_...',
+                      hintText: widget.tokenHint,
                       hintStyle: const TextStyle(color: Colors.white30),
                       filled: true,
                       fillColor: Colors.black26,
