@@ -458,36 +458,10 @@ ENDPOINTS: list[tuple[str, str, dict | None, dict | None]] = [
     # Users
     ("GET", f"{P}/users/search", None, {"q": "string"}),
     ("GET", f"{P}/my-permissions", None, {"resource": "string"}),
-    # Groups: the authenticated listing plus the single management
-    # surface at /admin/groups (#2941-fold — the /groups writes are
-    # gone).
+    # Groups: the authenticated listing; the management surface at
+    # /admin/groups is covered in the Admin section below (#2941-fold
+    # — the /groups writes are gone).
     ("GET", f"{P}/groups", None, None),
-    (
-        "POST",
-        f"{P}/admin/groups",
-        {"name": "string", "description": "string"},
-        None,
-    ),
-    (
-        "PATCH",
-        f"{P}/admin/groups/{{group_id}}",
-        {"name": "string", "description": "string"},
-        None,
-    ),
-    ("DELETE", f"{P}/admin/groups/{{group_id}}", None, None),
-    ("GET", f"{P}/admin/groups/{{group_id}}/members", None, None),
-    (
-        "POST",
-        f"{P}/admin/groups/{{group_id}}/members",
-        {"user_id": "uuid"},
-        None,
-    ),
-    (
-        "DELETE",
-        f"{P}/admin/groups/{{group_id}}/members/{{user_id}}",
-        None,
-        None,
-    ),
     # Admin
     ("GET", f"{P}/admin/users", None, None),
     (

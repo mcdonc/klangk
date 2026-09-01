@@ -1347,15 +1347,18 @@ void main() {
       expect(find.byTooltip('Delete user'), findsNothing);
     });
 
-    testWidgets('manage-members picker omits the system agent', (tester) async {
+    testWidgets('member picker searches /users/search and omits the agent',
+        (tester) async {
       testAuthHttpClientOverride = _mockClient((request) async {
         final path = request.url.path;
-        if (path == '/api/v1/admin/users') {
+        if (path == '/api/v1/users/search') {
+          // The type-ahead surface: a bare list, agent included — the
+          // dialog must filter the agent out (#2892).
           return http.Response(
-            _usersEnvelope(
-              [_agentUser(), _user('carol@example.com', id: 'u-carol')],
-              total: 2,
-            ),
+            jsonEncode([
+              _agentUser(),
+              _user('carol@example.com', id: 'u-carol'),
+            ]),
             200,
           );
         }
@@ -1383,14 +1386,79 @@ void main() {
       await tester.tap(find.text('admins'));
       await tester.pumpAndSettle();
 
-      // The add-member dropdown offers carol but never the agent (the
-      // backend rejects making it an ACL principal).
-      final dropdown = tester.widget<DropdownButton<String>>(
-        find.byType(DropdownButton<String>),
+      // Type a prefix; the picker hits the authenticated search
+      // surface and offers carol — never the system agent.
+      await tester.enterText(
+        find.byKey(const ValueKey('member-search')),
+        'carol',
       );
-      final values = dropdown.items!.map((item) => item.value).toList();
-      expect(values, contains('u-carol'));
-      expect(values, isNot(contains(agentUserId)));
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pumpAndSettle();
+
+      expect(find.text('carol@example.com'), findsOneWidget);
+      expect(find.byTooltip('Add to group'), findsOneWidget);
+      // The agent never appears as an offered candidate (#2892).
+      expect(find.text('klangk@example.com'), findsNothing);
+    });
+
+    testWidgets('manage-groups-only delegate sees members and can search',
+        (tester) async {
+      // #2943 review: a groups-only delegate gets 403 on /admin/users —
+      // the members dialog must still work (picker rides the
+      // authenticated /users/search surface).
+      testAuthHttpClientOverride = _mockClient((request) async {
+        final path = request.url.path;
+        if (path == '/api/v1/my-permissions') {
+          return http.Response(
+            jsonEncode({
+              'user_id': 'admin-user',
+              'email': 'admin@example.com',
+              'permissions': {
+                '/admin/groups': ['manage-groups'],
+              },
+              'groups': [],
+            }),
+            200,
+          );
+        }
+        if (path == '/api/v1/admin/groups') {
+          return http.Response(
+            _groupsEnvelope([_group('helpdesk', id: 'g9')], total: 1),
+            200,
+          );
+        }
+        if (path == '/api/v1/admin/groups/g9/members') {
+          return http.Response(
+            jsonEncode([_user('bob@example.com', id: 'u-bob')]),
+            200,
+          );
+        }
+        if (path == '/api/v1/users/search') {
+          return http.Response(
+            jsonEncode([_user('carol@example.com', id: 'u-carol')]),
+            200,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+
+      await pumpPage(tester);
+      await tester.tap(find.text('Groups'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('helpdesk'));
+      await tester.pumpAndSettle();
+
+      // Members render even though /admin/users would 404.
+      expect(find.text('bob@example.com'), findsOneWidget);
+      expect(find.text('No members'), findsNothing);
+
+      await tester.enterText(
+        find.byKey(const ValueKey('member-search')),
+        'carol',
+      );
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pumpAndSettle();
+      expect(find.text('carol@example.com'), findsOneWidget);
     });
   });
 

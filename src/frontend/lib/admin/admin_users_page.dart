@@ -950,8 +950,15 @@ class _ManageMembersDialog extends StatefulWidget {
 
 class _ManageMembersDialogState extends State<_ManageMembersDialog> {
   List<Map<String, dynamic>> _members = [];
-  List<Map<String, dynamic>> _allUsers = [];
   bool _loading = true;
+
+  /// Type-ahead picker results from the authenticated
+  /// `GET /users/search` surface: a `manage-groups`-only delegate
+  /// (no `manage-users`) must still be able to add members, so the
+  /// picker never reads `/admin/users` (#2943 review).
+  List<Map<String, dynamic>> _results = [];
+  final _searchController = TextEditingController();
+  Timer? _searchDebounce;
 
   String get _groupId => widget.group['id'] as String;
   String get _groupName => widget.group['name'] as String;
@@ -959,27 +966,56 @@ class _ManageMembersDialogState extends State<_ManageMembersDialog> {
   @override
   void initState() {
     super.initState();
-    _loadData();
+    _loadMembers();
+    _searchController.addListener(() {
+      final q = _searchController.text.trim();
+      _searchDebounce?.cancel();
+      if (q.isEmpty) {
+        if (mounted) setState(() => _results = []);
+        return;
+      }
+      _searchDebounce = Timer(const Duration(milliseconds: 250), () {
+        _search(q);
+      });
+    });
   }
 
-  Future<void> _loadData() async {
+  @override
+  void dispose() {
+    _searchDebounce?.cancel();
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadMembers() async {
     final auth = context.read<AuthService>();
-    final membersResp = await auth.authGet(
+    final resp = await auth.authGet(
       '/api/v1/admin/groups/$_groupId/members',
     );
-    final usersResp = await auth.authGet('/api/v1/admin/users?page_size=200');
     if (!mounted) return;
-    if (membersResp.statusCode != 200 || usersResp.statusCode != 200) {
-      setState(() => _loading = false);
-      return;
-    }
     setState(() {
-      _members = List<Map<String, dynamic>>.from(jsonDecode(membersResp.body));
-      _allUsers = List<Map<String, dynamic>>.from(
-        (jsonDecode(usersResp.body) as Map<String, dynamic>)['users'] as List,
-      );
+      if (resp.statusCode == 200) {
+        _members = List<Map<String, dynamic>>.from(jsonDecode(resp.body));
+      }
       _loading = false;
     });
+  }
+
+  Future<void> _search(String q) async {
+    final auth = context.read<AuthService>();
+    final resp = await auth.authGet(
+      '/api/v1/users/search?q=${Uri.encodeQueryComponent(q)}',
+    );
+    if (!mounted || resp.statusCode != 200) return;
+    final memberIds = _members.map((m) => m['id']).toSet();
+    final found = List<Map<String, dynamic>>.from(
+      (jsonDecode(resp.body) as List).cast<Map<String, dynamic>>(),
+    )
+        .where((u) => !memberIds.contains(u['id']))
+        // The agent can never be a group member (the backend rejects
+        // making it an ACL principal), so don't offer it (#2892).
+        .where((u) => !isSystemAgent(u));
+    setState(() => _results = found.toList());
   }
 
   Future<void> _addMember(String userId) async {
@@ -989,12 +1025,8 @@ class _ManageMembersDialogState extends State<_ManageMembersDialog> {
       body: jsonEncode({'user_id': userId}),
     );
     if (resp.statusCode == 200) {
-      final r = await auth.authGet('/api/v1/admin/groups/$_groupId/members');
-      if (r.statusCode == 200 && mounted) {
-        setState(() {
-          _members = List<Map<String, dynamic>>.from(jsonDecode(r.body));
-        });
-      }
+      _searchController.clear();
+      await _loadMembers();
     }
   }
 
@@ -1020,14 +1052,6 @@ class _ManageMembersDialogState extends State<_ManageMembersDialog> {
       );
     }
 
-    final memberIds = _members.map((m) => m['id']).toSet();
-    final nonMembers = _allUsers
-        .where((u) => !memberIds.contains(u['id']))
-        // The agent can never be a group member (the backend rejects
-        // making it an ACL principal), so don't offer it (#2892).
-        .where((u) => !isSystemAgent(u))
-        .toList();
-
     return AlertDialog(
       title: Text('Members of "$_groupName"'),
       content: SizedBox(
@@ -1036,19 +1060,33 @@ class _ManageMembersDialogState extends State<_ManageMembersDialog> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            if (nonMembers.isNotEmpty)
-              DropdownButton<String>(
-                isExpanded: true,
-                hint: const Text('Add member...'),
-                items: nonMembers.map((u) {
-                  return DropdownMenuItem(
-                    value: u['id'] as String,
-                    child: Text(u['email'] as String),
-                  );
-                }).toList(),
-                onChanged: (userId) {
-                  if (userId != null) _addMember(userId);
-                },
+            TextField(
+              key: const ValueKey('member-search'),
+              controller: _searchController,
+              decoration: const InputDecoration(
+                hintText: 'Add member by email prefix…',
+                prefixIcon: Icon(Icons.person_search),
+                isDense: true,
+              ),
+            ),
+            if (_results.isNotEmpty)
+              SizedBox(
+                height: 112,
+                child: ListView.builder(
+                  itemCount: _results.length,
+                  itemBuilder: (ctx, i) {
+                    final candidate = _results[i];
+                    return ListTile(
+                      dense: true,
+                      title: Text(candidate['email'] as String),
+                      trailing: IconButton(
+                        icon: const Icon(Icons.add_circle_outline),
+                        tooltip: 'Add to group',
+                        onPressed: () => _addMember(candidate['id'] as String),
+                      ),
+                    );
+                  },
+                ),
               ),
             const SizedBox(height: 8),
             Expanded(
@@ -2022,7 +2060,7 @@ class _AclBrowserTabState extends State<_AclBrowserTab> {
                       key: ValueKey(_selectedResource),
                       resource: _selectedResource,
                       // The admin browser is where the admin-scoped
-                      // `container-events` grant is creatable (#2923);
+                      // `manage-*` grants are creatable (#2940);
                       // the workspace editor keeps the curated list.
                       permissions: AclEditorState.adminPermissions,
                     ),

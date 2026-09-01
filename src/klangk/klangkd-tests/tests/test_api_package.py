@@ -315,6 +315,7 @@ def test_all_permissions_single_source():
     for name in (
         "manage-users",
         "manage-invitations",
+        "manage-groups",
         "manage-server-schedule",
         "manage-acls",
     ):

@@ -4,7 +4,7 @@
 /// Reads the `container_events` audit table (#2915) through
 /// `GET /api/v1/admin/container-events` — newest first, optional
 /// workspace-id filter, offset-based paging. The tab itself is gated on
-/// the dedicated `container-events` permission over
+/// the dedicated `manage-events` permission over
 /// `/admin/container-events` (see [AdminUsersPage]); admins hold it via
 /// the `/admin` wildcard, other principals only via an explicit grant.
 library;

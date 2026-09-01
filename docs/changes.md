@@ -38,7 +38,10 @@ operators or integrators to act when upgrading.
   the tab permission (or `*`) instead. Default deployments are
   unaffected. If you granted `container-events` ACEs while running
   main, rename them to `manage-events` (the feature was never in a
-  release).
+  release). Likewise, pre-#2940 `/groups` Allow `create` delegations
+  are now inert: group creation is gated by `manage-groups` on
+  `/admin/groups`, and that permission covers the whole Groups tab
+  (edit, delete, member management) — re-grant accordingly.
 
 - **The seeded admin group is renamed to `admins` (#2934).** Fresh
   installs seed a group named `admins`; upgrading renames the `admin`

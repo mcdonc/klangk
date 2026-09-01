@@ -231,8 +231,9 @@ class TestSeedDefaultUser:
 
 
 class TestSeedDefaultAcls:
-    """The tightened /groups seed (#2770): create goes to the admin
-    group, mirroring /workspaces (#2569) — not to system:authenticated."""
+    """Seeded-ACL shape. The /groups `create` seed (tightened in #2770)
+    was removed entirely in #2940 — group management rides the /admin
+    `*` wildcard; fresh installs seed nothing on /groups."""
 
     async def test_groups_create_not_seeded(self, db, app_state):
         """#2941-fold: the /groups `create` seed is gone — the write

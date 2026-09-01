@@ -14739,6 +14739,7 @@ class TestAdminTabPermissions:
         headers = await _auth_headers(client)
         for path in (
             "/api/v1/admin/users",
+            "/api/v1/admin/groups",
             "/api/v1/admin/invitations",
             "/api/v1/admin/acl/tree",
             "/api/v1/admin/server/schedule",
