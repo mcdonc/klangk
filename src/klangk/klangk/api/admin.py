@@ -848,10 +848,10 @@ async def list_container_events(
     Newest-first rows from the ``container_events`` audit table
     (#2915) plus the filter-matching total, optionally narrowed to one
     workspace. Gated on the dedicated ``manage-events`` permission
-    over the URL-derived resource ``/events``: the
-    admin group holds it through its ``/admin`` ``*`` wildcard, and a
-    non-admin gets it only via an explicit ACE on that resource —
-    read-only audit access without full admin.
+    over the URL-derived resource ``/events``: the admin group holds it
+    through the seeded Allow row, and a non-admin gets it only via an
+    explicit ACE on that resource — read-only audit access without
+    full admin.
     """
     app = request.app
     rows = await app.state.model.container_events.list_events(

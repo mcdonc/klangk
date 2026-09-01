@@ -154,7 +154,7 @@ reported as different, and a user logging in twice from the same
 machine is not audited.
 
 Admins can query a user's active sessions at any time — see
-[`GET /api/v1/users/{id}/sessions`](../reference/api-endpoints.md#get-apiv1adminusersidsessions)
+[`GET /api/v1/users/{id}/sessions`](../reference/api-endpoints.md#get-apiv1usersidsessions)
 in the API reference. Each row shows when the session was established,
 when it expires, and the workstation it came from.
 

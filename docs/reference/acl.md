@@ -168,16 +168,16 @@ Every governed surface is a first-class top-level resource (#2944);
 each carries **one** flat `manage-*` permission covering all of its
 actions — no per-action splits:
 
-| Permission               | Where it is checked | Controls                                                                                                                                                              |
-| ------------------------ | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `create`                 | `/workspaces`       | Create/import workspaces (renamed `create-workspace` in the workspaces tranche)                                                                                       |
-| `manage-users`           | `/users`            | The whole Users surface: list users and their workspaces, create, edit, unlock, delete, read active login sessions. `GET /users/search` stays authenticated (pickers) |
-| `manage-groups`          | `/groups`           | The whole Groups surface: create, edit, delete, manage members. `GET /groups` stays authenticated (pickers)                                                           |
-| `manage-invitations`     | `/invitations`      | List, send, resend, revoke invitations                                                                                                                                |
-| `manage-server-schedule` | `/server`           | Server stop/recycle schedules: list, create, cancel — plus the drain/consent decider WS handshake                                                                     |
-| `manage-events`          | `/events`           | Read the container start/stop history (`GET /events`) — read-only audit                                                                                               |
-| `manage-acls`            | `/acl`              | The Access Control browser: read and rewrite ACL entries on **any** resource via `GET/PUT /acl/*` — root-equivalent, see below                                        |
-| `admin`                  | `/admin`            | The instance-administrator **marker** only (`*` row); nothing in the API checks it anymore (#2944)                                                                    |
+| Permission               | Where it is checked | Controls                                                                                                                                                                                                                            |
+| ------------------------ | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `create`                 | `/workspaces`       | Create/import workspaces (renamed `create-workspace` in the workspaces tranche)                                                                                                                                                     |
+| `manage-users`           | `/users`            | The whole Users surface: list users and their workspaces, create, edit, unlock, delete, read active login sessions. `GET /users/search` stays authenticated (pickers)                                                               |
+| `manage-groups`          | `/groups`           | The whole Groups surface: create, edit, delete, manage members. `GET /groups` stays authenticated (pickers)                                                                                                                         |
+| `manage-invitations`     | `/invitations`      | List, send, resend, revoke invitations                                                                                                                                                                                              |
+| `manage-server-schedule` | `/server`           | Server stop/recycle schedules: list, create, cancel — plus the drain/consent decider WS handshake                                                                                                                                   |
+| `manage-events`          | `/events`           | Read the container start/stop history (`GET /events`) — read-only audit                                                                                                                                                             |
+| `manage-acls`            | `/acl`              | The Access Control browser: read and rewrite ACL entries on **any** resource via `GET/PUT /acl/*` — root-equivalent, see below                                                                                                      |
+| `admin`                  | `/admin`            | The instance-administrator **marker** only (`*` row); nothing checks it on `/admin` anymore (#2944) — but the workspace-transfer gate still checks the name `admin` on each `/workspaces/{id}` until the workspaces tranche (#2946) |
 
 `PUT /acl/resource` additionally requires `change-acls` on the target
 when that target is an individual workspace (`/workspaces/{id}`) — the

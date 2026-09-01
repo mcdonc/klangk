@@ -6170,10 +6170,9 @@ class TestWorkspaceGroupSharing:
 
 
 class TestUserGroupEndpoints:
-    """GET /groups (authenticated listing) + the /admin/groups management
-    surface behind manage-groups (#2941-fold: the /groups writes were
-    removed; their semantics — creator ACL grant, ACE cleanup on delete —
-    were ported onto /admin/groups)."""
+    """The /groups surface (#2944): an authenticated listing plus
+    manage-groups-gated writes (creator grant dropped — flat
+    permissions; ACE cleanup on delete retained)."""
 
     async def test_list_groups(self, client, user):
         headers = await _auth_headers(client)
@@ -9188,7 +9187,7 @@ class TestAdminResourceACL:
         assert workspace_scope("/workspaces") is None
         assert workspace_scope("/workspaces/") is None
         assert workspace_scope("/") is None
-        assert workspace_scope("/admin/users/x") is None
+        assert workspace_scope("/users/x") is None
         assert workspace_scope("") is None
         # Malformed: empty id segments are not a workspace target.
         assert workspace_scope("/workspaces//abc") is None
@@ -14679,7 +14678,8 @@ class TestAdminTabPermissions:
     async def test_wildcard_admin_keeps_full_access(
         self, client, app, admin_user
     ):
-        """The seeded /admin Allow * satisfies every tab permission."""
+        """The seeded per-resource Allow rows satisfy every tab
+        permission for admins (plus the /admin wildcard marker)."""
         headers = await self._admin_headers(client)
         for path in (
             "/api/v1/users",
@@ -14690,6 +14690,20 @@ class TestAdminTabPermissions:
         ):
             resp = await client.get(path, headers=headers)
             assert resp.status_code == 200, (path, resp.text)
+
+    async def test_old_admin_paths_are_gone(self, client, admin_user):
+        """#2944: the /admin/* API paths 404 — nothing lives there."""
+        headers = await self._admin_headers(client)
+        for path in (
+            "/api/v1/admin/users",
+            "/api/v1/admin/groups",
+            "/api/v1/admin/invitations",
+            "/api/v1/admin/acl/tree",
+            "/api/v1/admin/server/schedule",
+            "/api/v1/admin/container-events",
+        ):
+            resp = await client.get(path, headers=headers)
+            assert resp.status_code == 404, path
 
     async def test_plain_user_locked_out_everywhere(self, client, app, user):
         headers = await _auth_headers(client)

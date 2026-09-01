@@ -521,6 +521,30 @@ class TestConsentDeciderWS:
         assert ws.closed == (4003, "Forbidden")
         assert ws.accepted is False
 
+    async def test_deploy_wide_gate_checks_server_schedule(self):
+        """#2944: the deploy-wide handshake checks manage-server-schedule
+        on /server (previously the legacy admin-on-/admin gate) — pin
+        the exact resource and permission so a regression back to the
+        old names fails here, not in production."""
+        from fastapi import WebSocketDisconnect
+
+        from klangk.wshandler.decider import handle_consent_decider
+
+        app = _ws_app({"id": "u1", "email": "admin@x"})
+        checked = []
+
+        async def check(resource, principals, perm):
+            checked.append((resource, perm))
+            return perm == "manage-server-schedule"
+
+        app.state.acl.check_permission = AsyncMock(side_effect=check)
+        ws = _FakeWS({"token": "tok"}, [WebSocketDisconnect()])
+        await handle_consent_decider(ws, app)
+        assert ws.accepted is True
+        assert ("/server", "manage-server-schedule") in checked
+        # The old gate must not appear at all.
+        assert ("/admin", "admin") not in checked
+
     async def test_ping_touches_and_pongs(self):
         from fastapi import WebSocketDisconnect
 

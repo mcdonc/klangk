@@ -80,7 +80,7 @@ operators or integrators to act when upgrading.
 
 - **`GET /api/v1/groups` now returns a paged envelope (#2750).** The
   response is `{groups, page, page_size, total}` (same shape as
-  `GET /api/v1/groups`) instead of a bare list that was silently
+  `GET /api/v1/admin/groups`) instead of a bare list that was silently
   truncated at 200 rows. Integrators must read the `groups` key and
   paginate with `page`/`page_size`.
 
@@ -531,7 +531,7 @@ create`/`edit --classification-banner`, and the create/edit UIs; the
 - **Group `source` marker and filtering (#2750).** Groups now carry a
   `source` column: `manual` for human-managed groups,
   `workspace-role` for the four role groups seeded per workspace.
-  `GET /api/v1/groups` and `GET /api/v1/groups` accept a `source`
+  `GET /api/v1/groups` and `GET /api/v1/admin/groups` accept a `source`
   query filter and include it in each row, so pickers can hide the
   machine-generated role-group names. Existing rows are backfilled by a
   schema migration. Role groups are now also rejected as share/ACL

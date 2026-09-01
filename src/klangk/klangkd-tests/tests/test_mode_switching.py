@@ -150,7 +150,7 @@ class TestNoneToPasswordUpgrade:
     async def test_free_token_is_admin_and_can_set_password(
         self, mode_server, monkeypatch
     ):
-        """Steps 1-2: get the free token, then ``PATCH /admin/users/{id}``
+        """Steps 1-2: get the free token, then ``PATCH /users/{id}``
         with a new password — succeeds because the seeded default user is an
         admin."""
         client, user = mode_server
