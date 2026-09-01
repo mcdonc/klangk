@@ -82,6 +82,10 @@ _ROLE_GROUP_PERMISSIONS: dict[str, list[str]] = {
     ],
     "spectators": [
         "monitor-workspace",
+        # terminal = the WS connect gate only (#2946 lifecycle split):
+        # spectators connect to watch shared terminals; own-terminal UI
+        # stays gated on code-in-isolation, which they lack.
+        "terminal",
         "spectate-on-shared-terminals",
     ],
 }

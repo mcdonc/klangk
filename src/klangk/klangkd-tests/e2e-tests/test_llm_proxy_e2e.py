@@ -114,9 +114,23 @@ def server(fake_llm):
     stop_server(srv)
 
 
+def _auth_headers(srv) -> dict:
+    """#2946: the proxy is permission-gated — log in as the default user."""
+    resp = srv["client"].post(
+        "/api/v1/auth/login",
+        json={"identifier": "test@example.com", "password": "testpass"},
+        timeout=10,
+    )
+    token = resp.json()["access_token"]
+    return {"Authorization": f"Bearer {token}"}
+
+
 class TestLLMProxyE2E:
     def test_models_endpoint_returns_configured_model(self, server):
-        resp = server["client"].get("/llm-proxy/models", timeout=10)
+        headers = _auth_headers(server)
+        resp = server["client"].get(
+            "/llm-proxy/models", headers=headers, timeout=10
+        )
         assert resp.status_code == 200
         data = resp.json()
         assert data["object"] == "list"
@@ -126,6 +140,7 @@ class TestLLMProxyE2E:
     def test_chat_completions_proxies_to_upstream(self, server):
         resp = server["client"].post(
             "/llm-proxy/chat/completions",
+            headers=_auth_headers(server),
             json={
                 "model": "fake-model",
                 "messages": [{"role": "user", "content": "hello"}],
@@ -140,6 +155,7 @@ class TestLLMProxyE2E:
     def test_chat_completions_returns_usage(self, server):
         resp = server["client"].post(
             "/llm-proxy/chat/completions",
+            headers=_auth_headers(server),
             json={
                 "model": "fake-model",
                 "messages": [{"role": "user", "content": "hi"}],
@@ -163,7 +179,11 @@ class TestLLMProxyE2E:
             LOGFIRE_TOKEN="",
         )
         try:
-            resp = srv["client"].get("/llm-proxy/models", timeout=10)
+            resp = srv["client"].get(
+                "/llm-proxy/models",
+                headers=_auth_headers(srv),
+                timeout=10,
+            )
             assert resp.status_code == 200
             assert resp.json()["data"] == []
         finally:
@@ -201,7 +221,11 @@ class TestLLMProxyPassthroughE2E:
 
     def test_models_discovers_upstream(self, passthrough_stack):
         """GET /llm-proxy/models queries the upstream and returns its models."""
-        resp = passthrough_stack["client"].get("/llm-proxy/models", timeout=10)
+        resp = passthrough_stack["client"].get(
+            "/llm-proxy/models",
+            headers=_auth_headers(passthrough_stack),
+            timeout=10,
+        )
         assert resp.status_code == 200
         data = resp.json()
         assert data["object"] == "list"
@@ -212,6 +236,7 @@ class TestLLMProxyPassthroughE2E:
         """POST /llm-proxy/chat/completions forwards the model name as-is."""
         resp = passthrough_stack["client"].post(
             "/llm-proxy/chat/completions",
+            headers=_auth_headers(passthrough_stack),
             json={
                 "model": "fake-model",
                 "messages": [{"role": "user", "content": "hello"}],
