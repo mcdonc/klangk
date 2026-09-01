@@ -1714,6 +1714,12 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Git credential dialog hint text (#2954).** The browser-side
+  "Git credentials" dialog now derives its field hints from the host:
+  `github.com` keeps "GitHub username" and the `ghp_...`/`github_pat_...`
+  PAT placeholder, while any other host (gitlab.com, bitbucket.org, gitea,
+  self-hosted) shows neutral "Username" and "Token or password" hints.
+
 - **GitHub device-flow login runs once per tab session (#2953).**
   With `KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID` configured, every
   authenticated git operation (push, pull, clone) started a fresh

@@ -361,6 +361,18 @@ class _CredentialDialog extends StatefulWidget {
     required this.onCancel,
   });
 
+  /// GitHub hosts keep the PAT-flavored hints; every other host gets
+  /// neutral wording (gitlab.com, bitbucket.org, gitea, self-hosted, ...).
+  bool get isGitHubHost {
+    final normalized = host.toLowerCase();
+    return normalized == 'github.com' || normalized == 'www.github.com';
+  }
+
+  String get usernameHint => isGitHubHost ? 'GitHub username' : 'Username';
+
+  String get tokenHint =>
+      isGitHubHost ? 'ghp_... or github_pat_...' : 'Token or password';
+
   @override
   State<_CredentialDialog> createState() => _CredentialDialogState();
 }
@@ -444,7 +456,7 @@ class _CredentialDialogState extends State<_CredentialDialog> {
                     focusNode: _usernameFocusNode,
                     style: const TextStyle(color: Colors.white, fontSize: 14),
                     decoration: InputDecoration(
-                      hintText: 'GitHub username',
+                      hintText: widget.usernameHint,
                       hintStyle: const TextStyle(color: Colors.white30),
                       filled: true,
                       fillColor: Colors.black26,
@@ -479,7 +491,7 @@ class _CredentialDialogState extends State<_CredentialDialog> {
                     obscureText: true,
                     style: const TextStyle(color: Colors.white, fontSize: 14),
                     decoration: InputDecoration(
-                      hintText: 'ghp_... or github_pat_...',
+                      hintText: widget.tokenHint,
                       hintStyle: const TextStyle(color: Colors.white30),
                       filled: true,
                       fillColor: Colors.black26,
