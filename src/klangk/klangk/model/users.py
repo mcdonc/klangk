@@ -1015,8 +1015,11 @@ class UsersModel(Submodel):
         if days <= 0:
             return []
         cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        # Resolve the admins group on the pool connection *before* the
+        # transaction opens — no pool acquisition inside it (#2978).
+        admin_group = await self.get_group_by_name("admins")
         async with self.app.state.db.transaction() as db:
-            admin_ids = await self._admin_member_ids(db)
+            admin_ids = await self._admin_member_ids(db, admin_group)
             cursor = await db.execute(
                 "SELECT id, email, created_at, last_login_at,"
                 " last_activity_at FROM users WHERE disabled = 0"
@@ -1034,13 +1037,15 @@ class UsersModel(Submodel):
                 disabled.append({"id": row["id"], "email": row["email"]})
             return disabled
 
-    async def _admin_member_ids(self, db) -> set[str]:
+    async def _admin_member_ids(
+        self, db, admin_group: dict | None
+    ) -> set[str]:
         """IDs of ``admins`` group members (empty when unseeded).
 
-        Only the membership query runs on *db* (so it shares the
-        sweep's snapshot); the group lookup uses the pool connection.
+        The group row is resolved by the caller (outside the sweep's
+        transaction); only the membership query runs here, on *db*,
+        sharing the sweep's snapshot.
         """
-        admin_group = await self.get_group_by_name("admins")
         if admin_group is None:
             return set()
         cursor = await db.execute(

@@ -20,7 +20,7 @@ keeping the newest. An admin-facing paged view is tracked separately.
 import logging
 import time
 
-from .base import Submodel
+from .base import Submodel, resolve_prune_now
 from .users import AGENT_USER_ID
 
 logger = logging.getLogger(__name__)
@@ -86,11 +86,6 @@ def row_to_dict(row) -> dict:
     """Row-tuple -> dict with the column names of ``_EVENT_COLUMNS``."""
     keys = [c.strip() for c in _EVENT_COLUMNS.split(",")]
     return dict(zip(keys, row, strict=True))
-
-
-def _resolve_prune_now(now: float | None) -> float:
-    """The sweep's reference clock (caller-supplied or wall clock)."""
-    return time.time() if now is None else now
 
 
 class ContainerEventsModel(Submodel):
@@ -181,7 +176,7 @@ class ContainerEventsModel(Submodel):
         row_cap = settings.container_events_row_cap
         if retention_days <= 0 and row_cap <= 0:
             return 0
-        when = _resolve_prune_now(now)
+        when = resolve_prune_now(now)
         deleted = 0
         if retention_days > 0:
             deleted += await self._prune_retention(when, retention_days)

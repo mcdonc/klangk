@@ -9,7 +9,7 @@ reach while in ``egress_mode='interactive'``.
 import time
 import uuid
 
-from .base import Submodel
+from .base import Submodel, resolve_prune_now
 
 
 # Decision lifecycle values.
@@ -620,7 +620,7 @@ class EgressConsentModel(Submodel):
         row_cap = settings.egress_consent_row_cap
         if retention_days <= 0 and row_cap <= 0:
             return 0
-        when = _resolve_prune_now(now)
+        when = resolve_prune_now(now)
         deleted = 0
         if retention_days > 0:
             deleted += await self._prune_retention(
@@ -722,11 +722,6 @@ class EgressConsentModel(Submodel):
                 cursor = await db.execute(sql, params)
                 removed += cursor.rowcount
         return removed
-
-
-def _resolve_prune_now(now: float | None) -> float:
-    """The sweep's reference clock (caller-supplied or wall clock)."""
-    return time.time() if now is None else now
 
 
 def _row_to_dict(row) -> dict:

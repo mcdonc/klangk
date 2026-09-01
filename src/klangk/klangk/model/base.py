@@ -1,4 +1,7 @@
-"""Shared base for the model package's app-bound submodels."""
+"""Shared plumbing for the model package: the app-bound submodel base
+and small helpers used across the domain modules."""
+
+import time
 
 
 class Submodel:
@@ -15,3 +18,8 @@ class Submodel:
 
     def reconfigure(self, app) -> None:
         self.app = app
+
+
+def resolve_prune_now(now: float | None) -> float:
+    """A prune sweep's reference clock (caller-supplied or wall clock)."""
+    return time.time() if now is None else now
