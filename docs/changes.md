@@ -1767,6 +1767,14 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   `https://github.com./...` skipped the device flow and fell back to the
   manual PAT dialog; the credential helper now matches those spellings
   the same way the browser dialog does.
+- **Restart affordances gated on `restart-workspace` (#2939).** The
+  container-stopped overlay's Restart button and the settings panel's
+  "Restart now" action are hidden for members without the permission
+  (spectators, custom ACLs) — the server already refused the
+  `restart_container` message, so the buttons only surfaced a
+  permission-denied error. The pending-restart notice still shows;
+  only the action hides. The WebSocket gate matrix is now documented in
+  the ACL reference.
 
 - **Git credential dialog hint text (#2954).** The browser-side
   "Git credentials" dialog now derives its field wording from the host

@@ -146,6 +146,7 @@ void main() {
         buildContainerStoppedOverlay(
           restarting: false,
           stopReason: 'Container stopped (idle timeout)',
+          canRestart: true,
           onRestart: () {},
           onBack: () {},
         ),
@@ -162,6 +163,7 @@ void main() {
         buildContainerStoppedOverlay(
           restarting: false,
           stopReason: 'Container stopped',
+          canRestart: true,
           onRestart: () {},
           onBack: () {},
         ),
@@ -175,6 +177,7 @@ void main() {
         buildContainerStoppedOverlay(
           restarting: true,
           stopReason: '',
+          canRestart: true,
           onRestart: () {},
           onBack: () {},
         ),
@@ -192,6 +195,7 @@ void main() {
         buildContainerStoppedOverlay(
           restarting: false,
           stopReason: 'Container stopped',
+          canRestart: true,
           onRestart: () => called = true,
           onBack: () {},
         ),
@@ -201,12 +205,29 @@ void main() {
       expect(called, isTrue);
     });
 
+    testWidgets('hides restart button without restart-workspace (#2939)',
+        (tester) async {
+      await tester.pumpWidget(wrap(
+        buildContainerStoppedOverlay(
+          restarting: false,
+          stopReason: 'Container stopped',
+          canRestart: false,
+          onBack: () {},
+        ),
+      ));
+
+      expect(find.text('Restart'), findsNothing);
+      expect(find.byIcon(Icons.refresh), findsNothing);
+      expect(find.text('Back to workspaces'), findsOneWidget);
+    });
+
     testWidgets('back button calls callback', (tester) async {
       var called = false;
       await tester.pumpWidget(wrap(
         buildContainerStoppedOverlay(
           restarting: false,
           stopReason: 'Container stopped',
+          canRestart: true,
           onRestart: () {},
           onBack: () => called = true,
         ),

@@ -140,7 +140,8 @@ def has_permissions(
     """FastAPI dependency checking several permissions on one resource.
 
     Every permission must be granted (AND, not OR) — e.g. the role-group
-    writes require both ``share`` and ``change-acls`` (#2764): sharing
+    writes require both ``share-workspace`` and ``share-advanced``
+    (#2764; names as of #2946): sharing
     surface plus the raw-power gate. ``resource_fn`` is the same async
     callable(request, user) -> resource_path that
     :func:`has_permission` takes; one principals fetch is shared across

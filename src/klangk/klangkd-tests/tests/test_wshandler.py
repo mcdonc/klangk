@@ -8234,6 +8234,70 @@ class TestShareWindowHandlers:
             sockets.sessions.pop("ws-1", None)
             registry.states.pop("ws-1", None)
 
+    async def test_join_shared_terminal_read_only_follows_permissions(
+        self, user, temp_data_dir, app_state
+    ):
+        """#2939: the shared-terminal write gate is evaluated ONCE at
+        join — ``code-in-shared-terminals`` OR ``share-terminals``
+        freezes into TerminalSession(read_only=...). A spectate-only
+        member gets a read-only session; a member with the code
+        permission gets a writable one."""
+        app_state = _make_app_state()
+        sockets = app_state.state.sockets
+        registry = app_state.state.container_registry
+        owner = await app_state.state.model.users.create_user(
+            "owner2@test.com", "hash", verified=True
+        )
+
+        async def join_and_inspect(granted: set[str]) -> bool:
+            sock = _mock_sock()
+            conn = _base_conn(user=user, ws=sock, app_state=app_state)
+            conn.workspace_id = "ws-ro"
+            conn.container_id = "cid-ro"
+            conn._user_home = "/home/joiner"
+            session = sockets.get_or_create_session("ws-ro", app_state)
+            session.terminal_windows[owner["id"]] = [
+                {"name": "build", "index": 0, "id": "@0", "shared": True},
+            ]
+            registry.track_activity("cid-ro", "ws-ro")
+
+            async def fake_has_perm(perm: str) -> bool:
+                return perm in granted
+
+            conn.has_perm = fake_has_perm  # type: ignore[method-assign]
+            try:
+                with (
+                    patch.object(_ws_controllers, "TerminalSession") as MTS,
+                    patch.object(_mock_term, "select_window"),
+                    patch.object(_mock_term, "tmux_command", return_value=""),
+                ):
+                    mock_sess = _mock_terminal()
+                    MTS.return_value = mock_sess
+
+                    async def fake_output():
+                        return
+                        yield
+
+                    mock_sess.output = fake_output
+                    await conn.handle_join_shared_terminal(
+                        {"user_id": owner["id"], "window_id": "@0"}
+                    )
+                    await asyncio.sleep(0)
+                return MTS.call_args[1]["read_only"]
+            finally:
+                sockets.sessions.pop("ws-ro", None)
+                registry.states.pop("ws-ro", None)
+
+        # Spectate-only: read-only session.
+        spectate = {"spectate-on-shared-terminals"}
+        assert await join_and_inspect(spectate)
+        # Either write permission unfreezes it (spectate is the join
+        # gate itself, so realistic grant sets carry it too).
+        assert not await join_and_inspect(
+            spectate | {"code-in-shared-terminals"}
+        )
+        assert not await join_and_inspect(spectate | {"share-terminals"})
+
     async def test_join_service_terminal_routes_to_service_session(
         self, user, temp_data_dir, app_state
     ):

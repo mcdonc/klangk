@@ -131,7 +131,10 @@ http.Client _client({
   });
 }
 
-Widget _buildPanel({VoidCallback? onRestart, bool canExport = true}) =>
+Widget _buildPanel(
+        {VoidCallback? onRestart,
+        bool canExport = true,
+        bool canRestart = true}) =>
     MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => AuthService()),
@@ -145,6 +148,7 @@ Widget _buildPanel({VoidCallback? onRestart, bool canExport = true}) =>
           body: WorkspaceSettingsPanel(
             workspaceId: _wsId,
             canExport: canExport,
+            canRestart: canRestart,
             onRestart: onRestart ?? () {},
           ),
         ),
@@ -1474,6 +1478,46 @@ void main() {
           findsOneWidget);
       await tester.pump(const Duration(seconds: 2));
       await tester.pumpAndSettle();
+    });
+
+    testWidgets(
+        'hides "Restart now" but keeps the notice without restart-workspace '
+        '(#2939)', (tester) async {
+      // Same mount-removal flow as the notice test above, but the member
+      // cannot restart: the pending-restart information still shows
+      // (they need to know the change waits for a container create);
+      // only the action is hidden. A canRestart:true control in the same
+      // test pins that the flow really did raise the notice.
+      Future<void> runRemove(bool canRestart) async {
+        testAuthHttpClientOverride = _client(workspace: {
+          ..._workspace,
+          'running': true,
+        });
+        await tester.pumpWidget(_buildPanel(canRestart: canRestart));
+        await tester.pumpAndSettle();
+
+        await tester.ensureVisible(find.byIcon(Icons.close).first);
+        await tester.pumpAndSettle();
+        await tester.tap(find.byIcon(Icons.close).first);
+        await tester.pump();
+
+        await _scrollToAndTap(tester, find.text('Save'));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+
+      // Control: the notice raises and the action shows.
+      await runRemove(true);
+      expect(find.textContaining('Restart the workspace to apply'),
+          findsOneWidget);
+      expect(find.text('Restart now'), findsOneWidget);
+
+      // Without restart-workspace: same notice, no action.
+      await runRemove(false);
+      expect(find.text('Settings saved'), findsOneWidget);
+      expect(find.textContaining('Restart the workspace to apply'),
+          findsOneWidget);
+      expect(find.text('Restart now'), findsNothing);
     });
 
     testWidgets('"Restart now" invokes onRestart and dismisses the notice',

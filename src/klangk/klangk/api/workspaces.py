@@ -1757,9 +1757,10 @@ async def get_workspace_acl(
 ):
     """Get resolved ACL entries for a workspace.
 
-    Gated on ``change-acls`` (#2764): the raw ACE list is the advanced
-    editor's view. The simple sharing surface (members, group shares)
-    stays on ``share``; role-group writes need ``change-acls`` too.
+    Gated on ``share-advanced`` (#2764, renamed #2946): the raw ACE
+    list is the advanced editor's view. The simple sharing surface
+    (members, group shares) stays on ``share-workspace``; role-group
+    writes need ``share-advanced`` too.
     """
     resource = f"/workspaces/{workspace_id}"
     return await app.state.model.acl.get_acl_entries_resolved(resource)
@@ -1776,10 +1777,11 @@ async def replace_workspace_acl(
 ):
     """Replace all ACL entries for a workspace.
 
-    Gated on ``change-acls`` (#2764), not ``share``: rewriting the raw
-    ACE list can grant ``*`` and add Deny entries — a power beyond
-    inviting collaborators. Owners hold it via their ``*`` wildcard;
-    migration 0017 backfilled it onto existing ``share`` holders.
+    Gated on ``share-advanced`` (#2764; renamed from ``change-acls``
+    by #2946), not ``share-workspace``: rewriting the raw ACE list can
+    grant ``*`` and add Deny entries — a power beyond inviting
+    collaborators. Owners hold it via their ``*`` wildcard; migration
+    0017 backfilled it onto existing ``share`` holders.
     """
     resource = f"/workspaces/{workspace_id}"
     await app.state.model.acl.replace_acl_entries(

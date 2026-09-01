@@ -900,11 +900,12 @@ class WebSocketState:
         ``health_message`` tail of another tenant's service output) to
         anyone with a WebSocket. This scopes delivery server-side:
         connections are grouped by user and each distinct user is
-        ACL-checked for ``monitor`` on ``/workspaces/{workspace_id}`` —
-        the dedicated status-observation permission (#2783). Every
-        grant path that carries ``terminal`` also seeds ``monitor``
+        ACL-checked for ``monitor-workspace`` on
+        ``/workspaces/{workspace_id}`` — the dedicated
+        status-observation permission (#2783). Every grant path that
+        carries ``terminal`` also seeds ``monitor-workspace``
         (the owner's wildcard ACE, a direct member share, and every
-        role group), and ``monitor`` can be granted alone for
+        role group), and ``monitor-workspace`` can be granted alone for
         monitoring-only members, while the deployment-wide
         ``view``-for-authenticated seed ACE at ``/`` is deliberately
         too weak to count as membership.
@@ -1117,7 +1118,7 @@ class WebSocketState:
 
         Scoped to the connection's user's memberships (#1714): the
         allowed workspace set is resolved with one
-        ``permissions_for_resources`` pass (``monitor`` on each
+        ``permissions_for_resources`` pass (``monitor-workspace`` on each
         candidate resource — the dedicated status-observation
         permission, #2783), so a connecting client learns the health
         of workspaces it can observe — never other tenants'.

@@ -92,7 +92,8 @@ async def _refuse_invalid_handshake(
     Workspace-scoped deciders need the ``egress-consent`` permission on
     the workspace (owner, coder, or collaborator -- #2883; a spectator
     has only watch access and is refused here, so it can never reach the
-    verdict/revoke/pause handlers); deploy-wide deciders need admin.
+    verdict/revoke/pause handlers); deploy-wide deciders need
+    ``manage-server-schedule`` on ``/server`` (#2944).
     Mirrors the main /ws handler's workspace gate
     (wshandler/connection.py).
 

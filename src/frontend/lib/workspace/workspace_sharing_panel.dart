@@ -15,10 +15,10 @@ class WorkspaceSharingPanel extends StatefulWidget {
   /// (member list, role assignment) render only for share holders.
   final bool canShare;
 
-  /// Whether the user holds ``change-acls`` on the workspace (#2764) —
+  /// Whether the user holds ``share-advanced`` on the workspace (#2764,
   /// gates the "Advanced: Access Control" editor and the role-write
   /// affordances (add-user buttons, chip deletes), which the server
-  /// gates on ``change-acls`` as well. Raw ACE editing and role
+  /// renamed #2946) — gates on ``share-advanced`` as well. Raw ACE
   /// assignment are separate powers from inviting collaborators.
   final bool canEditAcl;
 
@@ -80,7 +80,7 @@ class WorkspaceSharingPanelState extends State<WorkspaceSharingPanel> {
     if (widget.canShare) {
       _loadRoles();
     } else {
-      // change-acls-only holders never see the buckets; without this
+      // share-advanced-only holders never see the buckets; without this
       // the panel would sit on the spinner (and fire a share-gated
       // request that 403s).
       _loading = false;
