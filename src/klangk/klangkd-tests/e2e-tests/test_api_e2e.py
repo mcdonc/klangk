@@ -117,7 +117,7 @@ def _make_user_admin(api, user_id, admin_headers):
     if not user_id:
         return
     # Find the admin group.
-    resp = api.get("/api/v1/admin/groups", headers=admin_headers)
+    resp = api.get("/api/v1/groups", headers=admin_headers)
     if resp.status_code != 200:
         return
     body = resp.json()
@@ -128,7 +128,7 @@ def _make_user_admin(api, user_id, admin_headers):
     if not admin_group:
         return
     api.post(
-        f"/api/v1/admin/groups/{admin_group['id']}/members",
+        f"/api/v1/groups/{admin_group['id']}/members",
         json={"user_id": user_id},
         headers=admin_headers,
     )
@@ -182,14 +182,14 @@ class TestConfig:
 
 class TestGroupManagement:
     def test_list_groups(self, api, admin_headers):
-        resp = api.get("/api/v1/admin/groups", headers=admin_headers)
+        resp = api.get("/api/v1/groups", headers=admin_headers)
         assert resp.status_code == 200
         groups = resp.json()["groups"]
         assert any(g["name"] == "admins" for g in groups)
 
     def test_create_group(self, api, admin_headers):
         resp = api.post(
-            "/api/v1/admin/groups",
+            "/api/v1/groups",
             headers=admin_headers,
             json={"name": "editors", "description": "Can edit stuff"},
         )
@@ -200,12 +200,12 @@ class TestGroupManagement:
 
     def test_create_duplicate_group_fails(self, api, admin_headers):
         api.post(
-            "/api/v1/admin/groups",
+            "/api/v1/groups",
             headers=admin_headers,
             json={"name": "dup-group"},
         )
         resp = api.post(
-            "/api/v1/admin/groups",
+            "/api/v1/groups",
             headers=admin_headers,
             json={"name": "dup-group"},
         )
@@ -213,13 +213,13 @@ class TestGroupManagement:
 
     def test_update_group(self, api, admin_headers):
         resp = api.post(
-            "/api/v1/admin/groups",
+            "/api/v1/groups",
             headers=admin_headers,
             json={"name": "to-rename"},
         )
         group_id = resp.json()["id"]
         resp = api.patch(
-            f"/api/v1/admin/groups/{group_id}",
+            f"/api/v1/groups/{group_id}",
             headers=admin_headers,
             json={"name": "renamed-group", "description": "Updated"},
         )
@@ -227,38 +227,34 @@ class TestGroupManagement:
 
     def test_delete_group(self, api, admin_headers):
         resp = api.post(
-            "/api/v1/admin/groups",
+            "/api/v1/groups",
             headers=admin_headers,
             json={"name": "to-delete"},
         )
         group_id = resp.json()["id"]
-        resp = api.delete(
-            f"/api/v1/admin/groups/{group_id}", headers=admin_headers
-        )
+        resp = api.delete(f"/api/v1/groups/{group_id}", headers=admin_headers)
         assert resp.status_code == 200
         # Verify gone
-        resp = api.get("/api/v1/admin/groups", headers=admin_headers)
+        resp = api.get("/api/v1/groups", headers=admin_headers)
         assert not any(g["id"] == group_id for g in resp.json()["groups"])
 
     def test_add_and_list_members(self, api, admin_headers, user_a):
         # Create a group
         resp = api.post(
-            "/api/v1/admin/groups",
+            "/api/v1/groups",
             headers=admin_headers,
             json={"name": "team-a"},
         )
         group_id = resp.json()["id"]
 
         # Get user A's ID
-        resp = api.get(
-            "/api/v1/admin/users?page_size=200", headers=admin_headers
-        )
+        resp = api.get("/api/v1/users?page_size=200", headers=admin_headers)
         users = resp.json()["users"]
         alice = next(u for u in users if u["email"] == user_a["email"])
 
         # Add user A to group
         resp = api.post(
-            f"/api/v1/admin/groups/{group_id}/members",
+            f"/api/v1/groups/{group_id}/members",
             headers=admin_headers,
             json={"user_id": alice["id"]},
         )
@@ -266,7 +262,7 @@ class TestGroupManagement:
 
         # List members
         resp = api.get(
-            f"/api/v1/admin/groups/{group_id}/members", headers=admin_headers
+            f"/api/v1/groups/{group_id}/members", headers=admin_headers
         )
         assert resp.status_code == 200
         members = resp.json()
@@ -275,32 +271,30 @@ class TestGroupManagement:
 
     def test_remove_member(self, api, admin_headers, user_b):
         resp = api.post(
-            "/api/v1/admin/groups",
+            "/api/v1/groups",
             headers=admin_headers,
             json={"name": "temp-group"},
         )
         group_id = resp.json()["id"]
 
-        resp = api.get(
-            "/api/v1/admin/users?page_size=200", headers=admin_headers
-        )
+        resp = api.get("/api/v1/users?page_size=200", headers=admin_headers)
         bob = next(
             u for u in resp.json()["users"] if u["email"] == user_b["email"]
         )
 
         api.post(
-            f"/api/v1/admin/groups/{group_id}/members",
+            f"/api/v1/groups/{group_id}/members",
             headers=admin_headers,
             json={"user_id": bob["id"]},
         )
         resp = api.delete(
-            f"/api/v1/admin/groups/{group_id}/members/{bob['id']}",
+            f"/api/v1/groups/{group_id}/members/{bob['id']}",
             headers=admin_headers,
         )
         assert resp.status_code == 200
 
         resp = api.get(
-            f"/api/v1/admin/groups/{group_id}/members", headers=admin_headers
+            f"/api/v1/groups/{group_id}/members", headers=admin_headers
         )
         assert resp.json() == []
 
@@ -310,35 +304,40 @@ class TestGroupManagement:
 
 class TestPermissionDenials:
     def test_non_admin_cannot_list_groups(self, api, nonadmin_user):
+        """#2944: GET /groups is the authenticated picker listing (200);
+        the gated reads are the members/acl surfaces."""
+        resp = api.get("/api/v1/groups", headers=nonadmin_user["headers"])
+        assert resp.status_code == 200
+        assert "groups" in resp.json()
+
         resp = api.get(
-            "/api/v1/admin/groups", headers=nonadmin_user["headers"]
+            "/api/v1/groups/some-id/members",
+            headers=nonadmin_user["headers"],
         )
         assert resp.status_code == 403
 
     def test_non_admin_cannot_create_group(self, api, nonadmin_user):
         resp = api.post(
-            "/api/v1/admin/groups",
+            "/api/v1/groups",
             headers=nonadmin_user["headers"],
             json={"name": "hacker-group"},
         )
         assert resp.status_code == 403
 
     def test_non_admin_cannot_list_users(self, api, nonadmin_user):
-        resp = api.get("/api/v1/admin/users", headers=nonadmin_user["headers"])
+        resp = api.get("/api/v1/users", headers=nonadmin_user["headers"])
         assert resp.status_code == 403
 
     def test_non_admin_cannot_create_user(self, api, nonadmin_user):
         resp = api.post(
-            "/api/v1/admin/users",
+            "/api/v1/users",
             headers=nonadmin_user["headers"],
             json={"email": "evil@example.com", "password": "testpass"},
         )
         assert resp.status_code == 403
 
     def test_non_admin_cannot_view_acl_tree(self, api, nonadmin_user):
-        resp = api.get(
-            "/api/v1/admin/acl/tree", headers=nonadmin_user["headers"]
-        )
+        resp = api.get("/api/v1/acl/tree", headers=nonadmin_user["headers"])
         assert resp.status_code == 403
 
     def test_non_admin_cannot_delete_other_workspace(
@@ -382,7 +381,7 @@ class TestPermissionDenials:
         resp = api.get("/api/v1/workspaces")
         assert resp.status_code == 401
 
-        resp = api.get("/api/v1/admin/users")
+        resp = api.get("/api/v1/users")
         assert resp.status_code == 401
 
 
@@ -391,7 +390,7 @@ class TestPermissionDenials:
 
 class TestACLIntrospection:
     def test_acl_tree(self, api, admin_headers):
-        resp = api.get("/api/v1/admin/acl/tree", headers=admin_headers)
+        resp = api.get("/api/v1/acl/tree", headers=admin_headers)
         assert resp.status_code == 200
         tree = resp.json()
         resources = [t["resource"] for t in tree]
@@ -400,13 +399,13 @@ class TestACLIntrospection:
 
     def test_acl_by_group(self, api, admin_headers):
         # Get admin group ID
-        resp = api.get("/api/v1/admin/groups", headers=admin_headers)
+        resp = api.get("/api/v1/groups", headers=admin_headers)
         admin_group = next(
             g for g in resp.json()["groups"] if g["name"] == "admins"
         )
 
         resp = api.get(
-            f"/api/v1/admin/acl/by-principal/group/{admin_group['id']}",
+            f"/api/v1/acl/by-principal/group/{admin_group['id']}",
             headers=admin_headers,
         )
         assert resp.status_code == 200
@@ -425,15 +424,13 @@ class TestACLIntrospection:
         ws_id = resp.json()["id"]
 
         # Get user A's ID
-        resp = api.get(
-            "/api/v1/admin/users?page_size=200", headers=admin_headers
-        )
+        resp = api.get("/api/v1/users?page_size=200", headers=admin_headers)
         alice = next(
             u for u in resp.json()["users"] if u["email"] == user_a["email"]
         )
 
         resp = api.get(
-            f"/api/v1/admin/acl/by-principal/user/{alice['id']}",
+            f"/api/v1/acl/by-principal/user/{alice['id']}",
             headers=admin_headers,
         )
         assert resp.status_code == 200
@@ -666,7 +663,7 @@ class TestWorkspaceSharingACL:
         ws_id = resp.json()["id"]
 
         # ACL tree should include this workspace
-        resp = api.get("/api/v1/admin/acl/tree", headers=admin_headers)
+        resp = api.get("/api/v1/acl/tree", headers=admin_headers)
         assert any(
             t["resource"] == f"/workspaces/{ws_id}" for t in resp.json()
         )
@@ -678,7 +675,7 @@ class TestWorkspaceSharingACL:
         assert resp.status_code == 200
 
         # ACL tree should no longer include this workspace
-        resp = api.get("/api/v1/admin/acl/tree", headers=admin_headers)
+        resp = api.get("/api/v1/acl/tree", headers=admin_headers)
         assert not any(
             t["resource"] == f"/workspaces/{ws_id}" for t in resp.json()
         )
@@ -693,11 +690,11 @@ class TestGrantAdminViaGroup:
     ):
         """Adding a user to the admin group gives them admin permissions."""
         # Verify non-admin cannot access admin endpoints
-        resp = api.get("/api/v1/admin/users", headers=nonadmin_user["headers"])
+        resp = api.get("/api/v1/users", headers=nonadmin_user["headers"])
         assert resp.status_code == 403
 
         # Get admin group
-        resp = api.get("/api/v1/admin/groups", headers=admin_headers)
+        resp = api.get("/api/v1/groups", headers=admin_headers)
         admin_group = next(
             g for g in resp.json()["groups"] if g["name"] == "admins"
         )
@@ -706,7 +703,7 @@ class TestGrantAdminViaGroup:
 
         # Add user to admin group
         resp = api.post(
-            f"/api/v1/admin/groups/{admin_group['id']}/members",
+            f"/api/v1/groups/{admin_group['id']}/members",
             headers=admin_headers,
             json={"user_id": user_id},
         )
@@ -714,7 +711,7 @@ class TestGrantAdminViaGroup:
 
         # Group membership is checked on every request, not cached in JWT
         resp = api.get(
-            "/api/v1/admin/users?page_size=200",
+            "/api/v1/users?page_size=200",
             headers=nonadmin_user["headers"],
         )
         assert resp.status_code == 200
@@ -722,13 +719,13 @@ class TestGrantAdminViaGroup:
 
         # Clean up — remove user from admin group
         resp = api.delete(
-            f"/api/v1/admin/groups/{admin_group['id']}/members/{user_id}",
+            f"/api/v1/groups/{admin_group['id']}/members/{user_id}",
             headers=admin_headers,
         )
         assert resp.status_code == 200
 
         # Verify access revoked immediately (no re-login needed)
-        resp = api.get("/api/v1/admin/users", headers=nonadmin_user["headers"])
+        resp = api.get("/api/v1/users", headers=nonadmin_user["headers"])
         assert resp.status_code == 403
 
 
@@ -752,9 +749,7 @@ class TestACLCascades:
         )
 
         # Get user's ID
-        resp = api.get(
-            "/api/v1/admin/users?page_size=200", headers=admin_headers
-        )
+        resp = api.get("/api/v1/users?page_size=200", headers=admin_headers)
         target = next(
             u
             for u in resp.json()["users"]
@@ -763,20 +758,20 @@ class TestACLCascades:
 
         # Verify ACE exists
         resp = api.get(
-            f"/api/v1/admin/acl/by-principal/user/{target['id']}",
+            f"/api/v1/acl/by-principal/user/{target['id']}",
             headers=admin_headers,
         )
         assert len(resp.json()) > 0
 
         # Delete user
         resp = api.delete(
-            f"/api/v1/admin/users/{target['id']}", headers=admin_headers
+            f"/api/v1/users/{target['id']}", headers=admin_headers
         )
         assert resp.status_code == 200
 
         # ACEs should be gone
         resp = api.get(
-            f"/api/v1/admin/acl/by-principal/user/{target['id']}",
+            f"/api/v1/acl/by-principal/user/{target['id']}",
             headers=admin_headers,
         )
         assert resp.json() == []
@@ -785,7 +780,7 @@ class TestACLCascades:
         """Deleting a group removes its ACEs from all resources."""
         # Create a group with an ACE
         resp = api.post(
-            "/api/v1/admin/groups",
+            "/api/v1/groups",
             headers=admin_headers,
             json={"name": "cascade-group"},
         )
@@ -793,19 +788,17 @@ class TestACLCascades:
 
         # Verify group shows in ACL queries
         resp = api.get(
-            f"/api/v1/admin/acl/by-principal/group/{group_id}",
+            f"/api/v1/acl/by-principal/group/{group_id}",
             headers=admin_headers,
         )
         # No ACEs yet for this group — that's fine, CASCADE is on FK
 
         # Delete the group
-        resp = api.delete(
-            f"/api/v1/admin/groups/{group_id}", headers=admin_headers
-        )
+        resp = api.delete(f"/api/v1/groups/{group_id}", headers=admin_headers)
         assert resp.status_code == 200
 
         # Group should be gone
-        resp = api.get("/api/v1/admin/groups", headers=admin_headers)
+        resp = api.get("/api/v1/groups", headers=admin_headers)
         assert not any(g["id"] == group_id for g in resp.json()["groups"])
 
 
@@ -935,7 +928,7 @@ class TestAdminResourceACL:
     def test_get_workspaces_acl(self, api, admin_headers):
         """Admin can read the /workspaces static resource ACL."""
         resp = api.get(
-            "/api/v1/admin/acl/resource?resource=/workspaces",
+            "/api/v1/acl/resource?resource=/workspaces",
             headers=admin_headers,
         )
         assert resp.status_code == 200
@@ -949,7 +942,7 @@ class TestAdminResourceACL:
         """Admin can add and remove ACEs on /workspaces."""
         # Get current
         resp = api.get(
-            "/api/v1/admin/acl/resource?resource=/workspaces",
+            "/api/v1/acl/resource?resource=/workspaces",
             headers=admin_headers,
         )
         original = resp.json()
@@ -976,7 +969,7 @@ class TestAdminResourceACL:
             },
         ]
         resp = api.put(
-            "/api/v1/admin/acl/resource?resource=/workspaces",
+            "/api/v1/acl/resource?resource=/workspaces",
             headers=admin_headers,
             json=new_entries,
         )
@@ -996,7 +989,7 @@ class TestAdminResourceACL:
             for e in original
         ]
         resp = api.put(
-            "/api/v1/admin/acl/resource?resource=/workspaces",
+            "/api/v1/acl/resource?resource=/workspaces",
             headers=admin_headers,
             json=restore,
         )
@@ -1006,7 +999,7 @@ class TestAdminResourceACL:
     def test_non_admin_denied(self, api, nonadmin_user):
         """Non-admin cannot access the resource ACL endpoint."""
         resp = api.get(
-            "/api/v1/admin/acl/resource?resource=/workspaces",
+            "/api/v1/acl/resource?resource=/workspaces",
             headers=nonadmin_user["headers"],
         )
         assert resp.status_code == 403
