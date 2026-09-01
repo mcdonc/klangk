@@ -56,8 +56,12 @@ the device flow automatically.
 The entire device flow runs inside the workspace container. The
 container-side credential helper (`git-credential-klangk`) talks to
 GitHub directly, and only sends the display code to the browser for the
-user to see. The access token never leaves the container — it goes
-straight from GitHub to git via the helper's stdout.
+user to see. The access token goes straight from GitHub to git via the
+helper's stdout — it is never displayed. After a successful
+authenticated operation, git calls the helper's `store` operation,
+which places the credential in the browser tab's in-memory cache so
+subsequent operations in that tab reuse it without a new login (see
+[Credential cache](#credential-cache) for lifetime and scope).
 
 If the device flow fails (network error, expired code, denied), the
 helper falls back to the PAT dialog automatically.
@@ -179,8 +183,9 @@ create a GitHub OAuth App and set one environment variable.
    KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID=Ov23li...
    ```
 
-8. Rebuild the workspace image so the variable is injected into
-   containers. The device flow will activate automatically for
+8. The variable is injected into workspace containers at **start** —
+   no image rebuild is needed. Restart existing workspaces (or open a
+   new one) and the device flow will activate automatically for
    `github.com` hosts.
 
 **Important**: this must be an **OAuth App**, not a GitHub App. The
@@ -199,11 +204,12 @@ The PAT cache is **per-tab** and **in-memory only**:
 - Closing the tab clears the cache.
 - The cache is keyed by `protocol://host` (e.g. `https://github.com`).
 
-Device flow tokens are not cached in the browser — the token goes
-directly from the container helper to git. However, after a successful
-`git push`, git calls the helper's `store` operation, which caches the
-credentials in the browser for subsequent operations within the same
-session.
+Device flow tokens reach git directly (the helper writes the token to
+its stdout for git, never to the screen). After a successful
+authenticated operation (`git push`, an authenticated pull, …), git
+calls the helper's `store` operation, which caches the credential in
+the browser for subsequent operations within the same session — the
+same store/erase lifecycle as PATs above.
 
 ## Multiple browser tabs
 
@@ -243,7 +249,8 @@ HTTPS with PATs or OAuth is the recommended authentication method.
   check is an ad-hoc `export` in the shell.
 - Check that the OAuth App has **Enable Device Flow** turned on.
 - The device flow only activates for `github.com` hosts.
-- Rebuild the workspace image after setting the variable.
+- Restart the workspace after setting the variable — it is injected at
+  container start, not baked into the image.
 
 ### Device flow code expired
 

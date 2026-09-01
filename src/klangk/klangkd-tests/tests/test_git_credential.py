@@ -322,10 +322,14 @@ class TestDeviceFlowCache:
         self, bridge_server, fake_browser_id
     ):
         server, port = bridge_server
+        # Wrapped in the bridge's {"status": "ok", "result": ...} envelope,
+        # exactly as the frontend produces it — the peek path must unwrap
+        # (a bare body is a shape production never sends).
+        inner = json.dumps(
+            {"username": "x-access-token", "password": "gho_cached"}
+        )
         _BridgeHandler.op_bodies = {
-            "peek": json.dumps(
-                {"username": "x-access-token", "password": "gho_cached"}
-            ).encode()
+            "peek": json.dumps({"status": "ok", "result": inner}).encode()
         }
 
         result = run_helper(
@@ -333,6 +337,10 @@ class TestDeviceFlowCache:
             "protocol=https\nhost=github.com\n\n",
             env_override={
                 "KLANGKWS_BRIDGE_URL": f"http://127.0.0.1:{port}",
+                # Dead local endpoint: if the short-circuit ever regresses,
+                # the device flow fails fast here instead of reaching the
+                # real github.com with the fake client id.
+                "GIT_CREDENTIAL_KLANGK_GITHUB_URL": "http://127.0.0.1:1",
                 **self.CLIENT_ENV,
             },
             extra_path=str(fake_browser_id),
