@@ -101,9 +101,11 @@ http.Client _mockClient(
           'email': 'admin@example.com',
           'permissions': {
             '/admin': ['*'],
-            '/admin/users': ['view'],
+            '/admin/users': ['view-users'],
             '/admin/groups': ['view'],
-            '/admin/invitations': ['view'],
+            '/admin/invitations': ['view-invitations'],
+            '/admin/server': ['view-server-schedule'],
+            '/admin/acl': ['change-acls'],
           },
           'groups': [
             {'id': 'g1', 'name': 'admins'}
@@ -444,7 +446,7 @@ void main() {
               'user_id': 'admin-user',
               'email': 'admin@example.com',
               'permissions': {
-                '/admin/users': ['view'],
+                '/admin/users': ['view-users'],
               },
               'groups': [],
             }),

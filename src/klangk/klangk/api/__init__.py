@@ -297,6 +297,8 @@ STATIC_RESOURCES = [
     "/admin/invitations",
     "/admin/groups",
     "/admin/container-events",
+    "/admin/acl",
+    "/admin/server",
 ]
 
 ALL_PERMISSIONS = [
@@ -323,6 +325,16 @@ ALL_PERMISSIONS = [
     "manage_users",
     "manage_invitations",
     "container-events",
+    "view-users",
+    "create-user",
+    "edit-user",
+    "delete-user",
+    "view-sessions",
+    "view-invitations",
+    "create-invitation",
+    "delete-invitation",
+    "view-server-schedule",
+    "manage-server-schedule",
     "*",
 ]
 

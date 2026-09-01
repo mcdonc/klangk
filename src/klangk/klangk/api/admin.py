@@ -31,7 +31,6 @@ from ..model import (
 )
 from .common import (
     WorkspaceAclEntry,
-    admin_resource,
     send_email,
     serialize_acl_entries,
 )
@@ -86,7 +85,7 @@ def _validate_admin_acl(entries, resource: str) -> None:
 async def send_invitation(
     req: SendInviteRequest,
     request: Request,
-    admin: dict = Depends(acl.has_permission("admin")),
+    admin: dict = Depends(acl.has_permission("create-invitation")),
     app=Depends(get_app_dep),
 ):
     """Send an invitation email (admin only)."""
@@ -146,7 +145,7 @@ async def list_invitations(
     sort: str = "created",
     order: str = "desc",
     q: str | None = None,
-    admin: dict = Depends(acl.has_permission("admin")),
+    admin: dict = Depends(acl.has_permission("view-invitations")),
     app=Depends(get_app_dep),
 ):
     """List invitations (admin only), server-side paginated/sorted/filtered.
@@ -164,7 +163,7 @@ async def list_invitations(
 @router.delete("/admin/invitations/{invitation_id}")
 async def revoke_invitation(
     invitation_id: str,
-    admin: dict = Depends(acl.has_permission("admin")),
+    admin: dict = Depends(acl.has_permission("delete-invitation")),
     app=Depends(get_app_dep),
 ):
     """Revoke a pending invitation (admin only)."""
@@ -183,7 +182,7 @@ async def revoke_invitation(
 async def resend_invitation(
     invitation_id: str,
     request: Request,
-    admin: dict = Depends(acl.has_permission("admin")),
+    admin: dict = Depends(acl.has_permission("create-invitation")),
     app=Depends(get_app_dep),
 ):
     """Resend an invitation email (admin only)."""
@@ -224,7 +223,7 @@ async def list_users(
     sort: str = "created",
     order: str = "desc",
     q: str | None = None,
-    admin: dict = Depends(acl.has_permission("admin")),
+    admin: dict = Depends(acl.has_permission("view-users")),
     app=Depends(get_app_dep),
 ):
     return await app.state.model.users.list_users(
@@ -242,7 +241,7 @@ class AdminCreateUserRequest(BaseModel):
 async def admin_create_user(
     req: AdminCreateUserRequest,
     request: Request,
-    admin: dict = Depends(acl.has_permission("admin")),
+    admin: dict = Depends(acl.has_permission("create-user")),
     app=Depends(get_app_dep),
 ):
     """Create a user (admin only).
@@ -313,7 +312,7 @@ async def list_user_workspaces(
     user_id: str,
     limit: int | None = Query(None, ge=1, le=200),
     offset: int | None = Query(None, ge=0),
-    admin: dict = Depends(acl.has_permission("admin")),
+    admin: dict = Depends(acl.has_permission("view-users")),
     app=Depends(get_app_dep),
 ):
     """List workspaces owned by a user (admin only).
@@ -333,7 +332,7 @@ async def list_user_workspaces(
 @router.delete("/admin/users/{user_id}")
 async def delete_user(
     user_id: str,
-    admin: dict = Depends(acl.has_permission("admin")),
+    admin: dict = Depends(acl.has_permission("delete-user")),
     app=Depends(get_app_dep),
 ):
     if user_id == admin["id"]:
@@ -375,7 +374,7 @@ class UpdateUserRequest(auth.BaseModel):
 async def update_user(
     user_id: str,
     req: UpdateUserRequest,
-    admin: dict = Depends(acl.has_permission("admin")),
+    admin: dict = Depends(acl.has_permission("edit-user")),
     app=Depends(get_app_dep),
 ):
     user = await app.state.model.users.get_user_by_id(user_id)
@@ -444,7 +443,7 @@ async def _update_user_disabled(
 @router.post("/admin/users/{user_id}/unlockout")
 async def unlock_user(
     user_id: str,
-    admin: dict = Depends(acl.has_permission("admin")),
+    admin: dict = Depends(acl.has_permission("edit-user")),
     app=Depends(get_app_dep),
 ):
     """Reset a user's login lockout so they can log in immediately."""
@@ -458,7 +457,7 @@ async def unlock_user(
 @router.get("/admin/users/{user_id}/sessions")
 async def list_user_sessions(
     user_id: str,
-    admin: dict = Depends(acl.has_permission("admin")),
+    admin: dict = Depends(acl.has_permission("view-sessions")),
     app=Depends(get_app_dep),
 ):
     """List a user's active sessions with workstation identity (#2586).
@@ -787,7 +786,7 @@ async def remove_group_member(
 
 @router.get("/admin/acl/tree")
 async def get_acl_tree(
-    admin: dict = Depends(acl.has_permission("admin")),
+    admin: dict = Depends(acl.has_permission("change-acls")),
     app=Depends(get_app_dep),
 ):
     return await app.state.model.acl.get_acl_tree_summary()
@@ -796,7 +795,7 @@ async def get_acl_tree(
 @router.get("/admin/acl/by-principal/user/{user_id}")
 async def get_acl_by_user(
     user_id: str,
-    admin: dict = Depends(acl.has_permission("admin")),
+    admin: dict = Depends(acl.has_permission("change-acls")),
     app=Depends(get_app_dep),
 ):
     return await app.state.model.acl.get_acl_entries_by_principal_user(user_id)
@@ -805,7 +804,7 @@ async def get_acl_by_user(
 @router.get("/admin/acl/by-principal/group/{group_id}")
 async def get_acl_by_group(
     group_id: str,
-    admin: dict = Depends(acl.has_permission("admin")),
+    admin: dict = Depends(acl.has_permission("change-acls")),
     app=Depends(get_app_dep),
 ):
     return await app.state.model.acl.get_acl_entries_by_principal_group(
@@ -816,7 +815,7 @@ async def get_acl_by_group(
 @router.get("/admin/acl/resource")
 async def get_resource_acl(
     resource: str,
-    admin: dict = Depends(acl.has_permission("admin", admin_resource)),
+    admin: dict = Depends(acl.has_permission("change-acls")),
     app=Depends(get_app_dep),
 ):
     """Get resolved ACL entries for any resource (admin only)."""
@@ -841,7 +840,7 @@ def workspace_scope(resource: str) -> str | None:
 async def replace_resource_acl(
     resource: str,
     entries: list[WorkspaceAclEntry],
-    admin: dict = Depends(acl.has_permission("admin", admin_resource)),
+    admin: dict = Depends(acl.has_permission("change-acls")),
     app=Depends(get_app_dep),
 ):
     """Replace ACL entries for any resource (admin only).
@@ -882,7 +881,7 @@ class ServerScheduleRequest(BaseModel):
 async def schedule_server_action(
     payload: ServerScheduleRequest,
     request: Request,
-    admin: dict = Depends(acl.has_permission("admin")),
+    admin: dict = Depends(acl.has_permission("manage-server-schedule")),
 ):
     """Schedule a server stop or recycle for a future time (#2661).
 
@@ -912,7 +911,7 @@ async def schedule_server_action(
 @router.get("/admin/server/schedule")
 async def list_server_schedules(
     request: Request,
-    admin: dict = Depends(acl.has_permission("admin")),
+    admin: dict = Depends(acl.has_permission("view-server-schedule")),
 ):
     """List pending server stop/recycle schedules (#2661)."""
     return {
@@ -924,7 +923,7 @@ async def list_server_schedules(
 async def cancel_server_schedule(
     schedule_id: str,
     request: Request,
-    admin: dict = Depends(acl.has_permission("admin")),
+    admin: dict = Depends(acl.has_permission("manage-server-schedule")),
 ):
     """Cancel a pending server stop/recycle schedule (#2661)."""
     app = request.app

@@ -48,6 +48,7 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
   bool _canInvitations = false;
   bool _canServer = false;
   bool _canEvents = false;
+  bool _canAcl = false;
 
   // Pending invitation count for the tab badge — updated by the
   // _InvitationsTab widget via callback.
@@ -90,21 +91,26 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
 
   void _resolvePermissions() {
     final auth = context.read<AuthService>();
-    _canUsers = auth.hasPermission('/admin', '*') ||
-        auth.hasPermission('/admin/users', 'view');
-    _canGroups = auth.hasPermission('/admin', '*') ||
-        auth.hasPermission('/admin/groups', 'view');
-    _canInvitations = auth.hasPermission('/admin', '*') ||
-        auth.hasPermission('/admin/invitations', 'view');
-    // The schedule API needs the `admin` permission on /admin (ancestors
-    // included), so gate the tab on exactly that.
-    _canServer = auth.hasPermission('/admin', 'admin');
+    // Per-tab permissions (#2940): wildcard admins hold every name via
+    // the /admin * wildcard; delegated users get exactly what their ACE
+    // on the sub-resource grants (same shape as the Events tab, #2923).
+    _canUsers = auth.hasPermission('/admin/users', 'view-users');
+    // Groups stay on the legacy /admin/groups surface (full-admin gate)
+    // until #2941 removes it in favor of /groups.
+    _canGroups = auth.hasPermission('/admin', '*');
+    _canInvitations =
+        auth.hasPermission('/admin/invitations', 'view-invitations');
+    _canServer = auth.hasPermission('/admin/server', 'view-server-schedule');
     // The events history (#2923) is gated on the dedicated
     // `container-events` permission over /admin/container-events — admins
     // hold it via the /admin `*` wildcard, delegated auditors via an
     // explicit ACE on the resource.
     _canEvents =
         auth.hasPermission('/admin/container-events', 'container-events');
+    // The Access Control browser reads /admin/acl/*, gated on
+    // `change-acls` (#2940) — the same name the workspace Advanced
+    // editor uses, until the workspaces tranche renames that side.
+    _canAcl = auth.hasPermission('/admin/acl', 'change-acls');
   }
 
   Future<void> _loadUsers({int page = 1}) async {
@@ -471,10 +477,10 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     if (_canInvitations) types.add('invitations');
     if (_canServer) types.add('server');
     if (_canEvents) types.add('events');
-    // The Access Control browser reads /admin/acl/tree, which needs full
-    // admin — a delegated container-events auditor (#2923) gets only the
-    // Events tab, not a dead ACL tab.
-    if (_canUsers || _canGroups || _canInvitations || _canServer) {
+    // The Access Control browser reads /admin/acl/*, gated on
+    // `change-acls` (#2940) — a delegated container-events auditor
+    // (#2923) gets only the Events tab, not a dead ACL tab.
+    if (_canAcl) {
       types.add('acl');
     }
     return types;

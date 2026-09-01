@@ -264,7 +264,6 @@ class TestSubmoduleStructure:
         for name in (
             "send_email",
             "workspace_resource",
-            "admin_resource",
             "require_workspace_token",
             "WorkspaceAclEntry",
             "autostart_allowed",

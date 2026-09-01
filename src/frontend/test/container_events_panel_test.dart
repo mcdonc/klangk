@@ -101,6 +101,7 @@ http.Client _mockClient(
 /// `/my-permissions`, so the Events resource is listed alongside it.
 Map<String, List<String>> get _adminPermissions => {
       '/admin': ['*'],
+      '/admin/users': ['view-users'],
       '/admin/container-events': ['view', 'container-events'],
     };
 
@@ -295,9 +296,9 @@ void main() {
       // /admin/container-events — so no Events tab.
       testAuthHttpClientOverride = _mockClient(
         {
-          '/admin/users': ['view'],
+          '/admin/users': ['view-users'],
           '/admin/groups': ['view'],
-          '/admin/invitations': ['view'],
+          '/admin/invitations': ['view-invitations'],
           '/admin': ['admin'],
         },
         (request) async => http.Response('Not found', 404),

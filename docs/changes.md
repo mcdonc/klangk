@@ -32,6 +32,12 @@ operators or integrators to act when upgrading.
 
 ### Breaking
 
+- **Hand-crafted `admin` ACEs stop matching split routes (#2940).** ACLs
+  granting the literal `admin` permission on `/admin` (rather than the
+  seeded `*` wildcard) no longer satisfy the per-tab endpoints — grant
+  the specific tab permission (or `*`) instead. Default deployments are
+  unaffected.
+
 - **The seeded admin group is renamed to `admins` (#2934).** Fresh
   installs seed a group named `admins`; upgrading renames the `admin`
   group in place (memberships and ACLs keep pointing at the same
@@ -316,6 +322,18 @@ sync` report a clear permission-denied error.
   [ACLs](reference/acl.md).
 
 ### Added
+
+- **Granular `/admin` tab permissions (#2940).** The admin endpoints
+  split off the monolithic `admin` gate onto per-tab permissions:
+  `view-users`/`create-user`/`edit-user`/`delete-user`/`view-sessions`
+  (Users), `view-invitations`/`create-invitation`/`delete-invitation`
+  (Invitations), `change-acls` (Access Control browser), and
+  `view-server-schedule`/`manage-server-schedule` (Server). Admins are
+  unaffected — the seeded `/admin` `*` wildcard covers every name — and
+  slices of the admin section can now be delegated to non-admins via
+  `Allow` ACEs on the sub-resources (same recipe as `container-events`).
+  See [ACLs](reference/acl.md). The legacy `/admin/groups*` endpoints
+  stay on the full-admin gate (#2941).
 
 - **Container events history API + admin Events tab (#2923).** New
   `GET /api/v1/admin/container-events` endpoint pages through the

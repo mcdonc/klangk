@@ -145,12 +145,18 @@ class AuthService extends ChangeNotifier {
 
   bool get isAdmin => hasPermission('/admin', '*');
 
-  /// True for wildcard admins and for delegated container-events auditors
-  /// (#2923): the principals allowed into the admin section at all. The
-  /// route guard, the app-bar admin icon, and the Events tab all key off
-  /// this — an auditor sees only the Events tab, admins see everything.
+  /// True for wildcard admins and for holders of any delegated /admin
+  /// tab permission (#2923, #2940): the principals allowed into the admin
+  /// section at all. The route guard and the app-bar admin icon key off
+  /// this — a delegated user sees only the tabs their ACEs grant, admins
+  /// see everything.
   bool get canAdminSection =>
-      isAdmin || hasPermission('/admin/container-events', 'container-events');
+      isAdmin ||
+      hasPermission('/admin/container-events', 'container-events') ||
+      hasPermission('/admin/users', 'view-users') ||
+      hasPermission('/admin/invitations', 'view-invitations') ||
+      hasPermission('/admin/server', 'view-server-schedule') ||
+      hasPermission('/admin/acl', 'change-acls');
 
   /// Check if the user has a specific permission on a resource.
   bool hasPermission(String resource, String permission) {
