@@ -28,9 +28,11 @@ the workspace image (`build-workspace-image`).
 
 ## Sign in with GitHub (recommended)
 
-When the admin has configured GitHub OAuth (see
-[Admin setup](#admin-setup-creating-a-github-oauth-app) below), running
-a git command that requires authentication for `github.com` triggers
+When the GitHub OAuth client ID is configured — deploy-wide by the
+admin (see [Admin setup](#admin-setup-creating-a-github-oauth-app)
+below), per workspace, or ad hoc in a shell (see
+[Ways to set the client ID](#ways-to-set-the-client-id)) — running a
+git command that requires authentication for `github.com` triggers
 the device flow automatically.
 
 ### How it works
@@ -54,8 +56,12 @@ the device flow automatically.
 The entire device flow runs inside the workspace container. The
 container-side credential helper (`git-credential-klangk`) talks to
 GitHub directly, and only sends the display code to the browser for the
-user to see. The access token never leaves the container — it goes
-straight from GitHub to git via the helper's stdout.
+user to see. The access token goes straight from GitHub to git via the
+helper's stdout — it is never displayed. After a successful
+authenticated operation, git calls the helper's `store` operation,
+which places the credential in the browser tab's in-memory cache so
+subsequent operations in that tab reuse it without a new login (see
+[Credential cache](#credential-cache) for lifetime and scope).
 
 If the device flow fails (network error, expired code, denied), the
 helper falls back to the PAT dialog automatically.
@@ -77,6 +83,41 @@ The device flow only activates when all of these are true:
 
 For non-GitHub hosts, or when the client ID is not configured, the
 helper falls through to the PAT dialog.
+
+### Ways to set the client ID
+
+`KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID` can come from three levels.
+Where several apply, the narrower one wins (the per-workspace value is
+injected after — and so overrides — the deploy-wide value; a shell
+export shadows both for commands run from that shell):
+
+1. **Deploy-wide (admin).** The `features_config:` block of
+   `klangkd.yaml` (`github_oauth_client_id: "Ov23li..."`) or the
+   `KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID` environment variable on
+   the server. Injected into every workspace container at start. See
+   [Admin setup](#admin-setup-creating-a-github-oauth-app).
+2. **Per workspace.** The workspace's environment settings (the `env`
+   map on workspace create/edit, e.g.
+   `KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID=Ov23li...`).
+   Useful for testing or when only one workspace should use GitHub
+   OAuth. Takes effect the next time the workspace container starts
+   (restart the workspace after changing it) and survives restarts of
+   that workspace. Stripped on export/import — an imported copy falls
+   back to the deploy-wide value.
+3. **Ad hoc, in a shell.** Inside the workspace terminal:
+
+   ```sh
+   export KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID=Ov23li...
+   git push
+   ```
+
+   Takes effect immediately for git commands run from that shell — no
+   container restart needed — but is gone when the shell or the
+   workspace restarts.
+
+In all three cases the value only needs to be the OAuth App's **client
+ID** — no client secret is ever needed (the device flow is designed for
+public clients).
 
 ## Using a personal access token
 
@@ -142,8 +183,9 @@ create a GitHub OAuth App and set one environment variable.
    KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID=Ov23li...
    ```
 
-8. Rebuild the workspace image so the variable is injected into
-   containers. The device flow will activate automatically for
+8. The variable is injected into workspace containers at **start** —
+   no image rebuild is needed. Restart existing workspaces (or open a
+   new one) and the device flow will activate automatically for
    `github.com` hosts.
 
 **Important**: this must be an **OAuth App**, not a GitHub App. The
@@ -162,11 +204,12 @@ The PAT cache is **per-tab** and **in-memory only**:
 - Closing the tab clears the cache.
 - The cache is keyed by `protocol://host` (e.g. `https://github.com`).
 
-Device flow tokens are not cached in the browser — the token goes
-directly from the container helper to git. However, after a successful
-`git push`, git calls the helper's `store` operation, which caches the
-credentials in the browser for subsequent operations within the same
-session.
+Device flow tokens reach git directly (the helper writes the token to
+its stdout for git, never to the screen). After a successful
+authenticated operation (`git push`, an authenticated pull, …), git
+calls the helper's `store` operation, which caches the credential in
+the browser for subsequent operations within the same session — the
+same store/erase lifecycle as PATs above.
 
 ## Multiple browser tabs
 
@@ -200,11 +243,14 @@ HTTPS with PATs or OAuth is the recommended authentication method.
 ### Device flow not activating
 
 - Verify `KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID` is set in the container
-  environment (check with `echo $KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID` in the
-  workspace terminal).
+  environment (check with `echo $KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID` in
+  the workspace terminal; empty means the device flow is off). See
+  [Ways to set the client ID](#ways-to-set-the-client-id) — the quickest
+  check is an ad-hoc `export` in the shell.
 - Check that the OAuth App has **Enable Device Flow** turned on.
 - The device flow only activates for `github.com` hosts.
-- Rebuild the workspace image after setting the variable.
+- Restart the workspace after setting the variable — it is injected at
+  container start, not baked into the image.
 
 ### Device flow code expired
 

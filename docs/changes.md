@@ -1714,6 +1714,17 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **GitHub device-flow login runs once per tab session (#2953).**
+  With `KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID` configured, every
+  authenticated git operation (push, pull, clone) started a fresh
+  OAuth device-flow login — the browser tab's credential cache,
+  populated by git's `store` after a successful push, was never
+  consulted on the device-flow path. The credential helper now checks
+  the cache first (new `peek` bridge operation); one login covers
+  subsequent github.com operations in that tab, and a rejected token
+  still triggers `erase` → a fresh login. Rebuild the workspace image
+  and the frontend bundle to pick up the fixed helper and feature.
+
 - **OpenClaw sandbox: every workspace sharing a mount now runs its own
   gateway (#2947).** openclaw 2026.8.1 added a single-instance gateway
   lock under its state dir, which defaulted onto the shared `/openclaw`

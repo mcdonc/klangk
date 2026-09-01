@@ -35,6 +35,18 @@ class GitCredentialFeature extends ToolPlugin with ChangeNotifier {
     switch (operation) {
       case 'get':
         return _handleGet(key, host);
+      case 'peek':
+        // Cache-only lookup: answer immediately with a miss when empty —
+        // never show a dialog. The container helper peeks before starting
+        // a GitHub device flow so a cached token is reused.
+        final cached = _cache[key];
+        if (cached != null) {
+          return jsonEncode({
+            'username': cached.username,
+            'password': cached.password,
+          });
+        }
+        return jsonEncode({'error': 'miss'});
       case 'store':
         final username = request['username'] as String? ?? '';
         final password = request['password'] as String? ?? '';
