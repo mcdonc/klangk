@@ -292,6 +292,7 @@ STATIC_RESOURCES = [
     "/",
     "/workspaces",
     "/groups",
+    "/users",
     "/admin",
     "/admin/users",
     "/admin/invitations",

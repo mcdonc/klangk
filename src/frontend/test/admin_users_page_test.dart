@@ -1393,4 +1393,60 @@ void main() {
       expect(values, isNot(contains(agentUserId)));
     });
   });
+
+  group('ACL browser permission hints (#2940)', () {
+    Finder sidebarNode(String label) => find.descendant(
+          of: find.byType(ListView),
+          matching: find.text(label),
+        );
+
+    testWidgets('lists only top-level resources and hints the permissions',
+        (tester) async {
+      serveUsers((page, pageSize, sort, order, q) => []);
+
+      await pumpPage(tester);
+
+      // Widen the surface: six tab labels overflow at the default
+      // 1280px test width, hiding the trailing Access Control tab.
+      await tester.binding.setSurfaceSize(const Size(1920, 1000));
+      await tester.pumpAndSettle();
+
+      await tester.ensureVisible(find.text('Access Control'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Access Control'));
+      await tester.pumpAndSettle();
+
+      // Only top-level resources — no admin sub-resources (#2940):
+      // the tabs are permission checks, not ACL destinations.
+      for (final label in ['Root', 'Workspaces', 'Groups', 'Users', 'Admin']) {
+        expect(sidebarNode(label), findsOneWidget);
+      }
+      for (final label in [
+        'Invitations',
+        'Server',
+        'Events',
+      ]) {
+        expect(sidebarNode(label), findsNothing);
+      }
+
+      // Root is selected first: its hint names the seeded permission.
+      expect(
+        find.textContaining('Checked permission: view —'),
+        findsOneWidget,
+      );
+
+      // The Admin node's hint names the tab permissions (delegation
+      // happens by ACEs here, not on per-tab sub-resources).
+      await tester.tap(sidebarNode('Admin'));
+      await tester.pumpAndSettle();
+      expect(
+        find.textContaining('manage-users, manage-invitations'),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('manage-acls (root-equivalent)'),
+        findsOneWidget,
+      );
+    });
+  });
 }

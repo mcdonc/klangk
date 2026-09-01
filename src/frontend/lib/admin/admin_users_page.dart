@@ -1865,16 +1865,35 @@ class _AclBrowserTab extends StatefulWidget {
 }
 
 class _AclBrowserTabState extends State<_AclBrowserTab> {
+  /// Only top-level resources are listed (#2940): the admin tabs are
+  /// permission *checks*, not ACL-granting destinations — a tab is
+  /// delegated by adding its `manage-*` permission (or `*`) ACE on the
+  /// `/admin` node, which every tab route inherits via walk-up. Listing
+  /// the sub-resources here blurred the endpoint-permission mapping
+  /// into the ACE tree.
   static const _resources = [
     ('/', 'Root', Icons.home),
     ('/workspaces', 'Workspaces', Icons.folder),
     ('/groups', 'Groups', Icons.group),
+    ('/users', 'Users', Icons.people),
     ('/admin', 'Admin', Icons.manage_accounts),
-    ('/admin/users', 'Users', Icons.people),
-    ('/admin/invitations', 'Invitations', Icons.mail_outline),
-    ('/admin/groups', 'Admin Groups', Icons.group),
-    ('/admin/container-events', 'Container Events', Icons.history),
   ];
+
+  /// The permission(s) that matter on each node (#2940): the endpoint
+  /// checks key on these names, so the browser shows the mapping next
+  /// to the ACE list instead of leaving the operator to guess which
+  /// name the server actually asks for on this resource.
+  static const _resourceHints = {
+    '/': 'view — held by every authenticated user via the seed',
+    '/workspaces':
+        'create — workspace creation; per-workspace permissions live on each /workspaces/{id}',
+    '/groups':
+        'No permission — authenticated listing; management is under /admin',
+    '/users':
+        'No permission checked yet — `search-users` arrives with the workspaces tranche (#2890)',
+    '/admin':
+        'manage-users, manage-invitations, manage-groups, manage-server-schedule, manage-events, manage-acls (root-equivalent) — or * for everything',
+  };
 
   String _selectedResource = '/';
 
@@ -1964,25 +1983,34 @@ class _AclBrowserTabState extends State<_AclBrowserTab> {
                     children: [
                       Icon(_selectedIcon, size: 20, color: KColors.accentGreen),
                       const SizedBox(width: 10),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            _selectedLabel,
-                            style: const TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 14,
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              _selectedLabel,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 14,
+                              ),
                             ),
-                          ),
-                          Text(
-                            _selectedResource,
-                            style: const TextStyle(
-                              fontSize: 11,
-                              color: KColors.textMuted,
-                              fontFamily: 'monospace',
+                            Text(
+                              _selectedResource,
+                              style: const TextStyle(
+                                fontSize: 11,
+                                color: KColors.textMuted,
+                                fontFamily: 'monospace',
+                              ),
                             ),
-                          ),
-                        ],
+                            Text(
+                              'Checked permission: ${_resourceHints[_selectedResource]}',
+                              style: const TextStyle(
+                                fontSize: 11,
+                                color: KColors.textMuted,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ],
                   ),
