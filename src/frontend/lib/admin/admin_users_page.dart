@@ -470,7 +470,7 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     if (_canInvitations) types.add('invitations');
     if (_canServer) types.add('server');
     if (_canEvents) types.add('events');
-    // The Access Control browser reads /admin/acl/*, gated on
+    // The Access Control browser reads /acl/*, gated on
     // `manage-acls` (#2940) — a delegated container-events auditor
     // (#2923) gets only the Events tab, not a dead ACL tab.
     if (_canAcl) {
@@ -542,7 +542,7 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
         view: const ContainerEventsPanel(),
       );
     }
-    // The Access Control browser reads /admin/acl/*, gated on
+    // The Access Control browser reads /acl/*, gated on
     // `manage-acls` (#2940) — shown exactly to its holders.
     if (_canAcl) {
       addTab(
@@ -951,7 +951,7 @@ class _ManageMembersDialogState extends State<_ManageMembersDialog> {
   /// Type-ahead picker results from the authenticated
   /// `GET /users/search` surface: a `manage-groups`-only delegate
   /// (no `manage-users`) must still be able to add members, so the
-  /// picker never reads `/admin/users` (#2943 review).
+  /// picker never reads the manage-users-gated listing (#2943 review).
   List<Map<String, dynamic>> _results = [];
   final _searchController = TextEditingController();
   Timer? _searchDebounce;

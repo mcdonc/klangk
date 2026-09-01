@@ -158,7 +158,7 @@ recycles never race — they run strictly one after another.
 
 The signal paths above act **on receipt**. For a planned action, an
 admin can schedule a server stop or recycle ahead of time
-(`POST /api/v1/admin/server/schedule` — see
+(`POST /api/v1/server/schedule` — see
 [Server Scheduling](../features/server-scheduling.md)). Schedules
 persist in the DB across `klangkd` restarts, and every connected
 client sees a live countdown (web UI banner, TUI status line) from the

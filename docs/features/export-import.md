@@ -27,7 +27,7 @@ The ACL walk is first-match-wins from the workspace resource upward, so the deny
 
 > **Not a hard guarantee:** the workspace ACL is writable by anyone holding the `change-acls` permission (#2764) — which the owner wildcard grants. An owner (or any change-acls holder) can edit the workspace ACL and delete the deny entry, re-enabling export. The deny is effective against principals who _cannot_ rewrite the workspace ACL (members, spectators, coders, and share-only collaborators); to revoke export against the owner too, remove them from the owners role / wildcard grant or take the workspace away — or block the endpoint at the reverse proxy.
 
-Add the entry via the workspace **Sharing → Advanced ACL** editor in the web UI or `PUT /api/v1/admin/acl/resource`. To grant export to a narrow set of users on a workspace, add an **Allow** `export` ACE for that user/group at an even lower position. In the web UI the Export card appears in the workspace **Settings** tab (which needs `edit`); a user granted only `export` should use the CLI (`klangk export`) or the API directly.
+Add the entry via the workspace **Sharing → Advanced ACL** editor in the web UI or `PUT /api/v1/acl/resource`. To grant export to a narrow set of users on a workspace, add an **Allow** `export` ACE for that user/group at an even lower position. In the web UI the Export card appears in the workspace **Settings** tab (which needs `edit`); a user granted only `export` should use the CLI (`klangk export`) or the API directly.
 
 ## Import
 

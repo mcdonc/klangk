@@ -71,7 +71,7 @@ Map<String, dynamic> _user(String email) => {
       'created_at': '2026-01-01T00:00:00',
     };
 
-/// The built-in system agent row, as `GET /admin/users` serves it.
+/// The built-in system agent row, as the users listing serves it.
 Map<String, dynamic> _agentUser() => {
       'id': agentUserId,
       'email': 'klangk@example.com',

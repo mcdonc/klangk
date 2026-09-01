@@ -232,7 +232,7 @@ or `reject-proxy-headers: true`):
   event the feature exists to catch — an attacker using stolen
   credentials from a second machine leaves no trace.
 - **The admin session list is misleading.**
-  `GET /api/v1/admin/users/{id}/sessions` shows the proxy's address
+  `GET /api/v1/users/{id}/sessions` shows the proxy's address
   for every session. An operator cannot tell workstations apart, and
   account sharing looks the same as normal use.
 - **The failure is silent.** Nothing errors, no warning is logged, and
@@ -279,7 +279,7 @@ Only the audit signal is lost.
 1. Log in as a test user from workstation A.
 2. Log in as the same user from a different network (workstation B —
    for example, a phone hotspot).
-3. As admin, call `GET /api/v1/admin/users/{id}/sessions`. The two
+3. As admin, call `GET /api/v1/users/{id}/sessions`. The two
    sessions must show different `source_ip` values, and each must be
    the real client address — not the proxy's.
 4. The klangkd log must contain

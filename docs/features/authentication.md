@@ -154,7 +154,7 @@ reported as different, and a user logging in twice from the same
 machine is not audited.
 
 Admins can query a user's active sessions at any time — see
-[`GET /api/v1/admin/users/{id}/sessions`](../reference/api-endpoints.md#get-apiv1adminusersidsessions)
+[`GET /api/v1/users/{id}/sessions`](../reference/api-endpoints.md#get-apiv1adminusersidsessions)
 in the API reference. Each row shows when the session was established,
 when it expires, and the workstation it came from.
 
@@ -194,9 +194,9 @@ Two classes of account are never auto-disabled:
 - the system agent (it does not authenticate).
 
 A disabled account keeps all of its data; an admin re-enables it via
-`PATCH /api/v1/admin/users/{id}` with `{"disabled": false}` (admins
+`PATCH /api/v1/users/{id}` with `{"disabled": false}` (admins
 cannot disable their own account through the same endpoint).
-`GET /api/v1/admin/users` reports each user's `disabled`,
+`GET /api/v1/users` reports each user's `disabled`,
 `last_login_at`, and `last_activity_at` fields. The setting is
 reloadable on SIGHUP.
 
