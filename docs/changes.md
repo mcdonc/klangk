@@ -381,6 +381,10 @@ sync` report a clear permission-denied error.
 
 ### Added
 
+- **README release badge (#2981).** The README now carries a release
+  badge showing the latest `v*` tag, driven by GitHub Releases —
+  no manual updates needed.
+
 - **Native YAML integers for `port`, `egress_port`,
   `bridge_timeout_seconds`, and `idle_timeout_seconds` (#2967).** A
   bare YAML integer (`port: 8997`) now parses the same as the quoted
