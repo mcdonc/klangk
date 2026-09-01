@@ -5,6 +5,12 @@ on:
   push:
     branches: [release/**]
   pull_request:
+    paths-ignore:
+      # Root-only docs/meta files can never affect what this workflow
+      # tests — a PR changing only these starts no run at all (#2957).
+      - "*.md"
+      - "zensical.toml"
+      - "bootstrap"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
@@ -19,6 +25,9 @@ jobs:
       - uses: dorny/paths-filter@v4
         id: filter
         with:
+          # some-with-excludes: see backend-tests.yml (#2957) — the default
+          # 'some' quantifier ignores negated patterns.
+          predicate-quantifier: some-with-excludes
           filters: |
             frontend:
               - 'src/frontend/lib/**'
@@ -27,6 +36,7 @@ jobs:
               - 'features/**/klangk/**'
               - 'scripts/lcov-report.py'
               - '.github/workflows/frontend-tests.yml'
+              - '!**/*.md'
 
       # Pin Flutter to the nixpkgs-unstable version (devenv ships 3.47.0,
       # #2869) so CI and local runs stay in lockstep — the local coverage

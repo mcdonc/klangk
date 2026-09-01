@@ -19,6 +19,12 @@ on:
     # Weekly, Tuesdays 06:00 UTC (trivy scans Mondays 06:00; fuzz is daily).
     - cron: "0 6 * * 2"
   pull_request:
+    paths-ignore:
+      # Root-only docs/meta files can never affect what this workflow
+      # tests — a PR changing only these starts no run at all (#2957).
+      - "*.md"
+      - "zensical.toml"
+      - "bootstrap"
 
 permissions:
   contents: read

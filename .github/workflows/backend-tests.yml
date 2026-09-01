@@ -5,6 +5,12 @@ on:
   push:
     branches: [release/**]
   pull_request:
+    paths-ignore:
+      # Root-only docs/meta files can never affect what this workflow
+      # tests — a PR changing only these starts no run at all (#2957).
+      - "*.md"
+      - "zensical.toml"
+      - "bootstrap"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
@@ -19,6 +25,10 @@ jobs:
       - uses: dorny/paths-filter@v4
         id: filter
         with:
+          # some-with-excludes: a changed file counts toward the filter only
+          # if it matches an inclusion and no exclusion — without this the
+          # default 'some' quantifier ignores negated patterns entirely.
+          predicate-quantifier: some-with-excludes
           filters: |
             python:
               - 'src/klangk/**'
@@ -26,6 +36,9 @@ jobs:
               - 'features/**'
               - 'features.yaml'
               - '.github/workflows/backend-tests.yml'
+              # Docs-only .md changes (READMEs, feature docs) can't affect
+              # the suite — a PR whose diff is otherwise docs-only skips it (#2957).
+              - '!**/*.md'
 
       - uses: actions/setup-python@v6
         if: steps.filter.outputs.python == 'true'
