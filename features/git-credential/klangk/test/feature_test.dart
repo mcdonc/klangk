@@ -357,6 +357,8 @@ void main() {
       await pumpWithPendingGet(tester, feature, 'github.com');
       expect(hintOf(tester, 0), 'GitHub username');
       expect(hintOf(tester, 1), 'ghp_... or github_pat_...');
+      expect(find.text('Personal access token (PAT):'), findsOneWidget);
+      expect(find.text('Token or password:'), findsNothing);
     });
 
     testWidgets('www.github.com keeps the GitHub hints', (tester) async {
@@ -365,10 +367,33 @@ void main() {
       expect(hintOf(tester, 1), 'ghp_... or github_pat_...');
     });
 
+    testWidgets('uppercase GitHub.com host keeps the GitHub hints',
+        (tester) async {
+      await pumpWithPendingGet(tester, feature, 'GitHub.com');
+      expect(hintOf(tester, 0), 'GitHub username');
+      expect(hintOf(tester, 1), 'ghp_... or github_pat_...');
+    });
+
+    testWidgets('github.com with explicit port keeps the GitHub hints',
+        (tester) async {
+      await pumpWithPendingGet(tester, feature, 'github.com:443');
+      expect(hintOf(tester, 0), 'GitHub username');
+      expect(hintOf(tester, 1), 'ghp_... or github_pat_...');
+    });
+
+    testWidgets('github.com with trailing dot keeps the GitHub hints',
+        (tester) async {
+      await pumpWithPendingGet(tester, feature, 'github.com.');
+      expect(hintOf(tester, 0), 'GitHub username');
+      expect(hintOf(tester, 1), 'ghp_... or github_pat_...');
+    });
+
     testWidgets('gitlab.com gets neutral hints', (tester) async {
       await pumpWithPendingGet(tester, feature, 'gitlab.com');
       expect(hintOf(tester, 0), 'Username');
       expect(hintOf(tester, 1), 'Token or password');
+      expect(find.text('Token or password:'), findsOneWidget);
+      expect(find.text('Personal access token (PAT):'), findsNothing);
     });
 
     testWidgets('self-hosted host gets neutral hints', (tester) async {
