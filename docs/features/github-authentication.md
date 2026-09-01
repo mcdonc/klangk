@@ -77,14 +77,17 @@ organization has approved the app.
 
 The device flow only activates when all of these are true:
 
-- `KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID` is set in the container environment
-- The git host is GitHub — any spelling of `github.com` (or `www.github.com`)
-  counts: case (`GitHub.com`), explicit port (`github.com:443`), and a
-  trailing dot (`github.com.`) all match
+- A provider is configured for the host — a
+  `KLANGKWS_FEATURE_OAUTH_PROVIDERS` entry whose `host` matches, or one
+  of the shorthands: `KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID` for
+  GitHub, `KLANGKWS_FEATURE_GITLAB_OAUTH_CLIENT_ID` for gitlab.com
+- The git host matches the provider's `host` — any spelling counts:
+  case (`GitHub.com`), explicit port (`github.com:443`), a trailing dot
+  (`github.com.`), and a `www.` prefix all match
 - A browser tab is connected (the helper needs to show the code)
 
-For non-GitHub hosts, or when the client ID is not configured, the
-helper falls through to the PAT dialog.
+For hosts without a configured provider, the helper falls through to the
+PAT dialog.
 
 ### Ways to set the client ID
 
@@ -194,7 +197,91 @@ create a GitHub OAuth App and set one environment variable.
 device authorization grant is only available on OAuth Apps.
 
 If `KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID` is not set, the device flow is
-disabled and the PAT dialog is used for all hosts.
+disabled for GitHub and the PAT dialog is used for all hosts.
+
+## Other git hosts: GitLab, self-hosted (provider map)
+
+The device flow is not GitHub-specific. Any OAuth provider that implements
+the RFC 8628 device authorization grant works. Today that means GitHub
+(OAuth Apps) and **GitLab 17.1+** — on GitLab the OAuth application must
+also have the device flow enabled (a per-app setting, off by default on
+new apps). Gitea has no device flow in any release yet
+([go-gitea/gitea#27309](https://github.com/go-gitea/gitea/issues/27309)),
+and Atlassian/Bitbucket offers no public device authorization endpoint;
+hosts on those services use the PAT dialog.
+
+For **gitlab.com** there is a shorthand, same as GitHub's: set
+
+```sh
+KLANGKWS_FEATURE_GITLAB_OAUTH_CLIENT_ID=abc123
+```
+
+and `git push` to `gitlab.com` runs the GitLab device flow
+(`/oauth/authorize_device` + `/oauth/token`, scope
+`read_repository write_repository`, username `oauth2`). No client secret
+needed; do **not** mark the app confidential.
+
+For **self-hosted GitLab or any other RFC 8628 provider**, the host is
+your own — use the provider map instead.
+`KLANGKWS_FEATURE_OAUTH_PROVIDERS` is a JSON list of provider entries:
+
+```sh
+KLANGKWS_FEATURE_OAUTH_PROVIDERS='[
+  {
+    "host": "gitlab.example.com",
+    "client_id": "abc123",
+    "device_code_url": "https://gitlab.example.com/oauth/authorize_device",
+    "token_url": "https://gitlab.example.com/oauth/token",
+    "scope": "read_repository write_repository",
+    "username": "oauth2"
+  }
+]'
+```
+
+Each entry:
+
+- **`host`** (required) — the git remote's host, bare (no `www.` prefix,
+  port, or trailing dot). Matching normalizes the credential host (case,
+  explicit port, trailing dot) and tolerates a `www.` prefix on it, but
+  never matches by suffix — `github.com.evil.com` is not `github.com`.
+- **`client_id`** (required) — the OAuth application's client ID (public
+  clients need no secret, same as GitHub).
+- **`device_code_url`** / **`token_url`** (required) — the provider's
+  RFC 8628 endpoints. For GitLab (self-managed or gitlab.com) these are
+  `https://<host>/oauth/authorize_device` and `https://<host>/oauth/token`.
+- **`scope`** (optional) — requested scope string; omitted from the code
+  request when empty.
+- **`username`** (optional) — the git username reported with the token.
+  Defaults to `oauth2` (the GitLab convention); GitHub's shorthand uses
+  `x-access-token`.
+
+An entry for `github.com` or `gitlab.com` may live in the map too — it
+wins over the corresponding shorthand when both are set. The same three
+levels apply as for the client IDs (deploy-wide via the server env or
+the `features_config:` block as `oauth_providers`, per workspace via the
+workspace `env` map, ad hoc via a shell `export`), and the rest of the
+flow — dialog, cache, PAT fallback — behaves identically.
+
+In `klangkd.yaml` the JSON must arrive as one string. Use a folded block
+scalar (no quote escaping — JSON is whitespace-insensitive) or a `file:`
+reference to a JSON file; a native YAML list as the value is rejected at
+construction:
+
+```yaml
+features_config:
+  oauth_providers: >-
+    [{"host": "gitlab.example.com",
+      "client_id": "abc123",
+      "device_code_url": "https://gitlab.example.com/oauth/authorize_device",
+      "token_url": "https://gitlab.example.com/oauth/token",
+      "scope": "read_repository write_repository",
+      "username": "oauth2"}]
+```
+
+The dialog names the provider ("Sign in to gitlab.com"), only `https`
+verification pages are auto-opened in the browser, and the poll loop is
+the same RFC 8628 state machine, so any compliant provider works
+without further configuration.
 
 ## Credential cache
 
@@ -250,8 +337,10 @@ HTTPS with PATs or OAuth is the recommended authentication method.
   [Ways to set the client ID](#ways-to-set-the-client-id) — the quickest
   check is an ad-hoc `export` in the shell.
 - Check that the OAuth App has **Enable Device Flow** turned on.
-- The device flow only activates for GitHub hosts — any spelling of
-  `github.com` (case, explicit port, and trailing dot all match; see
+- The device flow only activates for hosts with a configured provider
+  (GitHub via the client ID, or any host via a
+  `KLANGKWS_FEATURE_OAUTH_PROVIDERS` entry — case, explicit port, trailing
+  dot, and `www.` prefix all match; see
   [When does the device flow activate?](#when-does-the-device-flow-activate)).
 - Restart the workspace after setting the variable — it is injected at
   container start, not baked into the image.

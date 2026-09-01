@@ -97,6 +97,21 @@ Each key may be written as the **stripped, lowercased short form** — e.g. `sol
 This block is read at boot and on `SIGHUP` (reloadable, like the rest of the file). It supplies values only; it does **not** change which features are compiled in (build-time, [#1655](https://github.com/mcdonc/klangk/issues/1655)) or which are turned on (`KLANGKD_FEATURES_ENABLE`, deploy-time).
 
 > **Quote non-string values.** The block is typed as a plain string map and is resolved outside the typed settings model (`resolve_dynamic_config`), so quote numerics and booleans here — `soliplex_port: "8080"`, not `8080`. (Top-level settings fields, unlike this block, accept their native YAML scalar types — see above.)
+>
+> **JSON-valued keys: use a block scalar.** A value that is itself JSON — e.g. `oauth_providers`, the git-credential device-flow provider map — must arrive as one string, and a native YAML list or mapping as the value is rejected at construction. Avoid the double-quote-escaping trap entirely with a folded block scalar (`>-`; JSON is whitespace-insensitive, so line breaks fold cleanly) or a single-quoted one-liner (double quotes inside need no escaping), or keep the JSON in its own file and reference it with the `file:` prefix:
+>
+> ```yaml
+> features_config:
+>   oauth_providers: >-
+>     [{"host": "gitlab.example.com",
+>       "client_id": "abc123",
+>       "device_code_url": "https://gitlab.example.com/oauth/authorize_device",
+>       "token_url": "https://gitlab.example.com/oauth/token",
+>       "scope": "read_repository write_repository",
+>       "username": "oauth2"}]
+>   # …or:
+>   # oauth_providers: file:/etc/klangk/oauth-providers.json
+> ```
 
 ## Complete example
 

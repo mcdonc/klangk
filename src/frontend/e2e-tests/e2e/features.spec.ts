@@ -90,6 +90,10 @@ test.describe("feature artifacts visible to the frontend", () => {
     // env into the browser. Stripped-lowercased form — the server strips
     // KLANGKWS_FEATURE_ and lowercases the suffix for /api/config keys.
     expect(config).not.toHaveProperty("github_oauth_client_id");
+    // The same contract holds for every git-credential container-scope key
+    // (#432): the GitLab shorthand and the provider map.
+    expect(config).not.toHaveProperty("gitlab_oauth_client_id");
+    expect(config).not.toHaveProperty("oauth_providers");
   });
 
   test("/api/v1/config omits features_enable when KLANGKD_FEATURES_ENABLE unset", async ({

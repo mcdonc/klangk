@@ -321,6 +321,88 @@ void main() {
     });
   });
 
+  group('device flow dialog', () {
+    Widget overlayHost(GitCredentialFeature feature) => MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => Stack(
+                children: [feature.buildOverlay(context)!],
+              ),
+            ),
+          ),
+        );
+
+    Future<void> pumpWithDeviceFlow(
+      WidgetTester tester,
+      GitCredentialFeature feature,
+      Map<String, dynamic> payload,
+    ) async {
+      await feature.handlers['git_credential']!({
+        'operation': 'device_flow_show',
+        'protocol': 'https',
+        ...payload,
+      });
+      await tester.pumpWidget(overlayHost(feature));
+      await tester.pump();
+    }
+
+    testWidgets('names the provider host from the helper', (tester) async {
+      await pumpWithDeviceFlow(tester, feature, {
+        'host': 'gitlab.com',
+        'user_code': 'ABCD-1234',
+        'verification_uri': 'https://gitlab.com/oauth/authorize_device',
+      });
+      expect(find.text('Sign in to gitlab.com'), findsOneWidget);
+      expect(find.text('Enter this code at gitlab.com:'), findsOneWidget);
+      expect(find.byType(SelectableText), findsOneWidget);
+    });
+
+    testWidgets('falls back to github.com when host is absent', (tester) async {
+      // An older container helper that doesn't send the provider host —
+      // the dialog must still render a sensible title.
+      await pumpWithDeviceFlow(tester, feature, {
+        'user_code': 'ABCD-1234',
+        'verification_uri': 'https://github.com/login/device',
+      });
+      expect(find.text('Sign in to github.com'), findsOneWidget);
+      expect(find.text('Enter this code at github.com:'), findsOneWidget);
+    });
+
+    testWidgets('shows the error message from device_flow_error',
+        (tester) async {
+      await feature.handlers['git_credential']!({
+        'operation': 'device_flow_error',
+        'protocol': 'https',
+        'host': 'gitlab.com',
+        'error': 'Code expired. Please try again.',
+      });
+      await tester.pumpWidget(overlayHost(feature));
+      await tester.pump();
+      expect(find.text('Code expired. Please try again.'), findsOneWidget);
+      expect(find.text('Falling back to manual auth...'), findsOneWidget);
+      // The error state keeps the provider host — a failed GitLab flow
+      // must not relabel the dialog as GitHub.
+      expect(find.text('Sign in to gitlab.com'), findsOneWidget);
+    });
+  });
+
+  group('verification URI auto-open gate', () {
+    test('https URIs are auto-open candidates', () {
+      expect(shouldAutoOpenVerificationUri('https://gitlab.com/oauth/device'),
+          isTrue);
+    });
+
+    test('non-https URIs are never auto-opened', () {
+      // The provider map is ad-hoc settable from a workspace shell; a
+      // hostile entry must not be able to pop arbitrary pages.
+      expect(shouldAutoOpenVerificationUri('http://gitlab.com/oauth/device'),
+          isFalse);
+      expect(shouldAutoOpenVerificationUri('javascript:alert(1)'), isFalse);
+      expect(shouldAutoOpenVerificationUri('data:text/html,x'), isFalse);
+      expect(shouldAutoOpenVerificationUri(''), isFalse);
+    });
+  });
+
   group('credential dialog hints', () {
     Widget overlayHost(GitCredentialFeature feature) => MaterialApp(
           home: Scaffold(
