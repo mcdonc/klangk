@@ -78,7 +78,7 @@ http.Client _mockClient(
           'permissions': {
             '/admin': ['*'],
             '/admin/users': ['manage-users'],
-            '/admin/groups': ['view'],
+            '/admin/groups': ['manage-groups'],
             '/admin/invitations': ['manage-invitations'],
             '/admin/server': ['manage-server-schedule'],
             '/admin/acl': ['manage-acls'],

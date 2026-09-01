@@ -97,9 +97,9 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     // their ACE on the sub-resource grants (the Events tab, #2923,
     // follows the same shape with read-only `manage-events`).
     _canUsers = auth.hasPermission('/admin/users', 'manage-users');
-    // Groups stay on the legacy /admin/groups surface (full-admin gate)
-    // until #2941 removes it in favor of /groups.
-    _canGroups = auth.hasPermission('/admin', '*');
+    // Groups tab rides /admin/groups behind manage-groups (#2941-fold:
+    // the single group-management surface; the /groups writes are gone).
+    _canGroups = auth.hasPermission('/admin/groups', 'manage-groups');
     _canInvitations =
         auth.hasPermission('/admin/invitations', 'manage-invitations');
     _canServer = auth.hasPermission('/admin/server', 'manage-server-schedule');

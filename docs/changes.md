@@ -328,15 +328,14 @@ sync` report a clear permission-denied error.
 - **Granular `/admin` tab permissions (#2940).** The admin endpoints
   split off the monolithic `admin` gate onto one permission per tab:
   `manage-users` (Users), `manage-invitations` (Invitations),
-  `manage-server-schedule` (Server), and `manage-events` (Events;
-  renamed from `container-events`). Admins are unaffected — the seeded
-  `/admin` `*` wildcard covers every name — and a whole tab can now be
-  delegated to a non-admin via an `Allow` ACE on its sub-resource.
-  `manage-acls` (Access Control browser) is root-equivalent: it can
-  rewrite ACLs on any resource including `/admin` and `/`, so it is
-  granted only to administrators. See [ACLs](reference/acl.md). The
-  legacy `/admin/groups*` endpoints stay on the full-admin gate
-  (#2941).
+  `manage-groups` (Groups), `manage-server-schedule` (Server), and
+  `manage-events` (Events; renamed from `container-events`). Admins are
+  unaffected — the seeded `/admin` `*` wildcard covers every name — and
+  a whole tab can now be delegated to a non-admin via an `Allow` ACE on
+  its sub-resource. `manage-acls` (Access Control browser) is
+  root-equivalent: it can rewrite ACLs on any resource including
+  `/admin` and `/`, so it is granted only to administrators. See
+  [ACLs](reference/acl.md).
 
 - **Container events history API + admin Events tab (#2923).** New
   `GET /api/v1/admin/container-events` endpoint pages through the
@@ -1631,6 +1630,17 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   `KLANGKD_EGRESS_PORT` wins (#1542).
 
 ### Removed
+
+- **`/groups` write endpoints (#2940, closing #2941).** Group
+  management consolidates onto `/api/v1/admin/groups` behind
+  `manage-groups`: `POST/PATCH/DELETE /api/v1/groups` and the
+  `/groups/{id}/members` write/read endpoints are gone (their
+  semantics — creator ACL grant on create, ACE cleanup on delete —
+  were ported to the admin surface). `GET /api/v1/groups` remains the
+  authenticated listing. The seeded `/groups` Allow `create` ACE is no
+  longer emitted; rows already in upgraded deployments are inert.
+  Scripts calling the removed endpoints must switch to
+  `/api/v1/admin/groups`.
 
 - **`KLANGKD_TRUST_OUTER_PROXY` (#2596).** Dead setting removed: it was
   never read by any code (a leftover from the old nginx renderer). No

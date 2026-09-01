@@ -181,19 +181,12 @@ class Lifecycle:
             PRINCIPAL_GROUP,
             group_id=admin_group_id,
         )
-        # /groups: only admins can create (#2770). Group management
-        # otherwise runs through /admin/groups (admin permission).
-        # Deployers can loosen this per-deployment by adding an Allow
-        # `create` ACE on /groups targeting another group (the same
-        # recipe as /workspaces, #2569).
-        await self.app.state.model.acl.add_acl_entry(
-            "/groups",
-            0,
-            ACTION_ALLOW,
-            "create",
-            PRINCIPAL_GROUP,
-            group_id=admin_group_id,
-        )
+        # /groups: no seed — the write surface moved to /admin/groups
+        # behind manage-groups (#2941-fold), covered for admins by the
+        # /admin * wildcard above. Deployers delegate whole-tab access
+        # with an Allow manage-groups ACE on /admin/groups. Upgraded
+        # deployments keep their old /groups `create` ACE; it is inert
+        # (nothing checks permissions on /groups writes anymore).
         # /admin: admin group gets full access, deny everyone else
         await self.app.state.model.acl.add_acl_entry(
             "/admin",

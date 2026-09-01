@@ -68,6 +68,7 @@ class AclEditorState extends State<AclEditor> {
     ...workspacePermissions,
     'manage-users',
     'manage-invitations',
+    'manage-groups',
     'manage-server-schedule',
     'manage-acls',
     'manage-events',

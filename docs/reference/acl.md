@@ -149,15 +149,16 @@ all, #2886).
 
 Not every permission is checked on a workspace resource:
 
-| Permission               | Where it is checked                                  | Controls                                                                                                                                         |
-| ------------------------ | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `create`                 | `/workspaces`                                        | Create/import workspaces                                                                                                                         |
-| `admin`                  | `/admin`                                             | Legacy catch-all for instance admin functions — still gates the `/admin/groups*` endpoints (#2941 removes them) and the drain/consent decider WS |
-| `manage-events`          | `/admin/container-events`                            | Read the container start/stop history: `GET /admin/container-events` and the admin Events tab (#2923; renamed from `container-events` in #2940)  |
-| `manage-users`           | `/admin/users` (and `/admin/users/{id}` via walk-up) | The whole Users tab: list users and their workspaces, create, edit, unlock, delete, and read active login sessions (#2940)                       |
-| `manage-invitations`     | `/admin/invitations`                                 | The whole Invitations tab: list, send, resend, revoke (#2940)                                                                                    |
-| `manage-acls`            | `/admin/acl`                                         | The Access Control browser: read and rewrite ACL entries on **any** resource via `GET/PUT /admin/acl/*` (#2940) — root-equivalent, see below     |
-| `manage-server-schedule` | `/admin/server`                                      | Server stop/recycle schedules: list, create, cancel (#2940)                                                                                      |
+| Permission               | Where it is checked                                  | Controls                                                                                                                                                                       |
+| ------------------------ | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `create`                 | `/workspaces`                                        | Create/import workspaces                                                                                                                                                       |
+| `admin`                  | `/admin`                                             | Legacy catch-all for instance admin functions — still gates the `/admin/groups*` endpoints (#2941 removes them) and the drain/consent decider WS                               |
+| `manage-events`          | `/admin/container-events`                            | Read the container start/stop history: `GET /admin/container-events` and the admin Events tab (#2923; renamed from `container-events` in #2940)                                |
+| `manage-users`           | `/admin/users` (and `/admin/users/{id}` via walk-up) | The whole Users tab: list users and their workspaces, create, edit, unlock, delete, and read active login sessions (#2940)                                                     |
+| `manage-groups`          | `/admin/groups`                                      | The whole Groups tab: list, create, edit, delete, manage members (#2940; the `/groups` writes were removed and their semantics — creator ACL grant, ACE cleanup — ported here) |
+| `manage-invitations`     | `/admin/invitations`                                 | The whole Invitations tab: list, send, resend, revoke (#2940)                                                                                                                  |
+| `manage-acls`            | `/admin/acl`                                         | The Access Control browser: read and rewrite ACL entries on **any** resource via `GET/PUT /admin/acl/*` (#2940) — root-equivalent, see below                                   |
+| `manage-server-schedule` | `/admin/server`                                      | Server stop/recycle schedules: list, create, cancel (#2940)                                                                                                                    |
 
 Each admin tab has **one** permission covering all of its actions — there
 are no per-action splits: `manage-users` grants list + create + edit +
@@ -188,10 +189,9 @@ permission on its sub-resource (Admin → Access Control) — the
 more-specific resource wins the ACL walk ahead of the `/admin`
 Deny-everyone entry. A delegated user then gets the app-bar admin icon
 and the admin section showing exactly the tabs their ACEs grant (e.g.
-`manage-users` on `/admin/users` alone: the Users tab, all of it). The
-Groups tab is the exception: it still rides the legacy `/admin/groups`
-endpoints behind the full-admin gate until #2941 removes them in favor
-of `/groups`.
+`manage-users` on `/admin/users` alone: the Users tab, all of it).
+`GET /groups` remains an authenticated-user listing (pickers, share
+dialogs) — it is not part of the admin section.
 
 ## Checking Your Permissions
 

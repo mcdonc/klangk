@@ -297,7 +297,7 @@ void main() {
       testAuthHttpClientOverride = _mockClient(
         {
           '/admin/users': ['manage-users'],
-          '/admin/groups': ['view'],
+          '/admin/groups': ['manage-groups'],
           '/admin/invitations': ['manage-invitations'],
           '/admin': ['admin'],
         },

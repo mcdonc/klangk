@@ -154,6 +154,7 @@ class AuthService extends ChangeNotifier {
       isAdmin ||
       hasPermission('/admin/users', 'manage-users') ||
       hasPermission('/admin/invitations', 'manage-invitations') ||
+      hasPermission('/admin/groups', 'manage-groups') ||
       hasPermission('/admin/server', 'manage-server-schedule') ||
       hasPermission('/admin/container-events', 'manage-events') ||
       hasPermission('/admin/acl', 'manage-acls');
