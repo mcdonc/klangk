@@ -12,29 +12,23 @@ Run with: devenv shell -- test-backend-e2e -k test_llm_proxy_e2e
 import json
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from types import SimpleNamespace
 
+import httpx
 import pytest
 
-from klangk.auth import Auth
 from klangk.model import free_port
 from _e2e_server import start_server, stop_server
 
 
-def _ws_headers(secret, workspace_id="e2e-llm"):
-    """Auth headers with a workspace JWT signed by the server's secret
-    (the token class the egress caddy's forward_auth forwards, #2959)."""
-    auth = Auth(
-        SimpleNamespace(
-            state=SimpleNamespace(
-                settings=SimpleNamespace(
-                    jwt_secret=secret, workspace_token_hours=24.0
-                )
-            )
-        )
+def _ws_headers(client, workspace_id="e2e-llm"):
+    """Auth headers with a workspace JWT minted by the server's own
+    test-mode endpoint — the token class the egress caddy's forward_auth
+    forwards and the backend gate now requires (#2959)."""
+    resp = client.get(
+        f"/api/v1/test/workspace-token/{workspace_id}", timeout=10
     )
-    token = auth.create_workspace_token(workspace_id)
-    return {"Authorization": f"Bearer {token}"}
+    assert resp.status_code == 200, resp.text
+    return {"Authorization": f"Bearer {resp.json()['token']}"}
 
 
 class _FakeLLMHandler(BaseHTTPRequestHandler):
@@ -157,7 +151,7 @@ class TestLLMProxyE2E:
     def test_models_endpoint_returns_configured_model(self, server):
         resp = server["client"].get(
             "/llm-proxy/models",
-            headers=_ws_headers("llm-e2e-secret"),
+            headers=_ws_headers(server["client"]),
             timeout=10,
         )
         assert resp.status_code == 200
@@ -169,7 +163,7 @@ class TestLLMProxyE2E:
     def test_chat_completions_proxies_to_upstream(self, server):
         resp = server["client"].post(
             "/llm-proxy/chat/completions",
-            headers=_ws_headers("llm-e2e-secret"),
+            headers=_ws_headers(server["client"]),
             json={
                 "model": "fake-model",
                 "messages": [{"role": "user", "content": "hello"}],
@@ -184,7 +178,7 @@ class TestLLMProxyE2E:
     def test_chat_completions_returns_usage(self, server):
         resp = server["client"].post(
             "/llm-proxy/chat/completions",
-            headers=_ws_headers("llm-e2e-secret"),
+            headers=_ws_headers(server["client"]),
             json={
                 "model": "fake-model",
                 "messages": [{"role": "user", "content": "hi"}],
@@ -210,7 +204,7 @@ class TestLLMProxyE2E:
         try:
             resp = srv["client"].get(
                 "/llm-proxy/models",
-                headers=_ws_headers("llm-e2e-none"),
+                headers=_ws_headers(srv["client"]),
                 timeout=10,
             )
             assert resp.status_code == 200
@@ -252,7 +246,7 @@ class TestLLMProxyPassthroughE2E:
         """GET /llm-proxy/models queries the upstream and returns its models."""
         resp = passthrough_stack["client"].get(
             "/llm-proxy/models",
-            headers=_ws_headers("llm-pt-e2e"),
+            headers=_ws_headers(passthrough_stack["client"]),
             timeout=10,
         )
         assert resp.status_code == 200
@@ -265,7 +259,7 @@ class TestLLMProxyPassthroughE2E:
         """POST /llm-proxy/chat/completions forwards the model name as-is."""
         resp = passthrough_stack["client"].post(
             "/llm-proxy/chat/completions",
-            headers=_ws_headers("llm-pt-e2e"),
+            headers=_ws_headers(passthrough_stack["client"]),
             json={
                 "model": "fake-model",
                 "messages": [{"role": "user", "content": "hello"}],
@@ -275,3 +269,63 @@ class TestLLMProxyPassthroughE2E:
         assert resp.status_code == 200
         content = resp.json()["choices"][0]["message"]["content"]
         assert "Hello from" in content
+
+
+class TestLLMProxyEgressHopE2E:
+    """The full production hop: caddy egress listener → backend gate.
+
+    The other classes hit the backend directly, and the caddy ACL suite
+    uses an echo upstream — neither proves that a request through the
+    egress listener carries the workspace JWT all the way into the
+    backend's ``require_workspace_token`` gate (#2959). A caddy-side
+    regression that stopped forwarding ``Authorization`` would 401 every
+    in-container LLM call while both suites stayed green; this closes
+    that gap.
+
+    Real klangkd in TCP mode renders its own caddy (browser + egress
+    listeners). ``KLANGKD_CONTAINER_SUBNETS=127.0.0.1`` makes the test's
+    loopback source a container source so the egress ACL allows it (the
+    same trick the caddy ACL suite uses with the host IP).
+    """
+
+    @pytest.fixture(scope="class")
+    @staticmethod
+    def stack(fake_llm):
+        egress_port = free_port()
+        model_entry = f"openai/fake-model:{fake_llm['url']}/v1:dummy-key"
+        srv = start_server(
+            uds=False,
+            KLANGKD_JWT_SECRET="llm-hop-e2e",
+            KLANGKD_PREVENT_INSECURE_JWT_SECRET="",
+            KLANGKD_DEFAULT_USER="test@example.com",
+            KLANGKD_DEFAULT_PASSWORD="testpass",
+            KLANGKD_TEST_MODE="1",
+            KLANGKD_IDLE_TIMEOUT_SECONDS="300",
+            LOGFIRE_TOKEN="",
+            KLANGKD_LLM_MODELS=model_entry,
+            KLANGKD_EGRESS_PORT=str(egress_port),
+            KLANGKD_CONTAINER_SUBNETS="127.0.0.1",
+        )
+        yield {"client": srv["client"], "egress_port": egress_port}
+        stop_server(srv)
+
+    def test_tokenless_rejected_by_forward_auth(self, stack):
+        """No token → the egress forward_auth verifier 401s it."""
+        resp = httpx.get(
+            f"http://127.0.0.1:{stack['egress_port']}/llm-proxy/models",
+            timeout=10,
+        )
+        assert resp.status_code == 401
+
+    def test_workspace_token_survives_the_hop(self, stack):
+        """Workspace token → passes the ACL, forward_auth, AND the
+        backend gate; the model list comes back (200)."""
+        headers = _ws_headers(stack["client"], "ws-hop")
+        resp = httpx.get(
+            f"http://127.0.0.1:{stack['egress_port']}/llm-proxy/models",
+            headers=headers,
+            timeout=10,
+        )
+        assert resp.status_code == 200
+        ids = [m["id"] for m in resp.json()["data"]]
+        assert "fake-model" in ids

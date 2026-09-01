@@ -27,9 +27,10 @@ def _app(extra_env=None):
 
 
 def _client(app, authed=True):
-    """A client for the minimal app; `authed` pre-loads the workspace
-    token as the default Authorization header (per-request headers still
-    override it, #2959 gate tests rely on that)."""
+    """A client for the minimal app. `authed` pre-loads the workspace
+    token as the default Authorization header so existing cases exercise
+    the accepted caller class; the #2959 gate tests pass `authed=False`
+    (or per-request headers) to control exactly what is sent."""
     headers = _ws_headers(app) if authed else None
     return AsyncClient(
         transport=ASGITransport(app=app),
