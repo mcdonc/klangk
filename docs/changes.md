@@ -1714,6 +1714,13 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **GitHub device-flow gate now normalizes the git host (#2963).**
+  With `KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID` configured, a remote
+  written as `https://github.com:443/...`, `https://GitHub.com/...`, or
+  `https://github.com./...` skipped the device flow and fell back to the
+  manual PAT dialog; the credential helper now matches those spellings
+  the same way the browser dialog does.
+
 - **Git credential dialog hint text (#2954).** The browser-side
   "Git credentials" dialog now derives its field wording from the host
   (case-, port-, and trailing-dot-insensitive): `github.com` keeps

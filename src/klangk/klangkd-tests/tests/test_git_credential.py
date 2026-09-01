@@ -429,6 +429,82 @@ class TestDeviceFlowCache:
         assert "get" in ops
 
 
+class TestDeviceFlowHostGate:
+    """The device-flow gate must normalize the git credential host (#2963).
+
+    Git preserves case and can include an explicit port or trailing dot in
+    ``host``; every spelling of a GitHub remote must reach the device flow,
+    and non-GitHub hosts must skip it entirely.
+    """
+
+    CLIENT_ENV = {"KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID": "Ov23test"}
+
+    def _run_get(self, bridge_server, fake_browser_id, host):
+        server, port = bridge_server
+        base = f"http://127.0.0.1:{port}"
+        _BridgeHandler.op_bodies = {
+            "peek": json.dumps({"error": "miss"}).encode(),
+            "get": json.dumps({"username": "u", "password": "p"}).encode(),
+        }
+        _BridgeHandler.routes = {
+            "/login/device/code": json.dumps(
+                {
+                    "device_code": "dc-123",
+                    "user_code": "ABCD-1234",
+                    "verification_uri": f"{base}/login/device",
+                    "interval": 0,
+                    "expires_in": 60,
+                }
+            ).encode(),
+            "/login/oauth/access_token": json.dumps(
+                {"access_token": "gho_fresh", "token_type": "bearer"}
+            ).encode(),
+        }
+        return run_helper(
+            "get",
+            f"protocol=https\nhost={host}\n\n",
+            env_override={
+                "KLANGKWS_BRIDGE_URL": base,
+                "GIT_CREDENTIAL_KLANGK_GITHUB_URL": base,
+                **self.CLIENT_ENV,
+            },
+            extra_path=str(fake_browser_id),
+        )
+
+    @pytest.mark.parametrize(
+        "host",
+        [
+            "github.com",
+            "www.github.com",
+            "github.com:443",
+            "GitHub.com",
+            "github.com.",
+        ],
+    )
+    def test_gate_takes_device_flow_for_every_github_spelling(
+        self, bridge_server, fake_browser_id, host
+    ):
+        result = self._run_get(bridge_server, fake_browser_id, host)
+
+        assert result.returncode == 0
+        assert "password=gho_fresh" in result.stdout
+        ops = [r["operation"] for r in _BridgeHandler.requests]
+        assert ops[0] == "peek"
+        assert "device_flow_show" in ops
+        assert "device_flow_done" in ops
+        assert "get" not in ops  # never fell through to the PAT dialog
+
+    def test_gate_skips_device_flow_for_non_github_host(
+        self, bridge_server, fake_browser_id
+    ):
+        result = self._run_get(bridge_server, fake_browser_id, "gitlab.com")
+
+        assert result.returncode == 0
+        assert "password=p" in result.stdout
+        ops = [r["operation"] for r in _BridgeHandler.requests]
+        assert ops == ["get"]  # no peek, no device flow, straight to PAT
+
+
 class TestStoreAndErase:
     def test_store_forwards_credentials(self, bridge_server, fake_browser_id):
         server, port = bridge_server
