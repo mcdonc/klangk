@@ -46,7 +46,18 @@ def _is_seeded_shape(rows) -> bool:
     system-authenticated create entry the seed wrote."""
     if len(rows) != 1:
         return False
-    return rows[0][:7] == (
+    row = rows[0]
+    # Integer-indexed compare: rows may be the db.Row wrapper (no slice
+    # support) on the production connection path.
+    return (
+        row[0],
+        row[1],
+        row[2],
+        row[3],
+        row[4],
+        row[5],
+        row[6],
+    ) == (
         0,  # position
         ACTION_ALLOW,
         PRINCIPAL_SYSTEM,

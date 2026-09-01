@@ -69,11 +69,16 @@ def _is_legacy_groups_shape(rows) -> bool:
 
 def _is_legacy_row_shape(row) -> bool:
     """The single-row seed shape: ``Allow create`` for a group principal
-    at position 0."""
+    at position 0.
+
+    Integer-indexed compare: rows may be the db.Row wrapper (no slice
+    support) on the production connection path.
+    """
     return (
-        row[:4] == (0, ACTION_ALLOW, PRINCIPAL_GROUP, None)
+        (row[0], row[1], row[2], row[3])
+        == (0, ACTION_ALLOW, PRINCIPAL_GROUP, None)
         and row[4] is not None  # group_id
-        and row[5:] == (None, "create")
+        and (row[5], row[6]) == (None, "create")
     )
 
 
