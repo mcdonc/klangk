@@ -9,15 +9,12 @@ end-to-end through the in-process litellm Router.
 Run with: devenv shell -- test-backend-e2e -k test_llm_proxy_e2e
 """
 
-import json
-import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
-
 import httpx
 import pytest
 
 from klangk.model import free_port
 from _e2e_server import start_server, stop_server
+from _fake_llm import start_fake_llm, stop_fake_llm
 
 
 def _ws_headers(client, workspace_id="e2e-llm"):
@@ -31,81 +28,12 @@ def _ws_headers(client, workspace_id="e2e-llm"):
     return {"Authorization": f"Bearer {resp.json()['token']}"}
 
 
-class _FakeLLMHandler(BaseHTTPRequestHandler):
-    """Minimal OpenAI-compatible handler."""
-
-    def do_GET(self):
-        if self.path == "/v1/models":
-            body = json.dumps(
-                {
-                    "object": "list",
-                    "data": [
-                        {
-                            "id": "fake-model",
-                            "object": "model",
-                            "owned_by": "test",
-                        }
-                    ],
-                }
-            ).encode()
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-        else:
-            self.send_error(404)
-
-    def do_POST(self):
-        if self.path == "/v1/chat/completions":
-            length = int(self.headers.get("Content-Length", 0))
-            request_body = (
-                json.loads(self.rfile.read(length)) if length else {}
-            )
-            model = request_body.get("model", "unknown")
-            body = json.dumps(
-                {
-                    "id": "chatcmpl-fake",
-                    "object": "chat.completion",
-                    "model": model,
-                    "choices": [
-                        {
-                            "index": 0,
-                            "message": {
-                                "role": "assistant",
-                                "content": f"Hello from {model}!",
-                            },
-                            "finish_reason": "stop",
-                        }
-                    ],
-                    "usage": {
-                        "prompt_tokens": 5,
-                        "completion_tokens": 5,
-                        "total_tokens": 10,
-                    },
-                }
-            ).encode()
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-        else:
-            self.send_error(404)
-
-    def log_message(self, format, *args):
-        pass  # suppress request logs
-
-
 @pytest.fixture(scope="module")
 def fake_llm():
     """Start a fake OpenAI-compatible LLM server on a free port."""
-    port = free_port()
-    httpd = HTTPServer(("127.0.0.1", port), _FakeLLMHandler)
-    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
-    thread.start()
-    yield {"port": port, "url": f"http://127.0.0.1:{port}"}
-    httpd.shutdown()
+    fake = start_fake_llm()
+    yield fake
+    stop_fake_llm(fake)
 
 
 @pytest.fixture(scope="module")
