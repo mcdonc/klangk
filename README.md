@@ -1,5 +1,8 @@
 # Klangk
 
+[![Built with devenv](https://devenv.sh/assets/devenv-badge.svg)](https://devenv.sh)
+[![Built with Nix](https://img.shields.io/static/v1?logo=nixos&logoColor=white&label=&message=Built%20with%20Nix&color=41439a)](https://builtwithnix.org)
+
 ![Klangk Web Coding Agent](docs/screenshot.png)
 
 Klangk is a multi-user AI sandboxing, collaboration and coding platform.
