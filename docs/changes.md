@@ -392,12 +392,15 @@ sync` report a clear permission-denied error.
 - **`KLANGKWS_FEATURE_OAUTH_PROVIDERS` (#432).** JSON list of OAuth
   device-flow providers (`host`, `client_id`, `device_code_url`,
   `token_url`, optional `scope`/`username`) that extends the git-credential
-  device flow beyond GitHub to any RFC 8628 provider — GitLab, Gitea,
-  self-hosted. A matching entry wins over the
-  `KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID` shorthand, which keeps working
-  unchanged. The browser dialog now names the provider host ("Sign in to
-  gitlab.com"). See
-  [GitHub Authentication](features/github-authentication.md#other-git-hosts-gitlab-gitea-self-hosted-provider-map).
+  device flow beyond GitHub to any RFC 8628 provider — self-hosted GitLab
+  (17.1+, device flow enabled on the app) and other compliant hosts. A
+  matching entry wins over the client-ID shorthands; a new
+  `KLANGKWS_FEATURE_GITLAB_OAUTH_CLIENT_ID` shorthand covers `gitlab.com`
+  the way the existing GitHub one does. The browser dialog now names the
+  provider host ("Sign in to gitlab.com"), only `https` verification pages
+  are auto-opened, and malformed provider responses fall back to the PAT
+  dialog instead of hanging it. See
+  [GitHub Authentication](features/github-authentication.md#other-git-hosts-gitlab-self-hosted-provider-map).
 
 - **Granular `/admin` tab permissions (#2940).** The admin endpoints
   split off the monolithic `admin` gate onto one permission per tab:

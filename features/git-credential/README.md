@@ -114,7 +114,7 @@ feature removes any cached credentials for that host.
 
 ## Configuration
 
-The feature declares two config variables in `package.json` (both
+The feature declares three config variables in `package.json` (all
 `container` scope):
 
 - **`KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID`** — GitHub OAuth App client
@@ -122,15 +122,22 @@ The feature declares two config variables in `package.json` (both
   (endpoints `https://github.com/login/device/code` and
   `https://github.com/login/oauth/access_token`, scope `repo`, username
   `x-access-token`). No client secret needed.
+- **`KLANGKWS_FEATURE_GITLAB_OAUTH_CLIENT_ID`** — the same shorthand for
+  `gitlab.com` (endpoints `https://gitlab.com/oauth/authorize_device`
+  and `https://gitlab.com/oauth/token`, scope
+  `read_repository write_repository`, username `oauth2`). Needs GitLab
+  17.1+ with the device flow enabled on the OAuth application.
 - **`KLANGKWS_FEATURE_OAUTH_PROVIDERS`** — JSON list of provider entries
-  that activates the device flow for any host. Each entry:
+  that activates the device flow for any host — self-hosted GitLab,
+  other RFC 8628 providers, or overrides of the stock entries. Each
+  entry:
 
   ```json
   {
-    "host": "gitlab.com",
+    "host": "gitlab.example.com",
     "client_id": "abc123",
-    "device_code_url": "https://gitlab.com/oauth/authorize_device",
-    "token_url": "https://gitlab.com/oauth/token",
+    "device_code_url": "https://gitlab.example.com/oauth/authorize_device",
+    "token_url": "https://gitlab.example.com/oauth/token",
     "scope": "read_repository write_repository",
     "username": "oauth2"
   }
@@ -138,21 +145,26 @@ The feature declares two config variables in `package.json` (both
 
   Required: `host`, `client_id`, `device_code_url`, `token_url`. Optional:
   `scope` (omitted from the code request when empty) and `username`
-  (defaults to `oauth2`; GitHub uses `x-access-token`). Host matching
-  ignores case, an explicit port, a trailing dot, and a `www.` prefix,
-  so every spelling of the remote's host reaches its provider. When both
-  variables define a provider for the same host, the
-  `KLANGKWS_FEATURE_OAUTH_PROVIDERS` entry wins.
+  (defaults to `oauth2`; GitHub uses `x-access-token`). Entries must use
+  the bare host: matching normalizes the credential host (case, explicit
+  port, trailing dot) and tolerates a `www.` prefix on it, but never
+  matches by suffix (`github.com.evil.com` is not `github.com`). When a
+  shorthand and a map entry both define a provider for the same host,
+  the `KLANGKWS_FEATURE_OAUTH_PROVIDERS` entry wins.
 
-Both may be set deploy-wide (server env or the `features_config:` block
-of `klangkd.yaml`, short keys `github_oauth_client_id` /
-`oauth_providers`), per workspace (the workspace `env` map), or ad hoc in
-a shell. See the docs site's [GitHub Authentication](../../docs/features/github-authentication.md)
+All three may be set deploy-wide (server env or the `features_config:`
+block of `klangkd.yaml`, short keys `github_oauth_client_id` /
+`gitlab_oauth_client_id` / `oauth_providers`), per workspace (the
+workspace `env` map), or ad hoc in a shell. See the docs site's
+[GitHub Authentication](../../docs/features/github-authentication.md)
 page for the walkthrough.
 
 Providers known to support RFC 8628 device flow: GitHub (OAuth Apps only,
-not GitHub Apps), GitLab 13.x+, Gitea 1.17+, and Bitbucket (via
-Atlassian OAuth).
+not GitHub Apps) and GitLab (17.1+, with the device flow enabled on the
+OAuth application). Gitea has no device flow in any release yet
+(go-gitea/gitea#27309); Atlassian/Bitbucket has no public device
+authorization endpoint. When those change, extend `STOCK_PROVIDERS` in
+`tools/git-credential-klangk` — until then such hosts use the PAT dialog.
 
 ## Credential cache
 

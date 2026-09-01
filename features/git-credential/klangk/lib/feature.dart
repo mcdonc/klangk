@@ -8,6 +8,12 @@ import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 
 import 'open_url.dart';
 
+/// Only https verification URIs are auto-opened: the provider map is
+/// ad-hoc settable from a workspace shell, so a hostile entry must not be
+/// able to pop an arbitrary non-https page in the user's browser. The
+/// link is still rendered in the dialog either way.
+bool shouldAutoOpenVerificationUri(String uri) => uri.startsWith('https://');
+
 /// Git credential feature: handles bridge requests from the container-side
 /// git-credential-klangk helper. Shows a PAT dialog when git needs auth,
 /// caches credentials in memory for the session. The GitHub OAuth device
@@ -64,7 +70,9 @@ class GitCredentialFeature extends ToolPlugin with ChangeNotifier {
           host: request['host'] as String? ?? '',
         );
         notifyListeners();
-        openUrl(_deviceFlow!.verificationUri);
+        if (shouldAutoOpenVerificationUri(_deviceFlow!.verificationUri)) {
+          openUrl(_deviceFlow!.verificationUri);
+        }
         return jsonEncode({'status': 'ok'});
       case 'device_flow_done':
         _deviceFlow = null;
@@ -74,6 +82,7 @@ class GitCredentialFeature extends ToolPlugin with ChangeNotifier {
         _deviceFlow = _DeviceFlowState(
           userCode: '',
           verificationUri: '',
+          host: request['host'] as String? ?? '',
           error: request['error'] as String? ?? 'Unknown error',
         );
         notifyListeners();

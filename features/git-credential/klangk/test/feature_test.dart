@@ -380,6 +380,26 @@ void main() {
       await tester.pump();
       expect(find.text('Code expired. Please try again.'), findsOneWidget);
       expect(find.text('Falling back to manual auth...'), findsOneWidget);
+      // The error state keeps the provider host — a failed GitLab flow
+      // must not relabel the dialog as GitHub.
+      expect(find.text('Sign in to gitlab.com'), findsOneWidget);
+    });
+  });
+
+  group('verification URI auto-open gate', () {
+    test('https URIs are auto-open candidates', () {
+      expect(shouldAutoOpenVerificationUri('https://gitlab.com/oauth/device'),
+          isTrue);
+    });
+
+    test('non-https URIs are never auto-opened', () {
+      // The provider map is ad-hoc settable from a workspace shell; a
+      // hostile entry must not be able to pop arbitrary pages.
+      expect(shouldAutoOpenVerificationUri('http://gitlab.com/oauth/device'),
+          isFalse);
+      expect(shouldAutoOpenVerificationUri('javascript:alert(1)'), isFalse);
+      expect(shouldAutoOpenVerificationUri('data:text/html,x'), isFalse);
+      expect(shouldAutoOpenVerificationUri(''), isFalse);
     });
   });
 
