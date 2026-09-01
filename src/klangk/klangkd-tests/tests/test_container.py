@@ -5838,6 +5838,33 @@ def _health_state(
     return st
 
 
+class _CountingBool:
+    """A bool stand-in that counts evaluations — used to observe that
+    the health loop actually iterated before the test cancels it (a
+    fixed sleep window can expire under -n auto load before the first
+    tick, silently losing the skip-branch coverage, #2944)."""
+
+    def __init__(self, value: bool) -> None:
+        self.value = value
+        self.reads = 0
+
+    def __bool__(self) -> bool:
+        self.reads += 1
+        return self.value
+
+
+async def _wait_for_called(check, ticks: int = 500) -> None:
+    """Deterministically wait for a mocked call instead of a fixed
+    sleep: under -n auto load a 50ms window can elapse before the
+    health loop's first tick, de-flaking both the assertion and the
+    line coverage (#2944)."""
+    for _ in range(ticks):
+        if check.called:
+            return
+        await asyncio.sleep(0.001)
+    raise AssertionError("health loop never called _check_workspace")
+
+
 class TestHealthMonitorRunOne:
     def setup_method(self):
         app_state = _make_app_state()
@@ -6354,11 +6381,20 @@ class TestHealthMonitorLoopSkips:
                     monitor, "_check_workspace", AsyncMock()
                 ) as check,
                 patch.object(
+                    monitor,
+                    "_setup_complete",
+                    MagicMock(return_value=False),
+                ) as setup,
+                patch.object(
                     reg.app.state.settings, "health_check_interval", 0.01
                 ),
             ):
                 task = asyncio.create_task(monitor.run_health_loop())
-                await asyncio.sleep(0.05)
+                for _ in range(500):
+                    if setup.call_count:
+                        break
+                    await asyncio.sleep(0.001)
+                assert setup.call_count, "loop never iterated"
                 task.cancel()
                 try:
                     await task
@@ -6372,6 +6408,8 @@ class TestHealthMonitorLoopSkips:
         reg = _health_registry()
         monitor = reg.health
         st = _health_state(health_check=None)
+        gate = _CountingBool(False)
+        st.health_check = gate
         reg.states[st.workspace_id] = st
         try:
             with (
@@ -6383,7 +6421,11 @@ class TestHealthMonitorLoopSkips:
                 ),
             ):
                 task = asyncio.create_task(monitor.run_health_loop())
-                await asyncio.sleep(0.05)
+                for _ in range(500):
+                    if gate.reads:
+                        break
+                    await asyncio.sleep(0.001)
+                assert gate.reads, "loop never iterated"
                 task.cancel()
                 try:
                     await task
@@ -6408,7 +6450,7 @@ class TestHealthMonitorLoopSkips:
                 ),
             ):
                 task = asyncio.create_task(monitor.run_health_loop())
-                await asyncio.sleep(0.05)
+                await _wait_for_called(check)
                 task.cancel()
                 try:
                     await task

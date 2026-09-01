@@ -118,8 +118,11 @@ async def _refuse_invalid_handshake(
             f"/workspaces/{workspace}", principals, "egress-consent"
         )
     else:
+        # Server-lifecycle decisions (drain/recycle consent) are
+        # instance-sphere: manage-server-schedule on /server (#2944;
+        # previously the legacy `admin`-on-`/admin` gate).
         allowed = await app.state.acl.check_permission(
-            "/admin", principals, "admin"
+            "/server", principals, "manage-server-schedule"
         )
     if not allowed:
         await _refuse(websocket, 4003, "Forbidden", user.get("email"))

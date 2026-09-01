@@ -15,13 +15,13 @@ from _ws import connect_workspace
 
 def test_admin_users_crud(api, auth):
     headers = auth["headers"]
-    resp = api.get("/api/v1/admin/users?page_size=200", headers=headers)
+    resp = api.get("/api/v1/users?page_size=200", headers=headers)
     assert resp.status_code == 200
     assert any(u["email"] == "admin@example.com" for u in resp.json()["users"])
 
     email = f"admin-made-{uuid.uuid4().hex[:8]}@example.com"
     resp = api.post(
-        "/api/v1/admin/users",
+        "/api/v1/users",
         headers=headers,
         json={"email": email, "password": "made-by-admin"},
     )
@@ -36,7 +36,7 @@ def test_admin_users_crud(api, auth):
     assert resp.status_code == 200
 
     # Delete cascades cleanly.
-    resp = api.delete(f"/api/v1/admin/users/{user_id}", headers=headers)
+    resp = api.delete(f"/api/v1/users/{user_id}", headers=headers)
     assert resp.status_code == 200
 
 

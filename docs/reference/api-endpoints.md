@@ -15,11 +15,11 @@ are under `/api/v1` except `/health`, `/empty`, and the
 
 ## Endpoints
 
-### DELETE `/api/v1/admin/groups/{id}`
+### DELETE `/api/v1/groups/{id}`
 
 Delete a group (admin).
 
-**Auth:** JWT required. User must have `manage-groups` permission on `/admin/groups` (#2940).
+**Auth:** JWT required. User must have `manage-groups` permission on `/groups` (#2944).
 
 No request body.
 
@@ -29,11 +29,11 @@ No request body.
 
 ---
 
-### DELETE `/api/v1/admin/groups/{id}/members/{user_id}`
+### DELETE `/api/v1/groups/{id}/members/{user_id}`
 
 Remove a user from a group (admin).
 
-**Auth:** JWT required. User must have `manage-groups` permission on `/admin/groups` (#2940).
+**Auth:** JWT required. User must have `manage-groups` permission on `/groups` (#2944).
 
 No request body.
 
@@ -43,11 +43,11 @@ No request body.
 
 ---
 
-### DELETE `/api/v1/admin/server/schedule/{schedule_id}`
+### DELETE `/api/v1/server/schedule/{schedule_id}`
 
 Cancel a pending server stop/recycle schedule (#2661). All connected clients' countdowns update immediately.
 
-**Auth:** JWT required. User must have the `manage-server-schedule` permission on `/admin/server` (#2940).
+**Auth:** JWT required. User must have the `manage-server-schedule` permission on `/server` (#2944).
 
 No request body.
 
@@ -61,11 +61,11 @@ See [Server Scheduling](../features/server-scheduling.md).
 
 ---
 
-### DELETE `/api/v1/admin/invitations/{id}`
+### DELETE `/api/v1/invitations/{id}`
 
 Revoke a pending invitation.
 
-**Auth:** JWT required. User must have the `manage-invitations` permission on `/admin/invitations` (#2940).
+**Auth:** JWT required. User must have the `manage-invitations` permission on `/invitations` (#2944).
 
 No request body.
 
@@ -75,11 +75,11 @@ No request body.
 
 ---
 
-### DELETE `/api/v1/admin/users/{id}`
+### DELETE `/api/v1/users/{id}`
 
 Delete a user account. Cannot delete self or the system agent user.
 
-**Auth:** JWT required. User must have the `manage-users` permission on `/admin/users` (#2940).
+**Auth:** JWT required. User must have the `manage-users` permission on `/users` (#2944).
 
 No request body.
 
@@ -89,12 +89,12 @@ No request body.
 
 ---
 
-### POST `/api/v1/admin/users/{id}/unlockout`
+### POST `/api/v1/users/{id}/unlockout`
 
 Reset a user's login lockout, allowing them to log in immediately after
 being locked out due to too many failed attempts.
 
-**Auth:** JWT required. User must have the `manage-users` permission on `/admin/users` (#2940).
+**Auth:** JWT required. User must have the `manage-users` permission on `/users` (#2944).
 
 No request body.
 
@@ -104,7 +104,7 @@ No request body.
 
 ---
 
-### GET `/api/v1/admin/users/{id}/sessions`
+### GET `/api/v1/users/{id}/sessions`
 
 List a user's active sessions with their workstation identity — the
 queryable half of concurrent-logon auditing. One item per unexpired
@@ -113,7 +113,7 @@ session was established from (null = unknown, e.g. sessions created
 before the audit feature), `user_agent` is the client's User-Agent
 string (null = none was sent). Expired sessions are excluded.
 
-**Auth:** JWT required. User must have the `manage-users` permission on `/admin/users` (#2940).
+**Auth:** JWT required. User must have the `manage-users` permission on `/users` (#2944).
 
 No request body.
 
@@ -132,11 +132,11 @@ No request body.
 
 ---
 
-### GET `/api/v1/admin/acl/by-principal/group/{id}`
+### GET `/api/v1/acl/by-principal/group/{id}`
 
 List all ACL entries granted to a specific group across all resources.
 
-**Auth:** JWT required. User must have the `manage-acls` permission on `/admin/acl` (#2940).
+**Auth:** JWT required. User must have the `manage-acls` permission on `/acl` (#2944).
 
 No request body.
 
@@ -154,11 +154,11 @@ No request body.
 
 ---
 
-### GET `/api/v1/admin/acl/by-principal/user/{id}`
+### GET `/api/v1/acl/by-principal/user/{id}`
 
 List all ACL entries granted to a specific user across all resources.
 
-**Auth:** JWT required. User must have the `manage-acls` permission on `/admin/acl` (#2940).
+**Auth:** JWT required. User must have the `manage-acls` permission on `/acl` (#2944).
 
 No request body.
 
@@ -176,7 +176,7 @@ No request body.
 
 ---
 
-### GET `/api/v1/admin/acl/resource`
+### GET `/api/v1/acl/resource`
 
 Get the ACL entries for a specific resource. Query param: `resource`
 (e.g. `/workspaces/uuid`).
@@ -202,11 +202,11 @@ No request body.
 
 ---
 
-### GET `/api/v1/admin/acl/tree`
+### GET `/api/v1/acl/tree`
 
 Get a summary of the entire ACL tree across all resources.
 
-**Auth:** JWT required. User must have the `manage-acls` permission on `/admin/acl` (#2940).
+**Auth:** JWT required. User must have the `manage-acls` permission on `/acl` (#2944).
 
 No request body.
 
@@ -219,11 +219,11 @@ No request body.
 
 ---
 
-### GET `/api/v1/admin/groups`
+### GET `/api/v1/groups`
 
 List groups (admin) with pagination, filtering, and the paged envelope.
 
-**Auth:** JWT required. User must have `manage-groups` permission on `/admin/groups` (#2940).
+**Auth:** JWT required. User must have `manage-groups` permission on `/groups` (#2944).
 
 Query parameters:
 
@@ -254,11 +254,11 @@ No request body.
 
 ---
 
-### GET `/api/v1/admin/groups/{id}/members`
+### GET `/api/v1/groups/{id}/members`
 
 List members of a group (admin).
 
-**Auth:** JWT required. User must have `manage-groups` permission on `/admin/groups` (#2940).
+**Auth:** JWT required. User must have `manage-groups` permission on `/groups` (#2944).
 
 No request body.
 
@@ -268,11 +268,11 @@ No request body.
 
 ---
 
-### GET `/api/v1/admin/server/schedule`
+### GET `/api/v1/server/schedule`
 
 List pending server stop/recycle schedules (#2661). Rows exist only while pending — fired or cancelled schedules are deleted.
 
-**Auth:** JWT required. User must have the `manage-server-schedule` permission on `/admin/server` (#2940).
+**Auth:** JWT required. User must have the `manage-server-schedule` permission on `/server` (#2944).
 
 No request body.
 
@@ -294,11 +294,11 @@ See [Server Scheduling](../features/server-scheduling.md).
 
 ---
 
-### GET `/api/v1/admin/invitations`
+### GET `/api/v1/invitations`
 
 List all invitations (pending, accepted, and revoked).
 
-**Auth:** JWT required. User must have the `manage-invitations` permission on `/admin/invitations` (#2940).
+**Auth:** JWT required. User must have the `manage-invitations` permission on `/invitations` (#2944).
 
 No request body.
 
@@ -318,11 +318,11 @@ No request body.
 
 ---
 
-### GET `/api/v1/admin/users`
+### GET `/api/v1/users`
 
 List all user accounts in the system.
 
-**Auth:** JWT required. User must have the `manage-users` permission on `/admin/users` (#2940).
+**Auth:** JWT required. User must have the `manage-users` permission on `/users` (#2944).
 
 No request body.
 
@@ -344,13 +344,13 @@ No request body.
 
 ---
 
-### GET `/api/v1/admin/users/{id}/workspaces`
+### GET `/api/v1/users/{id}/workspaces`
 
 List workspaces owned by a user (admin). Used by the admin UI to show
 what a delete-user will destroy (#1224). Returns the standard pagination
 envelope.
 
-**Auth:** JWT required. User must have the `manage-users` permission on `/admin/users` (#2940).
+**Auth:** JWT required. User must have the `manage-users` permission on `/users` (#2944).
 
 Query params: `limit` (1–200, default 100), `offset` (default 0).
 
@@ -484,19 +484,6 @@ No request body.
 `auth_modes` is a string — one of `password`, `oidc`, `both`, or `none`
 (no-login single-user mode). The frontend and CLI branch on this value;
 see [Auth Modes](../features/auth-modes.md).
-
----
-
-### GET `/api/v1/groups`
-
-List groups visible to the current user, with the same paged envelope and
-query parameters as the admin endpoint (`page`, `page_size`, `sort`,
-`order`, `q`, and the `source` marker filter, #2750). Any authenticated
-caller. Previously returned a bare list hard-capped at 200 rows.
-
-**Auth:** JWT required. The write side of group management lives at
-`/api/v1/admin/groups` behind the `manage-groups` permission
-(#2940) — the `/groups` write endpoints were removed.
 
 ---
 
@@ -829,11 +816,11 @@ No request body.
 
 ---
 
-### PATCH `/api/v1/admin/groups/{id}`
+### PATCH `/api/v1/groups/{id}`
 
 Update a group's name or description (admin).
 
-**Auth:** JWT required. User must have `manage-groups` permission on `/admin/groups` (#2940).
+**Auth:** JWT required. User must have `manage-groups` permission on `/groups` (#2944).
 
 ```json
 { "name": "new-name", "description": "updated description" }
@@ -845,7 +832,7 @@ Update a group's name or description (admin).
 
 ---
 
-### PATCH `/api/v1/admin/users/{id}`
+### PATCH `/api/v1/users/{id}`
 
 Update a user's email, password, handle, or enabled state (admin). All
 fields optional. `disabled` (see
@@ -856,7 +843,7 @@ and its live WebSocket connections are closed (4001 → client logout).
 Admins cannot disable their own account, and the system agent cannot be
 disabled.
 
-**Auth:** JWT required. User must have the `manage-users` permission on `/admin/users` (#2940).
+**Auth:** JWT required. User must have the `manage-users` permission on `/users` (#2944).
 
 ```json
 {
@@ -914,11 +901,11 @@ An empty patch (`{}`) is rejected with `400`. Like a `PUT`, a changed
 
 ---
 
-### POST `/api/v1/admin/groups`
+### POST `/api/v1/groups`
 
 Create a new group (admin).
 
-**Auth:** JWT required. User must have `manage-groups` permission on `/admin/groups` (#2940).
+**Auth:** JWT required. User must have `manage-groups` permission on `/groups` (#2944).
 
 ```json
 { "name": "my-group", "description": "optional description" }
@@ -930,11 +917,11 @@ Create a new group (admin).
 
 ---
 
-### POST `/api/v1/admin/groups/{id}/members`
+### POST `/api/v1/groups/{id}/members`
 
 Add a user to a group (admin).
 
-**Auth:** JWT required. User must have `manage-groups` permission on `/admin/groups` (#2940).
+**Auth:** JWT required. User must have `manage-groups` permission on `/groups` (#2944).
 
 ```json
 { "user_id": "uuid" }
@@ -946,11 +933,11 @@ Add a user to a group (admin).
 
 ---
 
-### POST `/api/v1/admin/server/schedule`
+### POST `/api/v1/server/schedule`
 
 Schedule a server stop or recycle for a future time (#2661). Provide `at` (absolute ISO-8601; a naive timestamp is interpreted as UTC) or `in_seconds` (positive relative delay; ignored when `at` is given); `action` is `stop` or `recycle`. The schedule persists in the DB across `klangkd` restarts; when it fires: a **stop** runs the graceful TERM/INT path and the process exits (code 0) — the service manager owns what happens next; a **recycle** runs the SIGHUP graceful restart in-process (listener and DB stay up) and never exits. In both, workspaces are drained gracefully and every connected client sees a live countdown.
 
-**Auth:** JWT required. User must have the `manage-server-schedule` permission on `/admin/server` (#2940).
+**Auth:** JWT required. User must have the `manage-server-schedule` permission on `/server` (#2944).
 
 ```json
 { "action": "recycle", "at": "2026-08-24T23:00:00+02:00" }
@@ -974,11 +961,11 @@ See [Server Scheduling](../features/server-scheduling.md).
 
 ---
 
-### POST `/api/v1/admin/invitations`
+### POST `/api/v1/invitations`
 
 Send an invitation email to a new user.
 
-**Auth:** JWT required. User must have the `manage-invitations` permission on `/admin/invitations` (#2940).
+**Auth:** JWT required. User must have the `manage-invitations` permission on `/invitations` (#2944).
 
 ```json
 { "email": "user@example.com" }
@@ -990,11 +977,11 @@ Send an invitation email to a new user.
 
 ---
 
-### POST `/api/v1/admin/invitations/{id}/resend`
+### POST `/api/v1/invitations/{id}/resend`
 
 Resend an invitation email.
 
-**Auth:** JWT required. User must have the `manage-invitations` permission on `/admin/invitations` (#2940).
+**Auth:** JWT required. User must have the `manage-invitations` permission on `/invitations` (#2944).
 
 No request body.
 
@@ -1004,14 +991,14 @@ No request body.
 
 ---
 
-### POST `/api/v1/admin/users`
+### POST `/api/v1/users`
 
 Create a new user account. By default the user is created verified with
 the given password. Set `send_verification_email` to `true` to create
 the user unverified and send a verification email so they can set their
 own password (the `password` field is ignored in this case).
 
-**Auth:** JWT required. User must have the `manage-users` permission on `/admin/users` (#2940).
+**Auth:** JWT required. User must have the `manage-users` permission on `/users` (#2944).
 
 With password (default):
 
@@ -1637,7 +1624,7 @@ Add a user to a workspace role. Valid roles: `owners`, `coders`,
 
 ---
 
-### PUT `/api/v1/admin/acl/resource`
+### PUT `/api/v1/acl/resource`
 
 Replace all ACL entries for a specific resource. Query param: `resource`.
 

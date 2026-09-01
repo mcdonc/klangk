@@ -291,7 +291,7 @@ export async function ensureUser(
   const admin = await adminLogin(request);
   await postJson(
     request,
-    `${DEMO_URL}/api/v1/admin/users`,
+    `${DEMO_URL}/api/v1/users`,
     {
       email,
       password,

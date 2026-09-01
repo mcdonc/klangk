@@ -111,7 +111,7 @@ void main() {
       if (path == '/api/v1/workspaces/ws1/acl') {
         return http.Response(jsonEncode(_entries()), 200);
       }
-      if (path == '/api/v1/admin/users') {
+      if (path == '/api/v1/users') {
         return http.Response(
           jsonEncode({
             'users': [_user('alice@example.com')],
@@ -122,7 +122,7 @@ void main() {
           200,
         );
       }
-      if (path == '/api/v1/admin/groups') {
+      if (path == '/api/v1/groups') {
         final page = int.parse(request.url.queryParameters['page'] ?? '1');
         requestedGroupPages.add(page);
         capturedSource = request.url.queryParameters['source'];
@@ -201,7 +201,7 @@ void main() {
       if (path == '/api/v1/workspaces/ws1/acl') {
         return http.Response(jsonEncode(_entries()), 200);
       }
-      if (path == '/api/v1/admin/users') {
+      if (path == '/api/v1/users') {
         return http.Response(
           jsonEncode({
             'users': [_agentUser(), _user('alice@example.com')],
@@ -212,7 +212,7 @@ void main() {
           200,
         );
       }
-      if (path == '/api/v1/admin/groups') {
+      if (path == '/api/v1/groups') {
         return http.Response(
           jsonEncode({
             'groups': <Map<String, dynamic>>[],

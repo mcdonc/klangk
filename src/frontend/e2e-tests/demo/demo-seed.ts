@@ -157,7 +157,7 @@ async function findUserId(
   email: string,
   adminToken: string,
 ): Promise<string | null> {
-  const r = await get("/admin/users", adminToken);
+  const r = await get("/users", adminToken);
   if (!r.ok) return null;
   const data = JSON.parse(r.body);
   const arr = Array.isArray(data) ? data : (data.users ?? []);
@@ -170,7 +170,7 @@ async function findGroupId(
   name: string,
   adminToken: string,
 ): Promise<string | null> {
-  const r = await get("/admin/groups", adminToken);
+  const r = await get("/groups", adminToken);
   if (!r.ok) return null;
   const data = JSON.parse(r.body);
   const arr = Array.isArray(data) ? data : (data.groups ?? []);
@@ -186,7 +186,7 @@ async function ensureAdmin(
   const gid = await findGroupId("admins", adminToken);
   if (!gid) return false;
   const r = await post(
-    `/admin/groups/${gid}/members`,
+    `/groups/${gid}/members`,
     { user_id: userId },
     adminToken,
   );
@@ -211,7 +211,7 @@ async function resetDemoUsers(bootstrapToken: string): Promise<void> {
   for (const email of emails) {
     const id = await findUserId(email, bootstrapToken);
     if (id) {
-      await req("DELETE", `/admin/users/${id}`, undefined, bootstrapToken);
+      await req("DELETE", `/users/${id}`, undefined, bootstrapToken);
       console.log(
         `  ✓ deleted user ${email} (cascades workspaces + containers)`,
       );
@@ -229,13 +229,13 @@ async function ensureUser(
 ): Promise<{ created: boolean; id: string }> {
   const existing = await findUserId(email, adminToken);
   if (existing) return { created: false, id: existing };
-  const create = await post("/admin/users", { email, password }, adminToken);
+  const create = await post("/users", { email, password }, adminToken);
   if (!create.ok && !/already|exists/i.test(create.body)) {
     throw new Error(
       `create user ${email} failed (${create.status}): ${create.body.slice(0, 160)}`,
     );
   }
-  // POST /admin/users returns {id,...}; fall back to a lookup just in case.
+  // POST /users returns {id,...}; fall back to a lookup just in case.
   const id =
     JSON.parse(create.body).id ?? (await findUserId(email, adminToken));
   return { created: true, id };

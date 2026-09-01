@@ -71,7 +71,7 @@ def admin_users_ls(
     context.require_auth()
     client = context.client()
     resp = client.get(
-        "/api/v1/admin/users",
+        "/api/v1/users",
         params={"page": page, "page_size": page_size},
     )
     client.check_auth(resp)
@@ -157,7 +157,7 @@ def admin_users_set_password(
             raise typer.Exit(code=1)
 
     resp = client.patch(
-        f"/api/v1/admin/users/{user_id}",
+        f"/api/v1/users/{user_id}",
         json={"password": password},
     )
     client.check_auth(resp)
@@ -182,7 +182,7 @@ def admin_invitations_send(
         raise typer.Exit(code=1)
     context.require_auth()
     client = context.client()
-    resp = client.post("/api/v1/admin/invitations", json={"email": email})
+    resp = client.post("/api/v1/invitations", json={"email": email})
     client.check_auth(resp)
     if resp.status_code != 200:
         admin_error(resp)
@@ -194,7 +194,7 @@ def admin_invitations_ls() -> None:
     """List all invitations (admin only)."""
     context.require_auth()
     client = context.client()
-    resp = client.get("/api/v1/admin/invitations?page_size=200")
+    resp = client.get("/api/v1/invitations?page_size=200")
     client.check_auth(resp)
     if resp.status_code != 200:
         admin_error(resp)

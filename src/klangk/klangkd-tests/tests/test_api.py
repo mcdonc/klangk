@@ -6216,20 +6216,18 @@ class TestUserGroupEndpoints:
         headers = await self._admin_login(client)
         await app_state.state.model.users.create_group("a-manual-g")
         resp = await client.get(
-            "/api/v1/admin/groups?source=manual", headers=headers
+            "/api/v1/groups?source=manual", headers=headers
         )
         assert resp.status_code == 200
         assert all(g["source"] == "manual" for g in resp.json()["groups"])
-        bad = await client.get(
-            "/api/v1/admin/groups?source=nope", headers=headers
-        )
+        bad = await client.get("/api/v1/groups?source=nope", headers=headers)
         assert bad.status_code == 422
 
     async def test_admin_groups_lifecycle(self, client, app, admin_user):
         """The single management surface, driven by a wildcard admin."""
         headers = await self._admin_login(client)
         resp = await client.post(
-            "/api/v1/admin/groups",
+            "/api/v1/groups",
             headers=headers,
             json={"name": "lifecycle-group", "description": "d"},
         )
@@ -6237,30 +6235,19 @@ class TestUserGroupEndpoints:
         group = resp.json()
         gid = group["id"]
 
-        # Ported from POST /groups: the creator gets full ACL access.
-        entries = await app.state.model.acl.get_acl_entries(f"/groups/{gid}")
-        assert any(
-            e["permission"] == "*"
-            and e["principal_type"] == model.PRINCIPAL_USER
-            and e["user_id"] == admin_user["id"]
-            for e in entries
-        )
-
         resp = await client.patch(
-            f"/api/v1/admin/groups/{gid}",
+            f"/api/v1/groups/{gid}",
             headers=headers,
             json={"description": "updated"},
         )
         assert resp.status_code == 200
 
         resp = await client.get(
-            f"/api/v1/admin/groups/{gid}/members", headers=headers
+            f"/api/v1/groups/{gid}/members", headers=headers
         )
         assert resp.status_code == 200
 
-        resp = await client.delete(
-            f"/api/v1/admin/groups/{gid}", headers=headers
-        )
+        resp = await client.delete(f"/api/v1/groups/{gid}", headers=headers)
         assert resp.status_code == 200
         # Ported from DELETE /groups: the group's ACEs are cleaned up.
         entries = await app.state.model.acl.get_acl_entries(f"/groups/{gid}")
@@ -6269,12 +6256,12 @@ class TestUserGroupEndpoints:
     async def test_admin_create_group_duplicate(self, client, admin_user):
         headers = await self._admin_login(client)
         await client.post(
-            "/api/v1/admin/groups",
+            "/api/v1/groups",
             headers=headers,
             json={"name": "dup-admin-group"},
         )
         resp = await client.post(
-            "/api/v1/admin/groups",
+            "/api/v1/groups",
             headers=headers,
             json={"name": "dup-admin-group"},
         )
@@ -6283,7 +6270,7 @@ class TestUserGroupEndpoints:
     async def test_admin_update_nonexistent_group(self, client, admin_user):
         headers = await self._admin_login(client)
         resp = await client.patch(
-            "/api/v1/admin/groups/fake-id",
+            "/api/v1/groups/fake-id",
             headers=headers,
             json={"name": "x"},
         )
@@ -6292,46 +6279,33 @@ class TestUserGroupEndpoints:
     async def test_admin_update_group_no_fields(self, client, admin_user):
         headers = await self._admin_login(client)
         resp = await client.post(
-            "/api/v1/admin/groups",
+            "/api/v1/groups",
             headers=headers,
             json={"name": "noupdate-group"},
         )
         gid = resp.json()["id"]
         resp = await client.patch(
-            f"/api/v1/admin/groups/{gid}",
+            f"/api/v1/groups/{gid}",
             headers=headers,
             json={},
         )
         assert resp.status_code == 400
 
-    async def test_old_groups_writes_are_gone(self, client, user):
-        """The /groups write surface is removed (#2941-fold): 404, and
-        GET /groups still works for authenticated listing."""
+    async def test_groups_listing_authenticated_writes_gated(
+        self, client, user
+    ):
+        """#2944: GET /groups is the authenticated listing (pickers);
+        writes on the tree need manage-groups."""
         headers = await _auth_headers(client)
-        # The collection path still exists (GET /groups), so a write
-        # method is a 405; the {id}-based write paths are gone entirely.
-        resp = await client.post(
-            "/api/v1/groups", headers=headers, json={"name": "x"}
-        )
-        assert resp.status_code == 405
-        resp = await client.patch(
-            "/api/v1/groups/some-id", headers=headers, json={"name": "x"}
-        )
-        assert resp.status_code == 404
-        resp = await client.delete("/api/v1/groups/some-id", headers=headers)
-        assert resp.status_code == 404
-        resp = await client.post(
-            "/api/v1/groups/some-id/members",
-            headers=headers,
-            json={"user_id": "u"},
-        )
-        assert resp.status_code == 404
-        resp = await client.delete(
-            "/api/v1/groups/some-id/members/u", headers=headers
-        )
-        assert resp.status_code == 404
         resp = await client.get("/api/v1/groups", headers=headers)
-        assert resp.status_code == 200
+        assert resp.status_code == 200, resp.text
+
+        resp = await client.post(
+            "/api/v1/groups", headers=headers, json={"name": "nope"}
+        )
+        assert resp.status_code == 403
+        resp = await client.delete("/api/v1/groups/some-id", headers=headers)
+        assert resp.status_code == 403
 
     async def _admin_login(self, client):
         resp = await client.post(
@@ -8094,7 +8068,7 @@ class TestAdminEndpoints:
 
     async def test_list_users(self, client, admin_user, user):
         headers = await self._admin_headers(client)
-        resp = await client.get("/api/v1/admin/users", headers=headers)
+        resp = await client.get("/api/v1/users", headers=headers)
         assert resp.status_code == 200
         body = resp.json()
         users = body["users"]
@@ -8118,7 +8092,7 @@ class TestAdminEndpoints:
             await app_state.state.model.users.create_user(
                 f"u{i}@example.com", None, verified=True
             )
-        resp = await client.get("/api/v1/admin/users", headers=headers)
+        resp = await client.get("/api/v1/users", headers=headers)
         assert resp.status_code == 200
         body = resp.json()
         assert body["page"] == 1
@@ -8135,10 +8109,10 @@ class TestAdminEndpoints:
                 f"pg{i}@example.com", None, verified=True
             )
         page1 = await client.get(
-            "/api/v1/admin/users?page=1&page_size=3", headers=headers
+            "/api/v1/users?page=1&page_size=3", headers=headers
         )
         page2 = await client.get(
-            "/api/v1/admin/users?page=2&page_size=3", headers=headers
+            "/api/v1/users?page=2&page_size=3", headers=headers
         )
         assert page1.status_code == 200
         assert page2.status_code == 200
@@ -8168,7 +8142,7 @@ class TestAdminEndpoints:
                 e, None, verified=True
             )
         resp = await client.get(
-            "/api/v1/admin/users?sort=email&order=asc&page_size=50",
+            "/api/v1/users?sort=email&order=asc&page_size=50",
             headers=headers,
         )
         emails = [u["email"] for u in resp.json()["users"]]
@@ -8188,11 +8162,11 @@ class TestAdminEndpoints:
                 e, None, verified=True
             )
         asc = await client.get(
-            "/api/v1/admin/users?sort=email&order=asc&page_size=50",
+            "/api/v1/users?sort=email&order=asc&page_size=50",
             headers=headers,
         )
         desc = await client.get(
-            "/api/v1/admin/users?sort=email&order=desc&page_size=50",
+            "/api/v1/users?sort=email&order=desc&page_size=50",
             headers=headers,
         )
         asc_emails = [u["email"] for u in asc.json()["users"]]
@@ -8210,7 +8184,7 @@ class TestAdminEndpoints:
             "haystack@example.com", None, verified=True
         )
         resp = await client.get(
-            "/api/v1/admin/users?q=needle&page_size=50", headers=headers
+            "/api/v1/users?q=needle&page_size=50", headers=headers
         )
         body = resp.json()
         emails = [u["email"] for u in body["users"]]
@@ -8223,7 +8197,7 @@ class TestAdminEndpoints:
         headers = await self._admin_headers(client)
         # An unknown sort column must not 500 (falls back to created_at).
         resp = await client.get(
-            "/api/v1/admin/users?sort=evil%3B%20DROP%20TABLE&order=asc",
+            "/api/v1/users?sort=evil%3B%20DROP%20TABLE&order=asc",
             headers=headers,
         )
         assert resp.status_code == 200
@@ -8240,13 +8214,13 @@ class TestAdminEndpoints:
         headers = {
             "Authorization": f"Bearer {login_resp.json()['access_token']}"
         }
-        resp = await client.get("/api/v1/admin/users", headers=headers)
+        resp = await client.get("/api/v1/users", headers=headers)
         assert resp.status_code == 403
 
     async def test_admin_create_user(self, client, admin_user):
         headers = await self._admin_headers(client)
         resp = await client.post(
-            "/api/v1/admin/users",
+            "/api/v1/users",
             headers=headers,
             json={"email": "newuser@example.com", "password": "testpass123"},
         )
@@ -8266,7 +8240,7 @@ class TestAdminEndpoints:
     async def test_admin_create_user_duplicate(self, client, admin_user, user):
         headers = await self._admin_headers(client)
         resp = await client.post(
-            "/api/v1/admin/users",
+            "/api/v1/users",
             headers=headers,
             json={"email": "testuser@example.com", "password": "testpass"},
         )
@@ -8276,7 +8250,7 @@ class TestAdminEndpoints:
     async def test_admin_create_user_short_password(self, client, admin_user):
         headers = await self._admin_headers(client)
         resp = await client.post(
-            "/api/v1/admin/users",
+            "/api/v1/users",
             headers=headers,
             json={"email": "short@example.com", "password": "ab"},
         )
@@ -8293,7 +8267,7 @@ class TestAdminEndpoints:
             new_callable=AsyncMock,
         ) as mock_email:
             resp = await client.post(
-                "/api/v1/admin/users",
+                "/api/v1/users",
                 headers=headers,
                 json={
                     "email": "verify@example.com",
@@ -8319,7 +8293,7 @@ class TestAdminEndpoints:
     ):
         headers = await self._admin_headers(client)
         resp = await client.post(
-            "/api/v1/admin/users",
+            "/api/v1/users",
             headers=headers,
             json={"email": "nopw@example.com"},
         )
@@ -8338,7 +8312,7 @@ class TestAdminEndpoints:
             "Authorization": f"Bearer {login_resp.json()['access_token']}"
         }
         resp = await client.post(
-            "/api/v1/admin/users",
+            "/api/v1/users",
             headers=headers,
             json={"email": "new@example.com", "password": "testpass123"},
         )
@@ -8359,13 +8333,11 @@ class TestAdminEndpoints:
             ),
         ):
             resp = await client.delete(
-                f"/api/v1/admin/users/{user['id']}", headers=headers
+                f"/api/v1/users/{user['id']}", headers=headers
             )
         assert resp.status_code == 200
         # Verify user is gone
-        resp = await client.get(
-            "/api/v1/admin/users?page_size=200", headers=headers
-        )
+        resp = await client.get("/api/v1/users?page_size=200", headers=headers)
         emails = [u["email"] for u in resp.json()["users"]]
         assert "testuser@example.com" not in emails
 
@@ -8389,7 +8361,7 @@ class TestAdminEndpoints:
             ),
         ):
             resp = await client.delete(
-                f"/api/v1/admin/users/{user['id']}", headers=headers
+                f"/api/v1/users/{user['id']}", headers=headers
             )
         assert resp.status_code == 200
         assert user["id"] not in app.state.auth.activity_stamps
@@ -8397,7 +8369,7 @@ class TestAdminEndpoints:
     async def test_delete_self_forbidden(self, client, admin_user):
         headers = await self._admin_headers(client)
         resp = await client.delete(
-            f"/api/v1/admin/users/{admin_user['id']}", headers=headers
+            f"/api/v1/users/{admin_user['id']}", headers=headers
         )
         assert resp.status_code == 400
 
@@ -8413,7 +8385,7 @@ class TestAdminEndpoints:
         )
         headers = await self._admin_headers(client)
         resp = await client.patch(
-            f"/api/v1/admin/users/{user['id']}",
+            f"/api/v1/users/{user['id']}",
             headers=headers,
             json={"password": "testpass"},
         )
@@ -8421,7 +8393,7 @@ class TestAdminEndpoints:
         assert "current" in resp.json()["detail"]
         # A novel password still succeeds.
         resp = await client.patch(
-            f"/api/v1/admin/users/{user['id']}",
+            f"/api/v1/users/{user['id']}",
             headers=headers,
             json={"password": "novel-pass-1"},
         )
@@ -8430,7 +8402,7 @@ class TestAdminEndpoints:
     async def test_delete_nonexistent_user(self, client, admin_user):
         headers = await self._admin_headers(client)
         resp = await client.delete(
-            "/api/v1/admin/users/nonexistent-id", headers=headers
+            "/api/v1/users/nonexistent-id", headers=headers
         )
         assert resp.status_code == 404
 
@@ -8446,7 +8418,7 @@ class TestAdminEndpoints:
         await Lifecycle(_seed_state).seed_agent_user()
         headers = await self._admin_headers(client)
         resp = await client.delete(
-            f"/api/v1/admin/users/{model.AGENT_USER_ID}", headers=headers
+            f"/api/v1/users/{model.AGENT_USER_ID}", headers=headers
         )
         assert resp.status_code == 400
         assert "system agent" in resp.json()["detail"]
@@ -8481,7 +8453,7 @@ class TestAdminEndpoints:
             new_callable=AsyncMock,
         ):
             resp = await client.delete(
-                f"/api/v1/admin/users/{user['id']}", headers=headers
+                f"/api/v1/users/{user['id']}", headers=headers
             )
         assert resp.status_code == 200
         # Workspace should be gone (CASCADE)
@@ -8530,7 +8502,7 @@ class TestAdminEndpoints:
             ),
         ):
             resp = await client.delete(
-                f"/api/v1/admin/users/{user['id']}", headers=headers
+                f"/api/v1/users/{user['id']}", headers=headers
             )
         assert resp.status_code == 200
         assert ws_id not in registry._workspace_locks
@@ -8544,7 +8516,7 @@ class TestAdminEndpoints:
         user = ws_admin  # ws_admin returns the user dict
         # The `user` fixture owns no workspaces yet.
         resp = await client.get(
-            f"/api/v1/admin/users/{user['id']}/workspaces", headers=headers
+            f"/api/v1/users/{user['id']}/workspaces", headers=headers
         )
         assert resp.status_code == 200
         assert resp.json()["items"] == []
@@ -8568,7 +8540,7 @@ class TestAdminEndpoints:
         )
         assert ws_resp.status_code == 200
         resp = await client.get(
-            f"/api/v1/admin/users/{user['id']}/workspaces", headers=headers
+            f"/api/v1/users/{user['id']}/workspaces", headers=headers
         )
         assert resp.status_code == 200
         names = [ws["name"] for ws in resp.json()["items"]]
@@ -8578,14 +8550,14 @@ class TestAdminEndpoints:
         """Listing workspaces for a nonexistent user 404s."""
         headers = await self._admin_headers(client)
         resp = await client.get(
-            "/api/v1/admin/users/nonexistent-id/workspaces", headers=headers
+            "/api/v1/users/nonexistent-id/workspaces", headers=headers
         )
         assert resp.status_code == 404
 
     async def test_update_email(self, client, admin_user, user, app_state):
         headers = await self._admin_headers(client)
         resp = await client.patch(
-            f"/api/v1/admin/users/{user['id']}",
+            f"/api/v1/users/{user['id']}",
             json={"email": "renamed"},
             headers=headers,
         )
@@ -8596,7 +8568,7 @@ class TestAdminEndpoints:
     async def test_update_password(self, client, admin_user, user):
         headers = await self._admin_headers(client)
         resp = await client.patch(
-            f"/api/v1/admin/users/{user['id']}",
+            f"/api/v1/users/{user['id']}",
             json={"password": "newpass123"},
             headers=headers,
         )
@@ -8614,7 +8586,7 @@ class TestAdminEndpoints:
     async def test_update_nonexistent_user(self, client, admin_user):
         headers = await self._admin_headers(client)
         resp = await client.patch(
-            "/api/v1/admin/users/nonexistent-id",
+            "/api/v1/users/nonexistent-id",
             json={"email": "x"},
             headers=headers,
         )
@@ -8635,7 +8607,7 @@ class TestAdminEndpoints:
         await Lifecycle(_seed_state).seed_agent_user()
         headers = await self._admin_headers(client)
         resp = await client.patch(
-            f"/api/v1/admin/users/{model.AGENT_USER_ID}",
+            f"/api/v1/users/{model.AGENT_USER_ID}",
             json={"password": "sneaky123"},
             headers=headers,
         )
@@ -8660,7 +8632,7 @@ class TestAdminEndpoints:
         assert info["locked_until"] is not None
         # Unlock via admin endpoint
         resp = await client.post(
-            f"/api/v1/admin/users/{user['id']}/unlockout", headers=headers
+            f"/api/v1/users/{user['id']}/unlockout", headers=headers
         )
         assert resp.status_code == 200
         assert resp.json()["status"] == "unlocked"
@@ -8675,7 +8647,7 @@ class TestAdminEndpoints:
     async def test_unlock_nonexistent_user(self, client, admin_user):
         headers = await self._admin_headers(client)
         resp = await client.post(
-            "/api/v1/admin/users/nonexistent-id/unlockout", headers=headers
+            "/api/v1/users/nonexistent-id/unlockout", headers=headers
         )
         assert resp.status_code == 404
 
@@ -8689,7 +8661,7 @@ class TestAdminEndpoints:
         )
         headers = {"Authorization": f"Bearer {resp.json()['access_token']}"}
         resp = await client.post(
-            f"/api/v1/admin/users/{user['id']}/unlockout", headers=headers
+            f"/api/v1/users/{user['id']}/unlockout", headers=headers
         )
         assert resp.status_code == 403
 
@@ -8744,7 +8716,7 @@ class TestUserSessionsAudit:
             )
             assert resp.status_code == 200
         resp = await client.get(
-            f"/api/v1/admin/users/{user['id']}/sessions", headers=headers
+            f"/api/v1/users/{user['id']}/sessions", headers=headers
         )
         assert resp.status_code == 200
         items = resp.json()["items"]
@@ -8776,7 +8748,7 @@ class TestUserSessionsAudit:
         assert resp.status_code == 200
         headers = await self._admin_headers(client)
         resp = await client.get(
-            f"/api/v1/admin/users/{user['id']}/sessions", headers=headers
+            f"/api/v1/users/{user['id']}/sessions", headers=headers
         )
         assert resp.status_code == 200
         items = resp.json()["items"]
@@ -8787,7 +8759,7 @@ class TestUserSessionsAudit:
     async def test_admin_sessions_404_unknown_user(self, client, admin_user):
         headers = await self._admin_headers(client)
         resp = await client.get(
-            "/api/v1/admin/users/no-such-user/sessions", headers=headers
+            "/api/v1/users/no-such-user/sessions", headers=headers
         )
         assert resp.status_code == 404
 
@@ -8801,7 +8773,7 @@ class TestUserSessionsAudit:
         )
         headers = {"Authorization": f"Bearer {resp.json()['access_token']}"}
         resp = await client.get(
-            f"/api/v1/admin/users/{user['id']}/sessions", headers=headers
+            f"/api/v1/users/{user['id']}/sessions", headers=headers
         )
         assert resp.status_code == 403
 
@@ -8823,7 +8795,7 @@ class TestGroupEndpoints:
 
     async def test_list_groups(self, client, admin_user):
         headers = await self._admin_headers(client)
-        resp = await client.get("/api/v1/admin/groups", headers=headers)
+        resp = await client.get("/api/v1/groups", headers=headers)
         assert resp.status_code == 200
         body = resp.json()
         groups = body["groups"]
@@ -8839,7 +8811,7 @@ class TestGroupEndpoints:
         headers = await self._admin_headers(client)
         for i in range(12):
             await app_state.state.model.users.create_group(f"size-{i}")
-        resp = await client.get("/api/v1/admin/groups", headers=headers)
+        resp = await client.get("/api/v1/groups", headers=headers)
         assert resp.status_code == 200
         body = resp.json()
         assert body["page"] == 1
@@ -8854,10 +8826,10 @@ class TestGroupEndpoints:
         for i in range(5):
             await app_state.state.model.users.create_group(f"pg-{i}")
         page1 = await client.get(
-            "/api/v1/admin/groups?page=1&page_size=3", headers=headers
+            "/api/v1/groups?page=1&page_size=3", headers=headers
         )
         page2 = await client.get(
-            "/api/v1/admin/groups?page=2&page_size=3", headers=headers
+            "/api/v1/groups?page=2&page_size=3", headers=headers
         )
         assert page1.status_code == 200
         assert page2.status_code == 200
@@ -8881,7 +8853,7 @@ class TestGroupEndpoints:
         for n in ["charlie", "alpha", "bravo"]:
             await app_state.state.model.users.create_group(n)
         resp = await client.get(
-            "/api/v1/admin/groups?sort=name&order=asc&page_size=200",
+            "/api/v1/groups?sort=name&order=asc&page_size=200",
             headers=headers,
         )
         names = [g["name"] for g in resp.json()["groups"]]
@@ -8895,11 +8867,11 @@ class TestGroupEndpoints:
         for n in ["charlie", "alpha", "bravo"]:
             await app_state.state.model.users.create_group(n)
         asc = await client.get(
-            "/api/v1/admin/groups?sort=name&order=asc&page_size=200",
+            "/api/v1/groups?sort=name&order=asc&page_size=200",
             headers=headers,
         )
         desc = await client.get(
-            "/api/v1/admin/groups?sort=name&order=desc&page_size=200",
+            "/api/v1/groups?sort=name&order=desc&page_size=200",
             headers=headers,
         )
         asc_names = [g["name"] for g in asc.json()["groups"]]
@@ -8913,7 +8885,7 @@ class TestGroupEndpoints:
         await app_state.state.model.users.create_group("needle-group")
         await app_state.state.model.users.create_group("haystack-group")
         resp = await client.get(
-            "/api/v1/admin/groups?q=needle&page_size=200",
+            "/api/v1/groups?q=needle&page_size=200",
             headers=headers,
         )
         body = resp.json()
@@ -8927,7 +8899,7 @@ class TestGroupEndpoints:
         headers = await self._admin_headers(client)
         # An unknown sort column must not 500 (falls back to name).
         resp = await client.get(
-            "/api/v1/admin/groups?sort=evil%3B%20DROP%20TABLE&order=asc",
+            "/api/v1/groups?sort=evil%3B%20DROP%20TABLE&order=asc",
             headers=headers,
         )
         assert resp.status_code == 200
@@ -8936,7 +8908,7 @@ class TestGroupEndpoints:
     async def test_create_group(self, client, admin_user):
         headers = await self._admin_headers(client)
         resp = await client.post(
-            "/api/v1/admin/groups",
+            "/api/v1/groups",
             headers=headers,
             json={"name": "editors", "description": "Editor group"},
         )
@@ -8946,12 +8918,12 @@ class TestGroupEndpoints:
     async def test_create_group_duplicate(self, client, admin_user):
         headers = await self._admin_headers(client)
         await client.post(
-            "/api/v1/admin/groups",
+            "/api/v1/groups",
             headers=headers,
             json={"name": "dup-group"},
         )
         resp = await client.post(
-            "/api/v1/admin/groups",
+            "/api/v1/groups",
             headers=headers,
             json={"name": "dup-group"},
         )
@@ -8960,13 +8932,13 @@ class TestGroupEndpoints:
     async def test_update_group(self, client, admin_user):
         headers = await self._admin_headers(client)
         resp = await client.post(
-            "/api/v1/admin/groups",
+            "/api/v1/groups",
             headers=headers,
             json={"name": "to-rename"},
         )
         group_id = resp.json()["id"]
         resp = await client.patch(
-            f"/api/v1/admin/groups/{group_id}",
+            f"/api/v1/groups/{group_id}",
             headers=headers,
             json={"name": "renamed", "description": "new desc"},
         )
@@ -8975,13 +8947,13 @@ class TestGroupEndpoints:
     async def test_update_group_no_fields(self, client, admin_user):
         headers = await self._admin_headers(client)
         resp = await client.post(
-            "/api/v1/admin/groups",
+            "/api/v1/groups",
             headers=headers,
             json={"name": "no-update"},
         )
         group_id = resp.json()["id"]
         resp = await client.patch(
-            f"/api/v1/admin/groups/{group_id}",
+            f"/api/v1/groups/{group_id}",
             headers=headers,
             json={},
         )
@@ -8990,7 +8962,7 @@ class TestGroupEndpoints:
     async def test_update_group_not_found(self, client, admin_user):
         headers = await self._admin_headers(client)
         resp = await client.patch(
-            "/api/v1/admin/groups/nonexistent",
+            "/api/v1/groups/nonexistent",
             headers=headers,
             json={"name": "x"},
         )
@@ -8999,41 +8971,41 @@ class TestGroupEndpoints:
     async def test_delete_group(self, client, admin_user):
         headers = await self._admin_headers(client)
         resp = await client.post(
-            "/api/v1/admin/groups",
+            "/api/v1/groups",
             headers=headers,
             json={"name": "to-delete"},
         )
         group_id = resp.json()["id"]
         resp = await client.delete(
-            f"/api/v1/admin/groups/{group_id}", headers=headers
+            f"/api/v1/groups/{group_id}", headers=headers
         )
         assert resp.status_code == 200
 
     async def test_delete_group_not_found(self, client, admin_user):
         headers = await self._admin_headers(client)
         resp = await client.delete(
-            "/api/v1/admin/groups/nonexistent", headers=headers
+            "/api/v1/groups/nonexistent", headers=headers
         )
         assert resp.status_code == 404
 
     async def test_list_group_members(self, client, admin_user, user):
         headers = await self._admin_headers(client)
         resp = await client.post(
-            "/api/v1/admin/groups",
+            "/api/v1/groups",
             headers=headers,
             json={"name": "members-test"},
         )
         group_id = resp.json()["id"]
         # Add user to group
         resp = await client.post(
-            f"/api/v1/admin/groups/{group_id}/members",
+            f"/api/v1/groups/{group_id}/members",
             headers=headers,
             json={"user_id": user["id"]},
         )
         assert resp.status_code == 200
         # List members
         resp = await client.get(
-            f"/api/v1/admin/groups/{group_id}/members", headers=headers
+            f"/api/v1/groups/{group_id}/members", headers=headers
         )
         assert resp.status_code == 200
         assert len(resp.json()) == 1
@@ -9042,20 +9014,20 @@ class TestGroupEndpoints:
     async def test_list_group_members_not_found(self, client, admin_user):
         headers = await self._admin_headers(client)
         resp = await client.get(
-            "/api/v1/admin/groups/nonexistent/members", headers=headers
+            "/api/v1/groups/nonexistent/members", headers=headers
         )
         assert resp.status_code == 404
 
     async def test_add_group_member_user_not_found(self, client, admin_user):
         headers = await self._admin_headers(client)
         resp = await client.post(
-            "/api/v1/admin/groups",
+            "/api/v1/groups",
             headers=headers,
             json={"name": "member-test2"},
         )
         group_id = resp.json()["id"]
         resp = await client.post(
-            f"/api/v1/admin/groups/{group_id}/members",
+            f"/api/v1/groups/{group_id}/members",
             headers=headers,
             json={"user_id": "nonexistent"},
         )
@@ -9064,7 +9036,7 @@ class TestGroupEndpoints:
     async def test_add_group_member_group_not_found(self, client, admin_user):
         headers = await self._admin_headers(client)
         resp = await client.post(
-            "/api/v1/admin/groups/nonexistent/members",
+            "/api/v1/groups/nonexistent/members",
             headers=headers,
             json={"user_id": "x"},
         )
@@ -9073,18 +9045,18 @@ class TestGroupEndpoints:
     async def test_remove_group_member(self, client, admin_user, user):
         headers = await self._admin_headers(client)
         resp = await client.post(
-            "/api/v1/admin/groups",
+            "/api/v1/groups",
             headers=headers,
             json={"name": "remove-test"},
         )
         group_id = resp.json()["id"]
         await client.post(
-            f"/api/v1/admin/groups/{group_id}/members",
+            f"/api/v1/groups/{group_id}/members",
             headers=headers,
             json={"user_id": user["id"]},
         )
         resp = await client.delete(
-            f"/api/v1/admin/groups/{group_id}/members/{user['id']}",
+            f"/api/v1/groups/{group_id}/members/{user['id']}",
             headers=headers,
         )
         assert resp.status_code == 200
@@ -9092,13 +9064,13 @@ class TestGroupEndpoints:
     async def test_remove_group_member_not_member(self, client, admin_user):
         headers = await self._admin_headers(client)
         resp = await client.post(
-            "/api/v1/admin/groups",
+            "/api/v1/groups",
             headers=headers,
             json={"name": "rm-test"},
         )
         group_id = resp.json()["id"]
         resp = await client.delete(
-            f"/api/v1/admin/groups/{group_id}/members/nonexistent",
+            f"/api/v1/groups/{group_id}/members/nonexistent",
             headers=headers,
         )
         assert resp.status_code == 404
@@ -9117,7 +9089,7 @@ class TestACLEndpoints:
 
     async def test_get_acl_tree(self, client, admin_user):
         headers = await self._admin_headers(client)
-        resp = await client.get("/api/v1/admin/acl/tree", headers=headers)
+        resp = await client.get("/api/v1/acl/tree", headers=headers)
         assert resp.status_code == 200
         tree = resp.json()
         assert len(tree) > 0
@@ -9125,7 +9097,7 @@ class TestACLEndpoints:
     async def test_get_acl_by_user(self, client, admin_user, user):
         headers = await self._admin_headers(client)
         resp = await client.get(
-            f"/api/v1/admin/acl/by-principal/user/{user['id']}",
+            f"/api/v1/acl/by-principal/user/{user['id']}",
             headers=headers,
         )
         assert resp.status_code == 200
@@ -9136,7 +9108,7 @@ class TestACLEndpoints:
         groups = (await app_state.state.model.users.list_groups())["groups"]
         admin_group = next(g for g in groups if g["name"] == "admins")
         resp = await client.get(
-            f"/api/v1/admin/acl/by-principal/group/{admin_group['id']}",
+            f"/api/v1/acl/by-principal/group/{admin_group['id']}",
             headers=headers,
         )
         assert resp.status_code == 200
@@ -9237,7 +9209,7 @@ class TestAdminResourceACL:
     async def test_get_resource_acl(self, client, admin_user):
         headers = await self._admin_headers(client)
         resp = await client.get(
-            "/api/v1/admin/acl/resource?resource=/workspaces", headers=headers
+            "/api/v1/acl/resource?resource=/workspaces", headers=headers
         )
         assert resp.status_code == 200
         entries = resp.json()
@@ -9248,7 +9220,7 @@ class TestAdminResourceACL:
         headers = await self._admin_headers(client)
         # Get current ACL
         resp = await client.get(
-            "/api/v1/admin/acl/resource?resource=/workspaces", headers=headers
+            "/api/v1/acl/resource?resource=/workspaces", headers=headers
         )
         original = resp.json()
 
@@ -9272,7 +9244,7 @@ class TestAdminResourceACL:
             },
         ]
         resp = await client.put(
-            "/api/v1/admin/acl/resource?resource=/workspaces",
+            "/api/v1/acl/resource?resource=/workspaces",
             headers=headers,
             json=new_entries,
         )
@@ -9292,7 +9264,7 @@ class TestAdminResourceACL:
             for e in original
         ]
         resp = await client.put(
-            "/api/v1/admin/acl/resource?resource=/workspaces",
+            "/api/v1/acl/resource?resource=/workspaces",
             headers=headers,
             json=restore,
         )
@@ -9301,7 +9273,7 @@ class TestAdminResourceACL:
     async def test_get_resource_acl_requires_admin(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.get(
-            "/api/v1/admin/acl/resource?resource=/workspaces", headers=headers
+            "/api/v1/acl/resource?resource=/workspaces", headers=headers
         )
         assert resp.status_code == 403
 
@@ -9321,7 +9293,7 @@ class TestAdminResourceACL:
 
         headers = await self._admin_headers(client)
         resp = await client.get(
-            f"/api/v1/admin/acl/resource?resource={resource}",
+            f"/api/v1/acl/resource?resource={resource}",
             headers=headers,
         )
         assert resp.status_code == 200
@@ -9338,7 +9310,7 @@ class TestAdminResourceACL:
         ]
         # Site admin alone cannot rewrite an individual workspace's ACL.
         resp = await client.put(
-            f"/api/v1/admin/acl/resource?resource={resource}",
+            f"/api/v1/acl/resource?resource={resource}",
             headers=headers,
             json=payload,
         )
@@ -9356,7 +9328,7 @@ class TestAdminResourceACL:
             user_id=admin_user["id"],
         )
         resp = await client.put(
-            f"/api/v1/admin/acl/resource?resource={resource}",
+            f"/api/v1/acl/resource?resource={resource}",
             headers=headers,
             json=payload,
         )
@@ -9368,7 +9340,7 @@ class TestAdminResourceACL:
         headers = await self._admin_headers(client)
         # Try to save root ACL without Authenticated view
         resp = await client.put(
-            "/api/v1/admin/acl/resource?resource=/",
+            "/api/v1/acl/resource?resource=/",
             headers=headers,
             json=[
                 {
@@ -9388,7 +9360,7 @@ class TestAdminResourceACL:
         headers = await self._admin_headers(client)
         # Authenticated with * should be accepted
         resp = await client.put(
-            "/api/v1/admin/acl/resource?resource=/",
+            "/api/v1/acl/resource?resource=/",
             headers=headers,
             json=[
                 {
@@ -9413,7 +9385,7 @@ class TestAdminResourceACL:
         headers = await self._admin_headers(client)
         # Try to save /admin ACL with no group Allow
         resp = await client.put(
-            "/api/v1/admin/acl/resource?resource=/admin",
+            "/api/v1/acl/resource?resource=/admin",
             headers=headers,
             json=[
                 {
@@ -11532,7 +11504,7 @@ class TestInvitations:
             new_callable=AsyncMock,
         ) as mock_send:
             resp = await client.post(
-                "/api/v1/admin/invitations",
+                "/api/v1/invitations",
                 headers=headers,
                 json={"email": "invited@example.com"},
             )
@@ -11551,7 +11523,7 @@ class TestInvitations:
             app.state.auth, "invitations_enabled", lambda: False
         )
         resp = await client.post(
-            "/api/v1/admin/invitations",
+            "/api/v1/invitations",
             headers=headers,
             json={"email": "invited@example.com"},
         )
@@ -11563,7 +11535,7 @@ class TestInvitations:
     ):
         headers = await self._admin_headers(client)
         resp = await client.post(
-            "/api/v1/admin/invitations",
+            "/api/v1/invitations",
             headers=headers,
             json={"email": "testuser@example.com"},
         )
@@ -11578,12 +11550,12 @@ class TestInvitations:
             new_callable=AsyncMock,
         ):
             await client.post(
-                "/api/v1/admin/invitations",
+                "/api/v1/invitations",
                 headers=headers,
                 json={"email": "dup@example.com"},
             )
             resp = await client.post(
-                "/api/v1/admin/invitations",
+                "/api/v1/invitations",
                 headers=headers,
                 json={"email": "dup@example.com"},
             )
@@ -11593,7 +11565,7 @@ class TestInvitations:
     async def test_send_invitation_invalid_email(self, client, admin_user):
         headers = await self._admin_headers(client)
         resp = await client.post(
-            "/api/v1/admin/invitations",
+            "/api/v1/invitations",
             headers=headers,
             json={"email": "not-an-email"},
         )
@@ -11611,7 +11583,7 @@ class TestInvitations:
             "Authorization": f"Bearer {login_resp.json()['access_token']}"
         }
         resp = await client.post(
-            "/api/v1/admin/invitations",
+            "/api/v1/invitations",
             headers=headers,
             json={"email": "invited@example.com"},
         )
@@ -11625,16 +11597,16 @@ class TestInvitations:
             new_callable=AsyncMock,
         ):
             await client.post(
-                "/api/v1/admin/invitations",
+                "/api/v1/invitations",
                 headers=headers,
                 json={"email": "list1@example.com"},
             )
             await client.post(
-                "/api/v1/admin/invitations",
+                "/api/v1/invitations",
                 headers=headers,
                 json={"email": "list2@example.com"},
             )
-        resp = await client.get("/api/v1/admin/invitations", headers=headers)
+        resp = await client.get("/api/v1/invitations", headers=headers)
         assert resp.status_code == 200
         body = resp.json()
         invitations = body["invitations"]
@@ -11661,11 +11633,11 @@ class TestInvitations:
         ):
             for i in range(12):
                 await client.post(
-                    "/api/v1/admin/invitations",
+                    "/api/v1/invitations",
                     headers=headers,
                     json={"email": f"page{i}@example.com"},
                 )
-        resp = await client.get("/api/v1/admin/invitations", headers=headers)
+        resp = await client.get("/api/v1/invitations", headers=headers)
         assert resp.status_code == 200
         body = resp.json()
         assert body["page"] == 1
@@ -11684,15 +11656,15 @@ class TestInvitations:
         ):
             for i in range(6):
                 await client.post(
-                    "/api/v1/admin/invitations",
+                    "/api/v1/invitations",
                     headers=headers,
                     json={"email": f"pg{i}@example.com"},
                 )
         page1 = await client.get(
-            "/api/v1/admin/invitations?page=1&page_size=3", headers=headers
+            "/api/v1/invitations?page=1&page_size=3", headers=headers
         )
         page2 = await client.get(
-            "/api/v1/admin/invitations?page=2&page_size=3", headers=headers
+            "/api/v1/invitations?page=2&page_size=3", headers=headers
         )
         assert page1.status_code == 200
         assert page2.status_code == 200
@@ -11722,12 +11694,12 @@ class TestInvitations:
                 "bravo@example.com",
             ]:
                 await client.post(
-                    "/api/v1/admin/invitations",
+                    "/api/v1/invitations",
                     headers=headers,
                     json={"email": e},
                 )
         resp = await client.get(
-            "/api/v1/admin/invitations?sort=email&order=asc&page_size=50",
+            "/api/v1/invitations?sort=email&order=asc&page_size=50",
             headers=headers,
         )
         emails = [inv["email"] for inv in resp.json()["invitations"]]
@@ -11754,7 +11726,7 @@ class TestInvitations:
         )
         headers = await self._admin_headers(client)
         resp = await client.get(
-            "/api/v1/admin/invitations?sort=invited_by&order=asc&page_size=50",
+            "/api/v1/invitations?sort=invited_by&order=asc&page_size=50",
             headers=headers,
         )
         rows = resp.json()["invitations"]
@@ -11785,16 +11757,16 @@ class TestInvitations:
                 "bravo@example.com",
             ]:
                 await client.post(
-                    "/api/v1/admin/invitations",
+                    "/api/v1/invitations",
                     headers=headers,
                     json={"email": e},
                 )
         asc = await client.get(
-            "/api/v1/admin/invitations?sort=email&order=asc&page_size=50",
+            "/api/v1/invitations?sort=email&order=asc&page_size=50",
             headers=headers,
         )
         desc = await client.get(
-            "/api/v1/admin/invitations?sort=email&order=desc&page_size=50",
+            "/api/v1/invitations?sort=email&order=desc&page_size=50",
             headers=headers,
         )
         asc_emails = [inv["email"] for inv in asc.json()["invitations"]]
@@ -11809,17 +11781,17 @@ class TestInvitations:
             new_callable=AsyncMock,
         ):
             await client.post(
-                "/api/v1/admin/invitations",
+                "/api/v1/invitations",
                 headers=headers,
                 json={"email": "needle@example.com"},
             )
             await client.post(
-                "/api/v1/admin/invitations",
+                "/api/v1/invitations",
                 headers=headers,
                 json={"email": "haystack@example.com"},
             )
         resp = await client.get(
-            "/api/v1/admin/invitations?q=needle&page_size=50",
+            "/api/v1/invitations?q=needle&page_size=50",
             headers=headers,
         )
         body = resp.json()
@@ -11835,7 +11807,7 @@ class TestInvitations:
         headers = await self._admin_headers(client)
         # An unknown sort column must not 500 (falls back to created_at).
         resp = await client.get(
-            "/api/v1/admin/invitations?sort=evil%3B%20DROP%20TABLE&order=asc",
+            "/api/v1/invitations?sort=evil%3B%20DROP%20TABLE&order=asc",
             headers=headers,
         )
         assert resp.status_code == 200
@@ -11849,27 +11821,27 @@ class TestInvitations:
             new_callable=AsyncMock,
         ):
             create_resp = await client.post(
-                "/api/v1/admin/invitations",
+                "/api/v1/invitations",
                 headers=headers,
                 json={"email": "revoke@example.com"},
             )
         inv_id = create_resp.json()["id"]
         resp = await client.delete(
-            f"/api/v1/admin/invitations/{inv_id}", headers=headers
+            f"/api/v1/invitations/{inv_id}", headers=headers
         )
         assert resp.status_code == 200
         assert resp.json()["status"] == "revoked"
 
         # Can't revoke again
         resp = await client.delete(
-            f"/api/v1/admin/invitations/{inv_id}", headers=headers
+            f"/api/v1/invitations/{inv_id}", headers=headers
         )
         assert resp.status_code == 404
 
     async def test_revoke_nonexistent(self, client, admin_user):
         headers = await self._admin_headers(client)
         resp = await client.delete(
-            "/api/v1/admin/invitations/nonexistent-id", headers=headers
+            "/api/v1/invitations/nonexistent-id", headers=headers
         )
         assert resp.status_code == 404
 
@@ -11881,7 +11853,7 @@ class TestInvitations:
             new_callable=AsyncMock,
         ):
             create_resp = await client.post(
-                "/api/v1/admin/invitations",
+                "/api/v1/invitations",
                 headers=headers,
                 json={"email": "resend@example.com"},
             )
@@ -11892,7 +11864,7 @@ class TestInvitations:
             new_callable=AsyncMock,
         ) as mock_resend:
             resp = await client.post(
-                f"/api/v1/admin/invitations/{inv_id}/resend", headers=headers
+                f"/api/v1/invitations/{inv_id}/resend", headers=headers
             )
         assert resp.status_code == 200
         assert resp.json()["status"] == "resent"
@@ -11901,7 +11873,7 @@ class TestInvitations:
     async def test_resend_nonexistent(self, client, admin_user):
         headers = await self._admin_headers(client)
         resp = await client.post(
-            "/api/v1/admin/invitations/nonexistent/resend", headers=headers
+            "/api/v1/invitations/nonexistent/resend", headers=headers
         )
         assert resp.status_code == 404
 
@@ -11913,16 +11885,14 @@ class TestInvitations:
             new_callable=AsyncMock,
         ):
             create_resp = await client.post(
-                "/api/v1/admin/invitations",
+                "/api/v1/invitations",
                 headers=headers,
                 json={"email": "revoked-resend@example.com"},
             )
         inv_id = create_resp.json()["id"]
-        await client.delete(
-            f"/api/v1/admin/invitations/{inv_id}", headers=headers
-        )
+        await client.delete(f"/api/v1/invitations/{inv_id}", headers=headers)
         resp = await client.post(
-            f"/api/v1/admin/invitations/{inv_id}/resend", headers=headers
+            f"/api/v1/invitations/{inv_id}/resend", headers=headers
         )
         assert resp.status_code == 404
 
@@ -11934,7 +11904,7 @@ class TestInvitations:
             new_callable=AsyncMock,
         ):
             create_resp = await client.post(
-                "/api/v1/admin/invitations",
+                "/api/v1/invitations",
                 headers=headers,
                 json={"email": "accept@example.com"},
             )
@@ -11976,7 +11946,7 @@ class TestInvitations:
             new_callable=AsyncMock,
         ):
             create_resp = await client.post(
-                "/api/v1/admin/invitations",
+                "/api/v1/invitations",
                 headers=headers,
                 json={"email": "double@example.com"},
             )
@@ -12004,7 +11974,7 @@ class TestInvitations:
             new_callable=AsyncMock,
         ):
             create_resp = await client.post(
-                "/api/v1/admin/invitations",
+                "/api/v1/invitations",
                 headers=headers,
                 json={"email": "short@example.com"},
             )
@@ -12028,7 +11998,7 @@ class TestInvitations:
             new_callable=AsyncMock,
         ):
             create_resp = await client.post(
-                "/api/v1/admin/invitations",
+                "/api/v1/invitations",
                 headers=headers,
                 json={"email": "noreg@example.com"},
             )
@@ -12058,7 +12028,7 @@ class TestInvitations:
             new_callable=AsyncMock,
         ):
             create_resp = await client.post(
-                "/api/v1/admin/invitations",
+                "/api/v1/invitations",
                 headers=headers,
                 json={"email": "race@example.com"},
             )
@@ -13408,7 +13378,7 @@ class TestHandleEndpoints:
             "Authorization": f"Bearer {admin_resp.json()['access_token']}"
         }
         resp = await client.patch(
-            f"/api/v1/admin/users/{user['id']}",
+            f"/api/v1/users/{user['id']}",
             json={"handle": "admin-set-handle"},
             headers=admin_headers,
         )
@@ -13435,7 +13405,7 @@ class TestHandleEndpoints:
             new_callable=AsyncMock,
         ) as mock_refresh:
             resp = await client.patch(
-                f"/api/v1/admin/users/{user['id']}",
+                f"/api/v1/users/{user['id']}",
                 json={"handle": "admin-refreshed"},
                 headers=admin_headers,
             )
@@ -13458,7 +13428,7 @@ class TestHandleEndpoints:
             "Authorization": f"Bearer {admin_resp.json()['access_token']}"
         }
         resp = await client.patch(
-            f"/api/v1/admin/users/{user['id']}",
+            f"/api/v1/users/{user['id']}",
             json={"handle": "", "password": "testpass"},
             headers=admin_headers,
         )
@@ -13555,7 +13525,7 @@ class TestPasswordPolicyRouteEnforcement:
             new_callable=AsyncMock,
         ):
             create_resp = await client.post(
-                "/api/v1/admin/invitations",
+                "/api/v1/invitations",
                 headers=headers,
                 json={"email": "policyinvite@example.com"},
             )
@@ -13575,7 +13545,7 @@ class TestPasswordPolicyRouteEnforcement:
     ):
         headers = await _admin_login(client)
         resp = await client.post(
-            "/api/v1/admin/users",
+            "/api/v1/users",
             headers=headers,
             json={
                 "email": "policyadmin@example.com",
@@ -13590,7 +13560,7 @@ class TestPasswordPolicyRouteEnforcement:
     ):
         headers = await _admin_login(client)
         resp = await client.patch(
-            f"/api/v1/admin/users/{user['id']}",
+            f"/api/v1/users/{user['id']}",
             headers=headers,
             json={"password": "alllowercase1!"},
         )
@@ -13630,7 +13600,7 @@ class TestInactivityDisable:
     ):
         headers = await _admin_login(client)
         resp = await client.patch(
-            f"/api/v1/admin/users/{user['id']}",
+            f"/api/v1/users/{user['id']}",
             headers=headers,
             json={"disabled": True},
         )
@@ -13649,7 +13619,7 @@ class TestInactivityDisable:
         assert resp.status_code == 403
         # ...and accepted again after re-enable.
         resp = await client.patch(
-            f"/api/v1/admin/users/{user['id']}",
+            f"/api/v1/users/{user['id']}",
             headers=headers,
             json={"disabled": False},
         )
@@ -13666,7 +13636,7 @@ class TestInactivityDisable:
     async def test_admin_cannot_disable_self(self, client, admin_user):
         headers = await _admin_login(client)
         resp = await client.patch(
-            f"/api/v1/admin/users/{admin_user['id']}",
+            f"/api/v1/users/{admin_user['id']}",
             headers=headers,
             json={"disabled": True},
         )
@@ -13687,7 +13657,7 @@ class TestInactivityDisable:
         await Lifecycle(_seed_state).seed_agent_user()
         headers = await _admin_login(client)
         resp = await client.patch(
-            f"/api/v1/admin/users/{model.AGENT_USER_ID}",
+            f"/api/v1/users/{model.AGENT_USER_ID}",
             headers=headers,
             json={"disabled": True},
         )
@@ -13699,9 +13669,7 @@ class TestInactivityDisable:
     ):
         await app.state.model.users.set_user_disabled(user["id"], True)
         headers = await _admin_login(client)
-        resp = await client.get(
-            "/api/v1/admin/users?page_size=200", headers=headers
-        )
+        resp = await client.get("/api/v1/users?page_size=200", headers=headers)
         by_id = {u["id"]: u for u in resp.json()["users"]}
         assert by_id[user["id"]]["disabled"] is True
         assert by_id[admin_user["id"]]["disabled"] is False
@@ -13745,7 +13713,7 @@ class TestInactivityDisable:
 
         headers = await _admin_login(client)
         resp = await client.patch(
-            f"/api/v1/admin/users/{user['id']}",
+            f"/api/v1/users/{user['id']}",
             headers=headers,
             json={"disabled": True},
         )
@@ -13754,7 +13722,7 @@ class TestInactivityDisable:
         assert closed == [(4001, "Account disabled")]
         # Re-enable does not touch sockets.
         resp = await client.patch(
-            f"/api/v1/admin/users/{user['id']}",
+            f"/api/v1/users/{user['id']}",
             headers=headers,
             json={"disabled": False},
         )
@@ -13799,7 +13767,7 @@ class TestAdminServerSchedule:
     ):
         headers = await self._admin_headers(client)
         resp = await client.post(
-            "/api/v1/admin/server/schedule",
+            "/api/v1/server/schedule",
             headers=headers,
             json={"action": "stop", "in_seconds": 3600},
         )
@@ -13808,26 +13776,22 @@ class TestAdminServerSchedule:
         assert schedule["action"] == "stop"
         assert schedule["id"]
 
-        resp = await client.get(
-            "/api/v1/admin/server/schedule", headers=headers
-        )
+        resp = await client.get("/api/v1/server/schedule", headers=headers)
         assert resp.status_code == 200
         assert [s["id"] for s in resp.json()["schedules"]] == [schedule["id"]]
 
         resp = await client.delete(
-            f"/api/v1/admin/server/schedule/{schedule['id']}",
+            f"/api/v1/server/schedule/{schedule['id']}",
             headers=headers,
         )
         assert resp.status_code == 200
-        resp = await client.get(
-            "/api/v1/admin/server/schedule", headers=headers
-        )
+        resp = await client.get("/api/v1/server/schedule", headers=headers)
         assert resp.json()["schedules"] == []
 
     async def test_schedule_absolute_at(self, client, app, admin_user):
         headers = await self._admin_headers(client)
         resp = await client.post(
-            "/api/v1/admin/server/schedule",
+            "/api/v1/server/schedule",
             headers=headers,
             json={"action": "recycle", "at": "2030-01-01T00:00:00+00:00"},
         )
@@ -13844,7 +13808,7 @@ class TestAdminServerSchedule:
             {"action": "stop", "at": "not-a-date"},
         ):
             resp = await client.post(
-                "/api/v1/admin/server/schedule",
+                "/api/v1/server/schedule",
                 headers=headers,
                 json=body,
             )
@@ -13853,7 +13817,7 @@ class TestAdminServerSchedule:
     async def test_schedule_requires_admin(self, client, app, user):
         headers = await _auth_headers(client)
         resp = await client.post(
-            "/api/v1/admin/server/schedule",
+            "/api/v1/server/schedule",
             headers=headers,
             json={"action": "stop", "in_seconds": 60},
         )
@@ -13862,7 +13826,7 @@ class TestAdminServerSchedule:
     async def test_cancel_missing_404(self, client, app, admin_user):
         headers = await self._admin_headers(client)
         resp = await client.delete(
-            "/api/v1/admin/server/schedule/nope", headers=headers
+            "/api/v1/server/schedule/nope", headers=headers
         )
         assert resp.status_code == 404
 
@@ -13872,7 +13836,7 @@ class TestAdminServerSchedule:
             app.state.server_scheduler, "notify_pending", new=AsyncMock()
         ) as mock_notify:
             resp = await client.post(
-                "/api/v1/admin/server/schedule",
+                "/api/v1/server/schedule",
                 headers=headers,
                 json={"action": "stop", "in_seconds": 60},
             )
@@ -13926,9 +13890,7 @@ class TestContainerEventsAPI:
         )
         await events.record(ws_id, EVENT_START, CAUSE_AUTO_START)
 
-        resp = await client.get(
-            "/api/v1/admin/container-events", headers=headers
-        )
+        resp = await client.get("/api/v1/events", headers=headers)
         assert resp.status_code == 200, resp.text
         data = resp.json()
         assert data["total"] == 3
@@ -13965,7 +13927,7 @@ class TestContainerEventsAPI:
         await events.record(ws_b, EVENT_START, CAUSE_API, container_id="b-0")
 
         resp = await client.get(
-            "/api/v1/admin/container-events",
+            "/api/v1/events",
             headers=headers,
             params={"workspace_id": ws_a, "limit": 2, "offset": 1},
         )
@@ -13989,9 +13951,7 @@ class TestContainerEventsAPI:
             CAUSE_DELETE,
             actor_id="no-such-user",
         )
-        resp = await client.get(
-            "/api/v1/admin/container-events", headers=headers
-        )
+        resp = await client.get("/api/v1/events", headers=headers)
         assert resp.status_code == 200
         item = resp.json()["items"][0]
         assert item["workspace_name"] is None
@@ -14002,7 +13962,7 @@ class TestContainerEventsAPI:
         headers = await self._admin_headers(client)
         for params in ({"limit": 0}, {"limit": 501}, {"offset": -1}):
             resp = await client.get(
-                "/api/v1/admin/container-events",
+                "/api/v1/events",
                 headers=headers,
                 params=params,
             )
@@ -14010,9 +13970,7 @@ class TestContainerEventsAPI:
 
     async def test_plain_user_forbidden(self, client, app, user):
         headers = await _auth_headers(client)
-        resp = await client.get(
-            "/api/v1/admin/container-events", headers=headers
-        )
+        resp = await client.get("/api/v1/events", headers=headers)
         assert resp.status_code == 403
 
     async def test_delegated_grant_reads_without_admin(
@@ -14023,7 +13981,7 @@ class TestContainerEventsAPI:
         # the more-specific path wins the ACL walk over /admin's
         # Deny-everyone.
         await app_state.state.model.acl.add_acl_entry(
-            "/admin/container-events",
+            "/events",
             0,
             model.ACTION_ALLOW,
             "manage-events",
@@ -14036,9 +13994,7 @@ class TestContainerEventsAPI:
         )
 
         headers = await _auth_headers(client)
-        resp = await client.get(
-            "/api/v1/admin/container-events", headers=headers
-        )
+        resp = await client.get("/api/v1/events", headers=headers)
         assert resp.status_code == 200, resp.text
         data = resp.json()
         assert data["total"] == 1
@@ -14048,7 +14004,7 @@ class TestContainerEventsAPI:
         # frontend can show the tab to the delegated auditor.
         resp = await client.get("/api/v1/my-permissions", headers=headers)
         perms = resp.json()["permissions"]
-        assert "manage-events" in perms.get("/admin/container-events", [])
+        assert "manage-events" in perms.get("/events", [])
 
     async def test_admin_my_permissions_lists_resource(
         self, client, app, admin_user
@@ -14056,7 +14012,7 @@ class TestContainerEventsAPI:
         headers = await self._admin_headers(client)
         resp = await client.get("/api/v1/my-permissions", headers=headers)
         perms = resp.json()["permissions"]
-        assert "manage-events" in perms.get("/admin/container-events", [])
+        assert "manage-events" in perms.get("/events", [])
 
 
 class TestBranchGaps2834:
@@ -14086,7 +14042,7 @@ class TestBranchGaps2834:
         group = await app.state.model.users.get_group_by_name("admins")
         headers = await _admin_login(client)
         resp = await client.put(
-            "/api/v1/admin/acl/resource?resource=/admin",
+            "/api/v1/acl/resource?resource=/admin",
             headers=headers,
             json=[
                 {
@@ -14726,11 +14682,11 @@ class TestAdminTabPermissions:
         """The seeded /admin Allow * satisfies every tab permission."""
         headers = await self._admin_headers(client)
         for path in (
-            "/api/v1/admin/users",
-            "/api/v1/admin/invitations",
-            "/api/v1/admin/acl/tree",
-            "/api/v1/admin/server/schedule",
-            "/api/v1/admin/container-events",
+            "/api/v1/users",
+            "/api/v1/invitations",
+            "/api/v1/acl/tree",
+            "/api/v1/server/schedule",
+            "/api/v1/events",
         ):
             resp = await client.get(path, headers=headers)
             assert resp.status_code == 200, (path, resp.text)
@@ -14738,12 +14694,12 @@ class TestAdminTabPermissions:
     async def test_plain_user_locked_out_everywhere(self, client, app, user):
         headers = await _auth_headers(client)
         for path in (
-            "/api/v1/admin/users",
-            "/api/v1/admin/groups",
-            "/api/v1/admin/invitations",
-            "/api/v1/admin/acl/tree",
-            "/api/v1/admin/server/schedule",
-            "/api/v1/admin/container-events",
+            "/api/v1/users",
+            "/api/v1/groups/some-id/members",
+            "/api/v1/invitations",
+            "/api/v1/acl/tree",
+            "/api/v1/server/schedule",
+            "/api/v1/events",
         ):
             resp = await client.get(path, headers=headers)
             assert resp.status_code == 403, path
@@ -14751,23 +14707,21 @@ class TestAdminTabPermissions:
     async def test_delegated_manage_users_covers_the_whole_tab(
         self, client, app, user, app_state
     ):
-        await self._grant(
-            app_state, "/admin/users", "manage-users", user["id"]
-        )
+        await self._grant(app_state, "/users", "manage-users", user["id"])
         headers = await _auth_headers(client)
 
-        resp = await client.get("/api/v1/admin/users", headers=headers)
+        resp = await client.get("/api/v1/users", headers=headers)
         assert resp.status_code == 200, resp.text
 
         # Sessions (IP/UA rows) are part of the tab, not a separate gate.
         resp = await client.get(
-            f"/api/v1/admin/users/{user['id']}/sessions", headers=headers
+            f"/api/v1/users/{user['id']}/sessions", headers=headers
         )
         assert resp.status_code == 200, resp.text
 
         # Writes pass the gate too — one permission, whole tab.
         resp = await client.patch(
-            f"/api/v1/admin/users/{user['id']}",
+            f"/api/v1/users/{user['id']}",
             headers=headers,
             json={"handle": "helpdesk"},
         )
@@ -14775,9 +14729,9 @@ class TestAdminTabPermissions:
 
         # ...and nothing outside the tab.
         for path in (
-            "/api/v1/admin/invitations",
-            "/api/v1/admin/acl/tree",
-            "/api/v1/admin/server/schedule",
+            "/api/v1/invitations",
+            "/api/v1/acl/tree",
+            "/api/v1/server/schedule",
         ):
             resp = await client.get(path, headers=headers)
             assert resp.status_code == 403, path
@@ -14786,41 +14740,39 @@ class TestAdminTabPermissions:
         self, client, app, user, app_state
     ):
         await self._grant(
-            app_state, "/admin/invitations", "manage-invitations", user["id"]
+            app_state, "/invitations", "manage-invitations", user["id"]
         )
         headers = await _auth_headers(client)
 
-        resp = await client.get("/api/v1/admin/invitations", headers=headers)
+        resp = await client.get("/api/v1/invitations", headers=headers)
         assert resp.status_code == 200, resp.text
 
         # Past the gate: 400 because the email belongs to an existing
         # user (no email side effect on this branch).
         resp = await client.post(
-            "/api/v1/admin/invitations",
+            "/api/v1/invitations",
             headers=headers,
             json={"email": "testuser@example.com"},
         )
         assert resp.status_code == 400
         assert "already exists" in resp.json()["detail"]
 
-        resp = await client.get("/api/v1/admin/users", headers=headers)
+        resp = await client.get("/api/v1/users", headers=headers)
         assert resp.status_code == 403
 
     async def test_delegated_manage_server_schedule_covers_create_and_list(
         self, client, app, user, app_state
     ):
         await self._grant(
-            app_state, "/admin/server", "manage-server-schedule", user["id"]
+            app_state, "/server", "manage-server-schedule", user["id"]
         )
         headers = await _auth_headers(client)
 
-        resp = await client.get(
-            "/api/v1/admin/server/schedule", headers=headers
-        )
+        resp = await client.get("/api/v1/server/schedule", headers=headers)
         assert resp.status_code == 200, resp.text
 
         resp = await client.post(
-            "/api/v1/admin/server/schedule",
+            "/api/v1/server/schedule",
             headers=headers,
             json={"action": "stop", "in_seconds": 3600},
         )
@@ -14828,7 +14780,7 @@ class TestAdminTabPermissions:
         schedule_id = resp.json()["id"]
 
         resp = await client.delete(
-            f"/api/v1/admin/server/schedule/{schedule_id}", headers=headers
+            f"/api/v1/server/schedule/{schedule_id}", headers=headers
         )
         assert resp.status_code == 200, resp.text
 
@@ -14839,15 +14791,15 @@ class TestAdminTabPermissions:
         rewrite ACLs on ANY resource — including collections like
         /workspaces — so the permission is root-equivalent and granted
         only to administrators. This pins that deliberately."""
-        await self._grant(app_state, "/admin/acl", "manage-acls", user["id"])
+        await self._grant(app_state, "/acl", "manage-acls", user["id"])
         headers = await _auth_headers(client)
 
-        resp = await client.get("/api/v1/admin/acl/tree", headers=headers)
+        resp = await client.get("/api/v1/acl/tree", headers=headers)
         assert resp.status_code == 200, resp.text
 
         # Read the current entries, append a self-grant, replace.
         resp = await client.get(
-            "/api/v1/admin/acl/resource?resource=/workspaces",
+            "/api/v1/acl/resource?resource=/workspaces",
             headers=headers,
         )
         assert resp.status_code == 200, resp.text
@@ -14873,7 +14825,7 @@ class TestAdminTabPermissions:
             }
         )
         resp = await client.put(
-            "/api/v1/admin/acl/resource?resource=/workspaces",
+            "/api/v1/acl/resource?resource=/workspaces",
             headers=headers,
             json=entries,
         )
@@ -14888,19 +14840,17 @@ class TestAdminTabPermissions:
         assert resp.status_code == 200, resp.text
 
         # manage-acls alone opens no other tab.
-        resp = await client.get("/api/v1/admin/users", headers=headers)
+        resp = await client.get("/api/v1/users", headers=headers)
         assert resp.status_code == 403
 
     async def test_my_permissions_surfaces_tab_names(
         self, client, app, user, app_state
     ):
-        await self._grant(
-            app_state, "/admin/users", "manage-users", user["id"]
-        )
+        await self._grant(app_state, "/users", "manage-users", user["id"])
         headers = await _auth_headers(client)
         resp = await client.get("/api/v1/my-permissions", headers=headers)
         perms = resp.json()["permissions"]
-        assert "manage-users" in perms.get("/admin/users", [])
+        assert "manage-users" in perms.get("/users", [])
 
     async def test_admin_my_permissions_lists_all_tab_names(
         self, client, app, admin_user
@@ -14915,5 +14865,5 @@ class TestAdminTabPermissions:
             "manage-events",
         ):
             assert name in perms.get("/admin", [])
-        assert "manage-acls" in perms.get("/admin/acl", [])
-        assert "manage-events" in perms.get("/admin/container-events", [])
+        assert "manage-acls" in perms.get("/acl", [])
+        assert "manage-events" in perms.get("/events", [])

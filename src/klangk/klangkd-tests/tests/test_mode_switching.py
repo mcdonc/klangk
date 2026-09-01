@@ -169,7 +169,7 @@ class TestNoneToPasswordUpgrade:
 
         # admin set-password equivalent.
         resp = await client.patch(
-            f"/api/v1/admin/users/{user['id']}",
+            f"/api/v1/users/{user['id']}",
             headers=h,
             json={"password": NEW_PASSWORD},
         )
@@ -186,7 +186,7 @@ class TestNoneToPasswordUpgrade:
             "access_token"
         ]
         await client.patch(
-            f"/api/v1/admin/users/{user['id']}",
+            f"/api/v1/users/{user['id']}",
             headers={"Authorization": f"Bearer {token}"},
             json={"password": NEW_PASSWORD},
         )
@@ -210,7 +210,7 @@ class TestNoneToPasswordUpgrade:
             "access_token"
         ]
         await client.patch(
-            f"/api/v1/admin/users/{user['id']}",
+            f"/api/v1/users/{user['id']}",
             headers={"Authorization": f"Bearer {token}"},
             json={"password": NEW_PASSWORD},
         )

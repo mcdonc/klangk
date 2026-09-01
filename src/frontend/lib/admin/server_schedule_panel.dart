@@ -4,7 +4,7 @@
 ///
 /// The pending list is snapshot-driven: the `server_schedule` WS frame
 /// (broadcast on every change, see [WsClient]) is the live truth, with a
-/// REST `GET /api/v1/admin/server/schedule` load as the source before the
+/// REST `GET /api/v1/server/schedule` load as the source before the
 /// first snapshot arrives (and as a post-mutation refresh). Countdowns
 /// tick locally from each schedule's `fire_at` — same approach as the
 /// client banner (#2661), whose parse/format helpers are reused here.
@@ -106,7 +106,7 @@ class _ServerSchedulePanelState extends State<ServerSchedulePanel> {
     });
     try {
       final auth = context.read<AuthService>();
-      final resp = await auth.authGet('/api/v1/admin/server/schedule');
+      final resp = await auth.authGet('/api/v1/server/schedule');
       if (!mounted) return;
       if (resp.statusCode == 200) {
         final data = jsonDecode(resp.body) as Map<String, dynamic>;
@@ -176,8 +176,8 @@ class _ServerSchedulePanelState extends State<ServerSchedulePanel> {
     if (confirm != true) return;
     if (!mounted) return;
     final auth = context.read<AuthService>();
-    final resp = await auth
-        .authDelete('/api/v1/admin/server/schedule/${schedule['id']}');
+    final resp =
+        await auth.authDelete('/api/v1/server/schedule/${schedule['id']}');
     if (!mounted) return;
     if (resp.statusCode == 200) {
       // The authoritative update is the next `server_schedule` WS
@@ -413,7 +413,7 @@ class _ScheduleServerActionDialogState
     });
     final auth = context.read<AuthService>();
     final resp = await auth.authPost(
-      '/api/v1/admin/server/schedule',
+      '/api/v1/server/schedule',
       body: body,
     );
     if (!mounted) return;

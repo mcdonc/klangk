@@ -35,7 +35,7 @@ api_auth = sys.modules["klangk.api.auth"]
 
 # Total HTTP route operations the monolith exposed (per the issue).  The
 # split must preserve this exactly — no dropped or duplicated handlers.
-EXPECTED_ROUTE_COUNT = 91
+EXPECTED_ROUTE_COUNT = 90
 
 # Per-domain submodules and the number of routes each owns.  86 sub-routes
 # + 3 routes defined directly on the main router (version, config,
@@ -45,7 +45,7 @@ SUBMODULE_ROUTES = {
     "workspaces": 27,
     "resources": 10,  # 6 files + 4 images/volumes (merged submodules)
     "browser_delegate": 2,
-    "admin": 28,
+    "admin": 27,
     "llm_proxy": 2,
 }
 
@@ -82,16 +82,17 @@ REPRESENTATIVE_PATHS = [
     # browser bridge
     f"{API_PREFIX}/browser-delegate",
     f"{API_PREFIX}/browser-delegate/stream",
-    # admin (users / groups / invitations / acl)
-    f"{API_PREFIX}/admin/users",
-    f"{API_PREFIX}/admin/invitations",
-    f"{API_PREFIX}/admin/groups",
-    f"{API_PREFIX}/admin/acl/tree",
+    # first-class resources (#2944): users / groups / invitations /
+    # server / events / acl
+    f"{API_PREFIX}/users",
+    f"{API_PREFIX}/invitations",
+    f"{API_PREFIX}/groups",
+    f"{API_PREFIX}/server/schedule",
+    f"{API_PREFIX}/events",
+    f"{API_PREFIX}/acl/tree",
     # llm proxy (#2072)
     "/llm-proxy/models",
     "/llm-proxy/chat/completions",
-    # user-accessible groups
-    f"{API_PREFIX}/groups",
 ]
 
 
@@ -247,8 +248,8 @@ class TestSubmoduleStructure:
         total = 0
         for submod in SUBMODULE_ROUTES:
             total += len(import_module(f"klangk.api.{submod}").router.routes)
-        # 86 sub-routes + 3 direct (version/config/my-permissions) + 2
-        # root (health/empty) == 91.
+        # 85 sub-routes + 3 direct (version/config/my-permissions) + 2
+        # root (health/empty) == 90.
         assert total == EXPECTED_ROUTE_COUNT - 3 - 2
 
     def test_common_module_has_no_router(self):
@@ -333,4 +334,4 @@ def test_static_resources_single_source():
     assert not hasattr(api_admin, "STATIC_RESOURCES")
     # #2923's events resource must be reported so the frontend can gate
     # the Events tab on the dedicated permission.
-    assert "/admin/container-events" in api.STATIC_RESOURCES
+    assert "/events" in api.STATIC_RESOURCES

@@ -874,7 +874,7 @@ def seed_fuzz_fixtures(
         uid = create_fixture_id(
             uds_path,
             headers,
-            "/api/v1/admin/users",
+            "/api/v1/users",
             {
                 "email": f"fuzzuser{i}@example.com",
                 "password": "fuzzpass",
@@ -886,7 +886,7 @@ def seed_fuzz_fixtures(
         gid = create_fixture_id(
             uds_path,
             headers,
-            "/api/v1/admin/groups",
+            "/api/v1/groups",
             {"name": f"fuzz-group-{i}"},
             ok_codes=(200, 201),
         )

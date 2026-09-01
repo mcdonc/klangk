@@ -32,6 +32,15 @@ operators or integrators to act when upgrading.
 
 ### Breaking
 
+- **`/admin/*` API paths moved to first-class resources (#2944).**
+  Scripts and clients calling `/api/v1/admin/users*`,
+  `/api/v1/admin/groups*`, `/api/v1/admin/invitations*`,
+  `/api/v1/admin/server/schedule*`, `/api/v1/admin/container-events`,
+  or `/api/v1/admin/acl/*` must switch to `/api/v1/users*`,
+  `/api/v1/groups*`, `/api/v1/invitations*`, `/api/v1/server/schedule*`,
+  `/api/v1/events`, and `/api/v1/acl/*` respectively. The CLI, web
+  frontend, e2e suites, and seeds are already migrated.
+
 - **Hand-crafted `admin` ACEs stop matching split routes (#2940).** ACLs
   granting the literal `admin` permission on `/admin` (rather than the
   seeded `*` wildcard) no longer satisfy the per-tab endpoints — grant

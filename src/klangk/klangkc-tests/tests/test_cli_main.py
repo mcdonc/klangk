@@ -6232,7 +6232,7 @@ class TestAdminUsersCLI:
         assert "hero@example.com" in result.stdout
         client.patch.assert_called_once()
         called_path = client.patch.call_args.args[0]
-        assert called_path == "/api/v1/admin/users/u-1"
+        assert called_path == "/api/v1/users/u-1"
 
     def test_set_password_by_handle(self, logged_in_cfg, monkeypatch):
         """set-password resolves a *handle* to a user id (#616)."""
@@ -6264,7 +6264,7 @@ class TestAdminUsersCLI:
         )
         assert result.exit_code == 0
         client.patch.assert_called_once()
-        assert client.patch.call_args.args[0] == "/api/v1/admin/users/u-1"
+        assert client.patch.call_args.args[0] == "/api/v1/users/u-1"
 
     def test_set_password_prompt_match(self, logged_in_cfg, monkeypatch):
         from klangk.cli import main

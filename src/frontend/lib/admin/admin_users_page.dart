@@ -91,23 +91,19 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
 
   void _resolvePermissions() {
     final auth = context.read<AuthService>();
-    // One permission per tab (#2940): `manage-<thing>` grants full
-    // control of that tab's actions — the admin group holds every name
-    // via the /admin * wildcard; a delegated user gets exactly what
-    // their ACE on the sub-resource grants (the Events tab, #2923,
-    // follows the same shape with read-only `manage-events`).
-    _canUsers = auth.hasPermission('/admin/users', 'manage-users');
-    // Groups tab rides /admin/groups behind manage-groups (#2941-fold:
-    // the single group-management surface; the /groups writes are gone).
-    _canGroups = auth.hasPermission('/admin/groups', 'manage-groups');
-    _canInvitations =
-        auth.hasPermission('/admin/invitations', 'manage-invitations');
-    _canServer = auth.hasPermission('/admin/server', 'manage-server-schedule');
-    _canEvents = auth.hasPermission('/admin/container-events', 'manage-events');
-    // The Access Control browser reads /admin/acl/*, gated on
-    // `manage-acls` (#2940) — root-equivalent (it can rewrite ACLs on
-    // any resource), so it is granted only to administrators.
-    _canAcl = auth.hasPermission('/admin/acl', 'manage-acls');
+    // One permission per tab on its first-class resource (#2944): a
+    // `manage-<thing>` grant covers the whole tab; admins hold every
+    // name via the seeded per-resource rows (plus the /admin wildcard
+    // marker), a delegated user gets exactly what their ACE grants.
+    _canUsers = auth.hasPermission('/users', 'manage-users');
+    _canGroups = auth.hasPermission('/groups', 'manage-groups');
+    _canInvitations = auth.hasPermission('/invitations', 'manage-invitations');
+    _canServer = auth.hasPermission('/server', 'manage-server-schedule');
+    _canEvents = auth.hasPermission('/events', 'manage-events');
+    // The Access Control browser reads /acl/*, gated on `manage-acls`
+    // (#2940) — root-equivalent (it can rewrite ACLs on any
+    // resource), so it is granted only to administrators.
+    _canAcl = auth.hasPermission('/acl', 'manage-acls');
   }
 
   Future<void> _loadUsers({int page = 1}) async {
@@ -127,7 +123,7 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
       final q = _usersQuery.trim();
       if (q.isNotEmpty) query['q'] = q;
       final resp = await auth.authGet(
-        '/api/v1/admin/users?${_encodeQuery(query)}',
+        '/api/v1/users?${_encodeQuery(query)}',
       );
       if (resp.statusCode == 200) {
         final data = jsonDecode(resp.body) as Map<String, dynamic>;
@@ -160,7 +156,7 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     if (result == null) return;
 
     final resp = await auth.authPost(
-      '/api/v1/admin/users',
+      '/api/v1/users',
       body: jsonEncode(result),
     );
     if (resp.statusCode == 200) {
@@ -197,7 +193,7 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     var fetchFailed = false;
     try {
       final wsResp = await auth.authGet(
-        '/api/v1/admin/users/$userId/workspaces?limit=100',
+        '/api/v1/users/$userId/workspaces?limit=100',
       );
       if (wsResp.statusCode == 200) {
         final body = jsonDecode(wsResp.body);
@@ -242,7 +238,7 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     );
     if (confirm != true) return;
 
-    final resp = await auth.authDelete('/api/v1/admin/users/$userId');
+    final resp = await auth.authDelete('/api/v1/users/$userId');
     if (resp.statusCode == 200) {
       _loadUsers();
     } else {
@@ -335,7 +331,7 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     );
     if (result == null) return;
     final resp = await auth.authPatch(
-      '/api/v1/admin/users/${user['id']}',
+      '/api/v1/users/${user['id']}',
       body: jsonEncode(result),
     );
     if (resp.statusCode == 200) {
@@ -705,7 +701,7 @@ class _GroupsTabState extends State<_GroupsTab> {
       final source = _groupsSource;
       if (source != null) query['source'] = source;
       final resp = await auth.authGet(
-        '/api/v1/admin/groups?${_encodeQuery(query)}',
+        '/api/v1/groups?${_encodeQuery(query)}',
       );
       if (resp.statusCode == 200) {
         final data = jsonDecode(resp.body) as Map<String, dynamic>;
@@ -764,7 +760,7 @@ class _GroupsTabState extends State<_GroupsTab> {
     if (result != true || nameCtrl.text.trim().isEmpty) return;
     final auth = context.read<AuthService>();
     final resp = await auth.authPost(
-      '/api/v1/admin/groups',
+      '/api/v1/groups',
       body: jsonEncode({
         'name': nameCtrl.text.trim(),
         if (descCtrl.text.trim().isNotEmpty)
@@ -803,7 +799,7 @@ class _GroupsTabState extends State<_GroupsTab> {
     );
     if (confirm != true) return;
     final auth = context.read<AuthService>();
-    final resp = await auth.authDelete('/api/v1/admin/groups/$groupId');
+    final resp = await auth.authDelete('/api/v1/groups/$groupId');
     if (!mounted) return;
     if (resp.statusCode == 200) {
       _loadGroups();
@@ -990,7 +986,7 @@ class _ManageMembersDialogState extends State<_ManageMembersDialog> {
   Future<void> _loadMembers() async {
     final auth = context.read<AuthService>();
     final resp = await auth.authGet(
-      '/api/v1/admin/groups/$_groupId/members',
+      '/api/v1/groups/$_groupId/members',
     );
     if (!mounted) return;
     setState(() {
@@ -1021,7 +1017,7 @@ class _ManageMembersDialogState extends State<_ManageMembersDialog> {
   Future<void> _addMember(String userId) async {
     final auth = context.read<AuthService>();
     final resp = await auth.authPost(
-      '/api/v1/admin/groups/$_groupId/members',
+      '/api/v1/groups/$_groupId/members',
       body: jsonEncode({'user_id': userId}),
     );
     if (resp.statusCode == 200) {
@@ -1034,7 +1030,7 @@ class _ManageMembersDialogState extends State<_ManageMembersDialog> {
     final member = _members[index];
     final auth = context.read<AuthService>();
     final resp = await auth.authDelete(
-      '/api/v1/admin/groups/$_groupId/members/${member['id']}',
+      '/api/v1/groups/$_groupId/members/${member['id']}',
     );
     if (resp.statusCode == 200 && mounted) {
       setState(() => _members.removeAt(index));
@@ -1196,7 +1192,7 @@ class _InvitationsTabState extends State<_InvitationsTab> {
           '&sort=${Uri.encodeQueryComponent(_invitationsSort)}'
           '&order=${Uri.encodeQueryComponent(_invitationsOrder)}'
           '${q.isNotEmpty ? '&q=${Uri.encodeQueryComponent(q)}' : ''}';
-      final resp = await auth.authGet('/api/v1/admin/invitations?$query');
+      final resp = await auth.authGet('/api/v1/invitations?$query');
       if (resp.statusCode == 200) {
         final data = jsonDecode(resp.body) as Map<String, dynamic>;
         if (mounted) {
@@ -1223,7 +1219,7 @@ class _InvitationsTabState extends State<_InvitationsTab> {
 
     final auth = context.read<AuthService>();
     final resp = await auth.authPost(
-      '/api/v1/admin/invitations',
+      '/api/v1/invitations',
       body: jsonEncode({'email': email}),
     );
     if (resp.statusCode == 200) {
@@ -1271,7 +1267,7 @@ class _InvitationsTabState extends State<_InvitationsTab> {
 
     final auth = context.read<AuthService>();
     final resp = await auth.authDelete(
-      '/api/v1/admin/invitations/$invitationId',
+      '/api/v1/invitations/$invitationId',
     );
     if (resp.statusCode == 200) {
       _loadInvitations(page: _invitationsPage);
@@ -1290,7 +1286,7 @@ class _InvitationsTabState extends State<_InvitationsTab> {
   Future<void> _resendInvitation(String invitationId, String email) async {
     final auth = context.read<AuthService>();
     final resp = await auth.authPost(
-      '/api/v1/admin/invitations/$invitationId/resend',
+      '/api/v1/invitations/$invitationId/resend',
     );
     if (mounted) {
       if (resp.statusCode == 200) {
@@ -1912,25 +1908,29 @@ class _AclBrowserTabState extends State<_AclBrowserTab> {
   static const _resources = [
     ('/', 'Root', Icons.home),
     ('/workspaces', 'Workspaces', Icons.folder),
-    ('/groups', 'Groups', Icons.group),
     ('/users', 'Users', Icons.people),
-    ('/admin', 'Admin', Icons.manage_accounts),
+    ('/groups', 'Groups', Icons.group),
+    ('/invitations', 'Invitations', Icons.mail_outline),
+    ('/server', 'Server', Icons.dns),
+    ('/events', 'Events', Icons.history),
+    ('/acl', 'ACL', Icons.security),
   ];
 
-  /// The permission(s) that matter on each node (#2940): the endpoint
+  /// The permission(s) that matter on each node (#2944): the endpoint
   /// checks key on these names, so the browser shows the mapping next
   /// to the ACE list instead of leaving the operator to guess which
-  /// name the server actually asks for on this resource.
+  /// name the server actually asks for on this resource. /admin no
+  /// longer appears — it is only the instance-admin wildcard marker.
   static const _resourceHints = {
     '/': 'view — held by every authenticated user via the seed',
     '/workspaces':
         'create — workspace creation; per-workspace permissions live on each /workspaces/{id}',
-    '/groups':
-        'No permission — authenticated listing; management is under /admin',
-    '/users':
-        'No permission checked yet — `search-users` arrives with the workspaces tranche (#2890)',
-    '/admin':
-        'manage-users, manage-invitations, manage-groups, manage-server-schedule, manage-events, manage-acls (root-equivalent) — or * for everything',
+    '/users': 'manage-users (search stays authenticated for pickers)',
+    '/groups': 'manage-groups (listing stays authenticated for pickers)',
+    '/invitations': 'manage-invitations',
+    '/server': 'manage-server-schedule',
+    '/events': 'manage-events (read-only audit)',
+    '/acl': 'manage-acls — root-equivalent, administrators only',
   };
 
   String _selectedResource = '/';

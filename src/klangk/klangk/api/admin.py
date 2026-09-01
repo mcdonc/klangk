@@ -26,7 +26,6 @@ from ..model import (
     GROUP_SOURCES,
     PRINCIPAL_GROUP,
     PRINCIPAL_SYSTEM,
-    PRINCIPAL_USER,
     SYSTEM_AUTHENTICATED,
 )
 from .common import (
@@ -81,7 +80,7 @@ def _validate_admin_acl(entries, resource: str) -> None:
         )
 
 
-@router.post("/admin/invitations")
+@router.post("/invitations")
 async def send_invitation(
     req: SendInviteRequest,
     request: Request,
@@ -138,7 +137,7 @@ async def send_invitation(
     }
 
 
-@router.get("/admin/invitations")
+@router.get("/invitations")
 async def list_invitations(
     page: int = 1,
     page_size: int = 10,
@@ -160,7 +159,7 @@ async def list_invitations(
     )
 
 
-@router.delete("/admin/invitations/{invitation_id}")
+@router.delete("/invitations/{invitation_id}")
 async def revoke_invitation(
     invitation_id: str,
     admin: dict = Depends(acl.has_permission("manage-invitations")),
@@ -178,7 +177,7 @@ async def revoke_invitation(
     return {"status": "revoked"}
 
 
-@router.post("/admin/invitations/{invitation_id}/resend")
+@router.post("/invitations/{invitation_id}/resend")
 async def resend_invitation(
     invitation_id: str,
     request: Request,
@@ -216,7 +215,7 @@ async def resend_invitation(
     return {"status": "resent"}
 
 
-@router.get("/admin/users")
+@router.get("/users")
 async def list_users(
     page: int = 1,
     page_size: int = 10,
@@ -237,7 +236,7 @@ class AdminCreateUserRequest(BaseModel):
     send_verification_email: bool = False
 
 
-@router.post("/admin/users")
+@router.post("/users")
 async def admin_create_user(
     req: AdminCreateUserRequest,
     request: Request,
@@ -307,7 +306,7 @@ async def admin_create_user(
     return {"id": user["id"], "email": user["email"], "status": "created"}
 
 
-@router.get("/admin/users/{user_id}/workspaces")
+@router.get("/users/{user_id}/workspaces")
 async def list_user_workspaces(
     user_id: str,
     limit: int | None = Query(None, ge=1, le=200),
@@ -329,7 +328,7 @@ async def list_user_workspaces(
     )
 
 
-@router.delete("/admin/users/{user_id}")
+@router.delete("/users/{user_id}")
 async def delete_user(
     user_id: str,
     admin: dict = Depends(acl.has_permission("manage-users")),
@@ -370,7 +369,7 @@ class UpdateUserRequest(auth.BaseModel):
     disabled: bool | None = None
 
 
-@router.patch("/admin/users/{user_id}")
+@router.patch("/users/{user_id}")
 async def update_user(
     user_id: str,
     req: UpdateUserRequest,
@@ -440,7 +439,7 @@ async def _update_user_disabled(
             )
 
 
-@router.post("/admin/users/{user_id}/unlockout")
+@router.post("/users/{user_id}/unlockout")
 async def unlock_user(
     user_id: str,
     admin: dict = Depends(acl.has_permission("manage-users")),
@@ -454,7 +453,7 @@ async def unlock_user(
     return {"status": "unlocked"}
 
 
-@router.get("/admin/users/{user_id}/sessions")
+@router.get("/users/{user_id}/sessions")
 async def list_user_sessions(
     user_id: str,
     admin: dict = Depends(acl.has_permission("manage-users")),
@@ -527,7 +526,7 @@ async def update_group_fields(app, group_id: str, req) -> dict:
 
 
 @router.get("/groups")
-async def user_list_groups(
+async def list_groups(
     page: int = 1,
     page_size: int = 10,
     sort: str = "name",
@@ -537,15 +536,16 @@ async def user_list_groups(
     user: dict = Depends(auth.get_current_user),
     app=Depends(get_app_dep),
 ):
-    """List groups (any authenticated user can see groups).
+    """List groups (#2944): one surface for every reader — pickers,
+    share dialogs, and the admin Groups tab all read here, so the
+    listing is authenticated rather than manage-groups-gated (a
+    manage-groups delegate without manage-users still needs it).
 
-    Returns the paged envelope ``{groups, page, page_size, total}`` —
-    the same shape as the admin endpoint (#2750; previously a bare list
-    hard-capped at 200 rows). ``source=manual`` hides the seeded
-    per-workspace role groups; ``source=workspace-role`` shows only
-    them; the default shows all. The write side lives at
-    ``/admin/groups`` behind ``manage-groups`` (the ``/groups`` writes
-    were removed, #2941-fold).
+    Returns the paged envelope ``{groups, page, page_size, total}``
+    (#2750). ``source=manual`` hides the seeded per-workspace role
+    groups; ``source=workspace-role`` shows only them; the default
+    shows all. Writes (create/edit/delete, members) on this tree are
+    gated ``manage-groups``.
     """
     if source is not None and source not in GROUP_SOURCES:
         raise HTTPException(
@@ -562,42 +562,11 @@ async def user_list_groups(
     )
 
 
-# --- Admin group endpoints (single group-management surface, #2941-fold) ---
+# --- Group management writes (single surface, #2941-fold; moved to
+# /groups in #2944) ---
 
 
-@router.get("/admin/groups")
-async def list_groups(
-    page: int = 1,
-    page_size: int = 10,
-    sort: str = "name",
-    order: str = "asc",
-    q: str | None = None,
-    source: str | None = None,
-    admin: dict = Depends(acl.has_permission("manage-groups")),
-    app=Depends(get_app_dep),
-):
-    """List groups with the paged envelope; rows carry ``source``.
-
-    ``source=manual`` hides the seeded per-workspace role groups;
-    ``source=workspace-role`` shows only them; the default shows all
-    (#2750).
-    """
-    if source is not None and source not in GROUP_SOURCES:
-        raise HTTPException(
-            status_code=422,
-            detail="source must be one of: manual, workspace-role",
-        )
-    return await app.state.model.users.list_groups(
-        page=page,
-        page_size=page_size,
-        sort=sort,
-        order=order,
-        q=q,
-        source=source,
-    )
-
-
-@router.post("/admin/groups")
+@router.post("/groups")
 async def create_group(
     req: CreateGroupRequest,
     admin: dict = Depends(acl.has_permission("manage-groups")),
@@ -609,21 +578,10 @@ async def create_group(
             status_code=409, detail="A group with this name already exists"
         )
     group = await app.state.model.users.create_group(req.name, req.description)
-    # The creator gets full ACL access to the group (ported from the
-    # removed POST /groups, #2941-fold: a delegated group manager owns
-    # what they create).
-    await app.state.model.acl.add_acl_entry(
-        f"/groups/{group['id']}",
-        0,
-        ACTION_ALLOW,
-        "*",
-        PRINCIPAL_USER,
-        user_id=admin["id"],
-    )
     return group
 
 
-@router.patch("/admin/groups/{group_id}")
+@router.patch("/groups/{group_id}")
 async def update_group(
     group_id: str,
     req: UpdateGroupRequest,
@@ -633,7 +591,7 @@ async def update_group(
     return await update_group_fields(app, group_id, req)
 
 
-@router.delete("/admin/groups/{group_id}")
+@router.delete("/groups/{group_id}")
 async def delete_group(
     group_id: str,
     admin: dict = Depends(acl.has_permission("manage-groups")),
@@ -649,7 +607,7 @@ async def delete_group(
     return {"status": "deleted"}
 
 
-@router.get("/admin/groups/{group_id}/members")
+@router.get("/groups/{group_id}/members")
 async def list_group_members(
     group_id: str,
     admin: dict = Depends(acl.has_permission("manage-groups")),
@@ -659,7 +617,7 @@ async def list_group_members(
     return await app.state.model.users.get_group_members(group_id)
 
 
-@router.post("/admin/groups/{group_id}/members")
+@router.post("/groups/{group_id}/members")
 async def add_group_member(
     group_id: str,
     req: AddGroupMemberRequest,
@@ -674,7 +632,7 @@ async def add_group_member(
     return {"status": "added"}
 
 
-@router.delete("/admin/groups/{group_id}/members/{user_id}")
+@router.delete("/groups/{group_id}/members/{user_id}")
 async def remove_group_member(
     group_id: str,
     user_id: str,
@@ -694,7 +652,7 @@ async def remove_group_member(
 # --- ACL management endpoints ---
 
 
-@router.get("/admin/acl/tree")
+@router.get("/acl/tree")
 async def get_acl_tree(
     admin: dict = Depends(acl.has_permission("manage-acls")),
     app=Depends(get_app_dep),
@@ -702,7 +660,7 @@ async def get_acl_tree(
     return await app.state.model.acl.get_acl_tree_summary()
 
 
-@router.get("/admin/acl/by-principal/user/{user_id}")
+@router.get("/acl/by-principal/user/{user_id}")
 async def get_acl_by_user(
     user_id: str,
     admin: dict = Depends(acl.has_permission("manage-acls")),
@@ -711,7 +669,7 @@ async def get_acl_by_user(
     return await app.state.model.acl.get_acl_entries_by_principal_user(user_id)
 
 
-@router.get("/admin/acl/by-principal/group/{group_id}")
+@router.get("/acl/by-principal/group/{group_id}")
 async def get_acl_by_group(
     group_id: str,
     admin: dict = Depends(acl.has_permission("manage-acls")),
@@ -722,7 +680,7 @@ async def get_acl_by_group(
     )
 
 
-@router.get("/admin/acl/resource")
+@router.get("/acl/resource")
 async def get_resource_acl(
     resource: str,
     admin: dict = Depends(acl.has_permission("manage-acls")),
@@ -746,7 +704,7 @@ def workspace_scope(resource: str) -> str | None:
     return None
 
 
-@router.put("/admin/acl/resource")
+@router.put("/acl/resource")
 async def replace_resource_acl(
     resource: str,
     entries: list[WorkspaceAclEntry],
@@ -787,7 +745,7 @@ class ServerScheduleRequest(BaseModel):
     in_seconds: float | None = None  # relative delay, > 0
 
 
-@router.post("/admin/server/schedule")
+@router.post("/server/schedule")
 async def schedule_server_action(
     payload: ServerScheduleRequest,
     request: Request,
@@ -818,7 +776,7 @@ async def schedule_server_action(
     return schedule
 
 
-@router.get("/admin/server/schedule")
+@router.get("/server/schedule")
 async def list_server_schedules(
     request: Request,
     admin: dict = Depends(acl.has_permission("manage-server-schedule")),
@@ -829,7 +787,7 @@ async def list_server_schedules(
     }
 
 
-@router.delete("/admin/server/schedule/{schedule_id}")
+@router.delete("/server/schedule/{schedule_id}")
 async def cancel_server_schedule(
     schedule_id: str,
     request: Request,
@@ -877,7 +835,7 @@ async def _annotate_events(app, rows: list[dict]) -> list[dict]:
     ]
 
 
-@router.get("/admin/container-events")
+@router.get("/events")
 async def list_container_events(
     request: Request,
     limit: int = Query(50, ge=1, le=200),

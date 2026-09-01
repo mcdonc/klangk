@@ -70,8 +70,8 @@ async function makeUserAdmin(
   userId: string,
 ): Promise<void> {
   const aHeaders = await adminHeaders(request);
-  // /api/v1/admin/groups returns a paged envelope {groups: [...], ...}.
-  const groupsResp = await request.get(`${API_BASE}/api/v1/admin/groups`, {
+  // /api/v1/groups returns a paged envelope {groups: [...], ...}.
+  const groupsResp = await request.get(`${API_BASE}/api/v1/groups`, {
     headers: aHeaders,
   });
   const body = await groupsResp.json();
@@ -81,10 +81,10 @@ async function makeUserAdmin(
     : undefined;
   if (!adminGroup) return;
   // Add the user (ignore 409 if already a member).
-  await request.post(
-    `${API_BASE}/api/v1/admin/groups/${adminGroup.id}/members`,
-    { headers: aHeaders, data: { user_id: userId } },
-  );
+  await request.post(`${API_BASE}/api/v1/groups/${adminGroup.id}/members`, {
+    headers: aHeaders,
+    data: { user_id: userId },
+  });
 }
 
 /** Register a new user via API (test mode allows unauthenticated registration).

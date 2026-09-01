@@ -186,7 +186,7 @@ class TestCheckPermission:
 class TestCheckPermissionInMemory:
     """The batched in-memory path must match the per-call async path."""
 
-    _RESOURCES = ["/", "/workspaces", "/admin/users"]
+    _RESOURCES = ["/", "/workspaces", "/users"]
     _PERMISSIONS = ["view", "edit", "create", "terminal", "*"]
 
     async def test_inmemory_matches_async_across_resources(
@@ -212,7 +212,7 @@ class TestCheckPermissionInMemory:
             user_id=user["id"],
         )
         await app_state.state.model.acl.add_acl_entry(
-            "/admin/users",
+            "/users",
             0,
             ACTION_DENY,
             "view",
@@ -363,20 +363,24 @@ class TestRequestToResource:
 
     def test_admin_users(self):
         assert (
-            acl.request_to_resource(self._make_request("/admin/users"))
-            == "/admin/users"
+            acl.request_to_resource(self._make_request("/users")) == "/users"
         )
 
-    def test_admin_users_detail(self):
-        assert (
-            acl.request_to_resource(self._make_request("/admin/users/u1"))
-            == "/admin/users/u1"
-        )
-
-    def test_admin_base(self):
-        assert (
-            acl.request_to_resource(self._make_request("/admin")) == "/admin"
-        )
+    def test_flat_resources_collapse_to_collection(self):
+        """#2944: entity trees are flat — per-id paths collapse to the
+        collection so a single manage-* grant covers every object."""
+        for path in (
+            "/users/u1",
+            "/groups/g1/members/u2",
+            "/invitations/i1",
+            "/server/schedule/s1",
+            "/events",
+            "/acl/resource",
+        ):
+            expected = "/" + path.strip("/").split("/")[0]
+            assert (
+                acl.request_to_resource(self._make_request(path)) == expected
+            ), path
 
     def test_other_path(self):
         assert (

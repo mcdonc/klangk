@@ -101,11 +101,11 @@ http.Client _mockClient(
           'email': 'admin@example.com',
           'permissions': {
             '/admin': ['*'],
-            '/admin/users': ['manage-users'],
-            '/admin/groups': ['manage-groups'],
-            '/admin/invitations': ['manage-invitations'],
-            '/admin/server': ['manage-server-schedule'],
-            '/admin/acl': ['manage-acls'],
+            '/users': ['manage-users'],
+            '/groups': ['manage-groups'],
+            '/invitations': ['manage-invitations'],
+            '/server': ['manage-server-schedule'],
+            '/acl': ['manage-acls'],
           },
           'groups': [
             {'id': 'g1', 'name': 'admins'}
@@ -114,7 +114,7 @@ http.Client _mockClient(
         200,
       );
     }
-    if (request.url.path == '/api/v1/admin/server/schedule' &&
+    if (request.url.path == '/api/v1/server/schedule' &&
         request.method == 'GET') {
       return http.Response(jsonEncode({'schedules': []}), 200);
     }
@@ -194,7 +194,7 @@ void main() {
     int total = 25,
   }) {
     testAuthHttpClientOverride = _mockClient((request) async {
-      if (request.url.path == '/api/v1/admin/users') {
+      if (request.url.path == '/api/v1/users') {
         final page = int.parse(request.url.queryParameters['page'] ?? '1');
         final pageSize =
             int.parse(request.url.queryParameters['page_size'] ?? '10');
@@ -207,10 +207,10 @@ void main() {
           200,
         );
       }
-      if (request.url.path == '/api/v1/admin/invitations') {
+      if (request.url.path == '/api/v1/invitations') {
         return http.Response(emptyInvitationsEnvelope(), 200);
       }
-      if (request.url.path == '/api/v1/admin/groups') {
+      if (request.url.path == '/api/v1/groups') {
         return http.Response(_groupsEnvelope([]), 200);
       }
       return http.Response('Not found', 404);
@@ -226,13 +226,13 @@ void main() {
     int total = 25,
   }) {
     testAuthHttpClientOverride = _mockClient((request) async {
-      if (request.url.path == '/api/v1/admin/users') {
+      if (request.url.path == '/api/v1/users') {
         return http.Response(_usersEnvelope([]), 200);
       }
-      if (request.url.path == '/api/v1/admin/invitations') {
+      if (request.url.path == '/api/v1/invitations') {
         return http.Response(emptyInvitationsEnvelope(), 200);
       }
-      if (request.url.path == '/api/v1/admin/groups') {
+      if (request.url.path == '/api/v1/groups') {
         final page = int.parse(request.url.queryParameters['page'] ?? '1');
         final pageSize =
             int.parse(request.url.queryParameters['page_size'] ?? '10');
@@ -325,7 +325,7 @@ void main() {
       String? capturedSort;
       String? capturedOrder;
       testAuthHttpClientOverride = _mockClient((request) async {
-        if (request.url.path == '/api/v1/admin/users') {
+        if (request.url.path == '/api/v1/users') {
           capturedSort = request.url.queryParameters['sort'];
           capturedOrder = request.url.queryParameters['order'];
           return http.Response(
@@ -333,10 +333,10 @@ void main() {
             200,
           );
         }
-        if (request.url.path == '/api/v1/admin/invitations') {
+        if (request.url.path == '/api/v1/invitations') {
           return http.Response(emptyInvitationsEnvelope(), 200);
         }
-        if (request.url.path == '/api/v1/admin/groups') {
+        if (request.url.path == '/api/v1/groups') {
           return http.Response(_groupsEnvelope([]), 200);
         }
         return http.Response('Not found', 404);
@@ -371,17 +371,17 @@ void main() {
     testWidgets('sends email filter query live (debounced)', (tester) async {
       String? capturedQ;
       testAuthHttpClientOverride = _mockClient((request) async {
-        if (request.url.path == '/api/v1/admin/users') {
+        if (request.url.path == '/api/v1/users') {
           capturedQ = request.url.queryParameters['q'];
           return http.Response(
             _usersEnvelope([_user('needle@example.com')], total: 1),
             200,
           );
         }
-        if (request.url.path == '/api/v1/admin/invitations') {
+        if (request.url.path == '/api/v1/invitations') {
           return http.Response(emptyInvitationsEnvelope(), 200);
         }
-        if (request.url.path == '/api/v1/admin/groups') {
+        if (request.url.path == '/api/v1/groups') {
           return http.Response(_groupsEnvelope([]), 200);
         }
         return http.Response('Not found', 404);
@@ -446,14 +446,14 @@ void main() {
               'user_id': 'admin-user',
               'email': 'admin@example.com',
               'permissions': {
-                '/admin/users': ['manage-users'],
+                '/users': ['manage-users'],
               },
               'groups': [],
             }),
             200,
           );
         }
-        if (request.url.path == '/api/v1/admin/users') {
+        if (request.url.path == '/api/v1/users') {
           return http.Response(_usersEnvelope([]), 200);
         }
         return http.Response('Not found', 404);
@@ -554,13 +554,13 @@ void main() {
       String? capturedSort;
       String? capturedOrder;
       testAuthHttpClientOverride = _mockClient((request) async {
-        if (request.url.path == '/api/v1/admin/users') {
+        if (request.url.path == '/api/v1/users') {
           return http.Response(_usersEnvelope([]), 200);
         }
-        if (request.url.path == '/api/v1/admin/invitations') {
+        if (request.url.path == '/api/v1/invitations') {
           return http.Response(emptyInvitationsEnvelope(), 200);
         }
-        if (request.url.path == '/api/v1/admin/groups') {
+        if (request.url.path == '/api/v1/groups') {
           capturedSort = request.url.queryParameters['sort'];
           capturedOrder = request.url.queryParameters['order'];
           return http.Response(
@@ -599,13 +599,13 @@ void main() {
     testWidgets('defaults the groups browser to manual-only', (tester) async {
       String? capturedSource;
       testAuthHttpClientOverride = _mockClient((request) async {
-        if (request.url.path == '/api/v1/admin/users') {
+        if (request.url.path == '/api/v1/users') {
           return http.Response(_usersEnvelope([]), 200);
         }
-        if (request.url.path == '/api/v1/admin/invitations') {
+        if (request.url.path == '/api/v1/invitations') {
           return http.Response(emptyInvitationsEnvelope(), 200);
         }
-        if (request.url.path == '/api/v1/admin/groups') {
+        if (request.url.path == '/api/v1/groups') {
           capturedSource = request.url.queryParameters['source'];
           return http.Response(
             _groupsEnvelope([_group('admins')], total: 1),
@@ -632,13 +632,13 @@ void main() {
         (tester) async {
       final capturedSources = <String?>[];
       testAuthHttpClientOverride = _mockClient((request) async {
-        if (request.url.path == '/api/v1/admin/users') {
+        if (request.url.path == '/api/v1/users') {
           return http.Response(_usersEnvelope([]), 200);
         }
-        if (request.url.path == '/api/v1/admin/invitations') {
+        if (request.url.path == '/api/v1/invitations') {
           return http.Response(emptyInvitationsEnvelope(), 200);
         }
-        if (request.url.path == '/api/v1/admin/groups') {
+        if (request.url.path == '/api/v1/groups') {
           capturedSources.add(request.url.queryParameters['source']);
           // No filter (show all): the manual group plus a seeded role
           // group both come back.
@@ -678,13 +678,13 @@ void main() {
     testWidgets('sends name filter query live (debounced)', (tester) async {
       String? capturedQ;
       testAuthHttpClientOverride = _mockClient((request) async {
-        if (request.url.path == '/api/v1/admin/users') {
+        if (request.url.path == '/api/v1/users') {
           return http.Response(_usersEnvelope([]), 200);
         }
-        if (request.url.path == '/api/v1/admin/invitations') {
+        if (request.url.path == '/api/v1/invitations') {
           return http.Response(emptyInvitationsEnvelope(), 200);
         }
-        if (request.url.path == '/api/v1/admin/groups') {
+        if (request.url.path == '/api/v1/groups') {
           capturedQ = request.url.queryParameters['q'];
           return http.Response(
             _groupsEnvelope([_group('needle-group')], total: 1),
@@ -743,7 +743,7 @@ void main() {
     }) {
       testAuthHttpClientOverride = _mockClient((request) async {
         final path = request.url.path;
-        if (path == '/api/v1/admin/users') {
+        if (path == '/api/v1/users') {
           if (request.method == 'POST') {
             writes.add({
               '_method': 'POST',
@@ -766,18 +766,17 @@ void main() {
             200,
           );
         }
-        if (path.startsWith('/api/v1/admin/users/') &&
-            request.method == 'PATCH') {
+        if (path.startsWith('/api/v1/users/') && request.method == 'PATCH') {
           writes.add({
             '_method': 'PATCH',
             ...jsonDecode(request.body) as Map<String, dynamic>,
           });
           return http.Response(jsonEncode({'status': 'updated'}), 200);
         }
-        if (path == '/api/v1/admin/invitations') {
+        if (path == '/api/v1/invitations') {
           return http.Response(emptyInvitationsEnvelope(), 200);
         }
-        if (path == '/api/v1/admin/groups') {
+        if (path == '/api/v1/groups') {
           return http.Response(_groupsEnvelope([]), 200);
         }
         return http.Response('Not found', 404);
@@ -1190,13 +1189,13 @@ void main() {
     }) {
       testAuthHttpClientOverride = _mockClient((request) async {
         final path = request.url.path;
-        if (path == '/api/v1/admin/users') {
+        if (path == '/api/v1/users') {
           return http.Response(
             _usersEnvelope([_user('alice@example.com', id: 'u1')], total: 1),
             200,
           );
         }
-        if (path == '/api/v1/admin/users/u1/workspaces') {
+        if (path == '/api/v1/users/u1/workspaces') {
           return http.Response(
             jsonEncode({
               'items': workspaces,
@@ -1206,14 +1205,14 @@ void main() {
             200,
           );
         }
-        if (path == '/api/v1/admin/users/u1' && request.method == 'DELETE') {
+        if (path == '/api/v1/users/u1' && request.method == 'DELETE') {
           deletedIds.add('u1');
           return http.Response(jsonEncode({'status': 'deleted'}), 200);
         }
-        if (path == '/api/v1/admin/invitations') {
+        if (path == '/api/v1/invitations') {
           return http.Response(emptyInvitationsEnvelope(), 200);
         }
-        if (path == '/api/v1/admin/groups') {
+        if (path == '/api/v1/groups') {
           return http.Response(_groupsEnvelope([]), 200);
         }
         return http.Response('Not found', 404);
@@ -1362,19 +1361,19 @@ void main() {
             200,
           );
         }
-        if (path == '/api/v1/admin/groups') {
+        if (path == '/api/v1/groups') {
           return http.Response(
             _groupsEnvelope([_group('admins', id: 'g1')], total: 1),
             200,
           );
         }
-        if (path == '/api/v1/admin/groups/g1/members') {
+        if (path == '/api/v1/groups/g1/members') {
           return http.Response(
             jsonEncode([_user('bob@example.com', id: 'u-bob')]),
             200,
           );
         }
-        if (path == '/api/v1/admin/invitations') {
+        if (path == '/api/v1/invitations') {
           return http.Response(emptyInvitationsEnvelope(), 200);
         }
         return http.Response('Not found', 404);
@@ -1414,20 +1413,20 @@ void main() {
               'user_id': 'admin-user',
               'email': 'admin@example.com',
               'permissions': {
-                '/admin/groups': ['manage-groups'],
+                '/groups': ['manage-groups'],
               },
               'groups': [],
             }),
             200,
           );
         }
-        if (path == '/api/v1/admin/groups') {
+        if (path == '/api/v1/groups') {
           return http.Response(
             _groupsEnvelope([_group('helpdesk', id: 'g9')], total: 1),
             200,
           );
         }
-        if (path == '/api/v1/admin/groups/g9/members') {
+        if (path == '/api/v1/groups/g9/members') {
           return http.Response(
             jsonEncode([_user('bob@example.com', id: 'u-bob')]),
             200,
@@ -1486,16 +1485,23 @@ void main() {
 
       // Only top-level resources — no admin sub-resources (#2940):
       // the tabs are permission checks, not ACL destinations.
-      for (final label in ['Root', 'Workspaces', 'Groups', 'Users', 'Admin']) {
-        expect(sidebarNode(label), findsOneWidget);
-      }
       for (final label in [
+        'Root',
+        'Workspaces',
+        'Users',
+        'Groups',
         'Invitations',
         'Server',
         'Events',
+        'ACL',
       ]) {
-        expect(sidebarNode(label), findsNothing);
+        expect(sidebarNode(label), findsOneWidget);
       }
+      // The full noun tree — nothing else (no /admin node).
+      expect(
+          find.descendant(
+              of: find.byType(ListView), matching: find.text('Admin')),
+          findsNothing);
 
       // Root is selected first: its hint names the seeded permission.
       expect(
@@ -1503,16 +1509,19 @@ void main() {
         findsOneWidget,
       );
 
-      // The Admin node's hint names the tab permissions (delegation
-      // happens by ACEs here, not on per-tab sub-resources).
-      await tester.tap(sidebarNode('Admin'));
+      // The Users node's hint names its tab permission; /admin no
+      // longer appears at all (#2944 — instance-admin marker only).
+      await tester.tap(sidebarNode('Users'));
       await tester.pumpAndSettle();
       expect(
-        find.textContaining('manage-users, manage-invitations'),
+        find.textContaining('Checked permission: manage-users'),
         findsOneWidget,
       );
+      expect(sidebarNode('Admin'), findsNothing);
+      await tester.tap(sidebarNode('ACL'));
+      await tester.pumpAndSettle();
       expect(
-        find.textContaining('manage-acls (root-equivalent)'),
+        find.textContaining('manage-acls — root-equivalent'),
         findsOneWidget,
       );
     });

@@ -77,14 +77,19 @@ def check_permission_inmemory(
 def request_to_resource(request: Request) -> str:
     """Derive a resource path from the request URL.
 
-    Maps URL paths to the ACL resource tree:
+    Maps URL paths to the ACL resource tree (#2944: every governed
+    surface is a first-class top-level resource; the old /admin
+    subtree is gone):
+
       /workspaces          -> /workspaces
       /workspaces/{id}     -> /workspaces/{id}
       /workspaces/{id}/... -> /workspaces/{id}
-      /admin/users         -> /admin/users
-      /admin/users/{id}    -> /admin/users/{id}
-      /admin/invitations   -> /admin/invitations
-      /admin/groups        -> /admin/groups
+      /users/...           -> /users        (flat, no per-id nodes)
+      /groups/...          -> /groups
+      /invitations/...     -> /invitations
+      /server/...          -> /server
+      /events              -> /events
+      /acl/...             -> /acl
     """
     # Strip the versioned API prefix to get the logical resource path.
     path = request.url.path
@@ -96,12 +101,6 @@ def request_to_resource(request: Request) -> str:
 
     if parts[0] == "workspaces" and len(parts) >= 2:
         return f"/workspaces/{parts[1]}"
-    if parts[0] == "admin":
-        if len(parts) >= 3:
-            return f"/admin/{parts[1]}/{parts[2]}"
-        if len(parts) >= 2:
-            return f"/admin/{parts[1]}"
-        return "/admin"
     return "/" + parts[0]
 
 
