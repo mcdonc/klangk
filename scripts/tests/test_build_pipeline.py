@@ -95,10 +95,12 @@ EXPECTED_DART_FEATURE_NAMES = EXPECTED_DART_PACKAGE_FEATURES
 # alone keeps feature keys from colliding with server secrets/paths/infra.
 # Soliplex's KLANGKWS_FEATURE_SOLIPLEX_URL was renamed from SOLIPLEX_URL when it
 # was vendored (#1686) — the build guard from #1662 requires the prefix.
-# The chat feature (and its agent keys) was removed (#2716); git-credential's
-# key is now the only container-scope declaration.
+# The chat feature (and its agent keys) was removed (#2716); git-credential
+# declares the only container-scope keys (the GitHub shorthand + the
+# multi-provider device-flow map, #432).
 EXPECTED_CONTAINER_ENV_KEYS = [
     "KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID",
+    "KLANGKWS_FEATURE_OAUTH_PROVIDERS",
 ]
 
 
@@ -383,6 +385,7 @@ class TestManifestContract:
         assert all_keys == {
             "KLANGKWS_FEATURE_BOING_SPEED": "frontend",
             "KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID": "container",
+            "KLANGKWS_FEATURE_OAUTH_PROVIDERS": "container",
             "KLANGKWS_FEATURE_SOLIPLEX_URL": "frontend",
         }
 

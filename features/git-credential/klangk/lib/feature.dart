@@ -61,6 +61,7 @@ class GitCredentialFeature extends ToolPlugin with ChangeNotifier {
         _deviceFlow = _DeviceFlowState(
           userCode: request['user_code'] as String? ?? '',
           verificationUri: request['verification_uri'] as String? ?? '',
+          host: request['host'] as String? ?? '',
         );
         notifyListeners();
         openUrl(_deviceFlow!.verificationUri);
@@ -133,12 +134,22 @@ class _PendingRequest {
 class _DeviceFlowState {
   final String userCode;
   final String verificationUri;
+
+  /// The provider host (e.g. ``github.com``, ``gitlab.com``) sent by the
+  /// container helper so the dialog names the right service. Empty when
+  /// absent (error state, or an older helper that didn't send it).
+  final String host;
   final String? error;
   _DeviceFlowState({
     required this.userCode,
     required this.verificationUri,
+    this.host = '',
     this.error,
   });
+
+  /// Host for display; falls back to GitHub when the helper didn't send
+  /// one (back-compat with an older container helper).
+  String get displayHost => host.isEmpty ? 'github.com' : host;
 }
 
 class _CredentialOverlay extends StatefulWidget {
@@ -217,13 +228,14 @@ class _DeviceFlowDialog extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Row(
+                Row(
                   children: [
-                    Icon(Icons.lock_outline, color: Colors.white70, size: 20),
-                    SizedBox(width: 8),
+                    const Icon(Icons.lock_outline,
+                        color: Colors.white70, size: 20),
+                    const SizedBox(width: 8),
                     Text(
-                      'Sign in with GitHub',
-                      style: TextStyle(
+                      'Sign in to ${state.displayHost}',
+                      style: const TextStyle(
                         color: Colors.white,
                         fontSize: 16,
                         fontWeight: FontWeight.w600,
@@ -252,17 +264,21 @@ class _DeviceFlowDialog extends StatelessWidget {
                           ),
                         ),
                         SizedBox(width: 8),
-                        Text(
-                          'Falling back to manual auth...',
-                          style: TextStyle(color: Colors.white38, fontSize: 13),
+                        Flexible(
+                          child: Text(
+                            'Falling back to manual auth...',
+                            style:
+                                TextStyle(color: Colors.white38, fontSize: 13),
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ),
                       ],
                     ),
                   ),
                 ] else ...[
-                  const Text(
-                    'Enter this code at GitHub:',
-                    style: TextStyle(color: Colors.white70, fontSize: 13),
+                  Text(
+                    'Enter this code at ${state.displayHost}:',
+                    style: const TextStyle(color: Colors.white70, fontSize: 13),
                   ),
                   const SizedBox(height: 8),
                   Center(
@@ -296,6 +312,8 @@ class _DeviceFlowDialog extends StatelessWidget {
                   const SizedBox(height: 8),
                   Center(
                     child: RichText(
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       text: TextSpan(
                         children: [
                           const TextSpan(
@@ -331,9 +349,13 @@ class _DeviceFlowDialog extends StatelessWidget {
                           ),
                         ),
                         SizedBox(width: 8),
-                        Text(
-                          'Waiting for authorization...',
-                          style: TextStyle(color: Colors.white38, fontSize: 13),
+                        Flexible(
+                          child: Text(
+                            'Waiting for authorization...',
+                            style:
+                                TextStyle(color: Colors.white38, fontSize: 13),
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ),
                       ],
                     ),

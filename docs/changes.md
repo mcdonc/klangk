@@ -389,6 +389,16 @@ sync` report a clear permission-denied error.
   too. Env vars, quoted strings, and `file:`/`cmd:` indirection are
   unaffected.
 
+- **`KLANGKWS_FEATURE_OAUTH_PROVIDERS` (#432).** JSON list of OAuth
+  device-flow providers (`host`, `client_id`, `device_code_url`,
+  `token_url`, optional `scope`/`username`) that extends the git-credential
+  device flow beyond GitHub to any RFC 8628 provider — GitLab, Gitea,
+  self-hosted. A matching entry wins over the
+  `KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID` shorthand, which keeps working
+  unchanged. The browser dialog now names the provider host ("Sign in to
+  gitlab.com"). See
+  [GitHub Authentication](features/github-authentication.md#other-git-hosts-gitlab-gitea-self-hosted-provider-map).
+
 - **Granular `/admin` tab permissions (#2940).** The admin endpoints
   split off the monolithic `admin` gate onto one permission per tab:
   `manage-users` (Users), `manage-invitations` (Invitations),

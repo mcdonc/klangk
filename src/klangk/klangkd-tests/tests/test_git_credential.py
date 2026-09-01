@@ -5,6 +5,7 @@ import os
 import stat
 import subprocess
 import sys
+import urllib.parse
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from threading import Thread
@@ -99,12 +100,15 @@ class _BridgeHandler(BaseHTTPRequestHandler):
     """Minimal HTTP handler that records requests and returns canned responses.
 
     Response selection, in order: a path-routed body (``routes`` — used to
-    fake GitHub's device-flow endpoints when the helper's GITHUB_URL points
+    fake a provider's device-flow endpoints when a provider entry points
     here), an operation-routed body (``op_bodies`` — keyed on the payload's
     ``operation``), then the catch-all ``response_body``.
     """
 
     requests = []
+    # Form-encoded (non-JSON) bodies — the device-flow endpoint POSTs —
+    # parsed into flat dicts so tests can assert client_id/scope.
+    forms = []
     response_body = b"{}"
     response_status = 200
     routes = {}
@@ -125,9 +129,14 @@ class _BridgeHandler(BaseHTTPRequestHandler):
             parsed = json.loads(body)
             self.__class__.requests.append(parsed)
         except (json.JSONDecodeError, ValueError):
-            # The faked GitHub endpoints receive form-encoded bodies
-            # (the helper posts urlencoded data there); they aren't
-            # bridge operations, so don't record them.
+            # The faked provider endpoints receive form-encoded bodies
+            # (the helper posts urlencoded data there); they aren't bridge
+            # operations, so record them as parsed forms instead.
+            try:
+                form = urllib.parse.parse_qs(body.decode())
+                self.__class__.forms.append({k: v[0] for k, v in form.items()})
+            except (UnicodeDecodeError, ValueError):
+                pass
             parsed = {}
         self.send_response(self.__class__.response_status)
         self.send_header("Content-Type", "application/json")
@@ -142,6 +151,7 @@ class _BridgeHandler(BaseHTTPRequestHandler):
 def bridge_server():
     """Start a local HTTP server acting as the bridge."""
     _BridgeHandler.requests = []
+    _BridgeHandler.forms = []
     _BridgeHandler.response_body = b"{}"
     _BridgeHandler.response_status = 200
     _BridgeHandler.routes = {}
@@ -506,6 +516,315 @@ class TestDeviceFlowHostGate:
         assert "password=p" in result.stdout
         ops = [r["operation"] for r in _BridgeHandler.requests]
         assert ops == ["get"]  # no peek, no device flow, straight to PAT
+
+
+class TestProviderMap:
+    """KLANGKWS_FEATURE_OAUTH_PROVIDERS activates the device flow for any
+    host (GitLab, Gitea, self-hosted) with per-provider endpoints, scope,
+    and username (#432). The poll loop is RFC 8628 standard — only the
+    endpoint/credential plumbing is provider-specific.
+    """
+
+    def _providers_env(self, base, **overrides):
+        """One gitlab.com provider entry pointing at the fake server."""
+        entry = {
+            "host": "gitlab.com",
+            "client_id": "gitlab-id",
+            "device_code_url": f"{base}/oauth/authorize_device",
+            "token_url": f"{base}/oauth/token",
+            "scope": "read_repository write_repository",
+            "username": "oauth2",
+        }
+        entry.update(overrides)
+        return json.dumps([entry])
+
+    def _setup_flow(self, base, token="glpat-fresh"):
+        """Cache-miss peek + GitLab-style device-flow routes on the fake
+        server."""
+        _BridgeHandler.op_bodies = {
+            "peek": json.dumps({"error": "miss"}).encode(),
+            "get": json.dumps({"username": "u", "password": "p"}).encode(),
+        }
+        _BridgeHandler.routes = {
+            "/oauth/authorize_device": json.dumps(
+                {
+                    "device_code": "dc-gl",
+                    "user_code": "GLCD-1234",
+                    "verification_uri": f"{base}/oauth/authorize_device",
+                    "interval": 0,
+                    "expires_in": 60,
+                }
+            ).encode(),
+            "/oauth/token": json.dumps(
+                {"access_token": token, "token_type": "bearer"}
+            ).encode(),
+        }
+
+    def _run_get(self, bridge_server, fake_browser_id, host, providers_env):
+        server, port = bridge_server
+        base = f"http://127.0.0.1:{port}"
+        self._setup_flow(base)
+        return run_helper(
+            "get",
+            f"protocol=https\nhost={host}\n\n",
+            env_override={
+                "KLANGKWS_BRIDGE_URL": base,
+                "KLANGKWS_FEATURE_OAUTH_PROVIDERS": providers_env,
+            },
+            extra_path=str(fake_browser_id),
+        )
+
+    def test_device_flow_runs_for_mapped_host(
+        self, bridge_server, fake_browser_id
+    ):
+        """A gitlab.com push runs the device flow against the provider's
+        own endpoints, with the entry's scope and client_id in the code
+        request."""
+        server, port = bridge_server
+        base = f"http://127.0.0.1:{port}"
+        result = self._run_get(
+            bridge_server,
+            fake_browser_id,
+            "gitlab.com",
+            self._providers_env(base),
+        )
+
+        assert result.returncode == 0
+        assert "username=oauth2" in result.stdout
+        assert "password=glpat-fresh" in result.stdout
+        ops = [r["operation"] for r in _BridgeHandler.requests]
+        assert ops[0] == "peek"
+        assert "device_flow_show" in ops
+        assert "device_flow_done" in ops
+        assert "get" not in ops  # never fell through to the PAT dialog
+        # The device-code request carried the entry's client_id and scope.
+        code_req = _BridgeHandler.forms[0]
+        assert code_req["client_id"] == "gitlab-id"
+        assert code_req["scope"] == "read_repository write_repository"
+
+    def test_device_flow_show_names_the_provider_host(
+        self, bridge_server, fake_browser_id
+    ):
+        """device_flow_show carries the (normalized) provider host so the
+        browser dialog can name the right service."""
+        server, port = bridge_server
+        base = f"http://127.0.0.1:{port}"
+        result = self._run_get(
+            bridge_server,
+            fake_browser_id,
+            "GitLab.com:443",
+            self._providers_env(base),
+        )
+
+        assert result.returncode == 0
+        show = next(
+            r
+            for r in _BridgeHandler.requests
+            if r["operation"] == "device_flow_show"
+        )
+        assert show["host"] == "gitlab.com"
+        assert show["verification_uri"] == (f"{base}/oauth/authorize_device")
+
+    def test_custom_username_from_entry(self, bridge_server, fake_browser_id):
+        server, port = bridge_server
+        base = f"http://127.0.0.1:{port}"
+        result = self._run_get(
+            bridge_server,
+            fake_browser_id,
+            "gitlab.com",
+            self._providers_env(base, username="x-access-token"),
+        )
+
+        assert result.returncode == 0
+        assert "username=x-access-token" in result.stdout
+
+    def test_scope_omitted_when_entry_has_none(
+        self, bridge_server, fake_browser_id
+    ):
+        """An empty scope must not be sent as a bare ``scope=`` param —
+        providers that reject empty scopes would fail the code request."""
+        server, port = bridge_server
+        base = f"http://127.0.0.1:{port}"
+        result = self._run_get(
+            bridge_server,
+            fake_browser_id,
+            "gitlab.com",
+            self._providers_env(base, scope=""),
+        )
+
+        assert result.returncode == 0
+        assert "scope" not in _BridgeHandler.forms[0]
+
+    def test_www_spelling_matches_entry(self, bridge_server, fake_browser_id):
+        """A www.gitlab.com remote reaches the gitlab.com entry (the www
+        alias mirrors the legacy github.com/www.github.com pair)."""
+        server, port = bridge_server
+        base = f"http://127.0.0.1:{port}"
+        result = self._run_get(
+            bridge_server,
+            fake_browser_id,
+            "www.gitlab.com",
+            self._providers_env(base),
+        )
+
+        assert result.returncode == 0
+        assert "password=glpat-fresh" in result.stdout
+        ops = [r["operation"] for r in _BridgeHandler.requests]
+        assert "device_flow_show" in ops
+        assert "get" not in ops
+
+    def test_map_entry_wins_over_shorthand(
+        self, bridge_server, fake_browser_id
+    ):
+        """Both a github.com map entry and the legacy client-ID shorthand
+        set: the explicit map entry takes precedence."""
+        server, port = bridge_server
+        base = f"http://127.0.0.1:{port}"
+        providers = json.dumps(
+            [
+                {
+                    "host": "github.com",
+                    "client_id": "map-id",
+                    "device_code_url": f"{base}/login/device/code",
+                    "token_url": f"{base}/login/oauth/access_token",
+                    "scope": "repo",
+                    "username": "x-access-token",
+                }
+            ]
+        )
+        _BridgeHandler.op_bodies = {
+            "peek": json.dumps({"error": "miss"}).encode()
+        }
+        _BridgeHandler.routes = {
+            "/login/device/code": json.dumps(
+                {
+                    "device_code": "dc-123",
+                    "user_code": "ABCD-1234",
+                    "verification_uri": f"{base}/login/device",
+                    "interval": 0,
+                    "expires_in": 60,
+                }
+            ).encode(),
+            "/login/oauth/access_token": json.dumps(
+                {"access_token": "gho_fresh", "token_type": "bearer"}
+            ).encode(),
+        }
+        result = run_helper(
+            "get",
+            "protocol=https\nhost=github.com\n\n",
+            env_override={
+                "KLANGKWS_BRIDGE_URL": base,
+                "KLANGKWS_FEATURE_OAUTH_PROVIDERS": providers,
+                "KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID": "legacy-id",
+            },
+            extra_path=str(fake_browser_id),
+        )
+
+        assert result.returncode == 0
+        assert "password=gho_fresh" in result.stdout
+        assert _BridgeHandler.forms[0]["client_id"] == "map-id"
+
+    def test_shorthand_still_works_alongside_map(
+        self, bridge_server, fake_browser_id
+    ):
+        """A map that doesn't cover github.com leaves the shorthand in
+        charge for github.com hosts (backward compatibility)."""
+        server, port = bridge_server
+        base = f"http://127.0.0.1:{port}"
+        _BridgeHandler.op_bodies = {
+            "peek": json.dumps({"error": "miss"}).encode()
+        }
+        _BridgeHandler.routes = {
+            "/login/device/code": json.dumps(
+                {
+                    "device_code": "dc-123",
+                    "user_code": "ABCD-1234",
+                    "verification_uri": f"{base}/login/device",
+                    "interval": 0,
+                    "expires_in": 60,
+                }
+            ).encode(),
+            "/login/oauth/access_token": json.dumps(
+                {"access_token": "gho_fresh", "token_type": "bearer"}
+            ).encode(),
+        }
+        result = run_helper(
+            "get",
+            "protocol=https\nhost=github.com\n\n",
+            env_override={
+                "KLANGKWS_BRIDGE_URL": base,
+                "GIT_CREDENTIAL_KLANGK_GITHUB_URL": base,
+                "KLANGKWS_FEATURE_OAUTH_PROVIDERS": self._providers_env(base),
+                "KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID": "legacy-id",
+            },
+            extra_path=str(fake_browser_id),
+        )
+
+        assert result.returncode == 0
+        assert "password=gho_fresh" in result.stdout
+        assert _BridgeHandler.forms[0]["client_id"] == "legacy-id"
+
+    def test_invalid_json_falls_back_to_pat_dialog(
+        self, bridge_server, fake_browser_id
+    ):
+        result = self._run_get(
+            bridge_server, fake_browser_id, "gitlab.com", "{not json"
+        )
+
+        assert result.returncode == 0
+        assert "password=p" in result.stdout
+        ops = [r["operation"] for r in _BridgeHandler.requests]
+        assert ops == ["get"]
+
+    def test_non_list_json_falls_back_to_pat_dialog(
+        self, bridge_server, fake_browser_id
+    ):
+        result = self._run_get(
+            bridge_server,
+            fake_browser_id,
+            "gitlab.com",
+            '"gitlab.com"',
+        )
+
+        assert result.returncode == 0
+        ops = [r["operation"] for r in _BridgeHandler.requests]
+        assert ops == ["get"]
+
+    def test_entry_missing_required_fields_skipped(
+        self, bridge_server, fake_browser_id
+    ):
+        """An entry without the required fields is skipped, not fatal —
+        the host falls through to the PAT dialog."""
+        server, port = bridge_server
+        base = f"http://127.0.0.1:{port}"
+        broken = self._providers_env(base)
+        broken = broken.replace(f"{base}/oauth/token", "")
+        result = self._run_get(
+            bridge_server, fake_browser_id, "gitlab.com", broken
+        )
+
+        assert result.returncode == 0
+        ops = [r["operation"] for r in _BridgeHandler.requests]
+        assert ops == ["get"]
+
+    def test_unmapped_host_skips_device_flow(
+        self, bridge_server, fake_browser_id
+    ):
+        """bitbucket.org has no provider entry and no shorthand → PAT
+        dialog, no peek."""
+        server, port = bridge_server
+        base = f"http://127.0.0.1:{port}"
+        result = self._run_get(
+            bridge_server,
+            fake_browser_id,
+            "bitbucket.org",
+            self._providers_env(base),
+        )
+
+        assert result.returncode == 0
+        assert "password=p" in result.stdout
+        ops = [r["operation"] for r in _BridgeHandler.requests]
+        assert ops == ["get"]
 
 
 class TestStoreAndErase:

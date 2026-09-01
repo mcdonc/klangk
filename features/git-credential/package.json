@@ -5,7 +5,11 @@
   "klangk": {
     "config": {
       "KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID": {
-        "description": "GitHub OAuth App client ID for device-flow authentication (no secret needed)",
+        "description": "GitHub OAuth App client ID for device-flow authentication (no secret needed); shorthand for a KLANGKWS_FEATURE_OAUTH_PROVIDERS entry with host github.com",
+        "scope": "container"
+      },
+      "KLANGKWS_FEATURE_OAUTH_PROVIDERS": {
+        "description": "JSON list of OAuth device-flow providers: [{host, client_id, device_code_url, token_url, scope, username}] — activates the device flow for any git host (GitLab, Gitea, self-hosted)",
         "scope": "container"
       }
     }
