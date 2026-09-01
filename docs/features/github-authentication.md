@@ -28,9 +28,11 @@ the workspace image (`build-workspace-image`).
 
 ## Sign in with GitHub (recommended)
 
-When the admin has configured GitHub OAuth (see
-[Admin setup](#admin-setup-creating-a-github-oauth-app) below), running
-a git command that requires authentication for `github.com` triggers
+When the GitHub OAuth client ID is configured — deploy-wide by the
+admin (see [Admin setup](#admin-setup-creating-a-github-oauth-app)
+below), per workspace, or ad hoc in a shell (see
+[Ways to set the client ID](#ways-to-set-the-client-id)) — running a
+git command that requires authentication for `github.com` triggers
 the device flow automatically.
 
 ### How it works
@@ -77,6 +79,41 @@ The device flow only activates when all of these are true:
 
 For non-GitHub hosts, or when the client ID is not configured, the
 helper falls through to the PAT dialog.
+
+### Ways to set the client ID
+
+`KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID` can come from three levels.
+Where several apply, the narrower one wins (the per-workspace value is
+injected after — and so overrides — the deploy-wide value; a shell
+export shadows both for commands run from that shell):
+
+1. **Deploy-wide (admin).** The `features_config:` block of
+   `klangkd.yaml` (`github_oauth_client_id: "Ov23li..."`) or the
+   `KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID` environment variable on
+   the server. Injected into every workspace container at start. See
+   [Admin setup](#admin-setup-creating-a-github-oauth-app).
+2. **Per workspace.** The workspace's environment settings (the `env`
+   map on workspace create/edit, e.g.
+   `KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID=Ov23li...`).
+   Useful for testing or when only one workspace should use GitHub
+   OAuth. Takes effect the next time the workspace container starts
+   (restart the workspace after changing it) and survives restarts of
+   that workspace. Stripped on export/import — an imported copy falls
+   back to the deploy-wide value.
+3. **Ad hoc, in a shell.** Inside the workspace terminal:
+
+   ```sh
+   export KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID=Ov23li...
+   git push
+   ```
+
+   Takes effect immediately for git commands run from that shell — no
+   container restart needed — but is gone when the shell or the
+   workspace restarts.
+
+In all three cases the value only needs to be the OAuth App's **client
+ID** — no client secret is ever needed (the device flow is designed for
+public clients).
 
 ## Using a personal access token
 
@@ -200,8 +237,10 @@ HTTPS with PATs or OAuth is the recommended authentication method.
 ### Device flow not activating
 
 - Verify `KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID` is set in the container
-  environment (check with `echo $KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID` in the
-  workspace terminal).
+  environment (check with `echo $KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID` in
+  the workspace terminal; empty means the device flow is off). See
+  [Ways to set the client ID](#ways-to-set-the-client-id) — the quickest
+  check is an ad-hoc `export` in the shell.
 - Check that the OAuth App has **Enable Device Flow** turned on.
 - The device flow only activates for `github.com` hosts.
 - Rebuild the workspace image after setting the variable.
