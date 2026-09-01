@@ -204,6 +204,13 @@ operators or integrators to act when upgrading.
 
 ### Security
 
+- **`/llm-proxy` endpoints now require a workspace JWT (#2959).** The
+  backend validates the workspace token itself, mirroring the egress
+  proxy's `forward_auth` check. Previously the backend routes were
+  unauthenticated, so a client that could reach the backend port could
+  use the proxy (and its upstream API keys) from outside a workspace
+  container; user login tokens are rejected — the proxy is usable only
+  from inside workspace containers.
 - **Image builds verify third-party inputs (#2063).** Base images (workspace base, python host, Alpine sidecar, Debian FIPS builders + nix-seed sandbox) are now pulled by immutable `@sha256:` digest, with the base-image workflow's auto-PR pinning the digest. The uv and process-compose release tarballs are SHA-256-verified per architecture before extraction (no more `curl | sh` / `curl | tar` pipes), the Pi agent npm tarball is fetched directly and SHA-512-verified, and the NodeSource / GitHub CLI / Caddy apt repo keys are hash-verified before entering a keyring (Caddy's sources list is written inline). Pins live in the Dockerfiles; rotation procedures and known residuals are documented in [Building Images](development/building-images.md).
 
 - **Browser-delegate requests are bound to the caller's workspace

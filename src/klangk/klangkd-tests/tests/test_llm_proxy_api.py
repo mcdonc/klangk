@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from klangk.api.llm_proxy import router
+from klangk.auth import Auth
 from klangk.llm_router import LLMRouter
 from _helpers import make_settings
 
@@ -20,14 +21,62 @@ def _app(extra_env=None):
     )
     app = FastAPI()
     app.state.llm_router = LLMRouter(mock_app_state)
+    app.state.auth = Auth(mock_app_state)
     app.include_router(router)
     return app
 
 
-def _client(app):
+def _client(app, authed=True):
+    """A client for the minimal app; `authed` pre-loads the workspace
+    token as the default Authorization header (per-request headers still
+    override it, #2959 gate tests rely on that)."""
+    headers = _ws_headers(app) if authed else None
     return AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers=headers,
     )
+
+
+def _ws_headers(app, workspace_id="ws-llm"):
+    """Auth headers with a workspace JWT (the only accepted caller class,
+    #2959 — the egress caddy forwards this same header to the backend)."""
+    token = app.state.auth.create_workspace_token(workspace_id)
+    return {"Authorization": f"Bearer {token}"}
+
+
+class TestWorkspaceTokenGate:
+    """#2959: /llm-proxy is container-internal — workspace JWTs only."""
+
+    async def test_missing_token_returns_401(self):
+        app = _app()
+        async with _client(app, authed=False) as client:
+            resp = await client.get("/llm-proxy/models")
+        assert resp.status_code == 401
+        assert resp.json()["detail"] == "Missing workspace token"
+
+    async def test_user_jwt_rejected(self):
+        """A valid user login token is NOT a workspace token → 401."""
+        app = _app()
+        user_jwt = app.state.auth.create_token("user-1", "u@example.com")
+        async with _client(app, authed=False) as client:
+            resp = await client.get(
+                "/llm-proxy/models",
+                headers={"Authorization": f"Bearer {user_jwt}"},
+            )
+        assert resp.status_code == 401
+        assert resp.json()["detail"] == "Invalid workspace token"
+
+    async def test_expired_workspace_token_returns_401(self):
+        app = _app()
+        headers = _ws_headers(app)
+        app.state.auth.decode_workspace_token = lambda token: (
+            Auth.WORKSPACE_TOKEN_EXPIRED
+        )
+        async with _client(app, authed=False) as client:
+            resp = await client.get("/llm-proxy/models", headers=headers)
+        assert resp.status_code == 401
+        assert resp.json()["detail"] == "Workspace token expired"
 
 
 class TestListModels:

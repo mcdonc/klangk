@@ -12,11 +12,29 @@ Run with: devenv shell -- test-backend-e2e -k test_llm_proxy_e2e
 import json
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from types import SimpleNamespace
 
 import pytest
 
+from klangk.auth import Auth
 from klangk.model import free_port
 from _e2e_server import start_server, stop_server
+
+
+def _ws_headers(secret, workspace_id="e2e-llm"):
+    """Auth headers with a workspace JWT signed by the server's secret
+    (the token class the egress caddy's forward_auth forwards, #2959)."""
+    auth = Auth(
+        SimpleNamespace(
+            state=SimpleNamespace(
+                settings=SimpleNamespace(
+                    jwt_secret=secret, workspace_token_hours=24.0
+                )
+            )
+        )
+    )
+    token = auth.create_workspace_token(workspace_id)
+    return {"Authorization": f"Bearer {token}"}
 
 
 class _FakeLLMHandler(BaseHTTPRequestHandler):
@@ -115,8 +133,33 @@ def server(fake_llm):
 
 
 class TestLLMProxyE2E:
-    def test_models_endpoint_returns_configured_model(self, server):
+    def test_unauthenticated_rejected(self, server):
+        """#2959: no token → 401 (backend-side, not just the egress gate)."""
         resp = server["client"].get("/llm-proxy/models", timeout=10)
+        assert resp.status_code == 401
+
+    def test_user_jwt_rejected(self, server):
+        """#2959: a logged-in user's JWT is not a workspace token → 401."""
+        login = server["client"].post(
+            "/api/v1/auth/login",
+            json={"identifier": "test@example.com", "password": "testpass"},
+            timeout=10,
+        )
+        assert login.status_code == 200
+        user_jwt = login.json()["access_token"]
+        resp = server["client"].get(
+            "/llm-proxy/models",
+            headers={"Authorization": f"Bearer {user_jwt}"},
+            timeout=10,
+        )
+        assert resp.status_code == 401
+
+    def test_models_endpoint_returns_configured_model(self, server):
+        resp = server["client"].get(
+            "/llm-proxy/models",
+            headers=_ws_headers("llm-e2e-secret"),
+            timeout=10,
+        )
         assert resp.status_code == 200
         data = resp.json()
         assert data["object"] == "list"
@@ -126,6 +169,7 @@ class TestLLMProxyE2E:
     def test_chat_completions_proxies_to_upstream(self, server):
         resp = server["client"].post(
             "/llm-proxy/chat/completions",
+            headers=_ws_headers("llm-e2e-secret"),
             json={
                 "model": "fake-model",
                 "messages": [{"role": "user", "content": "hello"}],
@@ -140,6 +184,7 @@ class TestLLMProxyE2E:
     def test_chat_completions_returns_usage(self, server):
         resp = server["client"].post(
             "/llm-proxy/chat/completions",
+            headers=_ws_headers("llm-e2e-secret"),
             json={
                 "model": "fake-model",
                 "messages": [{"role": "user", "content": "hi"}],
@@ -163,7 +208,11 @@ class TestLLMProxyE2E:
             LOGFIRE_TOKEN="",
         )
         try:
-            resp = srv["client"].get("/llm-proxy/models", timeout=10)
+            resp = srv["client"].get(
+                "/llm-proxy/models",
+                headers=_ws_headers("llm-e2e-none"),
+                timeout=10,
+            )
             assert resp.status_code == 200
             assert resp.json()["data"] == []
         finally:
@@ -201,7 +250,11 @@ class TestLLMProxyPassthroughE2E:
 
     def test_models_discovers_upstream(self, passthrough_stack):
         """GET /llm-proxy/models queries the upstream and returns its models."""
-        resp = passthrough_stack["client"].get("/llm-proxy/models", timeout=10)
+        resp = passthrough_stack["client"].get(
+            "/llm-proxy/models",
+            headers=_ws_headers("llm-pt-e2e"),
+            timeout=10,
+        )
         assert resp.status_code == 200
         data = resp.json()
         assert data["object"] == "list"
@@ -212,6 +265,7 @@ class TestLLMProxyPassthroughE2E:
         """POST /llm-proxy/chat/completions forwards the model name as-is."""
         resp = passthrough_stack["client"].post(
             "/llm-proxy/chat/completions",
+            headers=_ws_headers("llm-pt-e2e"),
             json={
                 "model": "fake-model",
                 "messages": [{"role": "user", "content": "hello"}],
