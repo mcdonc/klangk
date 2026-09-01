@@ -1935,3 +1935,30 @@ class TestM0021FirstClassResourceAcls:
                 ], resource
         finally:
             await db.__aexit__(None, None, None)
+
+    async def test_legacy_groups_seed_is_replaced(self, tmp_path):
+        """The blocker the #2945 review proved: every pre-#2943
+        deployment carries the m0014-rewritten Allow create row on
+        /groups. The migration must replace it with the manage-groups
+        pair — leaving it locks admins out of group management."""
+        from klangk.model.migrations import m0021_first_class_resource_acls
+
+        db = await self._db(tmp_path)
+        try:
+            gid = await self._admins(db)
+            # The m0014 output shape: single Allow create for the group.
+            await db.execute(
+                "INSERT INTO acl_entries"
+                " (resource, position, action, principal_type, group_id,"
+                "  permission) VALUES ('/groups', 0, 1, 2, ?, 'create')",
+                (gid,),
+            )
+            await db.commit()
+            await m0021_first_class_resource_acls.migration.apply(db)
+
+            assert await self._entries(db, "/groups") == [
+                (0, 1, "manage-groups", gid, None),
+                (1, 0, "*", None, 0),
+            ]
+        finally:
+            await db.__aexit__(None, None, None)

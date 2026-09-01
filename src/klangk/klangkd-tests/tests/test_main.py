@@ -231,9 +231,9 @@ class TestSeedDefaultUser:
 
 
 class TestSeedDefaultAcls:
-    """Seeded-ACL shape. The /groups `create` seed (tightened in #2770)
-    was removed entirely in #2940 — group management rides the /admin
-    `*` wildcard; fresh installs seed nothing on /groups."""
+    """Seeded-ACL shape (#2944): the first-class trees each seed an
+    Allow manage-* (admins) + Deny everyone pair; /admin remains as
+    the wildcard-admin marker."""
 
     async def test_first_class_resources_seeded(self, db, app_state):
         """#2944: each first-class tree seeds Allow manage-* (admins) +

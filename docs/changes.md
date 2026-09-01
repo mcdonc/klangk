@@ -39,7 +39,12 @@ operators or integrators to act when upgrading.
   or `/api/v1/acl/*` must switch to `/api/v1/users*`,
   `/api/v1/groups*`, `/api/v1/invitations*`, `/api/v1/server/schedule*`,
   `/api/v1/events`, and `/api/v1/acl/*` respectively. The CLI, web
-  frontend, e2e suites, and seeds are already migrated.
+  frontend, e2e suites, and seeds are already migrated. Delegations
+  granted on the old `/admin/users`, `/admin/groups`, … sub-resources
+  match nothing anymore — re-grant the `manage-*` permission on the
+  new first-class resource. The pre-existing `/groups` Allow `create`
+  seed is migrated automatically (m0021); any other custom `/groups`
+  rows are left for a manual re-grant.
 
 - **Hand-crafted `admin` ACEs stop matching split routes (#2940).** ACLs
   granting the literal `admin` permission on `/admin` (rather than the

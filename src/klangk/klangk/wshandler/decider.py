@@ -24,7 +24,7 @@ Authorization (#2244 closes the #2308 authz gap): a workspace-scoped decider
 (``?workspace=<id>``) must have the ``egress-consent`` permission on that
 workspace (owner, coder, or collaborator -- #2883; spectators are
 watch-only and never register); a deploy-wide decider (no ``workspace``)
-must be an admin. A verdict is honored only if it targets the decider's
+must hold `manage-server-schedule`. A verdict is honored only if it targets the decider's
 own workspace (defense-in-depth), enforced in ``resolve`` via
 ``decider_workspace``. Pause/unpause share the same single gate as the
 connection itself (#2883): anyone who may register may also pause.

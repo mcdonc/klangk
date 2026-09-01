@@ -23,13 +23,22 @@ Details:
   as the instance-administrator wildcard marker (``isAdmin`` in the
   frontend reads ``*`` on ``/admin`` via ``/my-permissions``).
 - Positions: each inserted resource gets Allow at 0, Deny at 1,
-  mirroring the seed layout. A resource that already has rows (an
-  operator pre-staged grants) is skipped entirely — never half-merged
-  onto unknown positions.
+  mirroring the seed layout.
+- ``/groups`` carries a well-known legacy row on every deployment
+  first-booted before #2943: migration 0014 rewrote the seed to a
+  single ``Allow create`` row for the admin group. That row matches no
+  ``manage-groups`` check, so leaving it would lock admins out of
+  group management — the exact failure this migration exists to
+  prevent. When ``/groups`` holds **exactly** that legacy shape it is
+  replaced with the standard pair (the m0014 precedent). Any other
+  non-empty shape is an operator customization: skipped untouched,
+  with the manual step documented in the changelog.
+- A fresh database (entirely empty ``acl_entries``) is a no-op — the
+  boot seeds own it; inserting here would trip the seed's
+  empty-table gate and lose the ``/``, ``/workspaces``, and ``/admin``
+  rows.
 - Idempotent by construction: the per-resource existence check no-ops
-  on re-run, and fresh DBs get the rows from ``seed_default_acls``
-  (this migration still inserts them harmlessly before that seeding —
-  the seed itself is gated on an empty table and skips).
+  on re-run.
 """
 
 from klangk.model.acl import (
@@ -52,6 +61,21 @@ RESOURCES = {
 }
 
 
+def _is_legacy_groups_shape(rows) -> bool:
+    """Whether /groups holds exactly the m0014-rewritten seed: a single
+    ``Allow create`` row for a group principal at position 0."""
+    return bool(
+        len(rows) == 1
+        and rows[0][0] == 0  # position
+        and rows[0][1] == ACTION_ALLOW
+        and rows[0][2] == PRINCIPAL_GROUP
+        and rows[0][3] is None  # user_id
+        and rows[0][4] is not None  # group_id
+        and rows[0][5] is None  # system_principal
+        and rows[0][6] == "create"
+    )
+
+
 async def apply(db) -> None:
     cursor = await db.execute("SELECT COUNT(*) FROM acl_entries")
     if (await cursor.fetchone())[0] == 0:
@@ -66,11 +90,25 @@ async def apply(db) -> None:
 
     for resource, permission in RESOURCES.items():
         cursor = await db.execute(
-            "SELECT COUNT(*) FROM acl_entries WHERE resource = ?",
+            "SELECT position, action, principal_type, user_id, group_id,"
+            " system_principal, permission FROM acl_entries"
+            " WHERE resource = ?",
             (resource,),
         )
-        if (await cursor.fetchone())[0] > 0:
-            continue  # operator pre-staged rows here; don't disturb them
+        rows = list(await cursor.fetchall())
+        if rows:
+            if resource == "/groups" and _is_legacy_groups_shape(rows):
+                # The well-known m0014 seed: replace it — nothing checks
+                # `create` on /groups anymore, so leaving it would lock
+                # admins out of group management (#2945 review).
+                await db.execute(
+                    "DELETE FROM acl_entries WHERE resource = ?",
+                    (resource,),
+                )
+            else:
+                # Operator pre-staged/customized rows; don't disturb
+                # them (manual step documented in the changelog).
+                continue
         if admins_id is not None:
             await db.execute(
                 "INSERT INTO acl_entries"

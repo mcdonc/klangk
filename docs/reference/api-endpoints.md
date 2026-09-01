@@ -221,9 +221,12 @@ No request body.
 
 ### GET `/api/v1/groups`
 
-List groups (admin) with pagination, filtering, and the paged envelope.
+List groups with pagination, filtering, and the paged envelope — the
+one listing surface for every reader (pickers, share dialogs, the
+admin Groups tab).
 
-**Auth:** JWT required. User must have `manage-groups` permission on `/groups` (#2944).
+**Auth:** JWT required — any authenticated caller; writes on the tree
+need `manage-groups` (#2944).
 
 Query parameters:
 
