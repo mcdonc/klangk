@@ -384,6 +384,12 @@ sync` report a clear permission-denied error.
 - **README release badge (#2981).** The README now carries a release
   badge showing the latest `v*` tag, driven by GitHub Releases —
   no manual updates needed.
+- **Versioned documentation (#687).** Each release tag now deploys its
+  docs as a versioned subdirectory of the `gh-pages` branch (managed by
+  mike, with the zensical version selector), instead of overwriting the
+  whole site. The docs root redirects to the `latest` version. One-time
+  operator action: after the first tagged deploy creates the branch,
+  switch the GitHub Pages source to "Deploy from a branch: `gh-pages`".
 
 - **Native YAML integers for `port`, `egress_port`,
   `bridge_timeout_seconds`, and `idle_timeout_seconds` (#2967).** A

@@ -5,44 +5,60 @@ on:
     tags:
       - "v[0-9]*"
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Docs version to deploy (defaults to the ref name minus any v prefix)"
+        required: false
+        type: string
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: write
 
 concurrency:
-  group: pages
+  group: gh-pages
   cancel-in-progress: false
 
 jobs:
-  build:
+  deploy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          # Full history: mike reads prior versions off the gh-pages
+          # branch, which must be present as a remote ref.
+          fetch-depth: 0
 
       - uses: actions/setup-python@v6
         with:
           python-version: "3.14"
 
-      - name: Install Zensical
-        run: pip install zensical
+      - name: Install docs toolchain
+        run: |
+          pip install zensical
+          # squidfunk's mike fork adapts mike to zensical; it is not on
+          # PyPI, so install it from GitHub (see zensical's versioning
+          # docs). No mkdocs needed — the fork builds via zensical.
+          pip install git+https://github.com/squidfunk/mike.git
 
-      - name: Build docs
-        run: zensical build
+      - name: Configure git for gh-pages commits
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v5
-        with:
-          path: site
+      - name: Extract docs version
+        id: version
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            version="${{ inputs.version }}"
+          else
+            version="${GITHUB_REF_NAME#v}"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v5
+      - name: Deploy docs to gh-pages
+        env:
+          MIKE_DOCS_VERSION: ${{ steps.version.outputs.version }}
+        run: python scripts/deploy-docs.py
+
+      - name: Push gh-pages
+        run: git push origin gh-pages
