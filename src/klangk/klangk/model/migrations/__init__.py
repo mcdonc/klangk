@@ -105,21 +105,31 @@ MIGRATIONS: list[Migration] = [
 ]
 
 
-def validate_migrations(
-    migrations: list[Migration] | None = None,
-) -> None:
-    """Assert ids are contiguous 1..N and names unique (fail fast at
-    import time rather than mid-boot on a deployed server)."""
-    migrations = migrations if migrations is not None else MIGRATIONS
+def _assert_contiguous_ids(migrations: list[Migration]) -> None:
+    """Migration ids must be 1..N in order."""
     ids = [m.id for m in migrations]
     if ids != list(range(1, len(migrations) + 1)):
         raise RuntimeError(
             f"MIGRATIONS ids must be contiguous 1..{len(migrations)},"
             f" got {ids}. Never renumber or reorder — append instead."
         )
+
+
+def _assert_unique_names(migrations: list[Migration]) -> None:
+    """Migration names must be unique."""
     names = [m.name for m in migrations]
     if len(set(names)) != len(names):
         raise RuntimeError(f"Duplicate migration names: {names}")
+
+
+def validate_migrations(
+    migrations: list[Migration] | None = None,
+) -> None:
+    """Assert ids are contiguous 1..N and names unique (fail fast at
+    import time rather than mid-boot on a deployed server)."""
+    migrations = migrations if migrations is not None else MIGRATIONS
+    _assert_contiguous_ids(migrations)
+    _assert_unique_names(migrations)
 
 
 validate_migrations()
@@ -151,32 +161,53 @@ async def run_migrations(db) -> list[str]:
 
     applied_now: list[str] = []
     for migration in MIGRATIONS:
+        _assert_recorded_name_matches(migration, applied)
         if migration.id in applied:
-            if applied[migration.id] != migration.name:
-                raise RuntimeError(
-                    f"Migration {migration.id} is recorded as"
-                    f" {applied[migration.id]!r} but the code says"
-                    f" {migration.name!r}. Migration names are frozen"
-                    " once shipped (a rename forks history); restore"
-                    " the recorded name or append a new migration."
-                )
             continue
         logger.info("Applying schema migration %s", migration.name)
-        # Close any implicit transaction left open by earlier init_db
-        # statements (sqlite3 legacy control implicitly begins before
-        # DML; an open transaction would make BEGIN IMMEDIATE fail with
-        # "cannot start a transaction within a transaction").
-        await db.commit()
-        await db.execute("BEGIN IMMEDIATE")
-        try:
-            await migration.apply(db)
-            await db.execute(
-                "INSERT INTO schema_migrations (id, name) VALUES (?, ?)",
-                (migration.id, migration.name),
-            )
-            await db.commit()
-        except BaseException:
-            await db.rollback()
-            raise
+        await _apply_migration(db, migration)
         applied_now.append(migration.name)
     return applied_now
+
+
+def _assert_recorded_name_matches(
+    migration: Migration, applied: dict[int, str]
+) -> None:
+    """A recorded id must still carry its shipped name."""
+    recorded = applied.get(migration.id)
+    if recorded is None or recorded == migration.name:
+        return
+    raise RuntimeError(
+        f"Migration {migration.id} is recorded as"
+        f" {recorded!r} but the code says"
+        f" {migration.name!r}. Migration names are frozen"
+        " once shipped (a rename forks history); restore"
+        " the recorded name or append a new migration."
+    )
+
+
+async def _apply_migration(db, migration: Migration) -> None:
+    """Apply one migration + its record row atomically.
+
+    Closes any implicit transaction left open by earlier init_db
+    statements (sqlite3 legacy control implicitly begins before DML;
+    an open transaction would make BEGIN IMMEDIATE fail with
+    "cannot start a transaction within a transaction"), then runs
+    apply+record in one explicit ``BEGIN IMMEDIATE`` transaction —
+    SQLite DDL is transactional only under an explicit BEGIN (legacy
+    autocommit would leave failed migrations half-applied), so a
+    failure rolls both back and the migration is retried on the next
+    ``init_db``.
+    """
+    await db.commit()
+    await db.execute("BEGIN IMMEDIATE")
+    try:
+        await migration.apply(db)
+        await db.execute(
+            "INSERT INTO schema_migrations (id, name) VALUES (?, ?)",
+            (migration.id, migration.name),
+        )
+        await db.commit()
+    except BaseException:
+        await db.rollback()
+        raise

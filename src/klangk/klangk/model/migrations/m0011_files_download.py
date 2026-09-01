@@ -68,32 +68,35 @@ async def apply(db) -> None:
             " FROM acl_entries WHERE resource = ? ORDER BY position",
             (resource,),
         )
-        rows = await cursor.fetchall()
-        # Park existing rows at unique negative positions (ids are
-        # unique, so -1 - id never collides) before re-sequencing.
-        for row in rows:
+        await _resequence_with_mirrors(db, await cursor.fetchall())
+
+
+async def _resequence_with_mirrors(db, rows) -> None:
+    """Park existing rows at unique negative positions (ids are unique,
+    so -1 - id never collides), then rewrite the sequence inserting each
+    mirror directly after its source entry so evaluation order vs. `*`
+    ACEs is kept."""
+    for row in rows:
+        await db.execute(
+            "UPDATE acl_entries SET position = ? WHERE id = ?",
+            (-1 - row[0], row[0]),
+        )
+    position = 0
+    for row in rows:
+        await db.execute(
+            "UPDATE acl_entries SET position = ? WHERE id = ?",
+            (position, row[0]),
+        )
+        position += 1
+        if row[3] == _ALLOW and row[8] == _FILES:  # action, permission
             await db.execute(
-                "UPDATE acl_entries SET position = ? WHERE id = ?",
-                (-1 - row[0], row[0]),
-            )
-        # Rewrite the sequence, inserting each mirror directly after
-        # its source entry so evaluation order vs. `*` ACEs is kept.
-        position = 0
-        for row in rows:
-            await db.execute(
-                "UPDATE acl_entries SET position = ? WHERE id = ?",
-                (position, row[0]),
+                "INSERT INTO acl_entries"
+                " (resource, position, action, principal_type,"
+                "  user_id, group_id, system_principal, permission)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                _mirror_row(row, position),
             )
             position += 1
-            if row[3] == _ALLOW and row[8] == _FILES:  # action, permission
-                await db.execute(
-                    "INSERT INTO acl_entries"
-                    " (resource, position, action, principal_type,"
-                    "  user_id, group_id, system_principal, permission)"
-                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                    _mirror_row(row, position),
-                )
-                position += 1
 
 
 migration = Migration(11, "0011_files_download", apply)

@@ -44,15 +44,16 @@ _RESOURCE = "/groups"
 def _is_seeded_shape(rows) -> bool:
     """Whether the /groups ACL still holds exactly the single
     system-authenticated create entry the seed wrote."""
-    return bool(
-        len(rows) == 1
-        and rows[0][0] == 0  # position
-        and rows[0][1] == ACTION_ALLOW
-        and rows[0][2] == PRINCIPAL_SYSTEM
-        and rows[0][3] is None  # user_id
-        and rows[0][4] is None  # group_id
-        and rows[0][5] == SYSTEM_AUTHENTICATED
-        and rows[0][6] == "create"
+    if len(rows) != 1:
+        return False
+    return rows[0][:7] == (
+        0,  # position
+        ACTION_ALLOW,
+        PRINCIPAL_SYSTEM,
+        None,  # user_id
+        None,  # group_id
+        SYSTEM_AUTHENTICATED,
+        "create",
     )
 
 
