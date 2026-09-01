@@ -27,11 +27,17 @@ class WorkspaceSettingsPanel extends StatefulWidget {
   /// lifecycle (in-flight indicator + container_ready handling) (#1780).
   final VoidCallback onRestart;
 
+  /// #2939: whether the user holds `restart-workspace` — hides the
+  /// "Restart now" action for members who can edit settings but cannot
+  /// restart the container (custom ACLs).
+  final bool canRestart;
+
   const WorkspaceSettingsPanel({
     super.key,
     required this.workspaceId,
     this.canExport = true,
     required this.onRestart,
+    required this.canRestart,
   });
 
   @override
@@ -197,10 +203,11 @@ class WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
       allowAutostart:
           context.select<AuthService, bool>((a) => a.allowAutostart),
       saveMessage: _saveMessage,
-      pendingRestart: _pendingRestart,
+      pendingRestart: _pendingRestart && widget.canRestart,
       netfilterEnabled:
           context.select<AuthService, bool>((a) => a.netfilterEnabled),
       onSave: _saveSettings,
+      canRestart: widget.canRestart,
       onRestart: _restartNow,
     );
   }
@@ -314,6 +321,11 @@ class _SettingsForm extends StatefulWidget {
   final bool allowAutostart;
   final String? saveMessage;
   final bool pendingRestart;
+
+  /// #2939: whether the user holds `restart-workspace` — hides the
+  /// "Restart now" action for members who can edit settings but cannot
+  /// restart the container (custom ACLs).
+  final bool canRestart;
   final bool netfilterEnabled;
   final Future<void> Function(Map<String, dynamic>) onSave;
   final VoidCallback onRestart;
@@ -329,6 +341,7 @@ class _SettingsForm extends StatefulWidget {
     required this.allowAutostart,
     required this.saveMessage,
     required this.pendingRestart,
+    required this.canRestart,
     required this.netfilterEnabled,
     required this.onSave,
     required this.onRestart,
@@ -784,10 +797,11 @@ class _SettingsFormState extends State<_SettingsForm> {
               'they take effect at container create time.',
             ),
           ),
-          TextButton(
-            onPressed: widget.onRestart,
-            child: const Text('Restart now'),
-          ),
+          if (widget.canRestart)
+            TextButton(
+              onPressed: widget.onRestart,
+              child: const Text('Restart now'),
+            ),
         ],
       ),
     );

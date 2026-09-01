@@ -69,10 +69,15 @@ ContainerOverlayState? containerEventTransition({
 
 /// Overlay shown when the workspace container has stopped (idle timeout,
 /// manual stop, or crash). Pass [restarting] to swap the action area for a
-/// spinner; [stopReason] is shown verbatim when not restarting.
+/// spinner; [stopReason] is shown verbatim when not restarting. Pass
+/// [canRestart] as false to hide the Restart button for users without the
+/// `restart-workspace` permission (#2939) — the server re-checks the
+/// permission per `restart_container` message anyway, so the button would
+/// only ever surface a permission-denied error frame.
 Widget buildContainerStoppedOverlay({
   required bool restarting,
   required String stopReason,
+  required bool canRestart,
   required VoidCallback onRestart,
   required VoidCallback onBack,
 }) {
@@ -99,15 +104,16 @@ Widget buildContainerStoppedOverlay({
                   style: const TextStyle(color: Colors.white, fontSize: 16),
                 ),
                 const SizedBox(height: 16),
-                ElevatedButton.icon(
-                  onPressed: onRestart,
-                  icon: const Icon(Icons.refresh, size: 18),
-                  label: const Text('Restart'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: KColors.accentGreen,
-                    foregroundColor: Colors.white,
+                if (canRestart)
+                  ElevatedButton.icon(
+                    onPressed: onRestart,
+                    icon: const Icon(Icons.refresh, size: 18),
+                    label: const Text('Restart'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: KColors.accentGreen,
+                      foregroundColor: Colors.white,
+                    ),
                   ),
-                ),
                 const SizedBox(height: 12),
                 TextButton(
                   onPressed: onBack,

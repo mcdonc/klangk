@@ -131,7 +131,10 @@ http.Client _client({
   });
 }
 
-Widget _buildPanel({VoidCallback? onRestart, bool canExport = true}) =>
+Widget _buildPanel(
+        {VoidCallback? onRestart,
+        bool canExport = true,
+        bool canRestart = true}) =>
     MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => AuthService()),
@@ -145,6 +148,7 @@ Widget _buildPanel({VoidCallback? onRestart, bool canExport = true}) =>
           body: WorkspaceSettingsPanel(
             workspaceId: _wsId,
             canExport: canExport,
+            canRestart: canRestart,
             onRestart: onRestart ?? () {},
           ),
         ),
@@ -1474,6 +1478,31 @@ void main() {
           findsOneWidget);
       await tester.pump(const Duration(seconds: 2));
       await tester.pumpAndSettle();
+    });
+
+    testWidgets('hides "Restart now" without restart-workspace (#2939)',
+        (tester) async {
+      // Same mount-removal flow as the notice test above, but the member
+      // cannot restart: no notice at all (pendingRestart is gated on
+      // canRestart), and no "Restart now" button.
+      testAuthHttpClientOverride = _client(workspace: {
+        ..._workspace,
+        'running': true,
+      });
+      await tester.pumpWidget(_buildPanel(canRestart: false));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byIcon(Icons.close).first);
+      await tester.pump();
+
+      await _scrollToAndTap(tester, find.text('Save'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.text('Settings saved'), findsOneWidget);
+      expect(
+          find.textContaining('Restart the workspace to apply'), findsNothing);
+      expect(find.text('Restart now'), findsNothing);
     });
 
     testWidgets('"Restart now" invokes onRestart and dismisses the notice',

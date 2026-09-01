@@ -205,10 +205,9 @@ rewrite of a workspace always carries the workspace's own grant.
 resource — including `/` and the other first-class trees — so granting
 it to a principal is granting instance-wide control, exactly like
 adding them to the admins group. Grant it only to administrators.
-(Until the workspaces tranche renames the workspace-scoped
-`change-acls` to `share-advanced`, the two names coexist:
-`share-advanced` on a workspace resource is the workspace-level gate;
-`manage-acls` is the global editor.)
+(`share-advanced` on a workspace resource is the workspace-level gate;
+`manage-acls` is the global editor — two different names, two
+different resources.)
 
 Delegation is per-resource (the same recipe as the Events auditor,
 issue #2923): the admin group holds each `manage-*` via its seeded
@@ -224,6 +223,37 @@ authenticated-user reads (pickers, share dialogs).
 Upgrading from a pre-#2944 deployment: migration 0021 inserts the six
 Allow/Deny pairs for the admins group. If you had pre-staged rows on
 one of those resources, the migration leaves it untouched.
+
+## WebSocket gates (#2939)
+
+The WebSocket layer enforces its own gates, separate from the REST
+endpoints' `has_permission` dependencies. Full matrix — every WS
+trigger, the permission it checks, the resource, who holds it by
+default (the seeded role groups; owners hold `*`), and when it is
+re-checked:
+
+| WS trigger                                       | Permission                                          | Resource           | Default holders (besides owner)   | Re-checked                                                                                      |
+| ------------------------------------------------ | --------------------------------------------------- | ------------------ | --------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `workspace_connect` handshake (open workspace)   | `terminal`                                          | `/workspaces/{id}` | coders, collaborators, spectators | once per connect; revocation answers the next connect with machine-readable `forbidden` (#2891) |
+| `restart_container` message                      | `restart-workspace`                                 | `/workspaces/{id}` | coders, collaborators             | live, per message                                                                               |
+| exec channel (`klangk exec` / sync)              | `exec-and-sync`                                     | `/workspaces/{id}` | coders, collaborators             | live, per message (#2706)                                                                       |
+| own terminal creation                            | `code-in-isolation`                                 | `/workspaces/{id}` | coders, collaborators             | live, per message                                                                               |
+| `share_window` (share an own terminal)           | `share-terminals`                                   | `/workspaces/{id}` | collaborators                     | live, per message; unsharing needs no permission (#2875)                                        |
+| `join_shared_terminal` / `list_shared_terminals` | `spectate-on-shared-terminals`                      | `/workspaces/{id}` | coders, collaborators, spectators | live, per message                                                                               |
+| typing into a shared terminal                    | `code-in-shared-terminals` **or** `share-terminals` | `/workspaces/{id}` | collaborators                     | live, per message                                                                               |
+| targeting/closing others' shared terminals       | `share-terminals`                                   | `/workspaces/{id}` | collaborators                     | live, per message                                                                               |
+| service-health fan-out (per transition)          | `monitor-workspace`                                 | `/workspaces/{id}` | coders, collaborators, spectators | per fan-out (revocation stops delivery on the next frame)                                       |
+| service-health snapshot at registration          | `monitor-workspace`                                 | `/workspaces/{id}` | coders, collaborators, spectators | per snapshot                                                                                    |
+| consent-decider WS, workspace-scoped             | `egress-consent`                                    | `/workspaces/{id}` | coders, collaborators             | once at registration (handshake)                                                                |
+| consent-decider WS, deploy-wide (drain)          | `manage-server-schedule`                            | `/server`          | admins group                      | once at registration (handshake)                                                                |
+
+Audit conclusions (#2939): all 33 permission names in the vocabulary
+are enforced somewhere (no dead names); every WS gate's permission
+matches a seeded grant path; "live" rows re-resolve principals on
+every message, so mid-session revocation takes effect at the next
+message. The UI-side counterpart: affordances for WS-gated actions
+(share/spectate buttons, the restart button) follow the same
+permissions via the workspace's `my-permissions` set.
 
 ## Checking Your Permissions
 

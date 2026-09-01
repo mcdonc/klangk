@@ -622,6 +622,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
                         buildContainerStoppedOverlay(
                           restarting: _restarting,
                           stopReason: _stopReason,
+                          canRestart: _hasPerm('restart-workspace'),
                           onRestart: _restartContainer,
                           onBack: () => context.go('/workspaces'),
                         ),
@@ -731,6 +732,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
           ? WorkspaceSettingsPanel(
               workspaceId: widget.workspaceId,
               canExport: _hasPerm('export-workspace'),
+              canRestart: _hasPerm('restart-workspace'),
               onRestart: _restartContainer,
             )
           : null,
