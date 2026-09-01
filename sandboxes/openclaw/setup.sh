@@ -39,6 +39,9 @@ export HOME="${KLANGKWS_AGENT_HOME:-/home/klangk}"
 # pointer set from its very first spawn:
 #   - NVM_DIR + nvm.sh source (so nvm/node load in new shells)
 #   - /openclaw/bin on PATH (so the `openclaw` binary is found)
+#   - OPENCLAW_STATE_DIR + OPENCLAW_CONFIG_PATH (so each workspace's
+#     gateway holds its own lock and state in the agent home while
+#     every workspace reads the one shared config on the mount, #2947)
 #   - OPENCLAW_HOME (so openclaw locates its config; the agent's
 #     $HOME is /home/klangk, not /openclaw, so without this openclaw
 #     looks in the wrong place and reports "Missing config" -- #1039)
@@ -55,6 +58,27 @@ fi
 # shellcheck disable=SC2016
 if ! grep -q "$INSTALL_DIR/bin" ~/.profile 2>/dev/null; then
   echo "export PATH=\"$INSTALL_DIR/bin:\$PATH\"" >>~/.profile
+fi
+# Per-workspace gateway state (#2947): openclaw >= 2026.8.1 enforces a
+# single-instance gateway lock (and keeps its sqlite state) under the
+# STATE dir, resolving config as state-dir-derived before anything
+# else. The state dir defaults to $OPENCLAW_HOME/.openclaw -- ON THE
+# SHARED MOUNT -- so the first workspace's gateway holds the lock for
+# the life of its container and every other workspace at the same
+# mount dies with "gateway already running" while its health check
+# polls a loopback nobody binds. Pointing OPENCLAW_STATE_DIR into the
+# agent's (per-workspace) home gives each workspace its own lock and
+# state; OPENCLAW_CONFIG_PATH pins config resolution to the shared
+# config on the mount so nothing about the shared-install design
+# changes. Same split in healthcheck.sh (the NON-login check cannot
+# source this profile) and in the onboard env below.
+# shellcheck disable=SC2016
+if ! grep -q OPENCLAW_STATE_DIR ~/.profile 2>/dev/null; then
+  echo 'export OPENCLAW_STATE_DIR="${KLANGKWS_AGENT_HOME:-/home/klangk}/.openclaw-state"' >>~/.profile
+fi
+# shellcheck disable=SC2016
+if ! grep -q OPENCLAW_CONFIG_PATH ~/.profile 2>/dev/null; then
+  echo "export OPENCLAW_CONFIG_PATH=\"$INSTALL_DIR/.openclaw/openclaw.json\"" >>~/.profile
 fi
 # shellcheck disable=SC2016
 if ! grep -q OPENCLAW_HOME ~/.profile 2>/dev/null; then
@@ -126,6 +150,11 @@ export PATH="$INSTALL_DIR/bin:$PATH"
 # and sets up auth tokens. We overwrite the config afterward so
 # onboard doesn't clobber our settings (bind, http endpoints, etc.).
 export OPENCLAW_HOME="$INSTALL_DIR"
+# Same per-workspace state/config split as the ~/.profile exports
+# above (#2947): onboard must create its state in the agent home, not
+# on the shared mount, and keep writing the shared config.
+export OPENCLAW_STATE_DIR="${KLANGKWS_AGENT_HOME:-/home/klangk}/.openclaw-state"
+export OPENCLAW_CONFIG_PATH="$INSTALL_DIR/.openclaw/openclaw.json"
 openclaw onboard --non-interactive \
   --accept-risk \
   --mode local \

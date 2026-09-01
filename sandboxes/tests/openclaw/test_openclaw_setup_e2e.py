@@ -18,11 +18,22 @@ Under the agent-owns-the-service model (#1133/#1158) the service command
 runs in the agent's standalone ``service`` tmux session, whose login shell
 sources the AGENT's ``~/.profile``. So ``setup.sh`` repoints ``HOME`` at
 ``$KLANGKWS_AGENT_HOME`` and writes its exports there (``NVM_DIR`` + nvm
-source, ``/openclaw/bin`` on ``PATH``, ``OPENCLAW_HOME``); the owner
+source, ``/openclaw/bin`` on ``PATH``, ``OPENCLAW_HOME``, and the #2947
+split -- per-workspace ``OPENCLAW_STATE_DIR`` in the agent home plus
+shared ``OPENCLAW_CONFIG_PATH`` on the mount); the owner
 manages openclaw through the Service terminal tab, not their own shell, so
 nothing openclaw-related lives in the owner's home (#1171). The health
 check is unaffected: it runs as a non-login ``bash -c`` and uses an
-absolute-path wrapper that bakes in ``OPENCLAW_HOME``.
+absolute-path wrapper that bakes in ``OPENCLAW_HOME`` (and the #2947
+split).
+
+Why the #2947 split exists: openclaw >= 2026.8.1 enforces a
+single-instance gateway lock under its STATE dir, which defaults to a
+path on the SHARED ``/openclaw`` mount -- so with several workspaces at
+one mount only the first workspace's gateway could run (the others die
+with "gateway already running") and their health checks polled a
+loopback that never listens. The state dir therefore lives per
+workspace (agent home) while the config stays shared.
 
 Why ``~/.profile`` and not ``~/.bashrc`` (#1087): ``~/.profile`` is the
 POSIX file sourced by login shells. ``~/.bashrc`` has an interactivity
@@ -357,6 +368,21 @@ class TestOpenclawSetupProfileExports:
             )
             assert 'export PATH="/openclaw/bin:$PATH"' in profile
 
+            # The #2947 split: per-workspace gateway state in the agent
+            # home, shared config pinned on the mount. Both must also be
+            # written up front — the service session's gateway needs them
+            # from its first spawn, exactly like OPENCLAW_HOME.
+            assert "OPENCLAW_STATE_DIR=" in profile, (
+                "OPENCLAW_STATE_DIR missing from ~/.profile before the "
+                "slow install -- a second workspace at the same mount "
+                "cannot run its own gateway (shared lock, #2947).\n"
+                "~/.profile:\n" + profile
+            )
+            assert (
+                'export OPENCLAW_CONFIG_PATH="/openclaw/.openclaw/openclaw.json"'
+                in profile
+            )
+
             # Release setup.sh and let the real openclaw install finish.
             os.remove(SENTINEL)
             assert sandbox_proc.wait(timeout=SETUP_TIMEOUT) == 0, (
@@ -453,6 +479,20 @@ class TestOpenclawSetupProfileExports:
                 "shared-mount failure mode.\n~/.profile:\n" + profile
             )
             assert 'export PATH="/openclaw/bin:$PATH"' in profile
+            # The #2947 state/config split exports ride the same
+            # up-front block; on the skip path they must still land.
+            assert "OPENCLAW_STATE_DIR=" in profile, (
+                "OPENCLAW_STATE_DIR missing from the second workspace's "
+                "~/.profile even though setup completed -- a regression "
+                "that moved the export inside the install-skip guard "
+                "leaves it out permanently here (the install is skipped, "
+                "so the guard body never runs). This is the #1039 "
+                "shared-mount failure mode.\n~/.profile:\n" + profile
+            )
+            assert (
+                'export OPENCLAW_CONFIG_PATH="/openclaw/.openclaw/openclaw.json"'
+                in profile
+            )
         finally:
             if sandbox_proc.poll() is None:
                 sandbox_proc.kill()

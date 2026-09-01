@@ -54,3 +54,9 @@ the user's home directory:
 - **`/openclaw/.openclaw/openclaw.json`** — pre-seeded config using
   the Klangk LLM proxy with dynamic token auth, gateway bound to
   container port 8000 for hosted app access
+
+Runtime state (the gateway's single-instance lock and sqlite store)
+lives per workspace under the agent home
+(`~/.openclaw-state`, `OPENCLAW_STATE_DIR`), not on the shared mount:
+openclaw ≥ 2026.8.1 would otherwise let only the first workspace at a
+shared mount run a gateway (#2947).
