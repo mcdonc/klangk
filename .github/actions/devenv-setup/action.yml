@@ -14,10 +14,16 @@ runs:
     # install.determinate.systems substituter to strip out (the workaround
     # for #1420 is no longer needed). Flakes/nix-command are turned on both
     # by the action's built-in --enable-flakes flag and explicitly below.
+    # access-tokens authenticates nix's api.github.com calls (flake tag -> rev
+    # resolution in the bootstrap step) with the job's GITHUB_TOKEN. Without
+    # it those calls are unauthenticated and share the runner IP's 60 req/hr
+    # limit with every other tenant, so a busy neighbor IP can 403 the
+    # bootstrap (#2948). The token is job-scoped and the runner is ephemeral.
     - uses: NixOS/nix-installer-action@v1
       with:
         extra-conf: |
           experimental-features = nix-command flakes
+          access-tokens = github.com=${{ github.token }}
 
     - name: Free disk space
       if: runner.os == 'Linux'
