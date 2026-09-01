@@ -96,20 +96,43 @@ class TestNoBridge:
 
 
 class _BridgeHandler(BaseHTTPRequestHandler):
-    """Minimal HTTP handler that records requests and returns canned responses."""
+    """Minimal HTTP handler that records requests and returns canned responses.
+
+    Response selection, in order: a path-routed body (``routes`` — used to
+    fake GitHub's device-flow endpoints when the helper's GITHUB_URL points
+    here), an operation-routed body (``op_bodies`` — keyed on the payload's
+    ``operation``), then the catch-all ``response_body``.
+    """
 
     requests = []
     response_body = b"{}"
     response_status = 200
+    routes = {}
+    op_bodies = {}
+
+    def _response_for(self, path, body_json):
+        if path in self.__class__.routes:
+            return self.__class__.routes[path]
+        op = body_json.get("operation", "")
+        if op in self.__class__.op_bodies:
+            return self.__class__.op_bodies[op]
+        return self.__class__.response_body
 
     def do_POST(self):
         length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(length)
-        self.__class__.requests.append(json.loads(body))
+        try:
+            parsed = json.loads(body)
+            self.__class__.requests.append(parsed)
+        except (json.JSONDecodeError, ValueError):
+            # The faked GitHub endpoints receive form-encoded bodies
+            # (the helper posts urlencoded data there); they aren't
+            # bridge operations, so don't record them.
+            parsed = {}
         self.send_response(self.__class__.response_status)
         self.send_header("Content-Type", "application/json")
         self.end_headers()
-        self.wfile.write(self.__class__.response_body)
+        self.wfile.write(self._response_for(self.path, parsed))
 
     def log_message(self, *args):
         pass  # suppress output
@@ -121,6 +144,8 @@ def bridge_server():
     _BridgeHandler.requests = []
     _BridgeHandler.response_body = b"{}"
     _BridgeHandler.response_status = 200
+    _BridgeHandler.routes = {}
+    _BridgeHandler.op_bodies = {}
 
     server = HTTPServer(("127.0.0.1", 0), _BridgeHandler)
     port = server.server_address[1]
@@ -281,6 +306,119 @@ class TestGetOperation:
             _BridgeHandler.do_POST = orig_do_post
 
         assert headers_seen[-1] == "Bearer ws-jwt-123"
+
+
+class TestDeviceFlowCache:
+    """The device flow must not re-run when the tab cache has a token.
+
+    Regression: with the client ID set, ``get`` used to start a fresh
+    device flow on every git operation — git's post-success ``store``
+    populated the browser cache, but the helper never consulted it.
+    """
+
+    CLIENT_ENV = {"KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID": "Ov23test"}
+
+    def test_cached_credential_short_circuits_device_flow(
+        self, bridge_server, fake_browser_id
+    ):
+        server, port = bridge_server
+        _BridgeHandler.op_bodies = {
+            "peek": json.dumps(
+                {"username": "x-access-token", "password": "gho_cached"}
+            ).encode()
+        }
+
+        result = run_helper(
+            "get",
+            "protocol=https\nhost=github.com\n\n",
+            env_override={
+                "KLANGKWS_BRIDGE_URL": f"http://127.0.0.1:{port}",
+                **self.CLIENT_ENV,
+            },
+            extra_path=str(fake_browser_id),
+        )
+
+        assert result.returncode == 0
+        assert "username=x-access-token" in result.stdout
+        assert "password=gho_cached" in result.stdout
+        # Only the cache peek reached the bridge — no device_flow_show, no
+        # PAT-dialog "get", so no login was attempted.
+        assert [r["operation"] for r in _BridgeHandler.requests] == ["peek"]
+
+    def test_device_flow_runs_on_cache_miss(
+        self, bridge_server, fake_browser_id
+    ):
+        """Cache miss → full device flow against the faked GitHub endpoints."""
+        server, port = bridge_server
+        base = f"http://127.0.0.1:{port}"
+        _BridgeHandler.op_bodies = {
+            "peek": json.dumps({"error": "miss"}).encode()
+        }
+        _BridgeHandler.routes = {
+            "/login/device/code": json.dumps(
+                {
+                    "device_code": "dc-123",
+                    "user_code": "ABCD-1234",
+                    "verification_uri": f"{base}/login/device",
+                    "interval": 0,
+                    "expires_in": 60,
+                }
+            ).encode(),
+            "/login/oauth/access_token": json.dumps(
+                {"access_token": "gho_fresh", "token_type": "bearer"}
+            ).encode(),
+        }
+
+        result = run_helper(
+            "get",
+            "protocol=https\nhost=github.com\n\n",
+            env_override={
+                "KLANGKWS_BRIDGE_URL": base,
+                "GIT_CREDENTIAL_KLANGK_GITHUB_URL": base,
+                **self.CLIENT_ENV,
+            },
+            extra_path=str(fake_browser_id),
+        )
+
+        assert result.returncode == 0
+        assert "username=x-access-token" in result.stdout
+        assert "password=gho_fresh" in result.stdout
+        ops = [r["operation"] for r in _BridgeHandler.requests]
+        assert ops[0] == "peek"
+        assert "device_flow_show" in ops
+        assert "device_flow_done" in ops
+
+    def test_peek_error_falls_through_to_pat_dialog(
+        self, bridge_server, fake_browser_id
+    ):
+        """A peek the bridge can't answer (error body) must not strand git —
+        the helper falls through to the ordinary get (PAT dialog) path."""
+        server, port = bridge_server
+        _BridgeHandler.op_bodies = {
+            "peek": json.dumps({"status": "error"}).encode(),
+            "get": json.dumps(
+                {"username": "octocat", "password": "ghp_pat"}
+            ).encode(),
+        }
+
+        result = run_helper(
+            "get",
+            "protocol=https\nhost=github.com\n\n",
+            env_override={
+                "KLANGKWS_BRIDGE_URL": f"http://127.0.0.1:{port}",
+                "GIT_CREDENTIAL_KLANGK_GITHUB_URL": "http://127.0.0.1:1",
+                **self.CLIENT_ENV,
+            },
+            extra_path=str(fake_browser_id),
+        )
+
+        # Device flow unreachable (dead GITHUB_URL) → peek error → PAT path.
+        assert result.returncode == 0
+        assert "username=octocat" in result.stdout
+        assert "password=ghp_pat" in result.stdout
+        ops = [r["operation"] for r in _BridgeHandler.requests]
+        assert ops[0] == "peek"
+        assert "get" in ops
 
 
 class TestStoreAndErase:

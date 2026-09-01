@@ -192,6 +192,69 @@ void main() {
     });
   });
 
+  group('peek operation', () {
+    test('returns cached credentials without dialog', () async {
+      await feature.handlers['git_credential']!({
+        'operation': 'store',
+        'protocol': 'https',
+        'host': 'github.com',
+        'username': 'x-access-token',
+        'password': 'gho_abc123',
+      });
+
+      final result = jsonDecode(await feature.handlers['git_credential']!({
+        'operation': 'peek',
+        'protocol': 'https',
+        'host': 'github.com',
+      }));
+      expect(result['username'], 'x-access-token');
+      expect(result['password'], 'gho_abc123');
+    });
+
+    test('returns miss immediately on empty cache', () async {
+      final result = jsonDecode(await feature.handlers['git_credential']!({
+        'operation': 'peek',
+        'protocol': 'https',
+        'host': 'github.com',
+      }));
+      expect(result['error'], 'miss');
+    });
+
+    test('returns miss after erase', () async {
+      await feature.handlers['git_credential']!({
+        'operation': 'store',
+        'protocol': 'https',
+        'host': 'github.com',
+        'username': 'octocat',
+        'password': 'ghp_abc123',
+      });
+      await feature.handlers['git_credential']!({
+        'operation': 'erase',
+        'protocol': 'https',
+        'host': 'github.com',
+      });
+
+      final result = jsonDecode(await feature.handlers['git_credential']!({
+        'operation': 'peek',
+        'protocol': 'https',
+        'host': 'github.com',
+      }));
+      expect(result['error'], 'miss');
+    });
+
+    test('does not block on cache miss', () async {
+      bool completed = false;
+      await feature.handlers['git_credential']!({
+        'operation': 'peek',
+        'protocol': 'https',
+        'host': 'github.com',
+      })
+          .then((_) => completed = true);
+      expect(completed, isTrue,
+          reason: 'peek must resolve without waiting for a dialog');
+    });
+  });
+
   group('device flow operations', () {
     test('device_flow_show returns ok and notifies', () async {
       bool notified = false;
