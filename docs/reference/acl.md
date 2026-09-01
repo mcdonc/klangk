@@ -51,8 +51,6 @@ Klangk uses an Access Control List (ACL) system to manage permissions. Instead o
 | `/volumes`     | Deny   | Everyone      | `*`                      |
 | `/images`      | Allow  | Authenticated | `view-images`            |
 | `/images`      | Deny   | Everyone      | `*`                      |
-| `/llm-proxy`   | Allow  | Authenticated | `use-llm-proxy`          |
-| `/llm-proxy`   | Deny   | Everyone      | `*`                      |
 | `/admin`       | Allow  | group:admins  | `*` (admin marker only)  |
 | `/admin`       | Deny   | Everyone      | `*`                      |
 
@@ -184,20 +182,19 @@ Every governed surface is a first-class top-level resource (#2944);
 each carries **one** flat `manage-*` permission covering all of its
 actions — no per-action splits:
 
-| Permission               | Where it is checked | Controls                                                                                                                                                                          |
-| ------------------------ | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `create-workspace`       | `/workspaces`       | Create/import workspaces (#2946 rename)                                                                                                                                           |
-| `manage-users`           | `/users`            | The whole Users surface: list users and their workspaces, create, edit, unlock, delete, read active login sessions. `GET /users/search` stays authenticated (pickers)             |
-| `manage-groups`          | `/groups`           | The whole Groups surface: create, edit, delete, manage members. `GET /groups` stays authenticated (pickers)                                                                       |
-| `manage-invitations`     | `/invitations`      | List, send, resend, revoke invitations                                                                                                                                            |
-| `manage-server-schedule` | `/server`           | Server stop/recycle schedules: list, create, cancel — plus the drain/consent decider WS handshake                                                                                 |
-| `manage-events`          | `/events`           | Read the container start/stop history (`GET /events`) — read-only audit                                                                                                           |
-| `manage-acls`            | `/acl`              | The Access Control browser: read and rewrite ACL entries on **any** resource via `GET/PUT /acl/*` — root-equivalent, see below                                                    |
-| `manage-volumes`         | `/volumes`          | Self-service volumes (still label-scoped to the caller at runtime) — Allow Authenticated by default (#2946)                                                                       |
-| `view-images`            | `/images`           | The image/nix/sudo capability listing the create/edit UIs read (#2946)                                                                                                            |
-| `use-llm-proxy`          | `/llm-proxy`        | The in-process LLM proxy: user JWTs are checked directly; workspace tokens (the container path via the egress caddy) are checked against the workspace owner's principals (#2946) |
-| `search-users`           | `/users`            | The member-picker type-ahead (`GET /users/search`) — Allow Authenticated by default (#2946)                                                                                       |
-| `admin`                  | `/admin`            | The instance-administrator **marker** only (`*` row); nothing checks it anywhere anymore (#2944, #2946 — the transfer gate now checks `transfer-workspace`)                       |
+| Permission               | Where it is checked | Controls                                                                                                                                                              |
+| ------------------------ | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `create-workspace`       | `/workspaces`       | Create/import workspaces (#2946 rename)                                                                                                                               |
+| `manage-users`           | `/users`            | The whole Users surface: list users and their workspaces, create, edit, unlock, delete, read active login sessions. `GET /users/search` stays authenticated (pickers) |
+| `manage-groups`          | `/groups`           | The whole Groups surface: create, edit, delete, manage members. `GET /groups` stays authenticated (pickers)                                                           |
+| `manage-invitations`     | `/invitations`      | List, send, resend, revoke invitations                                                                                                                                |
+| `manage-server-schedule` | `/server`           | Server stop/recycle schedules: list, create, cancel — plus the drain/consent decider WS handshake                                                                     |
+| `manage-events`          | `/events`           | Read the container start/stop history (`GET /events`) — read-only audit                                                                                               |
+| `manage-acls`            | `/acl`              | The Access Control browser: read and rewrite ACL entries on **any** resource via `GET/PUT /acl/*` — root-equivalent, see below                                        |
+| `manage-volumes`         | `/volumes`          | Self-service volumes (still label-scoped to the caller at runtime) — Allow Authenticated by default (#2946)                                                           |
+| `view-images`            | `/images`           | The image/nix/sudo capability listing the create/edit UIs read (#2946)                                                                                                |
+| `search-users`           | `/users`            | The member-picker type-ahead (`GET /users/search`) — Allow Authenticated by default (#2946)                                                                           |
+| `admin`                  | `/admin`            | The instance-administrator **marker** only (`*` row); nothing checks it anywhere anymore (#2944, #2946 — the transfer gate now checks `transfer-workspace`)           |
 
 `PUT /acl/resource` additionally requires `share-advanced` on the target
 when that target is an individual workspace (`/workspaces/{id}`) — the

@@ -1,24 +1,22 @@
 """Migration 0023: seed the self-service resource ACLs (#2946).
 
-#2946 turns three previously ungoverned surfaces into checked
-resources and splits one picker endpoint out of ``manage-users``:
+#2946 turns two previously ungoverned surfaces into checked
+resources and splits one picker endpoint out of ``manage-users:
 
 - ``/volumes``     — ``manage-volumes`` (self-service volumes, still
                      label-scoped to the caller at runtime)
 - ``/images``      — ``view-images`` (the image/nix/sudo capability
                      listing the create/edit UIs read)
-- ``/llm-proxy``   — ``use-llm-proxy`` (the chat proxy, #2072 —
-                     previously fully unauthenticated)
 - ``/users``       — ``search-users`` (the member-picker type-ahead;
                      ``GET /users/search`` used to need only
                      authentication, and it still must for
                      non-admins — #2943's manage-users does NOT
                      imply it)
 
-Without rows, existing deployments lock every user out of volumes,
-images, and the LLM proxy on upgrade (the ACL walk from these
-resources never passes through ``/``'s Allow ``view`` — different
-permission — so nothing satisfies the new checks). Each resource gets
+Without rows, existing deployments lock every user out of volumes and
+images on upgrade (the ACL walk from these resources never passes
+through ``/``'s Allow ``view`` — different permission — so nothing
+satisfies the new checks). Each resource gets
 the two rows a fresh install seeds: Allow for Authenticated, Deny for
 Everyone. ``/users`` instead gets one inserted row — Allow
 ``search-users`` Authenticated at position 1 — with any existing
@@ -49,7 +47,6 @@ from klangk.model.migrations.base import Migration
 RESOURCES = {
     "/volumes": "manage-volumes",
     "/images": "view-images",
-    "/llm-proxy": "use-llm-proxy",
 }
 
 
@@ -87,16 +84,28 @@ async def apply(db) -> None:
         )
 
     # /users: insert Allow search-users Authenticated at position 1,
-    # shifting existing rows at position >= 1 up. The insert itself is
-    # idempotent (skip if a search-users row already exists).
+    # shifting existing rows at position >= 1 up. The shift runs in two
+    # steps via a large offset: a single ``position + 1`` UPDATE
+    # violates UNIQUE(resource, position) on any run of two or more
+    # consecutive positions (the admin ACL browser's output shape), so
+    # rows first move far above the occupied range and then settle
+    # back down. The insert itself is idempotent (skip if a
+    # search-users row already exists).
     cursor = await db.execute(
         "SELECT COUNT(*) FROM acl_entries"
         " WHERE resource = '/users' AND permission = 'search-users'"
     )
     if (await cursor.fetchone())[0] == 0:
+        offset = 1_000_000
         await db.execute(
-            "UPDATE acl_entries SET position = position + 1"
-            " WHERE resource = '/users' AND position >= 1"
+            "UPDATE acl_entries SET position = position + ?"
+            " WHERE resource = '/users' AND position >= 1",
+            (offset,),
+        )
+        await db.execute(
+            "UPDATE acl_entries SET position = position - ? + 1"
+            " WHERE resource = '/users' AND position > ?",
+            (offset, offset),
         )
         await db.execute(
             "INSERT INTO acl_entries"

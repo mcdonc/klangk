@@ -495,7 +495,8 @@ see [Auth Modes](../features/auth-modes.md).
 List available container images that can be used when creating or
 editing workspaces.
 
-**Auth:** JWT required.
+**Auth:** JWT required. User must have the `view-images` permission on
+`/images` (#2946; seeded Allow for Authenticated).
 
 No request body.
 
@@ -521,7 +522,7 @@ No request body.
   "email": "user@example.com",
   "groups": [],
   "permissions": {
-    "/workspaces/uuid": ["view", "terminal", "files"]
+    "/workspaces/uuid": ["view", "terminal", "files-view"]
   }
 }
 ```
@@ -533,7 +534,10 @@ No request body.
 Search for users by email or handle. Used for autocomplete when sharing
 workspaces or adding group members.
 
-**Auth:** JWT required. Query param: `q` (search string, min length 1).
+**Auth:** JWT required. User must have the `search-users` permission on
+`/users` (#2946; seeded Allow for Authenticated — distinct from
+`manage-users`, so picker surfaces work for non-admins). Query param:
+`q` (search string, min length 1).
 
 No request body.
 
@@ -567,7 +571,9 @@ No request body.
 
 List podman volumes owned by the current user.
 
-**Auth:** JWT required.
+**Auth:** JWT required. User must have the `manage-volumes` permission
+on `/volumes` (#2946; seeded Allow for Authenticated; volumes stay
+label-scoped to the caller at runtime).
 
 No request body.
 
@@ -1305,7 +1311,8 @@ Returns `StreamingResponse` (`application/x-ndjson`).
 
 Create a new podman volume labeled with the current user's ID.
 
-**Auth:** JWT required.
+**Auth:** JWT required. User must have the `manage-volumes` permission
+on `/volumes` (#2946).
 
 ```json
 { "name": "my-volume" }
@@ -1750,7 +1757,8 @@ Replace all ACL entries for a workspace.
 
 Delete a podman volume. Only the owning user can delete their volumes.
 
-**Auth:** JWT required. Checks user ownership.
+**Auth:** JWT required. User must have the `manage-volumes` permission
+on `/volumes` (#2946). Checks user ownership.
 
 No request body.
 

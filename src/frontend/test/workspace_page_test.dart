@@ -308,7 +308,12 @@ void main() {
       expect(
         consentSurfaceAllowed(
           egressMode: 'interactive',
-          permissions: ['view', 'monitor', 'terminal', 'egress-consent'],
+          permissions: [
+            'view',
+            'monitor-workspace',
+            'terminal',
+            'egress-consent'
+          ],
         ),
         isTrue,
       );
@@ -330,7 +335,7 @@ void main() {
           egressMode: 'interactive',
           permissions: [
             'view',
-            'monitor',
+            'monitor-workspace',
             'terminal',
             'spectate-on-shared-terminals'
           ],

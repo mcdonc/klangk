@@ -56,11 +56,12 @@ You can create additional groups (e.g., "engineering", "design") and
 share workspaces with an entire group instead of individual users.
 
 Manage groups from the Admin panel under the Groups tab. By default,
-only members of the `admins` group can create groups (the `/groups`
-resource grants `create-workspace` to the admins group). To let other users create
-groups, add an **Allow** entry for the `create-workspace` permission on the
-`/groups` resource targeting the `members` group (or any other group)
-via the ACL editor — the same recipe as
+only members of the `admins` group can manage groups — the whole
+Groups tab (create, edit, delete, member management) is gated by
+`manage-groups` on `/groups`. To delegate group management, add an
+**Allow** entry for the `manage-groups` permission on the `/groups`
+resource targeting the group of your choice via the ACL editor — the
+same recipe as
 [workspace creation](#granting-workspace-creation-to-non-admin-users).
 
 ## Default access rules

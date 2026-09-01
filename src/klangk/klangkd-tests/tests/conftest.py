@@ -110,7 +110,6 @@ async def _seed_2946_self_service(app_state):
     for resource, permission in (
         ("/volumes", "manage-volumes"),
         ("/images", "view-images"),
-        ("/llm-proxy", "use-llm-proxy"),
     ):
         existing = await acl.get_acl_entries(resource)
         if existing:

@@ -46,17 +46,20 @@ operators or integrators to act when upgrading.
   check or grant the old names must rename them the same way.
   Lifecycle control also splits out of `terminal`: `start-workspace`,
   `stop-workspace`, and `restart-workspace` are now checked on their
-  own, granted by default to the coders and collaborators roles —
-  spectators no longer hold them.
+  own. m0022 grants the trio to every existing workspace's
+  `coders-*`/`collaborators-*` role groups (matching the fresh seeds);
+  spectators no longer hold lifecycle control — re-grant the trio
+  manually if a spectator group should keep it.
 
-- **Self-service surfaces are permission-gated (#2946).** The LLM proxy
-  (`/llm-proxy/*`, previously unauthenticated), the volumes API, and
-  the images listing now check `use-llm-proxy`, `manage-volumes`, and
-  `view-images` on their own resources — seeded Allow for Authenticated
-  (m0023 seeds existing deployments), so default behavior is unchanged;
-  a deploy can now deny them per user/group. `GET /users/search`
-  (member-picker type-ahead) checks `search-users` on `/users`, also
-  Allow Authenticated by default.
+- **Self-service surfaces are permission-gated (#2946).** The volumes
+  API and the images listing now check `manage-volumes` and
+  `view-images` on their own resources — seeded Allow for
+  Authenticated (m0023 seeds existing deployments), so default
+  behavior is unchanged; a deploy can now deny them per user/group
+  via the ACL editor. `GET /users/search` (member-picker type-ahead)
+  checks `search-users` on `/users`, also Allow Authenticated by
+  default. The LLM proxy is gated separately by its own
+  workspace-token requirement (#2959).
 
 - **`/admin/*` API paths moved to first-class resources (#2944).**
   Scripts and clients calling the old `/api/v1/admin/users*`,

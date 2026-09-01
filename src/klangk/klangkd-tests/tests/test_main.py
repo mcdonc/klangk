@@ -282,7 +282,6 @@ class TestSeedDefaultAcls:
         for resource, permission in (
             ("/volumes", "manage-volumes"),
             ("/images", "view-images"),
-            ("/llm-proxy", "use-llm-proxy"),
         ):
             entries = await app_state.state.model.acl.get_acl_entries(resource)
             assert len(entries) == 2, resource

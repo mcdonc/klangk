@@ -246,11 +246,11 @@ class Lifecycle:
         #                               scoped per user at runtime)
         #   /images     view-images    — the image/nix/sudo capability
         #                               listing (create/edit UIs)
-        #   /llm-proxy  use-llm-proxy  — the chat proxy (#2072)
+        # NB: /llm-proxy is NOT here — #2959 gives it its own
+        # workspace-token-only gate, independent of the ACL system.
         for resource, permission in (
             ("/volumes", "manage-volumes"),
             ("/images", "view-images"),
-            ("/llm-proxy", "use-llm-proxy"),
         ):
             await self.app.state.model.acl.add_acl_entry(
                 resource,

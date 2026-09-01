@@ -1977,6 +1977,9 @@ class TestM0022WorkspacePermissionRenames:
         db = aiosqlite.connect(str(tmp_path / "m0022.db"))
         db = await db.__aenter__()
         await db.execute(
+            "CREATE TABLE groups (id TEXT PRIMARY KEY, name TEXT, source TEXT)"
+        )
+        await db.execute(
             "CREATE TABLE acl_entries ("
             " id INTEGER PRIMARY KEY AUTOINCREMENT,"
             " resource TEXT, position INTEGER, action INTEGER,"
@@ -1988,8 +1991,18 @@ class TestM0022WorkspacePermissionRenames:
 
     async def _seed_legacy(self, db):
         """An old-shape deployment: collection create + a workspace
-        carrying every renamed name plus the untouched ones."""
-
+        carrying every renamed name plus the untouched ones, with
+        coders/collaborators/spectators role groups in place."""
+        for gid, name in (
+            ("g-coders", "coders-ws-1"),
+            ("g-collab", "collaborators-ws-1"),
+            ("g-spec", "spectators-ws-1"),
+        ):
+            await db.execute(
+                "INSERT INTO groups (id, name, source)"
+                " VALUES (?, ?, 'workspace-role')",
+                (gid, name),
+            )
         await db.execute(
             "INSERT INTO acl_entries"
             " (resource, position, action, principal_type, group_id,"
@@ -2019,14 +2032,67 @@ class TestM0022WorkspacePermissionRenames:
                 " VALUES ('/workspaces/ws-1', ?, 1, 1, 'u-1', ?)",
                 (i, perm),
             )
+        # Role groups: coders/collaborators carry the old seeded grant
+        # list shape (incl. terminal + monitor); spectators the short
+        # one.
+        role_rows = (
+            [
+                ("g-coders", 100 + i, p)
+                for i, p in enumerate(
+                    [
+                        "view",
+                        "monitor",
+                        "terminal",
+                        "egress-consent",
+                        "code-in-isolation",
+                        "exec-and-sync",
+                        "spectate-on-shared-terminals",
+                        "files",
+                        "files-download",
+                        "files-write",
+                    ]
+                )
+            ]
+            + [
+                ("g-collab", 200 + i, p)
+                for i, p in enumerate(
+                    [
+                        "view",
+                        "monitor",
+                        "terminal",
+                        "files",
+                        "files-download",
+                        "files-write",
+                    ]
+                )
+            ]
+            + [
+                ("g-spec", 300 + i, p)
+                for i, p in enumerate(
+                    [
+                        "view",
+                        "monitor",
+                        "terminal",
+                        "spectate-on-shared-terminals",
+                    ]
+                )
+            ]
+        )
+        for gid, pos, perm in role_rows:
+            await db.execute(
+                "INSERT INTO acl_entries"
+                " (resource, position, action, principal_type, group_id,"
+                "  permission)"
+                " VALUES ('/workspaces/ws-1', ?, 1, 2, ?, ?)",
+                (pos, gid, perm),
+            )
         await db.commit()
 
-    async def _perms(self, db, resource) -> list:
-        cursor = await db.execute(
-            "SELECT permission FROM acl_entries WHERE resource = ?"
-            " ORDER BY position",
-            (resource,),
-        )
+    async def _perms(self, db, resource, user_only=False) -> list:
+        sql = "SELECT permission FROM acl_entries WHERE resource = ?"
+        if user_only:
+            sql += " AND user_id = 'u-1'"
+        cursor = await db.execute(sql + " ORDER BY position", (resource,))
         return [r[0] for r in await cursor.fetchall()]
 
     async def test_renames_by_scope(self, tmp_path):
@@ -2038,7 +2104,9 @@ class TestM0022WorkspacePermissionRenames:
             await m0022_workspace_permission_renames.migration.apply(db)
 
             assert await self._perms(db, "/workspaces") == ["create-workspace"]
-            assert await self._perms(db, "/workspaces/ws-1") == [
+            assert await self._perms(
+                db, "/workspaces/ws-1", user_only=True
+            ) == [
                 # renamed
                 "duplicate-workspace",
                 "edit-workspace",
@@ -2055,9 +2123,27 @@ class TestM0022WorkspacePermissionRenames:
                 "files-download",
                 "files-write",
             ]
-            # Idempotent: a re-run matches nothing.
+
+            # Lifecycle trio granted to coders + collaborators role
+            # groups only.
+            async def group_perms(gid):
+                cur = await db.execute(
+                    "SELECT permission FROM acl_entries"
+                    " WHERE resource = '/workspaces/ws-1' AND group_id = ?"
+                    " ORDER BY position",
+                    (gid,),
+                )
+                return [r[0] for r in await cur.fetchall()]
+
+            trio = {"start-workspace", "stop-workspace", "restart-workspace"}
+            for gid in ("g-coders", "g-collab"):
+                assert trio <= set(await group_perms(gid)), gid
+            assert not (trio & set(await group_perms("g-spec")))
+            # Idempotent: a re-run inserts nothing.
+            before = await group_perms("g-coders")
             await m0022_workspace_permission_renames.migration.apply(db)
-            perms = await self._perms(db, "/workspaces/ws-1")
+            assert await group_perms("g-coders") == before
+            perms = await self._perms(db, "/workspaces/ws-1", user_only=True)
             assert perms[:1] == ["duplicate-workspace"]
         finally:
             await db.__aexit__(None, None, None)
@@ -2134,7 +2220,6 @@ class TestM0023SelfServiceResources:
             for resource, permission in (
                 ("/volumes", "manage-volumes"),
                 ("/images", "view-images"),
-                ("/llm-proxy", "use-llm-proxy"),
             ):
                 assert await self._rows(db, resource) == [
                     (0, ACTION_ALLOW, permission, 1),
@@ -2152,6 +2237,52 @@ class TestM0023SelfServiceResources:
                 (0, ACTION_ALLOW, "manage-users", None),
                 (1, ACTION_ALLOW, "search-users", 1),
                 (2, ACTION_DENY, "*", 0),
+            ]
+        finally:
+            await db.__aexit__(None, None, None)
+
+    async def test_three_consecutive_users_rows(self, tmp_path):
+        """Regression (#2956 review): a single ``position + 1`` UPDATE
+        violates UNIQUE(resource, position) once /users holds a run of
+        >= 2 consecutive positions — the admin ACL browser's output
+        shape after an operator adds one custom rule. The two-step
+        offset shift must handle it."""
+        from klangk.model import ACTION_ALLOW, ACTION_DENY
+        from klangk.model.migrations import m0023_self_service_resources
+
+        db = await self._db(tmp_path)
+        try:
+            await db.execute(
+                "INSERT INTO acl_entries"
+                " (resource, position, action, principal_type, group_id,"
+                "  permission)"
+                " VALUES ('/users', 0, 1, 2, 'g-a', 'manage-users')"
+            )
+            await db.execute(
+                "INSERT INTO acl_entries"
+                " (resource, position, action, principal_type, user_id,"
+                "  permission)"
+                " VALUES ('/users', 1, 1, 1, 'u-9', 'manage-users')"
+            )
+            await db.execute(
+                "INSERT INTO acl_entries"
+                " (resource, position, action, principal_type,"
+                "  system_principal, permission)"
+                " VALUES ('/users', 2, 0, 3, 0, '*')"
+            )
+            await db.execute(
+                "INSERT INTO acl_entries"
+                " (resource, position, action, principal_type,"
+                "  system_principal, permission)"
+                " VALUES ('/', 0, 1, 3, 1, 'view')"
+            )
+            await db.commit()
+            await m0023_self_service_resources.migration.apply(db)
+            assert await self._rows(db, "/users") == [
+                (0, ACTION_ALLOW, "manage-users", None),
+                (1, ACTION_ALLOW, "search-users", 1),
+                (2, ACTION_ALLOW, "manage-users", None),
+                (3, ACTION_DENY, "*", 0),
             ]
         finally:
             await db.__aexit__(None, None, None)

@@ -1914,6 +1914,8 @@ class _AclBrowserTabState extends State<_AclBrowserTab> {
     ('/server', 'Server', Icons.dns),
     ('/events', 'Events', Icons.history),
     ('/acl', 'ACL', Icons.security),
+    ('/volumes', 'Volumes', Icons.storage),
+    ('/images', 'Images', Icons.image),
   ];
 
   /// The permission(s) that matter on each node (#2944): the endpoint
@@ -1924,12 +1926,14 @@ class _AclBrowserTabState extends State<_AclBrowserTab> {
   static const _resourceHints = {
     '/': 'view — held by every authenticated user via the seed',
     '/workspaces':
-        'create — workspace creation; per-workspace permissions live on each /workspaces/{id}',
-    '/users': 'manage-users (search stays authenticated for pickers)',
+        'create-workspace — workspace creation; per-workspace permissions live on each /workspaces/{id}',
+    '/users': 'manage-users; search-users — the member-picker type-ahead',
     '/groups': 'manage-groups (listing stays authenticated for pickers)',
     '/invitations': 'manage-invitations',
     '/server': 'manage-server-schedule',
     '/events': 'manage-events (read-only audit)',
+    '/volumes': 'manage-volumes — self-service volumes (Allow Authenticated)',
+    '/images': 'view-images — the image/capability listing',
     '/acl': 'manage-acls — root-equivalent, administrators only',
   };
 

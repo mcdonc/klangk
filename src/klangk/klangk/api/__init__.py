@@ -297,6 +297,8 @@ STATIC_RESOURCES = [
     "/server",
     "/events",
     "/acl",
+    "/volumes",
+    "/images",
     "/admin",
 ]
 
@@ -332,7 +334,6 @@ ALL_PERMISSIONS = [
     "manage-events",
     "manage-volumes",
     "view-images",
-    "use-llm-proxy",
     "search-users",
     "*",
 ]

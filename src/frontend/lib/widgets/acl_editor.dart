@@ -76,6 +76,9 @@ class AclEditorState extends State<AclEditor> {
     'manage-server-schedule',
     'manage-acls',
     'manage-events',
+    'search-users',
+    'manage-volumes',
+    'view-images',
   ];
 
   List<String> get _permissions => widget.permissions ?? workspacePermissions;
