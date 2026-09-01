@@ -1714,6 +1714,16 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **OpenClaw sandbox: every workspace sharing a mount now runs its own
+  gateway (#2947).** openclaw 2026.8.1 added a single-instance gateway
+  lock under its state dir, which defaulted onto the shared `/openclaw`
+  mount — so with several workspaces at one mount only the first
+  workspace's gateway could start and every other workspace's health
+  check reported `unhealthy` forever. Setup now points
+  `OPENCLAW_STATE_DIR` at the per-workspace agent home (own lock and
+  state per workspace) while `OPENCLAW_CONFIG_PATH` keeps the shared
+  config on the mount.
+
 - **Window watcher start/stop race (#2929).** A quick connect→disconnect
   on a live workspace could land `stop()` inside the tmux control-mode
   watcher's still-in-flight start, leaving the host-side podman exec
