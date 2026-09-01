@@ -494,10 +494,13 @@ class TestDeviceFlowHostGate:
         assert "device_flow_done" in ops
         assert "get" not in ops  # never fell through to the PAT dialog
 
+    @pytest.mark.parametrize(
+        "host", ["gitlab.com", "github.com.evil.com", "notgithub.com"]
+    )
     def test_gate_skips_device_flow_for_non_github_host(
-        self, bridge_server, fake_browser_id
+        self, bridge_server, fake_browser_id, host
     ):
-        result = self._run_get(bridge_server, fake_browser_id, "gitlab.com")
+        result = self._run_get(bridge_server, fake_browser_id, host)
 
         assert result.returncode == 0
         assert "password=p" in result.stdout

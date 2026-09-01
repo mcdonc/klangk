@@ -78,7 +78,9 @@ organization has approved the app.
 The device flow only activates when all of these are true:
 
 - `KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID` is set in the container environment
-- The git host is `github.com` (or `www.github.com`)
+- The git host is GitHub — any spelling of `github.com` (or `www.github.com`)
+  counts: case (`GitHub.com`), explicit port (`github.com:443`), and a
+  trailing dot (`github.com.`) all match
 - A browser tab is connected (the helper needs to show the code)
 
 For non-GitHub hosts, or when the client ID is not configured, the
@@ -248,7 +250,9 @@ HTTPS with PATs or OAuth is the recommended authentication method.
   [Ways to set the client ID](#ways-to-set-the-client-id) — the quickest
   check is an ad-hoc `export` in the shell.
 - Check that the OAuth App has **Enable Device Flow** turned on.
-- The device flow only activates for `github.com` hosts.
+- The device flow only activates for GitHub hosts — any spelling of
+  `github.com` (case, explicit port, and trailing dot all match; see
+  [When does the device flow activate?](#when-does-the-device-flow-activate)).
 - Restart the workspace after setting the variable — it is injected at
   container start, not baked into the image.
 
