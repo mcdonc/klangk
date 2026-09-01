@@ -19,6 +19,14 @@ import aiosqlite
 import pytest
 
 from klangk.model import migrations as migrations_mod
+from klangk.model.acl import (
+    ACTION_ALLOW,
+    ACTION_DENY,
+    PRINCIPAL_GROUP,
+    PRINCIPAL_SYSTEM,
+    SYSTEM_AUTHENTICATED,
+    SYSTEM_EVERYONE,
+)
 from klangk.model.migrations import Migration, run_migrations
 from klangk.model.users import AGENT_USER_ID
 
@@ -1966,6 +1974,109 @@ class TestM0021FirstClassResourceAcls:
             ]
         finally:
             await db.__aexit__(None, None, None)
+
+
+class TestLegacyShapesThroughProductionConnection:
+    """The m0014/m0021 shape compares must tolerate the ``db.Row``
+    wrapper (integer keys only — no slices) used on the production
+    connection path, not just the raw-aiosqlite rows the per-migration
+    harnesses use (#2980 review)."""
+
+    async def _forget(self, app_state, migration_id: int) -> None:
+        async with aiosqlite.connect(str(app_state.state.db.db_path)) as db:
+            await db.execute(
+                "DELETE FROM schema_migrations WHERE id = ?", (migration_id,)
+            )
+            await db.commit()
+
+    async def test_m0014_seeded_shape_reapplied_via_wrapper(
+        self, temp_data_dir, app_state
+    ):
+        """m0014's seeded-shape check sees wrapper rows and consumes the
+        pre-#2770 /groups seed (regression: row slicing crashed on the
+        wrapper, boot-looping upgrades)."""
+        await app_state.state.model.init_db()
+        async with aiosqlite.connect(str(app_state.state.db.db_path)) as db:
+            await db.execute(
+                "DELETE FROM acl_entries WHERE resource = '/groups'"
+            )
+            # The pre-m0014 seed: single system-authenticated Allow
+            # create at position 0.
+            await db.execute(
+                "INSERT INTO acl_entries"
+                " (resource, position, action, principal_type, user_id,"
+                "  group_id, system_principal, permission)"
+                " VALUES ('/groups', 0, ?, ?, NULL, NULL, ?, 'create')",
+                (ACTION_ALLOW, PRINCIPAL_SYSTEM, SYSTEM_AUTHENTICATED),
+            )
+            await db.commit()
+        await self._forget(app_state, 14)
+
+        # Through the production wrapper: the shape check must match,
+        # and m0014 consumes the seeded row (no 'admin' group exists
+        # post-m0020, so no replacement is inserted).
+        await app_state.state.model.init_db()
+        async with aiosqlite.connect(str(app_state.state.db.db_path)) as db:
+            cursor = await db.execute(
+                "SELECT COUNT(*) FROM acl_entries WHERE resource = '/groups'"
+            )
+            assert (await cursor.fetchone())[0] == 0
+
+    async def test_m0021_legacy_groups_shape_replaced_via_wrapper(
+        self, temp_data_dir, app_state
+    ):
+        """m0021's legacy-shape check sees wrapper rows and replaces the
+        m0014 seed with the manage-groups pair (regression: row slicing
+        crashed on the wrapper, boot-looping upgrades)."""
+        await app_state.state.model.init_db()
+        async with aiosqlite.connect(str(app_state.state.db.db_path)) as db:
+            cursor = await db.execute(
+                "SELECT id FROM groups WHERE name = 'admins'"
+            )
+            row = await cursor.fetchone()
+            if row is None:
+                await db.execute(
+                    "INSERT INTO groups (id, name) VALUES ('g-admins',"
+                    " 'admins')"
+                )
+                admins_id = "g-admins"
+            else:
+                admins_id = row[0]
+            await db.execute(
+                "DELETE FROM acl_entries WHERE resource = '/groups'"
+            )
+            # The m0014 output shape: single group-principal Allow
+            # create at position 0.
+            await db.execute(
+                "INSERT INTO acl_entries"
+                " (resource, position, action, principal_type, user_id,"
+                "  group_id, system_principal, permission)"
+                " VALUES ('/groups', 0, ?, ?, NULL, ?, NULL, 'create')",
+                (ACTION_ALLOW, PRINCIPAL_GROUP, admins_id),
+            )
+            await db.commit()
+        await self._forget(app_state, 21)
+
+        # Through the production wrapper: the legacy shape must be
+        # recognized and replaced with the admins Allow + everyone Deny.
+        await app_state.state.model.init_db()
+        async with aiosqlite.connect(str(app_state.state.db.db_path)) as db:
+            cursor = await db.execute(
+                "SELECT position, action, principal_type, group_id,"
+                " system_principal, permission FROM acl_entries"
+                " WHERE resource = '/groups' ORDER BY position"
+            )
+            assert list(await cursor.fetchall()) == [
+                (
+                    0,
+                    ACTION_ALLOW,
+                    PRINCIPAL_GROUP,
+                    admins_id,
+                    None,
+                    "manage-groups",
+                ),
+                (1, ACTION_DENY, PRINCIPAL_SYSTEM, None, SYSTEM_EVERYONE, "*"),
+            ]
 
 
 class TestM0022WorkspacePermissionRenames:

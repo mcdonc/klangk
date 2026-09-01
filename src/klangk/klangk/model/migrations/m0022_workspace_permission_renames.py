@@ -93,6 +93,22 @@ async def apply(db) -> None:
     await _grant_lifecycle_trio(db)
 
 
+_LIFECYCLE_TRIO = (
+    "start-workspace",
+    "stop-workspace",
+    "restart-workspace",
+)
+
+
+def _missing_lifecycle_perms(held: set) -> list[str]:
+    """The trio permissions the group doesn't already hold."""
+    return [
+        perm
+        for perm in _LIFECYCLE_TRIO
+        if "*" not in held and perm not in held
+    ]
+
+
 async def _grant_lifecycle_trio(db) -> None:
     """Insert start/stop/restart-workspace for every existing coders-*
     / collaborators-* role group's workspace resource (seeded only for
@@ -120,13 +136,7 @@ async def _grant_lifecycle_trio(db) -> None:
             (resource,),
         )
         pos = (await cursor2.fetchone())[0]
-        for perm in (
-            "start-workspace",
-            "stop-workspace",
-            "restart-workspace",
-        ):
-            if perm in held or "*" in held:
-                continue
+        for perm in _missing_lifecycle_perms(held):
             pos += 1
             await db.execute(
                 "INSERT INTO acl_entries"

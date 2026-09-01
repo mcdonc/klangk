@@ -64,15 +64,80 @@ RESOURCES = {
 def _is_legacy_groups_shape(rows) -> bool:
     """Whether /groups holds exactly the m0014-rewritten seed: a single
     ``Allow create`` row for a group principal at position 0."""
-    return bool(
-        len(rows) == 1
-        and rows[0][0] == 0  # position
-        and rows[0][1] == ACTION_ALLOW
-        and rows[0][2] == PRINCIPAL_GROUP
-        and rows[0][3] is None  # user_id
-        and rows[0][4] is not None  # group_id
-        and rows[0][5] is None  # system_principal
-        and rows[0][6] == "create"
+    return len(rows) == 1 and _is_legacy_row_shape(rows[0])
+
+
+def _is_legacy_row_shape(row) -> bool:
+    """The single-row seed shape: ``Allow create`` for a group principal
+    at position 0.
+
+    Integer-indexed compare: rows may be the db.Row wrapper (no slice
+    support) on the production connection path.
+    """
+    return (
+        (row[0], row[1], row[2], row[3])
+        == (0, ACTION_ALLOW, PRINCIPAL_GROUP, None)
+        and row[4] is not None  # group_id
+        and (row[5], row[6]) == (None, "create")
+    )
+
+
+def _resource_acl_action(resource: str, rows) -> str:
+    """What to do with a resource's existing ACL rows: ``fresh`` (none),
+    ``replace`` (the well-known m0014 /groups seed), or ``skip``
+    (operator pre-staged/customized rows)."""
+    if not rows:
+        return "fresh"
+    if resource == "/groups" and _is_legacy_groups_shape(rows):
+        return "replace"
+    return "skip"
+
+
+async def _migrate_resource_acl(
+    db, resource: str, permission: str, admins_id: str | None
+) -> None:
+    """Clear the replaceable rows and write the admins Allow + everyone
+    Deny pair for *resource*."""
+    cursor = await db.execute(
+        "SELECT position, action, principal_type, user_id, group_id,"
+        " system_principal, permission FROM acl_entries"
+        " WHERE resource = ?",
+        (resource,),
+    )
+    rows = list(await cursor.fetchall())
+    action = _resource_acl_action(resource, rows)
+    if action == "skip":
+        # Operator pre-staged/customized rows; don't disturb
+        # them (manual step documented in the changelog).
+        return
+    if action == "replace":
+        # The well-known m0014 seed: replace it — nothing checks
+        # `create` on /groups anymore, so leaving it would lock
+        # admins out of group management (#2945 review).
+        await db.execute(
+            "DELETE FROM acl_entries WHERE resource = ?",
+            (resource,),
+        )
+    if admins_id is not None:
+        await db.execute(
+            "INSERT INTO acl_entries"
+            " (resource, position, action, principal_type, user_id,"
+            "  group_id, system_principal, permission)"
+            " VALUES (?, 0, ?, ?, NULL, ?, NULL, ?)",
+            (
+                resource,
+                ACTION_ALLOW,
+                PRINCIPAL_GROUP,
+                admins_id,
+                permission,
+            ),
+        )
+    await db.execute(
+        "INSERT INTO acl_entries"
+        " (resource, position, action, principal_type, user_id,"
+        "  group_id, system_principal, permission)"
+        " VALUES (?, 1, ?, ?, NULL, NULL, ?, '*')",
+        (resource, ACTION_DENY, PRINCIPAL_SYSTEM, SYSTEM_EVERYONE),
     )
 
 
@@ -89,47 +154,7 @@ async def apply(db) -> None:
     admins_id = row[0] if row is not None else None
 
     for resource, permission in RESOURCES.items():
-        cursor = await db.execute(
-            "SELECT position, action, principal_type, user_id, group_id,"
-            " system_principal, permission FROM acl_entries"
-            " WHERE resource = ?",
-            (resource,),
-        )
-        rows = list(await cursor.fetchall())
-        if rows:
-            if resource == "/groups" and _is_legacy_groups_shape(rows):
-                # The well-known m0014 seed: replace it — nothing checks
-                # `create` on /groups anymore, so leaving it would lock
-                # admins out of group management (#2945 review).
-                await db.execute(
-                    "DELETE FROM acl_entries WHERE resource = ?",
-                    (resource,),
-                )
-            else:
-                # Operator pre-staged/customized rows; don't disturb
-                # them (manual step documented in the changelog).
-                continue
-        if admins_id is not None:
-            await db.execute(
-                "INSERT INTO acl_entries"
-                " (resource, position, action, principal_type, user_id,"
-                "  group_id, system_principal, permission)"
-                " VALUES (?, 0, ?, ?, NULL, ?, NULL, ?)",
-                (
-                    resource,
-                    ACTION_ALLOW,
-                    PRINCIPAL_GROUP,
-                    admins_id,
-                    permission,
-                ),
-            )
-        await db.execute(
-            "INSERT INTO acl_entries"
-            " (resource, position, action, principal_type, user_id,"
-            "  group_id, system_principal, permission)"
-            " VALUES (?, 1, ?, ?, NULL, NULL, ?, '*')",
-            (resource, ACTION_DENY, PRINCIPAL_SYSTEM, SYSTEM_EVERYONE),
-        )
+        await _migrate_resource_acl(db, resource, permission, admins_id)
 
 
 migration = Migration(21, "0021_first_class_resource_acls", apply)

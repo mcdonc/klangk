@@ -36,6 +36,24 @@ _ROLE_GROUP_NAME_RE = re.compile(
 _WORKSPACE_ROLE = "workspace-role"
 
 
+def _workspace_role_target(
+    name: str, ws_names: dict[str, str]
+) -> tuple[str, str] | None:
+    """``(role, workspace_id)`` when *name* is a seeded role group of a
+    real workspace; None otherwise (collision skip, #2750)."""
+    m = _ROLE_GROUP_NAME_RE.match(name)
+    if m is None:
+        return None
+    role, ws_id = m.group(1), m.group(2)
+    try:
+        uuid_mod.UUID(ws_id)
+    except ValueError:
+        return None  # suffix is not a UUID — human-named, skip
+    if ws_id not in ws_names:
+        return None  # collision: pattern-matching human group, skip
+    return role, ws_id
+
+
 async def apply(db) -> None:
     await db.execute(
         "ALTER TABLE groups ADD COLUMN source TEXT NOT NULL DEFAULT 'manual'"
@@ -50,16 +68,10 @@ async def apply(db) -> None:
     ws_names = {row[0]: row[1] for row in await ws_cursor.fetchall()}
     for row in rows:
         group_id, name = row[0], row[1]
-        m = _ROLE_GROUP_NAME_RE.match(name)
-        if m is None:
+        target = _workspace_role_target(name, ws_names)
+        if target is None:
             continue
-        role, ws_id = m.group(1), m.group(2)
-        try:
-            uuid_mod.UUID(ws_id)
-        except ValueError:
-            continue  # suffix is not a UUID — human-named, skip
-        if ws_id not in ws_names:
-            continue  # collision: pattern-matching human group, skip
+        role, ws_id = target
         await db.execute(
             "UPDATE groups SET source = ?, description = ? WHERE id = ?",
             (
