@@ -5,6 +5,12 @@ on:
   push:
     branches: [release/**]
   pull_request:
+    paths-ignore:
+      # Root-only docs/meta files can never affect what this workflow
+      # tests — a PR changing only these starts no run at all (#2957).
+      - "*.md"
+      - "zensical.toml"
+      - "bootstrap"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}

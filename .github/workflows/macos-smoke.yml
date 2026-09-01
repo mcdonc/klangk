@@ -20,6 +20,12 @@ on:
   push:
     branches: [release/**]
   pull_request:
+    paths-ignore:
+      # Root-only docs/meta files can never affect what this workflow
+      # tests — a PR changing only these starts no run at all (#2957).
+      - "*.md"
+      - "zensical.toml"
+      - "bootstrap"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
@@ -35,6 +41,9 @@ jobs:
       - uses: dorny/paths-filter@v4
         id: filter
         with:
+          # some-with-excludes: see backend-tests.yml (#2957) — the default
+          # 'some' quantifier ignores negated patterns.
+          predicate-quantifier: some-with-excludes
           filters: |
             backend:
               - 'src/klangk/**'
@@ -42,6 +51,7 @@ jobs:
               - 'features/**'
               - 'features.yaml'
               - '.github/workflows/macos-smoke.yml'
+              - '!**/*.md'
 
       - uses: actions/setup-python@v6
         if: steps.filter.outputs.backend == 'true'
