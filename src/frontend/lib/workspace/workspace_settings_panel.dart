@@ -29,7 +29,8 @@ class WorkspaceSettingsPanel extends StatefulWidget {
 
   /// #2939: whether the user holds `restart-workspace` — hides the
   /// "Restart now" action for members who can edit settings but cannot
-  /// restart the container (custom ACLs).
+  /// restart the container (custom ACLs). The pending-restart *notice*
+  /// still shows (the information matters); only the action hides.
   final bool canRestart;
 
   const WorkspaceSettingsPanel({
@@ -203,7 +204,7 @@ class WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
       allowAutostart:
           context.select<AuthService, bool>((a) => a.allowAutostart),
       saveMessage: _saveMessage,
-      pendingRestart: _pendingRestart && widget.canRestart,
+      pendingRestart: _pendingRestart,
       netfilterEnabled:
           context.select<AuthService, bool>((a) => a.netfilterEnabled),
       onSave: _saveSettings,
@@ -324,7 +325,8 @@ class _SettingsForm extends StatefulWidget {
 
   /// #2939: whether the user holds `restart-workspace` — hides the
   /// "Restart now" action for members who can edit settings but cannot
-  /// restart the container (custom ACLs).
+  /// restart the container (custom ACLs). The pending-restart *notice*
+  /// still shows (the information matters); only the action hides.
   final bool canRestart;
   final bool netfilterEnabled;
   final Future<void> Function(Map<String, dynamic>) onSave;

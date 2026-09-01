@@ -232,26 +232,30 @@ trigger, the permission it checks, the resource, who holds it by
 default (the seeded role groups; owners hold `*`), and when it is
 re-checked:
 
-| WS trigger                                       | Permission                                          | Resource           | Default holders (besides owner)   | Re-checked                                                                                      |
-| ------------------------------------------------ | --------------------------------------------------- | ------------------ | --------------------------------- | ----------------------------------------------------------------------------------------------- |
-| `workspace_connect` handshake (open workspace)   | `terminal`                                          | `/workspaces/{id}` | coders, collaborators, spectators | once per connect; revocation answers the next connect with machine-readable `forbidden` (#2891) |
-| `restart_container` message                      | `restart-workspace`                                 | `/workspaces/{id}` | coders, collaborators             | live, per message                                                                               |
-| exec channel (`klangk exec` / sync)              | `exec-and-sync`                                     | `/workspaces/{id}` | coders, collaborators             | live, per message (#2706)                                                                       |
-| own terminal creation                            | `code-in-isolation`                                 | `/workspaces/{id}` | coders, collaborators             | live, per message                                                                               |
-| `share_window` (share an own terminal)           | `share-terminals`                                   | `/workspaces/{id}` | collaborators                     | live, per message; unsharing needs no permission (#2875)                                        |
-| `join_shared_terminal` / `list_shared_terminals` | `spectate-on-shared-terminals`                      | `/workspaces/{id}` | coders, collaborators, spectators | live, per message                                                                               |
-| typing into a shared terminal                    | `code-in-shared-terminals` **or** `share-terminals` | `/workspaces/{id}` | collaborators                     | live, per message                                                                               |
-| targeting/closing others' shared terminals       | `share-terminals`                                   | `/workspaces/{id}` | collaborators                     | live, per message                                                                               |
-| service-health fan-out (per transition)          | `monitor-workspace`                                 | `/workspaces/{id}` | coders, collaborators, spectators | per fan-out (revocation stops delivery on the next frame)                                       |
-| service-health snapshot at registration          | `monitor-workspace`                                 | `/workspaces/{id}` | coders, collaborators, spectators | per snapshot                                                                                    |
-| consent-decider WS, workspace-scoped             | `egress-consent`                                    | `/workspaces/{id}` | coders, collaborators             | once at registration (handshake)                                                                |
-| consent-decider WS, deploy-wide (drain)          | `manage-server-schedule`                            | `/server`          | admins group                      | once at registration (handshake)                                                                |
+| WS trigger                                                    | Permission                                          | Resource           | Default holders (besides owner)   | Re-checked                                                                                          |
+| ------------------------------------------------------------- | --------------------------------------------------- | ------------------ | --------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `workspace_connect` handshake (open workspace)                | `terminal`                                          | `/workspaces/{id}` | coders, collaborators, spectators | once per connect; revocation answers the next connect with machine-readable `forbidden` (#2891)     |
+| `restart_container` message                                   | `restart-workspace`                                 | `/workspaces/{id}` | coders, collaborators             | live, per message                                                                                   |
+| exec channel (`klangk exec` / sync)                           | `exec-and-sync`                                     | `/workspaces/{id}` | coders, collaborators             | live per `exec_start`; input into an in-flight session is not re-checked (one-shot channel)         |
+| own terminal creation                                         | `code-in-isolation`                                 | `/workspaces/{id}` | coders, collaborators             | live, per message                                                                                   |
+| `share_window` (share an own terminal)                        | `share-terminals`                                   | `/workspaces/{id}` | collaborators                     | live, per message; unsharing needs no permission (#2875)                                            |
+| `join_shared_terminal` / `list_shared_terminals`              | `spectate-on-shared-terminals`                      | `/workspaces/{id}` | coders, collaborators, spectators | live, per message                                                                                   |
+| typing into a shared terminal                                 | `code-in-shared-terminals` **or** `share-terminals` | `/workspaces/{id}` | collaborators                     | once at join — frozen into the session's read-only flag, enforced per keystroke until detach/rejoin |
+| creating/targeting/closing shared terminals (incl. one's own) | `share-terminals`                                   | `/workspaces/{id}` | collaborators                     | live, per message                                                                                   |
+| service-health fan-out (per transition)                       | `monitor-workspace`                                 | `/workspaces/{id}` | coders, collaborators, spectators | per fan-out (revocation stops delivery on the next frame)                                           |
+| service-health snapshot at registration                       | `monitor-workspace`                                 | `/workspaces/{id}` | coders, collaborators, spectators | per snapshot                                                                                        |
+| consent-decider WS, workspace-scoped                          | `egress-consent`                                    | `/workspaces/{id}` | coders, collaborators             | once at registration (handshake)                                                                    |
+| consent-decider WS, deploy-wide (drain)                       | `manage-server-schedule`                            | `/server`          | admins group                      | once at registration (handshake)                                                                    |
 
 Audit conclusions (#2939): all 33 permission names in the vocabulary
 are enforced somewhere (no dead names); every WS gate's permission
-matches a seeded grant path; "live" rows re-resolve principals on
-every message, so mid-session revocation takes effect at the next
-message. The UI-side counterpart: affordances for WS-gated actions
+matches a seeded grant path. Revocation timing differs per row: the
+"live, per message" rows re-resolve principals on every message, so
+mid-session revocation bites at the next message (revoking
+`exec-and-sync` mid-session is e2e-tested, #2706); the once-per-
+handshake rows (connect, deciders) take effect on the next
+connection; the shared-terminal write gate takes effect on the next
+join. The UI-side counterpart: affordances for WS-gated actions
 (share/spectate buttons, the restart button) follow the same
 permissions via the workspace's `my-permissions` set.
 

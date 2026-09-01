@@ -212,7 +212,6 @@ void main() {
           restarting: false,
           stopReason: 'Container stopped',
           canRestart: false,
-          onRestart: () => fail('restart must not be reachable'),
           onBack: () {},
         ),
       ));

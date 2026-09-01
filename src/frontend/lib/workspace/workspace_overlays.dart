@@ -78,7 +78,7 @@ Widget buildContainerStoppedOverlay({
   required bool restarting,
   required String stopReason,
   required bool canRestart,
-  required VoidCallback onRestart,
+  VoidCallback? onRestart,
   required VoidCallback onBack,
 }) {
   return Container(
