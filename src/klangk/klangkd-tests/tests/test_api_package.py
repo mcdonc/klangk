@@ -307,9 +307,18 @@ def test_all_permissions_single_source():
     assert "change-acls" in api.ALL_PERMISSIONS
     # #2883's egress-consent gate must be reportable the same way.
     assert "egress-consent" in api.ALL_PERMISSIONS
-    # #2923's container-events history gate must be reportable the
-    # same way (the admin Events tab keys off /my-permissions).
-    assert "container-events" in api.ALL_PERMISSIONS
+    # #2923's events history gate (renamed `manage-events` in #2940)
+    # must be reportable the same way (the admin Events tab keys off
+    # /my-permissions).
+    assert "manage-events" in api.ALL_PERMISSIONS
+    # #2940's per-tab admin permissions likewise.
+    for name in (
+        "manage-users",
+        "manage-invitations",
+        "manage-server-schedule",
+        "manage-acls",
+    ):
+        assert name in api.ALL_PERMISSIONS
 
 
 def test_static_resources_single_source():

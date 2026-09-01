@@ -152,11 +152,11 @@ class AuthService extends ChangeNotifier {
   /// see everything.
   bool get canAdminSection =>
       isAdmin ||
-      hasPermission('/admin/container-events', 'container-events') ||
-      hasPermission('/admin/users', 'view-users') ||
-      hasPermission('/admin/invitations', 'view-invitations') ||
-      hasPermission('/admin/server', 'view-server-schedule') ||
-      hasPermission('/admin/acl', 'change-acls');
+      hasPermission('/admin/users', 'manage-users') ||
+      hasPermission('/admin/invitations', 'manage-invitations') ||
+      hasPermission('/admin/server', 'manage-server-schedule') ||
+      hasPermission('/admin/container-events', 'manage-events') ||
+      hasPermission('/admin/acl', 'manage-acls');
 
   /// Check if the user has a specific permission on a resource.
   bool hasPermission(String resource, String permission) {

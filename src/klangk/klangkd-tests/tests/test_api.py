@@ -14233,7 +14233,7 @@ class TestAdminServerSchedule:
 
 class TestContainerEventsAPI:
     """#2923: the paged container-events history read + its dedicated
-    ``container-events`` permission gate."""
+    ``manage-events`` permission gate."""
 
     async def _admin_headers(self, client):
         resp = await client.post(
@@ -14377,7 +14377,7 @@ class TestContainerEventsAPI:
             "/admin/container-events",
             0,
             model.ACTION_ALLOW,
-            "container-events",
+            "manage-events",
             model.PRINCIPAL_USER,
             user_id=user["id"],
         )
@@ -14399,7 +14399,7 @@ class TestContainerEventsAPI:
         # frontend can show the tab to the delegated auditor.
         resp = await client.get("/api/v1/my-permissions", headers=headers)
         perms = resp.json()["permissions"]
-        assert "container-events" in perms.get("/admin/container-events", [])
+        assert "manage-events" in perms.get("/admin/container-events", [])
 
     async def test_admin_my_permissions_lists_resource(
         self, client, app, admin_user
@@ -14407,7 +14407,7 @@ class TestContainerEventsAPI:
         headers = await self._admin_headers(client)
         resp = await client.get("/api/v1/my-permissions", headers=headers)
         perms = resp.json()["permissions"]
-        assert "container-events" in perms.get("/admin/container-events", [])
+        assert "manage-events" in perms.get("/admin/container-events", [])
 
 
 class TestBranchGaps2834:
@@ -15038,12 +15038,15 @@ class TestNoCoverAudit2910Part3:
 
 
 class TestAdminTabPermissions:
-    """#2940: per-tab /admin permissions replace the monolithic admin gate.
+    """#2940: one `manage-<thing>` permission per admin tab.
 
     Admins keep full access via the seeded /admin Allow * wildcard; a
-    delegated user gets exactly what their ACE on the sub-resource grants
-    (the more-specific path wins the ACL walk over /admin's Deny
-    everyone) — the same shape as the container-events auditor (#2923).
+    delegated user gets exactly the tab their ACE on the sub-resource
+    grants (the same shape as the read-only Events auditor, #2923).
+    A tab permission covers every action of that tab — there are no
+    per-action splits. `manage-acls` is root-equivalent by design: it
+    can rewrite ACLs on any resource, including /admin and / — pinned
+    explicitly below.
     """
 
     async def _admin_headers(self, client):
@@ -15071,13 +15074,14 @@ class TestAdminTabPermissions:
     async def test_wildcard_admin_keeps_full_access(
         self, client, app, admin_user
     ):
-        """The seeded /admin Allow * satisfies every new tab permission."""
+        """The seeded /admin Allow * satisfies every tab permission."""
         headers = await self._admin_headers(client)
         for path in (
             "/api/v1/admin/users",
             "/api/v1/admin/invitations",
             "/api/v1/admin/acl/tree",
             "/api/v1/admin/server/schedule",
+            "/api/v1/admin/container-events",
         ):
             resp = await client.get(path, headers=headers)
             assert resp.status_code == 200, (path, resp.text)
@@ -15089,66 +15093,37 @@ class TestAdminTabPermissions:
             "/api/v1/admin/invitations",
             "/api/v1/admin/acl/tree",
             "/api/v1/admin/server/schedule",
+            "/api/v1/admin/container-events",
         ):
             resp = await client.get(path, headers=headers)
             assert resp.status_code == 403, path
 
-    async def test_delegated_view_users_reads_but_cannot_mutate(
+    async def test_delegated_manage_users_covers_the_whole_tab(
         self, client, app, user, app_state
     ):
-        await self._grant(app_state, "/admin/users", "view-users", user["id"])
+        await self._grant(
+            app_state, "/admin/users", "manage-users", user["id"]
+        )
         headers = await _auth_headers(client)
 
         resp = await client.get("/api/v1/admin/users", headers=headers)
         assert resp.status_code == 200, resp.text
 
-        # Every other users-tab action needs its own permission.
-        resp = await client.post(
-            "/api/v1/admin/users",
-            headers=headers,
-            json={"email": "new@example.com", "password": "P@ssw0rdabc"},
-        )
-        assert resp.status_code == 403
-        resp = await client.delete(
-            f"/api/v1/admin/users/{user['id']}", headers=headers
-        )
-        assert resp.status_code == 403
-        resp = await client.patch(
-            f"/api/v1/admin/users/{user['id']}",
-            headers=headers,
-            json={"handle": "nope"},
-        )
-        assert resp.status_code == 403
-        resp = await client.post(
-            f"/api/v1/admin/users/{user['id']}/unlockout", headers=headers
-        )
-        assert resp.status_code == 403
-
-    async def test_view_sessions_is_separate_from_view_users(
-        self, client, app, user, app_state
-    ):
-        # Session rows leak source IPs and user agents — a view-users
-        # holder must not see them without an explicit view-sessions ACE.
-        await self._grant(app_state, "/admin/users", "view-users", user["id"])
-        headers = await _auth_headers(client)
-        resp = await client.get(
-            f"/api/v1/admin/users/{user['id']}/sessions", headers=headers
-        )
-        assert resp.status_code == 403
-
-        await self._grant(
-            app_state, "/admin/users", "view-sessions", user["id"], priority=1
-        )
+        # Sessions (IP/UA rows) are part of the tab, not a separate gate.
         resp = await client.get(
             f"/api/v1/admin/users/{user['id']}/sessions", headers=headers
         )
         assert resp.status_code == 200, resp.text
 
-    async def test_delegation_does_not_leak_across_tabs(
-        self, client, app, user, app_state
-    ):
-        await self._grant(app_state, "/admin/users", "view-users", user["id"])
-        headers = await _auth_headers(client)
+        # Writes pass the gate too — one permission, whole tab.
+        resp = await client.patch(
+            f"/api/v1/admin/users/{user['id']}",
+            headers=headers,
+            json={"handle": "helpdesk"},
+        )
+        assert resp.status_code == 200, resp.text
+
+        # ...and nothing outside the tab.
         for path in (
             "/api/v1/admin/invitations",
             "/api/v1/admin/acl/tree",
@@ -15157,32 +15132,17 @@ class TestAdminTabPermissions:
             resp = await client.get(path, headers=headers)
             assert resp.status_code == 403, path
 
-    async def test_invitation_view_and_create_split(
+    async def test_delegated_manage_invitations_covers_send_and_list(
         self, client, app, user, app_state
     ):
         await self._grant(
-            app_state, "/admin/invitations", "view-invitations", user["id"]
+            app_state, "/admin/invitations", "manage-invitations", user["id"]
         )
         headers = await _auth_headers(client)
+
         resp = await client.get("/api/v1/admin/invitations", headers=headers)
         assert resp.status_code == 200, resp.text
 
-        # view-invitations is read-only: creating needs create-invitation
-        # (which also covers resend — it re-issues an invitation).
-        resp = await client.post(
-            "/api/v1/admin/invitations",
-            headers=headers,
-            json={"email": "testuser@example.com"},
-        )
-        assert resp.status_code == 403
-
-        await self._grant(
-            app_state,
-            "/admin/invitations",
-            "create-invitation",
-            user["id"],
-            priority=1,
-        )
         # Past the gate: 400 because the email belongs to an existing
         # user (no email side effect on this branch).
         resp = await client.post(
@@ -15193,46 +15153,104 @@ class TestAdminTabPermissions:
         assert resp.status_code == 400
         assert "already exists" in resp.json()["detail"]
 
-    async def test_change_acls_gate_on_acl_editor(
-        self, client, app, user, app_state
-    ):
-        await self._grant(app_state, "/admin/acl", "change-acls", user["id"])
-        headers = await _auth_headers(client)
-        resp = await client.get("/api/v1/admin/acl/tree", headers=headers)
-        assert resp.status_code == 200, resp.text
-
-        # The editor permission does not open other tabs.
         resp = await client.get("/api/v1/admin/users", headers=headers)
         assert resp.status_code == 403
 
-    async def test_schedule_permissions_split_view_and_manage(
+    async def test_delegated_manage_server_schedule_covers_create_and_list(
         self, client, app, user, app_state
     ):
         await self._grant(
-            app_state, "/admin/server", "view-server-schedule", user["id"]
+            app_state, "/admin/server", "manage-server-schedule", user["id"]
         )
         headers = await _auth_headers(client)
+
         resp = await client.get(
             "/api/v1/admin/server/schedule", headers=headers
         )
         assert resp.status_code == 200, resp.text
 
-        # Read-only: creating or cancelling needs manage-server-schedule.
         resp = await client.post(
             "/api/v1/admin/server/schedule",
             headers=headers,
             json={"action": "stop", "in_seconds": 3600},
         )
+        assert resp.status_code == 200, resp.text
+        schedule_id = resp.json()["id"]
+
+        resp = await client.delete(
+            f"/api/v1/admin/server/schedule/{schedule_id}", headers=headers
+        )
+        assert resp.status_code == 200, resp.text
+
+    async def test_manage_acls_is_root_equivalent_by_design(
+        self, client, app, user, app_state
+    ):
+        """The documented sharp edge (#2940): a manage-acls holder can
+        rewrite ACLs on ANY resource — including collections like
+        /workspaces — so the permission is root-equivalent and granted
+        only to administrators. This pins that deliberately."""
+        await self._grant(app_state, "/admin/acl", "manage-acls", user["id"])
+        headers = await _auth_headers(client)
+
+        resp = await client.get("/api/v1/admin/acl/tree", headers=headers)
+        assert resp.status_code == 200, resp.text
+
+        # Read the current entries, append a self-grant, replace.
+        resp = await client.get(
+            "/api/v1/admin/acl/resource?resource=/workspaces",
+            headers=headers,
+        )
+        assert resp.status_code == 200, resp.text
+        entries = [
+            {
+                "action": e["action"],
+                "principal_type": e["principal_type"],
+                "permission": e["permission"],
+                "user_id": e.get("user_id"),
+                "group_id": e.get("group_id"),
+                "system_principal": e.get("system_principal"),
+            }
+            for e in resp.json()
+        ]
+        entries.append(
+            {
+                "action": 1,
+                "principal_type": 1,
+                "permission": "*",
+                "user_id": user["id"],
+                "group_id": None,
+                "system_principal": None,
+            }
+        )
+        resp = await client.put(
+            "/api/v1/admin/acl/resource?resource=/workspaces",
+            headers=headers,
+            json=entries,
+        )
+        assert resp.status_code == 200, resp.text
+
+        # The self-grant took effect — root over the collection.
+        resp = await client.post(
+            "/api/v1/workspaces",
+            headers=headers,
+            json={"name": "escalated-ws"},
+        )
+        assert resp.status_code == 200, resp.text
+
+        # manage-acls alone opens no other tab.
+        resp = await client.get("/api/v1/admin/users", headers=headers)
         assert resp.status_code == 403
 
     async def test_my_permissions_surfaces_tab_names(
         self, client, app, user, app_state
     ):
-        await self._grant(app_state, "/admin/users", "view-users", user["id"])
+        await self._grant(
+            app_state, "/admin/users", "manage-users", user["id"]
+        )
         headers = await _auth_headers(client)
         resp = await client.get("/api/v1/my-permissions", headers=headers)
         perms = resp.json()["permissions"]
-        assert "view-users" in perms.get("/admin/users", [])
+        assert "manage-users" in perms.get("/admin/users", [])
 
     async def test_admin_my_permissions_lists_all_tab_names(
         self, client, app, admin_user
@@ -15241,16 +15259,11 @@ class TestAdminTabPermissions:
         resp = await client.get("/api/v1/my-permissions", headers=headers)
         perms = resp.json()["permissions"]
         for name in (
-            "view-users",
-            "create-user",
-            "edit-user",
-            "delete-user",
-            "view-sessions",
-            "view-invitations",
-            "create-invitation",
-            "delete-invitation",
-            "view-server-schedule",
+            "manage-users",
+            "manage-invitations",
             "manage-server-schedule",
+            "manage-events",
         ):
             assert name in perms.get("/admin", [])
-        assert "change-acls" in perms.get("/admin/acl", [])
+        assert "manage-acls" in perms.get("/admin/acl", [])
+        assert "manage-events" in perms.get("/admin/container-events", [])

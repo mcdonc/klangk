@@ -149,37 +149,49 @@ all, #2886).
 
 Not every permission is checked on a workspace resource:
 
-| Permission                                                   | Where it is checked                                  | Controls                                                                                                                                         |
-| ------------------------------------------------------------ | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `create`                                                     | `/workspaces`                                        | Create/import workspaces                                                                                                                         |
-| `admin`                                                      | `/admin`                                             | Legacy catch-all for instance admin functions — still gates the `/admin/groups*` endpoints (#2941 removes them) and the drain/consent decider WS |
-| `container-events`                                           | `/admin/container-events`                            | Read the container start/stop history: `GET /admin/container-events` and the admin Events tab (#2923)                                            |
-| `view-users`, `create-user`, `edit-user`, `delete-user`      | `/admin/users` (and `/admin/users/{id}` via walk-up) | Users tab: list users and their workspaces, create, edit (+ unlock), delete (#2940)                                                              |
-| `view-sessions`                                              | `/admin/users`                                       | Read a user's active login sessions (source IPs, user agents) — deliberately separate from `view-users` (#2940)                                  |
-| `view-invitations`, `create-invitation`, `delete-invitation` | `/admin/invitations`                                 | Invitations tab: list, send (+ resend), revoke (#2940)                                                                                           |
-| `change-acls`                                                | `/admin/acl`                                         | Read and rewrite ACL entries via the Access Control browser (`GET/PUT /admin/acl/*`) (#2940)                                                     |
-| `view-server-schedule`, `manage-server-schedule`             | `/admin/server`                                      | Server stop/recycle schedules: list vs create/cancel (#2940)                                                                                     |
+| Permission               | Where it is checked                                  | Controls                                                                                                                                         |
+| ------------------------ | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `create`                 | `/workspaces`                                        | Create/import workspaces                                                                                                                         |
+| `admin`                  | `/admin`                                             | Legacy catch-all for instance admin functions — still gates the `/admin/groups*` endpoints (#2941 removes them) and the drain/consent decider WS |
+| `manage-events`          | `/admin/container-events`                            | Read the container start/stop history: `GET /admin/container-events` and the admin Events tab (#2923; renamed from `container-events` in #2940)  |
+| `manage-users`           | `/admin/users` (and `/admin/users/{id}` via walk-up) | The whole Users tab: list users and their workspaces, create, edit, unlock, delete, and read active login sessions (#2940)                       |
+| `manage-invitations`     | `/admin/invitations`                                 | The whole Invitations tab: list, send, resend, revoke (#2940)                                                                                    |
+| `manage-acls`            | `/admin/acl`                                         | The Access Control browser: read and rewrite ACL entries on **any** resource via `GET/PUT /admin/acl/*` (#2940) — root-equivalent, see below     |
+| `manage-server-schedule` | `/admin/server`                                      | Server stop/recycle schedules: list, create, cancel (#2940)                                                                                      |
+
+Each admin tab has **one** permission covering all of its actions — there
+are no per-action splits: `manage-users` grants list + create + edit +
+delete + sessions, not a read-only view. The read-only exception is
+`manage-events`, which only pages through history.
 
 `PUT /admin/acl/resource` additionally requires `change-acls` on the
 target when that target is an individual workspace (`/workspaces/{id}`)
 — the same resource-level gate as `PUT /workspaces/{id}/acl`, so a raw
 ACE rewrite of a workspace always carries the workspace's own grant.
 Collection and static resources (`/`, `/workspaces`, `/groups`,
-`/admin/*`) are governed by the `change-acls` check on `/admin/acl`
+`/admin/*`) are governed by the `manage-acls` check on `/admin/acl`
 (#2940).
 
-Every per-tab admin permission follows the same delegation recipe as
-`container-events` (#2923, generalized in #2940): the admin group holds
-it via its `/admin` `*` wildcard, so admins see every tab out of the
-box. To delegate a slice of the admin section to a non-admin, add an
-`Allow` ACE for the permission on its sub-resource (Admin → Access
-Control) — the more-specific resource wins the ACL walk ahead of the
-`/admin` Deny-everyone entry. A delegated user then gets the app-bar
-admin icon and the admin section showing exactly the tabs their ACEs
-grant (e.g. `view-users` on `/admin/users` alone: the Users tab,
-read-only). The Groups tab is the exception: it still rides the legacy
-`/admin/groups` endpoints behind the full-admin gate until #2941
-removes them in favor of `/groups`.
+**`manage-acls` is root-equivalent.** A holder can rewrite ACLs on any
+resource — including `/admin` and `/` — so granting it to a principal
+is granting instance-wide control, exactly like adding them to the
+admins group. Grant it only to administrators. (Until the workspaces
+tranche renames the workspace-scoped `change-acls` to `share-advanced`,
+the two names coexist: `change-acls` on a workspace resource is the
+workspace-level gate; `manage-acls` is the global editor.)
+
+Every admin tab permission follows the same delegation recipe as
+`manage-events` (#2923, generalized in #2940): the admin group holds it
+via its `/admin` `*` wildcard, so admins see every tab out of the box.
+To delegate a whole tab to a non-admin, add an `Allow` ACE for the
+permission on its sub-resource (Admin → Access Control) — the
+more-specific resource wins the ACL walk ahead of the `/admin`
+Deny-everyone entry. A delegated user then gets the app-bar admin icon
+and the admin section showing exactly the tabs their ACEs grant (e.g.
+`manage-users` on `/admin/users` alone: the Users tab, all of it). The
+Groups tab is the exception: it still rides the legacy `/admin/groups`
+endpoints behind the full-admin gate until #2941 removes them in favor
+of `/groups`.
 
 ## Checking Your Permissions
 

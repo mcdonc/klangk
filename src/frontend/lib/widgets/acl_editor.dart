@@ -35,7 +35,7 @@ class AclEditorState extends State<AclEditor> {
 
   /// Workspace-sphere permissions: the curated dropdown for workspace
   /// ACLs (the Sharing tab's Advanced editor). Admin-sphere strings
-  /// (`admin`, `manage_users`, …) are deliberately absent — they are
+  /// (`admin`, `manage-users`, …) are deliberately absent — they are
   /// meaningless on `/workspaces/{id}`.
   static const List<String> workspacePermissions = [
     'view',
@@ -59,12 +59,18 @@ class AclEditorState extends State<AclEditor> {
     '*',
   ];
 
-  /// Admin-resource vocabulary: the workspace list plus the
-  /// admin-scoped `container-events` history gate (#2923), offered only
-  /// where it is meaningful (the admin ACL browser).
+  /// Admin-resource vocabulary: the workspace list plus the admin
+  /// tab permissions (#2940), offered only where they are meaningful
+  /// (the admin ACL browser). `manage-acls` is root-equivalent — it
+  /// gates the editor's own endpoints and is granted only to
+  /// administrators.
   static const List<String> adminPermissions = [
     ...workspacePermissions,
-    'container-events',
+    'manage-users',
+    'manage-invitations',
+    'manage-server-schedule',
+    'manage-acls',
+    'manage-events',
   ];
 
   List<String> get _permissions => widget.permissions ?? workspacePermissions;
