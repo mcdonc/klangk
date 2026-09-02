@@ -40,9 +40,9 @@ PRUNE_INTERVAL = 3600.0
 
 async def workspace_is_interactive(app, workspace_id: str) -> bool:
     # #2308: interactivity is runtime state -- a workspace is interactive
-    # only while a live consent decider is registered for it (or
-    # deploy-wide), AND the workspace has opted in (egress_mode). No
-    # decider -> static behavior (clean denial, no held connection).
+    # only while a live consent decider is registered for it, AND the
+    # workspace has opted in (egress_mode). No decider -> static behavior
+    # (clean denial, no held connection).
     ws = await app.state.model.workspaces.get_workspace(workspace_id)
     if not ws or ws.get("egress_mode") != EGRESS_MODE_INTERACTIVE:
         return False

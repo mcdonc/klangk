@@ -2,12 +2,13 @@
 
 A workspace is treated as "interactive" (its blocked egress is held for a
 human decision, #2311) exactly while **at least one consent decider** is
-registered for it -- or deploy-wide. Interactivity is therefore *runtime
+registered for it. Interactivity is therefore *runtime
 state*, not the stored ``egress_mode`` flag: a decider connects (#2310, over
 the decider WebSocket) -> the workspace becomes interactive; the decider
 disconnects -> it reverts to static allow-list behavior. With no decider,
 blocked egress just fails (clean denial, no hanging connection -- the #2308
-model).
+model). Deciders are strictly workspace-scoped (#2976): consent has no
+deploy-wide flavor.
 
 The registry supports **N concurrent deciders** per workspace (several CLI
 sessions + Flutter clients at once): it is a collection keyed by decider id,
@@ -45,9 +46,8 @@ class ConsentDeciderRegistry:
 
     def __init__(self, app) -> None:
         self.app = app
-        # decider_id -> {"ws": workspace_id | None, "seen": monotonic,
+        # decider_id -> {"ws": workspace_id, "seen": monotonic,
         #                 "email": str, "sock": SafeWebSocket}
-        # workspace_id None = deploy-wide (decides for every workspace).
         self._deciders: dict[str, dict] = {}
         self._reaper: asyncio.Task | None = None
 
@@ -61,7 +61,7 @@ class ConsentDeciderRegistry:
     def register(
         self,
         decider_id: str,
-        workspace_id: str | None,
+        workspace_id: str,
         email: str | None,
         sock,
     ) -> None:
@@ -79,7 +79,7 @@ class ConsentDeciderRegistry:
         }
         logger.info(
             "consent decider registered: scope=%s decider=%s",
-            workspace_id[:8] if workspace_id else "deploy",
+            workspace_id[:8],
             decider_id[:8],
         )
 
@@ -97,30 +97,26 @@ class ConsentDeciderRegistry:
             entry["seen"] = time.monotonic()
 
     def has_decider(self, workspace_id: str) -> bool:
-        """True iff >= 1 live decider is registered for this workspace or deploy-wide."""
+        """True iff >= 1 live decider is registered for this workspace."""
         now = time.monotonic()
         cutoff = self.timeout
         for entry in self._deciders.values():
-            scope = entry["ws"]
-            if (scope is None or scope == workspace_id) and (
-                now - entry["seen"] <= cutoff
-            ):
+            if entry["ws"] == workspace_id and (now - entry["seen"] <= cutoff):
                 return True
         return False
 
     def deciders_for(self, workspace_id: str) -> list[str]:
-        """Ids of live deciders for this workspace or deploy-wide (#2244 fanout)."""
+        """Ids of live deciders for this workspace (#2244 fanout)."""
         now = time.monotonic()
         cutoff = self.timeout
         return [
             did
             for did, entry in self._deciders.items()
-            if (entry["ws"] is None or entry["ws"] == workspace_id)
-            and (now - entry["seen"] <= cutoff)
+            if entry["ws"] == workspace_id and (now - entry["seen"] <= cutoff)
         ]
 
     def broadcast(self, workspace_id: str, message: dict) -> int:
-        """Send *message* to every live decider for this workspace or deploy-wide.
+        """Send *message* to every live decider for this workspace.
 
         Used by the coordinator to fan out ``egress_request`` (new hold) and
         ``egress_resolved`` (verdict/timeout) frames. A decider whose socket is
@@ -133,11 +129,7 @@ class ConsentDeciderRegistry:
         dead: list[str] = []
         delivered = 0
         for did, entry in self._deciders.items():
-            scope = entry["ws"]
-            if (
-                not (scope is None or scope == workspace_id)
-                or now - entry["seen"] > cutoff
-            ):
+            if entry["ws"] != workspace_id or now - entry["seen"] > cutoff:
                 continue
             try:
                 entry["sock"].send_json(message)

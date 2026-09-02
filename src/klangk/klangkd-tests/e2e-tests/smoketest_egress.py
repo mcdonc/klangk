@@ -46,6 +46,7 @@ if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
 import httpx  # noqa: E402
+import websockets  # noqa: E402
 
 from _e2e_server import start_server, stop_server, tracked_mkdtemp, ws_connect  # noqa: E402
 
@@ -719,10 +720,8 @@ _DETAIL_PREFIX_NAMES: list[tuple[str, str]] = [
     ("B sidecar not ready", "NO-EXPECTED-REQUEST"),
     ("A-scoped decider saw B's request", "ISOLATION-BROKEN"),
     ("B deny let the connection through", "DENY-RELEASED"),
-    ("deploy-wide's B deny let it through", "DENY-RELEASED"),
-    ("deploy-wide didn't see A", "NO-EXPECTED-REQUEST"),
-    ("deploy-wide saw A but the app didn't", "NO-EXPECTED-REQUEST"),
-    ("deploy-wide didn't see B", "NO-EXPECTED-REQUEST"),
+    ("deploy-wide connect was accepted", "DEPLOYWIDE-ACCEPTED"),
+    ("no-workspace handshake failed unexpectedly", "UNEXPECTED-ERROR"),
     ("could not set up the scope phase", "UNEXPECTED-ERROR"),
     ("no hold surfaced", "NO-EXPECTED-REQUEST"),
     ("expired but the connection succeeded", "NORESPONSE-OK"),
@@ -827,7 +826,7 @@ OUTCOME_NAMES: dict[str, str] = {
     "PAUSE-REFUSED": "an off-list host was refused or hung while paused instead of auto-allowing -- the pause did not take effect at the gate. #2332",
     "PAUSE-POLICY-BYPASS": "a static policy (allow-list / rejected_domains) was bypassed or changed while paused -- pause must affect only the interactive hold, not the DNS-layer lists. #2332",
     "PAUSE-RESUME-BROKEN": "after resume, an off-list host was not re-held for consent (the pause lingered, or the re-hold failed). #2332",
-    "PAUSE-ACK-FAILED": "the pause/unpause pause_ack came back not-ok (protocol: unknown duration, or a deploy-wide decider). #2332/#2389/#2883",
+    "PAUSE-ACK-FAILED": "the pause/unpause pause_ack came back not-ok (protocol: unknown duration). #2332/#2389/#2883",
     "FANOUT-SERIALIZED": "N concurrent off-list connects did not all surface a held request simultaneously (the NFQUEUE consumer serialized them -- a #2331/#2337 regression).",
     "CONCURRENT-NOT-DEDUPED": "concurrent connections to the same destination each produced a prompt (the coordinator's per-destination dedup is broken -- each should collapse to one).",
     "ONCE-CROSS-CONN": "a `once` verdict on one connection released a separate concurrent connection to the same host (the verdict leaked across connections -- #2361).",
@@ -923,8 +922,8 @@ class SmokeTest:
         # Extra deciders / workspaces / terminal-WS opened by the decider-scope
         # + audit phases. Closed + deleted in teardown so nothing leaks into
         # the no-decider phase (the #2413 leak class) or past the run. A phase
-        # also closes its own deciders eagerly: the deploy-wide one covers
-        # workspace A and would otherwise keep it interactive.
+        # also closes its own deciders eagerly: a live one keeps its workspace
+        # interactive and would break the no-decider phase premise.
         self._extra_deciders: list[RawDecider] = []
         self._extra_ws_ids: list[str] = []
         self._extra_ws_conns: list[tuple] = []
@@ -1899,7 +1898,7 @@ class SmokeTest:
 
     async def _connect_raw_decider(
         self,
-        workspace_id: str | None = None,
+        workspace_id: str,
         attempts: int = 4,
         *,
         ping: bool = False,
@@ -1923,13 +1922,12 @@ class SmokeTest:
         # (The prior framing as a TCP-proxy flakiness workaround was
         # disproven -- the proxy is Caddy and reliable, #2398.)
         #
-        # workspace_id scopes the decider: a real id -> workspace-scoped
-        # (needs terminal access); None -> deploy-wide (needs admin, decides
-        # for every workspace). Used by the decider-scope phase's
-        # isolation / coverage probes (#2392).
-        url = f"/ws/consent-decider?token={self.auth['token']}"
-        if workspace_id is not None:
-            url += f"&workspace={workspace_id}"
+        # workspace_id scopes the decider: a workspace id -> that
+        # workspace's consent (needs egress-consent on it). Consent is
+        # strictly workspace-scoped (#2976); there is no deploy-wide
+        # flavor. Used by the decider-scope phase's isolation probe
+        # (#2392) and the multi-decider/audit phases.
+        url = f"/ws/consent-decider?token={self.auth['token']}&workspace={workspace_id}"
         last: Exception | None = None
         for i in range(attempts):
             began = time.time()
@@ -3503,28 +3501,36 @@ class SmokeTest:
             self._abort = True
 
     async def run_decider_scope_phase(self, pilot) -> None:
-        """Workspace-scoped vs deploy-wide decider authz (#2392).
+        """Workspace-scoped decider isolation + no-deploy-wide refusal
+        (#2392, #2976).
 
         Cross-workspace isolation: a decider scoped to workspace A must NOT
         receive workspace B's ``egress_request`` (the registry's
-        ``deciders_for`` filters by scope). Deploy-wide coverage: an admin
-        decider (no ``workspace`` param) receives ``egress_request`` from
-        EVERY workspace. Both are driven on the real stack with a second
-        interactive workspace B.
+        ``deciders_for`` filters by scope). Driven on the real stack with a
+        second interactive workspace B.
 
-        ``pilot`` drives the textual app (decider #1, scoped to A = the
-        isolation subject); we read its ``controller.pending`` directly.
+        No deploy-wide flavor: a decider handshake with no ``workspace``
+        param must be refused (#2976) -- an accepted one would be a
+        cross-workspace consent path again.
+
+        ``pilot`` is unused (signature symmetry); the textual app (decider
+        #1, scoped to A = the isolation subject) is read directly via its
+        ``controller.pending``.
         """
         if not self.args.decider_scope:
             return
         print(
-            "\n--- decider scope: workspace-scoped isolation + deploy-wide ---"
+            "\n--- decider scope: workspace-scoped isolation + no deploy-wide ---"
         )
         d_b: RawDecider | None = None
-        d_dep: RawDecider | None = None
         cont_b: str | None = None
         step_tag = "create B"
         try:
+            # 0) no deploy-wide flavor (#2976): the no-workspace handshake
+            #    is refused pre-accept (uvicorn answers a bare HTTP 403).
+            step_tag = "no-workspace handshake"
+            await self._probe_no_workspace_decider_refused()
+
             ws_b = await asyncio.to_thread(
                 self._create_workspace, self.server, self.auth
             )
@@ -3544,10 +3550,6 @@ class SmokeTest:
             d_b = await self._connect_raw_decider(ws_b, ping=True)
             self._extra_deciders.append(d_b)
             await d_b.settle()
-            step_tag = "deploy-wide decider"
-            d_dep = await self._connect_raw_decider(None, ping=True)
-            self._extra_deciders.append(d_dep)
-            await d_dep.settle()
 
             # 1) isolation + B readiness: B's off-list SYN is held; d_b sees
             #    it, the A-scoped app does NOT. If d_b never sees it, B's
@@ -3600,100 +3602,6 @@ class SmokeTest:
                 if sx == MISMATCH and not self.args.continue_run:
                     self._abort = True
                     return
-
-            # 2) deploy-wide positive control: an A off-list SYN reaches the
-            #    deploy-wide decider AND the A-scoped app (proves d_dep really
-            #    receives frames, so #3's "didn't see B" can't be a false neg).
-            host_a = "rust-lang.org"  # fresh
-            ca = _canonical(host_a)
-            step_a = _Step(
-                self.summary.total, host_a, "domain", False, "scope-A", "-"
-            )
-            of_a = f"/tmp/smoke_scope_a_{self.summary.total}.out"
-            _trigger(self.container, host_a, of_a)
-            rid_a = await d_dep.wait_for(ca, 20.0)
-            app_a = (
-                await _wait_for_request(self.app, ca, 8.0) if rid_a else None
-            )
-            if rid_a is None:
-                self._record_probe(
-                    step_a,
-                    "A off-list -> deploy-wide",
-                    "no-request(!)",
-                    None,
-                    FINDING,
-                    "deploy-wide didn't see A (A sidecar readiness, #2417)",
-                )
-            else:
-                if app_a is not None:
-                    self.app._decide_id(app_a, DECISION_ALLOWED, DURATION_ONCE)
-                    await pilot.pause()
-                    await _wait_resolved(self.app, app_a, 15.0)
-                text_a = await _wait_result(self.container, of_a)
-                ec_a = _parse_exit(text_a)
-                if app_a is not None:
-                    sx, dx = PASS, ""
-                else:
-                    sx, dx = (
-                        FINDING,
-                        "deploy-wide saw A but the app didn't (timing)",
-                    )
-                self._record_probe(
-                    step_a,
-                    "A off-list -> deploy-wide + app",
-                    "covered" if app_a else "partial",
-                    ec_a,
-                    sx,
-                    dx,
-                )
-                if sx == MISMATCH and not self.args.continue_run:
-                    self._abort = True
-                    return
-
-            # 3) deploy-wide sees B: the SAME deploy-wide decider receives a B
-            #    off-list SYN -- coverage is deploy-wide, not A-scoped.
-            host_b2 = "elixir-lang.org"  # fresh
-            cb2 = _canonical(host_b2)
-            step_b2 = _Step(
-                self.summary.total, host_b2, "domain", False, "scope-B2", "-"
-            )
-            of_b2 = f"/tmp/smoke_scope_b2_{self.summary.total}.out"
-            _trigger(cont_b, host_b2, of_b2)
-            rid_b2 = await d_dep.wait_for(cb2, 20.0)
-            if rid_b2 is None:
-                self._record_probe(
-                    step_b2,
-                    "B off-list -> deploy-wide",
-                    "no-request(!)",
-                    None,
-                    FINDING,
-                    "deploy-wide didn't see B (B sidecar readiness, #2417)",
-                )
-            else:
-                await d_b.verdict(rid_b2, DECISION_DENIED, DURATION_ONCE)
-                await d_b.wait_resolution(rid_b2, 15.0)
-                text_b2 = await _wait_result(cont_b, of_b2)
-                ec_b2 = _parse_exit(text_b2)
-                if ec_b2 == EXIT_REFUSED:
-                    sx, dx = PASS, ""
-                elif ec_b2 == 0:
-                    sx, dx = MISMATCH, "deploy-wide's B deny let it through"
-                else:
-                    sx, dx = (
-                        FINDING,
-                        f"B2 conn not cleanly refused (exit {ec_b2})",
-                    )
-                self._record_probe(
-                    step_b2,
-                    "B off-list -> deploy-wide too",
-                    "covered",
-                    ec_b2,
-                    sx,
-                    dx,
-                )
-                if sx == MISMATCH and not self.args.continue_run:
-                    self._abort = True
-                    return
         except Exception as e:  # noqa: BLE001
             self._record_probe(
                 _Step(
@@ -3708,13 +3616,65 @@ class SmokeTest:
             if not self.args.continue_run:
                 self._abort = True
         finally:
-            # CRITICAL: the deploy-wide decider covers workspace A, so a live one
-            # keeps A interactive and breaks the no-decider phase premise (the
-            # #2413 leak class). Close both eagerly; teardown is a backstop
-            # (double-close is a safe no-op).
-            for d in (d_dep, d_b):
-                if d is not None:
-                    await d.close()
+            # CRITICAL: a live d_b keeps workspace B interactive (and would
+            # break later phases' premises), so close it eagerly; teardown is
+            # a backstop (double-close is a safe no-op).
+            if d_b is not None:
+                await d_b.close()
+
+    async def _probe_no_workspace_decider_refused(self) -> None:
+        """#2976: a decider handshake with no ``workspace`` param must be
+        refused pre-accept (uvicorn answers a bare HTTP 403). An accepted
+        one would be a cross-workspace consent path -- anyone with an
+        admin-ish grant deciding for every workspace."""
+        step = _Step(
+            self.summary.total, "(no-workspace)", "n/a", False, "scope-nw", "-"
+        )
+        try:
+            ws_nw = await ws_connect(
+                self.server,
+                f"/ws/consent-decider?token={self.auth['token']}",
+                open_timeout=15,
+            )
+        except websockets.InvalidStatus as e:
+            if e.response.status_code == 403:
+                self._record_probe(
+                    step, "no-workspace handshake", "refused", None, PASS, ""
+                )
+                return
+            self._record_probe(
+                step,
+                "no-workspace handshake",
+                f"http {e.response.status_code}",
+                None,
+                FINDING,
+                "no-workspace handshake failed unexpectedly",
+            )
+            return
+        except Exception as e:  # noqa: BLE001
+            self._record_probe(
+                step,
+                "no-workspace handshake",
+                "error",
+                None,
+                FINDING,
+                f"no-workspace handshake failed unexpectedly: {e!r}",
+            )
+            return
+        # Accepted -- the cross-workspace path is back. Close it so it
+        # cannot hold workspaces interactive for later phases.
+        await ws_nw.close()
+        self._record_probe(
+            step,
+            "no-workspace handshake",
+            "accepted(!)",
+            None,
+            MISMATCH,
+            "deploy-wide connect was accepted (cross-workspace consent "
+            "path is back, #2976)",
+        )
+        if not self.args.continue_run:
+            self._abort = True
 
     async def run_audit_distinction_phase(self, pilot) -> None:
         """Audit distinction: ``expired`` (timeout) vs ``denied`` (human) (#2392).
@@ -5189,7 +5149,7 @@ def main() -> int:
         "--no-decider-scope",
         dest="decider_scope",
         action="store_false",
-        help="skip the workspace-scoped vs deploy-wide decider phase (#2392)",
+        help="skip the workspace-scoped decider isolation phase (#2392/#2976)",
     )
     p.add_argument(
         "--no-audit-distinction",

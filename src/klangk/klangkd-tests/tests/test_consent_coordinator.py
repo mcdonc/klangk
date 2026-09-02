@@ -596,12 +596,6 @@ class TestConsentCoordinatorFanout:
         frames = await coord.snapshot(FULL_WS)
         assert [f["request"]["id"] for f in frames] == ["a"]
 
-    async def test_snapshot_deploy_wide_is_empty(self):
-        app = _app()
-        coord = ConsentCoordinator(app)
-        assert await coord.snapshot(None) == []
-        app.state.model.egress_consent.list_requests.assert_not_awaited()
-
 
 class TestConsentCoordinatorRules:
     async def test_rules_frame_groups_active_and_allow_list(self):
@@ -645,15 +639,6 @@ class TestConsentCoordinatorRules:
         app = _app(workspace_exists=False)
         coord = ConsentCoordinator(app)
         assert await coord.rules_frame(FULL_WS) is None
-        app.state.model.egress_consent.list_active.assert_not_awaited()
-
-    async def test_rules_frame_none_for_deploy_wide(self):
-        app = _app()
-        coord = ConsentCoordinator(app)
-        assert await coord.rules_frame(None) is None
-        # deploy-wide deciders get no rules frame (no single workspace),
-        # matching snapshot().
-        app.state.model.workspaces.get_workspace.assert_not_awaited()
         app.state.model.egress_consent.list_active.assert_not_awaited()
 
     async def test_rules_frame_includes_active_pause_window(self):

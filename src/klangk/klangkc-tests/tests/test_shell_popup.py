@@ -887,3 +887,74 @@ class TestShellWiring:
         assert rc == 0
         out = capsys.readouterr()
         assert "Disconnected from mork" in out.err
+
+
+class TestMemberMayDecide:
+    """#2976: the shell spawns its consent-popup decider exactly when the
+    member holds ``egress-consent`` (or ``*``) on the workspace -- the same
+    gate the decider handshake enforces. Spectator-profile members skip the
+    wrapper instead of 403-looping; API failures fail OPEN (the handshake is
+    the authority)."""
+
+    WS_ID = "wid" + "0" * 51
+
+    @staticmethod
+    def _client(perms):
+        client = MagicMock()
+        resp = MagicMock()
+        resp.json.return_value = {
+            "permissions": {f"/workspaces/{TestMemberMayDecide.WS_ID}": perms}
+        }
+        client.get.return_value = resp
+        return client
+
+    def test_true_when_egress_consent_held(self):
+        assert (
+            cli_main.member_may_decide(
+                self._client(["terminal", "egress-consent"]), self.WS_ID
+            )
+            is True
+        )
+
+    def test_true_when_wildcard_held(self):
+        assert (
+            cli_main.member_may_decide(self._client(["*"]), self.WS_ID) is True
+        )
+
+    def test_false_for_spectator_profile(self):
+        # terminal-only (the spectator profile): no consent authority.
+        assert (
+            cli_main.member_may_decide(self._client(["terminal"]), self.WS_ID)
+            is False
+        )
+
+    def test_false_for_no_grants(self):
+        assert (
+            cli_main.member_may_decide(self._client([]), self.WS_ID) is False
+        )
+
+    def test_true_on_api_error(self):
+        # Fail-open: a flaky preflight must never drop the decider for an
+        # entitled member -- the server handshake stays the authority.
+        import httpx
+
+        client = MagicMock()
+        client.get.side_effect = httpx.ConnectError("down")
+        assert cli_main.member_may_decide(client, self.WS_ID) is True
+
+    def test_true_on_non_json_body(self):
+        # A non-JSON error body (an HTML 500 page from a proxy) fails open.
+        client = MagicMock()
+        resp = MagicMock()
+        resp.json.side_effect = ValueError("not json")
+        client.get.return_value = resp
+        assert cli_main.member_may_decide(client, self.WS_ID) is True
+
+    def test_true_when_resource_missing_from_response(self):
+        # my-permissions returned no entry for the workspace: unknown, not
+        # a refusal -- fail open and let the handshake decide.
+        client = MagicMock()
+        resp = MagicMock()
+        resp.json.return_value = {"permissions": {}}
+        client.get.return_value = resp
+        assert cli_main.member_may_decide(client, self.WS_ID) is True

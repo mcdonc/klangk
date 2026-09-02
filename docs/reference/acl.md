@@ -188,7 +188,7 @@ actions — no per-action splits:
 | `manage-users`           | `/users`            | The whole Users surface: list users and their workspaces, create, edit, unlock, delete, read active login sessions. `GET /users/search` stays authenticated (pickers) |
 | `manage-groups`          | `/groups`           | The whole Groups surface: create, edit, delete, manage members. `GET /groups` stays authenticated (pickers)                                                           |
 | `manage-invitations`     | `/invitations`      | List, send, resend, revoke invitations                                                                                                                                |
-| `manage-server-schedule` | `/server`           | Server stop/recycle schedules: list, create, cancel — plus the drain/consent decider WS handshake                                                                     |
+| `manage-server-schedule` | `/server`           | Server stop/recycle schedules: list, create, cancel                                                                                                                   |
 | `manage-events`          | `/events`           | Read the container start/stop history (`GET /events`) — read-only audit                                                                                               |
 | `manage-acls`            | `/acl`              | The Access Control browser: read and rewrite ACL entries on **any** resource via `GET/PUT /acl/*` — root-equivalent, see below                                        |
 | `manage-volumes`         | `/volumes`          | Self-service volumes (still label-scoped to the caller at runtime) — Allow Authenticated by default (#2946)                                                           |
@@ -245,7 +245,19 @@ re-checked:
 | service-health fan-out (per transition)                       | `monitor-workspace`                                 | `/workspaces/{id}` | coders, collaborators, spectators | per fan-out (revocation stops delivery on the next frame)                                           |
 | service-health snapshot at registration                       | `monitor-workspace`                                 | `/workspaces/{id}` | coders, collaborators, spectators | per snapshot                                                                                        |
 | consent-decider WS, workspace-scoped                          | `egress-consent`                                    | `/workspaces/{id}` | coders, collaborators             | once at registration (handshake)                                                                    |
-| consent-decider WS, deploy-wide (drain)                       | `manage-server-schedule`                            | `/server`          | admins group                      | once at registration (handshake)                                                                    |
+
+There is no deploy-wide consent-decider handshake (#2976, decision A):
+consent authority is strictly per-workspace (`egress-consent` on
+`/workspaces/{id}`), and a handshake without a `workspace` param is
+refused. The deploy-wide flavor was an instance-administrator override
+standing in for absent workspace members — an operator escape hatch, not
+a consent concept — and it was gated by `manage-server-schedule`, which
+has nothing to do with consent. Removed rather than renamed: with no
+admin backstop, a workspace is interactive exactly while one of its own
+members (a client of the `klangk shell` popup decider or the web
+workspace page, both of which register whenever the member holds
+`egress-consent`) is connected; with none, it reverts to the static
+allow-list (the documented fallback, #2311).
 
 Audit conclusions (#2939): all 33 permission names in the vocabulary
 are enforced somewhere (no dead names); every WS gate's permission

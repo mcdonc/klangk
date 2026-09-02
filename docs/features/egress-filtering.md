@@ -126,8 +126,8 @@ there is no per-process attribution.
 
 `egress_mode = "interactive"` is the opt-in, but interactivity is
 **runtime state** (#2308): a workspace's off-list egress is actually held
-only while **at least one live consent decider** is connected for it (or
-deploy-wide). A decider is a connected client — the `klangk
+only while **at least one live consent decider** is connected for it. A
+decider is a connected client — the `klangk
 consent-decide` TUI, the consent popup inside `klangk shell`, or the web
 UI — and its WebSocket connection _is_ the registration; liveness is
 driven by client pings, and a decider silent for
@@ -187,20 +187,17 @@ left pending forever.
   (until restart), and the attached ▾ menu sends the verdict with any
   other duration (#2246, #2499), plus a **Network** tab
   listing the in-effect rules with revoke actions.
-- **Deploy-wide** — an admin may connect a decider without a workspace
-  scope (via the `/ws/consent-decider` WebSocket) to decide for every
-  interactive workspace on the deploy. It receives newly-created holds
-  live, but no replay of holds that predate its connection (those simply
-  time out).
 
 Several deciders may be connected at once (two CLI sessions and the web
 UI, say): each pending request is fanned out to all of them and the first
-decision wins (#2244).
+decision wins (#2244). Deciders are strictly workspace-scoped (#2976):
+there is no deploy-wide flavor — a decider handshake without a workspace
+param is refused.
 
-**Authorization.** A workspace-scoped decider needs the `egress-consent`
-permission on the workspace (owner, coder, or collaborator — #2883;
+**Authorization.** A decider needs the `egress-consent` permission on
+the workspace (owner, coder, or collaborator — #2883;
 spectators are watch-only and never see the Network tab or the consent
-banner); a deploy-wide decider needs admin. A verdict can only decide a
+banner). A verdict can only decide a
 request inside the decider's own workspace. Pausing prompting (below)
 shares the same single gate — anyone who may register a decider may
 also pause.

@@ -126,6 +126,7 @@ from .edit import (  # noqa: F401
 from .shellcmd import (  # noqa: F401
     consent_popup_enabled,
     klangk_argv,
+    member_may_decide,
     popup_decider_argv,
     popup_inner_shell_argv,
     run_consent_popup,

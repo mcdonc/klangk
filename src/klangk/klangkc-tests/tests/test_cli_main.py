@@ -1364,16 +1364,71 @@ class TestMainCLI:
                 return_value=True,
             ):
                 with patch.object(
-                    klangk.cli.shellcmd, "run_consent_popup", return_value=0
-                ) as fake_popup:
+                    klangk.cli.shellcmd,
+                    "member_may_decide",
+                    return_value=True,
+                ):
                     with patch.object(
-                        klangk.cli.shellcmd, "ws_shell"
-                    ) as fake_shell:
-                        with pytest.raises(typer.Exit) as exc:
-                            main.shell("ws", "@1")
+                        klangk.cli.shellcmd,
+                        "run_consent_popup",
+                        return_value=0,
+                    ) as fake_popup:
+                        with patch.object(
+                            klangk.cli.shellcmd, "ws_shell"
+                        ) as fake_shell:
+                            with pytest.raises(typer.Exit) as exc:
+                                main.shell("ws", "@1")
         assert exc.value.exit_code == 0
         fake_popup.assert_called_once()  # the wrapper ran
         fake_shell.assert_not_called()  # the plain attach did not
+
+    def test_shell_skips_consent_popup_for_spectator(
+        self, logged_in_cfg, monkeypatch, reset_env
+    ):
+        """#2976: a member without egress-consent (the spectator profile)
+        never spawns the popup decider -- the plain attach runs instead, so
+        no decider sits in the 403-retry loop."""
+
+        from klangk.cli import main
+
+        ws = Workspace(
+            id="wid" + "0" * 51,
+            name="ws",
+            created_at="2025-01-01T00:00:00Z",
+            egress_mode="interactive",
+        )
+        client = MagicMock()
+        client.resolve_workspace.return_value = ws
+
+        async def fake_shell(*args, **kwargs):
+            pass
+
+        shell_fn = MagicMock(side_effect=fake_shell)
+
+        with patch.object(context_mod, "client", return_value=client):
+            with patch.object(
+                klangk.cli.shellcmd,
+                "consent_popup_enabled",
+                return_value=True,
+            ):
+                with patch.object(
+                    klangk.cli.shellcmd,
+                    "member_may_decide",
+                    return_value=False,
+                ):
+                    with patch.object(
+                        klangk.cli.shellcmd,
+                        "run_consent_popup",
+                        return_value=0,
+                    ) as fake_popup:
+                        with patch.object(
+                            klangk.cli.shellcmd, "ws_shell", shell_fn
+                        ):
+                            os.environ["TERM"] = "xterm-256color"
+                            with patch("termios.tcgetattr", return_value=None):
+                                main.shell("ws")
+        fake_popup.assert_not_called()  # no decider spawned
+        shell_fn.assert_called_once()  # plain attach ran
 
     def test_shell_with_terminal_arg(
         self, logged_in_cfg, monkeypatch, reset_env

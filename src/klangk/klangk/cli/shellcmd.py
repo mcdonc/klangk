@@ -12,6 +12,7 @@ import asyncio
 import os
 import sys
 
+import httpx
 import typer
 import websockets
 
@@ -112,6 +113,33 @@ def consent_popup_enabled(ws, no_consent_popup: bool) -> bool:
         isatty=True,
         tmux_version=host_tmux_version(),
     )
+
+
+def member_may_decide(client, workspace_id: str) -> bool:
+    """True when the logged-in member may decide egress for the workspace.
+
+    #2976: the consent-popup decider must register exactly when the member
+    holds ``egress-consent`` (or ``*``) on the workspace -- the same gate the
+    decider handshake enforces server-side. A spectator-profile member
+    (terminal only) skips the popup wrapper instead of spawning a decider
+    that is 403-refused at the handshake (the #2490 slow-retry loop).
+    Fails OPEN on API errors: the server handshake stays the authority, and
+    a flaky preflight must never silently drop the decider for an entitled
+    member.
+    """
+    resource = f"/workspaces/{workspace_id}"
+    try:
+        resp = client.get(
+            "/api/v1/my-permissions", params={"resource": resource}
+        )
+        perms = resp.json().get("permissions", {}).get(resource)
+    except (httpx.HTTPError, ValueError):
+        # ValueError: a non-JSON error body (e.g. an HTML 500 page from a
+        # proxy in front of klangkd) must not skip the decider.
+        return True
+    if not isinstance(perms, list):
+        return True
+    return "egress-consent" in perms or "*" in perms
 
 
 def run_consent_popup(ws, terminal: str | None, forward_agent: bool) -> int:
@@ -224,11 +252,14 @@ def shell(
         config_default=context.cfg().get_forward_agent(context.server_url())
         or False,
     )
-    if consent_popup_enabled(ws, no_consent_popup):
+    if consent_popup_enabled(ws, no_consent_popup) and member_may_decide(
+        client, ws.id
+    ):
         # Wrap the normal shell in the consent-popup russian-doll (#2383).
         # Falls back to the plain attach below when tmux is prevented, opted
-        # out (--no-consent-popup / the inner re-invocation), or the workspace
-        # is not interactive-egress.
+        # out (--no-consent-popup / the inner re-invocation), the workspace
+        # is not interactive-egress, or the member may not decide egress
+        # (#2976: spectator-profile members never spawn a decider).
         raise typer.Exit(code=run_consent_popup(ws, terminal, forward_agent))
     try:
         asyncio.run(
