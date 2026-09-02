@@ -133,9 +133,7 @@ class WindowEventWatcher:
         # task is running now, so "constructed but never started" no
         # longer describes it (#3015 review).
         self._start_pending = False
-        if self._task is not None and not self._task.done():
-            return
-        if self._starting or self._stopped:
+        if self._start_in_flight_or_live():
             return
         self._starting = True
         try:
@@ -167,21 +165,38 @@ class WindowEventWatcher:
         self._proc = proc
         self._task = asyncio.create_task(self.read_loop())
 
+    def _start_in_flight_or_live(self) -> bool:
+        """True when a start would duplicate or race an existing one."""
+        if self._task is not None and not self._task.done():
+            return True
+        return self._starting or self._stopped
+
     async def read_loop(self) -> None:
-        proc = self._proc
-        if proc is None or proc.stdout is None:
+        stdout = self._reader_stream()
+        if stdout is None:
             return
         try:
-            while True:
-                raw = await proc.stdout.readline()
-                if not raw:
-                    return
-                if is_window_event(raw.decode(errors="replace").strip()):
-                    self._on_change()
+            await self._read_events(stdout)
         except asyncio.CancelledError:
             raise
         except Exception:
             logger.exception("WindowEventWatcher read loop error")
+
+    def _reader_stream(self):
+        """The proc's stdout, or None when the watcher never started."""
+        proc = self._proc
+        if proc is None or proc.stdout is None:
+            return None
+        return proc.stdout
+
+    async def _read_events(self, stdout) -> None:
+        """Read control-mode lines forever, firing on window events."""
+        while True:
+            raw = await stdout.readline()
+            if not raw:
+                return
+            if is_window_event(raw.decode(errors="replace").strip()):
+                self._on_change()
 
     async def stop(self) -> None:
         # Set the flag before reading any teardown state, so a start()

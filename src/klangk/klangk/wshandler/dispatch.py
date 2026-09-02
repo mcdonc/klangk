@@ -79,6 +79,20 @@ async def ws_authenticate(websocket: WebSocket, app):
     return result
 
 
+async def _dispatch_connection_command(conn, cmd, msg) -> bool:
+    """Dispatch a Connection-table command; False when *cmd* is not one."""
+    entry = WS_CONNECTION_COMMANDS.get(cmd)
+    if entry is None:
+        return False
+    method_name, takes_msg = entry
+    method = getattr(conn, method_name)
+    if takes_msg:
+        await method(msg)
+    else:
+        await method()
+    return True
+
+
 async def dispatch_ws_loop(conn, safe_ws, user: dict, app) -> None:
     """Receive/dispatch frames until the socket drops. Connection-command
     table first, then state-command table, else an error frame."""
@@ -93,20 +107,53 @@ async def dispatch_ws_loop(conn, safe_ws, user: dict, app) -> None:
         log_ws_msg("RECV", msg, user)
 
         cmd = msg.get("cmd")
-        entry = WS_CONNECTION_COMMANDS.get(cmd)
-        if entry is not None:
-            method_name, takes_msg = entry
-            method = getattr(conn, method_name)
-            if takes_msg:
-                await method(msg)
-            else:
-                await method()
+        if await _dispatch_connection_command(conn, cmd, msg):
+            continue
+        state_method = WS_STATE_COMMANDS.get(cmd)
+        if state_method is not None:
+            getattr(app.state.sockets, state_method)(msg, safe_ws)
         else:
-            state_method = WS_STATE_COMMANDS.get(cmd)
-            if state_method is not None:
-                getattr(app.state.sockets, state_method)(msg, safe_ws)
-            else:
-                send_error(safe_ws, f"Unknown command: {cmd}")
+            send_error(safe_ws, f"Unknown command: {cmd}")
+
+
+async def _send_connect_snapshots(safe_ws, app) -> None:
+    """Replay the connect-time snapshots to a just-connected socket."""
+    # Replay current health of every health-checked workspace the
+    # user can open so a pure-WS consumer (e.g. ``klangk monitor``)
+    # sees steady-state status immediately instead of being blind
+    # until the next transition (#1175 item 1). Scoped to the
+    # user's memberships (#1714).
+    await app.state.sockets.send_service_health_snapshot(safe_ws)
+    # #2661: replay any pending server stop/recycle schedule so a
+    # just-connected client can show the countdown immediately instead
+    # of waiting for the scheduler's next periodic broadcast. Guarded:
+    # minimal test apps may not wire the scheduler.
+    server_scheduler = getattr(app.state, "server_scheduler", None)
+    if server_scheduler is not None:
+        await server_scheduler.send_snapshot_to(safe_ws)
+
+
+async def _run_websocket_session(conn, safe_ws, user: dict, app) -> None:
+    """Dispatch frames until the socket drops, mapping the known
+    disconnect/slow-client failures to their log lines."""
+    try:
+        await _send_connect_snapshots(safe_ws, app)
+        await dispatch_ws_loop(conn, safe_ws, user, app)
+    except WebSocketDisconnect:
+        logger.info("WebSocket disconnected for user %s", user["email"])
+    except RuntimeError as e:
+        # Starlette raises RuntimeError("WebSocket is not connected...")
+        # when the client disconnects before or during receive_text().
+        logger.info("WebSocket disconnected for user %s: %s", user["email"], e)
+    except SlowClientError as e:
+        # Carry the reason: "outbound queue full" is a genuinely slow
+        # client, "sender stopped" is this connection already tearing down
+        # (#2623 — the distinction was invisible in CI logs before).
+        logger.warning(
+            "Slow client dropped for user %s (%s)", user["email"], e
+        )
+    except Exception as e:
+        logger.exception("WebSocket error: %s", e)
 
 
 async def handle_websocket(websocket: WebSocket, app) -> None:
@@ -126,37 +173,7 @@ async def handle_websocket(websocket: WebSocket, app) -> None:
     # snapshot (#1714) awaits DB queries, and a raise there used to
     # leak the sender task and skip conn.cleanup().
     try:
-        # Replay current health of every health-checked workspace the
-        # user can open so a pure-WS consumer (e.g. ``klangk monitor``)
-        # sees steady-state status immediately instead of being blind
-        # until the next transition (#1175 item 1). Scoped to the
-        # user's memberships (#1714).
-        await app.state.sockets.send_service_health_snapshot(safe_ws)
-        # #2661: replay any pending server stop/recycle schedule so a
-        # just-connected client can show the countdown immediately instead
-        # of waiting for the scheduler's next periodic broadcast. Guarded:
-        # minimal test apps may not wire the scheduler.
-        server_scheduler = getattr(app.state, "server_scheduler", None)
-        if server_scheduler is not None:
-            await server_scheduler.send_snapshot_to(safe_ws)
-
-        await dispatch_ws_loop(conn, safe_ws, user, app)
-
-    except WebSocketDisconnect:
-        logger.info("WebSocket disconnected for user %s", user["email"])
-    except RuntimeError as e:
-        # Starlette raises RuntimeError("WebSocket is not connected...")
-        # when the client disconnects before or during receive_text().
-        logger.info("WebSocket disconnected for user %s: %s", user["email"], e)
-    except SlowClientError as e:
-        # Carry the reason: "outbound queue full" is a genuinely slow
-        # client, "sender stopped" is this connection already tearing down
-        # (#2623 — the distinction was invisible in CI logs before).
-        logger.warning(
-            "Slow client dropped for user %s (%s)", user["email"], e
-        )
-    except Exception as e:
-        logger.exception("WebSocket error: %s", e)
+        await _run_websocket_session(conn, safe_ws, user, app)
     finally:
         await safe_ws.stop_sender()
         await conn.cleanup()

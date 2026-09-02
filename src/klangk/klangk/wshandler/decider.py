@@ -151,26 +151,14 @@ def _log_handshake_timing(t0: float, marks: list[tuple[str, float]]) -> None:
     )
 
 
-async def _dispatch_decider_message(
-    app,
-    registry,
-    safe_ws,
-    msg: dict,
-    workspace: str,
-    user_id: str,
-    decider_id: str,
-) -> None:
-    """Act on one parsed decider frame by its ``type``.
-
-    Unknown types are ignored. Raises whatever the per-type handler raises
-    (SlowClientError from sends is handled by the receive loop)."""
-    mtype = msg.get("type")
-    if mtype == "ping":
-        registry.touch(decider_id)
-        safe_ws.send_json({"type": "pong"})
-    elif mtype == "verdict":
+async def _dispatch_decision_frame(
+    app, safe_ws, msg, workspace, user_id, mtype
+) -> bool:
+    """Handle a verdict/revoke frame; False when *mtype* is neither."""
+    if mtype == "verdict":
         await _handle_verdict(app, safe_ws, msg, workspace, user_id)
-    elif mtype == "revoke":
+        return True
+    if mtype == "revoke":
         # #2339: drop the sidecar rule + mark the verdict revoked.
         # ok=False if it's not an active verdict, is outside this
         # decider's workspace, or the sidecar never acked the drop.
@@ -186,13 +174,52 @@ async def _dispatch_decider_message(
                 "ok": ok,
             }
         )
-    elif mtype == "pause":
+        return True
+    return False
+
+
+async def _dispatch_session_frame(
+    app, registry, safe_ws, msg, workspace, decider_id, mtype
+) -> bool:
+    """Handle a ping/pause/unpause frame; False when *mtype* is none of
+    them (unknown types are ignored)."""
+    if mtype == "ping":
+        registry.touch(decider_id)
+        safe_ws.send_json({"type": "pong"})
+        return True
+    if mtype == "pause":
         # #2332: pause interactive consent prompting for this
         # decider's workspace for a window.
         await _handle_pause(app, safe_ws, msg, workspace)
-    elif mtype == "unpause":
+        return True
+    if mtype == "unpause":
         # #2332: clear an active pause for this decider's workspace.
         await _handle_unpause(app, safe_ws, workspace)
+        return True
+    return False
+
+
+async def _dispatch_decider_message(
+    app,
+    registry,
+    safe_ws,
+    msg: dict,
+    workspace: str,
+    user_id: str,
+    decider_id: str,
+) -> None:
+    """Act on one parsed decider frame by its ``type``.
+
+    Unknown types are ignored. Raises whatever the per-type handler raises
+    (SlowClientError from sends is handled by the receive loop)."""
+    mtype = msg.get("type")
+    if await _dispatch_decision_frame(
+        app, safe_ws, msg, workspace, user_id, mtype
+    ):
+        return
+    await _dispatch_session_frame(
+        app, registry, safe_ws, msg, workspace, decider_id, mtype
+    )
 
 
 async def _decider_authenticate(websocket: WebSocket, app, _hs_mark):
@@ -212,6 +239,55 @@ async def _decider_authenticate(websocket: WebSocket, app, _hs_mark):
     return result
 
 
+_FRAME_DISCONNECTED = object()
+
+
+async def _receive_decider_frame(safe_ws):
+    """The next decoded dict frame; None on a malformed/non-dict message
+    to skip, or ``_FRAME_DISCONNECTED`` when the socket dropped."""
+    # Starlette raises RuntimeError ("WebSocket is not connected...")
+    # on a client disconnect during receive_text(); treat it the same
+    # as WebSocketDisconnect.
+    try:
+        raw = await safe_ws.receive_text()
+    except (WebSocketDisconnect, RuntimeError):
+        return _FRAME_DISCONNECTED
+    try:
+        msg = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(msg, dict):
+        return None
+    return msg
+
+
+async def _dispatch_decider_frame(
+    app, registry, safe_ws, frame, workspace, user, decider_id
+) -> bool:
+    """Dispatch one frame; False when the client fell behind (the caller
+    breaks). Any other handler error is logged and swallowed — a single
+    bad verdict or transient send error must not tear down the whole
+    connection (and every other in-flight prompt on it)."""
+    mtype = frame.get("type")
+    try:
+        await _dispatch_decider_message(
+            app,
+            registry,
+            safe_ws,
+            frame,
+            workspace,
+            user["id"],
+            decider_id,
+        )
+    except SlowClientError:
+        # Outbound queue full -- the client can't keep up. Drop it
+        # (matches the main /ws handler's slow-client handling).
+        return False
+    except Exception:
+        logger.exception("consent decider: error handling %r message", mtype)
+    return True
+
+
 async def _decider_receive_loop(
     app,
     registry,
@@ -223,41 +299,16 @@ async def _decider_receive_loop(
     """Receive + dispatch decider frames until the socket drops or the
     client falls behind."""
     while True:
-        # Starlette raises RuntimeError ("WebSocket is not connected...")
-        # on a client disconnect during receive_text(); treat it the same
-        # as WebSocketDisconnect.
-        try:
-            raw = await safe_ws.receive_text()
-        except (WebSocketDisconnect, RuntimeError):
+        frame = await _receive_decider_frame(safe_ws)
+        if frame is _FRAME_DISCONNECTED:
             break
-        try:
-            msg = json.loads(raw)
-        except json.JSONDecodeError:
+        if frame is None:
             continue
-        if not isinstance(msg, dict):
-            continue
-        mtype = msg.get("type")
-        try:
-            await _dispatch_decider_message(
-                app,
-                registry,
-                safe_ws,
-                msg,
-                workspace,
-                user["id"],
-                decider_id,
-            )
-        except SlowClientError:
-            # Outbound queue full -- the client can't keep up. Drop it
-            # (matches the main /ws handler's slow-client handling).
+        ok = await _dispatch_decider_frame(
+            app, registry, safe_ws, frame, workspace, user, decider_id
+        )
+        if not ok:
             break
-        except Exception:
-            # A single bad verdict or transient send error must not tear
-            # down the whole connection (and every other in-flight prompt
-            # on it). Log + keep going.
-            logger.exception(
-                "consent decider: error handling %r message", mtype
-            )
 
 
 async def handle_consent_decider(websocket: WebSocket, app) -> None:
@@ -308,13 +359,7 @@ async def handle_consent_decider(websocket: WebSocket, app) -> None:
         # (resolve pops first) -- whereas snapshot-then-register would MISS
         # holds created in the gap (silent fail-close). Tolerate the duplicate
         # to never miss.
-        for frame in await app.state.consent_coordinator.snapshot(workspace):
-            safe_ws.send_json(frame)
-        # The in-effect rules snapshot (#2335 slice A): lets a decider joining
-        # mid-flight see what's currently allowed/denied, not just holds.
-        rules = await app.state.consent_coordinator.rules_frame(workspace)
-        if rules is not None:
-            safe_ws.send_json(rules)
+        await _replay_decider_snapshot(app, safe_ws, workspace)
         await _decider_receive_loop(
             app, registry, safe_ws, workspace, user, decider_id
         )
@@ -323,6 +368,18 @@ async def handle_consent_decider(websocket: WebSocket, app) -> None:
         # registration so the workspace reverts to static (#2308).
         registry.deregister(decider_id)
         await safe_ws.stop_sender()
+
+
+async def _replay_decider_snapshot(app, safe_ws, workspace) -> None:
+    """Replay the pending holds and the in-effect rules snapshot to a
+    just-registered decider (fan-in, #2244; rules slice A, #2335)."""
+    for frame in await app.state.consent_coordinator.snapshot(workspace):
+        safe_ws.send_json(frame)
+    # The in-effect rules snapshot (#2335 slice A): lets a decider joining
+    # mid-flight see what's currently allowed/denied, not just holds.
+    rules = await app.state.consent_coordinator.rules_frame(workspace)
+    if rules is not None:
+        safe_ws.send_json(rules)
 
 
 async def _handle_pause(app, safe_ws, msg, workspace) -> None:

@@ -34,13 +34,19 @@ from .safe_websocket import WS_ERRORS, SlowClientError, SafeWebSocket
 logger = logging.getLogger(__name__)
 
 
-async def authenticate_egress_socket(websocket: WebSocket, app) -> str | None:
-    """Validate the sidecar socket's workspace token; close and return None
-    on failure (forward_auth already checked the header on the egress site)."""
+def _egress_token(websocket: WebSocket) -> str | None:
+    """The workspace token from the Authorization header or ?token=."""
     authorization = websocket.headers.get("authorization", "")
     token = authorization[7:] if authorization.startswith("Bearer ") else None
     if not token:
         token = websocket.query_params.get("token")
+    return token
+
+
+async def authenticate_egress_socket(websocket: WebSocket, app) -> str | None:
+    """Validate the sidecar socket's workspace token; close and return None
+    on failure (forward_auth already checked the header on the egress site)."""
+    token = _egress_token(websocket)
     if not token:
         await websocket.close(code=4001, reason="Missing token")
         return None
@@ -72,23 +78,9 @@ async def handle_egress_sidecar(websocket: WebSocket, app) -> None:
     app.state.sidecar_connections.register(workspace_id, safe)
     relay_tasks: set[asyncio.Task] = set()
     try:
-        while True:
-            # Starlette raises RuntimeError ("WebSocket is not connected...")
-            # on a client disconnect during receive_text(); treat it the same
-            # as WebSocketDisconnect.
-            try:
-                raw = await websocket.receive_text()
-            except (WebSocketDisconnect, RuntimeError):
-                break
-            try:
-                msg = json.loads(raw)
-            except json.JSONDecodeError:
-                continue
-            if not isinstance(msg, dict):
-                continue
-            dispatch_sidecar_message(
-                app, safe, coordinator, workspace_id, relay_tasks, msg
-            )
+        await _sidecar_event_loop(
+            app, websocket, coordinator, workspace_id, safe, relay_tasks
+        )
     finally:
         # Sidecar gone (disconnect/restart/crash): drop its registration (any
         # in-flight revoke ack fails at once) + cancel in-flight relays.
@@ -96,6 +88,55 @@ async def handle_egress_sidecar(websocket: WebSocket, app) -> None:
         for task in list(relay_tasks):
             task.cancel()
         await safe.stop_sender()
+
+
+async def _sidecar_event_loop(
+    app,
+    websocket: WebSocket,
+    coordinator,
+    workspace_id: str,
+    safe: SafeWebSocket,
+    relay_tasks: set[asyncio.Task],
+) -> None:
+    """Receive and dispatch sidecar frames until the socket drops."""
+    while True:
+        stop, msg = await _receive_sidecar_frame(websocket)
+        if stop:
+            break
+        if msg is not None:
+            dispatch_sidecar_message(
+                app, safe, coordinator, workspace_id, relay_tasks, msg
+            )
+
+
+def _record_sidecar_activity(app, workspace_id: str) -> None:
+    """Record the sidecar's egress/network activity bump (#2479): an
+    egress-only workload bypasses klangkd, so without this its idle
+    timer would never advance and the container would be reaped
+    mid-egress. The sidecar flood-gates the frame; here the bump is a
+    single float write on this loop thread."""
+    state = app.state.container_registry.states.get(workspace_id)
+    if state is not None:
+        state.record_activity()
+
+
+async def _receive_sidecar_frame(websocket) -> tuple[bool, dict | None]:
+    """(stop, frame): stop on disconnect; a None frame is skipped
+    (malformed / non-dict)."""
+    try:
+        raw = await websocket.receive_text()
+    except (WebSocketDisconnect, RuntimeError):
+        # Starlette raises RuntimeError ("WebSocket is not connected...")
+        # on a client disconnect during receive_text(); treat it the same
+        # as WebSocketDisconnect.
+        return True, None
+    try:
+        msg = json.loads(raw)
+    except json.JSONDecodeError:
+        return False, None
+    if not isinstance(msg, dict):
+        return False, None
+    return False, msg
 
 
 def dispatch_sidecar_message(
@@ -116,14 +157,7 @@ def dispatch_sidecar_message(
         )
         return
     if mtype == "activity":
-        # Sidecar reports egress/network activity (#2479): an
-        # egress-only workload bypasses klangkd, so without this its
-        # idle timer would never advance and the container would be
-        # reaped mid-egress. The sidecar flood-gates the frame; here
-        # the bump is a single float write on this loop thread.
-        state = app.state.container_registry.states.get(workspace_id)
-        if state is not None:
-            state.record_activity()
+        _record_sidecar_activity(app, workspace_id)
         return
     if mtype != "egress":
         return
@@ -141,6 +175,13 @@ def dispatch_sidecar_message(
     task.add_done_callback(relay_tasks.discard)
 
 
+def _valid_dport(dport) -> bool:
+    """A dport is None or an int (bool excluded: it subclasses int)."""
+    if dport is None:
+        return True
+    return isinstance(dport, int) and not isinstance(dport, bool)
+
+
 def parse_egress_fields(msg: dict) -> tuple[str, str, int | None] | None:
     """(local_id, dst, dport) from an egress frame, or None on a malformed
     one."""
@@ -149,9 +190,7 @@ def parse_egress_fields(msg: dict) -> tuple[str, str, int | None] | None:
     dport = msg.get("dport")
     if not isinstance(local_id, str) or not isinstance(dst, str):
         return None
-    if dport is not None and (
-        not isinstance(dport, int) or isinstance(dport, bool)
-    ):
+    if not _valid_dport(dport):
         return None
     return local_id, dst, dport
 

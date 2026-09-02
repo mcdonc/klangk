@@ -38,6 +38,27 @@ MAX_INPUT_SIZE = 16777216
 SEND_QUEUE_SIZE = 256
 
 
+def _ws_debug_label(user: dict | None) -> str:
+    """The optional [email] label for a debug log line."""
+    return f" [{user['email']}]" if user else ""
+
+
+def _terminal_io_debug(
+    direction: str, msg: dict, msg_type: str, user: dict | None
+) -> None:
+    """Log a terminal_output/terminal_input frame with a truncated data
+    preview (to avoid log spam)."""
+    data = msg.get("data", "")
+    preview = repr(data[:80]) + ("..." if len(data) > 80 else "")
+    logger.debug(
+        "WS %s%s: %s data=%s",
+        direction,
+        _ws_debug_label(user),
+        msg_type,
+        preview,
+    )
+
+
 def log_ws_msg(direction: str, msg: dict, user: dict | None = None) -> None:
     """Log a WebSocket message for debugging (KLANGKD_WEBSOCKET_DEBUG=1)."""
     if not WS_DEBUG:
@@ -45,13 +66,14 @@ def log_ws_msg(direction: str, msg: dict, user: dict | None = None) -> None:
     msg_type = msg.get("type") or msg.get("cmd") or "?"
     # Truncate terminal_output/terminal_input data to avoid log spam
     if msg_type in ("terminal_output", "terminal_input"):
-        data = msg.get("data", "")
-        preview = repr(data[:80]) + ("..." if len(data) > 80 else "")
-        who = f" [{user['email']}]" if user else ""
-        logger.debug("WS %s%s: %s data=%s", direction, who, msg_type, preview)
-    else:
-        who = f" [{user['email']}]" if user else ""
-        logger.debug("WS %s%s: %s", direction, who, json.dumps(msg)[:200])
+        _terminal_io_debug(direction, msg, msg_type, user)
+        return
+    logger.debug(
+        "WS %s%s: %s",
+        direction,
+        _ws_debug_label(user),
+        json.dumps(msg)[:200],
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -160,12 +182,20 @@ def broadcast_event(
         session.broadcast(frame)
     if not subscribed:
         sock.send_json(frame)
-    elif session is not None and sock not in session.subscribers:
+    elif _pruned_by_broadcast(session, sock, subscribed):
         # Subscribed before the broadcast but pruned by it: the acting
         # connection's send failed and its copy was dropped.
         logger.warning(
             "Acting socket missed %s broadcast (send failed, pruned)", name
         )
+
+
+def _pruned_by_broadcast(session, sock, subscribed: bool) -> bool:
+    """Whether the acting socket was subscribed before the broadcast but
+    pruned by it (its send failed and its copy was dropped)."""
+    return (
+        subscribed and session is not None and sock not in session.subscribers
+    )
 
 
 def format_idle_timeout(seconds: int | float) -> str:
