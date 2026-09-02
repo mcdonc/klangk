@@ -18,6 +18,7 @@ from ..util import (  # moved to util (#1547); re-exported via __all__
     port_in_use,
     scan_free_ports,
 )
+from .base import Submodel
 
 
 __all__ = [
@@ -35,7 +36,7 @@ __all__ = [
 ]
 
 
-class PortsModel:
+class PortsModel(Submodel):
     """DB-backed port-allocation tracking, through ``app_state.db``.
 
     Reached via ``app_state.model.ports``. Reaches the DB through
@@ -43,12 +44,6 @@ class PortsModel:
     OS-level socket probes (``port_in_use`` etc.) stay in ``util`` — only
     the DB-backed allocation tracking lives here.
     """
-
-    def __init__(self, app):
-        self.app = app
-
-    def reconfigure(self, app) -> None:
-        self.app = app
 
     async def add_port_allocations(
         self, workspace_id: str, ports: list[int]

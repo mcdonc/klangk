@@ -6,6 +6,7 @@ and the pure ``row_to_acl_entry`` helper stay module-level — they are
 imported as literal values by ``workspaces.py`` and ``schema.py``.
 """
 
+from .base import Submodel
 from .users import (
     AGENT_USER_ID,
     AgentPrincipalError,
@@ -40,7 +41,61 @@ def row_to_acl_entry(row) -> dict:
     }
 
 
-class ACLModel:
+def _system_principal_fields(row) -> dict:
+    """Display fields for a system-principal row."""
+    sp = row["system_principal"]
+    return {
+        "principal": "Everyone" if sp == SYSTEM_EVERYONE else "Authenticated",
+        "system_principal": sp,
+    }
+
+
+def _user_principal_fields(row) -> dict:
+    """Display fields for a user-principal row."""
+    return {
+        "principal": row["user_email"] or row["user_id"],
+        "user_id": row["user_id"],
+    }
+
+
+def _group_principal_fields(row) -> dict:
+    """Display fields for a group-principal row."""
+    return {
+        "principal": row["group_name"] or row["group_id"],
+        "group_id": row["group_id"],
+    }
+
+
+def _resolved_principal_fields(row) -> dict:
+    """Principal display fields for one resolved ACL row.
+
+    An unknown principal type yields no fields (the entry carries only
+    the base columns).
+    """
+    pt = row["principal_type"]
+    if pt == PRINCIPAL_SYSTEM:
+        return _system_principal_fields(row)
+    if pt == PRINCIPAL_USER:
+        return _user_principal_fields(row)
+    if pt == PRINCIPAL_GROUP:
+        return _group_principal_fields(row)
+    return {}
+
+
+def _reject_agent_principal(entry: dict) -> None:
+    """Guard: no entry may make the system agent a user principal."""
+    if (
+        entry.get("principal_type") == PRINCIPAL_USER
+        and entry.get("user_id") == AGENT_USER_ID
+    ):
+        raise AgentPrincipalError(
+            "The system agent cannot hold ACL entries"
+            " (global fixed UUID — granting it cross-workspace"
+            " blast radius)."
+        )
+
+
+class ACLModel(Submodel):
     """ACL data access, through ``app_state.db``.
 
     Reached via ``app_state.model.acl``. Reaches the DB through
@@ -49,12 +104,6 @@ class ACLModel:
     (backstop); the constants and the pure ``row_to_acl_entry`` helper
     stay module-level.
     """
-
-    def __init__(self, app):
-        self.app = app
-
-    def reconfigure(self, app) -> None:
-        self.app = app
 
     async def _check_role_group_scope(
         self, db, resource: str, group_id: str
@@ -188,19 +237,7 @@ class ACLModel:
                 "principal_type": row["principal_type"],
                 "permission": row["permission"],
             }
-            pt = row["principal_type"]
-            if pt == PRINCIPAL_SYSTEM:
-                sp = row["system_principal"]
-                entry["principal"] = (
-                    "Everyone" if sp == SYSTEM_EVERYONE else "Authenticated"
-                )
-                entry["system_principal"] = sp
-            elif pt == PRINCIPAL_USER:
-                entry["principal"] = row["user_email"] or row["user_id"]
-                entry["user_id"] = row["user_id"]
-            elif pt == PRINCIPAL_GROUP:
-                entry["principal"] = row["group_name"] or row["group_id"]
-                entry["group_id"] = row["group_id"]
+            entry.update(_resolved_principal_fields(row))
             results.append(entry)
         return results
 
@@ -217,44 +254,45 @@ class ACLModel:
         principal.
         """
         for entry in entries:
-            if (
-                entry.get("principal_type") == PRINCIPAL_USER
-                and entry.get("user_id") == AGENT_USER_ID
-            ):
-                raise AgentPrincipalError(
-                    "The system agent cannot hold ACL entries"
-                    " (global fixed UUID — granting it cross-workspace"
-                    " blast radius)."
-                )
+            _reject_agent_principal(entry)
         async with self.app.state.db.transaction() as db:
-            for entry in entries:
-                if (
-                    entry.get("principal_type") == PRINCIPAL_GROUP
-                    and entry.get("group_id") is not None
-                ):
-                    await self._check_role_group_scope(
-                        db, resource, entry["group_id"]
-                    )
+            await self._check_entry_role_group_scopes(db, resource, entries)
             await db.execute(
                 "DELETE FROM acl_entries WHERE resource = ?", (resource,)
             )
             for entry in entries:
-                await db.execute(
-                    "INSERT INTO acl_entries"
-                    " (resource, position, action, principal_type,"
-                    "  user_id, group_id, system_principal, permission)"
-                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                    (
-                        resource,
-                        entry["position"],
-                        entry["action"],
-                        entry["principal_type"],
-                        entry.get("user_id"),
-                        entry.get("group_id"),
-                        entry.get("system_principal"),
-                        entry["permission"],
-                    ),
+                await self._insert_acl_entry(db, resource, entry)
+
+    async def _check_entry_role_group_scopes(
+        self, db, resource: str, entries: list[dict]
+    ) -> None:
+        """Guard: group entries must respect the role-group scope."""
+        for entry in entries:
+            if (
+                entry.get("principal_type") == PRINCIPAL_GROUP
+                and entry.get("group_id") is not None
+            ):
+                await self._check_role_group_scope(
+                    db, resource, entry["group_id"]
                 )
+
+    async def _insert_acl_entry(self, db, resource: str, entry: dict) -> None:
+        await db.execute(
+            "INSERT INTO acl_entries"
+            " (resource, position, action, principal_type,"
+            "  user_id, group_id, system_principal, permission)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                resource,
+                entry["position"],
+                entry["action"],
+                entry["principal_type"],
+                entry.get("user_id"),
+                entry.get("group_id"),
+                entry.get("system_principal"),
+                entry["permission"],
+            ),
+        )
 
     async def delete_acl_entries_for_resource(self, resource: str) -> int:
         """Delete all ACL entries for a resource. Returns count deleted."""

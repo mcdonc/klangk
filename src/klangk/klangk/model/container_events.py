@@ -20,6 +20,7 @@ keeping the newest. An admin-facing paged view is tracked separately.
 import logging
 import time
 
+from .base import Submodel, resolve_prune_now
 from .users import AGENT_USER_ID
 
 logger = logging.getLogger(__name__)
@@ -87,14 +88,8 @@ def row_to_dict(row) -> dict:
     return dict(zip(keys, row, strict=True))
 
 
-class ContainerEventsModel:
+class ContainerEventsModel(Submodel):
     """CRUD for the ``container_events`` table."""
-
-    def __init__(self, app):
-        self.app = app
-
-    def reconfigure(self, app) -> None:
-        self.app = app
 
     async def record(
         self,
@@ -181,19 +176,22 @@ class ContainerEventsModel:
         row_cap = settings.container_events_row_cap
         if retention_days <= 0 and row_cap <= 0:
             return 0
-        if now is None:
-            now = time.time()
+        when = resolve_prune_now(now)
         deleted = 0
         if retention_days > 0:
-            async with self.app.state.db.transaction() as db:
-                cursor = await db.execute(
-                    "DELETE FROM container_events WHERE created_at < ?",
-                    (now - retention_days * 86400.0,),
-                )
-                deleted += cursor.rowcount
+            deleted += await self._prune_retention(when, retention_days)
         if row_cap > 0:
             deleted += await self._prune_row_cap(row_cap)
         return deleted
+
+    async def _prune_retention(self, now: float, retention_days: int) -> int:
+        """Retention pass: delete rows older than the window."""
+        async with self.app.state.db.transaction() as db:
+            cursor = await db.execute(
+                "DELETE FROM container_events WHERE created_at < ?",
+                (now - retention_days * 86400.0,),
+            )
+            return cursor.rowcount
 
     async def _prune_row_cap(self, row_cap: int) -> int:
         """Deploy-wide cap: delete the oldest rows over the cap, keeping
