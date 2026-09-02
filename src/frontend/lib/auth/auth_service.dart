@@ -155,14 +155,18 @@ class AuthService extends ChangeNotifier {
   /// Permissions fetched from /api/v1/my-permissions.
   Map<String, List<String>> _permissions = {};
   List<Map<String, dynamic>> _groups = [];
+  bool _isAdmin = false;
 
   Map<String, List<String>> get permissions => _permissions;
   List<Map<String, dynamic>> get groups => _groups;
 
-  bool get isAdmin => hasPermission('/admin', '*');
+  /// #2974: instance-admin status — the explicit is_admin flag from
+  /// /my-permissions, derived server-side from admins-group membership
+  /// (replaces the /admin wildcard-ACE marker lookup).
+  bool get isAdmin => _isAdmin;
 
-  /// True for wildcard admins and for holders of any delegated /admin
-  /// tab permission (#2923, #2940): the principals allowed into the admin
+  /// True for instance admins and for holders of any delegated admin-tab
+  /// permission (#2923, #2940): the principals allowed into the admin
   /// section at all. The route guard and the app-bar admin icon key off
   /// this — a delegated user sees only the tabs their ACEs grant, admins
   /// see everything.
@@ -287,6 +291,7 @@ class AuthService extends ChangeNotifier {
         _groups = List<Map<String, dynamic>>.from(
           data['groups'] as List? ?? [],
         );
+        _isAdmin = data['is_admin'] == true;
       } else if (resp.statusCode == 401) {
         await _clearToken();
       }
@@ -345,6 +350,7 @@ class AuthService extends ChangeNotifier {
     _token = null;
     _permissions = {};
     _groups = [];
+    _isAdmin = false;
     // The pending redirect belongs to the session being cleared; drop it
     // so the next login can never inherit the old session's destination
     // (#2670). If the user was on a protected page, guardAuth re-stashes

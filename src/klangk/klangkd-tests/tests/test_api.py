@@ -9295,8 +9295,10 @@ class TestACLEndpoints:
         assert resp.status_code == 200
         data = resp.json()
         assert data["email"] == "testadmin@example.com"
-        assert "/admin" in data["permissions"]
-        assert "*" in data["permissions"]["/admin"]
+        # #2974: instance-admin status is the explicit flag derived from
+        # admins-group membership — /admin is gone from the permission map.
+        assert data["is_admin"] is True
+        assert "/admin" not in data["permissions"]
 
     async def test_my_permissions_non_admin(self, client, admin_user, user):
         """Non-admin user has no admin permissions."""
@@ -9305,6 +9307,7 @@ class TestACLEndpoints:
         assert resp.status_code == 200
         data = resp.json()
         assert "/admin" not in data["permissions"]
+        assert data["is_admin"] is False
 
     async def test_my_permissions_for_resource(self, client, ws_admin):
         """Check permissions for a specific resource."""
@@ -15046,13 +15049,15 @@ class TestAdminTabPermissions:
     ):
         headers = await self._admin_headers(client)
         resp = await client.get("/api/v1/my-permissions", headers=headers)
-        perms = resp.json()["permissions"]
-        for name in (
-            "manage-users",
-            "manage-invitations",
-            "manage-server-schedule",
-            "manage-events",
-        ):
-            assert name in perms.get("/admin", [])
-        assert "manage-acls" in perms.get("/acl", [])
+        data = resp.json()
+        perms = data["permissions"]
+        # #2974: the instance-admin marker is the explicit flag; /admin
+        # itself is gone from the permission map.
+        assert data["is_admin"] is True
+        assert "/admin" not in perms
+        # Every tab surface is listed under its own first-class resource.
+        assert "manage-users" in perms.get("/users", [])
+        assert "manage-invitations" in perms.get("/invitations", [])
+        assert "manage-server-schedule" in perms.get("/server", [])
         assert "manage-events" in perms.get("/events", [])
+        assert "manage-acls" in perms.get("/acl", [])

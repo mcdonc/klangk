@@ -2086,7 +2086,8 @@ class _AclBrowserTabState extends State<_AclBrowserTab> {
   /// checks key on these names, so the browser shows the mapping next
   /// to the ACE list instead of leaving the operator to guess which
   /// name the server actually asks for on this resource. /admin no
-  /// longer appears — it is only the instance-admin wildcard marker.
+  /// longer appears — it is retired entirely (#2974); instance-admin
+  /// status is the is_admin flag on /my-permissions.
   static const _resourceHints = {
     '/': 'view — held by every authenticated user via the seed',
     '/workspaces':

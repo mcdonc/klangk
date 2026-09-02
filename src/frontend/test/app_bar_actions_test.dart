@@ -17,6 +17,7 @@ String _adminToken() {
   final header = base64Url.encode(utf8.encode(jsonEncode({'alg': 'none'})));
   final body = base64Url.encode(utf8.encode(jsonEncode({
     'email': 'admin@example.com',
+    'is_admin': true,
     'permissions': {
       '/admin': ['*'],
     },
@@ -58,6 +59,7 @@ void main() {
             jsonEncode({
               'user_id': 'u1',
               'email': 'admin@example.com',
+              'is_admin': true,
               'permissions': {
                 '/admin': ['*']
               },
@@ -93,6 +95,7 @@ void main() {
             jsonEncode({
               'user_id': 'u1',
               'email': 'admin@example.com',
+              'is_admin': true,
               'permissions': {
                 '/admin': ['*']
               },

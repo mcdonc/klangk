@@ -274,26 +274,11 @@ class Lifecycle:
             PRINCIPAL_SYSTEM,
             system_principal=SYSTEM_AUTHENTICATED,
         )
-        # /admin: kept as the instance-administrator marker — Allow *
-        # for admins, deny everyone. No route checks a permission here
-        # anymore (#2944); the wildcard marks "is an instance admin"
-        # for /my-permissions consumers (the frontend's isAdmin).
-        await self.app.state.model.acl.add_acl_entry(
-            "/admin",
-            0,
-            ACTION_ALLOW,
-            "*",
-            PRINCIPAL_GROUP,
-            group_id=admin_group_id,
-        )
-        await self.app.state.model.acl.add_acl_entry(
-            "/admin",
-            1,
-            ACTION_DENY,
-            "*",
-            PRINCIPAL_SYSTEM,
-            system_principal=SYSTEM_EVERYONE,
-        )
+        # No /admin rows (#2974): nothing checks a permission there since
+        # #2944 — the instance-admin marker is now the explicit is_admin
+        # flag on /my-permissions, derived from admins-group membership.
+        # Migration 0027 removes the stored marker rows on existing
+        # deployments.
         logger.info("Seeded default ACL entries")
 
     async def ensure_admin_group(self) -> str:

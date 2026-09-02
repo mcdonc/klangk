@@ -99,6 +99,7 @@ http.Client _mockClient(
         jsonEncode({
           'user_id': 'admin-user',
           'email': 'admin@example.com',
+          'is_admin': true,
           'permissions': {
             '/admin': ['*'],
             '/users': ['manage-users'],

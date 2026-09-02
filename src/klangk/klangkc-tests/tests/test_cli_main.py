@@ -6018,7 +6018,10 @@ class TestStatusAdminFlag:
         client = MagicMock()
         resp = MagicMock(
             status_code=200,
-            json=lambda: {"permissions": perms},
+            json=lambda: {
+                "permissions": perms,
+                "is_admin": perms.get("_admin", False),
+            },
         )
         resp.headers = {"content-type": "application/json"}
         client.get.return_value = resp
@@ -6028,7 +6031,7 @@ class TestStatusAdminFlag:
     def test_plain_shows_admin_yes(self, logged_in_cfg, capsys, monkeypatch):
         from klangk.cli import main
 
-        self._perms_client({"/admin": ["*"]}, monkeypatch)
+        self._perms_client({"_admin": True}, monkeypatch)
         main.status(plain=True)
         out = capsys.readouterr().out
         assert "admin=yes" in out
@@ -6036,7 +6039,7 @@ class TestStatusAdminFlag:
     def test_plain_shows_admin_no(self, logged_in_cfg, capsys, monkeypatch):
         from klangk.cli import main
 
-        self._perms_client({"/admin": []}, monkeypatch)
+        self._perms_client({}, monkeypatch)
         main.status(plain=True)
         out = capsys.readouterr().out
         assert "admin=no" in out
@@ -6048,7 +6051,7 @@ class TestStatusAdminFlag:
 
         from klangk.cli import main
 
-        self._perms_client({"/admin": ["*"]}, monkeypatch)
+        self._perms_client({"_admin": True}, monkeypatch)
         buf = StringIO()
         with patch.object(
             klangk.cli.authcmds,
@@ -6065,7 +6068,7 @@ class TestStatusAdminFlag:
 
         from klangk.cli import main
 
-        self._perms_client({"/admin": []}, monkeypatch)
+        self._perms_client({}, monkeypatch)
         buf = StringIO()
         with patch.object(
             klangk.cli.authcmds,

@@ -59,7 +59,10 @@ void main() {
   // All HTTP the app issues during this flow: config (login page +
   // AuthService), login, and my-permissions. No token exp claim -> no
   // refresh timer for the test to fight with.
-  String installMocks({Map<String, List<String>> permissions = const {}}) {
+  String installMocks({
+    Map<String, List<String>> permissions = const {},
+    bool isAdmin = false,
+  }) {
     final token = makeJwt({'sub': 'user-1', 'email': 'user@example.com'});
     testConfigHttpClientOverride = MockClient((request) async {
       return http.Response(
@@ -83,6 +86,7 @@ void main() {
           jsonEncode({
             'user_id': 'u1',
             'email': 'user@example.com',
+            'is_admin': isAdmin,
             'permissions': permissions,
             'groups': <Map<String, dynamic>>[],
           }),
@@ -210,11 +214,14 @@ void main() {
   // Mirror that here: let the persisted token restore (permissions fetch
   // included) settle before mounting the router at /admin/users.
   Future<AuthService> restoreSession(
-      WidgetTester tester, Map<String, List<String>> permissions) async {
+    WidgetTester tester,
+    Map<String, List<String>> permissions, {
+    bool isAdmin = false,
+  }) async {
     final token = makeJwt({'sub': 'user-1', 'email': 'user@example.com'});
     // ignore: invalid_use_of_visible_for_testing
     SharedPreferences.setMockInitialValues({'klangk_jwt': token});
-    installMocks(permissions: permissions);
+    installMocks(permissions: permissions, isAdmin: isAdmin);
     final auth = AuthService();
     // A quiet host widget: pump until _loadToken (config + permissions)
     // completes and initialized flips true.
@@ -250,9 +257,13 @@ void main() {
 
   testWidgets('restored admin session at /admin/users stays put (#2669)',
       (tester) async {
-    final auth = await restoreSession(tester, const {
-      '/admin': ['*'],
-    });
+    final auth = await restoreSession(
+      tester,
+      const {
+        '/users': ['manage-users'],
+      },
+      isAdmin: true,
+    );
     expect(auth.isAdmin, isTrue);
 
     final router = buildRouter(auth, '/admin/users');

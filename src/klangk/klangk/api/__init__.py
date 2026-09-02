@@ -310,8 +310,12 @@ STATIC_RESOURCES = [
     "/acl",
     "/volumes",
     "/images",
-    "/admin",
 ]
+
+# The instance-admin group name — /my-permissions derives the explicit
+# is_admin flag from membership in it (#2974; replaces the /admin
+# wildcard-ACE marker the #2944 overhaul retired as a checking tree).
+ADMIN_GROUP_NAME = "admins"
 
 
 @router.get("/my-permissions")
@@ -324,7 +328,9 @@ async def my_permissions(
 
     If ``resource`` query param is provided, checks permissions for that
     specific resource path (e.g., ``/workspaces/{id}``). Otherwise
-    returns permissions for all static resources.
+    returns permissions for all static resources. The ``is_admin`` flag
+    is derived from admins-group membership (#2974) — /admin is no
+    longer a permission-checking resource.
     """
     principals = await request.app.state.acl.get_principals(user["id"])
     groups = await request.app.state.model.users.get_user_groups(user["id"])
@@ -337,6 +343,7 @@ async def my_permissions(
             "user_id": user["id"],
             "email": user["email"],
             "groups": groups,
+            "is_admin": any(g["name"] == ADMIN_GROUP_NAME for g in groups),
             "permissions": {resource: perms} if perms else {},
         }
     # Batch all static resources into a single ACL query instead of
@@ -348,6 +355,7 @@ async def my_permissions(
         "user_id": user["id"],
         "email": user["email"],
         "groups": groups,
+        "is_admin": any(g["name"] == ADMIN_GROUP_NAME for g in groups),
         "permissions": permissions,
     }
 

@@ -74,6 +74,7 @@ from klangk.model.migrations import m0023_self_service_resources
 from klangk.model.migrations import m0024_join_workspace_permission
 from klangk.model.migrations import m0025_volumes_admin_surface
 from klangk.model.migrations import m0026_drop_dead_images_deny_row
+from klangk.model.migrations import m0027_retire_admin_marker
 from klangk.model.migrations.base import Migration
 
 __all__ = ["MIGRATIONS", "Migration", "run_migrations"]
@@ -108,6 +109,7 @@ MIGRATIONS: list[Migration] = [
     m0024_join_workspace_permission.migration,
     m0025_volumes_admin_surface.migration,
     m0026_drop_dead_images_deny_row.migration,
+    m0027_retire_admin_marker.migration,
 ]
 
 

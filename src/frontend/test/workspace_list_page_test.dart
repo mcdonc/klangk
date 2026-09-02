@@ -107,6 +107,7 @@ void main() {
     Map<String, List<String>>? permissions,
     List<Map<String, dynamic>>? groups,
     bool netfilterEnabled = false,
+    bool isAdmin = false,
   }) {
     return MockClient((request) async {
       if (request.url.path.contains('/api/v1/config')) {
@@ -124,6 +125,7 @@ void main() {
           jsonEncode({
             'user_id': 'test',
             'email': 'test@example.com',
+            'is_admin': isAdmin,
             'permissions': permissions ??
                 {
                   '/': ['view'],
@@ -1502,12 +1504,12 @@ void main() {
           return http.Response('Not found', 404);
         },
         permissions: {
-          '/admin': ['*'],
           '/workspaces': ['create-workspace'],
         },
         groups: [
           {'id': 'g1', 'name': 'admins'},
         ],
+        isAdmin: true,
       );
 
       await tester.pumpWidget(buildPage());
@@ -1966,12 +1968,12 @@ void main() {
           return http.Response('Not found', 404);
         },
         permissions: {
-          '/admin': ['*'],
           '/workspaces': ['create-workspace'],
         },
         groups: [
           {'id': 'g1', 'name': 'admins'},
         ],
+        isAdmin: true,
       );
 
       String? navigatedTo;

@@ -283,23 +283,9 @@ async def admin_group(app_state):
             group_id=group["id"],
         )
     await _seed_2946_self_service(app_state)
-    # /admin stays as the instance-admin wildcard marker (#2944).
-    await acl.add_acl_entry(
-        "/admin",
-        0,
-        ACTION_ALLOW,
-        "*",
-        PRINCIPAL_GROUP,
-        group_id=group["id"],
-    )
-    await acl.add_acl_entry(
-        "/admin",
-        1,
-        ACTION_DENY,
-        "*",
-        PRINCIPAL_SYSTEM,
-        system_principal=SYSTEM_EVERYONE,
-    )
+    # No /admin rows (#2974): the instance-admin marker is the explicit
+    # is_admin flag on /my-permissions, derived from admins-group
+    # membership — not a wildcard ACE.
     # #2569: seed the members group (mirrors main.py ensure_members_group).
     members = await app_state.state.model.users.create_group(
         "members", description="All regular users"

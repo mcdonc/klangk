@@ -32,6 +32,17 @@ operators or integrators to act when upgrading.
 
 ### Breaking
 
+- **`/admin` is retired as an ACL resource (#2974).** Nothing checked a
+  permission on `/admin` since #2944; its rows survived only as the
+  instance-administrator wildcard marker. `/my-permissions` now returns
+  an explicit `is_admin` flag derived from `admins`-group membership
+  (the source of truth), `/admin` is gone from the permission map and
+  the seed, and migration `0027` deletes the stored rows. Scripts and
+  clients that probed the `/admin` `*` ACE for admin status must read
+  the flag instead; delegations that lived on the dead tree match
+  nothing (no endpoint resolved to `/admin` since #2944, so only the
+  marker semantics are affected).
+
 - **Deploy capability toggles moved off the images listing (#2974).**
   `GET /api/v1/images` no longer returns `nix_available` /
   `sudo_available` — clients read them from the new

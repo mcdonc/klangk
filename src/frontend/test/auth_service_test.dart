@@ -27,6 +27,7 @@ void main() {
   http.Client _emptyConfigClient({
     Map<String, List<String>>? permissions,
     List<Map<String, dynamic>>? groups,
+    bool isAdmin = false,
   }) {
     return MockClient((request) async {
       if (request.url.path.contains('/api/v1/config')) {
@@ -43,6 +44,7 @@ void main() {
           jsonEncode({
             'user_id': 'test',
             'email': 'test@example.com',
+            'is_admin': isAdmin,
             'permissions': permissions ?? {},
             'groups': groups ?? [],
           }),
@@ -870,11 +872,9 @@ void main() {
       expect(service.userId, 'user-42');
     });
 
-    test('isAdmin returns true when admin permission present', () async {
+    test('isAdmin returns true when the flag is set', () async {
       testAuthHttpClientOverride = _emptyConfigClient(
-        permissions: {
-          '/admin': ['*'],
-        },
+        isAdmin: true,
         groups: [
           {'id': 'g1', 'name': 'admins'},
         ],
@@ -884,7 +884,6 @@ void main() {
       final service = AuthService();
       await Future.delayed(Duration.zero);
       expect(service.isAdmin, isTrue);
-      expect(service.hasPermission('/admin', 'manage_users'), isTrue);
     });
 
     test('isAdmin returns false when no admin permission', () async {
@@ -918,8 +917,9 @@ void main() {
 
     test('permissions cleared on logout', () async {
       testAuthHttpClientOverride = _emptyConfigClient(
+        isAdmin: true,
         permissions: {
-          '/admin': ['*'],
+          '/users': ['manage-users'],
         },
       );
       final token = makeJwt({'sub': 'user-1'});
@@ -966,9 +966,10 @@ void main() {
             jsonEncode({
               'user_id': 'u',
               'email': 'u',
+              'is_admin': isAdmin,
               'permissions': isAdmin
                   ? {
-                      '/admin': ['*']
+                      '/users': ['manage-users']
                     }
                   : {
                       '/': ['view']

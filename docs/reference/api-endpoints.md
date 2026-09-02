@@ -520,7 +520,9 @@ No request body.
 
 Get the current user's effective permissions. If a `resource` query param
 is provided, returns permissions for that specific resource; otherwise
-returns permissions across all static resources.
+returns permissions across all static resources. The `is_admin` flag is
+derived from `admins`-group membership (#2974) — the instance-admin
+marker, replacing the retired `/admin` wildcard ACE.
 
 **Auth:** JWT required. Optional query param: `resource`.
 
@@ -530,6 +532,7 @@ No request body.
 {
   "user_id": "uuid",
   "email": "user@example.com",
+  "is_admin": false,
   "groups": [],
   "permissions": {
     "/workspaces/uuid": ["view", "terminal", "files-view"]

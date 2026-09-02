@@ -70,8 +70,8 @@ def logout(
 def admin_status(token: str | None) -> bool | None:
     """Admin status from /my-permissions (the canonical source the
     frontend uses for isAdmin). Best-effort: if the probe fails (offline,
-    token expired, old server without /admin in the static set) status
-    still reports everything else rather than erroring out."""
+    token expired, old server without the explicit flag) status still
+    reports everything else rather than erroring out."""
     is_admin: bool | None = None
     if token:
         try:
@@ -79,8 +79,12 @@ def admin_status(token: str | None) -> bool | None:
             resp = client.get("/api/v1/my-permissions")
             client.check_auth(resp)
             if resp.status_code == 200:
-                perms = resp.json().get("permissions", {})
-                is_admin = "*" in perms.get("/admin", [])
+                # #2974: explicit flag derived server-side from
+                # admins-group membership (the /admin wildcard-ACE
+                # marker is retired). Absent on an old server -> None
+                # (unknown), never silently False.
+                flag = resp.json().get("is_admin")
+                is_admin = flag if isinstance(flag, bool) else None
         except Exception:
             is_admin = None
     return is_admin

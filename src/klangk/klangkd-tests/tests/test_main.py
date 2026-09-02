@@ -232,12 +232,13 @@ class TestSeedDefaultUser:
 
 class TestSeedDefaultAcls:
     """Seeded-ACL shape (#2944): the first-class trees each seed an
-    Allow manage-* (admins) + Deny everyone pair; /admin remains as
-    the wildcard-admin marker."""
+    Allow manage-* (admins) + Deny everyone pair; /admin is retired
+    (#2974 — the admin marker lives in /my-permissions' is_admin flag)."""
 
     async def test_first_class_resources_seeded(self, db, app_state):
         """#2944: each first-class tree seeds Allow manage-* (admins) +
-        Deny everyone; /admin remains as the wildcard-admin marker."""
+        Deny everyone; /admin is retired (#2974 — the marker is the
+        is_admin flag on /my-permissions)."""
         lifecycle = _lifecycle(make_settings({}))
         admin_group_id = await lifecycle.ensure_admin_group()
         await lifecycle.seed_default_acls(admin_group_id)
@@ -259,13 +260,13 @@ class TestSeedDefaultAcls:
             assert deny["permission"] == "*"
             assert deny["system_principal"] == model.SYSTEM_EVERYONE
 
+        # #2974: /admin is gone from the seed — the instance-admin
+        # marker is the is_admin flag on /my-permissions (admins-group
+        # membership), not a wildcard ACE.
         admin_entries = await app_state.state.model.acl.get_acl_entries(
             "/admin"
         )
-        assert any(
-            e["permission"] == "*" and e["group_id"] == admin_group_id
-            for e in admin_entries
-        )
+        assert admin_entries == []
 
         # #2946: /users carries the search-users row for Authenticated
         # between the admins' Allow and the blanket Deny.

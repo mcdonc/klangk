@@ -70,8 +70,9 @@ String get _adminToken {
 /// plus a custom handler for everything else.
 http.Client _mockClient(
   Map<String, List<String>> permissions,
-  Future<http.Response> Function(http.Request) handler,
-) {
+  Future<http.Response> Function(http.Request) handler, {
+  bool isAdmin = true,
+}) {
   return MockClient((request) async {
     if (request.url.path.contains('/api/v1/config')) {
       return http.Response(
@@ -84,6 +85,7 @@ http.Client _mockClient(
         jsonEncode({
           'user_id': 'admin-user',
           'email': 'admin@example.com',
+          'is_admin': isAdmin,
           'permissions': permissions,
           'groups': [
             {'id': 'g1', 'name': 'admin'}
@@ -299,9 +301,9 @@ void main() {
           '/users': ['manage-users'],
           '/groups': ['manage-groups'],
           '/invitations': ['manage-invitations'],
-          '/admin': ['admin'],
         },
         (request) async => http.Response('Not found', 404),
+        isAdmin: false,
       );
 
       await pumpPage(tester, toEvents: false);
