@@ -1880,6 +1880,13 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Workspace restart now notifies every connected member (#3008).**
+  When one member restarted a workspace container, only that member's
+  client was told — other members' terminals went dead with no recovery
+  until a full page reload. The restart lifecycle events are now
+  broadcast to every connection in the workspace; the broadcast
+  `container_ready` clears each member's stopped overlay and re-starts
+  their terminal automatically.
 - **Admin → Events table no longer runs off the screen (#3006).** The
   table columns now share the panel width — long container ids and
   network-namespace names ellipsize with a tooltip carrying the full

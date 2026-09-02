@@ -13,6 +13,7 @@ from ..terminal import TerminalSession
 from ..podman import ExecSession, PodmanError
 from .safe_websocket import SafeWebSocket, WS_ERRORS
 from .support import (
+    broadcast_event,
     send_error,
     send_event,
     format_idle_timeout,
@@ -483,7 +484,16 @@ class Connection:
         # Save before cleanup — cleanup clears state fields.
         workspace_id = self.workspace_id
 
-        send_event(self.sock, "container_restart", "Restarting container...")
+        # #3008: fan the notice out to every connection in the workspace,
+        # not just this socket. Siblings ignore ``container_restart``
+        # today (no frontend consumer); it is the lifecycle notice for
+        # future clients, and keeps parity with the ``container_ready``
+        # fan-out below — sibling recovery itself is driven by that
+        # broadcast container_ready.
+        session = self.app.state.sockets.get_session(workspace_id)
+        broadcast_event(
+            session, self.sock, "container_restart", "Restarting container..."
+        )
 
         try:
             await self.cleanup()
@@ -527,7 +537,7 @@ class Connection:
 
     async def _announce_restarted_container(self, workspace_id) -> None:
         """Record activity, re-bind sibling connections to the new
-        container, and send the container_ready frame."""
+        container, and broadcast the container_ready frame (#3008)."""
         self.app.state.container_registry.record_activity(self.container_id)
 
         # Update container_id on ALL connections to this workspace
@@ -556,7 +566,11 @@ class Connection:
         else:
             status_msg += f" — idle timeout: {timeout_mins:.1f}m"
 
-        send_event(self.sock, "container_ready", status_msg)
+        # #3008: the ready notice goes to every connection too — each
+        # sibling page's container_ready handling (overlay/spinner clear,
+        # terminal re-start) recovers with no frontend changes.
+        session = self.app.state.sockets.get_session(workspace_id)
+        broadcast_event(session, self.sock, "container_ready", status_msg)
 
         logger.info(
             "Container restarted via restart_container command for workspace %s",

@@ -27,6 +27,7 @@ from .support import (
     MAX_INPUT_SIZE as MAX_INPUT_SIZE,
     SEND_QUEUE_SIZE as SEND_QUEUE_SIZE,
     WS_DEBUG as WS_DEBUG,
+    broadcast_event as broadcast_event,
     disconnect_all_websockets as disconnect_all_websockets,
     disconnect_user as disconnect_user,
     format_container_info as format_container_info,
