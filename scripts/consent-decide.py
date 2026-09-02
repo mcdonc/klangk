@@ -72,6 +72,19 @@ def decide(
     )
 
 
+def allowed_spec(host: str, port) -> str:
+    """The allowed_domains entry for a destination: raw IPs must be CIDR
+    (ip/32) so the sidecar entrypoint's static allow loop applies them (a
+    bare IP is neither matched by that loop nor by the DNS proxy, which
+    matches query names); domains stay as host specs."""
+    try:
+        ipaddress.ip_address(host)
+        spec = f"{host}/32"
+    except ValueError:
+        spec = host
+    return f"{spec}:{port}" if port else spec
+
+
 def _allow_destination(conn: sqlite3.Connection, ws: str, row: sqlite3.Row) -> bool:
     """Add the request's destination to the workspace's allowed_domains.
 
@@ -85,17 +98,7 @@ def _allow_destination(conn: sqlite3.Connection, ws: str, row: sqlite3.Row) -> b
     if wrow is None:
         return False
     domains = json.loads(wrow["allowed_domains"] or "[]")
-    # Raw IPs must be CIDR (ip/32) so the sidecar entrypoint's static allow
-    # loop applies them; a bare IP is neither matched by that loop nor by the
-    # DNS proxy (which matches query names). Domains stay as host specs.
-    host = row["dest_host"]
-    port = row["dest_port"]
-    try:
-        ipaddress.ip_address(host)
-        spec = f"{host}/32"
-    except ValueError:
-        spec = host
-    entry = f"{spec}:{port}" if port else spec
+    entry = allowed_spec(row["dest_host"], row["dest_port"])
     if entry in domains:
         return False
     domains.append(entry)
@@ -148,6 +151,25 @@ def _prompt_and_decide(conn, ws: str, row, user_id: str, seen: set) -> None:
         console.print("skipped")
 
 
+def pending_rows(conn: sqlite3.Connection, ws: str, seen: set) -> list[sqlite3.Row]:
+    """The workspace's pending requests not yet decided/skipped."""
+    return [r for r in _fetch_pending(conn, ws) if r["id"] not in seen]
+
+
+def poll_pending(conn: sqlite3.Connection, ws: str, user_id: str, seen: set) -> None:
+    """Poll + prompt over pending requests until Ctrl-C."""
+    while True:
+        pending = pending_rows(conn, ws, seen)
+        if not pending:
+            sys.stdout.write("\rno pending requests; polling (Ctrl-C to quit)   ")
+            sys.stdout.flush()
+            time.sleep(2)
+            continue
+        sys.stdout.write("\r" + " " * 50 + "\r")
+        for row in pending:
+            _prompt_and_decide(conn, ws, row, user_id, seen)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("workspace_id", help="workspace id (full or prefix)")
@@ -177,16 +199,7 @@ def main() -> None:
             f"[bold]egress consent decide[/bold] -- workspace {ws[:8]} "
             f"(decider: {args.as_user})"
         )
-        while True:
-            pending = [r for r in _fetch_pending(conn, ws) if r["id"] not in seen]
-            if not pending:
-                sys.stdout.write("\rno pending requests; polling (Ctrl-C to quit)   ")
-                sys.stdout.flush()
-                time.sleep(2)
-                continue
-            sys.stdout.write("\r" + " " * 50 + "\r")
-            for row in pending:
-                _prompt_and_decide(conn, ws, row, user_id, seen)
+        poll_pending(conn, ws, user_id, seen)
     except KeyboardInterrupt:
         console.print("\nbye.")
     finally:

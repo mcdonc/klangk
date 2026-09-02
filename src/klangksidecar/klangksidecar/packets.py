@@ -27,12 +27,18 @@ def rst_debug(msg: str) -> None:
         print(msg, flush=True)
 
 
+def _ethernet_offset(payload: bytes) -> int:
+    """14 when the payload carries a 14-byte Ethernet header before the IPv4
+    packet (bare L3 payloads start at 0)."""
+    if len(payload) > 14 and (payload[0] >> 4) != 4 and (payload[14] >> 4) == 4:
+        return 14  # Ethernet header
+    return 0
+
+
 def ipv4_offsets(payload: bytes) -> tuple[int, int] | None:
     """(header_offset, ihl) for the IPv4 header, or None when the payload is
     not IPv4 (bare L3 or with a 14-byte Ethernet prefix) or too short."""
-    off = 0
-    if len(payload) > 14 and (payload[0] >> 4) != 4 and (payload[14] >> 4) == 4:
-        off = 14  # Ethernet header
+    off = _ethernet_offset(payload)
     if off + 20 > len(payload) or (payload[off] >> 4) != 4:
         return None
     ihl = (payload[off] & 0x0F) * 4
@@ -62,12 +68,24 @@ def parse_dest(payload: bytes) -> tuple[str, int]:
     return dst, port
 
 
+def _syn_tuple_at(payload: bytes, off: int, ihl: int) -> tuple[str, int, str, int, int]:
+    """``(src_ip, src_port, dst_ip, dst_port, seq)`` read at a validated
+    (off, ihl): the SYN's source end (IP:port) is the workspace's local end
+    and becomes the forged RST's *destination*; its sequence number drives
+    the RST's ack (#2345)."""
+    l4 = off + ihl
+    src_ip = ".".join(str(b) for b in payload[off + 12 : off + 16])
+    dst_ip = ".".join(str(b) for b in payload[off + 16 : off + 20])
+    src_port = int.from_bytes(payload[l4 : l4 + 2], "big")
+    dst_port = int.from_bytes(payload[l4 + 2 : l4 + 4], "big")
+    seq = int.from_bytes(payload[l4 + 4 : l4 + 8], "big")
+    return src_ip, src_port, dst_ip, dst_port, seq
+
+
 def parse_syn_tuple(payload: bytes) -> tuple[str, int, str, int, int]:
     """``(src_ip, src_port, dst_ip, dst_port, seq)`` from an IPv4 TCP SYN, or an
     all-zero tuple if unparseable.
 
-    The SYN's source end (IP:port) is the workspace's local end and becomes the
-    forged RST's *destination*; its sequence number drives the RST's ack (#2345).
     Pure (mirrors :func:`parse_dest`'s L3/L4 offset logic) so it can be
     unit-tested with synthetic bytes.
     """
@@ -80,12 +98,7 @@ def parse_syn_tuple(payload: bytes) -> tuple[str, int, str, int, int]:
     l4 = off + ihl
     if l4 + 12 > len(payload):  # sport + dport + seq
         return "", 0, "", 0, 0
-    src_ip = ".".join(str(b) for b in payload[off + 12 : off + 16])
-    dst_ip = ".".join(str(b) for b in payload[off + 16 : off + 20])
-    src_port = int.from_bytes(payload[l4 : l4 + 2], "big")
-    dst_port = int.from_bytes(payload[l4 + 2 : l4 + 4], "big")
-    seq = int.from_bytes(payload[l4 + 4 : l4 + 8], "big")
-    return src_ip, src_port, dst_ip, dst_port, seq
+    return _syn_tuple_at(payload, off, ihl)
 
 
 def ones_checksum(data: bytes) -> int:

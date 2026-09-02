@@ -112,18 +112,23 @@ def ensure_users(base: str, token: str) -> dict[str, str]:
     return ids
 
 
+def group_id_by_name(base: str, token: str, name: str) -> str:
+    """The id of a group by name (from the paged listing)."""
+    _, listing = api(base, token, "GET", "/api/v1/groups?page_size=100")
+    return next(g["id"] for g in listing["groups"] if g["name"] == name)
+
+
 def ensure_admin_group_member(base: str, token: str, user_id: str) -> None:
     """Idempotently add fmtk-admin to the ``admins`` group."""
-    _, listing = api(base, token, "GET", "/api/v1/groups?page_size=100")
-    group = next(g for g in listing["groups"] if g["name"] == "admins")
-    _, members = api(base, token, "GET", f"/api/v1/groups/{group['id']}/members")
+    group_id = group_id_by_name(base, token, "admins")
+    _, members = api(base, token, "GET", f"/api/v1/groups/{group_id}/members")
     if any(m["id"] == user_id for m in members):
         return
     status, body = api(
         base,
         token,
         "POST",
-        f"/api/v1/groups/{group['id']}/members",
+        f"/api/v1/groups/{group_id}/members",
         {"user_id": user_id},
     )
     if status != 200:
@@ -150,12 +155,17 @@ def ensure_workspace(base: str, owner_token: str) -> str:
     return body["id"]
 
 
+def role_bucket(base: str, token: str, ws_id: str, role: str) -> dict:
+    """The workspace's ``role`` bucket from the roles listing."""
+    _, roles = api(base, token, "GET", f"/api/v1/workspaces/{ws_id}/roles")
+    return next(r for r in roles if r["role"] == role)
+
+
 def ensure_role_member(
     base: str, token: str, ws_id: str, role: str, email: str
 ) -> None:
     """Idempotently add ``email`` to the workspace's ``role`` bucket."""
-    _, roles = api(base, token, "GET", f"/api/v1/workspaces/{ws_id}/roles")
-    bucket = next(r for r in roles if r["role"] == role)
+    bucket = role_bucket(base, token, ws_id, role)
     if any(m["email"] == email for m in bucket["members"]):
         return
     status, body = api(

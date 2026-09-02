@@ -61,6 +61,40 @@ FEATURE_API_DEP = {
 }
 
 
+def dart_package_classes(dart_dir: str) -> tuple[list[str], list[str]]:
+    """(tool_classes, tab_classes) from a feature's lib/feature.dart."""
+    with open(os.path.join(dart_dir, "lib", "feature.dart")) as f:
+        source = f.read()
+    tool_classes = re.findall(r"class\s+(\w+)\s+extends\s+ToolPlugin", source)
+    tab_classes = re.findall(r"class\s+(\w+)\s+extends\s+WorkspaceTabPlugin", source)
+    return tool_classes, tab_classes
+
+
+def scan_feature_dir(name: str, features_dir: str) -> dict | None:
+    """One features/<name> entry's metadata, or None when it has no Dart
+    package (missing pubspec/feature.dart) or declares no plugins (a
+    feature with neither a ToolPlugin nor a WorkspaceTabPlugin isn't a
+    klangk feature)."""
+    dart_dir = os.path.join(features_dir, name, "klangk")
+    pubspec_file = os.path.join(dart_dir, "pubspec.yaml")
+    feature_dart = os.path.join(dart_dir, "lib", "feature.dart")
+    if not os.path.isfile(pubspec_file) or not os.path.isfile(feature_dart):
+        return None
+    tool_classes, tab_classes = dart_package_classes(dart_dir)
+    if not tool_classes and not tab_classes:
+        return None
+    with open(pubspec_file) as f:
+        pubspec = yaml.safe_load(f)
+    package_name = pubspec.get("name", f"klangk_feature_{name}")
+    return {
+        "name": name,
+        "package_name": package_name,
+        "dart_dir": dart_dir,
+        "tool_classes": tool_classes,
+        "tab_classes": tab_classes,
+    }
+
+
 def find_features(features_dir):
     """Scan features/*/klangk/ for Dart packages, return metadata.
 
@@ -80,39 +114,9 @@ def find_features(features_dir):
         return features
 
     for name in sorted(os.listdir(features_dir)):
-        feature_dir = os.path.join(features_dir, name)
-        dart_dir = os.path.join(feature_dir, "klangk")
-        pubspec_file = os.path.join(dart_dir, "pubspec.yaml")
-        feature_dart = os.path.join(dart_dir, "lib", "feature.dart")
-
-        if not os.path.isfile(pubspec_file) or not os.path.isfile(feature_dart):
-            continue
-
-        with open(pubspec_file) as f:
-            pubspec = yaml.safe_load(f)
-
-        package_name = pubspec.get("name", f"klangk_feature_{name}")
-
-        with open(feature_dart) as f:
-            source = f.read()
-
-        tool_classes = re.findall(r"class\s+(\w+)\s+extends\s+ToolPlugin", source)
-        tab_classes = re.findall(
-            r"class\s+(\w+)\s+extends\s+WorkspaceTabPlugin", source
-        )
-        # A feature with neither component isn't a klangk feature — skip it.
-        if not tool_classes and not tab_classes:
-            continue
-
-        features.append(
-            {
-                "name": name,
-                "package_name": package_name,
-                "dart_dir": dart_dir,
-                "tool_classes": tool_classes,
-                "tab_classes": tab_classes,
-            }
-        )
+        meta = scan_feature_dir(name, features_dir)
+        if meta is not None:
+            features.append(meta)
 
     return features
 
@@ -170,6 +174,71 @@ def _validate_feature_config_key(key, feature_name):
         )
 
 
+def normalized_scope(spec: dict) -> str:
+    """The key's scope, defaulting unknown scopes to "container" (same
+    as the old server resolver)."""
+    scope = spec.get("scope", "container")
+    if scope not in {"container", "frontend", "both"}:
+        return "container"
+    return scope
+
+
+def manifest_config_entry(spec: dict) -> tuple[dict, bool]:
+    """The manifest config entry for one declared key + whether it is
+    container-scoped (eligible for container-env injection). Carries only
+    the JSON-serializable, runtime-relevant shape: {description, default,
+    scope}."""
+    scope = normalized_scope(spec)
+    entry = {
+        "description": spec.get("description", ""),
+        "default": spec.get("default", ""),
+        "scope": scope,
+    }
+    return entry, scope in _CONTAINER_SCOPES
+
+
+def feature_config(cfg: dict, name: str) -> tuple[dict, list[str]]:
+    """The normalized {key: entry} config + the container-scope keys for
+    one feature's package.json klangk.config block."""
+    config = {}
+    env_keys = []
+    for key, spec in cfg.items():
+        if not isinstance(spec, dict):
+            continue
+        # Every declared key must carry the KLANGKWS_FEATURE_ prefix,
+        # regardless of scope (#1662). Validate before emitting anything so
+        # a bad declaration aborts the build rather than shipping a manifest
+        # the runtime would silently skip.
+        _validate_feature_config_key(key, name)
+        config[key], container_scoped = manifest_config_entry(spec)
+        if container_scoped:
+            env_keys.append(key)
+    return config, env_keys
+
+
+def package_json_manifest(pkg_json: str, name: str) -> tuple[str, str, dict, list[str]]:
+    """(version, description, config, container_env_keys) from one
+    feature's package.json; empty metadata when absent/unreadable/malformed
+    (a malformed feature's parse errors don't abort the build)."""
+    version = ""
+    description = ""
+    config = {}
+    env_keys: list[str] = []
+    if not os.path.isfile(pkg_json):
+        return version, description, config, env_keys
+    try:
+        with open(pkg_json) as f:
+            manifest = json.load(f)
+        version = manifest.get("version", "")
+        description = manifest.get("description", "")
+        cfg = manifest.get("klangk", {}).get("config", {})
+        if isinstance(cfg, dict):
+            config, env_keys = feature_config(cfg, name)
+    except (json.JSONDecodeError, ValueError, OSError):
+        pass
+    return version, description, config, env_keys
+
+
 def collect_feature_metadata(dart_features, features_dir):
     """Build the per-feature metadata + container_env_keys from package.json.
 
@@ -188,41 +257,8 @@ def collect_feature_metadata(dart_features, features_dir):
     for p in dart_features:
         name = p["name"]
         pkg_json = os.path.join(features_dir, name, "package.json")
-        version = ""
-        description = ""
-        config = {}
-        if os.path.isfile(pkg_json):
-            try:
-                with open(pkg_json) as f:
-                    manifest = json.load(f)
-                version = manifest.get("version", "")
-                description = manifest.get("description", "")
-                cfg = manifest.get("klangk", {}).get("config", {})
-                if isinstance(cfg, dict):
-                    # Carry only the JSON-serializable, runtime-relevant shape
-                    # per key: {description, default, scope}. Unknown scopes
-                    # default to "container" (same as the old server resolver).
-                    for key, spec in cfg.items():
-                        if not isinstance(spec, dict):
-                            continue
-                        # Every declared key must carry the KLANGKWS_FEATURE_
-                        # prefix, regardless of scope (#1662). Validate before
-                        # emitting anything so a bad declaration aborts the
-                        # build rather than shipping a manifest the runtime
-                        # would silently skip.
-                        _validate_feature_config_key(key, name)
-                        scope = spec.get("scope", "container")
-                        if scope not in {"container", "frontend", "both"}:
-                            scope = "container"
-                        config[key] = {
-                            "description": spec.get("description", ""),
-                            "default": spec.get("default", ""),
-                            "scope": scope,
-                        }
-                        if scope in _CONTAINER_SCOPES:
-                            container_env_keys.append(key)
-            except (json.JSONDecodeError, ValueError, OSError):
-                pass
+        version, description, config, env_keys = package_json_manifest(pkg_json, name)
+        container_env_keys.extend(env_keys)
         features.append(
             {
                 "name": name,
@@ -282,6 +318,25 @@ def write_pubspec(features, dart_pkg_dir):
         yaml.dump(pubspec, f, default_flow_style=False, sort_keys=False)
 
 
+def constructor_lines(features: list, classes_key: str) -> list[str]:
+    """The ``    Cls(),`` lines for one aggregator's feature list."""
+    lines = []
+    for p in features:
+        for cls in p[classes_key]:
+            lines.append(f"    {cls}(),")
+    return lines
+
+
+def named_constructor_lines(features: list, classes_key: str, label: str) -> list[str]:
+    """The ``    (name: ..., label: Cls()),`` lines for one named-record
+    aggregator."""
+    lines = []
+    for p in features:
+        for cls in p[classes_key]:
+            lines.append(f"    (name: {p['name']!r}, {label}: {cls}()),")
+    return lines
+
+
 def generate_dart(features):
     """Generate klangk_features.dart source as a string."""
     lines = [
@@ -295,9 +350,7 @@ def generate_dart(features):
     lines.append("")
     lines.append("List<ToolPlugin> createAllFeatures() {")
     lines.append("  return [")
-    for p in features:
-        for cls in p["tool_classes"]:
-            lines.append(f"    {cls}(),")
+    lines.extend(constructor_lines(features, "tool_classes"))
     lines.append("  ];")
     lines.append("}")
     lines.append("")
@@ -307,9 +360,7 @@ def generate_dart(features):
     lines.append("// `name` matches features.json features[].name / defaults[].")
     lines.append("List<({String name, ToolPlugin feature})> createAllNamedFeatures() {")
     lines.append("  return [")
-    for p in features:
-        for cls in p["tool_classes"]:
-            lines.append(f"    (name: {p['name']!r}, feature: {cls}()),")
+    lines.extend(named_constructor_lines(features, "tool_classes", "feature"))
     lines.append("  ];")
     lines.append("}")
     lines.append("")
@@ -324,9 +375,7 @@ def generate_dart(features):
         "List<({String name, WorkspaceTabPlugin tab})> createAllNamedWorkspaceTabs() {"
     )
     lines.append("  return [")
-    for p in features:
-        for cls in p["tab_classes"]:
-            lines.append(f"    (name: {p['name']!r}, tab: {cls}()),")
+    lines.extend(named_constructor_lines(features, "tab_classes", "tab"))
     lines.append("  ];")
     lines.append("}")
     lines.append("")
@@ -349,6 +398,22 @@ def write_overrides_and_symlink(dart_pkg_dir):
     if os.path.islink(symlink_path) or os.path.exists(symlink_path):
         os.remove(symlink_path)
     os.symlink(overrides_path, symlink_path)
+
+
+def write_dart_aggregator(features: list, dart_pkg_dir: str) -> None:
+    """Generate klangk_features.dart + print the codegen summary."""
+    output = generate_dart(features)
+    output_path = os.path.join(dart_pkg_dir, "lib", "klangk_features.dart")
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    with open(output_path, "w") as f:
+        f.write(output)
+
+    names = [c for p in features for c in (p["tool_classes"] + p["tab_classes"])]
+    print(
+        f"Generated Dart pubspec at {os.path.join(dart_pkg_dir, 'pubspec.yaml')} "
+        f"with {len(features)} feature(s)"
+    )
+    print(f"Generated Dart {output_path}: {', '.join(names) or '(none)'}")
 
 
 def main(argv=None):
@@ -398,18 +463,7 @@ def main(argv=None):
         print(f"Regenerated feature manifest {FEATURES_JSON}")
         return
 
-    output = generate_dart(features)
-    output_path = os.path.join(dart_pkg_dir, "lib", "klangk_features.dart")
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    with open(output_path, "w") as f:
-        f.write(output)
-
-    names = [c for p in features for c in (p["tool_classes"] + p["tab_classes"])]
-    print(
-        f"Generated Dart pubspec at {os.path.join(dart_pkg_dir, 'pubspec.yaml')} "
-        f"with {len(features)} feature(s)"
-    )
-    print(f"Generated Dart {output_path}: {', '.join(names) or '(none)'}")
+    write_dart_aggregator(features, dart_pkg_dir)
     print(f"Generated feature manifest {FEATURES_JSON}")
 
 

@@ -50,6 +50,14 @@ def ws_url(consent_url: str) -> str:
     return consent_url  # already ws(s)://, or an exotic scheme used verbatim
 
 
+def verdict_result(msg: dict) -> tuple[str, str]:
+    """The ``(decision, duration)`` a verdict frame resolves a pending hold
+    to: any non-"allow" verdict (deny, expired, malformed) -> deny."""
+    decision = msg.get("decision")
+    token = decision if decision == "allow" else "deny"
+    return token, msg.get("duration") or "once"
+
+
 class SidecarConsentClient:
     """Persistent WS client to klangkd's ``/ws/egress-sidecar`` (#2311 half B).
 
@@ -112,6 +120,56 @@ class SidecarConsentClient:
                 pass
         self._fail_close_pending()
 
+    def _warn_token_missing(self) -> None:
+        """One-shot DEBUG note while the workspace JWT has not been written
+        (expected at startup; retried without escalating backoff)."""
+        if DEBUG and not self._no_token_warned:
+            print(
+                "consent: workspace token not yet present; retrying",
+                flush=True,
+            )
+            self._no_token_warned = True
+
+    async def _try_connect(self, token: str) -> bool:
+        """One connect/serve/disconnect cycle. Returns True when the connection
+        was established (the caller resets its backoff)."""
+        connected = False
+        try:
+            async with websockets.connect(
+                self._url,
+                ping_interval=20,
+                ping_timeout=10,
+                close_timeout=5,
+                additional_headers={"Authorization": "Bearer " + token},
+            ) as ws:
+                self._ws = ws
+                self._connected.set()
+                self._no_token_warned = False
+                connected = True
+                if DEBUG:
+                    print(f"consent: connected to {self._url}", flush=True)
+                async for raw in ws:
+                    await self._dispatch(raw)
+        except Exception as exc:
+            # Log the exception TYPE only -- the connection carries the
+            # workspace JWT (Authorization header), and a websockets
+            # exception could embed request details (#2309). The websockets
+            # package logger is capped at WARNING on import so its DEBUG
+            # request-line can't leak either.
+            if DEBUG:
+                print(
+                    f"consent: connection error: {type(exc).__name__}",
+                    flush=True,
+                )
+        finally:
+            # Disconnected (clean close, error, or crash): the sidecar's
+            # held connections die with it (fail-close). Any in-flight
+            # request resolves to deny so its caller NXDOMAIN/DROPs.
+            self._ws = None
+            self._connected.clear()
+            self._fail_close_pending()
+        return connected
+
     async def run(self) -> None:
         backoff = 1.0
         while not self._stop:
@@ -119,48 +177,11 @@ class SidecarConsentClient:
             if not token:
                 # Token file not present yet (workspace JWT not written). Retry
                 # without escalating backoff (expected at startup).
-                if DEBUG and not self._no_token_warned:
-                    print(
-                        "consent: workspace token not yet present; retrying",
-                        flush=True,
-                    )
-                    self._no_token_warned = True
+                self._warn_token_missing()
                 await asyncio.sleep(1.0)
                 continue
-            try:
-                async with websockets.connect(
-                    self._url,
-                    ping_interval=20,
-                    ping_timeout=10,
-                    close_timeout=5,
-                    additional_headers={"Authorization": "Bearer " + token},
-                ) as ws:
-                    self._ws = ws
-                    self._connected.set()
-                    self._no_token_warned = False
-                    backoff = 1.0
-                    if DEBUG:
-                        print(f"consent: connected to {self._url}", flush=True)
-                    async for raw in ws:
-                        await self._dispatch(raw)
-            except Exception as exc:
-                # Log the exception TYPE only -- the connection carries the
-                # workspace JWT (Authorization header), and a websockets
-                # exception could embed request details (#2309). The websockets
-                # package logger is capped at WARNING on import so its DEBUG
-                # request-line can't leak either.
-                if DEBUG:
-                    print(
-                        f"consent: connection error: {type(exc).__name__}",
-                        flush=True,
-                    )
-            finally:
-                # Disconnected (clean close, error, or crash): the sidecar's
-                # held connections die with it (fail-close). Any in-flight
-                # request resolves to deny so its caller NXDOMAIN/DROPs.
-                self._ws = None
-                self._connected.clear()
-                self._fail_close_pending()
+            if await self._try_connect(token):
+                backoff = 1.0
             if self._stop:
                 break
             await asyncio.sleep(backoff)
@@ -181,15 +202,60 @@ class SidecarConsentClient:
 
     def apply_verdict(self, msg: dict) -> None:
         vid = msg.get("id")
-        decision = msg.get("decision")
         if not isinstance(vid, str):
             return
         fut = self._pending.pop(vid, None)
         if fut is not None and not fut.done():
-            # Any non-"allow" verdict (deny, expired, malformed) -> deny.
-            token = decision if decision == "allow" else "deny"
-            duration = msg.get("duration") or "once"
-            fut.set_result((token, duration))
+            fut.set_result(verdict_result(msg))
+
+    def _drop_session_rules(self, host: str, decision: str) -> None:
+        """Close the session gates BEFORE the executor window (#2370, #2446).
+
+        While :func:`klangksidecar.rules.drop_for_host` forks iptables
+        off-loop (~tens of ms), a racing SYN/DNS could read the loop-only
+        session lists and re-install a fresh ACCEPT (an allow revoke) or keep
+        auto-denying (a deny revoke) that the revoke never clears; clearing
+        them first on the loop makes both gates deny during the window. (A
+        deny never adds to SESSION_HOST_ALLOWS, so skip it there.)"""
+        if decision == "allowed":
+            allowlist.drop_session_hosts(host)
+        # The caller already restricted decision to allowed/denied, so exactly
+        # one of these branches runs -- the elif's false arc (neither) is
+        # unreachable.
+        elif decision == "denied":  # pragma: no branch
+            allowlist.drop_session_denies(host)
+
+    async def _drop_host_rules(self, host, decision) -> bool:
+        """Run the revoke off the loop; True once the rule is gone and the
+        cached verdicts cleared."""
+        if not (isinstance(host, str) and decision in ("allowed", "denied")):
+            return False
+        self._drop_session_rules(host, decision)
+        try:
+            ips = await asyncio.get_running_loop().run_in_executor(
+                None, rules.drop_for_host, host, decision
+            )
+            # Drop the host's cached verdicts on the loop AFTER the rule
+            # removal (loop-only dict). A cache hit only pkt.accept()s a
+            # retransmit -- it does not re-install an ACCEPT -- so this is
+            # safe after the drop and needs no window protection.
+            clear_verdict_cache(ips)
+            # The ack means "the rule is dropped" (#2339); the loop-state
+            # clears are pure dict ops and don't affect it.
+            return True
+        except Exception:
+            return False
+
+    async def _send_drop_ack(self, ack_id, ok: bool) -> None:
+        """Best-effort drop_ack frame back to klangkd."""
+        if not (isinstance(ack_id, str) and self._ws is not None):
+            return
+        try:
+            await self._ws.send(
+                json.dumps({"type": "drop_ack", "id": ack_id, "ok": ok})
+            )
+        except Exception:
+            pass
 
     async def handle_drop_rule(self, msg: dict) -> None:
         """klangkd asked us to drop a host's rules (revocation, #2339).
@@ -197,50 +263,8 @@ class SidecarConsentClient:
         Runs :func:`drop_for_host` off the loop (it forks iptables) and acks
         back so klangkd marks the verdict revoked only once the rule is gone.
         """
-        ack_id = msg.get("id")
-        host = msg.get("host")
-        decision = msg.get("decision")
-        ok = False
-        if isinstance(host, str) and decision in ("allowed", "denied"):
-            # #2370: close the session-allow gates BEFORE the executor window.
-            # While drop_for_host forks iptables off-loop (~tens of ms), a racing
-            # SYN/DNS could read SESSION_HOST_ALLOWS and re-install a fresh
-            # ACCEPT (the host's remaining allow TTL) the revoke never clears.
-            # drop_session_hosts runs on the loop (loop-only structure) and
-            # makes cb's session_host_allows_ttl + ports_for deny during the
-            # window. (A deny never adds to SESSION_HOST_ALLOWS, so skip it
-            # there.)
-            if decision == "allowed":
-                allowlist.drop_session_hosts(host)
-            # The outer guard already restricted decision to allowed/denied,
-            # so exactly one of these branches runs -- the elif's false arc
-            # (neither) is unreachable.
-            elif decision == "denied":  # pragma: no branch
-                # Clear the host-scoped deny memory (#2446) BEFORE drop_for_host
-                # forks iptables, so a SYN arriving during that window re-prompts
-                # instead of staying auto-denied (mirror of the allow revoke).
-                allowlist.drop_session_denies(host)
-            try:
-                ips = await asyncio.get_running_loop().run_in_executor(
-                    None, rules.drop_for_host, host, decision
-                )
-                # Drop the host's cached verdicts on the loop AFTER the rule
-                # removal (loop-only dict). A cache hit only pkt.accept()s a
-                # retransmit -- it does not re-install an ACCEPT -- so this is
-                # safe after the drop and needs no window protection.
-                clear_verdict_cache(ips)
-                # The ack means "the rule is dropped" (#2339); the loop-state
-                # clears above are pure dict ops and don't affect it.
-                ok = True
-            except Exception:
-                ok = False
-        if isinstance(ack_id, str) and self._ws is not None:
-            try:
-                await self._ws.send(
-                    json.dumps({"type": "drop_ack", "id": ack_id, "ok": ok})
-                )
-            except Exception:
-                pass
+        ok = await self._drop_host_rules(msg.get("host"), msg.get("decision"))
+        await self._send_drop_ack(msg.get("id"), ok)
 
     async def request(self, dst: str, dport: int | None) -> tuple[str, str]:
         """Send an egress frame + await the verdict. Fail-close -> ``("deny",

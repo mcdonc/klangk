@@ -58,6 +58,24 @@ def test_clean_binary_edit_passes(repo):
     assert cbi.find_violations() == []
 
 
+def assert_single_violation(violations: list, path: str, is_bin: bool) -> tuple:
+    """find_violations flagged exactly one binary/text violation for the
+    path; returns (old, new)."""
+    assert len(violations) == 1
+    vpath, old, new, vbin = violations[0]
+    assert vpath == path
+    assert vbin is is_bin
+    return old, new
+
+
+def assert_integrity_report(err: str) -> None:
+    """main()'s stderr names the mechanism, the file, and the remediation."""
+    assert "EF BF BD" in err
+    assert "#1734" in err
+    assert "asset.wasm" in err
+    assert "checkout HEAD" in err  # remediation hint present
+
+
 def test_lossy_rewrite_of_binary_flagged(repo):
     """The #1734 mechanism: a text-mode round-trip injects thousands of
     replacement chars into a binary — flagged as binary, any increase."""
@@ -69,11 +87,7 @@ def test_lossy_rewrite_of_binary_flagged(repo):
     assert mangled.count(REPL) > 50  # sanity: the round-trip inflated REPLs
     p.write_bytes(mangled)
     _stage(repo, "asset.wasm")
-    v = cbi.find_violations()
-    assert len(v) == 1
-    path, old, new, is_bin = v[0]
-    assert path == "asset.wasm"
-    assert is_bin is True
+    old, new = assert_single_violation(cbi.find_violations(), "asset.wasm", True)
     assert old == 0  # clean HEAD baseline had no replacement chars
     assert new > 0  # the lossy rewrite injected them
 
@@ -85,11 +99,7 @@ def test_new_corrupt_binary_flagged(repo):
         raw.decode("utf-8", errors="replace").encode("utf-8")
     )
     _stage(repo, "new.wasm")
-    v = cbi.find_violations()
-    assert len(v) == 1
-    path, old, new, is_bin = v[0]
-    assert path == "new.wasm"
-    assert is_bin is True
+    old, new = assert_single_violation(cbi.find_violations(), "new.wasm", True)
     assert old == 0  # no prior version
     assert new > cbi.TEXT_THRESHOLD
 
@@ -138,8 +148,4 @@ def test_script_entrypoint(repo):
 def test_main_reports_and_fails(monkeypatch, capsys):
     monkeypatch.setattr(cbi, "find_violations", lambda: [("asset.wasm", 0, 1000, True)])
     assert cbi.main() == 1
-    err = capsys.readouterr().err
-    assert "EF BF BD" in err
-    assert "#1734" in err
-    assert "asset.wasm" in err
-    assert "checkout HEAD" in err  # remediation hint present
+    assert_integrity_report(capsys.readouterr().err)

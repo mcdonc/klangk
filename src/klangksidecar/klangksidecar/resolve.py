@@ -58,6 +58,15 @@ def nxdomain_for(wire: bytes) -> bytes:
     return resp.to_wire()
 
 
+def a_records_or_none(resp: bytes) -> list[tuple[str, int]]:
+    """``a_records_with_ttl`` with a parse failure swallowed (``[]``) so a
+    malformed upstream response drops only this one response, not the proxy."""
+    try:
+        return a_records_with_ttl(resp)
+    except Exception:
+        return []
+
+
 async def respond_allowed(
     s: socket.socket,
     resp: bytes,
@@ -77,10 +86,7 @@ async def respond_allowed(
     persist (a partial fail-open).
     """
     loop = asyncio.get_running_loop()
-    try:
-        recs = a_records_with_ttl(resp)
-    except Exception:
-        recs = []
+    recs = a_records_or_none(resp)
     try:
         if recs:
             # Bound a timed session-allow's learned rule at its verdict's
@@ -176,10 +182,7 @@ async def respond_recorded(
     :func:`respond_allowed` minus the ACCEPT install.
     """
     loop = asyncio.get_running_loop()
-    try:
-        recs = a_records_with_ttl(resp)
-    except Exception:
-        recs = []
+    recs = a_records_or_none(resp)
     try:
         if recs:
             await loop.run_in_executor(None, rules.record_hosts, recs, qname)
@@ -221,6 +224,39 @@ def send_nxdomain(s: socket.socket, data: bytes, addr: tuple[str, int]) -> None:
         pass
 
 
+async def send_denied(
+    s: socket.socket,
+    data: bytes,
+    addr: tuple[str, int],
+    qname: str,
+    client: SidecarConsentClient | None,
+) -> None:
+    """The deny path: interactive mode resolves + responds + records IP->host
+    (the SYN is consent-gated at NFQUEUE, not held here at the DNS query);
+    static mode (no client) NXDOMAINs."""
+    if DEBUG:
+        print(f"deny  {qname}", flush=True)
+    if client is not None:
+        await forward_and_record(s, data, addr, qname)
+    else:
+        send_nxdomain(s, data, addr)
+
+
+def _handle_rejected(
+    s: socket.socket, data: bytes, addr: tuple[str, int], qname: str
+) -> bool:
+    """Static deny-list (#2367): a rejected name is NXDOMAIN'd unconditionally,
+    in BOTH static and interactive modes, and takes precedence over the
+    allow-list + consent (a name in both allowed + rejected is rejected).
+    Returns True when handled."""
+    if not rejected_for(qname):
+        return False
+    if DEBUG:
+        print(f"reject {qname}", flush=True)
+    send_nxdomain(s, data, addr)
+    return True
+
+
 async def handle_packet(
     s: socket.socket,
     data: bytes,
@@ -246,24 +282,11 @@ async def handle_packet(
     # bypass NFQUEUE entirely.
     if client is not None:
         client.bump_activity()
-    # Static deny-list (#2367): a rejected name is NXDOMAIN'd unconditionally,
-    # in BOTH static and interactive modes, and takes precedence over the
-    # allow-list + consent (a name in both allowed + rejected is rejected).
-    if rejected_for(qname):
-        if DEBUG:
-            print(f"reject {qname}", flush=True)
-        send_nxdomain(s, data, addr)
+    if _handle_rejected(s, data, addr, qname):
         return
     ports = ports_for(qname)
     deny, port_set = decision(qname, ports)
     if deny:
-        if DEBUG:
-            print(f"deny  {qname}", flush=True)
-        if client is not None:
-            # Interactive: resolve + respond + record IP->host; the SYN is
-            # consent-gated at NFQUEUE (not held here at the DNS query).
-            await forward_and_record(s, data, addr, qname)
-        else:
-            send_nxdomain(s, data, addr)
+        await send_denied(s, data, addr, qname, client)
         return
     await forward_and_learn(s, data, addr, qname, port_set)

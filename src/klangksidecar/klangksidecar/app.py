@@ -126,6 +126,67 @@ def resolve_ws_host(consent_url: str) -> str | None:
     return ip
 
 
+async def start_consent_client() -> SidecarConsentClient | None:
+    """Start the WS consent client when consent is configured (a
+    :data:`config.CONSENT_URL`), else None (static mode)."""
+    if not config.CONSENT_URL:
+        return None
+    client = consent.SidecarConsentClient(
+        config.CONSENT_URL, WORKSPACE_TOKEN_PATH, HOLD_TIMEOUT
+    )
+    await client.start()
+    return client
+
+
+def bind_dns_socket() -> socket.socket:
+    """Bind the non-blocking UDP DNS socket the per-query loop serves on."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s.bind(("127.0.0.1", LISTEN_PORT))
+    s.setblocking(False)
+    print(
+        f"dns-proxy listening on 127.0.0.1:{LISTEN_PORT} "
+        f"(upstream={UPSTREAM[0]}, allowed={allowlist.SPECS})",
+        flush=True,
+    )
+    return s
+
+
+async def start_consent_services(loop, client: SidecarConsentClient) -> tuple:
+    """Start the NFQUEUE consumer + the egress sampler (interactive mode).
+
+    #2485: the egress byte-accounting rule + the sampler that bumps the idle
+    timer on real workspace traffic (long-lived / UDP flows the #2481 DNS+SYN
+    hooks miss). Best-effort; a missing rule -> flat zero counter -> sampler
+    never bumps (falls back to #2481). resolve_ws_host scopes the rule to
+    exclude the sidecar's own WS so its keepalives can't self-sustain the
+    timer. Resolve + install run off-loop (gethostbyname + 2 iptables forks
+    are blocking), matching the rest of startup. Returns ``(nfq, sampler)``.
+    """
+    packets.check_rst_socket()  # eager-deny RST forge (#2345); best-effort (NET_RAW)
+    nfq = nfqueue.setup_nfq_consumer(client)  # bound NFQUEUE, for shutdown (#2400)
+    ws_ip = await loop.run_in_executor(None, resolve_ws_host, config.CONSENT_URL)
+    await loop.run_in_executor(None, rules.install_acct, ws_ip)
+    sampler = asyncio.create_task(
+        consent.activity_sampler(client, rules.acct_bytes, config.ACTIVITY_GATE_S)
+    )
+    BG_TASKS.add(sampler)
+    sampler.add_done_callback(BG_TASKS.discard)
+    return nfq, sampler
+
+
+async def serve_dns(s: socket.socket, client: SidecarConsentClient | None) -> None:
+    """The per-query recv loop; exits only via the SIGTERM CancelledError,
+    never by falling through the condition -- the arc to loop exit is
+    unreachable."""
+    loop = asyncio.get_running_loop()
+    while True:  # pragma: no branch
+        try:
+            data, addr = await loop.sock_recvfrom(s, 65535)
+        except Exception:
+            continue
+        await resolve.handle_packet(s, data, addr, client)
+
+
 async def async_main() -> None:
     """The asyncio DNS loop (#2311 half B, #2324): allow-listed + denied names
     resolve inline; a denied name in interactive mode records IP->host so its
@@ -136,45 +197,18 @@ async def async_main() -> None:
     PID 1, and the kernel suppresses default terminate dispositions for init).
     """
     loop = asyncio.get_running_loop()
-    client: SidecarConsentClient | None = None
-    if config.CONSENT_URL:
-        client = consent.SidecarConsentClient(
-            config.CONSENT_URL, WORKSPACE_TOKEN_PATH, HOLD_TIMEOUT
-        )
-        await client.start()
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    s.bind(("127.0.0.1", LISTEN_PORT))
-    s.setblocking(False)
-    print(
-        f"dns-proxy listening on 127.0.0.1:{LISTEN_PORT} "
-        f"(upstream={UPSTREAM[0]}, allowed={allowlist.SPECS})",
-        flush=True,
-    )
+    client = await start_consent_client()
+    s = bind_dns_socket()
     rules.check_mark()
     _sweep = asyncio.create_task(rules.async_sweeper())
     BG_TASKS.add(_sweep)  # strong ref for the loop's lifetime
     _sweep.add_done_callback(BG_TASKS.discard)
-    nfq = None
-    _sampler: asyncio.Task | None = None
     # NFQUEUE consumer is driven by this event loop (get_fd + add_reader) so a
     # slow verdict on one SYN doesn't serialize others (#2324, #2329).
-    if config.CONSENT_URL:
-        packets.check_rst_socket()  # eager-deny RST forge (#2345); best-effort (NET_RAW)
-        nfq = nfqueue.setup_nfq_consumer(client)  # bound NFQUEUE, for shutdown (#2400)
-        # #2485: egress byte-accounting rule + the sampler that bumps the idle
-        # timer on real workspace traffic (long-lived / UDP flows the #2481
-        # DNS+SYN hooks miss). Best-effort; a missing rule -> flat zero counter
-        # -> sampler never bumps (falls back to #2481). resolve_ws_host scopes
-        # the rule to exclude the sidecar's own WS so its keepalives can't
-        # self-sustain the timer. Resolve + install run off-loop (gethostbyname
-        # + 2 iptables forks are blocking), matching the rest of startup.
-        ws_ip = await loop.run_in_executor(None, resolve_ws_host, config.CONSENT_URL)
-        await loop.run_in_executor(None, rules.install_acct, ws_ip)
-        _sampler = asyncio.create_task(
-            consent.activity_sampler(client, rules.acct_bytes, config.ACTIVITY_GATE_S)
-        )
-        BG_TASKS.add(_sampler)
-        _sampler.add_done_callback(BG_TASKS.discard)
+    nfq = None
+    _sampler: asyncio.Task | None = None
+    if client is not None:
+        nfq, _sampler = await start_consent_services(loop, client)
     # The sidecar is PID 1 (entrypoint.sh execs python). The kernel suppresses
     # default terminate/stop dispositions for a PID-namespace init: a SIGTERM
     # with no handler installed is effectively ignored, so podman's `stop -t 5`
@@ -208,14 +242,7 @@ async def async_main() -> None:
     except (NotImplementedError, RuntimeError):
         pass  # signal handlers need the main thread + a supported loop backend
     try:
-        # Exits only via the SIGTERM CancelledError above, never by falling
-        # through the condition -- the arc to loop exit is unreachable.
-        while True:  # pragma: no branch
-            try:
-                data, addr = await loop.sock_recvfrom(s, 65535)
-            except Exception:
-                continue
-            await resolve.handle_packet(s, data, addr, client)
+        await serve_dns(s, client)
     except asyncio.CancelledError:
         if DEBUG:
             print("dns-proxy: stop signal received, shutting down", flush=True)

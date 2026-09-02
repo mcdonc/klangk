@@ -37,6 +37,14 @@ def _is_type_checking(node: ast.AST) -> bool:
     )
 
 
+def _catches_import_error(handler: ast.ExceptHandler) -> bool:
+    """Does an except clause catch ImportError/ModuleNotFoundError?"""
+    return isinstance(handler.type, ast.Name) and handler.type.id in (
+        "ImportError",
+        "ModuleNotFoundError",
+    )
+
+
 def _is_guarded_optional(node: ast.AST) -> bool:
     """Check if a node is a module-scope ``try: import`` over ``ImportError``.
 
@@ -48,9 +56,7 @@ def _is_guarded_optional(node: ast.AST) -> bool:
     if not (isinstance(parent, ast.Try) and _is_top_level(parent)):
         return False
     return any(
-        isinstance(h, ast.ExceptHandler)
-        and isinstance(h.type, ast.Name)
-        and h.type.id in ("ImportError", "ModuleNotFoundError")
+        isinstance(h, ast.ExceptHandler) and _catches_import_error(h)
         for h in parent.handlers
     )
 
@@ -90,6 +96,35 @@ def _is_marked(lines: list[str], lineno: int, comment: str) -> bool:
     return False
 
 
+def _is_exempt(node: ast.AST) -> bool:
+    """Is the import module-scope in one of the canonical patterns (plain
+    top-level, ``if TYPE_CHECKING:``, or a guarded optional dependency)?"""
+    return _is_top_level(node) or _is_type_checking(node) or _is_guarded_optional(node)
+
+
+def _is_flagged_import(node: ast.AST, source_lines: list[str]) -> bool:
+    """Is this import node a deferred import that carries no allow marker?"""
+    if not isinstance(node, (ast.Import, ast.ImportFrom)):
+        return False
+    if _is_exempt(node):
+        return False
+    return not _is_marked(source_lines, node.lineno, "allow-deferred-import")
+
+
+def _file_deferred_errors(root: Path, pyfile: Path) -> list[str]:
+    """The flagged deferred imports in one file (parse failures are
+    skipped)."""
+    parsed = _parse_file(pyfile)
+    if parsed is None:
+        return []
+    tree, source_lines = parsed
+    return [
+        _deferred_import_error(root, pyfile, node)
+        for node in ast.walk(tree)
+        if _is_flagged_import(node, source_lines)
+    ]
+
+
 def check_deferred_imports(package_dir: str) -> list[str]:
     """Flag imports that are not at module scope.
 
@@ -100,27 +135,9 @@ def check_deferred_imports(package_dir: str) -> list[str]:
     root = Path(package_dir).resolve()
     if not root.is_dir():
         return [f"ERROR: {package_dir} is not a directory"]
-
     errors: list[str] = []
     for pyfile in sorted(root.rglob("*.py")):
-        parsed = _parse_file(pyfile)
-        if parsed is None:
-            continue
-        tree, source_lines = parsed
-
-        for node in ast.walk(tree):
-            if not isinstance(node, (ast.Import, ast.ImportFrom)):
-                continue
-            if (
-                _is_top_level(node)
-                or _is_type_checking(node)
-                or _is_guarded_optional(node)
-            ):
-                continue
-            if _is_marked(source_lines, node.lineno, "allow-deferred-import"):
-                continue
-
-            errors.append(_deferred_import_error(root, pyfile, node))
+        errors.extend(_file_deferred_errors(root, pyfile))
     return errors
 
 
@@ -174,31 +191,35 @@ def _find_packages_in_dir(directory: Path) -> list[str]:
     return sorted(str(r) for r in roots)
 
 
-def main() -> int:
-    args = sys.argv[1:]
-
+def resolve_package_dirs(args: list[str]) -> list[str]:
+    """The package dirs to scan: discovered under cwd when no args, derived
+    from .py file paths when given files, else the args themselves."""
     if not args:
         # No arguments: discover packages under cwd
-        package_dirs = _find_packages_in_dir(Path.cwd())
-    elif any(a.endswith(".py") for a in args):
+        return _find_packages_in_dir(Path.cwd())
+    if any(a.endswith(".py") for a in args):
         # File paths: discover packages from them
-        package_dirs = _packages_from_files(args)
-    else:
-        # Package directories
-        package_dirs = args
+        return _packages_from_files(args)
+    return args
 
+
+def report_errors(all_errors: list[str]) -> int:
+    """Print the error lines; the exit code (1 on any deferred import)."""
+    if not all_errors:
+        return 0
+    for line in all_errors:
+        print(line, file=sys.stderr)
+    return 1
+
+
+def main() -> int:
+    package_dirs = resolve_package_dirs(sys.argv[1:])
     if not package_dirs:
         return 0
-
     all_errors: list[str] = []
     for pkg_dir in package_dirs:
         all_errors.extend(check_deferred_imports(pkg_dir))
-
-    if all_errors:
-        for line in all_errors:
-            print(line, file=sys.stderr)
-        return 1
-    return 0
+    return report_errors(all_errors)
 
 
 if __name__ == "__main__":

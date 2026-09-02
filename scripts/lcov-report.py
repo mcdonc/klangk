@@ -4,6 +4,23 @@
 import sys
 
 
+def note_uncovered(line: str, uncovered_lines: dict, current) -> None:
+    """Record a ``DA:`` line whose execution count is 0 (uncovered)."""
+    parts = line[3:].split(",")
+    if len(parts) >= 2 and parts[1] == "0":
+        uncovered_lines.setdefault(current, []).append(int(parts[0]))
+
+
+def note_lcov_line(line: str, current, files: dict, uncovered_lines: dict) -> None:
+    """Apply one non-``SF:`` lcov record to the accumulators."""
+    if line.startswith("DA:"):
+        note_uncovered(line, uncovered_lines, current)
+    elif line.startswith("LH:"):
+        files.setdefault(current, {})["hit"] = int(line[3:])
+    elif line.startswith("LF:"):
+        files.setdefault(current, {})["total"] = int(line[3:])
+
+
 def parse_lcov(lines: list[str]) -> tuple[dict, dict]:
     """(per-file {hit, total}, per-file uncovered line numbers) from an lcov
     tracefile."""
@@ -14,14 +31,8 @@ def parse_lcov(lines: list[str]) -> tuple[dict, dict]:
         line = line.strip()
         if line.startswith("SF:"):
             current = line[3:]
-        elif line.startswith("DA:"):
-            parts = line[3:].split(",")
-            if len(parts) >= 2 and parts[1] == "0":
-                uncovered_lines.setdefault(current, []).append(int(parts[0]))
-        elif line.startswith("LH:"):
-            files.setdefault(current, {})["hit"] = int(line[3:])
-        elif line.startswith("LF:"):
-            files.setdefault(current, {})["total"] = int(line[3:])
+        else:
+            note_lcov_line(line, current, files, uncovered_lines)
     return files, uncovered_lines
 
 

@@ -672,6 +672,14 @@ def wait_for_server(uds_path: str, timeout: float = 30) -> None:
 # ---------------------------------------------------------------------------
 
 
+def truncated_body(body: dict) -> str:
+    """The body serialized for the report, truncated past 200 chars."""
+    body_str = json.dumps(body, default=str)
+    if len(body_str) > 200:
+        return body_str[:200] + "..."
+    return body_str
+
+
 class AnomalyTracker:
     def __init__(self):
         self.server_errors: list[dict] = []  # 5xx responses
@@ -699,14 +707,17 @@ class AnomalyTracker:
             "time": time.strftime("%H:%M:%S"),
         }
         if body is not None:
-            # Truncate large bodies for the report
-            body_str = json.dumps(body, default=str)
-            if len(body_str) > 200:
-                body_str = body_str[:200] + "..."
-            entry["body"] = body_str
+            entry["body"] = truncated_body(body)
+        self.classify_entry(entry, status, error)
+
+    def classify_entry(
+        self, entry: dict, status: int | None, error: str | None
+    ) -> None:
+        """Route one recorded entry to its bucket: 5xx -> server_errors,
+        timeout -> timeouts, connection -> connection_errors."""
         if status is not None and status >= 500:
             self.server_errors.append(entry)
-            logger.warning("5xx: %s %s → %d", method, path, status)
+            logger.warning("5xx: %s %s → %d", entry["method"], entry["path"], status)
         elif error == "timeout":
             self.timeouts.append(entry)
         elif error == "connection":
@@ -794,16 +805,25 @@ _STDERR_ANOMALY_KEYWORDS = [
 ]
 
 
+def stderr_line_is_anomaly(line: str) -> bool:
+    """Does a server-stderr line look like an unhandled exception?
+    Expected/normal log lines (INFO/WARNING/password noise) are filtered out."""
+    low = line.lower()
+    return (
+        any(kw in low for kw in _STDERR_ANOMALY_KEYWORDS)
+        and "INFO" not in line
+        and "WARNING" not in line
+        and "password" not in low
+    )
+
+
 def _stderr_anomaly_lines(stderr_output: str) -> list[str]:
     """Server-stderr lines that look like unhandled exceptions, with
     expected/normal log lines (INFO/WARNING/password noise) filtered out."""
     return [
         line
         for line in stderr_output.strip().splitlines()
-        if any(kw in line.lower() for kw in _STDERR_ANOMALY_KEYWORDS)
-        and "INFO" not in line
-        and "WARNING" not in line
-        and "password" not in line.lower()
+        if stderr_line_is_anomaly(line)
     ]
 
 
@@ -847,51 +867,50 @@ def create_fixture_id(
     return None
 
 
+def collect_fixture_ids(
+    uds_path: str,
+    headers: dict,
+    url: str,
+    payloads: list[dict],
+    ok_codes: tuple[int, ...] = (200,),
+) -> list[str]:
+    """POST each payload fixture; collect the ids that came back."""
+    ids = []
+    for payload in payloads:
+        fid = create_fixture_id(uds_path, headers, url, payload, ok_codes)
+        if fid:
+            ids.append(fid)
+    return ids
+
+
 def seed_fuzz_fixtures(
     uds_path: str, token: str
 ) -> tuple[list[str], list[str], list[str]]:
     """Pre-create workspaces / users / groups so fuzzed paths have real
     ids to target. Returns (workspace_ids, user_ids, group_ids)."""
     headers = {"Authorization": f"Bearer {token}"}
-    workspace_ids: list[str] = []
-    user_ids: list[str] = []
-    group_ids: list[str] = []
-
-    # Pre-create a couple of workspaces
-    for i in range(2):
-        wid = create_fixture_id(
-            uds_path,
-            headers,
-            "/api/v1/workspaces",
-            {"name": f"fuzz-ws-{i}"},
-        )
-        if wid:
-            workspace_ids.append(wid)
-
-    # Also create some users and groups to have IDs for fuzzing
-    for i in range(3):
-        uid = create_fixture_id(
-            uds_path,
-            headers,
-            "/api/v1/users",
-            {
-                "email": f"fuzzuser{i}@example.com",
-                "password": "fuzzpass",
-            },
-        )
-        if uid:
-            user_ids.append(uid)
-    for i in range(2):
-        gid = create_fixture_id(
-            uds_path,
-            headers,
-            "/api/v1/groups",
-            {"name": f"fuzz-group-{i}"},
-            ok_codes=(200, 201),
-        )
-        if gid:
-            group_ids.append(gid)
-
+    workspace_ids = collect_fixture_ids(
+        uds_path,
+        headers,
+        "/api/v1/workspaces",
+        [{"name": f"fuzz-ws-{i}"} for i in range(2)],
+    )
+    user_ids = collect_fixture_ids(
+        uds_path,
+        headers,
+        "/api/v1/users",
+        [
+            {"email": f"fuzzuser{i}@example.com", "password": "fuzzpass"}
+            for i in range(3)
+        ],
+    )
+    group_ids = collect_fixture_ids(
+        uds_path,
+        headers,
+        "/api/v1/groups",
+        [{"name": f"fuzz-group-{i}"} for i in range(2)],
+        ok_codes=(200, 201),
+    )
     return workspace_ids, user_ids, group_ids
 
 
@@ -906,6 +925,32 @@ def _fill_id_placeholder(
         placeholder,
         rng.choice(ids + [fuzz_uuid(rng)]) if ids else fuzz_uuid(rng),
     )
+
+
+_NAMED_PLACEHOLDER_DRAWS = {
+    "{role}": lambda rng: rng.choice(ROLES),
+    "{invitation_id}": fuzz_uuid,
+    "{name}": fuzz_string,
+    "{provider_id}": fuzz_string,
+}
+
+
+def fuzz_random_path(rng: random.Random) -> str:
+    """A synthetic random multi-segment path for the catch-all endpoints."""
+    segments = rng.randint(1, 4)
+    return "/" + "/".join(fuzz_string(rng) for _ in range(segments))
+
+
+def fill_named_placeholders(rng: random.Random, path: str) -> str:
+    """Substitute the non-id placeholders ({role} from the known role
+    list, {invitation_id}/{name}/{provider_id} as fuzzed values) and the
+    synthetic {random_path} catch-all."""
+    for placeholder, draw in _NAMED_PLACEHOLDER_DRAWS.items():
+        if placeholder in path:
+            path = path.replace(placeholder, draw(rng))
+    if "{random_path}" in path:
+        path = fuzz_random_path(rng)
+    return path
 
 
 def fill_path_params(
@@ -924,18 +969,7 @@ def fill_path_params(
         ("{group_id}", group_ids),
     ):
         path = _fill_id_placeholder(rng, path, placeholder, ids)
-    if "{role}" in path:
-        path = path.replace("{role}", rng.choice(ROLES))
-    if "{invitation_id}" in path:
-        path = path.replace("{invitation_id}", fuzz_uuid(rng))
-    if "{name}" in path:
-        path = path.replace("{name}", fuzz_string(rng))
-    if "{random_path}" in path:
-        segments = rng.randint(1, 4)
-        path = "/" + "/".join(fuzz_string(rng) for _ in range(segments))
-    if "{provider_id}" in path:
-        path = path.replace("{provider_id}", fuzz_string(rng))
-    return path
+    return fill_named_placeholders(rng, path)
 
 
 def fuzz_request_headers(rng: random.Random, headers: dict) -> dict:
@@ -962,6 +996,16 @@ def fuzz_request_headers(rng: random.Random, headers: dict) -> dict:
     return req_headers
 
 
+def fuzz_request_args(body, params, req_headers: dict) -> dict:
+    """The httpx request kwargs: the JSON body as ``json=``, or raw
+    ``content=`` when the fuzzed headers override the content-type."""
+    if not body:
+        return {"params": params}
+    if "Content-Type" in req_headers:
+        return {"content": json.dumps(body).encode(), "params": params}
+    return {"json": body, "params": params}
+
+
 async def send_fuzz_request(
     client: httpx.AsyncClient,
     tracker: AnomalyTracker,
@@ -972,17 +1016,9 @@ async def send_fuzz_request(
     req_headers: dict,
 ) -> None:
     """Fire one fuzzed request and record the outcome."""
+    args = fuzz_request_args(body, params, req_headers)
     try:
-        r = await client.request(
-            method,
-            path,
-            json=body if body and "Content-Type" not in req_headers else None,
-            content=json.dumps(body).encode()
-            if body and "Content-Type" in req_headers
-            else None,
-            params=params,
-            headers=req_headers,
-        )
+        r = await client.request(method, path, headers=req_headers, **args)
         tracker.record(method, path, r.status_code, body=body)
     except httpx.TimeoutException:
         tracker.record(method, path, None, error="timeout", body=body)
@@ -992,6 +1028,18 @@ async def send_fuzz_request(
         await asyncio.sleep(2)
     except Exception as exc:
         tracker.record(method, path, None, error=str(exc), body=body)
+
+
+def maybe_relogin(tracker: AnomalyTracker, headers: dict, uds_path: str) -> None:
+    """Periodically re-login in case the token was invalidated (checked
+    every 200 requests); on failure continue with the old/no token."""
+    if tracker.requests_sent % 200 != 0:
+        return
+    try:
+        new_token = uds_login(uds_path, "admin@example.com", "admin")
+        headers["Authorization"] = f"Bearer {new_token}"
+    except Exception:
+        pass  # will continue with old or no token
 
 
 async def run_fuzz(
@@ -1045,12 +1093,7 @@ async def run_fuzz(
             await asyncio.sleep(rng.uniform(0.01, 0.1))
 
             # Periodically re-login in case the token was invalidated
-            if tracker.requests_sent % 200 == 0:
-                try:
-                    new_token = uds_login(uds_path, "admin@example.com", "admin")
-                    headers["Authorization"] = f"Bearer {new_token}"
-                except Exception:
-                    pass  # will continue with old or no token
+            maybe_relogin(tracker, headers, uds_path)
 
 
 # ---------------------------------------------------------------------------
@@ -1094,6 +1137,18 @@ def _backend_routes() -> set[tuple[str, str]]:
     return routes
 
 
+def print_route_diff(missing: list, extra: list) -> None:
+    """Print the missing/extra route sets from the drift diff."""
+    if missing:
+        print("\nMISSING from fuzzer (real routes not fuzzed):")
+        for m, p in missing:
+            print(f"  {m:6} {p}")
+    if extra:
+        print("\nEXTRA in fuzzer (fuzzed, no matching route):")
+        for m, p in extra:
+            print(f"  {m:6} {p}")
+
+
 def check_endpoints() -> int:
     """Diff ENDPOINTS against the live router; fail on drift (#1536).
 
@@ -1107,14 +1162,7 @@ def check_endpoints() -> int:
     missing = sorted(backend - fuzzed, key=lambda x: x[1])
     extra = sorted(fuzzed - backend, key=lambda x: x[1])
     print(f"backend routes: {len(backend)}  fuzzer endpoints: {len(fuzzed)}")
-    if missing:
-        print("\nMISSING from fuzzer (real routes not fuzzed):")
-        for m, p in missing:
-            print(f"  {m:6} {p}")
-    if extra:
-        print("\nEXTRA in fuzzer (fuzzed, no matching route):")
-        for m, p in extra:
-            print(f"  {m:6} {p}")
+    print_route_diff(missing, extra)
     if not missing and not extra:
         print("No drift ✓")
         return 0
@@ -1124,6 +1172,58 @@ def check_endpoints() -> int:
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+
+
+def stop_server(proc: subprocess.Popen, tee: TeeReader) -> None:
+    """SIGTERM the server (SIGKILL after a 10s grace) + drain the tee."""
+    proc.send_signal(signal.SIGTERM)
+    try:
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+    tee.join()
+
+
+def fuzz_session(tracker: AnomalyTracker, args, seed: int, data_dir: str) -> str:
+    """Start the server, log in, run the fuzz loop, tear down. Returns the
+    captured server stderr."""
+    logger.info("Starting klangkd")
+    proc, tee, uds_path = start_server(data_dir)
+    try:
+        wait_for_server(uds_path)
+        logger.info("Server is up")
+
+        token = uds_login(uds_path, "admin@example.com", "admin")
+        logger.info("Logged in as admin")
+
+        logger.info(
+            "Starting fuzz run: duration=%g min, seed=%d",
+            args.duration,
+            seed,
+        )
+        asyncio.run(run_fuzz(uds_path, token, args.duration, seed, tracker))
+    except KeyboardInterrupt:
+        logger.info("Interrupted by user")
+    except Exception:
+        logger.exception("Fuzz runner error")
+    finally:
+        stop_server(proc, tee)
+    return tee.output
+
+
+def write_server_log(stderr_data: str) -> None:
+    """Write the full server log for later inspection."""
+    log_path = os.path.join(os.path.dirname(__file__), "..", "fuzz-server.log")
+    with open(log_path, "w") as f:
+        f.write(stderr_data)
+    logger.info("Server stderr saved to %s", log_path)
+
+
+def fuzz_exit(tracker: AnomalyTracker) -> int:
+    """Exit code: 1 on 5xx or connection errors (the anomalies that gate
+    CI), 0 otherwise."""
+    return 1 if bool(tracker.server_errors or tracker.connection_errors) else 0
 
 
 def main():
@@ -1160,49 +1260,11 @@ def main():
     tracker = AnomalyTracker()
 
     with tempfile.TemporaryDirectory(prefix="klangk-fuzz-") as data_dir:
-        logger.info("Starting klangkd")
-        proc, tee, uds_path = start_server(data_dir)
+        stderr_data = fuzz_session(tracker, args, seed, data_dir)
 
-        try:
-            wait_for_server(uds_path)
-            logger.info("Server is up")
-
-            token = uds_login(uds_path, "admin@example.com", "admin")
-            logger.info("Logged in as admin")
-
-            logger.info(
-                "Starting fuzz run: duration=%g min, seed=%d",
-                args.duration,
-                seed,
-            )
-            asyncio.run(run_fuzz(uds_path, token, args.duration, seed, tracker))
-        except KeyboardInterrupt:
-            logger.info("Interrupted by user")
-        except Exception:
-            logger.exception("Fuzz runner error")
-        finally:
-            # Stop server
-            proc.send_signal(signal.SIGTERM)
-            try:
-                proc.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait()
-            tee.join()
-
-        stderr_data = tee.output
-
-        report = tracker.report(stderr_data)
-        print(report)
-
-        # Write full server log for later inspection
-        log_path = os.path.join(os.path.dirname(__file__), "..", "fuzz-server.log")
-        with open(log_path, "w") as f:
-            f.write(stderr_data)
-        logger.info("Server stderr saved to %s", log_path)
-
-        has_anomalies = bool(tracker.server_errors or tracker.connection_errors)
-        sys.exit(1 if has_anomalies else 0)
+    print(tracker.report(stderr_data))
+    write_server_log(stderr_data)
+    sys.exit(fuzz_exit(tracker))
 
 
 if __name__ == "__main__":

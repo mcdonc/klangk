@@ -29,6 +29,41 @@ INCLUSIVE = "inclusive"
 SUBDOMAINS = "subdomains"
 
 
+def _split_spec_port(spec: str) -> tuple[str, int | None]:
+    """Split a trailing ``:port`` off a spec -> ``(host_part, port)``; the
+    port is None when absent or not numeric (then the whole spec is the host,
+    e.g. a bare IPv6 literal fragment)."""
+    if ":" not in spec:
+        return spec, None
+    host_part, port_part = spec.rsplit(":", 1)
+    if port_part.isdigit():
+        return host_part, int(port_part)
+    return spec, None
+
+
+def _spec_scope(s: str) -> tuple[str, str]:
+    """The nginx-style host-scope strip (#2377) -> ``(host, mode)``: a leading
+    ``*.`` is SUBDOMAINS, a leading ``.`` is INCLUSIVE, bare is EXACT."""
+    if s.startswith("*."):
+        return s[2:], SUBDOMAINS
+    if s.startswith("."):
+        return s[1:], INCLUSIVE
+    return s, EXACT
+
+
+def _parse_one_spec(spec: str) -> tuple[str, int | None, str] | None:
+    """One comma-separated entry -> ``(host, port, mode)``, or None when it
+    is empty/a CIDR (CIDR specs are applied statically by the entrypoint)."""
+    spec = spec.strip()
+    if not spec or "/" in spec:
+        return None
+    spec, port = _split_spec_port(spec)
+    s, mode = _spec_scope(spec.lower())
+    if not s:
+        return None
+    return s, port, mode
+
+
 def parse_specs(
     env_var: str = "KLANGKNETWORK_EGRESS_ALLOW",
 ) -> list[tuple[str, int | None, str]]:
@@ -42,25 +77,9 @@ def parse_specs(
     """
     out: list[tuple[str, int | None, str]] = []
     for spec in os.environ.get(env_var, "").split(","):
-        spec = spec.strip()
-        if not spec or "/" in spec:
-            continue
-        port: int | None = None
-        if ":" in spec:
-            host_part, port_part = spec.rsplit(":", 1)
-            if port_part.isdigit():
-                port = int(port_part)
-                spec = host_part
-        s = spec.lower()
-        mode = EXACT
-        if s.startswith("*."):
-            mode = SUBDOMAINS
-            s = s[2:]
-        elif s.startswith("."):
-            mode = INCLUSIVE
-            s = s[1:]
-        if s:
-            out.append((s, port, mode))
+        parsed = _parse_one_spec(spec)
+        if parsed is not None:
+            out.append(parsed)
     return out
 
 
@@ -155,6 +174,21 @@ def _add_session_entry(lst: list, host: str, port: int, ttl: float) -> None:
     lst.append((host, port, EXACT, expire))
 
 
+def _entry_remaining(entry: tuple, host: str, port: int, now: float) -> float | None:
+    """Remaining TTL an *lst* entry covers ``host:port``, or None (expired,
+    no match, or port mismatch). Matches via :func:`host_matches`; the entry's
+    port must match or be all-ports (``None``)."""
+    h, p, mode, exp = entry
+    if exp <= now:
+        return None  # belt-and-suspenders: _prune ran above, but a just-expired
+        # entry can survive the microseconds between its `now` and this one.
+    if not host_matches(host, h, mode):
+        return None
+    if p != port and p is not None:
+        return None
+    return exp - now
+
+
 def session_entry_ttl(lst: list, host: str, port: int) -> float | None:
     """Max remaining TTL of an entry in *lst* covering ``host:port``, or None.
 
@@ -167,16 +201,10 @@ def session_entry_ttl(lst: list, host: str, port: int) -> float | None:
     if not host:
         return None
     now = time.time()
-    best: float | None = None
-    for h, p, mode, exp in lst:
-        if exp <= now:
-            continue  # belt-and-suspenders: _prune ran above, but a just-expired
-            # entry can survive the microseconds between its `now` and this one.
-        if host_matches(host, h, mode) and (p == port or p is None):
-            remaining = exp - now
-            if best is None or remaining > best:
-                best = remaining
-    return best
+    remainings = [
+        r for e in lst if (r := _entry_remaining(e, host, port, now)) is not None
+    ]
+    return max(remainings, default=None)
 
 
 def add_session_host(host: str, port: int, ttl: float) -> None:
@@ -219,6 +247,22 @@ def session_host_allows_ttl(host: str, port: int) -> float | None:
     return session_entry_ttl(state.SESSION_HOST_ALLOWS, host, port)
 
 
+def _matches_static_spec(qname: str) -> bool:
+    """Does any static :data:`SPECS` entry match ``qname`` (any port)?"""
+    return any(host_matches(qname, host, mode) for host, _port, mode in SPECS)
+
+
+def _min_session_allow_ttl(qname: str, now: float) -> float | None:
+    """Min remaining TTL across unexpired session allows matching ``qname``,
+    or None when none matches."""
+    remainings = [
+        exp - now
+        for host, _port, mode, exp in state.SESSION_HOST_ALLOWS
+        if exp > now and host_matches(qname, host, mode)
+    ]
+    return min(remainings, default=None)
+
+
 def session_allow_rule_cap(qname: str) -> float | None:
     """Min remaining TTL bounding a DNS-path learned rule for ``qname``, or
     ``None`` (#2465).
@@ -255,19 +299,10 @@ def session_allow_rule_cap(qname: str) -> float | None:
     NOT covered by the NFQUEUE gate. All real consent flows hit this for a
     single host:port, where the cap is exact.
     """
-    if any(host_matches(qname, host, mode) for host, _port, mode in SPECS):
+    if _matches_static_spec(qname):
         return None  # a static spec matches -> forever -> DNS TTL is correct
     _prune_session_allows()
-    now = time.time()
-    best: float | None = None
-    for host, _port, mode, exp in state.SESSION_HOST_ALLOWS:
-        if exp <= now:
-            continue
-        if host_matches(qname, host, mode):
-            remaining = exp - now
-            if best is None or remaining < best:
-                best = remaining
-    return best
+    return _min_session_allow_ttl(qname, time.time())
 
 
 def _prune_session_denies() -> None:
