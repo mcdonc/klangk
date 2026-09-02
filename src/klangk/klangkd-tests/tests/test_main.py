@@ -287,16 +287,15 @@ class TestSeedDefaultAcls:
             (0, "view-volumes", admin_group_id),
             (1, "manage-volumes", admin_group_id),
         ]
-        # ...and /images still seeds the #2946 self-service pair:
-        # Allow Authenticated + Deny Everyone.
-        for resource, permission in (("/images", "view-images"),):
-            entries = await app_state.state.model.acl.get_acl_entries(resource)
-            assert len(entries) == 2, resource
-            allow, deny = entries
-            assert allow["permission"] == permission
-            assert allow["system_principal"] == model.SYSTEM_AUTHENTICATED
-            assert deny["permission"] == "*"
-            assert deny["system_principal"] == model.SYSTEM_EVERYONE
+        # ...and /images seeds the #2946 self-service row — Allow
+        # Authenticated only (#2974 dropped the dead Deny Everyone row:
+        # it can never fire, and no-match is default-deny).
+        images = await app_state.state.model.acl.get_acl_entries("/images")
+        assert [(e["position"], e["permission"]) for e in images] == [
+            (0, "view-images")
+        ]
+        assert images[0]["system_principal"] == model.SYSTEM_AUTHENTICATED
+        assert images[0]["action"] == model.ACTION_ALLOW
 
 
 class TestSeedDefaultUserAuthModeGating:

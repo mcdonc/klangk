@@ -55,7 +55,7 @@ class WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
   bool _nixAvailable = false;
 
   // #2017: whether the deploy allows sudo at all (sudo_available on
-  // /api/v1/images) — gates the settings form's lock-down toggle.
+  // /api/v1/config, #2974) — gates the settings form's lock-down toggle.
   bool _sudoAvailable = false;
   bool _loading = true;
   String? _error;
@@ -124,16 +124,20 @@ class WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
 
     _workspace = ws;
 
-    // Load allowed images
+    // Load allowed images. #2974: the deploy-level nix/sudo toggles
+    // come from the auth service's config cache — call
+    // refreshDeployConfig so a SIGHUP-reloaded deploy is reflected
+    // without a re-login.
     try {
+      await auth.refreshDeployConfig();
       final imgResp = await auth.authGet('/api/v1/images');
       if (mounted && imgResp.statusCode == 200) {
         final imgData = jsonDecode(imgResp.body) as Map<String, dynamic>;
         _defaultImage = imgData['default'] as String? ?? 'klangk-pi';
         _allowedImages =
             (imgData['allowed'] as List?)?.cast<String>() ?? [_defaultImage];
-        _nixAvailable = imgData['nix_available'] == true;
-        _sudoAvailable = imgData['sudo_available'] == true;
+        _nixAvailable = auth.nixAvailable;
+        _sudoAvailable = auth.sudoAvailable;
       }
     } catch (e) {
       // coverage:ignore-start

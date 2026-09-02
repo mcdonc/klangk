@@ -32,6 +32,19 @@ operators or integrators to act when upgrading.
 
 ### Breaking
 
+- **Deploy capability toggles moved off the images listing (#2974).**
+  `GET /api/v1/images` no longer returns `nix_available` /
+  `sudo_available` — clients read them from the new
+  authenticated-only `GET /api/v1/config` fields of the same names
+  (same posture as the netfilter fields). The web frontend, the TUI
+  create/edit forms, and the `klangk images` CLI surface are migrated;
+  hand-built clients reading the toggles off the images response must
+  switch to `/config`. The dead Deny Everyone row on `/images` is also
+  dropped from the seed (migration `0026` removes it on existing
+  deployments — it could never fire, and no-match is already
+  default-deny); the Allow Authenticated `view-images` default is
+  unchanged and remains operator-modifiable via the ACL editor.
+
 - **`/volumes` is now an admin surface (#2974).** The volume listing
   checks the new `view-volumes` permission on `/volumes`, and
   create/delete check `manage-volumes` — both seeded Allow for the

@@ -2617,19 +2617,26 @@ class TestWorkspaceRoutes:
         assert "default" in data
         assert "allowed" in data
         assert data["default"] in data["allowed"]
+        # #2974: the deploy-level toggles moved to the authenticated-only
+        # /config fields — the images listing is image data only.
+        assert "nix_available" not in data
+        assert "sudo_available" not in data
 
-    async def test_list_images_sudo_available(
-        self, client, app, user, monkeypatch
-    ):
-        """#2017: sudo_available reports the deploy-wide allow_sudo posture
-        so create/edit UIs can gate the per-workspace lock-down toggle."""
+    async def test_config_sudo_available(self, client, app, user, monkeypatch):
+        """#2017/#2974: sudo_available reports the deploy-wide allow_sudo
+        posture (authenticated-only /config field) so create/edit UIs can
+        gate the per-workspace lock-down toggle."""
         headers = await _auth_headers(client)
         monkeypatch.setattr(app.state.settings, "allow_sudo", "true")
-        resp = await client.get("/api/v1/images", headers=headers)
+        resp = await client.get("/api/v1/config", headers=headers)
         assert resp.json()["sudo_available"] is True
         monkeypatch.setattr(app.state.settings, "allow_sudo", "")
-        resp = await client.get("/api/v1/images", headers=headers)
+        resp = await client.get("/api/v1/config", headers=headers)
         assert resp.json()["sudo_available"] is False
+        # #1365 posture: like the netfilter fields, absent pre-auth.
+        resp = await client.get("/api/v1/config")
+        assert "sudo_available" not in resp.json()
+        assert "nix_available" not in resp.json()
 
     async def test_delete_workspace(self, client, user, registry):
         headers = await _auth_headers(client)
@@ -3854,20 +3861,20 @@ class TestWorkspaceRoutes:
         app.state.settings.nix_enabled = on
         app.state.settings.nix_seed.path = "/tmp/nix-seed" if on else None
 
-    async def test_images_reports_nix_unavailable_by_default(
+    async def test_config_reports_nix_unavailable_by_default(
         self, client, user
     ):
         headers = await _auth_headers(client)
-        resp = await client.get("/api/v1/images", headers=headers)
+        resp = await client.get("/api/v1/config", headers=headers)
         assert resp.status_code == 200
         assert resp.json()["nix_available"] is False
 
-    async def test_images_reports_available_when_armed(
+    async def test_config_reports_nix_available_when_armed(
         self, client, user, app
     ):
         self._arm_nix(app, True)
         headers = await _auth_headers(client)
-        resp = await client.get("/api/v1/images", headers=headers)
+        resp = await client.get("/api/v1/config", headers=headers)
         assert resp.json()["nix_available"] is True
 
     async def test_create_rejects_nix_optin_while_off(self, client, user, app):

@@ -60,6 +60,15 @@ permission; unauthenticated users are denied everything. `/admin`
 checks nothing anymore (#2944) — its `*` row only marks "instance
 administrator" for permission-map consumers.
 
+The `/images` Allow Authenticated row is the deliberate exception to
+the admin-default convention (#2974): the listing's consumers are the
+workspace create/edit UIs, which non-admins reach with
+`create-workspace`/`edit-workspace`. It is still an operator choice —
+delete the row (default-deny then takes over) or scope it to a group in
+the ACL editor; no trailing Deny Everyone row is seeded because it could
+never fire (the JWT middleware rejects unauthenticated requests before
+any ACL check) and no-match is already default-deny.
+
 ### Granting workspace creation to non-admin users
 
 By default only administrators can create workspaces (#2569). To allow
@@ -194,7 +203,7 @@ delegation matters:
 | `manage-acls`            | `/acl`              | The Access Control browser: read and rewrite ACL entries on **any** resource via `GET/PUT /acl/*` — root-equivalent, see below                                        |
 | `view-volumes`           | `/volumes`          | The Volumes admin tab's read: list the deployment's volume inventory (`GET /volumes`) with per-volume provenance — admins by default, delegable read-only (#2974)     |
 | `manage-volumes`         | `/volumes`          | The volume mutating endpoints (`POST /volumes`, `DELETE /volumes/{name}`) — admins by default (#2974; was Allow Authenticated in #2946)                               |
-| `view-images`            | `/images`           | The image/nix/sudo capability listing the create/edit UIs read (#2946)                                                                                                |
+| `view-images`            | `/images`           | The image listing the create/edit UIs read (#2946; Allow Authenticated by default — the deliberate, ACL-editor-modifiable exception, #2974)                           |
 | `search-users`           | `/users`            | The member-picker type-ahead (`GET /users/search`) — Allow Authenticated by default (#2946)                                                                           |
 | `admin`                  | `/admin`            | The instance-administrator **marker** only (`*` row); nothing checks it anywhere anymore (#2944, #2946 — the transfer gate now checks `transfer-workspace`)           |
 

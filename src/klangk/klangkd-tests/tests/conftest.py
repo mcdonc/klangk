@@ -103,32 +103,23 @@ async def _seed_2946_self_service(app_state):
     """
     from klangk.model.acl import (
         ACTION_ALLOW,
-        ACTION_DENY,
         PRINCIPAL_SYSTEM,
         SYSTEM_AUTHENTICATED,
-        SYSTEM_EVERYONE,
     )
 
     acl = app_state.state.model.acl
-    for resource, permission in (("/images", "view-images"),):
-        existing = await acl.get_acl_entries(resource)
-        if existing:
-            continue
+    # /images: Allow Authenticated only (#2974 — the dead Deny Everyone
+    # row is gone from the seed; migration 0026 drops it on existing
+    # deployments).
+    existing = await acl.get_acl_entries("/images")
+    if not existing:
         await acl.add_acl_entry(
-            resource,
+            "/images",
             0,
             ACTION_ALLOW,
-            permission,
+            "view-images",
             PRINCIPAL_SYSTEM,
             system_principal=SYSTEM_AUTHENTICATED,
-        )
-        await acl.add_acl_entry(
-            resource,
-            1,
-            ACTION_DENY,
-            "*",
-            PRINCIPAL_SYSTEM,
-            system_principal=SYSTEM_EVERYONE,
         )
     rows = await acl.get_acl_entries("/users")
     if not any(r["permission"] == "search-users" for r in rows):

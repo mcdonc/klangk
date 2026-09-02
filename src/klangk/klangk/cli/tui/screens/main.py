@@ -826,16 +826,24 @@ class MainScreen(StatusScreen):
             data = await asyncio.to_thread(state.list_images)
             default = data.get("default", "") or ""
             allowed = list(data.get("allowed") or [])
-            nix_available = data.get("nix_available") is True
-            sudo_available = data.get("sudo_available") is True
         except AuthError:
             self.app.session_expired()
             return
         except (httpx.HTTPError, OSError, ValueError) as exc:
             logger.debug("Could not fetch image list: %s", exc)
             default, allowed = "", []
-            nix_available = False
-            sudo_available = False
+        # #2974: deploy-level nix/sudo toggles moved from the images
+        # payload to the authenticated-only /config fields.
+        try:
+            nix_available, sudo_available = await asyncio.to_thread(
+                state.deploy_toggles
+            )
+        except AuthError:
+            self.app.session_expired()
+            return
+        except (httpx.HTTPError, OSError, ValueError) as exc:
+            logger.debug("Could not fetch deploy toggles: %s", exc)
+            nix_available = sudo_available = False
         try:
             allow_autostart = await asyncio.to_thread(state.allow_autostart)
         except (httpx.HTTPError, OSError, ValueError) as exc:

@@ -22,7 +22,6 @@ from .. import (
     acl,
 )
 from ..podman import PodmanError as PodmanError
-from ..settings import parse_bool_setting
 from ..util import (
     sanitize_disposition_name,
 )
@@ -239,22 +238,15 @@ async def list_images(
     _user: dict = Depends(acl.has_permission("view-images")),
     app=Depends(get_app_dep),
 ):
+    """The image listing for the workspace create/edit UIs (#2974).
+
+    Deployment-level toggles (nix/sudo availability) moved to the
+    authenticated-only fields on ``/api/v1/config`` — they are
+    deployment config, not image data.
+    """
     return {
         "default": app.state.container_registry.image_name,
         "allowed": sorted(app.state.container_registry.allowed_images),
-        # #2202/#2560: whether the per-workspace nix flag can trigger the
-        # per-workspace /nix mount. The create UI shows the "nix" toggle
-        # only when the feature is armed — a backend configured (btrfs
-        # snapshot or fuse-overlayfs, #2219) AND nix_enabled on (#2560,
-        # off by default); the flag is inert otherwise (workspaces use the
-        # nix image's baked /nix).
-        "nix_available": app.state.nix.available,
-        # #2017: whether the deploy allows sudo at all (the per-workspace
-        # knob may only lock a workspace down below this). The create/edit
-        # UIs show the sudo toggle only when this is true — on a
-        # sudo-forbidding deploy the toggle is a no-op (sudo is off for
-        # every workspace regardless).
-        "sudo_available": parse_bool_setting(app.state.settings.allow_sudo),
     }
 
 

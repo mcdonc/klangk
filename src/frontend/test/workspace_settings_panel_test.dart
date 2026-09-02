@@ -78,7 +78,11 @@ http.Client _client({
     final p = request.url.path;
     if (p == '/api/v1/config') {
       return http.Response(
-        jsonEncode({'netfilter_enabled': netfilterEnabled}),
+        jsonEncode({
+          'netfilter_enabled': netfilterEnabled,
+          'nix_available': nixAvailable,
+          'sudo_available': sudoAvailable,
+        }),
         200,
       );
     }
@@ -94,8 +98,6 @@ http.Client _client({
         jsonEncode({
           'default': 'klangk-pi',
           'allowed': ['klangk-pi', 'other:latest'],
-          'nix_available': nixAvailable,
-          'sudo_available': sudoAvailable,
         }),
         200,
       );
@@ -198,7 +200,9 @@ void main() {
       Map<String, dynamic>? savedBody;
       testAuthHttpClientOverride = MockClient((request) async {
         final p = request.url.path;
-        if (p == '/api/v1/config') return http.Response(jsonEncode({}), 200);
+        if (p == '/api/v1/config') {
+          return http.Response(jsonEncode({}), 200);
+        }
         if (p == '/api/v1/workspaces') {
           return http.Response(
             jsonEncode([
@@ -355,7 +359,10 @@ void main() {
       testAuthHttpClientOverride = MockClient((request) async {
         final p = request.url.path;
         if (p == '/api/v1/config') {
-          return http.Response(jsonEncode({}), 200);
+          return http.Response(
+            jsonEncode({'nix_available': true}),
+            200,
+          );
         }
         if (p == '/api/v1/workspaces') {
           return http.Response(jsonEncode([_workspace]), 200);
@@ -368,7 +375,6 @@ void main() {
             jsonEncode({
               'default': 'klangk-pi',
               'allowed': ['klangk-pi'],
-              'nix_available': true,
             }),
             200,
           );
@@ -433,7 +439,9 @@ void main() {
       Map<String, dynamic>? savedBody;
       testAuthHttpClientOverride = MockClient((request) async {
         final p = request.url.path;
-        if (p == '/api/v1/config') return http.Response(jsonEncode({}), 200);
+        if (p == '/api/v1/config') {
+          return http.Response(jsonEncode({'nix_available': true}), 200);
+        }
         if (p == '/api/v1/workspaces') {
           return http.Response(
             jsonEncode([
@@ -453,7 +461,6 @@ void main() {
             jsonEncode({
               'default': 'klangk-pi',
               'allowed': ['klangk-pi'],
-              'nix_available': true,
             }),
             200,
           );
@@ -561,7 +568,9 @@ void main() {
       Map<String, dynamic>? savedBody;
       testAuthHttpClientOverride = MockClient((request) async {
         final p = request.url.path;
-        if (p == '/api/v1/config') return http.Response(jsonEncode({}), 200);
+        if (p == '/api/v1/config') {
+          return http.Response(jsonEncode({'sudo_available': true}), 200);
+        }
         if (p == '/api/v1/workspaces') {
           return http.Response(
             jsonEncode([
@@ -578,7 +587,6 @@ void main() {
             jsonEncode({
               'default': 'klangk-pi',
               'allowed': ['klangk-pi'],
-              'sudo_available': true,
             }),
             200,
           );
@@ -615,7 +623,9 @@ void main() {
       Map<String, dynamic>? savedBody;
       testAuthHttpClientOverride = MockClient((request) async {
         final p = request.url.path;
-        if (p == '/api/v1/config') return http.Response(jsonEncode({}), 200);
+        if (p == '/api/v1/config') {
+          return http.Response(jsonEncode({'sudo_available': true}), 200);
+        }
         if (p == '/api/v1/workspaces') {
           return http.Response(
             jsonEncode([
@@ -635,7 +645,6 @@ void main() {
             jsonEncode({
               'default': 'klangk-pi',
               'allowed': ['klangk-pi'],
-              'sudo_available': true,
             }),
             200,
           );
@@ -734,7 +743,9 @@ void main() {
       Map<String, dynamic>? savedBody;
       testAuthHttpClientOverride = MockClient((request) async {
         final p = request.url.path;
-        if (p == '/api/v1/config') return http.Response(jsonEncode({}), 200);
+        if (p == '/api/v1/config') {
+          return http.Response(jsonEncode({}), 200);
+        }
         if (p == '/api/v1/workspaces') {
           return http.Response(
             jsonEncode([
@@ -754,7 +765,6 @@ void main() {
             jsonEncode({
               'default': 'klangk-pi',
               'allowed': ['klangk-pi'],
-              'nix_available': true,
             }),
             200,
           );
@@ -1566,7 +1576,9 @@ void main() {
       Map<String, dynamic>? savedBody;
       testAuthHttpClientOverride = MockClient((request) async {
         final p = request.url.path;
-        if (p == '/api/v1/config') return http.Response(jsonEncode({}), 200);
+        if (p == '/api/v1/config') {
+          return http.Response(jsonEncode({}), 200);
+        }
         if (p == '/api/v1/workspaces') {
           return http.Response(
             jsonEncode([
@@ -1739,7 +1751,10 @@ void main() {
       testAuthHttpClientOverride = MockClient((request) async {
         final p = request.url.path;
         if (p == '/api/v1/config') {
-          return http.Response(jsonEncode({}), 200);
+          return http.Response(
+            jsonEncode({}),
+            200,
+          );
         }
         if (p == '/api/v1/workspaces') {
           return http.Response(

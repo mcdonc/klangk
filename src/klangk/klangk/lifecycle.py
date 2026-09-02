@@ -255,32 +255,25 @@ class Lifecycle:
                 PRINCIPAL_GROUP,
                 group_id=admin_group_id,
             )
-        # #2946 self-service surface, granted to every authenticated
-        # user by default (a deploy that wants it restricted denies
-        # or scopes the rows in the ACL editor):
-        #   /images     view-images    — the image/nix/sudo capability
-        #                               listing (create/edit UIs)
+        # /images self-service surface (#2946, #2974): Allow
+        # view-images for every authenticated user — the deliberate
+        # default (the create/edit UIs read the listing), modifiable by
+        # an operator via the ACL editor (delete the row and default-deny
+        # takes over, or scope it to a group). No trailing Deny Everyone
+        # row: it can never fire (the JWT middleware rejects
+        # unauthenticated requests before any ACL check) and no-match is
+        # already default-deny. Migration 0026 drops it on existing
+        # deployments.
         # NB: /llm-proxy is NOT here — #2959 gives it its own
         # workspace-token-only gate, independent of the ACL system.
-        # (#2974: the /volumes rows above moved to the admins group;
-        # the /images rework lands in its own PR.)
-        for resource, permission in (("/images", "view-images"),):
-            await self.app.state.model.acl.add_acl_entry(
-                resource,
-                0,
-                ACTION_ALLOW,
-                permission,
-                PRINCIPAL_SYSTEM,
-                system_principal=SYSTEM_AUTHENTICATED,
-            )
-            await self.app.state.model.acl.add_acl_entry(
-                resource,
-                1,
-                ACTION_DENY,
-                "*",
-                PRINCIPAL_SYSTEM,
-                system_principal=SYSTEM_EVERYONE,
-            )
+        await self.app.state.model.acl.add_acl_entry(
+            "/images",
+            0,
+            ACTION_ALLOW,
+            "view-images",
+            PRINCIPAL_SYSTEM,
+            system_principal=SYSTEM_AUTHENTICATED,
+        )
         # /admin: kept as the instance-administrator marker — Allow *
         # for admins, deny everyone. No route checks a permission here
         # anymore (#2944); the wildcard marks "is an instance admin"

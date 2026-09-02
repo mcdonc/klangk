@@ -448,9 +448,12 @@ Get public instance configuration: whether registration and invitations
 are enabled, available OIDC providers, login banner text, auth mode,
 and the branding / feature flags the pre-auth UI needs. An
 **authenticated** caller additionally receives the deploy-wide netfilter
-default + enabled flag (the egress perimeter is not exposed pre-auth),
-plus any feature-declared frontend config keys and `features_enable`
-when set.
+default + enabled flag (the egress perimeter is not exposed pre-auth)
+and the deploy-level capability toggles `nix_available` /
+`sudo_available` (#2974 — moved off the images listing; whether the
+per-workspace nix mount can arm, and whether the deploy allows sudo at
+all), plus any feature-declared frontend config keys and
+`features_enable` when set.
 
 **Auth:** None (public payload; authenticated callers get a few extra
 fields).
@@ -480,9 +483,14 @@ No request body.
   "privacy_url": "",
   "aup_url": "",
   "support_url": "",
-  "support_email": ""
+  "support_email": "",
+  "nix_available": false,
+  "sudo_available": true
 }
 ```
+
+The last two keys (like `netfilter_enabled`) appear only on the
+authenticated payload.
 
 `auth_modes` is a string — one of `password`, `oidc`, `both`, or `none`
 (no-login single-user mode). The frontend and CLI branch on this value;
@@ -493,10 +501,12 @@ see [Auth Modes](../features/auth-modes.md).
 ### GET `/api/v1/images`
 
 List available container images that can be used when creating or
-editing workspaces.
+editing workspaces. Deployment-level capability toggles (nix/sudo
+availability) moved to the authenticated-only `/config` fields (#2974).
 
 **Auth:** JWT required. User must have the `view-images` permission on
-`/images` (#2946; seeded Allow for Authenticated).
+`/images` (#2946; seeded Allow for Authenticated — the deliberate,
+ACL-editor-modifiable default, #2974).
 
 No request body.
 
