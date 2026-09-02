@@ -17,6 +17,48 @@ from ..settings import parse_bool_setting
 
 logger = logging.getLogger(__name__)
 
+# The full permission vocabulary: every string an ACE may carry and every
+# permission the permission layer can be asked about. ``api/__init__.py``
+# re-exports it (``klangk.api.ALL_PERMISSIONS``), and the roles endpoint
+# uses it to expand each role group's effective grants (#2986). Kept here
+# — a module no route submodule imports from — so workspaces.py can use it
+# without a circular import through ``api/__init__``.
+ALL_PERMISSIONS = [
+    "view",
+    "monitor-workspace",
+    "create-workspace",
+    "duplicate-workspace",
+    "edit-workspace",
+    "delete-workspace",
+    "start-workspace",
+    "stop-workspace",
+    "restart-workspace",
+    "transfer-workspace",
+    "terminal",
+    "egress-consent",
+    "code-in-isolation",
+    "exec-and-sync",
+    "spectate-on-shared-terminals",
+    "code-in-shared-terminals",
+    "share-terminals",
+    "files-view",
+    "files-download",
+    "files-write",
+    "export-workspace",
+    "share-workspace",
+    "share-advanced",
+    "manage-users",
+    "manage-invitations",
+    "manage-groups",
+    "manage-server-schedule",
+    "manage-acls",
+    "manage-events",
+    "manage-volumes",
+    "view-images",
+    "search-users",
+    "*",
+]
+
 
 async def send_email(coro, recipient: str, kind: str = "email") -> None:
     """Await an email-sending coroutine, converting failures to 503."""

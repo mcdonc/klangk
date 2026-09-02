@@ -15,7 +15,9 @@ friendlier interfaces:
 - **Workspace sharing** — the Sharing tab on each workspace lets you
   add users or groups and assign them a role (Owner, Coder,
   Collaborator, Spectator). Behind the scenes, each role maps to a
-  set of ACL entries.
+  set of ACL entries, and each bucket lists the permissions its group
+  currently holds — read live from the ACL, so edits made in the
+  Advanced ACL editor show up on reload.
 - **Admin panel** — the Admin page lets you manage users, groups,
   and global access rules.
 - **UI visibility** — tabs and buttons appear or disappear based on

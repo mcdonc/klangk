@@ -381,6 +381,13 @@ sync` report a clear permission-denied error.
 
 ### Added
 
+- **Live permission lists in the Sharing tab (#2986).** Each role
+  bucket (owners, collaborators, coders, spectators) now lists the
+  permissions its group actually holds on the workspace, read live
+  from the ACL — post-seed edits made in the Advanced ACL editor are
+  reflected on reload. A `*` grant shows as "All permissions". The
+  buckets span about three quarters of the screen width.
+
 - **README release badge (#2981).** The README now carries a release
   badge showing the latest `v*` tag, driven by GitHub Releases —
   no manual updates needed.

@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -28,13 +27,20 @@ String get _token {
 /// Role payload as served by `GET /api/v1/workspaces/{id}/roles`:
 /// deliberately scrambled server-side so the sort order is asserted, with
 /// an empty role (spectators), and an unknown suffix (auditors) that
-/// exercises the icon/color/description fallbacks.
+/// exercises the icon/color fallbacks and the missing-`permissions`
+/// graceful path. Owners carry the wildcard expansion the backend emits
+/// for a `*` grant (collapsed to 'All permissions' in the UI).
 List<Map<String, dynamic>> _roles() => [
       {
         'role': 'spectators',
         'group_id': 'g4',
         'group_name': 'spectators-ws1',
         'members': [],
+        'permissions': [
+          'monitor-workspace',
+          'terminal',
+          'spectate-on-shared-terminals',
+        ],
       },
       {
         'role': 'coders',
@@ -42,6 +48,13 @@ List<Map<String, dynamic>> _roles() => [
         'group_name': 'coders-ws1',
         'members': [
           {'id': 'u-bob', 'email': 'bob@example.com'},
+        ],
+        'permissions': [
+          'monitor-workspace',
+          'terminal',
+          'egress-consent',
+          'code-in-isolation',
+          'files-view',
         ],
       },
       {
@@ -59,6 +72,7 @@ List<Map<String, dynamic>> _roles() => [
         'members': [
           {'id': 'u-alice', 'email': 'alice@example.com'},
         ],
+        'permissions': ['*', 'view', 'terminal'],
       },
       {
         'role': 'collaborators',
@@ -66,6 +80,12 @@ List<Map<String, dynamic>> _roles() => [
         'group_name': 'collaborators-ws1',
         'members': [
           {'id': 'u-carol', 'email': 'carol@example.com'},
+        ],
+        'permissions': [
+          'monitor-workspace',
+          'terminal',
+          'egress-consent',
+          'share-terminals',
         ],
       },
     ];
@@ -166,6 +186,17 @@ void main() {
     // Members render as chips; the empty role shows its empty state.
     expect(find.text('alice@example.com'), findsOneWidget);
     expect(find.text('No members'), findsOneWidget);
+
+    // Permission lists render per bucket (#2986): the owners' wildcard
+    // collapses to a label (the expanded names never render), granted
+    // permissions render once per bucket that holds them, and a role
+    // without a `permissions` key (auditors) renders no chips.
+    expect(find.text('All permissions'), findsOneWidget);
+    expect(find.text('terminal'), findsNWidgets(3));
+    expect(find.text('egress-consent'), findsNWidgets(2));
+    expect(find.text('share-terminals'), findsOneWidget);
+    expect(find.text('view'), findsNothing);
+
     // Without change-acls (#2764) the role-write affordances are hidden:
     // no add-user buttons, chips carry no delete icons.
     expect(find.byTooltip('Add user'), findsNothing);
@@ -174,6 +205,26 @@ void main() {
           of: find.byType(Chip), matching: find.byIcon(Icons.close)),
       findsNothing,
     );
+  });
+
+  testWidgets('panel spans three quarters of the screen width (#2986)',
+      (tester) async {
+    tester.view.physicalSize = const Size(1600, 900);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    stubHttp();
+    await tester.pumpWidget(buildPanel(canEditAcl: false));
+    await tester.pumpAndSettle();
+
+    final constraint = tester.widget<ConstrainedBox>(
+      find
+          .ancestor(
+            of: find.text('Owners'),
+            matching: find.byType(ConstrainedBox),
+          )
+          .first,
+    );
+    expect(constraint.constraints.maxWidth, 1200);
   });
 
   testWidgets('role-write affordances appear with change-acls (#2764)',

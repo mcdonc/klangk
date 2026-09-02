@@ -42,7 +42,7 @@ from .. import (
     oidc,
     wshandler,
 )
-from .common import autostart_allowed, get_app_dep
+from .common import ALL_PERMISSIONS, autostart_allowed, get_app_dep
 
 # Imported under an alias: the ``from . import auth as _auth_routes`` line
 # below pulls in the api/auth.py *submodule*, and the import machinery writes
@@ -300,42 +300,6 @@ STATIC_RESOURCES = [
     "/volumes",
     "/images",
     "/admin",
-]
-
-ALL_PERMISSIONS = [
-    "view",
-    "monitor-workspace",
-    "create-workspace",
-    "duplicate-workspace",
-    "edit-workspace",
-    "delete-workspace",
-    "start-workspace",
-    "stop-workspace",
-    "restart-workspace",
-    "transfer-workspace",
-    "terminal",
-    "egress-consent",
-    "code-in-isolation",
-    "exec-and-sync",
-    "spectate-on-shared-terminals",
-    "code-in-shared-terminals",
-    "share-terminals",
-    "files-view",
-    "files-download",
-    "files-write",
-    "export-workspace",
-    "share-workspace",
-    "share-advanced",
-    "manage-users",
-    "manage-invitations",
-    "manage-groups",
-    "manage-server-schedule",
-    "manage-acls",
-    "manage-events",
-    "manage-volumes",
-    "view-images",
-    "search-users",
-    "*",
 ]
 
 
