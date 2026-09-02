@@ -451,8 +451,9 @@ and the branding / feature flags the pre-auth UI needs. An
 default + enabled flag (the egress perimeter is not exposed pre-auth)
 and the deploy-level capability toggles `nix_available` /
 `sudo_available` (#2974 — moved off the images listing; whether the
-per-workspace nix mount can arm, and whether the deploy allows sudo at
-all), plus any feature-declared frontend config keys and
+per-workspace nix mount can arm, and whether the deploy's sudo ceiling
+permits the per-workspace opt-in — sudo itself is off unless the
+workspace's settings store `allow_sudo: true`), plus any feature-declared frontend config keys and
 `features_enable` when set.
 
 **Auth:** None (public payload; authenticated callers get a few extra

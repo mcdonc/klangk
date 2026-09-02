@@ -171,11 +171,12 @@ RUN chgrp root \
       /usr/sbin/unix_chkpwd /var/mail \
     2>/dev/null; true
 
-# Sudo is configured at runtime by the backend (klangk-configure-sudo, run via
-# podman exec as the container root) based on KLANGKD_ALLOW_SUDO — no sudoers
-# rule is baked into the image, and the entrypoint does not touch sudoers. The
-# entrypoint itself runs as the klangk user (uid 1000) via the configured userns
-# (default --userns=keep-id:uid=1000,gid=1000): there is no gosu drop and no
-# root PID 1.
+# Sudo is configured at runtime by the backend (klangk-configure-sudo, run
+# via podman exec as the container root) from the workspace's allow_sudo
+# setting under the KLANGKD_ALLOW_SUDO ceiling (#3047) — no sudoers rule is
+# baked into the image, and the entrypoint does not touch sudoers. The
+# entrypoint itself runs as the klangk user (uid 1000) via the configured
+# userns (default --userns=keep-id:uid=1000,gid=1000): there is no gosu drop
+# and no root PID 1.
 
 ENTRYPOINT ["/opt/klangk/entrypoint.sh"]

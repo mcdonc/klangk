@@ -99,9 +99,12 @@ sandbox:
 | `setup-timeout` | no       | `300`    | Maximum seconds the setup script may run before being killed. Set to `0` to disable.                          |
 
 The setup script runs once — on workspace creation, not on
-reconnect. It runs as the `klangk` user inside the container. If
-`KLANGKD_ALLOW_SUDO` is enabled on the server, the script can use
-`sudo` for system-level setup (installing packages, etc.).
+reconnect. It runs as the `klangk` user inside the container. The
+script can use `sudo` for system-level setup (installing packages,
+etc.) only when the workspace has opted in to sudo (`allow_sudo: true`,
+see [Container
+packages](container-packages.md)) **and** `KLANGKD_ALLOW_SUDO` is
+enabled on the server (the ceiling).
 
 > **`~` and the home layout:** In `mount-at`, `copy` destinations,
 > and `mounts` destinations, `~` always expands to `/home/{handle}` —
