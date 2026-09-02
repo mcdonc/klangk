@@ -79,6 +79,41 @@ _SIGNAL_NAMES = {
 _DEAD_STATES = frozenset({"exited", "stopped", "dead"})
 
 
+def _oom_death(memory_limit: str | None, exit_code) -> tuple[str, str]:
+    """(cause, message) for an OOM kill, naming the limit when known."""
+    if memory_limit:
+        return (
+            "oom",
+            f"OOM-killed at {memory_limit} memory limit "
+            f"(exit code {exit_code})",
+        )
+    return "oom", f"OOM-killed (exit code {exit_code})"
+
+
+def _signal_death(exit_code: int) -> tuple[str, str] | None:
+    """(cause, message) when the exit code is a signal death (128+n),
+    else None."""
+    if exit_code <= 128:
+        return None
+    signal_name = _SIGNAL_NAMES.get(exit_code - 128)
+    if signal_name is None:
+        return None
+    return "exited", f"killed by {signal_name} (exit code {exit_code})"
+
+
+def _exit_death(exit_code) -> tuple[str, str]:
+    """(cause, message) for a plain (non-OOM) process exit."""
+    if exit_code is None:
+        return "exited", "main process exited (no exit code recorded)"
+    if exit_code == 0:
+        return "exited", "main process exited cleanly (code 0)"
+    if isinstance(exit_code, int):
+        signal = _signal_death(exit_code)
+        if signal is not None:
+            return signal
+    return "exited", f"main process exited with code {exit_code}"
+
+
 def classify_death(
     info: dict | None, memory_limit: str | None = None
 ) -> tuple[str, str]:
@@ -97,22 +132,8 @@ def classify_death(
     state = info.get("State") or {}
     exit_code = state.get("ExitCode")
     if state.get("OOMKilled"):
-        if memory_limit:
-            return (
-                "oom",
-                f"OOM-killed at {memory_limit} memory limit "
-                f"(exit code {exit_code})",
-            )
-        return "oom", f"OOM-killed (exit code {exit_code})"
-    if exit_code is None:
-        return "exited", "main process exited (no exit code recorded)"
-    if exit_code == 0:
-        return "exited", "main process exited cleanly (code 0)"
-    if isinstance(exit_code, int) and exit_code > 128:
-        signal_name = _SIGNAL_NAMES.get(exit_code - 128)
-        if signal_name:
-            return "exited", f"killed by {signal_name} (exit code {exit_code})"
-    return "exited", f"main process exited with code {exit_code}"
+        return _oom_death(memory_limit, exit_code)
+    return _exit_death(exit_code)
 
 
 class RestartTracker:
@@ -133,18 +154,20 @@ class RestartTracker:
         self.next_attempt_at: float | None = None
         self.gave_up_at: float | None = None
 
+    def _phase(self) -> str:
+        """The tracker's display state."""
+        if self.gave_up_at is not None:
+            return "crash-loop"
+        if self.next_attempt_at is not None:
+            return "backing-off"
+        if self.last_started_at is not None:
+            return "recovering"
+        return "dead"
+
     def status(self) -> dict:
         """API shape for the /status endpoint and list annotation."""
-        if self.gave_up_at is not None:
-            state = "crash-loop"
-        elif self.next_attempt_at is not None:
-            state = "backing-off"
-        elif self.last_started_at is not None:
-            state = "recovering"
-        else:
-            state = "dead"
         out: dict = {
-            "state": state,
+            "state": self._phase(),
             "attempts": self.attempts,
             "last_cause": self.last_cause,
         }
@@ -344,16 +367,12 @@ class CrashRecoveryMonitor:
         reset the tracker of a stable survivor."""
         registry = self.app.state.container_registry
         # Post-await revalidation: skip anything the world moved under.
-        if registry.states.get(ws_id) is not state:
-            return  # state replaced/removed (rebind, user start/stop)
-        if state.container_id != cid:
-            return  # rebound to a fresh container — not our death
-        if ws_id in registry.stopping:
-            return  # an expected stop is now in flight
-        if registry.stop_epoch.get(ws_id, 0) != epoch:
-            return  # a stop began AND completed during the listing
+        if not self._snapshot_still_current(
+            registry, ws_id, state, cid, epoch
+        ):
+            return
         observed = liveness.get(cid)
-        if observed is not None and observed not in _DEAD_STATES:
+        if self._liveness_alive(observed):
             # Alive (running / created / paused / ...): nothing to do.
             self.maybe_reset_tracker(ws_id)
             return
@@ -376,6 +395,27 @@ class CrashRecoveryMonitor:
                 ws_id,
                 e,
             )
+
+    def _snapshot_still_current(
+        self, registry, ws_id: str, state, cid: str, epoch: int
+    ) -> bool:
+        """Whether the sweep snapshot row is still the live truth after
+        the liveness listing's await."""
+        if registry.states.get(ws_id) is not state:
+            return False  # state replaced/removed (rebind, user start/stop)
+        if state.container_id != cid:
+            return False  # rebound to a fresh container — not our death
+        if ws_id in registry.stopping:
+            return False  # an expected stop is now in flight
+        if registry.stop_epoch.get(ws_id, 0) != epoch:
+            return False  # a stop began AND completed during the listing
+        return True
+
+    @staticmethod
+    def _liveness_alive(observed) -> bool:
+        """True when an observed liveness state means alive (running /
+        created / paused / ...) rather than dead or absent."""
+        return observed is not None and observed not in _DEAD_STATES
 
     def maybe_reset_tracker(self, ws_id: str) -> None:
         """Drop the retry counter once a restarted container is stable.
@@ -485,9 +525,7 @@ class CrashRecoveryMonitor:
     ) -> None:
         """Post-teardown disposition: interleaved user action wins (no
         restart), else disabled-recovery / crash-loop / schedule-restart."""
-        if (
-            epoch is not None and registry.stop_epoch.get(ws_id, 0) != epoch
-        ) or registry.states.get(ws_id) is not None:
+        if self._user_action_interleaved(registry, ws_id, epoch):
             logger.info(
                 "Workspace %s: user action interleaved with death "
                 "handling; not recording crash state or restarting",
@@ -518,6 +556,22 @@ class CrashRecoveryMonitor:
         self.broadcast_death_event(ws_id, cause, message, tracker)
 
     @staticmethod
+    def _stop_epoch_moved(registry, ws_id: str, epoch: int | None) -> bool:
+        """True when a stop began and completed since *epoch* was
+        captured."""
+        return epoch is not None and registry.stop_epoch.get(ws_id, 0) != epoch
+
+    def _user_action_interleaved(
+        self, registry, ws_id: str, epoch: int | None
+    ) -> bool:
+        """True when a user action raced the death handling and owns the
+        workspace now: a stop began/completed during the awaits, or a
+        start re-created registry state."""
+        if self._stop_epoch_moved(registry, ws_id, epoch):
+            return True
+        return registry.states.get(ws_id) is not None
+
+    @staticmethod
     def _death_guards_pass(
         registry, ws_id: str, state, container_id: str, epoch: int | None
     ) -> bool:
@@ -529,7 +583,7 @@ class CrashRecoveryMonitor:
             return False  # workspace state gone or rebound (user action raced)
         if ws_id in registry.stopping:
             return False  # an expected stop is in flight
-        if epoch is not None and registry.stop_epoch.get(ws_id, 0) != epoch:
+        if CrashRecoveryMonitor._stop_epoch_moved(registry, ws_id, epoch):
             return False  # a stop began and completed during detection
         return True
 
@@ -585,76 +639,116 @@ class CrashRecoveryMonitor:
                 delay,
             )
             await asyncio.sleep(delay)
-            if self.trackers.get(ws_id) is not tracker:
-                return  # superseded by a user action
-            if not self.enabled:
-                tracker.next_attempt_at = None
+            if self._restart_abort(ws_id, tracker):
                 return
-            # Start-refusal check (#2527): a graceful restart's drain
-            # must stick — crash recovery would otherwise re-start the
-            # workspace under the recycling runtime.
-            blocked = (
-                self.app.state.container_registry.new_starts_blocked_reason()
-            )
-            if blocked:
-                tracker.next_attempt_at = None
-                logger.info(
-                    "Workspace %s: restart suppressed (%s)",
-                    ws_id,
-                    blocked,
-                )
-                return
-            ws = None
-            try:
-                ws = await self.app.state.model.workspaces.get_workspace_by_id(
-                    ws_id
-                )
-            except Exception as e:  # pragma: no cover - defensive
-                logger.warning(
-                    "Workspace %s restart: lookup failed: %s", ws_id, e
-                )
+            ws = await self._restartable_workspace(ws_id)
             if ws is None:
-                # Deleted (or unreadable) while backing off — abandon.
-                self.trackers.pop(ws_id, None)
-                logger.info(
-                    "Workspace %s no longer exists; abandoning restart",
-                    ws_id,
-                )
                 return
-            try:
-                cid, _status = await self.app.state.workspaces.start_workspace(
-                    ws, cause=CAUSE_CRASH_RESTART
-                )
-                tracker.last_started_at = time.time()
-                tracker.next_attempt_at = None
-                logger.info(
-                    "Workspace %s restarted after unexpected death "
-                    "(attempt %d, container %s)",
-                    ws_id,
-                    attempt,
-                    cid[:12],
-                )
+            if await self._restart_or_retry(ws_id, tracker, attempt, ws):
                 return
-            except asyncio.CancelledError:
-                raise
-            except Exception as e:
-                logger.warning(
-                    "Workspace %s restart attempt %d failed: %s",
-                    ws_id,
-                    attempt,
-                    e,
-                )
-                if tracker.attempts >= self.max_retries:
-                    tracker.gave_up_at = time.time()
-                    tracker.next_attempt_at = None
-                    logger.warning(
-                        "Workspace %s: crash-loop — %d restart attempt(s) "
-                        "exhausted; leaving stopped",
-                        ws_id,
-                        tracker.attempts,
-                    )
-                    return
-                # Loop: next backoff (the counter doubling continues).
+            # Loop: next backoff (the counter doubling continues).
+
+    def _restart_abort(self, ws_id: str, tracker: RestartTracker) -> bool:
+        """True when the pending restart must abort now: superseded by a
+        user action (silent, marker left), disabled mid-flight (marker
+        cleared), or start-refused by a drain (#2527, logged + marker
+        cleared)."""
+        if self.trackers.get(ws_id) is not tracker:
+            return True  # superseded by a user action
+        if not self.enabled:
+            tracker.next_attempt_at = None
+            return True
+        blocked = self.app.state.container_registry.new_starts_blocked_reason()
+        if blocked:
+            tracker.next_attempt_at = None
+            logger.info(
+                "Workspace %s: restart suppressed (%s)",
+                ws_id,
+                blocked,
+            )
+            return True
+        return False
+
+    async def _restartable_workspace(self, ws_id: str) -> dict | None:
+        """The workspace row to restart, or None when it was deleted (or
+        unreadable) — the tracker is dropped and the restart abandoned."""
+        try:
+            ws = await self.app.state.model.workspaces.get_workspace_by_id(
+                ws_id
+            )
+        except Exception as e:  # pragma: no cover - defensive
+            logger.warning("Workspace %s restart: lookup failed: %s", ws_id, e)
+            return None
+        if ws is None:
+            self.trackers.pop(ws_id, None)
+            logger.info(
+                "Workspace %s no longer exists; abandoning restart",
+                ws_id,
+            )
+        return ws
+
+    async def _restart_or_retry(
+        self, ws_id: str, tracker: RestartTracker, attempt: int, ws: dict
+    ) -> bool:
+        """Start the restarted workspace once; True when the loop should
+        stop (restarted, or crash-loop terminal), False to loop into the
+        next backoff. Reraises CancelledError."""
+        try:
+            await self._start_restarted_workspace(ws_id, tracker, attempt, ws)
+            return True
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            return self._on_restart_failure(ws_id, tracker, attempt, e)
+
+    async def _start_restarted_workspace(
+        self, ws_id: str, tracker: RestartTracker, attempt: int, ws: dict
+    ) -> None:
+        """One successful restart: record the stability anchor and log."""
+        cid, _status = await self.app.state.workspaces.start_workspace(
+            ws, cause=CAUSE_CRASH_RESTART
+        )
+        tracker.last_started_at = time.time()
+        tracker.next_attempt_at = None
+        logger.info(
+            "Workspace %s restarted after unexpected death "
+            "(attempt %d, container %s)",
+            ws_id,
+            attempt,
+            cid[:12],
+        )
+
+    def _on_restart_failure(
+        self,
+        ws_id: str,
+        tracker: RestartTracker,
+        attempt: int,
+        exc: Exception,
+    ) -> bool:
+        """Log a failed attempt; True when the loop should stop
+        (crash-loop terminal), False to retry with the next backoff."""
+        logger.warning(
+            "Workspace %s restart attempt %d failed: %s",
+            ws_id,
+            attempt,
+            exc,
+        )
+        if tracker.attempts < self.max_retries:
+            return False
+        self._give_up_restart(ws_id, tracker)
+        return True
+
+    def _give_up_restart(self, ws_id: str, tracker: RestartTracker) -> None:
+        """Mark the tracker crash-loop terminal; the workspace stays
+        stopped."""
+        tracker.gave_up_at = time.time()
+        tracker.next_attempt_at = None
+        logger.warning(
+            "Workspace %s: crash-loop — %d restart attempt(s) "
+            "exhausted; leaving stopped",
+            ws_id,
+            tracker.attempts,
+        )
 
     # --- events ---
 

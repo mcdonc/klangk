@@ -1313,6 +1313,16 @@ class TestCrashBranchGaps2834:
             "main process exited with code 200",
         )
 
+    def test_non_int_exit_code_falls_back_to_plain_exit(self):
+        # A defensive non-int ExitCode (inspect payload from a future
+        # podman) must surface as the generic message, not raise on
+        # the > 128 comparison.
+        cause, msg = classify_death(inspect_dead(exit_code="137"))
+        assert (cause, msg) == (
+            "exited",
+            "main process exited with code 137",
+        )
+
     async def test_start_twice_keeps_single_task(self, crash_env):
         app_state = make_app_state(crash_env)
         monitor = app_state.state.container_registry.crash

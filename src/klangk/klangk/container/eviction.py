@@ -94,6 +94,18 @@ def _read_int_file(path: str) -> int:
 _CGROUP_LIMIT_UNLIMITED = 1 << 60
 
 
+def _cgroup_usage(cgroup_dir: str) -> tuple[int, int, int] | None:
+    """(limit, current, inactive_file) from whichever cgroup version
+    is present; None when there is no finite limit / nothing readable."""
+    try:
+        v2_max = _v2_memory_limit(cgroup_dir)
+        if v2_max is not None:
+            return _cgroup_v2_usage(cgroup_dir, v2_max)
+        return _cgroup_v1_usage(cgroup_dir)
+    except (OSError, ValueError):
+        return None
+
+
 def cgroup_memory_headroom(
     cgroup_dir: str = "/sys/fs/cgroup",
 ) -> tuple[int, int] | None:
@@ -111,19 +123,13 @@ def cgroup_memory_headroom(
     page cache is excluded), the same approximation k8s uses for node
     pressure. A limit smaller than the floor is ignored.
     """
-    try:
-        v2_max = _v2_memory_limit(cgroup_dir)
-        if v2_max is not None:
-            limit, current, inactive_file = _cgroup_v2_usage(
-                cgroup_dir, v2_max
-            )
-        else:
-            limit, current, inactive_file = _cgroup_v1_usage(cgroup_dir)
-    except (OSError, ValueError):
+    usage = _cgroup_usage(cgroup_dir)
+    if usage is None:
         return None
+    limit, current, inactive_file = usage
     # "0" (or a bogus negative) is not a limit — e.g. a transient
     # memory.max=0 during container teardown. Ignore, meminfo governs.
-    if limit is None or limit <= 0:
+    if limit <= 0:
         return None
     working_set = max(0, current - inactive_file)
     if working_set > limit:
@@ -178,6 +184,32 @@ def stat_value(stat_path: str, names: tuple[str, ...]) -> int:
     return 0
 
 
+def _vm_stat_pages(vm_stat_output: str) -> dict[str, int]:
+    """``{counter: pages}`` from vm_stat's lines ("Pages free: 12345.")."""
+    pages: dict[str, int] = {}
+    for line in vm_stat_output.splitlines():
+        name, colon, value = line.partition(":")
+        if not colon:
+            continue
+        value = value.strip().rstrip(".")
+        if value.isdigit():
+            pages[name.strip()] = int(value)
+    return pages
+
+
+def _vm_stat_available_pages(pages: dict[str, int]) -> int:
+    """(free + inactive + speculative) page count; raises ValueError
+    when any counter is missing."""
+    try:
+        return (
+            pages["Pages free"]
+            + pages["Pages inactive"]
+            + pages["Pages speculative"]
+        )
+    except KeyError:
+        raise ValueError("vm_stat output lacks page counters") from None
+
+
 def parse_vm_stat(
     vm_stat_output: str, page_size: int, total_bytes: int
 ) -> float:
@@ -189,24 +221,26 @@ def parse_vm_stat(
     Raises ``ValueError`` when the page counters are missing — callers
     treat unmeasurable as "skip this cycle".
     """
-    pages: dict[str, int] = {}
-    for line in vm_stat_output.splitlines():
-        # "Pages free:                               12345."
-        name, colon, value = line.partition(":")
-        if not colon:
-            continue
-        value = value.strip().rstrip(".")
-        if value.isdigit():
-            pages[name.strip()] = int(value)
-    free = pages.get("Pages free")
-    inactive = pages.get("Pages inactive")
-    speculative = pages.get("Pages speculative")
-    if free is None or inactive is None or speculative is None:
-        raise ValueError("vm_stat output lacks page counters")
+    pages = _vm_stat_pages(vm_stat_output)
+    available_pages = _vm_stat_available_pages(pages)
     if total_bytes <= 0 or page_size <= 0:
         raise ValueError("vm_stat parse got non-positive total/page size")
-    available = (free + inactive + speculative) * page_size
+    available = available_pages * page_size
     return min(available / total_bytes, 1.0)
+
+
+def _header_page_size(header: str) -> int:
+    """Page size parsed from the header ("Mach Virtual Memory
+    Statistics: (page size of 16384 bytes)"), or 0 when unparseable."""
+    page_size = 0
+    if "page size of" in header and "bytes" in header:
+        try:
+            page_size = int(
+                header.split("page size of")[1].split("bytes")[0].strip()
+            )
+        except ValueError:
+            page_size = 0
+    return page_size
 
 
 def vm_stat_page_size(vm_stat_output: str) -> int:
@@ -218,16 +252,8 @@ def vm_stat_page_size(vm_stat_output: str) -> int:
     direction would evict on healthy memory. Unmeasurable (skip the
     cycle) is the safe failure.
     """
-    # "Mach Virtual Memory Statistics: (page size of 16384 bytes)"
     header = vm_stat_output.splitlines()[0] if vm_stat_output else ""
-    page_size = 0
-    if "page size of" in header and "bytes" in header:
-        try:
-            page_size = int(
-                header.split("page size of")[1].split("bytes")[0].strip()
-            )
-        except ValueError:
-            page_size = 0
+    page_size = _header_page_size(header)
     if page_size <= 0:
         raise ValueError("vm_stat header lacks a parseable page size")
     return page_size
@@ -398,29 +424,40 @@ class MemoryPressureEvictor:
         the conservative reading of "never stop idle workspaces".
         """
         registry = self.app.state.container_registry
-        sockets = self.app.state.sockets
-        candidates = []
-        for ws_id, state in registry.states.items():
-            if ws_id in registry.stopping:
-                continue
-            # A start/stop in flight (the per-workspace lock is held)
-            # means the workspace is mid-transition: a reconnecting
-            # workspace's container is tracked from podman create but
-            # has no subscriber until container_ready, so without this
-            # check an armed evictor stops the fresh container under
-            # the connecting client (#2527 e2e flake).
-            if registry.workspace_operation_in_flight(ws_id):
-                continue
-            if state.get_idle_timeout() == 0:
-                continue
-            session = sockets.sessions.get(ws_id)
-            if session and (
-                session.subscribers or session.browser_subscribers
-            ):
-                continue
-            candidates.append(state)
+        candidates = [
+            state
+            for ws_id, state in registry.states.items()
+            if self._evictable(ws_id, state)
+        ]
         candidates.sort(key=lambda s: s.last_activity)
         return candidates
+
+    def _evictable(self, ws_id: str, state) -> bool:
+        """Whether one tracked workspace is an eviction candidate."""
+        registry = self.app.state.container_registry
+        if ws_id in registry.stopping:
+            return False
+        # A start/stop in flight (the per-workspace lock is held)
+        # means the workspace is mid-transition: a reconnecting
+        # workspace's container is tracked from podman create but
+        # has no subscriber until container_ready, so without this
+        # check an armed evictor stops the fresh container under
+        # the connecting client (#2527 e2e flake).
+        if registry.workspace_operation_in_flight(ws_id):
+            return False
+        if state.get_idle_timeout() == 0:
+            return False
+        return not self._has_live_subscribers(ws_id)
+
+    def _has_live_subscribers(self, ws_id: str) -> bool:
+        """True when the workspace has any live terminal/browser
+        subscriber. Every workspace client holds the same workspace
+        WebSocket (``session.subscribers``), so the subscriber set
+        covers terminal and browser clients alike (#2627 review)."""
+        session = self.app.state.sockets.sessions.get(ws_id)
+        return bool(
+            session and (session.subscribers or session.browser_subscribers)
+        )
 
     async def evict_one(self, fraction: float) -> bool:
         """Gracefully stop the least-recently-active idle workspace.
@@ -519,22 +556,7 @@ class MemoryPressureEvictor:
         """
         percent = fraction * 100
         if pressured:
-            if percent >= self._recovery:
-                logger.info(
-                    "Host memory recovered (%.1f%% available >= %.1f%%) "
-                    "— ending eviction episode",
-                    percent,
-                    self._recovery,
-                )
-                self._warned_no_evictable = False
-                self._evicted_this_episode = 0
-                return 0, False
-            if percent < self._threshold:
-                await self.evict_one(fraction)
-            # Between threshold and recovery: hold — memory is being
-            # reclaimed (an eviction may still be in flight); evicting
-            # again here is what flap-prevention exists to avoid.
-            return below, pressured
+            return await self._step_pressured(fraction, below)
         if percent < self._threshold:
             below += 1
             if below >= self._sustain_polls:
@@ -550,6 +572,32 @@ class MemoryPressureEvictor:
                 return 0, True
             return below, pressured
         return 0, pressured
+
+    async def _step_pressured(
+        self, fraction: float, below: int
+    ) -> tuple[int, bool]:
+        """One step inside an open episode: evict one workspace per poll
+        while still below threshold; the episode closes only when
+        availability rises to the recovery threshold (strictly above
+        threshold — the gap is the hysteresis that prevents
+        flap-eviction at the boundary)."""
+        percent = fraction * 100
+        if percent >= self._recovery:
+            logger.info(
+                "Host memory recovered (%.1f%% available >= %.1f%%) "
+                "— ending eviction episode",
+                percent,
+                self._recovery,
+            )
+            self._warned_no_evictable = False
+            self._evicted_this_episode = 0
+            return 0, False
+        if percent < self._threshold:
+            await self.evict_one(fraction)
+        # Between threshold and recovery: hold — memory is being
+        # reclaimed (an eviction may still be in flight); evicting
+        # again here is what flap-prevention exists to avoid.
+        return below, True
 
     async def run(self) -> None:
         """Poll loop: measure, sustain, evict, hysteresis.
@@ -591,18 +639,25 @@ class MemoryPressureEvictor:
             # path that breaks *later* (transient today, permanent next
             # week) still says so.
             warned_unreadable = False
-            try:
-                below, pressured = await self._handle_measurement(
-                    fraction, below, pressured
-                )
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                # The eviction action must never kill the loop: a host at
-                # <10% available is exactly where fork (podman exec)
-                # fails with OSError — skipping one cycle is fine, dying
-                # silently for the process lifetime is not (#2627 review).
-                logger.warning(
-                    "Memory-pressure eviction cycle failed (skipped)",
-                    exc_info=True,
-                )
+            below, pressured = await self._step_state_machine(
+                fraction, below, pressured
+            )
+
+    async def _step_state_machine(
+        self, fraction: float, below: int, pressured: bool
+    ) -> tuple[int, bool]:
+        """One guarded state-machine step. The eviction action must
+        never kill the loop: a host at <10% available is exactly where
+        fork (podman exec) fails with OSError — skipping one cycle is
+        fine, dying silently for the process lifetime is not (#2627
+        review)."""
+        try:
+            return await self._handle_measurement(fraction, below, pressured)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning(
+                "Memory-pressure eviction cycle failed (skipped)",
+                exc_info=True,
+            )
+            return below, pressured
