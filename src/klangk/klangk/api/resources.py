@@ -298,9 +298,12 @@ async def create_volume(
                 status_code=409, detail=f"Volume {body.name!r} already exists"
             )
     # A non-managed name (another instance's or the operator's volume)
-    # falls through to create_volume, which surfaces podman's own
-    # "volume already exists" failure instead of confirming the
-    # volume's existence with a 409 (#2973).
+    # falls through to create_volume: podman's own create failure raises
+    # PodmanError, which reaches the client as a bare 500 with no probed
+    # name in the body. 500-vs-200 still hints at existence, but no
+    # longer with a 409 + echoed detail (#2973). In-instance cross-user
+    # names still 409 (issue scope: instance-managed volumes only; the
+    # admin-surface rework, #2989, narrows who can call this at all).
     info = await app.state.podman.create_volume(
         body.name,
         {
