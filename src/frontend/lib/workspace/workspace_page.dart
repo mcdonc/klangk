@@ -465,8 +465,11 @@ class _WorkspacePageState extends State<WorkspacePage> {
       // `terminal` without `spectate-on-shared-terminals`, and an
       // ungated auto-join would be server-denied the moment anyone
       // shares a terminal — swapping the page for an error view with no
-      // user action at all.
+      // user action at all. Also gated on `terminal` (#2975 review):
+      // without it there is no Terminal tab to render the stream in —
+      // joining would subscribe to PTY frames nothing displays.
       if (_activeSharedTerminal == null &&
+          _hasPerm('terminal') &&
           !_hasPerm('code-in-isolation') &&
           _hasPerm('spectate-on-shared-terminals') &&
           wsClient.sharedTerminals.isNotEmpty) {

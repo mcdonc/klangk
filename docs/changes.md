@@ -394,10 +394,12 @@ sync` report a clear permission-denied error.
   Terminal-tab visibility signal: a member without it gets no Terminal
   tab, so a custom ACL can grant, e.g., files-only access
   (`join-workspace` + `files-view`). Migration m0024 copies every
-  stored workspace `terminal` Allow ACE to a sibling `join-workspace`
-  row (nothing is renamed — existing `terminal` grants keep working),
-  and fresh seeds and both share flows (member, group) grant
-  `join-workspace` alongside `terminal`.
+  stored `terminal` ACE — Allow and Deny, on any resource the ACL
+  ancestor walk consults — to a `join-workspace` sibling inserted
+  directly after it, so first-match answers (including Deny-based
+  exclusions and collection-level grants) survive the swap unchanged;
+  nothing is renamed, and fresh seeds and both share flows (member,
+  group) grant `join-workspace` alongside `terminal`.
 
 - **README release badge (#2981).** The README now carries a release
   badge showing the latest `v*` tag, driven by GitHub Releases —

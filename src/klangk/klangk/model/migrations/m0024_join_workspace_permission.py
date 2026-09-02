@@ -1,63 +1,93 @@
-"""Migration 0024: grant ``join-workspace`` to existing terminal holders.
+"""Migration 0024: grant ``join-workspace`` alongside stored ``terminal``.
 
 The ``workspace_connect`` handshake — the gate for opening a workspace
 at all — now checks ``join-workspace`` instead of ``terminal`` (#2975):
 ``terminal`` becomes the Terminal-tab visibility signal the frontend
 reads from my-permissions, and the connect gate gets a self-describing
 name. Stored ACEs carry no ``join-workspace`` rows; without this
-migration every existing workspace's grants (including the per-workspace
-role groups seeded at creation time, and direct user/group shares) fall
-short of the new gate and members lock themselves out of their own
-workspaces the moment this code boots.
+migration every existing grant falls short of the new gate and members
+lock themselves out of their own workspaces the moment this code boots.
 
-Scope: every ``Allow`` ACE for ``terminal`` on a workspace resource
-(GLOB ``/workspaces/?*``) gains a sibling ``Allow`` ACE for
-``join-workspace`` appended at the end of that resource's ACL (max
-position + 1) unless the principal already holds ``join-workspace`` or
-the ``*`` wildcard on that resource (owners need nothing). This is a
-copy, not a rename — the ``terminal`` rows stay untouched, so custom
-ACLs and scripts that grant/check ``terminal`` keep working, and every
-grant path that ever carried ``terminal`` is covered (role groups and
-direct user/group shares alike). The seed and both share flows
-(member, group) grant ``join-workspace`` alongside ``terminal`` for
-fresh rows; this migration backfills existing deployments so the
-upgrade does not silently stop anyone who could already connect.
+Answer preservation, not just grant copying — the ACL walk
+(:func:`klangk.acl.check_permission`) evaluates first-match-wins over
+the resource AND its ancestors (``/workspaces/{id}`` → ``/workspaces``
+→ ``/``), for Allow and Deny rows alike. So this migration copies every
+``terminal`` row — Allow AND Deny — on ANY resource (not just the
+workspace GLOB): an Allow ``terminal`` on the collection ``/workspaces``
+answered the old gate through the ancestor walk, and a Deny
+``terminal`` above a grant blocked it; both must keep answering the new
+gate identically (the m0022 rename precedent carried Deny rows along
+the same way). Each sibling ``join-workspace`` row is inserted directly
+AFTER its source row — positions at and above the insertion point shift
+up — so every principal's first matching row answers with the same
+action it did before the swap.
 
-Idempotent by construction: the already-covered check matches on a
-re-run, so a second apply inserts nothing.
+This is a copy, not a rename — the ``terminal`` rows stay untouched, so
+custom ACLs and scripts that grant/check ``terminal`` keep working. The
+seed and both share flows (member, group) grant ``join-workspace``
+alongside ``terminal`` for fresh rows.
+
+Idempotent by construction: a source row whose identical
+``join-workspace`` sibling (same resource, principal, and action)
+already exists is skipped, so a re-run inserts nothing.
 """
 
-from klangk.model.acl import ACTION_ALLOW
 from klangk.model.migrations.base import Migration
 
 
-async def apply(db) -> None:
-    # Distinct principals holding an Allow terminal ACE on a workspace.
+async def _shift_up(db, resource: str, from_pos: int) -> None:
+    """Bump every row at/from ``from_pos`` up by one — highest first.
+
+    Single-row UPDATEs in descending order can never transiently violate
+    UNIQUE(resource, position); one bulk UPDATE could (its row
+    evaluation order is undefined).
+    """
     cursor = await db.execute(
-        "SELECT DISTINCT resource, principal_type, user_id, group_id,"
-        " system_principal FROM acl_entries"
-        " WHERE action = ? AND permission = 'terminal'"
-        "   AND resource GLOB '/workspaces/?*'",
-        (ACTION_ALLOW,),
+        "SELECT position FROM acl_entries"
+        " WHERE resource = ? AND position >= ? ORDER BY position DESC",
+        (resource, from_pos),
     )
-    holders = await cursor.fetchall()
+    for (pos,) in await cursor.fetchall():
+        await db.execute(
+            "UPDATE acl_entries SET position = position + 1"
+            " WHERE resource = ? AND position = ?",
+            (resource, pos),
+        )
+
+
+async def apply(db) -> None:
+    # Every terminal row on any resource, highest position first within
+    # each resource: inserting a sibling shifts only rows ABOVE the
+    # source, so sources at lower positions are still where the cursor
+    # expects them when their turn comes.
+    cursor = await db.execute(
+        "SELECT resource, position, action, principal_type, user_id,"
+        " group_id, system_principal FROM acl_entries"
+        " WHERE permission = 'terminal'"
+        " ORDER BY resource, position DESC"
+    )
+    sources = await cursor.fetchall()
     for (
         resource,
+        position,
+        action,
         principal_type,
         user_id,
         group_id,
         system_principal,
-    ) in holders:
-        # Already covered: an existing join-workspace (or wildcard)
-        # Allow ACE for the same principal on the same resource.
+    ) in sources:
+        # Idempotency: an identical join-workspace sibling (same
+        # principal and action on the same resource) means this source
+        # was already copied.
         covered = await db.execute(
             "SELECT 1 FROM acl_entries"
-            " WHERE resource = ? AND action = ? AND principal_type = ?"
+            " WHERE resource = ? AND permission = 'join-workspace'"
+            " AND action = ? AND principal_type = ?"
             " AND user_id IS ? AND group_id IS ? AND system_principal IS ?"
-            " AND permission IN ('join-workspace', '*') LIMIT 1",
+            " LIMIT 1",
             (
                 resource,
-                ACTION_ALLOW,
+                action,
                 principal_type,
                 user_id,
                 group_id,
@@ -66,12 +96,7 @@ async def apply(db) -> None:
         )
         if await covered.fetchone() is not None:
             continue
-        max_pos = await db.execute(
-            "SELECT COALESCE(MAX(position), -1) FROM acl_entries"
-            " WHERE resource = ?",
-            (resource,),
-        )
-        pos = (await max_pos.fetchone())[0] + 1
+        await _shift_up(db, resource, position + 1)
         await db.execute(
             "INSERT INTO acl_entries"
             " (resource, position, action, principal_type,"
@@ -79,8 +104,8 @@ async def apply(db) -> None:
             " VALUES (?, ?, ?, ?, ?, ?, ?, 'join-workspace')",
             (
                 resource,
-                pos,
-                ACTION_ALLOW,
+                position + 1,
+                action,
                 principal_type,
                 user_id,
                 group_id,

@@ -247,7 +247,7 @@ re-checked:
 | consent-decider WS, workspace-scoped                          | `egress-consent`                                    | `/workspaces/{id}` | coders, collaborators             | once at registration (handshake)                                                                    |
 | consent-decider WS, deploy-wide (drain)                       | `manage-server-schedule`                            | `/server`          | admins group                      | once at registration (handshake)                                                                    |
 
-Audit conclusions (#2939): all 33 permission names in the vocabulary
+Audit conclusions (#2939): all 34 permission names in the vocabulary
 are enforced somewhere (no dead names); every WS gate's permission
 matches a seeded grant path. Revocation timing differs per row: the
 "live, per message" rows re-resolve principals on every message, so
