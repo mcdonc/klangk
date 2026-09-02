@@ -14695,6 +14695,31 @@ class TestBranchGaps2834:
         assert resp.status_code == 400
         assert "mount source" in resp.json()["detail"]
 
+    async def test_create_workspace_rejects_flaglike_volume_source(
+        self, client, admin_user
+    ):
+        """#3018 (real, unmocked gate): a leading-dash mount source would
+        reach ``podman volume create`` argv verbatim — 400 at create,
+        while a podman-safe named volume still passes."""
+        headers = await _admin_login(client)
+        bad = await client.post(
+            "/api/v1/workspaces",
+            headers=headers,
+            json={
+                "name": "flaglike-mount-ws",
+                "mounts": ["--opt=x:/data"],
+            },
+        )
+        assert bad.status_code == 400
+        assert "podman-safe" in bad.json()["detail"]
+        good = await client.post(
+            "/api/v1/workspaces",
+            headers=headers,
+            json={"name": "safe-vol-ws", "mounts": ["my-vol:/data"]},
+        )
+        assert good.status_code == 200
+        assert good.json()["mounts"] == ["my-vol:/data"]
+
     async def test_stop_workspace_running_container_no_session(
         self, client, admin_user, app
     ):

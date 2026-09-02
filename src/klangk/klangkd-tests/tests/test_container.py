@@ -3990,6 +3990,38 @@ class TestValidateMountSpec:
         assert err is not None
         assert "unknown option" in err.lower()
 
+    def test_named_volume_leading_dash_rejected(self):
+        """#3018: a leading-dash source is parsed as a flag by the podman
+        CLI (``podman volume create --opt=...``) — rejected at the mount
+        gate, same rule as the volumes API (#2971)."""
+        err = self.registry.validate_mount_spec("--opt=x:/data")
+        assert err is not None
+        assert "podman-safe" in err.lower()
+
+    def test_named_volume_bad_charset_rejected(self):
+        """#3018: sources outside [a-zA-Z0-9_.-] (after an alphanumeric
+        first char) are rejected — including the trailing-newline case
+        that a Python ``re`` ``$`` anchor would wrongly accept.
+        (A "."-prefixed source is a bind source, not a volume — that
+        case is covered by test_bind_sources_unaffected_by_volume_rule.)"""
+        for source in ("has space", "ex!am", "_under", "a\nb"):
+            err = self.registry.validate_mount_spec(f"{source}:/data")
+            assert err is not None, source
+            assert "podman-safe" in err.lower()
+
+    def test_named_volume_length_cap(self):
+        """#3018: the 64-char boundary passes, 65 chars rejects."""
+        assert self.registry.validate_mount_spec(f"{'a' * 64}:/data") is None
+        err = self.registry.validate_mount_spec(f"{'a' * 65}:/data")
+        assert err is not None
+        assert "podman-safe" in err.lower()
+
+    def test_bind_sources_unaffected_by_volume_rule(self):
+        """#3018: absolute paths and '.'-prefixed (bind) sources never hit
+        the volume-name rule — they keep the protected/allowed-root path."""
+        assert self.registry.validate_mount_spec("/host:/container") is None
+        assert self.registry.validate_mount_spec("./cache:/data") is None
+
     def test_validate_mounts_list(self):
         assert self.registry.validate_mounts(["/a:/b", "vol:/c"]) is None
 
@@ -4188,6 +4220,28 @@ class TestExtraMountsVolumeCreation:
             == self.registry.app.state.util.instance_id()
         )
         assert labels["klangk.user-id"] == "user-123"
+
+    async def test_unsafe_volume_name_rejected_at_start(self, workspace):
+        """#3018 defense in depth: a row that slipped past the API gate
+        (created before #3018, or via another writer) must not reach
+        podman argv either — ValueError before any podman call."""
+        mock_inspect = AsyncMock()
+        mock_create = AsyncMock()
+        with patch_podman(
+            self.registry,
+            inspect_volume=mock_inspect,
+            create_volume=mock_create,
+        ):
+            with pytest.raises(ValueError, match="not podman-safe"):
+                await self.registry.start_container(
+                    container.ContainerStartSpec(
+                        workspace["id"],
+                        "/tmp/home",
+                        extra_mounts=["--opt=x:/data"],
+                    )
+                )
+        assert mock_inspect.await_count == 0
+        assert mock_create.await_count == 0
 
     async def test_existing_volume_not_recreated(self, workspace, app_state):
         """Existing volumes owned by this instance and user are used as-is."""
