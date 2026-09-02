@@ -1369,6 +1369,10 @@ the count is the caller's instance-managed volumes (`GET
 concurrent creates. The same cap also gates the workspace-start
 auto-create of mounted named volumes. `0` (the default) = unlimited.
 
+`name` must be podman-safe (#2971): start with an alphanumeric
+character, continue with `a-zA-Z0-9_.-` only, and be at most 64
+characters; violations return HTTP 422.
+
 ```json
 { "name": "my-volume" }
 ```
@@ -1817,6 +1821,9 @@ filter).
 
 **Auth:** JWT required. User must have the `manage-volumes` permission
 on `/volumes` (#2993; seeded Allow for the `admins` group).
+
+`{name}` in the path must satisfy the same podman-safe rule as on
+create (#2971); violations return HTTP 422.
 
 No request body.
 

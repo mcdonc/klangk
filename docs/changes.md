@@ -243,6 +243,15 @@ operators or integrators to act when upgrading.
 
 ### Security
 
+- **Volume name validation (#2971).** `POST /api/v1/volumes` and
+  `DELETE /api/v1/volumes/{name}` now reject names that are not
+  podman-safe — they must start with an alphanumeric character,
+  continue with `a-zA-Z0-9_.-` only, and be at most 64 characters —
+  with HTTP 422. Previously any string was appended verbatim to the
+  podman command line, so a leading-dash name was parsed as a podman
+  flag (on delete, `--all` could remove every unused volume on the
+  host).
+
 - **Volume-create conflict check no longer leaks foreign volume names
   (#2973).** `POST /api/v1/volumes` answered 409 for any podman volume
   name that existed on the host, letting a user probe for volumes the
