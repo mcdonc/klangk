@@ -46,6 +46,7 @@ from klangk.wshandler import (
     TerminalController,
     WebSocketState,
     WorkspaceSession,
+    broadcast_event,
     disconnect_all_websockets,
     send_error,
     handle_websocket,
@@ -5906,6 +5907,58 @@ class TestBroadcastDeadSubscribers:
             sockets.sessions.pop("ws-dead-sub", None)
 
 
+class TestBroadcastEvent:
+    """#3008: broadcast_event fans a CUSTOM event out to a workspace
+    session, with a direct-send fallback so the acting connection is
+    covered even when it isn't a subscriber (no session — e.g. a
+    unit-test wiring — or an out-of-session socket)."""
+
+    def _names(self, sock):
+        return [
+            c[0][0].get("event", {}).get("name")
+            for c in sock.send_json.call_args_list
+            if isinstance(c[0][0], dict) and c[0][0].get("type") == "event"
+        ]
+
+    def test_no_session_direct_send(self):
+        sock = _mock_sock()
+        broadcast_event(None, sock, "container_restart", "Restarting...")
+        assert self._names(sock) == ["container_restart"]
+
+    async def test_subscribed_socket_gets_exactly_one_copy(self, app_state):
+        app_state = _make_app_state()
+        sockets = app_state.state.sockets
+        session = sockets.get_or_create_session("ws-bcast", app_state)
+        sock = _mock_sock()
+        sibling = _mock_sock()
+        await session.add_subscriber(sock, "cid")
+        await session.add_subscriber(sibling, "cid")
+        try:
+            broadcast_event(session, sock, "container_ready", "ready")
+            assert self._names(sock) == ["container_ready"]
+            assert self._names(sibling) == ["container_ready"]
+        finally:
+            sockets.sessions.pop("ws-bcast", None)
+
+    async def test_out_of_session_socket_gets_direct_send(self, app_state):
+        """The acting socket is not a subscriber: it still gets the event
+        (direct send) alongside the broadcast to real subscribers."""
+        app_state = _make_app_state()
+        sockets = app_state.state.sockets
+        session = sockets.get_or_create_session("ws-bcast-2", app_state)
+        acting = _mock_sock()
+        sibling = _mock_sock()
+        await session.add_subscriber(sibling, "cid")
+        try:
+            broadcast_event(
+                session, acting, "container_restart", "Restarting..."
+            )
+            assert self._names(acting) == ["container_restart"]
+            assert self._names(sibling) == ["container_restart"]
+        finally:
+            sockets.sessions.pop("ws-bcast-2", None)
+
+
 class TestHandleRestartContainer:
     async def test_restart_not_connected(self):
         sock = _mock_sock()
@@ -6420,6 +6473,78 @@ class TestHandleRestartContainer:
 
         assert conn2.container_id == "new-cid"
 
+        sockets.connections.pop(sock1, None)
+        sockets.connections.pop(sock2, None)
+        sockets.sessions.pop(workspace["id"], None)
+
+    async def test_restart_notifies_sibling_connections(self, user, app_state):
+        """#3008: restart lifecycle events reach every connection in the
+        workspace, not only the restarting one — a sibling's page recovers
+        on the broadcast container_ready (overlay clear + terminal
+        re-start) instead of its terminal going dead."""
+        app_state = _make_app_state()
+        sockets = app_state.state.sockets
+        registry = app_state.state.container_registry
+        sock1 = _mock_sock(headers={"host": "localhost:8997"})
+        sock2 = _mock_sock()
+        workspace = await _create_workspace_with_acl(
+            app_state, user["id"], "restart-fanout"
+        )
+        conn1 = _base_conn(user=user, ws=sock1, app_state=app_state)
+        conn2 = _base_conn(user=user, ws=sock2, app_state=app_state)
+        conn1.workspace_id = workspace["id"]
+        conn1.container_id = "old-cid"
+        conn1.workspace = workspace
+        conn2.workspace_id = workspace["id"]
+        conn2.container_id = "old-cid"
+        session = sockets.get_or_create_session(workspace["id"], app_state)
+        await session.add_subscriber(sock1, "old-cid")
+        await session.add_subscriber(sock2, "old-cid")
+        sockets.connections[sock1] = conn1
+        sockets.connections[sock2] = conn2
+
+        async def fake_start(self_arg, wid, ws_obj):
+            self_arg.container_id = "new-cid"
+            self_arg.workspace_id = wid
+            # start_workspace_container re-subscribes the restarting
+            # socket (the real path calls add_subscriber).
+            await session.add_subscriber(sock1, "new-cid")
+
+        with (
+            patch.object(
+                Connection,
+                "start_workspace_container",
+                autospec=True,
+                side_effect=fake_start,
+            ),
+            patch.object(registry, "record_activity"),
+            patch.object(
+                registry,
+                "get_workspace_ports",
+                return_value=[],
+            ),
+        ):
+            await conn1.handle_restart_container()
+
+        def custom_names(sock):
+            return [
+                c[0][0].get("event", {}).get("name")
+                for c in sock.send_json.call_args_list
+                if isinstance(c[0][0], dict)
+                and c[0][0].get("type") == "event"
+                and c[0][0].get("event", {}).get("type") == "CUSTOM"
+            ]
+
+        # The restarting client gets each notice exactly once (never a
+        # broadcast + direct-send double) …
+        assert custom_names(sock1).count("container_restart") == 1
+        assert custom_names(sock1).count("container_ready") == 1
+        # … and the sibling gets both lifecycle events too.
+        assert custom_names(sock2).count("container_restart") == 1
+        assert custom_names(sock2).count("container_ready") == 1
+
+        await session.remove_subscriber(sock1)
+        await session.remove_subscriber(sock2)
         sockets.connections.pop(sock1, None)
         sockets.connections.pop(sock2, None)
         sockets.sessions.pop(workspace["id"], None)
@@ -10841,6 +10966,10 @@ class TestDrainingStartPaths:
 
     async def test_restart_refused_while_draining(self, user, app_state):
         sock = _mock_sock()
+        # #3008: the restart path now fans the container_restart notice
+        # out through app.state.sockets — wire the real state object in
+        # (the minimal app_state fixture doesn't include it).
+        app_state.state.sockets = WebSocketState(app_state)
         conn = _base_conn(user=user, ws=sock, app_state=app_state)
         conn.workspace_id = "ws-c"
         conn.workspace = {"id": "ws-c", "name": "c"}

@@ -20,7 +20,7 @@ from ..container import workspace_container_name, workspace_name_slug
 
 if TYPE_CHECKING:
     from .safe_websocket import SafeWebSocket
-    from .session import WebSocketState
+    from .session import WebSocketState, WorkspaceSession
 
 logger = logging.getLogger(__name__)
 
@@ -116,17 +116,43 @@ async def refresh_user_handle(
             conn.user["handle"] = new_handle
 
 
+def custom_event_frame(name: str, reason: str | None = None) -> dict:
+    """Build a CUSTOM event frame (container_ready, container_stopped, …)."""
+    value = {"reason": reason} if reason else {}
+    return {
+        "type": "event",
+        "event": {"type": "CUSTOM", "name": name, "value": value},
+    }
+
+
 def send_event(
     sock: SafeWebSocket, name: str, reason: str | None = None
 ) -> None:
     """Send a CUSTOM event (container_ready, container_stopped, etc.)."""
-    value = {"reason": reason} if reason else {}
-    sock.send_json(
-        {
-            "type": "event",
-            "event": {"type": "CUSTOM", "name": name, "value": value},
-        }
-    )
+    sock.send_json(custom_event_frame(name, reason))
+
+
+def broadcast_event(
+    session: WorkspaceSession | None,
+    sock: SafeWebSocket,
+    name: str,
+    reason: str | None = None,
+) -> None:
+    """Send a CUSTOM event to every subscriber, plus *sock* if it isn't one.
+
+    #3008: workspace lifecycle events (container_restart, container_ready)
+    must reach every connection in the workspace, not only the acting one —
+    sibling pages recover exactly like the restarting client instead of
+    stranding a dead terminal. *sock* (the acting connection) gets a direct
+    send only when it is not a session subscriber, so it is never
+    double-sent.
+    """
+    frame = custom_event_frame(name, reason)
+    subscribed = session is not None and sock in session.subscribers
+    if session is not None:
+        session.broadcast(frame)
+    if not subscribed:
+        sock.send_json(frame)
 
 
 def format_idle_timeout(seconds: int | float) -> str:

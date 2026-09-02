@@ -31,6 +31,7 @@ from .support import (
     disconnect_user as disconnect_user,
     format_container_info as format_container_info,
     format_idle_timeout as format_idle_timeout,
+    broadcast_event as broadcast_event,
     log_ws_msg as log_ws_msg,
     refresh_user_handle as refresh_user_handle,
     reset_workspace_state as reset_workspace_state,
