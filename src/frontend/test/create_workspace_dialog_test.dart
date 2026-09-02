@@ -1208,13 +1208,14 @@ void main() {
       await tester.pump();
 
       expect(postedBody, isNotNull);
-      // The lock-down is emitted by default; a checked toggle (opt-in)
-      // omits the key — True is the bag's default and the deploy setting
-      // stays the ceiling (#2017).
+      // The lock-down is emitted by default; opting in emits an explicit
+      // true (#3047 — the bag is the sole posture source, absent = off;
+      // the deploy flag stays the ceiling).
       expect(postedBody!['settings'], {'allow_sudo': false});
     });
 
-    testWidgets('opting in (check) omits allow_sudo (#3046)', (tester) async {
+    testWidgets('opting in (check) sends allow_sudo=true (#3047)',
+        (tester) async {
       Map<String, dynamic>? postedBody;
       testAuthHttpClientOverride = mockClient((request) async {
         if (request.url.path == '/api/v1/workspaces' &&
@@ -1241,11 +1242,9 @@ void main() {
       await tester.pump();
 
       expect(postedBody, isNotNull);
-      // Opting in omits the key (follow the deploy posture).
-      expect(
-          postedBody!['settings'] == null ||
-              !(postedBody!['settings'] as Map).containsKey('allow_sudo'),
-          isTrue);
+      // #3047: the bag is the sole posture source — opting in emits an
+      // explicit true (an absent key means OFF).
+      expect(postedBody!['settings'], {'allow_sudo': true});
     });
   });
 }

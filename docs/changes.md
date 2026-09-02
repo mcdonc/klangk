@@ -32,6 +32,19 @@ operators or integrators to act when upgrading.
 
 ### Breaking
 
+- **Per-workspace sudo is now opt-in (#3046, #3047).** `KLANGKD_ALLOW_SUDO`
+  no longer grants passwordless sudo by itself — it is now only the
+  ceiling that permits a workspace to opt in. Sudo is on for a workspace
+  only when its settings bag stores `allow_sudo: true` (the _Allow sudo_
+  toggle, which now defaults to unchecked in the Flutter dialog/settings
+  panel and the TUI form, or `klangk create --sudo` / `--sudo` on edit);
+  an absent key means locked down, and a `true` can never raise sudo
+  past `KLANGKD_ALLOW_SUDO=0`. **On upgrade, existing workspaces with
+  no stored `allow_sudo` key lose sudo at their next container start**
+  (no bag migration runs) — opt them in with `klangk edit <ws> --sudo`
+  if they need it. See [Container
+  packages](https://klangk.github.io/klangk/features/container-packages/).
+
 - **Volumes are an admin surface (#2993).** `GET /volumes` now checks
   the new `view-volumes` permission (the admin Volumes tab's listing
   gate), while `POST /volumes` and `DELETE /volumes/{name}` keep
@@ -1568,14 +1581,6 @@ stop)`) and a `server: stop at 23:00 (in 1h 12m)` status line in the
   `KLANGKD_ALLOW_INSECURE_NO_AUTH`.
 
 ### Changed
-
-- **`Allow sudo` toggle defaults to off (#3046).** The per-workspace
-  sudo toggle in the Flutter create dialog, the Flutter settings panel,
-  and the TUI workspace form now starts unchecked (locked down); users
-  opt in to passwordless sudo. Workspaces created through the API or
-  the `klangk` CLI with no `allow_sudo` key still follow the
-  deploy-wide default (`KLANGKD_ALLOW_SUDO`). The CLI
-  `--sudo/--no-sudo` flags are unchanged.
 
 - **Server admin schedule list (#3002).** The explanatory paragraph
   ("A stop exits the server process…") no longer renders above the

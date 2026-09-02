@@ -76,30 +76,26 @@ so common development tasks work out of the box.
 
 ## Installing Additional Packages
 
-By default the `klangk` user has passwordless `sudo` (the deploy-wide
-`KLANGKD_ALLOW_SUDO` defaults to on) for workspaces created through the
-API or the `klangk` CLI without a `--no-sudo` flag. Workspaces created
-through the Flutter or TUI forms are locked down by default — the Allow
-sudo toggle starts unchecked (#3046).
+Sudo is **off by default** for every workspace (#3046/#3047): the
+stored per-workspace `allow_sudo` setting is the sole posture source,
+and an absent key means locked down. The deploy-wide
+`KLANGKD_ALLOW_SUDO` flag is only a ceiling — it permits the _Allow
+sudo_ toggle to be checked but grants nothing by itself.
 
 ### With sudo enabled
 
-With sudo on (the default), the `klangk` user can install packages
-normally:
+Opt the workspace in (check _Allow sudo_ in the UI, or
+`klangk create --sudo` / `klangk edit --sudo`) and the `klangk` user
+gets passwordless `sudo` (while the deploy ceiling allows it):
 
 ```bash
 sudo apt-get update && sudo apt-get install -y <package>
 ```
 
-A workspace can also be locked down individually below the deploy
-default (sudo-disabled) even on a sudo-enabled server — the owner (or a
-member with edit permission on the workspace) sets `allow_sudo: false` in
-the workspace settings (`klangk edit --no-sudo`, or the _Allow sudo_
-toggle in the workspace settings UI, which defaults to unchecked, #3046).
-An absent `allow_sudo` key still follows the deploy default when the
-workspace is created through the API or CLI; the UI toggle locks the
-workspace down on save. The lock-down applies at the next
-container start.
+The opt-in stores `allow_sudo: true` in the workspace settings; a later
+lock-down (`allow_sudo: false`, or just removing the opt-in) applies at
+the next container start. A workspace `true` can never grant sudo on a
+deploy where `KLANGKD_ALLOW_SUDO` is off.
 
 ### Without sudo
 

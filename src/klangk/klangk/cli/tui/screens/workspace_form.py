@@ -781,14 +781,19 @@ def create_toggles(screen, settings: dict | None) -> dict:
     """The create payload's settings bag with the shown toggles applied."""
     if screen._nix_available and screen.query_one("#nix", Checkbox).value:
         settings = merged_toggles(settings, {"nix": True})
-    # #2017: emit only the lock-down (unchecked) — a checked toggle is
-    # the default (follow the deploy posture), and the server setting
-    # is a ceiling, so an explicit True buys nothing over omitting it.
-    if (
-        screen._sudo_available
-        and not screen.query_one("#allow_sudo", Checkbox).value
-    ):
-        settings = merged_toggles(settings, {"allow_sudo": False})
+    # #2017/#3047: always emit an explicit sudo value when the toggle
+    # is shown — an absent key means OFF (the bag is the sole posture
+    # source; the deploy flag is only a ceiling). Unchecked locks the
+    # workspace down; checked opts in.
+    if screen._sudo_available:
+        settings = merged_toggles(
+            settings,
+            {
+                "allow_sudo": bool(
+                    screen.query_one("#allow_sudo", Checkbox).value
+                )
+            },
+        )
     return settings
 
 
@@ -1223,7 +1228,7 @@ def edit_general_seeds(ws) -> dict:
         name=ws.name or "",
         auto_start=ws.auto_start,
         nix=bool((ws.settings or {}).get("nix")),
-        allow_sudo=bool((ws.settings or {}).get("allow_sudo", True)),
+        allow_sudo=bool((ws.settings or {}).get("allow_sudo", False)),
     )
 
 
@@ -1262,9 +1267,12 @@ def nix_changed(available: bool, settings: dict, old: dict) -> bool:
 
 
 def sudo_changed(available: bool, settings: dict, old: dict) -> bool:
-    """Whether the create-time sudo posture flipped (#2017)."""
-    return available and settings.get("allow_sudo", True) != bool(
-        old.get("allow_sudo", True)
+    """Whether the create-time sudo posture flipped (#2017/#3047).
+
+    Absent means OFF on both sides — an absent key already reads as
+    locked-down, so storing an explicit False is not a flip."""
+    return available and settings.get("allow_sudo", False) != bool(
+        old.get("allow_sudo", False)
     )
 
 

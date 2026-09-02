@@ -311,10 +311,10 @@ def create(
         None,
         "--sudo/--no-sudo",
         help=(
-            "Workspace sudo posture (server-permitting): --no-sudo locks "
-            "this workspace down (no passwordless sudo) even when the "
-            "server allows it; --sudo follows the server default. Applies "
-            "when the container is next created"
+            "Workspace sudo posture (server-permitting): off unless this "
+            "workspace opts in with --sudo. --no-sudo locks it down "
+            "(no passwordless sudo); omitting the flag also means off. "
+            "Applies when the container is next created"
         ),
     ),
     classification_banner: str | None = typer.Option(

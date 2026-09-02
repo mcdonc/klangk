@@ -1019,12 +1019,12 @@ class KlangkSettings(BaseSettings):
     allow_autostart: str = ""
     # allow_sudo: passwordless sudo for the klangk user inside workspace
     # containers, written as a sudoers rule at container-create time.
-    # Default "true" (#2017 follow-up): sudo is on unless the operator
-    # opts out ("0"/"false"/"no"). It is a ceiling for the per-workspace
-    # lock-down (settings-bag allow_sudo, see workspace_settings.resolve_
-    # allow_sudo) — a workspace may disable sudo below this default but
-    # can never enable it above it. Reloadable on SIGHUP; applies to
-    # containers started after the change.
+    # #3047: this flag is ONLY a ceiling — "is the per-workspace Allow
+    # sudo box allowed to be checked". It grants nothing by itself:
+    # sudo is on for a workspace only when its settings bag stores
+    # allow_sudo: true AND this flag is on (see workspace_settings.
+    # resolve_allow_sudo). Default "true"; reloadable on SIGHUP;
+    # applies to containers started after the change.
     allow_sudo: str = "true"
     # per_handle_home: home-layout default for NEW workspaces (#2169 chunk 1,
     # #2719; default flipped to shared in chunk 5, #2723 — the Breaking

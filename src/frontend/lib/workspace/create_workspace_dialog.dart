@@ -273,9 +273,9 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
     }
     final settings = _collectSettings();
     if (widget.nixAvailable && _nixEnabled) settings['nix'] = true;
-    if (widget.sudoAvailable && !_sudoEnabled) {
-      settings['allow_sudo'] = false;
-    }
+    // #3047: always emit an explicit value when the toggle is shown —
+    // an absent key now means OFF (the bag is the sole posture source).
+    if (widget.sudoAvailable) settings['allow_sudo'] = _sudoEnabled;
     if (settings.isNotEmpty) body['settings'] = settings;
 
     try {

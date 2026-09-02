@@ -9519,10 +9519,10 @@ async def test_create_screen_sudo_defaults_to_lockdown(monkeypatch):
         assert captured["k"]["settings"] == {"allow_sudo": False}
 
 
-async def test_create_screen_sudo_checked_sends_nothing(monkeypatch):
-    """#2017/#3046: checking the toggle (opt in) omits the key — True is
-    the bag's default (follow the deploy posture), and the server setting
-    stays the ceiling, so an explicit True buys nothing."""
+async def test_create_screen_sudo_checked_sends_opt_in(monkeypatch):
+    """#2017/#3047: checking the toggle (opt in) sends an explicit
+    allow_sudo=True — the bag is the sole posture source, so an absent
+    key would mean OFF."""
 
     async def noop(*a, **k):
         return None
@@ -9552,7 +9552,7 @@ async def test_create_screen_sudo_checked_sends_nothing(monkeypatch):
         cs.query_one("#name").value = "ws"
         cs._create()
         await app.workers.wait_for_complete()
-        assert "allow_sudo" not in (captured["k"]["settings"] or {})
+        assert captured["k"]["settings"] == {"allow_sudo": True}
 
 
 # ---------------------------------------------------------------------------
@@ -10035,17 +10035,18 @@ async def test_edit_screen_sudo_unchecked_sends_lockdown(monkeypatch):
         }
 
 
-async def test_edit_screen_sudo_lockdown_prompts_restart(monkeypatch):
-    """#2017/#3046: an untouched save on a running workspace with no
-    stored allow_sudo now stores the lock-down — an effective posture
-    flip (True → False), so a restart must be offered (the sudoers rule
-    is written at container-create time)."""
+async def test_edit_screen_sudo_untouched_absent_no_restart(monkeypatch):
+    """#3047: an absent bag key already means OFF, so an untouched save
+    on a running workspace is not a posture flip — no restart is
+    offered (the sudoers rule is written at container-create time; only
+    an actual flip needs the restart). The image matches the workspace
+    so the image field can't be the trigger."""
 
     async def noop(*a, **k):
         return None
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
-    ws = _wsobj("alpha", running=True)
+    ws = _wsobj("alpha", running=True, image="base")
     app = KlangkApp(_edit_state(ws))
     async with app.run_test() as pilot:
         _edit_screen(app, ws, sudo_available=True)
@@ -10053,7 +10054,34 @@ async def test_edit_screen_sudo_lockdown_prompts_restart(monkeypatch):
         es = app.screen
         sudo = es.query_one("#allow_sudo", Checkbox)
         assert sudo.value is False  # #3046: absent bag key = locked down
-        es.save()  # untouched posture stores the lock-down
+        es.save()  # untouched posture stores the explicit lock-down
+        await app.workers.wait_for_complete()
+        assert not isinstance(app.screen, ConfirmScreen)  # no offer
+
+
+async def test_edit_screen_sudo_optin_to_lockdown_prompts_restart(
+    monkeypatch,
+):
+    """#2017/#3047: unchecking an opted-in workspace is an effective
+    posture flip (true → false) — a restart must be offered (the
+    sudoers rule is written at container-create time)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    ws = _wsobj(
+        "alpha", running=True, image="base", settings={"allow_sudo": True}
+    )
+    app = KlangkApp(_edit_state(ws))
+    async with app.run_test() as pilot:
+        _edit_screen(app, ws, sudo_available=True)
+        await pilot.pause()
+        es = app.screen
+        sudo = es.query_one("#allow_sudo", Checkbox)
+        assert sudo.value is True  # pre-populated from the stored opt-in
+        sudo.value = False  # lock the workspace down
+        es.save()
         await app.workers.wait_for_complete()
         assert isinstance(app.screen, ConfirmScreen)  # restart offered
 

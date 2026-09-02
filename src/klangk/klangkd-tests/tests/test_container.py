@@ -2664,21 +2664,29 @@ class TestStartContainer:
         kwargs = p.create_container.call_args.kwargs
         assert kwargs["cpus"] == 1.5
 
-    async def test_sudo_enabled_by_default(self, workspace):
-        # #2017 follow-up: allow_sudo defaults to "true" — a fresh deploy
-        # grants passwordless sudo. The opt-outs (deploy-wide "0"/"false",
-        # per-workspace lock-down) are pinned by the tests below.
+    async def test_sudo_disabled_by_default(self, workspace):
+        # #3047: an absent bag key means sudo is OFF — a fresh deploy
+        # grants nothing. The opt-in (bag allow_sudo=true on a
+        # sudo-enabled deploy) is pinned by the tests below.
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 container.ContainerStartSpec(workspace["id"], "/tmp/home")
             )
         call = _sudo_call(p)
         assert call.kwargs.get("user") == "root"
-        assert "NOPASSWD:ALL" in str(call.args[1])
+        assert "!ALL" in str(call.args[1])
 
-    async def test_sudo_enabled(self, workspace, monkeypatch):
+    async def test_sudo_enabled_explicit_opt_in(
+        self, workspace, app_state, monkeypatch
+    ):
+        """#3047: sudo needs an explicit bag opt-in; the deploy flag is
+        only a ceiling, so it alone grants nothing (the absent-key case
+        is pinned by test_sudo_disabled_by_default)."""
         monkeypatch.setattr(
             self.registry.app.state.settings, "allow_sudo", "true"
+        )
+        await app_state.state.model.workspaces.update_workspace_settings(
+            workspace["id"], workspace["user_id"], {"allow_sudo": True}
         )
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
@@ -2722,12 +2730,12 @@ class TestStartContainer:
             )
         assert "!ALL" in str(_sudo_call(p).args[1])
 
-    async def test_sudo_workspace_absent_follows_deploy(
+    async def test_sudo_workspace_absent_means_off(
         self, workspace, monkeypatch
     ):
-        """#2017: no bag key = default True = follow the deploy posture
-        (deploy-on shown here; the off direction is pinned by
-        test_sudo_disabled and the ceiling tests above)."""
+        """#3047: no bag key = OFF even on a deploy whose allow_sudo
+        ceiling is on — the flag is only a permission to check the box,
+        not a posture default."""
         monkeypatch.setattr(
             self.registry.app.state.settings, "allow_sudo", "true"
         )
@@ -2735,7 +2743,7 @@ class TestStartContainer:
             await self.registry.start_container(
                 container.ContainerStartSpec(workspace["id"], "/tmp/home")
             )
-        assert "NOPASSWD:ALL" in str(_sudo_call(p).args[1])
+        assert "!ALL" in str(_sudo_call(p).args[1])
 
     async def test_sudo_disabled(self, workspace, monkeypatch):
         monkeypatch.setattr(
@@ -2760,9 +2768,10 @@ class TestStartContainer:
     async def test_sudo_toggled_off_to_on(
         self, workspace, monkeypatch, app_state
     ):
-        """Start with sudo disabled, restart with sudo enabled."""
+        """#3047: start locked down (absent bag), restart after an
+        explicit opt-in — the bag flip takes effect on the new start."""
         monkeypatch.setattr(
-            self.registry.app.state.settings, "allow_sudo", "false"
+            self.registry.app.state.settings, "allow_sudo", "true"
         )
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
@@ -2775,8 +2784,8 @@ class TestStartContainer:
         await app_state.state.model.workspaces.update_workspace_container(
             workspace["id"], None
         )
-        monkeypatch.setattr(
-            self.registry.app.state.settings, "allow_sudo", "true"
+        await app_state.state.model.workspaces.update_workspace_settings(
+            workspace["id"], workspace["user_id"], {"allow_sudo": True}
         )
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
@@ -2787,9 +2796,13 @@ class TestStartContainer:
     async def test_sudo_toggled_on_to_off(
         self, workspace, monkeypatch, app_state
     ):
-        """Start with sudo enabled, restart with sudo disabled."""
+        """#3047: start opted in (bag true), restart after the lock-down —
+        the bag flip takes effect on the new start."""
         monkeypatch.setattr(
             self.registry.app.state.settings, "allow_sudo", "true"
+        )
+        await app_state.state.model.workspaces.update_workspace_settings(
+            workspace["id"], workspace["user_id"], {"allow_sudo": True}
         )
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
@@ -2801,8 +2814,8 @@ class TestStartContainer:
         await app_state.state.model.workspaces.update_workspace_container(
             workspace["id"], None
         )
-        monkeypatch.setattr(
-            self.registry.app.state.settings, "allow_sudo", "false"
+        await app_state.state.model.workspaces.update_workspace_settings(
+            workspace["id"], workspace["user_id"], {"allow_sudo": False}
         )
         with patch_podman(self.registry) as p:
             await self.registry.start_container(

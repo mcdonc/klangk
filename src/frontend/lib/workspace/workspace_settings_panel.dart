@@ -282,10 +282,11 @@ bool _hasCreateTimeFieldChanged(
   // allow_sudo — the sudoers rule is written at container-create time,
   // so a posture flip needs a restart to take effect (#2017). Same
   // emit-gating as nix: only compare when this save emitted the key.
+  // #3047: absent = OFF (effective posture), on both sides.
   if (newSettings.containsKey('allow_sudo')) {
     final prevSettings = (prev['settings'] as Map?) ?? const {};
-    final prevSudo = (prevSettings['allow_sudo'] as bool?) ?? true;
-    final newSudo = (newSettings['allow_sudo'] as bool?) ?? true;
+    final prevSudo = (prevSettings['allow_sudo'] as bool?) ?? false;
+    final newSudo = (newSettings['allow_sudo'] as bool?) ?? false;
     if (prevSudo != newSudo) return true;
   }
   return false;

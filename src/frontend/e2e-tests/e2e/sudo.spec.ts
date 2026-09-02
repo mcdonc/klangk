@@ -66,14 +66,43 @@ async function execInContainer(
 }
 
 // The E2E server starts without KLANGKD_ALLOW_SUDO, so the deploy
-// default applies — passwordless sudo is ON (#2017 follow-up flip).
+// ceiling is on — but the bag value is the sole posture source
+// (#3047): an absent allow_sudo key means sudo is OFF; sudo needs an
+// explicit opt-in.
 test.describe("sudo configuration", () => {
-  test("sudo is enabled by default", async ({ page, request }) => {
+  test("sudo is off by default (absent key locks down)", async ({
+    page,
+    request,
+  }) => {
+    const { workspaceId, token, cleanup } = await createAndOpenWorkspace(
+      page,
+      request,
+      "sudo-default-e2e",
+      { waitForTerminal: true },
+    );
+    try {
+      // sudo -n = non-interactive; with no allow_sudo key the sudoers
+      // rule is !ALL, so it must fail.
+      const result = await execInContainer(token, workspaceId, [
+        "bash",
+        "-c",
+        "sudo -n true 2>&1; echo EXIT:$?",
+      ]);
+      expect(result.stdout).toContain("EXIT:1");
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("an explicit allow_sudo=true opts in", async ({ page, request }) => {
     const { workspaceId, token, cleanup } = await createAndOpenWorkspace(
       page,
       request,
       "sudo-on-e2e",
-      { waitForTerminal: true },
+      {
+        waitForTerminal: true,
+        body: { settings: { allow_sudo: true } },
+      },
     );
     try {
       // sudo -n = non-interactive; should succeed (exit 0) with the

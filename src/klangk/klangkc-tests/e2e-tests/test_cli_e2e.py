@@ -1096,25 +1096,43 @@ class TestVolumes:
 
 
 class TestSudoLifecycle:
-    """#3046: the per-workspace sudo posture flips with a plain edit —
-    each flip offers a restart that rewrites the sudoers rule
-    (klangk-configure-sudo runs on every container start, resolving the
-    settings bag then), so no manual container recreation is needed."""
+    """#3046/#3047: the per-workspace sudo posture is the stored bag
+    value (absent = off; the deploy flag is only a ceiling), and it
+    flips with a plain edit — each flip offers a restart that rewrites
+    the sudoers rule (klangk-configure-sudo runs on every container
+    start, resolving the settings bag then), so no manual container
+    recreation is needed."""
 
     @pytest.fixture(autouse=True, scope="class")
     @staticmethod
     def workspace(cli_config):
-        run(["klangk", "create", "e2e-sudo", "--sudo"], env=cli_config["env"])
+        # No --sudo flag: the workspace starts locked down (absent key).
+        run(["klangk", "create", "e2e-sudo"], env=cli_config["env"])
         yield
         run(["klangk", "rm", "e2e-sudo"], env=cli_config["env"])
 
-    def test_sudo_works_after_create(self, cli_config):
+    def test_sudo_off_by_default(self, cli_config):
         result = run(
             ["klangk", "exec", "e2e-sudo", "sudo", "-n", "true"],
             env=cli_config["env"],
             timeout=180,
         )
+        assert result.returncode != 0  # !ALL rule denies sudo
+
+    def test_edit_on_opts_in(self, cli_config):
+        result = run(
+            ["klangk", "edit", "e2e-sudo", "--sudo"],
+            input="y\n",  # accept the offered restart
+            env=cli_config["env"],
+        )
         assert result.returncode == 0
+        assert "Updated" in result.stdout
+        result = run(
+            ["klangk", "exec", "e2e-sudo", "sudo", "-n", "true"],
+            env=cli_config["env"],
+            timeout=180,
+        )
+        assert result.returncode == 0  # NOPASSWD:ALL
 
     def test_edit_off_locks_sudo_down(self, cli_config):
         result = run(
