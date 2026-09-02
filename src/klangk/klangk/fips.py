@@ -63,6 +63,26 @@ logger = logging.getLogger(__name__)
 _PROBE_BYTES = b"klangk-fips-probe"
 
 
+def _lists_sha2(low: str) -> bool:
+    """True when any SHA-2 digest name appears in lowered openssl
+    output."""
+    return "sha256" in low or "sha2-256" in low or "sha512" in low
+
+
+def _digest_verdict(low: str) -> tuple[bool, str] | None:
+    """The ``(ok, detail)`` verdict for non-empty lowered algorithm
+    output, or ``None`` when it cannot be interpreted."""
+    has_sha2 = _lists_sha2(low)
+    has_md5 = "md5" in low
+    if has_sha2 and not has_md5:
+        return True, "approved set has SHA-2 and no MD5"
+    if has_md5:
+        return False, "MD5 appears in the fips=yes approved set"
+    if not has_sha2:
+        return False, "no SHA-2 digest in the fips=yes approved set"
+    return None  # pragma: no cover — unreachable by construction
+
+
 def parse_openssl_list(stdout: str) -> tuple[bool, str] | None:
     """Parse ``openssl list -digest-algorithms -propquery fips=yes`` output.
 
@@ -71,17 +91,9 @@ def parse_openssl_list(stdout: str) -> tuple[bool, str] | None:
     the output cannot be interpreted (caller treats as inconclusive).
     """
     low = stdout.lower()
-    has_sha2 = "sha256" in low or "sha2-256" in low or "sha512" in low
-    has_md5 = "md5" in low
     if not low.strip():
         return None
-    if has_sha2 and not has_md5:
-        return True, "approved set has SHA-2 and no MD5"
-    if has_md5:
-        return False, "MD5 appears in the fips=yes approved set"
-    if not has_sha2:
-        return False, "no SHA-2 digest in the fips=yes approved set"
-    return None  # pragma: no cover — unreachable by construction
+    return _digest_verdict(low)
 
 
 def run_openssl_list() -> tuple[bool, str]:
@@ -124,6 +136,31 @@ def run_openssl_list() -> tuple[bool, str]:
     return parsed
 
 
+def _sha2_still_available(sha256) -> tuple[bool, str]:
+    """The outcome when md5 was rejected on the fetch path — the FIPS
+    enforcement signal. An approved digest must still work, else the
+    whole fetch path is broken (fail closed)."""
+    try:
+        sha256(_PROBE_BYTES)
+    except ValueError:
+        return False, "md5 rejected but SHA-256 unavailable too"
+    return True, "md5 rejected, SHA-256 available (OpenSSL fetch path)"
+
+
+def _md5_probe_result(md5, sha256) -> tuple[bool, str] | None:
+    """The probe outcome for a working ``_hashlib``: ``(True, ...)`` when
+    md5 is rejected on the fetch path, ``(False, ...)`` when md5 works
+    (FIPS not enforcing), ``None`` when an unexpected error made the
+    probe inconclusive (the caller falls through to the CLI layer)."""
+    try:
+        md5(_PROBE_BYTES)
+    except ValueError:
+        return _sha2_still_available(sha256)
+    except Exception:
+        return None
+    return False, "md5 not rejected — FIPS provider not enforcing"
+
+
 def probe_hashlib() -> tuple[bool, str] | None:
     """Layer-1 probe via CPython's ``_hashlib`` (provider-aware).
 
@@ -150,22 +187,7 @@ def probe_hashlib() -> tuple[bool, str] | None:
     sha256 = getattr(_hashlib, "openssl_sha256", None)
     if md5 is None or sha256 is None:
         return None
-    try:
-        md5(_PROBE_BYTES)
-    except ValueError:
-        # Non-approved digest rejected on the OpenSSL fetch path — the
-        # FIPS enforcement signal. An approved digest must still work,
-        # else the whole fetch path is broken (fail closed).
-        try:
-            sha256(_PROBE_BYTES)
-        except ValueError:
-            return False, "md5 rejected but SHA-256 unavailable too"
-        return True, "md5 rejected, SHA-256 available (OpenSSL fetch path)"
-    except Exception:
-        # An unexpected error is not a FIPS signal — inconclusive here,
-        # fall through to the CLI layer.
-        return None
-    return False, "md5 not rejected — FIPS provider not enforcing"
+    return _md5_probe_result(md5, sha256)
 
 
 def probe_process() -> tuple[bool, str]:

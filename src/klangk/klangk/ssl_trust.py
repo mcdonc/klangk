@@ -119,6 +119,29 @@ def _first_existing_ca(candidates: list[str], self_real) -> str | None:
     return None
 
 
+def _append_bundle_file(out, path: str, warn: str) -> bool:
+    """Append one bundle/cert file's contents to *out*; ``False`` (with
+    a warning) when unreadable."""
+    try:
+        with open(path) as f:
+            out.write(f.read())
+        return True
+    except OSError as exc:
+        logger.warning(warn, path, exc)
+        return False
+
+
+def _append_custom_certs(out, ssl_dir: str) -> int:
+    """Append every readable cert in *ssl_dir*; returns how many were
+    written (unreadable files are skipped with a warning)."""
+    written = 0
+    for cert in iter_cert_files(ssl_dir):
+        written += _append_bundle_file(
+            out, cert, "Skipping unreadable cert %s: %s"
+        )
+    return written
+
+
 def write_merged_bundle(bundle_path: str, ssl_dir: str) -> bool:
     """Write system CAs + custom certs to ``bundle_path``.
 
@@ -129,22 +152,17 @@ def write_merged_bundle(bundle_path: str, ssl_dir: str) -> bool:
     with open(bundle_path, "w") as out:
         sys_bundle = system_ca_bundle(self_bundle=bundle_path)
         if sys_bundle:
-            try:
-                with open(sys_bundle) as f:
-                    out.write(f.read())
-                written += 1
-            except OSError as exc:
-                logger.warning(
-                    "Could not read system CA bundle %s: %s", sys_bundle, exc
-                )
-        for cert in iter_cert_files(ssl_dir):
-            try:
-                with open(cert) as f:
-                    out.write(f.read())
-                written += 1
-            except OSError as exc:
-                logger.warning("Skipping unreadable cert %s: %s", cert, exc)
+            written += _append_bundle_file(
+                out, sys_bundle, "Could not read system CA bundle %s: %s"
+            )
+        written += _append_custom_certs(out, ssl_dir)
     return written > 0 and os.path.getsize(bundle_path) > 0
+
+
+def _apply_trust_vars(bundle_path: str) -> None:
+    """Point every backend trust env var at the bundle."""
+    for name in SSL_TRUST_VARS:
+        os.environ[name] = bundle_path
 
 
 class SSLTrust:
@@ -182,23 +200,11 @@ class SSLTrust:
         path = os.path.realpath(candidate)
         return path if any(True for _ in iter_cert_files(path)) else None
 
-    def apply_backend_ssl_trust(self) -> str | None:
-        """Make the backend process trust the deployer's custom CAs.
-
-        Builds a merged bundle (system + custom) under ``<data_dir>/ssl`` and sets
-        :data:`SSL_TRUST_VARS` in :data:`os.environ`, so the backend's outbound TLS
-        (OIDC discovery, SMTP relay, LLM-proxy upstream) honors the private CAs.
-        Idempotent and safe to call at startup; a no-op when no cert dir is
-        configured.  Refuses to apply trust when the system bundle can't be found
-        *and* no cert was written (would risk losing public-internet trust).
-
-        Returns the bundle path, or ``None`` if trust was not applied.
-        """
-        ssl_dir = self.ssl_cert_dir()
-        if not ssl_dir:
-            return None
-        state_dir = self.app.state.settings.state_dir
-        bundle_dir = os.path.join(state_dir, "ssl")
+    def _build_bundle(self, ssl_dir: str) -> str | None:
+        """Write the merged bundle under ``<state_dir>/ssl``; ``None``
+        (with a log) when the dir cannot be created or the bundle comes
+        out empty."""
+        bundle_dir = os.path.join(self.app.state.settings.state_dir, "ssl")
         try:
             os.makedirs(bundle_dir, exist_ok=True)
         except OSError as exc:
@@ -214,6 +220,26 @@ class SSLTrust:
                 bundle_path,
             )
             return None
+        return bundle_path
+
+    def apply_backend_ssl_trust(self) -> str | None:
+        """Make the backend process trust the deployer's custom CAs.
+
+        Builds a merged bundle (system + custom) under ``<data_dir>/ssl`` and sets
+        :data:`SSL_TRUST_VARS` in :data:`os.environ`, so the backend's outbound TLS
+        (OIDC discovery, SMTP relay, LLM-proxy upstream) honors the private CAs.
+        Idempotent and safe to call at startup; a no-op when no cert dir is
+        configured.  Refuses to apply trust when the system bundle can't be found
+        *and* no cert was written (would risk losing public-internet trust).
+
+        Returns the bundle path, or ``None`` if trust was not applied.
+        """
+        ssl_dir = self.ssl_cert_dir()
+        if not ssl_dir:
+            return None
+        bundle_path = self._build_bundle(ssl_dir)
+        if bundle_path is None:
+            return None
         if not system_ca_bundle(self_bundle=bundle_path):
             logger.warning(
                 "Applying backend SSL trust without a system bundle: the trust "
@@ -221,8 +247,7 @@ class SSLTrust:
                 "may fail. Provide a system CA bundle, or remove the custom certs "
                 "from <KLANGKD_CUSTOMIZE_DIR>/certs/ to skip backend trust."
             )
-        for name in SSL_TRUST_VARS:
-            os.environ[name] = bundle_path
+        _apply_trust_vars(bundle_path)
         logger.info(
             "Backend SSL trust applied: %s -> %d env var(s) (custom certs from %s)",
             bundle_path,

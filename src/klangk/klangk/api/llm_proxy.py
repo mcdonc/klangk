@@ -48,6 +48,79 @@ async def list_models(request: Request):
     }
 
 
+def _passthrough_stream_response(resp) -> StreamingResponse:
+    """A StreamingResponse forwarding the upstream's SSE lines."""
+
+    async def stream_passthrough():
+        try:
+            async for line in resp.aiter_lines():
+                yield f"{line}\n"
+        finally:
+            await resp.aclose()
+
+    return StreamingResponse(
+        stream_passthrough(),
+        media_type="text/event-stream",
+    )
+
+
+async def _chunk_data(chunk):
+    """Convert one streamed chunk to its payload (model_dump, dict, or
+    str fallback); awaits an async ``model_dump``."""
+    if hasattr(chunk, "model_dump"):
+        data = chunk.model_dump()
+        if inspect.isawaitable(data):
+            data = await data
+        return data
+    if isinstance(chunk, dict):
+        return chunk
+    return str(chunk)
+
+
+async def _stream_litellm_response(response) -> StreamingResponse:
+    """A StreamingResponse rendering the litellm async-generator chunks
+    in the OpenAI SSE shape, terminated with [DONE]."""
+
+    async def stream_litellm():
+        async for chunk in response:
+            data = await _chunk_data(chunk)
+            yield f"data: {json.dumps(data)}\n\n"
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        stream_litellm(),
+        media_type="text/event-stream",
+    )
+
+
+async def _json_response(response) -> JSONResponse:
+    """Convert a non-streaming litellm response to a plain dict for
+    JSONResponse; awaits an async ``model_dump``."""
+    if hasattr(response, "model_dump"):
+        data = response.model_dump()
+        if inspect.isawaitable(data):
+            data = await data
+    elif isinstance(response, dict):
+        data = response
+    else:
+        data = dict(response)
+    return JSONResponse(content=data)
+
+
+async def _dispatch_completion(llm_router, body):
+    """Route one completion body to its response flavor: passthrough
+    SSE, litellm async-generator SSE, or plain JSON."""
+    if body.get("stream", False) and llm_router.passthrough:
+        resp = await llm_router.passthrough_completion_stream(body)
+        return _passthrough_stream_response(resp)
+    response = await llm_router.acompletion(**body)
+    # litellm returns an async generator when stream=True.
+    if hasattr(response, "__aiter__"):
+        return await _stream_litellm_response(response)
+    # Non-streaming: convert to a plain dict for JSONResponse.
+    return await _json_response(response)
+
+
 @router.post("/chat/completions")
 async def chat_completions(request: Request):
     """Proxy a chat completion request to the litellm Router.
@@ -65,57 +138,7 @@ async def chat_completions(request: Request):
         )
     body = await request.json()
     try:
-        is_stream = body.get("stream", False)
-
-        # Passthrough streaming: forward the SSE stream from the upstream.
-        if is_stream and llm_router.passthrough:
-            resp = await llm_router.passthrough_completion_stream(body)
-
-            async def stream_passthrough():
-                try:
-                    async for line in resp.aiter_lines():
-                        yield f"{line}\n"
-                finally:
-                    await resp.aclose()
-
-            return StreamingResponse(
-                stream_passthrough(),
-                media_type="text/event-stream",
-            )
-
-        response = await llm_router.acompletion(**body)
-
-        # litellm returns an async generator when stream=True.
-        if hasattr(response, "__aiter__"):
-
-            async def stream_litellm():
-                async for chunk in response:
-                    if hasattr(chunk, "model_dump"):
-                        data = chunk.model_dump()
-                        if inspect.isawaitable(data):
-                            data = await data
-                    elif isinstance(chunk, dict):
-                        data = chunk
-                    else:
-                        data = str(chunk)
-                    yield f"data: {json.dumps(data)}\n\n"
-                yield "data: [DONE]\n\n"
-
-            return StreamingResponse(
-                stream_litellm(),
-                media_type="text/event-stream",
-            )
-
-        # Non-streaming: convert to a plain dict for JSONResponse.
-        if hasattr(response, "model_dump"):
-            data = response.model_dump()
-            if inspect.isawaitable(data):
-                data = await data
-        elif isinstance(response, dict):
-            data = response
-        else:
-            data = dict(response)
-        return JSONResponse(content=data)
+        return await _dispatch_completion(llm_router, body)
     except Exception:
         logger.exception("LLM completion failed")
         return JSONResponse(

@@ -74,6 +74,11 @@ PASSWORD_CLASSES = (
 )
 
 
+def _count_class(password: str, lo: str, hi: str) -> int:
+    """Count the ASCII characters in the inclusive range ``lo``..``hi``."""
+    return sum(1 for c in password if lo <= c <= hi)
+
+
 def password_class_counts(password: str) -> dict[str, int]:
     """ASCII character-class counts for the complexity policy (#2581).
 
@@ -86,9 +91,9 @@ def password_class_counts(password: str) -> dict[str, int]:
     means by "a digit" (``٣``) or "uppercase" (``Ⅰ``) while disagreeing
     with the clients. Server, web UI, and CLI must stay in sync.
     """
-    upper = sum(1 for c in password if "A" <= c <= "Z")
-    lower = sum(1 for c in password if "a" <= c <= "z")
-    digit = sum(1 for c in password if "0" <= c <= "9")
+    upper = _count_class(password, "A", "Z")
+    lower = _count_class(password, "a", "z")
+    digit = _count_class(password, "0", "9")
     return {
         "upper": upper,
         "lower": lower,
@@ -127,6 +132,18 @@ def is_locked_out(
             f"Too many failed attempts. Try again in {remaining // 60} minutes.",
         )
     return False, None
+
+
+def _unmet_requirement(
+    key: str, name: str, configured: dict, counts: dict
+) -> str | None:
+    """The human phrase for an unmet class requirement, or ``None``
+    when the class requirement is met (or its minimum is 0 —
+    disabled)."""
+    need = configured[key]
+    if need > 0 and counts[key] < need:
+        return f"at least {need} {name}{'s' if need != 1 else ''}"
+    return None
 
 
 def ensure_not_disabled(user: dict) -> None:
@@ -214,6 +231,23 @@ def dummy_verify_hash() -> str:
     return hash_password(secrets.token_urlsafe(32))
 
 
+async def verify_login_password(user: dict | None, password: str) -> bool:
+    """Time-equalized password verify for login-style endpoints (#2618).
+
+    OIDC-only users have no password hash; unknown users have no
+    account. Both verify against the dummy hash so the failure path
+    costs one full password verify either way — response timing cannot
+    enumerate accounts. The dummy hash is minted off the event loop
+    too — the one-time PBKDF2 cost must never block request handling
+    (functools.cache makes later calls free). Authorization still
+    requires a real hash to have matched.
+    """
+    password_hash = (user.get("password_hash") if user else None) or (
+        await asyncio.to_thread(dummy_verify_hash)
+    )
+    return await asyncio.to_thread(verify_password, password, password_hash)
+
+
 class RegisterRequest(BaseModel):
     email: str
     password: str
@@ -249,6 +283,21 @@ def validate_email(email: str) -> None:
         raise HTTPException(
             status_code=400, detail="Must be a valid email address"
         )
+
+
+def _other_workstation_ips(rows: list[dict], source_ip: str) -> list[str]:
+    """The distinct known IPs (other than *source_ip*) the user has
+    active sessions from, sorted.
+
+    Sessions with an unknown IP (pre-#2586 rows, unresolvable clients)
+    are never reported as different."""
+    return sorted(
+        {
+            row["source_ip"]
+            for row in rows
+            if row["source_ip"] is not None and row["source_ip"] != source_ip
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -426,9 +475,10 @@ class Auth:
             "special": self.password_require_special,
         }
         unmet = [
-            f"at least {need} {name}{'s' if need != 1 else ''}"
+            phrase
             for key, name in PASSWORD_CLASSES
-            if (need := configured[key]) > 0 and counts[key] < need
+            if (phrase := _unmet_requirement(key, name, configured, counts))
+            is not None
         ]
         if unmet:
             raise HTTPException(
@@ -654,14 +704,7 @@ class Auth:
         sessions = self.app.state.model.sessions
         await sessions.purge_expired()
         rows = await sessions.list_sessions(user_id)
-        others = sorted(
-            {
-                row["source_ip"]
-                for row in rows
-                if row["source_ip"] is not None
-                and row["source_ip"] != source_ip
-            }
-        )
+        others = _other_workstation_ips(rows, source_ip)
         if not others:
             return
         logger.info(
@@ -674,8 +717,10 @@ class Auth:
             ", ".join(others),
         )
 
-    async def _enforce_session_limit(self, user_id: str) -> None:
-        """Revoke the user's oldest sessions past the configured cap.
+    async def _revoke_sessions(
+        self, user_id: str, rows: list[dict], limit: int
+    ) -> None:
+        """Blocklist then delete the given (oldest-first) session rows.
 
         Victims are removed oldest-first by blocklisting their JTIs (the
         same revocation path as logout: the next HTTP request 401s with
@@ -685,17 +730,7 @@ class Auth:
         can only leave a dead token's row behind (purged on the next
         issuance), never a live token without a row.
         """
-        sessions = self.app.state.model.sessions
-        # Dead sessions (their JWT already failed exp verification) never
-        # count toward the cap; purge also bounds the table when the
-        # limit is off.
-        await sessions.purge_expired()
-        limit = self.max_sessions_per_user
-        if limit <= 0:
-            return
-        rows = await sessions.list_sessions(user_id)
-        excess = rows[:-limit] if len(rows) > limit else []
-        for row in excess:
+        for row in rows:
             logger.info(
                 "session limit: revoking oldest session jti=%s "
                 "(user %s over cap %d)",
@@ -706,8 +741,25 @@ class Auth:
             await self.app.state.model.tokens.blocklist_token(
                 row["jti"], row["expires_at"]
             )
-        if excess:
-            await sessions.remove_sessions([row["jti"] for row in excess])
+        await self.app.state.model.sessions.remove_sessions(
+            [row["jti"] for row in rows]
+        )
+
+    async def _enforce_session_limit(self, user_id: str) -> None:
+        """Revoke the user's oldest sessions past the configured cap.
+
+        Dead sessions (their JWT already failed exp verification) never
+        count toward the cap; the purge also bounds the table when the
+        limit is off.
+        """
+        sessions = self.app.state.model.sessions
+        await sessions.purge_expired()
+        limit = self.max_sessions_per_user
+        if limit <= 0:
+            return
+        rows = await sessions.list_sessions(user_id)
+        if len(rows) > limit:
+            await self._revoke_sessions(user_id, rows[:-limit], limit)
 
     async def record_activity(self, user_id: str) -> None:
         """Stamp ``users.last_activity_at`` (throttled) on API access (#2588).
@@ -900,6 +952,16 @@ class Auth:
             user_id=user["id"], email=user["email"], access_token=token
         )
 
+    async def _reject_bad_credentials(
+        self, user: dict | None, password: str, lockout_key: str, attempt_info
+    ) -> None:
+        """401 unless a real password hash matched; records the failure
+        on the lockout key."""
+        password_ok = await verify_login_password(user, password)
+        if user is None or not user.get("password_hash") or not password_ok:
+            await self.record_login_failure(lockout_key, attempt_info)
+            raise HTTPException(status_code=401, detail="Invalid credentials")
+
     async def login(
         self,
         req: LoginRequest,
@@ -922,24 +984,9 @@ class Auth:
         # expensive step below is verify_password's PBKDF2, run in a
         # worker thread so the event loop is not blocked).
         attempt_info = await self.check_login_lockout(lockout_key)
-
-        # OIDC-only users have no password hash; unknown users have no
-        # account. Both verify against the dummy hash so the failure
-        # path costs one full password verify either way — response
-        # timing cannot enumerate accounts (#2618). Authorization
-        # still requires a real hash to have matched. The dummy hash is
-        # minted off the event loop too — the one-time PBKDF2 cost must
-        # never block request handling (functools.cache makes later
-        # calls free).
-        password_hash = (user.get("password_hash") if user else None) or (
-            await asyncio.to_thread(dummy_verify_hash)
+        await self._reject_bad_credentials(
+            user, req.password, lockout_key, attempt_info
         )
-        password_ok = await asyncio.to_thread(
-            verify_password, req.password, password_hash
-        )
-        if user is None or not user.get("password_hash") or not password_ok:
-            await self.record_login_failure(lockout_key, attempt_info)
-            raise HTTPException(status_code=401, detail="Invalid credentials")
         if not user.get("verified"):
             raise HTTPException(
                 status_code=403,
@@ -961,6 +1008,63 @@ class Auth:
         await self.app.state.model.users.record_login(user["id"])
         return TokenResponse(access_token=token)
 
+    async def _refreshed_or_revoked(self, jti: str) -> TokenResponse | None:
+        """The cached replacement when *jti* was already refreshed.
+
+        ``None`` when the jti is not blocklisted at all; a blocklisted
+        jti with no cached replacement was revoked by logout → 401.
+        """
+        if not await self.app.state.model.tokens.is_token_blocklisted(jti):
+            return None
+        cached = await self.app.state.model.tokens.get_refreshed_token(jti)
+        if cached is not None:
+            return TokenResponse(access_token=cached)
+        raise HTTPException(status_code=401, detail="Token has been revoked")
+
+    async def _require_active_user(self, user_id: str) -> dict:
+        """The user row for a token rotation; 401 when the user is gone
+        and 403 when disabled (a disabled account cannot rotate its way
+        back in, #2588)."""
+        user = await self.app.state.model.users.get_user_by_id(user_id)
+        if user is None:
+            raise HTTPException(status_code=401, detail="User not found")
+        ensure_not_disabled(user)
+        return user
+
+    async def _swap_token(
+        self, jti: str, exp, user_id: str, new_token: str
+    ) -> None:
+        """Blocklist the old jti with the new token cached alongside it
+        (making refresh idempotent), then move the session row onto the
+        refreshed jti — a refresh is the same session under a new token
+        (#2585), so the user's session count does not grow on refresh."""
+        expires_at = datetime.fromtimestamp(exp, tz=timezone.utc).isoformat()
+        logger.info(
+            "REFRESH: blocklisting old access token; any WS still using "
+            "it will be rejected as 4001 on its next connect"
+        )
+        await self.app.state.model.tokens.blocklist_token(
+            jti, expires_at, new_token=new_token
+        )
+        new_payload = self.decode_token(new_token)
+        new_expires_at = datetime.fromtimestamp(
+            new_payload["exp"], tz=timezone.utc
+        ).isoformat()
+        await self.app.state.model.sessions.replace_session(
+            jti, user_id, new_payload["jti"], new_expires_at
+        )
+
+    async def _expired_token_response(self, token: str) -> TokenResponse:
+        """A previously-refreshed expired token still returns its cached
+        replacement; anything else is a plain 401."""
+        payload = self.decode_token(token, allow_expired=True)
+        jti = payload.get("jti")
+        if jti:
+            cached = await self.app.state.model.tokens.get_refreshed_token(jti)
+            if cached is not None:
+                return TokenResponse(access_token=cached)
+        raise HTTPException(status_code=401, detail="Token expired")
+
     async def refresh_token(self, token: str) -> TokenResponse:
         """Exchange a valid access token for a new one.
 
@@ -968,7 +1072,6 @@ class Auth:
         alongside it, making the endpoint idempotent: repeated calls
         with the same old token return the same new token.
         """
-        jti = None
         try:
             payload = self.decode_token(token)
             user_id = payload.get("sub")
@@ -978,48 +1081,18 @@ class Auth:
             if not all([user_id, email, jti, exp]):
                 raise HTTPException(status_code=401, detail="Invalid token")
 
-            if await self.app.state.model.tokens.is_token_blocklisted(jti):
-                # Already refreshed — return the cached replacement
-                cached = await self.app.state.model.tokens.get_refreshed_token(
-                    jti
-                )
-                if cached is not None:
-                    return TokenResponse(access_token=cached)
-                raise HTTPException(
-                    status_code=401, detail="Token has been revoked"
-                )
+            cached = await self._refreshed_or_revoked(jti)
+            if cached is not None:
+                return cached
 
-            user = await self.app.state.model.users.get_user_by_id(user_id)
-            if user is None:
-                raise HTTPException(status_code=401, detail="User not found")
-            # A disabled account cannot rotate its way back in (#2588).
-            ensure_not_disabled(user)
+            await self._require_active_user(user_id)
             # A refresh is authenticated API use (#2588 review): stamp so
             # a headless client that only refreshes (no other API calls)
             # still counts as active.
             await self.record_activity(user_id)
 
             new_token = self.create_token(user_id, email)
-            expires_at = datetime.fromtimestamp(
-                exp, tz=timezone.utc
-            ).isoformat()
-            logger.info(
-                "REFRESH: blocklisting old access token; any WS still using "
-                "it will be rejected as 4001 on its next connect"
-            )
-            await self.app.state.model.tokens.blocklist_token(
-                jti, expires_at, new_token=new_token
-            )
-            # The refreshed JTI occupies the old session's slot (a refresh
-            # is the same session under a new token, #2585): the user's
-            # session count does not grow on refresh.
-            new_payload = self.decode_token(new_token)
-            new_expires_at = datetime.fromtimestamp(
-                new_payload["exp"], tz=timezone.utc
-            ).isoformat()
-            await self.app.state.model.sessions.replace_session(
-                jti, user_id, new_payload["jti"], new_expires_at
-            )
+            await self._swap_token(jti, exp, user_id, new_token)
             # Refreshing a pre-#2585 token (no row) INSERTS one; enforce
             # so the cap holds on every path that adds a session row,
             # not just logins (#2585 review).
@@ -1028,17 +1101,42 @@ class Auth:
 
         except ExpiredSignatureError:
             # Token expired — check if it was previously refreshed
-            payload = self.decode_token(token, allow_expired=True)
-            jti = payload.get("jti")
-            if jti:
-                cached = await self.app.state.model.tokens.get_refreshed_token(
-                    jti
-                )
-                if cached is not None:
-                    return TokenResponse(access_token=cached)
-            raise HTTPException(status_code=401, detail="Token expired")
+            return await self._expired_token_response(token)
         except JWTError:
             raise HTTPException(status_code=401, detail="Invalid token")
+
+    async def _token_revoked(self, jti: str) -> bool:
+        """True when *jti* was revoked (by a refresh or a logout)."""
+        revoked = await self.app.state.model.tokens.is_token_blocklisted(jti)
+        if revoked:
+            logger.info(
+                "token reject: BLOCKLISTED (revoked by a refresh or "
+                "logout -> WS will close 4001 -> client logout)"
+            )
+        return revoked
+
+    async def _user_from_valid_payload(self, payload: dict) -> dict | None:
+        """The user for a decoded, unexpired token payload; ``None`` for
+        malformed claims, a revoked token, or a missing user."""
+        user_id = payload.get("sub")
+        jti = payload.get("jti")
+        if None in (user_id, jti):
+            return None
+        if await self._token_revoked(jti):
+            return None
+        user = await self.app.state.model.users.get_user_by_id(user_id)
+        if user is None:
+            return None
+        # Disabled accounts keep their WS connections shut (#2588):
+        # returning None rejects the connect like any dead token.
+        if user.get("disabled"):
+            logger.info(
+                "token reject: ACCOUNT DISABLED -> WS will close 4001"
+                " -> client logout"
+            )
+            return None
+        await self.record_activity(user_id)
+        return user
 
     async def get_user_from_token(self, token: str) -> dict | str | None:
         """Validate a token string (used for WebSocket auth).
@@ -1049,30 +1147,9 @@ class Auth:
             None: for all other failures (malformed, revoked, missing user).
         """
         try:
-            payload = self.decode_token(token)
-            user_id = payload.get("sub")
-            jti = payload.get("jti")
-            if user_id is None or jti is None:
-                return None
-            if await self.app.state.model.tokens.is_token_blocklisted(jti):
-                logger.info(
-                    "token reject: BLOCKLISTED (revoked by a refresh or "
-                    "logout -> WS will close 4001 -> client logout)"
-                )
-                return None
-            user = await self.app.state.model.users.get_user_by_id(user_id)
-            if user is None:
-                return None
-            # Disabled accounts keep their WS connections shut (#2588):
-            # returning None rejects the connect like any dead token.
-            if user.get("disabled"):
-                logger.info(
-                    "token reject: ACCOUNT DISABLED -> WS will close 4001"
-                    " -> client logout"
-                )
-                return None
-            await self.record_activity(user_id)
-            return user
+            return await self._user_from_valid_payload(
+                self.decode_token(token)
+            )
         except ExpiredSignatureError:
             logger.info(
                 "token reject: EXPIRED -> WS will close 4002 -> client logout"
@@ -1104,6 +1181,35 @@ class Auth:
 # ---------------------------------------------------------------------------
 
 
+async def _authenticated_user(request: Request, credentials) -> dict:
+    """The user for valid, unrevoked credentials; raises 401 for every
+    failure mode (missing claims, a revoked token, an unknown user)."""
+    payload = request.app.state.auth.decode_token(credentials.credentials)
+    user_id = payload.get("sub")
+    jti = payload.get("jti")
+    if None in (user_id, jti):
+        raise HTTPException(status_code=401, detail="Invalid token")
+    if await request.app.state.model.tokens.is_token_blocklisted(jti):
+        raise HTTPException(status_code=401, detail="Token has been revoked")
+    user = await request.app.state.model.users.get_user_by_id(user_id)
+    if user is None:
+        raise HTTPException(status_code=401, detail="User not found")
+    return user
+
+
+async def _optional_user(request: Request, credentials) -> dict | None:
+    """The user for valid, unrevoked credentials; ``None`` for missing
+    claims, a revoked token, or an unknown user."""
+    payload = request.app.state.auth.decode_token(credentials.credentials)
+    user_id = payload.get("sub")
+    jti = payload.get("jti")
+    if None in (user_id, jti):
+        return None
+    if await request.app.state.model.tokens.is_token_blocklisted(jti):
+        return None
+    return await request.app.state.model.users.get_user_by_id(user_id)
+
+
 async def get_current_user(
     request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(security),
@@ -1113,24 +1219,11 @@ async def get_current_user(
         raise HTTPException(status_code=401, detail="Not authenticated")
 
     try:
-        payload = auth.decode_token(credentials.credentials)
-        user_id = payload.get("sub")
-        jti = payload.get("jti")
-        if user_id is None or jti is None:
-            raise HTTPException(status_code=401, detail="Invalid token")
-
-        if await request.app.state.model.tokens.is_token_blocklisted(jti):
-            raise HTTPException(
-                status_code=401, detail="Token has been revoked"
-            )
-
-        user = await request.app.state.model.users.get_user_by_id(user_id)
-        if user is None:
-            raise HTTPException(status_code=401, detail="User not found")
+        user = await _authenticated_user(request, credentials)
         # A disabled account fails every authenticated request (#2588);
         # 403 (not 401) so clients don't loop on refresh/relogin.
         ensure_not_disabled(user)
-        await auth.record_activity(user_id)
+        await auth.record_activity(user["id"])
         return user
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid token")
@@ -1150,21 +1243,14 @@ async def get_current_user_optional(
         return None
     auth = request.app.state.auth
     try:
-        payload = auth.decode_token(credentials.credentials)
-        user_id = payload.get("sub")
-        jti = payload.get("jti")
-        if user_id is None or jti is None:
-            return None
-        if await request.app.state.model.tokens.is_token_blocklisted(jti):
-            return None
-        user = await request.app.state.model.users.get_user_by_id(user_id)
+        user = await _optional_user(request, credentials)
         if user is None:
             return None
         # Valid credentials on a disabled account still 403 (#2588) —
         # returning None here would silently degrade /config to the
         # anonymous view and hide the reason from the client.
         ensure_not_disabled(user)
-        await auth.record_activity(user_id)
+        await auth.record_activity(user["id"])
         return user
     except JWTError:
         return None

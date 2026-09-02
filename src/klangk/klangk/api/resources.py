@@ -192,6 +192,31 @@ async def download_file(
     )
 
 
+def _upload_filename(path: str, file: UploadFile) -> str:
+    """The target filename: an explicit path wins, else the upload's
+    basename; 400 when neither yields one."""
+    filename = path if path else posixpath.basename(file.filename or "")
+    if not filename:
+        raise HTTPException(status_code=400, detail="No filename provided")
+    return filename
+
+
+async def _read_upload(file: UploadFile, max_upload: int) -> bytes:
+    """Stream the whole upload into memory, enforcing the size cap
+    (413 past the limit)."""
+    buf = io.BytesIO()
+    total = 0
+    while chunk := await file.read(1024 * 1024):
+        total += len(chunk)
+        if total > max_upload:
+            raise HTTPException(
+                status_code=413,
+                detail=f"File exceeds {max_upload // (1024 * 1024)} MB limit",
+            )
+        buf.write(chunk)
+    return buf.getvalue()
+
+
 @router.post("/workspaces/{workspace_id}/files/upload")
 async def upload_file(
     workspace_id: str,
@@ -205,25 +230,14 @@ async def upload_file(
 ):
     cid = _require_container(workspace_id, app.state.container_registry)
 
-    filename = path if path else posixpath.basename(file.filename or "")
-    if not filename:
-        raise HTTPException(status_code=400, detail="No filename provided")
-
-    max_upload = app.state.settings.file_upload_size_max
-    buf = io.BytesIO()
-    total = 0
-    while chunk := await file.read(1024 * 1024):
-        total += len(chunk)
-        if total > max_upload:
-            raise HTTPException(
-                status_code=413,
-                detail=f"File exceeds {max_upload // (1024 * 1024)} MB limit",
-            )
-        buf.write(chunk)
+    filename = _upload_filename(path, file)
+    data = await _read_upload(file, app.state.settings.file_upload_size_max)
 
     try:
         saved_path = await app.state.files.write_file(
-            cid, filename, buf.getvalue()
+            cid,
+            filename,
+            data,
         )
     except (ValueError, OSError) as e:
         raise _files_http_error(e) from None
@@ -286,19 +300,26 @@ def _volume_usage_map(rows) -> dict[str, list[str]]:
     return usage
 
 
-async def _creator_handles(app, volumes) -> dict[str, str | None]:
-    """Creator ``klangk.user-id`` label → the user's handle (#2993).
+def _volume_creator_label(v: dict) -> str | None:
+    """The ``klangk.user-id`` creator label of a podman volume row."""
+    return (v.get("Labels") or {}).get("klangk.user-id")
 
-    A label whose user no longer exists (deleted creator) maps to
-    ``None`` — the id stays in ``user_id`` as provenance.
-    """
+
+async def _creator_handle(app, uid: str) -> str | None:
+    """The creator's handle; ``None`` when the creator no longer exists
+    (the id stays in ``user_id`` as provenance)."""
+    creator = await app.state.model.users.get_user_by_id(uid)
+    return (creator or {}).get("handle") or None
+
+
+async def _creator_handles(app, volumes) -> dict[str, str | None]:
+    """Creator ``klangk.user-id`` label → the user's handle (#2993)."""
     handles: dict[str, str | None] = {}
     for v in volumes:
-        uid = (v.get("Labels") or {}).get("klangk.user-id")
+        uid = _volume_creator_label(v)
         if not uid or uid in handles:
             continue
-        creator = await app.state.model.users.get_user_by_id(uid)
-        handles[uid] = (creator or {}).get("handle") or None
+        handles[uid] = await _creator_handle(app, uid)
     return handles
 
 
@@ -364,10 +385,8 @@ async def list_volumes(
         {
             "name": v["Name"],
             "created": v.get("CreatedAt", ""),
-            "user_id": (v.get("Labels") or {}).get("klangk.user-id"),
-            "created_by": handles.get(
-                (v.get("Labels") or {}).get("klangk.user-id")
-            ),
+            "user_id": _volume_creator_label(v),
+            "created_by": handles.get(_volume_creator_label(v)),
             "workspaces": usage.get(v["Name"], []),
         }
         for v in volumes
@@ -402,37 +421,57 @@ class CreateVolumeRequest(BaseModel):
     name: str = Field(pattern=VOLUME_NAME_PATTERN)
 
 
-@router.post("/volumes")
-async def create_volume(
-    body: CreateVolumeRequest,
-    user: dict = Depends(acl.has_permission("manage-volumes")),
-    app=Depends(get_app_dep),
-):
-    existing = await app.state.podman.inspect_volume(body.name)
-    if existing is not None:
-        labels = existing.get("Labels") or {}
-        if labels.get("klangk.instance") == app.state.util.instance_id():
-            raise HTTPException(
-                status_code=409, detail=f"Volume {body.name!r} already exists"
-            )
-    # Per-user volume quota (#2972): a create past the cap is refused
-    # with 429 (not 403 — the refusal is capacity, not authorization;
-    # not 503 either — the workspace-admission 503s are auto-retried by
-    # the CLI's request_with_retry, and a quota refusal must not be).
-    # Checked after the conflict probe so an in-instance duplicate
-    # still reports 409 (the route's caller can list the instance
-    # inventory either way). Only runs when a quota is configured —
-    # the default 0 keeps the create path exactly as before, with no
-    # extra podman call. The per-user lock spans count+create: without
-    # it, N concurrent creates each count the same pre-create total
-    # and all pass a cap they jointly exceed. The workspace-start
-    # auto-create door (container/spec.py ensure_volumes) shares the
-    # same lock and quota gate.
-    labels = {
-        "klangk.managed": "true",
-        "klangk.instance": app.state.util.instance_id(),
-        "klangk.user-id": user["id"],
-    }
+async def _reject_in_instance_duplicate(app, name: str) -> None:
+    """409 when *name* is already an instance-managed volume.
+
+    Checked before the quota so an in-instance duplicate still reports
+    409. A non-managed name (another instance's or the operator's
+    volume) falls through: podman's own create failure raises
+    PodmanError, which reaches the client as a bare 500 with no probed
+    name in the body. 500-vs-200 still hints at existence, but no
+    longer with a 409 + echoed detail (#2973). In-instance cross-user
+    names still 409 (issue scope: instance-managed volumes only; the
+    admin-surface rework, #2993, narrows who can call this at all).
+    """
+    existing = await app.state.podman.inspect_volume(name)
+    if existing is None:
+        return
+    labels = existing.get("Labels") or {}
+    if labels.get("klangk.instance") == app.state.util.instance_id():
+        raise HTTPException(
+            status_code=409, detail=f"Volume {name!r} already exists"
+        )
+
+
+def _volume_quota_error(count: int, quota: int) -> HTTPException:
+    """The 429 raised when a create would pass the per-user volume cap
+    (#2972) — capacity, not authorization (not 403), and not
+    auto-retried (not 503, which the CLI's request_with_retry
+    re-drives)."""
+    return HTTPException(
+        status_code=429,
+        detail=(
+            f"volume quota reached: {count} of this user's "
+            f"volumes already exist and the server caps it at "
+            f"{quota} (KLANGKD_VOLUME_QUOTA_PER_USER). Delete "
+            "a volume first, or ask the operator to raise the cap."
+        ),
+    )
+
+
+async def _create_volume_checked(
+    app, user: dict, name: str, labels: dict
+) -> dict:
+    """Create the volume under the per-user quota (#2972).
+
+    The per-user lock spans count+create: without it, N concurrent
+    creates each count the same pre-create total and all pass a cap
+    they jointly exceed. The workspace-start auto-create door
+    (container/spec.py ensure_volumes) shares the same lock and quota
+    gate. Only runs the count when a quota is configured — the default
+    0 keeps the create path exactly as before, with no extra podman
+    call.
+    """
     quota = app.state.settings.volume_quota_per_user
     if quota > 0:
         async with app.state.podman.volume_create_lock(user["id"]):
@@ -440,28 +479,56 @@ async def create_volume(
                 app.state.util.instance_id(), user["id"]
             )
             if count >= quota:
-                raise HTTPException(
-                    status_code=429,
-                    detail=(
-                        f"volume quota reached: {count} of this user's "
-                        f"volumes already exist and the server caps it at "
-                        f"{quota} (KLANGKD_VOLUME_QUOTA_PER_USER). Delete "
-                        "a volume first, or ask the operator to raise the "
-                        "cap."
-                    ),
-                )
-            info = await app.state.podman.create_volume(body.name, labels)
-    else:
-        # A non-managed name (another instance's or the operator's volume)
-        # falls through to create_volume: podman's own create failure
-        # raises PodmanError, which reaches the client as a bare 500 with
-        # no probed name in the body. 500-vs-200 still hints at
-        # existence, but no longer with a 409 + echoed detail (#2973).
-        # In-instance cross-user names still 409 (issue scope:
-        # instance-managed volumes only; the admin-surface rework,
-        # #2993, narrows who can call this at all).
-        info = await app.state.podman.create_volume(body.name, labels)
+                raise _volume_quota_error(count, quota)
+            return await app.state.podman.create_volume(name, labels)
+    return await app.state.podman.create_volume(name, labels)
+
+
+@router.post("/volumes")
+async def create_volume(
+    body: CreateVolumeRequest,
+    user: dict = Depends(acl.has_permission("manage-volumes")),
+    app=Depends(get_app_dep),
+):
+    await _reject_in_instance_duplicate(app, body.name)
+    labels = {
+        "klangk.managed": "true",
+        "klangk.instance": app.state.util.instance_id(),
+        "klangk.user-id": user["id"],
+    }
+    info = await _create_volume_checked(app, user, body.name, labels)
     return {"name": info["Name"], "created": info.get("CreatedAt", "")}
+
+
+async def _require_managed_volume(app, name: str) -> dict:
+    """The volume's info; 404 when missing or not managed by this
+    Klangk instance."""
+    info = await app.state.podman.inspect_volume(name)
+    if info is None:
+        raise HTTPException(status_code=404, detail="Volume not found")
+    labels = info.get("Labels") or {}
+    if labels.get("klangk.instance") != app.state.util.instance_id():
+        raise HTTPException(
+            status_code=404,
+            detail="Volume not managed by this Klangk instance",
+        )
+    return info
+
+
+async def _remove_volume(app, name: str) -> None:
+    """Remove the volume; a podman 404 → 404, 409 (in use) → 409."""
+    try:
+        await app.state.podman.remove_volume(name)
+    except PodmanError as e:
+        if e.status == 404:
+            raise HTTPException(
+                status_code=404, detail="Volume not found"
+            ) from None
+        if e.status == 409:
+            raise HTTPException(
+                status_code=409, detail="Volume is in use"
+            ) from None
+        raise
 
 
 @router.delete("/volumes/{name}")
@@ -480,25 +547,6 @@ async def delete_volume(
     verbatim, and podman parses a leading-dash name as a flag —
     `--all` would remove every unused volume on the host.
     """
-    info = await app.state.podman.inspect_volume(name)
-    if info is None:
-        raise HTTPException(status_code=404, detail="Volume not found")
-    labels = info.get("Labels") or {}
-    if labels.get("klangk.instance") != app.state.util.instance_id():
-        raise HTTPException(
-            status_code=404,
-            detail="Volume not managed by this Klangk instance",
-        )
-    try:
-        await app.state.podman.remove_volume(name)
-    except PodmanError as e:
-        if e.status == 404:
-            raise HTTPException(
-                status_code=404, detail="Volume not found"
-            ) from None
-        if e.status == 409:
-            raise HTTPException(
-                status_code=409, detail="Volume is in use"
-            ) from None
-        raise
+    await _require_managed_volume(app, name)
+    await _remove_volume(app, name)
     return {"status": "deleted"}

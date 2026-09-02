@@ -32,6 +32,7 @@ from .. import (
 )
 from ..exceptions import NodeDrainingError, WorkspaceCapacityError
 from ..model.container_events import (
+    CAUSE_API,
     CAUSE_CREATE,
     CAUSE_DELETE,
     CAUSE_RESTART,
@@ -110,23 +111,14 @@ def _validate_allowed_domains(
     return domains
 
 
-def _validate_rejected_domains(
-    values: list[str] | None, app
-) -> list[str] | None:
-    """Validate + normalize a workspace's ``rejected_domains`` list (#2367).
+def _reject_cidr_specs(values: list[str]) -> None:
+    """Raise HTTP 400 on any CIDR spec in a ``rejected_domains`` list.
 
-    The deny counterpart to :func:`_validate_allowed_domains`. Reuses
-    :func:`klangk.netfilter.parse_allowed_domains` so the host grammar matches
-    (bare = exact apex, ``.host`` = apex + subdomains, ``*.host`` = subdomains
-    only, #2377). Host-only: a CIDR spec is rejected up front -- the network
-    sidecar NXDOMAINs a rejected name *before* resolution, which has no
-    IP/CIDR dimension, and a deny-list must not silently ignore an entry an
-    operator believed was blocking something. Raises HTTP 400 on a malformed
-    entry or a CIDR. Only warns -- never rejects -- when the network sidecar
-    is not configured (the value is persisted for when filtering is re-enabled).
+    The deny list is host-only (#2367): the network sidecar NXDOMAINs a
+    rejected name *before* resolution, which has no IP/CIDR dimension,
+    and a deny-list must not silently ignore an entry an operator
+    believed was blocking something.
     """
-    if not values:
-        return None
     for raw in values:
         spec = raw.strip()
         if spec and "/" in spec:
@@ -138,6 +130,24 @@ def _validate_rejected_domains(
                     " Use a host/domain spec instead."
                 ),
             )
+
+
+def _validate_rejected_domains(
+    values: list[str] | None, app
+) -> list[str] | None:
+    """Validate + normalize a workspace's ``rejected_domains`` list (#2367).
+
+    The deny counterpart to :func:`_validate_allowed_domains`. Reuses
+    :func:`klangk.netfilter.parse_allowed_domains` so the host grammar matches
+    (bare = exact apex, ``.host`` = apex + subdomains, ``*.host`` = subdomains
+    only, #2377). Host-only: a CIDR spec is rejected up front (see
+    :func:`_reject_cidr_specs`). Raises HTTP 400 on a malformed entry or a
+    CIDR. Only warns -- never rejects -- when the network sidecar is not
+    configured (the value is persisted for when filtering is re-enabled).
+    """
+    if not values:
+        return None
+    _reject_cidr_specs(values)
     try:
         domains = netfilter_mod.parse_allowed_domains(
             values, label="rejected_domains"
@@ -277,11 +287,18 @@ async def list_shared_workspaces(
     )
 
 
-class CreateWorkspaceRequest(BaseModel):
-    name: str
+class WorkspaceBodyFields(BaseModel):
+    """The optional workspace fields shared verbatim by the create
+    (POST) and update (PUT) bodies.
+
+    Fields whose type or default *differs* between the two bodies
+    (``name``, ``auto_start``, ``egress_mode``, ``per_handle_home``)
+    stay declared on the concrete classes; everything else lives here
+    so the two request schemas cannot drift apart.
+    """
+
     image: str | None = None
     service_command: str | None = None
-    auto_start: bool = False
     mounts: list[str] | None = None
     env: dict[str, str] | None = None
     setup_state: Literal["pending", "complete", "failed"] | None = None
@@ -289,6 +306,11 @@ class CreateWorkspaceRequest(BaseModel):
     allowed_domains: list[str] | None = None
     rejected_domains: list[str] | None = None
     settings: dict | None = None
+
+
+class CreateWorkspaceRequest(WorkspaceBodyFields):
+    name: str
+    auto_start: bool = False
     egress_mode: Literal["static", "interactive", "allow"] = (
         EGRESS_MODE_DEFAULT
     )
@@ -349,41 +371,87 @@ async def create_workspace(
     return ws
 
 
-def _validate_create_fields(body, app) -> dict:
-    """Validate the POST body (400s raise); returns the derived
-    allowed/rejected domains, settings, per_handle_home, and banner."""
-    if body.auto_start and not autostart_allowed(app):
+def _check_autostart(auto_start, app) -> None:
+    """400 when a body asks for auto-start on a server without it."""
+    if auto_start and not autostart_allowed(app):
         raise HTTPException(
             status_code=400,
             detail="Auto-start is not enabled on this server"
             " (set KLANGKD_ALLOW_AUTOSTART=1)",
         )
-    if (
-        body.image
-        and body.image not in app.state.container_registry.allowed_images
+
+
+def _check_image(image: str | None, app) -> None:
+    """400 when *image* is present but not on this instance's allow-list.
+
+    ``None`` (absent) skips; any other value must be allowed. The create
+    path calls this only for truthy images (an empty image on create
+    means "the deploy default").
+    """
+    if image is not None and image not in (
+        app.state.container_registry.allowed_images
     ):
         raise HTTPException(
             status_code=400,
-            detail=f"Image {body.image!r} is not allowed. "
+            detail=f"Image {image!r} is not allowed. "
             f"Allowed: {sorted(app.state.container_registry.allowed_images)}",
         )
-    if body.mounts:
-        mount_err = app.state.container_registry.validate_mounts(body.mounts)
-        if mount_err:
-            raise HTTPException(status_code=400, detail=mount_err)
+
+
+def _check_mounts(mounts, app) -> None:
+    """400 when *mounts* is a present, non-empty list that fails this
+    instance's mount validation."""
+    if not mounts:
+        return
+    mount_err = app.state.container_registry.validate_mounts(mounts)
+    if mount_err:
+        raise HTTPException(status_code=400, detail=mount_err)
+
+
+def _validated_settings(raw) -> dict:
+    """Run :func:`validate_settings`, re-raising ``ValueError`` as 400."""
     try:
-        settings = validate_settings(body.settings)
-        # #2560: while the feature is off, a create may not opt in to nix
-        # (there is no existing bag on create, so any nix=true rejects).
-        validate_nix_optin(settings, nix_available=app.state.nix.available)
+        return validate_settings(raw)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _check_nix_optin(settings: dict, app, previous=None) -> None:
+    """400 on a nix opt-in while the feature is off (#2560).
+
+    *previous* is the already-stored bag a PUT may echo (update path);
+    ``None`` on create/import where any nix=true rejects.
+    """
     try:
-        classification_banner = normalize_classification_banner(
-            body.classification_banner
+        validate_nix_optin(
+            settings,
+            nix_available=app.state.nix.available,
+            previous=previous,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _normalized_banner(classification_banner) -> str | None:
+    """Normalize a classification marking, re-raising ``ValueError`` as
+    400."""
+    try:
+        return normalize_classification_banner(classification_banner)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _validate_create_fields(body, app) -> dict:
+    """Validate the POST body (400s raise); returns the derived
+    allowed/rejected domains, settings, per_handle_home, and banner."""
+    _check_autostart(body.auto_start, app)
+    if body.image:
+        _check_image(body.image, app)
+    _check_mounts(body.mounts, app)
+    settings = _validated_settings(body.settings)
+    # #2560: while the feature is off, a create may not opt in to nix
+    # (there is no existing bag on create, so any nix=true rejects).
+    _check_nix_optin(settings, app)
     return {
         "allowed_domains": _validate_allowed_domains(
             body.allowed_domains, app
@@ -397,7 +465,9 @@ def _validate_create_fields(body, app) -> dict:
             if body.per_handle_home is not None
             else app.state.settings.per_handle_home
         ),
-        "classification_banner": classification_banner,
+        "classification_banner": _normalized_banner(
+            body.classification_banner
+        ),
     }
 
 
@@ -438,18 +508,9 @@ async def _eager_start(app, body, ws, actor_id: str | None) -> None:
         )
 
 
-class UpdateWorkspaceRequest(BaseModel):
+class UpdateWorkspaceRequest(WorkspaceBodyFields):
     name: str | None = None
-    image: str | None = None
-    service_command: str | None = None
     auto_start: bool | None = None
-    mounts: list[str] | None = None
-    env: dict[str, str] | None = None
-    setup_state: Literal["pending", "complete", "failed"] | None = None
-    health_check: str | None = None
-    allowed_domains: list[str] | None = None
-    rejected_domains: list[str] | None = None
-    settings: dict | None = None
     # egress_mode (like allowed_domains) is enforced by the network
     # sidecar at container start, so a change here takes effect on the
     # next start/restart, not on the live container (PR #2248 review N3).
@@ -475,25 +536,10 @@ def _validate_update_fields(app, fields: dict) -> None:
 def _validate_update_core(app, fields: dict) -> None:
     """The 400-raising checks: autostart enablement, image allow-list,
     mount validity."""
-    if fields.get("auto_start") and not autostart_allowed(app):
-        raise HTTPException(
-            status_code=400,
-            detail="Auto-start is not enabled on this server"
-            " (set KLANGKD_ALLOW_AUTOSTART=1)",
-        )
-    if "image" in fields and fields["image"] is not None:
-        if fields["image"] not in app.state.container_registry.allowed_images:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Image {fields['image']!r} is not allowed. "
-                f"Allowed: {sorted(app.state.container_registry.allowed_images)}",
-            )
-    if "mounts" in fields and fields["mounts"]:
-        mount_err = app.state.container_registry.validate_mounts(
-            fields["mounts"]
-        )
-        if mount_err:
-            raise HTTPException(status_code=400, detail=mount_err)
+    _check_autostart(fields.get("auto_start"), app)
+    if "image" in fields:
+        _check_image(fields["image"], app)
+    _check_mounts(fields.get("mounts"), app)
 
 
 def _normalize_update_fields(app, fields: dict) -> None:
@@ -510,17 +556,23 @@ def _normalize_update_fields(app, fields: dict) -> None:
     # ``exclude_unset=True`` means the key is present only when the client
     # sent it; a missing ``settings`` key leaves the bag untouched.
     if "settings" in fields:
-        try:
-            fields["settings"] = validate_settings(fields["settings"])
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        fields["settings"] = _validated_settings(fields["settings"])
     if "classification_banner" in fields:
-        try:
-            fields["classification_banner"] = normalize_classification_banner(
-                fields["classification_banner"]
-            )
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        fields["classification_banner"] = _normalized_banner(
+            fields["classification_banner"]
+        )
+
+
+def _notify_workspace_audience(
+    app, user: dict, workspace: dict, members: list[dict]
+) -> None:
+    """Push workspaces-changed to the caller, the owner, and every
+    shared member -- the exact audience a workspace-scoped change
+    re-renders for."""
+    member_ids = {m["id"] for m in members}
+    member_ids.update({user["id"], workspace["user_id"]})
+    for uid in member_ids:
+        app.state.sockets.notify_user_workspaces_changed(uid)
 
 
 async def _notify_marking_change(
@@ -538,10 +590,26 @@ async def _notify_marking_change(
     members = await app.state.model.workspaces.get_workspace_members(
         workspace["id"]
     )
-    member_ids = {m["id"] for m in members}
-    member_ids.update({user["id"], workspace["user_id"]})
-    for uid in member_ids:
-        app.state.sockets.notify_user_workspaces_changed(uid)
+    _notify_workspace_audience(app, user, workspace, members)
+
+
+def _reset_health_probe(live_state, health_check) -> None:
+    """Apply an edited health_check to live state and reset the cached
+    status so the next poll re-broadcasts (#1015)."""
+    live_state.health_check = health_check or None
+    live_state.health_status = None
+    live_state.health_checked_at = None
+    live_state.health_message = None
+
+
+async def _sync_tmux_workspace_name(app, live_state, fields: dict) -> None:
+    """Keep the tmux status bar in sync when the workspace is renamed
+    (#1880): open terminals would otherwise keep showing the old
+    name until a new terminal_start fires. Idempotent + non-fatal."""
+    if "name" in fields and app.state.terminal.tmux_enabled():
+        await app.state.terminal.set_workspace_name(
+            live_state.container_id, fields["name"]
+        )
 
 
 async def _apply_live_state_updates(
@@ -557,18 +625,8 @@ async def _apply_live_state_updates(
     if "setup_state" in fields:
         live_state.setup_state = fields["setup_state"]
     if "health_check" in fields:
-        live_state.health_check = fields["health_check"] or None
-        # Reset the cached status so the next poll re-broadcasts.
-        live_state.health_status = None
-        live_state.health_checked_at = None
-        live_state.health_message = None
-    # Keep the tmux status bar in sync when the workspace is renamed
-    # (#1880): open terminals would otherwise keep showing the old
-    # name until a new terminal_start fires. Idempotent + non-fatal.
-    if "name" in fields and app.state.terminal.tmux_enabled():
-        await app.state.terminal.set_workspace_name(
-            live_state.container_id, fields["name"]
-        )
+        _reset_health_probe(live_state, fields["health_check"])
+    await _sync_tmux_workspace_name(app, live_state, fields)
 
 
 @router.put("/workspaces/{workspace_id}")
@@ -591,14 +649,9 @@ async def update_workspace(
         # #2560: PUT settings is a full-replace bag; a new nix=true opt-in
         # rejects while the feature is off, but an echo of the workspace's
         # already-stored true is tolerated (clients merge over the bag).
-        try:
-            validate_nix_optin(
-                fields["settings"],
-                nix_available=app.state.nix.available,
-                previous=workspace["settings"],
-            )
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        _check_nix_optin(
+            fields["settings"], app, previous=workspace["settings"]
+        )
     updated = await app.state.model.workspaces.update_workspace(
         workspace_id, workspace["user_id"], **fields
     )
@@ -724,6 +777,30 @@ async def duplicate_workspace(
     return ws
 
 
+async def _stop_workspace_container(
+    app, workspace: dict, cause: str, actor_id: str | None
+) -> None:
+    """Stop and remove the workspace's container.
+
+    Prefers the live container_id from the registry (tracks the currently
+    running container) over the DB value (may be stale if the container
+    was already stopped by idle timeout). No-op when neither is set.
+    """
+    live_state = app.state.container_registry.get_state(workspace["id"])
+    cid = (
+        live_state.container_id
+        if live_state
+        else workspace.get("container_id")
+    )
+    if cid:
+        await app.state.container_registry.stop_and_remove_container(
+            cid,
+            workspace_id=workspace["id"],
+            cause=cause,
+            actor_id=actor_id,
+        )
+
+
 @router.delete("/workspaces/{workspace_id}")
 async def delete_workspace(
     workspace_id: str,
@@ -742,25 +819,10 @@ async def delete_workspace(
         workspace_id
     )
 
-    # Prefer the live container_id from the registry (tracks the currently
-    # running container) over the DB value (may be stale if the container
-    # was already stopped by idle timeout).
-    live_state = app.state.container_registry.get_state(workspace_id)
-    cid = (
-        live_state.container_id
-        if live_state
-        else workspace.get("container_id")
-    )
-    # reset_workspace_state (below) stops the agent session and clears
-    # shared state; the agent subprocess runs inside the container, so
-    # stopping the container kills it either way.
-    if cid:
-        await app.state.container_registry.stop_and_remove_container(
-            cid,
-            workspace_id=workspace_id,
-            cause=CAUSE_DELETE,
-            actor_id=user["id"],
-        )
+    # _stop_workspace_container + reset_workspace_state (below) also stop
+    # the agent session and clear shared state; the agent subprocess runs
+    # inside the container, so stopping the container kills it either way.
+    await _stop_workspace_container(app, workspace, CAUSE_DELETE, user["id"])
     await wshandler.reset_workspace_state(app.state.sockets, workspace_id)
 
     deleted = await app.state.workspaces.delete_workspace(
@@ -775,10 +837,7 @@ async def delete_workspace(
     # Notify the deleter, the owner, and any shared members so their
     # workspace list refreshes (members were fetched above, before the
     # resource's ACL entries were removed).
-    member_ids = {m["id"] for m in members}
-    member_ids.update({user["id"], workspace["user_id"]})
-    for uid in member_ids:
-        app.state.sockets.notify_user_workspaces_changed(uid)
+    _notify_workspace_audience(app, user, workspace, members)
     return {"status": "deleted"}
 
 
@@ -808,42 +867,11 @@ async def restart_workspace(
     workspace = await app.state.model.workspaces.get_workspace(workspace_id)
     if workspace is None:
         raise HTTPException(status_code=404, detail="Workspace not found")
-    live_state = app.state.container_registry.get_state(workspace_id)
-    cid = (
-        live_state.container_id
-        if live_state
-        else workspace.get("container_id")
-    )
-    if cid:
-        await app.state.container_registry.stop_and_remove_container(
-            cid,
-            workspace_id=workspace_id,
-            cause=CAUSE_RESTART,
-            actor_id=user["id"],
-        )
+    await _stop_workspace_container(app, workspace, CAUSE_RESTART, user["id"])
     await wshandler.reset_workspace_state(app.state.sockets, workspace_id)
     # Start a fresh container; the service command fires via the
     # create choke point in start_container.
-    try:
-        await app.state.workspaces.start_workspace(
-            workspace, actor_id=user["id"], cause=CAUSE_RESTART
-        )
-    except NodeDrainingError as exc:
-        # A draining node refuses fresh starts (#2527); the stop above
-        # already happened, so the workspace is simply left stopped.
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    except WorkspaceCapacityError as exc:
-        # Admission control refused the restart (#2525) — host memory
-        # or the per-user quota. 503 (not 400/500) so clients can tell
-        # a deterministic, operator-actionable capacity refusal apart
-        # from config errors and runtime failures. The stop above
-        # already happened, so the workspace is left stopped; capacity
-        # is re-checked on every start.
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    except ValueError as exc:
-        # User-config error (e.g. a bind-mount source path that doesn't
-        # exist) — surface as a 400, not an unhandled 500 (#2157).
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    await _start_or_http_error(app, workspace, user["id"], cause=CAUSE_RESTART)
     return {"status": "restarted"}
 
 
@@ -904,6 +932,35 @@ async def stop_workspace(
     return {"status": "stopped"}
 
 
+async def _start_or_http_error(
+    app, workspace: dict, actor_id, cause: str = CAUSE_API
+) -> None:
+    """Start a workspace container, mapping the service-layer errors to
+    client-distinguishable HTTP statuses.
+
+    On a drain/capacity refusal the stop (restart path) already
+    happened, so the workspace is simply left stopped; capacity and
+    drain state are re-checked on every start (#2525 / #2527).
+    """
+    try:
+        await app.state.workspaces.start_workspace(
+            workspace, actor_id=actor_id, cause=cause
+        )
+    except NodeDrainingError as exc:
+        # Draining node (#2527): clear 503 so clients/CLI can distinguish
+        # "temporarily disabled by a restart" from a config error.
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except WorkspaceCapacityError as exc:
+        # Capacity refusal (#2525): distinguishable 503 with an
+        # actionable "stop a workspace / free memory" detail.
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        # User-config error (e.g. a bind-mount source path that doesn't
+        # exist) — surface as a 400, not an unhandled 500 (#2157). The WS
+        # start path sends an error frame for the same condition.
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.post("/workspaces/{workspace_id}/start")
 async def start_workspace(
     workspace_id: str,
@@ -922,23 +979,7 @@ async def start_workspace(
         raise HTTPException(status_code=404, detail="Workspace not found")
     if app.state.container_registry.get_state(workspace_id) is not None:
         return {"status": "already_running"}
-    try:
-        await app.state.workspaces.start_workspace(
-            workspace, actor_id=user["id"]
-        )
-    except NodeDrainingError as exc:
-        # Draining node (#2527): clear 503 so clients/CLI can distinguish
-        # "temporarily disabled by a restart" from a config error.
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    except WorkspaceCapacityError as exc:
-        # Capacity refusal (#2525): distinguishable 503 with an
-        # actionable "stop a workspace / free memory" detail.
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    except ValueError as exc:
-        # User-config error (e.g. a bind-mount source path that doesn't
-        # exist) — surface as a 400, not an unhandled 500 (#2157). The WS
-        # start path sends an error frame for the same condition.
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    await _start_or_http_error(app, workspace, user["id"])
     return {"status": "started"}
 
 
@@ -1017,6 +1058,45 @@ async def workspace_status(
 # --- Workspace export/import endpoints ---
 
 
+async def _exportable_workspace(app, workspace_id: str, user_id) -> dict:
+    """Resolve the workspace to export; 404 when it cannot be found.
+
+    Owner-scoped first; the caller may hold export via a group ACE (e.g.
+    the owners role group) rather than a direct access row, in which case
+    the bare-id lookup finds it — the permission layer already gated.
+    """
+    workspace = await app.state.model.workspaces.get_workspace(
+        workspace_id, user_id
+    )
+    if workspace is None:
+        workspace = await app.state.model.workspaces.get_workspace_by_id(
+            workspace_id
+        )
+    if workspace is None:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+    return workspace
+
+
+async def _estimate_home_size(home_dir) -> int:
+    """Estimate the uncompressed home size (bytes) for the client's
+    progress display; 0 when ``du`` is unavailable or fails."""
+    if not home_dir.exists():
+        return 0
+    try:
+        result = await asyncio.to_thread(
+            subprocess.run,
+            ["du", "-sb", str(home_dir)],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode == 0:
+            return int(result.stdout.split()[0])
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        pass  # fall back to 0
+    return 0
+
+
 @router.get("/workspaces/{workspace_id}/export")
 async def export_workspace(
     workspace_id: str,
@@ -1037,18 +1117,7 @@ async def export_workspace(
     The archive contains workspace.json (metadata) and the home
     directory tree under home/.
     """
-    workspace = await app.state.model.workspaces.get_workspace(
-        workspace_id, user["id"]
-    )
-    if workspace is None:
-        # The caller may hold export via a group ACE (e.g. the owners
-        # role group) rather than a direct access row — look it up
-        # without the access check; the permission layer already gated.
-        workspace = await app.state.model.workspaces.get_workspace_by_id(
-            workspace_id
-        )
-    if workspace is None:
-        raise HTTPException(status_code=404, detail="Workspace not found")
+    workspace = await _exportable_workspace(app, workspace_id, user["id"])
 
     home_dir = app.state.workspaces.home_path(workspace_id)
     ws_name = workspace["name"]
@@ -1056,20 +1125,7 @@ async def export_workspace(
     metadata = app.state.workspaces.workspace_metadata(workspace)
 
     # Estimate uncompressed size for client progress display.
-    estimated_size = 0
-    if home_dir.exists():
-        try:
-            result = await asyncio.to_thread(
-                subprocess.run,
-                ["du", "-sb", str(home_dir)],
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-            if result.returncode == 0:
-                estimated_size = int(result.stdout.split()[0])
-        except (OSError, ValueError, subprocess.TimeoutExpired):
-            pass  # fall back to 0
+    estimated_size = await _estimate_home_size(home_dir)
 
     # Stream the tarball using GNU tar piped to stdout. Uses the shared
     # build_export_tar_args (workspaces.py), same as build_workspace_archive.
@@ -1324,6 +1380,66 @@ async def _extract_home_directory(
         )
 
 
+def _imported_settings(meta: dict, app) -> dict:
+    """Re-validate imported settings; 400 on any invalid value.
+
+    An archive from this instance is trusted, but the bag may predate a
+    schema change or carry a value the current deploy rejects. Validate
+    rather than persist blindly. #2560: import is a create path (no
+    previous bag) — the archive is user-supplied, editable input, so a
+    nix=true opt-in rejects while the feature is off, exactly like POST
+    /workspaces.
+    """
+    try:
+        settings = validate_settings(meta.get("settings"))
+        validate_nix_optin(settings, nix_available=app.state.nix.available)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Archive settings are invalid: {exc}",
+        ) from exc
+    return settings
+
+
+async def _create_from_archive(
+    app,
+    user: dict,
+    meta: dict,
+    settings: dict,
+    allowed_domains,
+    rejected_domains,
+) -> dict:
+    """Create the workspace row from the sanitized archive metadata;
+    a name collision is a 409."""
+    try:
+        return await app.state.workspaces.create_workspace(
+            user["id"],
+            meta["name"],
+            image=meta["image"],
+            service_command=meta["service_command"],
+            auto_start=meta["auto_start"],
+            mounts=meta["mounts"],
+            env=meta["env"],
+            health_check=meta["health_check"],
+            allowed_domains=allowed_domains,
+            rejected_domains=rejected_domains,
+            settings=settings,
+            egress_mode=meta["egress_mode"],
+            # The archive's explicit layout wins over the deploy
+            # default (KLANGKD_PER_HANDLE_HOME): import is a creation,
+            # but the exported workspace's home tree is laid out for
+            # that layout (#2722). Legacy archives without the field
+            # already carried True from _extract_archive_metadata.
+            per_handle_home=meta["per_handle_home"],
+            classification_banner=meta["classification_banner"],
+        )
+    except SAIntegrityError:
+        raise HTTPException(
+            status_code=409,
+            detail=f"A workspace named {meta['name']!r} already exists",
+        )
+
+
 @router.post("/workspaces/import")
 async def import_workspace(
     file: UploadFile,
@@ -1350,48 +1466,11 @@ async def import_workspace(
         rejected_domains = _validate_rejected_domains(
             meta.get("rejected_domains"), app
         )
-        # Re-validate imported settings — an archive from this instance is
-        # trusted, but the bag may predate a schema change or carry a value
-        # the current deploy rejects. Validate rather than persist blindly.
-        try:
-            settings = validate_settings(meta.get("settings"))
-            # #2560: import is a create path (no previous bag) — the archive
-            # is user-supplied, editable input, so a nix=true opt-in rejects
-            # while the feature is off, exactly like POST /workspaces.
-            validate_nix_optin(settings, nix_available=app.state.nix.available)
-        except ValueError as exc:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Archive settings are invalid: {exc}",
-            ) from exc
+        settings = _imported_settings(meta, app)
 
-        try:
-            ws = await app.state.workspaces.create_workspace(
-                user["id"],
-                meta["name"],
-                image=meta["image"],
-                service_command=meta["service_command"],
-                auto_start=meta["auto_start"],
-                mounts=meta["mounts"],
-                env=meta["env"],
-                health_check=meta["health_check"],
-                allowed_domains=allowed_domains,
-                rejected_domains=rejected_domains,
-                settings=settings,
-                egress_mode=meta["egress_mode"],
-                # The archive's explicit layout wins over the deploy
-                # default (KLANGKD_PER_HANDLE_HOME): import is a creation,
-                # but the exported workspace's home tree is laid out for
-                # that layout (#2722). Legacy archives without the field
-                # already carried True from _extract_archive_metadata.
-                per_handle_home=meta["per_handle_home"],
-                classification_banner=meta["classification_banner"],
-            )
-        except SAIntegrityError:
-            raise HTTPException(
-                status_code=409,
-                detail=f"A workspace named {meta['name']!r} already exists",
-            )
+        ws = await _create_from_archive(
+            app, user, meta, settings, allowed_domains, rejected_domains
+        )
 
         try:
             await _extract_home_directory(
@@ -1659,6 +1738,29 @@ class ChangeRoleRequest(BaseModel):
     role: str | None = None  # None = remove from all roles
 
 
+async def _remove_from_all_roles(app, workspace_id: str, user_id) -> None:
+    """Drop the user from every workspace role group."""
+    for suffix in ROLE_GROUP_SUFFIXES:
+        group_name = f"{suffix}-{workspace_id}"
+        group = await app.state.model.users.get_group_by_name(group_name)
+        if group is None:
+            continue
+        await app.state.model.users.remove_user_from_group(
+            user_id, group["id"]
+        )
+
+
+async def _add_to_role(app, workspace_id: str, user_id, role: str) -> None:
+    """Add the user to a workspace role group; 404 when the group is
+    missing."""
+    group = await app.state.model.users.get_group_by_name(
+        f"{role}-{workspace_id}"
+    )
+    if group is None:
+        raise HTTPException(status_code=404, detail="Role group not found")
+    await app.state.model.users.add_user_to_group(user_id, group["id"])
+
+
 @router.patch("/workspaces/{workspace_id}/roles")
 async def change_workspace_role(
     workspace_id: str,
@@ -1682,24 +1784,11 @@ async def change_workspace_role(
         )
 
     # Remove from all current roles
-    for suffix in ROLE_GROUP_SUFFIXES:
-        group_name = f"{suffix}-{workspace_id}"
-        group = await app.state.model.users.get_group_by_name(group_name)
-        if group is None:
-            continue
-        await app.state.model.users.remove_user_from_group(
-            target["id"], group["id"]
-        )
+    await _remove_from_all_roles(app, workspace_id, target["id"])
 
     # Add to target role if specified
     if body.role is not None:
-        group_name = f"{body.role}-{workspace_id}"
-        group = await app.state.model.users.get_group_by_name(group_name)
-        if group is None:
-            raise HTTPException(status_code=404, detail="Role group not found")
-        await app.state.model.users.add_user_to_group(
-            target["id"], group["id"]
-        )
+        await _add_to_role(app, workspace_id, target["id"], body.role)
 
     app.state.sockets.notify_user_workspaces_changed(user["id"])
     app.state.sockets.notify_user_workspaces_changed(target["id"])
