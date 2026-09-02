@@ -60,6 +60,18 @@ permission; unauthenticated users are denied everything. `/admin`
 checks nothing anymore (#2944) — its `*` row only marks "instance
 administrator" for permission-map consumers.
 
+The `/images` Allow Authenticated row is the deliberate exception to
+the admin-default convention (#2974): the listing's consumers are the
+workspace create/edit UIs, which non-admins reach with
+`create-workspace`/`edit-workspace`. It is still an operator choice —
+delete the row (default-deny then takes over) or scope it to a group in
+the ACL editor. No trailing Deny Everyone row is seeded: no `/images`
+route checks a permission other than `view-images`, and unauthenticated
+requests are rejected by the JWT middleware before any ACL check.
+(Side effect: without the row, authenticated users' effective
+permissions on `/images` include the `view` inherited from `/` —
+visible in `/my-permissions`; nothing checks it.)
+
 ### Granting workspace creation to non-admin users
 
 By default only administrators can create workspaces (#2569). To allow
@@ -192,7 +204,7 @@ actions — no per-action splits:
 | `manage-events`          | `/events`           | Read the container start/stop history (`GET /events`) — read-only audit                                                                                               |
 | `manage-acls`            | `/acl`              | The Access Control browser: read and rewrite ACL entries on **any** resource via `GET/PUT /acl/*` — root-equivalent, see below                                        |
 | `manage-volumes`         | `/volumes`          | Self-service volumes (still label-scoped to the caller at runtime) — Allow Authenticated by default (#2946)                                                           |
-| `view-images`            | `/images`           | The image/nix/sudo capability listing the create/edit UIs read (#2946)                                                                                                |
+| `view-images`            | `/images`           | The image listing the create/edit UIs read (#2946; Allow Authenticated by default — the deliberate, ACL-editor-modifiable exception, #2974)                           |
 | `search-users`           | `/users`            | The member-picker type-ahead (`GET /users/search`) — Allow Authenticated by default (#2946)                                                                           |
 | `admin`                  | `/admin`            | The instance-administrator **marker** only (`*` row); nothing checks it anywhere anymore (#2944, #2946 — the transfer gate now checks `transfer-workspace`)           |
 

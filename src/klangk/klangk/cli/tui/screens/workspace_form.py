@@ -352,22 +352,30 @@ async def open_edit_screen(screen, state, workspace, on_edited) -> None:
 
     Shared by the workspace-list (main) and workspace-detail screens.
     An image-listing failure degrades to empty defaults (the form's
-    image field then accepts free text); an autostart failure leaves it
-    disabled; ``AuthError`` ends the session via ``session_expired``.
+    image field then accepts free text); an autostart or toggle
+    failure leaves them disabled; ``AuthError`` ends the session via
+    ``session_expired``.
     """
     try:
         data = await asyncio.to_thread(state.list_images)
         default = data.get("default", "") or ""
         allowed = list(data.get("allowed") or [])
-        nix_available = data.get("nix_available") is True
-        sudo_available = data.get("sudo_available") is True
     except AuthError:
         screen.app.session_expired()
         return
     except Exception:
         default, allowed = "", []
-        nix_available = False
-        sudo_available = False
+    # #2974: deploy-level nix/sudo toggles moved from the images
+    # payload to the authenticated-only /config fields.
+    try:
+        nix_available, sudo_available = await asyncio.to_thread(
+            state.deploy_toggles
+        )
+    except AuthError:
+        screen.app.session_expired()
+        return
+    except Exception:
+        nix_available = sudo_available = False
     try:
         allow_autostart = await asyncio.to_thread(state.allow_autostart)
     except AuthError:

@@ -44,6 +44,16 @@ operators or integrators to act when upgrading.
   `egress-consent`, so interactive workspaces keep working for their own
   members.
 
+- **Deploy capability toggles moved off the images listing (#2994).**
+  `GET /api/v1/images` no longer returns `nix_available` /
+  `sudo_available` — read them from the new authenticated-only
+  `GET /api/v1/config` fields of the same names. Hand-built clients
+  reading the toggles off the images response must switch to `/config`.
+  Migration `0025` also removes the retired seed's Deny Everyone row on
+  `/images` (it gated no route): authenticated users' effective
+  permissions on `/images` now include the `view` inherited from `/`,
+  visible in `/my-permissions` — informational only.
+
 - **Workspace-sphere permission names (#2946).** Every stored ACE and
   every client that checks a workspace permission must use the new
   specific names: `create-workspace` (on `/workspaces`),

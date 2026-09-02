@@ -107,28 +107,35 @@ async def _seed_2946_self_service(app_state):
     )
 
     acl = app_state.state.model.acl
-    for resource, permission in (
-        ("/volumes", "manage-volumes"),
-        ("/images", "view-images"),
-    ):
-        existing = await acl.get_acl_entries(resource)
-        if existing:
-            continue
+    if not await acl.get_acl_entries("/volumes"):
         await acl.add_acl_entry(
-            resource,
+            "/volumes",
             0,
             ACTION_ALLOW,
-            permission,
+            "manage-volumes",
             PRINCIPAL_SYSTEM,
             system_principal=SYSTEM_AUTHENTICATED,
         )
         await acl.add_acl_entry(
-            resource,
+            "/volumes",
             1,
             ACTION_DENY,
             "*",
             PRINCIPAL_SYSTEM,
             system_principal=SYSTEM_EVERYONE,
+        )
+    # /images: Allow Authenticated only (#2994 — the dead Deny Everyone
+    # row is gone from the seed; migration 0025 drops it on existing
+    # deployments).
+    existing = await acl.get_acl_entries("/images")
+    if not existing:
+        await acl.add_acl_entry(
+            "/images",
+            0,
+            ACTION_ALLOW,
+            "view-images",
+            PRINCIPAL_SYSTEM,
+            system_principal=SYSTEM_AUTHENTICATED,
         )
     rows = await acl.get_acl_entries("/users")
     if not any(r["permission"] == "search-users" for r in rows):
