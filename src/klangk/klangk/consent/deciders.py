@@ -37,6 +37,13 @@ from ..wshandler.safe_websocket import WS_ERRORS
 logger = logging.getLogger(__name__)
 
 
+def _entry_matches(
+    entry: dict, workspace_id: str, now: float, cutoff: float
+) -> bool:
+    """True when a decider entry serves *workspace_id* and is live."""
+    return entry["ws"] == workspace_id and now - entry["seen"] <= cutoff
+
+
 class ConsentDeciderRegistry:
     """Tracks live consent deciders; the gate for interactive egress (#2308).
 
@@ -129,7 +136,7 @@ class ConsentDeciderRegistry:
         dead: list[str] = []
         delivered = 0
         for did, entry in self._deciders.items():
-            if entry["ws"] != workspace_id or now - entry["seen"] > cutoff:
+            if not _entry_matches(entry, workspace_id, now, cutoff):
                 continue
             try:
                 entry["sock"].send_json(message)
