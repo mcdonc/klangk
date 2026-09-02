@@ -485,8 +485,11 @@ class Connection:
         workspace_id = self.workspace_id
 
         # #3008: fan the notice out to every connection in the workspace,
-        # not just this socket — siblings' pages show the restart spinner
-        # and re-arm terminal recovery instead of sitting dead.
+        # not just this socket. Siblings ignore ``container_restart``
+        # today (no frontend consumer); it is the lifecycle notice for
+        # future clients, and keeps parity with the ``container_ready``
+        # fan-out below — sibling recovery itself is driven by that
+        # broadcast container_ready.
         session = self.app.state.sockets.get_session(workspace_id)
         broadcast_event(
             session, self.sock, "container_restart", "Restarting container..."

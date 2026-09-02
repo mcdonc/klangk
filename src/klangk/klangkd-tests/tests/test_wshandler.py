@@ -3,6 +3,7 @@
 import asyncio
 import base64
 import json
+import logging
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
@@ -5925,14 +5926,16 @@ class TestBroadcastEvent:
         broadcast_event(None, sock, "container_restart", "Restarting...")
         assert self._names(sock) == ["container_restart"]
 
-    async def test_subscribed_socket_gets_exactly_one_copy(self, app_state):
+    def test_subscribed_socket_gets_exactly_one_copy(self):
         app_state = _make_app_state()
         sockets = app_state.state.sockets
         session = sockets.get_or_create_session("ws-bcast", app_state)
         sock = _mock_sock()
         sibling = _mock_sock()
-        await session.add_subscriber(sock, "cid")
-        await session.add_subscriber(sibling, "cid")
+        # Direct set adds (not add_subscriber) so no window watcher
+        # task spawns against the mock podman.
+        session.subscribers.add(sock)
+        session.subscribers.add(sibling)
         try:
             broadcast_event(session, sock, "container_ready", "ready")
             assert self._names(sock) == ["container_ready"]
@@ -5940,7 +5943,7 @@ class TestBroadcastEvent:
         finally:
             sockets.sessions.pop("ws-bcast", None)
 
-    async def test_out_of_session_socket_gets_direct_send(self, app_state):
+    def test_out_of_session_socket_gets_direct_send(self):
         """The acting socket is not a subscriber: it still gets the event
         (direct send) alongside the broadcast to real subscribers."""
         app_state = _make_app_state()
@@ -5948,7 +5951,7 @@ class TestBroadcastEvent:
         session = sockets.get_or_create_session("ws-bcast-2", app_state)
         acting = _mock_sock()
         sibling = _mock_sock()
-        await session.add_subscriber(sibling, "cid")
+        session.subscribers.add(sibling)
         try:
             broadcast_event(
                 session, acting, "container_restart", "Restarting..."
@@ -5957,6 +5960,36 @@ class TestBroadcastEvent:
             assert self._names(sibling) == ["container_restart"]
         finally:
             sockets.sessions.pop("ws-bcast-2", None)
+
+    def test_failed_acting_socket_send_is_swallowed_and_logged(self, caplog):
+        """A subscribed acting socket whose send fails is pruned by the
+        broadcast and gets zero delivered copies — the failure must not
+        propagate (a slow/dead acting client must not abort the restart)
+        and no fallback re-send is attempted, but the drop is logged for
+        diagnosis (#3014 review)."""
+        app_state = _make_app_state()
+        sockets = app_state.state.sockets
+        session = sockets.get_or_create_session("ws-bcast-3", app_state)
+        acting = _mock_sock()
+        acting.send_json = MagicMock(side_effect=RuntimeError("ws closed"))
+        sibling = _mock_sock()
+        session.subscribers.add(acting)
+        session.subscribers.add(sibling)
+        try:
+            with caplog.at_level(logging.WARNING):
+                broadcast_event(session, acting, "container_ready", "ready")
+            # One send attempt (the broadcast) — no fallback double-send.
+            assert acting.send_json.call_count == 1
+            # The failed socket was pruned; the sibling was delivered to.
+            assert acting not in session.subscribers
+            assert self._names(sibling) == ["container_ready"]
+            assert any(
+                "container_ready" in r.getMessage()
+                and "pruned" in r.getMessage()
+                for r in caplog.records
+            )
+        finally:
+            sockets.sessions.pop("ws-bcast-3", None)
 
 
 class TestHandleRestartContainer:
@@ -6516,6 +6549,11 @@ class TestHandleRestartContainer:
                 "start_workspace_container",
                 autospec=True,
                 side_effect=fake_start,
+            ),
+            # add_subscriber spawns the tmux window watcher against the
+            # mock podman; suppress it (not what this test exercises).
+            patch.object(
+                WorkspaceSession, "start_window_sync", lambda s: None
             ),
             patch.object(registry, "record_activity"),
             patch.object(

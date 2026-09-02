@@ -183,6 +183,53 @@ class TestEventFanout:
             cleanup()
 
     @pytest.mark.asyncio
+    async def test_restart_notifies_all_connections(self, server, auth):
+        """#3008: a restart triggered by one connection sends the
+        container_restart notice and the container_ready event to every
+        connection in the workspace — siblings recover without a reload."""
+        workspace_id, cleanup = create_workspace(server, auth)
+        try:
+            ws1 = await ws_connect(server, auth, workspace_id)
+            ws2 = await ws_connect(server, auth, workspace_id)
+
+            try:
+
+                def is_custom(name):
+                    def pred(msg):
+                        if msg.get("type") != "event":
+                            return False
+                        event = msg.get("event", {})
+                        return (
+                            event.get("type") == "CUSTOM"
+                            and event.get("name") == name
+                        )
+
+                    return pred
+
+                async def restart_and_watch(ws):
+                    """Trigger the restart on ws1, drain ws until the
+                    container_ready CUSTOM event (the restart tears down
+                    and recreates the container, which takes seconds)."""
+                    await ws.send(json.dumps({"cmd": "restart_container"}))
+                    return await recv_until(
+                        ws, is_custom("container_ready"), timeout=60
+                    )
+
+                msgs1, msgs2 = await asyncio.gather(
+                    restart_and_watch(ws1),
+                    recv_until(ws2, is_custom("container_ready"), timeout=60),
+                )
+                assert any(is_custom("container_restart")(m) for m in msgs1)
+                assert any(is_custom("container_ready")(m) for m in msgs1)
+                assert any(is_custom("container_restart")(m) for m in msgs2)
+                assert any(is_custom("container_ready")(m) for m in msgs2)
+            finally:
+                await ws1.close()
+                await ws2.close()
+        finally:
+            cleanup()
+
+    @pytest.mark.asyncio
     async def test_exec_output_only_goes_to_requester(self, server, auth):
         """exec_output goes only to the connection that started the exec,
         not to all subscribers (exec is per-connection, not broadcast)."""

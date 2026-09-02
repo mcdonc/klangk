@@ -146,6 +146,12 @@ def broadcast_event(
     stranding a dead terminal. *sock* (the acting connection) gets a direct
     send only when it is not a session subscriber, so it is never
     double-sent.
+
+    A subscribed *sock* whose send fails is pruned by ``session.broadcast``
+    and gets zero copies with the failure swallowed (``broadcast_to_set``
+    catches WS_ERRORS) — a slow/dead acting client must not abort the
+    restart itself. That silent drop is logged here so the lost lifecycle
+    frames are diagnosable.
     """
     frame = custom_event_frame(name, reason)
     subscribed = session is not None and sock in session.subscribers
@@ -153,6 +159,12 @@ def broadcast_event(
         session.broadcast(frame)
     if not subscribed:
         sock.send_json(frame)
+    elif session is not None and sock not in session.subscribers:
+        # Subscribed before the broadcast but pruned by it: the acting
+        # connection's send failed and its copy was dropped.
+        logger.warning(
+            "Acting socket missed %s broadcast (send failed, pruned)", name
+        )
 
 
 def format_idle_timeout(seconds: int | float) -> str:
