@@ -44,6 +44,14 @@ def fetch_config(server_url: str) -> dict | str | None:
         return UNREACHABLE
 
 
+def login_failure_detail(resp) -> str:
+    """The server's error detail, or the HTTP status when not JSON."""
+    try:
+        return resp.json().get("detail", f"HTTP {resp.status_code}")
+    except Exception:
+        return f"HTTP {resp.status_code}"
+
+
 def local_login(server_url: str) -> tuple[str, str]:
     """No-auth single-user mode: fetch a free token for the seeded default
     user via POST /api/v1/auth/local (#1374).
@@ -63,11 +71,7 @@ def local_login(server_url: str) -> tuple[str, str]:
         )
         raise SystemExit(1)
     if resp.status_code != 200:
-        try:
-            detail = resp.json().get("detail", f"HTTP {resp.status_code}")
-        except Exception:
-            detail = f"HTTP {resp.status_code}"
-        _err.print(f"[red]Login failed:[/red] {detail}")
+        _err.print(f"[red]Login failed:[/red] {login_failure_detail(resp)}")
         raise SystemExit(1)
     data = resp.json()
     token = data.get("access_token")
@@ -184,22 +188,30 @@ margin:0;background:#1a1a2e;color:#e0e0e0">
         raise SystemExit(1)
 
 
-def already_logged_in(state, server_url: str, email: str) -> bool:
-    """True (and prints) when a cached token for *email* still works."""
+def cached_user_token(state, server_url: str, email: str) -> str | None:
+    """The cached token for *email* on the server, if any."""
     ss = state.servers.get(server_url)
     cached = ss.users.get(email) if ss else None
-    if not (cached and cached.token):
+    if cached and cached.token:
+        return cached.token
+    return None
+
+
+def already_logged_in(state, server_url: str, email: str) -> bool:
+    """True (and prints) when a cached token for *email* still works."""
+    token = cached_user_token(state, server_url, email)
+    if not token:
         return False
     try:
         resp = http_request(
             server_url,
             "GET",
             "/api/v1/workspaces",
-            headers={"Authorization": f"Bearer {cached.token}"},
+            headers={"Authorization": f"Bearer {token}"},
             timeout=5.0,
         )
         if resp.status_code == 200:
-            state.set_credentials(server_url, email, cached.token)
+            state.set_credentials(server_url, email, token)
             state.save()
             _out.print(f"Already logged in as [bold]{email}[/bold]")
             return True
@@ -247,6 +259,11 @@ def select_oidc_provider(providers: list) -> dict:
         raise SystemExit(1)
 
 
+def should_use_oidc(auth_modes: str, email, password) -> bool:
+    """OIDC when password login is off, or no credentials were given."""
+    return auth_modes == "oidc" or (email is None and password is None)
+
+
 def try_oidc_login(server_url, email, password, config, state) -> bool:
     """Run the OIDC browser flow when the server config calls for it.
 
@@ -257,8 +274,7 @@ def try_oidc_login(server_url, email, password, config, state) -> bool:
     auth_modes = config.get("auth_modes", "password")
     if not (providers and auth_modes in ("oidc", "both")):
         return False
-    use_oidc = auth_modes == "oidc" or (email is None and password is None)
-    if not use_oidc:
+    if not should_use_oidc(auth_modes, email, password):
         return False
     provider = select_oidc_provider(providers)
     oidc_browser_login(server_url, provider["id"], state)
@@ -305,6 +321,28 @@ def password_login(server_url, email, password, state) -> None:
     _out.print(f"Logged in as [bold]{email}[/bold]")
 
 
+def none_mode_login(server_url, state) -> None:
+    """Log in via the no-auth free-token arm and persist it."""
+    email, token = local_login(server_url)
+    state.set_credentials(server_url, email, token)
+    state.save()
+    seed_config(server_url, email)
+    _out.print(f"Logged in as [bold]{email}[/bold] (no-auth mode)")
+
+
+def login_with_config(
+    server_url, email, password, config: dict, state
+) -> None:
+    """The config-routed login arms: no-auth, OIDC, or password."""
+    auth_modes = config.get("auth_modes", "password")
+    if auth_modes == "none":
+        none_mode_login(server_url, state)
+        return
+    if try_oidc_login(server_url, email, password, config, state):
+        return
+    password_login(server_url, email, password, state)
+
+
 def login(
     server_url: str,
     email: str | None = None,
@@ -320,22 +358,11 @@ def login(
     # Probe the server to verify it's a klangk instance
     config = fetch_config_or_exit(server_url)
 
-    # Default-safe per #1374: a missing/unparseable auth_modes field falls
-    # back to password so an old server never routes to the /auth/local arm.
-    auth_modes = "password"
+    # Default-safe per #1374: a missing config (old server) routes to
+    # the password arm rather than the /auth/local arm.
     if config:
-        auth_modes = config.get("auth_modes", "password")
-
-        if auth_modes == "none":
-            email, token = local_login(server_url)
-            state.set_credentials(server_url, email, token)
-            state.save()
-            seed_config(server_url, email)
-            _out.print(f"Logged in as [bold]{email}[/bold] (no-auth mode)")
-            return
-
-        if try_oidc_login(server_url, email, password, config, state):
-            return
+        login_with_config(server_url, email, password, config, state)
+        return
 
     password_login(server_url, email, password, state)
 
@@ -375,37 +402,59 @@ def refresh_token(server_url: str, token: str) -> str | None:
         return None
 
 
+def proc_cmdline(pid: int) -> str | None:
+    """One /proc pid's cmdline, or None when unreadable."""
+    try:
+        return (
+            open(f"/proc/{pid}/cmdline", "rb")
+            .read()
+            .replace(b"\0", b" ")
+            .decode("utf-8", "replace")
+            .strip()
+        )
+    except OSError:
+        return None
+
+
+def proc_ppid(pid: int) -> int | None:
+    """One /proc pid's parent pid, or None when unreadable."""
+    try:
+        return int(open(f"/proc/{pid}/stat", "rb").read().decode().split()[3])
+    except (OSError, ValueError):
+        return None
+
+
+def next_chain_pid(cur: int) -> int | None:
+    """The next pid up the chain, or None when the walk should stop."""
+    ppid = proc_ppid(cur)
+    if ppid is None or ppid <= 1 or ppid == cur:
+        return None
+    return ppid
+
+
+def logout_process_chain() -> list[str]:
+    """The parent-process chain entries (``pid=[cmd]``) up to init."""
+    chain: list[str] = []
+    cur = os.getppid()
+    for _ in range(8):
+        cmd = proc_cmdline(cur)
+        if cmd is None:
+            break
+        chain.append(f"{cur}=[{cmd}]")
+        cur = next_chain_pid(cur)
+        if cur is None:
+            break
+    return chain
+
+
 def _log_logout_caller() -> None:
     """Diagnostic: log the parent-process chain that invoked logout.
 
     Walks /proc upward so the next spurious logout reveals its spawner
     (shell, script, cron, the TUI, ...). Best-effort; never raises.
     """
-    chain: list[str] = []
-    cur = os.getppid()
-    for _ in range(8):
-        try:
-            cmd = (
-                open(f"/proc/{cur}/cmdline", "rb")
-                .read()
-                .replace(b"\0", b" ")
-                .decode("utf-8", "replace")
-                .strip()
-            )
-        except OSError:
-            break
-        chain.append(f"{cur}=[{cmd}]")
-        try:
-            ppid = int(
-                open(f"/proc/{cur}/stat", "rb").read().decode().split()[3]
-            )
-        except (OSError, ValueError):
-            break
-        if ppid <= 1 or ppid == cur:
-            break
-        cur = ppid
     msg = "auth.logout() invoked; process chain: " + (
-        " <- ".join(chain) or "(unknown)"
+        " <- ".join(logout_process_chain()) or "(unknown)"
     )
     logging.getLogger(__name__).warning(msg)
 

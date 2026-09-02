@@ -90,6 +90,15 @@ def is_unreachable(exc: BaseException) -> bool:
     return isinstance(exc, (httpx.TransportError, OSError))
 
 
+def remaining_text(total: int) -> str:
+    """Coarse remaining duration, e.g. ``1h 12m`` / ``12m`` / ``30s``."""
+    if total >= 3600:
+        return f"{total // 3600}h {(total % 3600) // 60}m"
+    if total >= 60:
+        return f"{total // 60}m"
+    return f"{total}s"
+
+
 def server_schedule_line(schedule: dict) -> str:
     """Status-line text for the next pending server action (#2661).
 
@@ -110,13 +119,7 @@ def server_schedule_line(schedule: dict) -> str:
     fire_at = fire_at.astimezone()
     remaining = fire_at - datetime.datetime.now().astimezone()
     total = max(0, int(remaining.total_seconds()))
-    if total >= 3600:
-        left = f"{total // 3600}h {(total % 3600) // 60}m"
-    elif total >= 60:
-        left = f"{total // 60}m"
-    else:
-        left = f"{total}s"
-    return f"server: {action} at {fire_at:%H:%M} (in {left})"
+    return f"server: {action} at {fire_at:%H:%M} (in {remaining_text(total)})"
 
 
 def reconnect_backoff(attempt: int) -> float:
@@ -131,6 +134,41 @@ def reconnect_backoff(attempt: int) -> float:
     return (base + jitter) / 2.0
 
 
+def missing_credentials(url, token) -> bool:
+    """True when either the server url or the token is gone."""
+    return not url or not token
+
+
+def token_refresh_remaining(token: str) -> float | None:
+    """Seconds until expiry when within the refresh margin, else None."""
+    exp = decode_token_claims(token).get("exp")
+    if exp is None:
+        return None
+    remaining = exp - time.time()
+    if remaining > TOKEN_REFRESH_MARGIN:
+        return None
+    return remaining
+
+
+async def refresh_or_expire(state, url: str, token: str) -> str | None:
+    """Refresh the token; None to continue, "expired" to log out.
+
+    A refresh failure may just mean a concurrent refresher (e.g. the
+    CLI's background thread) already rotated the token and got this one
+    blocklisted; re-read state: if the token changed, keep running
+    instead of forcing a logout (#1882 review).
+    """
+    new = await asyncio.to_thread(refresh_token, url, token)
+    if new:
+        logger.debug("Token refreshed proactively")
+        return None
+    if state.token() != token:
+        logger.debug("Token rotated concurrently; not expiring")
+        return None
+    logger.warning("Proactive token refresh failed")
+    return "expired"
+
+
 async def run_token_refresh_loop(state) -> str:
     """Proactively refresh the access token before it expires.
 
@@ -142,28 +180,110 @@ async def run_token_refresh_loop(state) -> str:
         await asyncio.sleep(TOKEN_REFRESH_POLL)
         url = state.current_url()
         token = state.token()
-        if not url or not token:
+        if missing_credentials(url, token):
             return "no_token"
-        exp = decode_token_claims(token).get("exp")
-        if exp is None:
-            continue
-        remaining = exp - time.time()
-        if remaining > TOKEN_REFRESH_MARGIN:
+        remaining = token_refresh_remaining(token)
+        if remaining is None:
             continue
         logger.debug("Token expires in %.0fs, refreshing", remaining)
-        new = await asyncio.to_thread(refresh_token, url, token)
-        if new:
-            logger.debug("Token refreshed proactively")
-        else:
-            # Refresh failed — but a concurrent refresher (e.g. the CLI's
-            # background thread) may already have rotated the token and got
-            # this one blocklisted. Re-read state: if the token changed,
-            # keep running instead of forcing a logout (#1882 review).
-            if state.token() != token:
-                logger.debug("Token rotated concurrently; not expiring")
-                continue
-            logger.warning("Proactive token refresh failed")
-            return "expired"
+        outcome = await refresh_or_expire(state, url, token)
+        if outcome is not None:
+            return outcome
+
+
+def filtered_workspaces(workspaces, matches, q: str) -> list:
+    """The workspaces matching the filter query (a copy when empty)."""
+    if not q:
+        return list(workspaces)
+    return [ws for ws in workspaces if matches(ws, q)]
+
+
+async def fetch_image_defaults(state) -> tuple[str, list[str]] | None:
+    """The deploy's default image + allowed list; None on auth failure.
+
+    Transport failures degrade to empty values (empty default, no list).
+    """
+    try:
+        data = await asyncio.to_thread(state.list_images)
+    except AuthError:
+        return None
+    except (httpx.HTTPError, OSError, ValueError) as exc:
+        logger.debug("Could not fetch image list: %s", exc)
+        return "", []
+    return data.get("default", "") or "", list(data.get("allowed") or [])
+
+
+async def fetch_deploy_toggles(state) -> tuple[bool, bool] | None:
+    """The deploy nix/sudo toggles; None on auth failure."""
+    try:
+        return await asyncio.to_thread(state.deploy_toggles)
+    except AuthError:
+        return None
+    except (httpx.HTTPError, OSError, ValueError) as exc:
+        logger.debug("Could not fetch deploy toggles: %s", exc)
+        return False, False
+
+
+async def fetch_or_default(state_method, fallback, label: str):
+    """Await a state fetch off-loop, falling back on transport errors."""
+    try:
+        return await asyncio.to_thread(state_method)
+    except (httpx.HTTPError, OSError, ValueError) as exc:
+        logger.debug("Could not fetch %s: %s", label, exc)
+        return fallback
+
+
+def has_credentials(state) -> bool:
+    """True when the active server has both a url and a token."""
+    return bool(state.current_url() and state.token())
+
+
+def list_method(state, owned: bool):
+    """The state's owned/shared list method for *owned*."""
+    return (
+        state.list_owned_workspaces if owned else state.list_shared_workspaces
+    )
+
+
+def apply_overlay_to(overlay: dict, ws) -> None:
+    """Overlay the freshest running state onto one workspace (#2032)."""
+    wid = str(getattr(ws, "id", "") or "")
+    if wid and wid in overlay:
+        ws.running = overlay[wid]
+
+
+def parse_status_event(raw: str) -> dict | None:
+    """A dict event from one frame, or None when not JSON / not an object."""
+    try:
+        event = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(event, dict):
+        return None
+    return event
+
+
+def safe_on_connect(on_connect) -> None:
+    """Invoke on_connect, isolating exceptions (logged, not fatal)."""
+    if on_connect is None:
+        return
+    try:
+        on_connect()
+    except Exception:  # noqa: BLE001
+        logger.exception("status WS on_connect callback failed")
+
+
+def safe_on_event(on_event, event: dict) -> None:
+    """Invoke on_event, isolating exceptions (logged, not fatal)."""
+    try:
+        on_event(event)
+    except Exception:  # noqa: BLE001
+        logger.exception("status WS event callback failed")
+
+
+def unreachable_error_text(exc) -> str:
+    """The error text for an unreachable list fetch."""
+    return str(exc) or "server unreachable"
 
 
 class MainScreen(StatusScreen):
@@ -484,11 +604,8 @@ class MainScreen(StatusScreen):
     def _apply_filter(self) -> None:
         """Re-populate both lists from cached data with filter + sort."""
         q = self._filter_text
-        owned = self._owned_all
-        shared = self._shared_all
-        if q:
-            owned = [ws for ws in owned if self._matches(ws, q)]
-            shared = [ws for ws in shared if self._matches(ws, q)]
+        owned = filtered_workspaces(self._owned_all, self._matches, q)
+        shared = filtered_workspaces(self._shared_all, self._matches, q)
         owned = self._sort_workspaces(owned)
         shared = self._sort_workspaces(shared)
         empty = "(no matches)" if q else "(no workspaces)"
@@ -504,25 +621,37 @@ class MainScreen(StatusScreen):
             if lv.index is None:
                 lv.index = 0
 
-    def on_key(self, event) -> None:
-        # Escape in the filter input: clear text or hide bar and return.
+    def on_escape_in_filter(self) -> None:
+        """Escape in the filter input: clear text or hide bar and return."""
+        inp = self.query_one("#filter_input", Input)
+        if inp.value:
+            inp.value = ""
+        else:
+            self.query_one("#filter_bar").display = False
+            self._focus_visible_list()
+
+    def on_down_from_tabs(self) -> bool:
+        """Down from the tab strip: focus the active workspace list (#1781)."""
+        lv = self._active_list()
+        if lv is None:
+            return False
+        lv.focus()
+        if lv.index is None:
+            lv.index = 0
+        return True
+
+    def handle_nav_key(self, event) -> bool:
+        """Handle a navigation key; True when consumed."""
         if event.key == "escape" and isinstance(self.focused, Input):
-            inp = self.query_one("#filter_input", Input)
-            if inp.value:
-                inp.value = ""
-            else:
-                self.query_one("#filter_bar").display = False
-                self._focus_visible_list()
-            event.stop()
-            return
-        # Down from the tab strip drops into the active workspace list (#1781).
+            self.on_escape_in_filter()
+            return True
         if event.key == "down" and isinstance(self.focused, Tabs):
-            lv = self._active_list()
-            if lv is not None:
-                event.stop()
-                lv.focus()
-                if lv.index is None:
-                    lv.index = 0
+            return self.on_down_from_tabs()
+        return False
+
+    def on_key(self, event) -> None:
+        if self.handle_nav_key(event):
+            event.stop()
 
     def action_switch_server(self) -> None:
         self.app.push_screen(ServerSwitchScreen())
@@ -547,20 +676,30 @@ class MainScreen(StatusScreen):
         lv = self._active_list()
         return lv.highlighted_child if lv is not None else None
 
+    def _ws_by_name(self, name: str):
+        """The first workspace (owned then shared) matching *name*."""
+        for ws in list(self._owned_all) + list(self._shared_all):
+            if getattr(ws, "name", "") == name:
+                return ws
+        return None
+
+    def _ws_by_item_id(self, item, by_id: dict):
+        """The workspace for a row's workspace_id, when known."""
+        wid = str(getattr(item, "workspace_id", "") or "")
+        if wid and wid in by_id:
+            return by_id[wid]
+        return None
+
     def _highlighted_ws(self):
         """The workspace object for the highlighted row, or None."""
         item = self._highlighted_item()
         if item is None:
             return None
-        wid = str(getattr(item, "workspace_id", "") or "")
         by_id = getattr(self, "_ws_by_id", {}) or {}
-        if wid and wid in by_id:
-            return by_id[wid]
-        name = getattr(item, "name", "") or ""
-        for ws in list(self._owned_all) + list(self._shared_all):
-            if getattr(ws, "name", "") == name:
-                return ws
-        return None
+        by_id_match = self._ws_by_item_id(item, by_id)
+        if by_id_match is not None:
+            return by_id_match
+        return self._ws_by_name(getattr(item, "name", "") or "")
 
     def _require_highlighted(self) -> str | None:
         """Return the highlighted workspace name, or flash a hint + None."""
@@ -822,51 +961,31 @@ class MainScreen(StatusScreen):
 
     async def do_create(self) -> None:
         state = self.app.tui_state
-        try:
-            data = await asyncio.to_thread(state.list_images)
-            default = data.get("default", "") or ""
-            allowed = list(data.get("allowed") or [])
-        except AuthError:
+        images = await fetch_image_defaults(state)
+        if images is None:
             self.app.session_expired()
             return
-        except (httpx.HTTPError, OSError, ValueError) as exc:
-            logger.debug("Could not fetch image list: %s", exc)
-            default, allowed = "", []
+        default, allowed = images
         # #2974: deploy-level nix/sudo toggles moved from the images
         # payload to the authenticated-only /config fields.
-        try:
-            nix_available, sudo_available = await asyncio.to_thread(
-                state.deploy_toggles
-            )
-        except AuthError:
+        toggles = await fetch_deploy_toggles(state)
+        if toggles is None:
             self.app.session_expired()
             return
-        except (httpx.HTTPError, OSError, ValueError) as exc:
-            logger.debug("Could not fetch deploy toggles: %s", exc)
-            nix_available = sudo_available = False
-        try:
-            allow_autostart = await asyncio.to_thread(state.allow_autostart)
-        except (httpx.HTTPError, OSError, ValueError) as exc:
-            logger.debug("Could not fetch autostart config: %s", exc)
-            allow_autostart = False
-        try:
-            default_domains = await asyncio.to_thread(
-                state.default_allowed_domains
-            )
-        except (httpx.HTTPError, OSError, ValueError) as exc:
-            logger.debug("Could not fetch default allowed domains: %s", exc)
-            default_domains = []
+        nix_available, sudo_available = toggles
+        allow_autostart = await fetch_or_default(
+            state.allow_autostart, False, "autostart config"
+        )
+        default_domains = await fetch_or_default(
+            state.default_allowed_domains, [], "default allowed domains"
+        )
         # #2721: the deploy's home-layout default, pre-reflected by the
         # form's Per-handle home checkbox. None (fetch failed) hides the
         # checkbox and omits the field, so the server applies its own
         # default — never a silently forced layout (#2737 review).
-        try:
-            default_per_handle_home = await asyncio.to_thread(
-                state.default_per_handle_home
-            )
-        except (httpx.HTTPError, OSError, ValueError) as exc:
-            logger.debug("Could not fetch home-layout default: %s", exc)
-            default_per_handle_home = None
+        default_per_handle_home = await fetch_or_default(
+            state.default_per_handle_home, None, "home-layout default"
+        )
         self.app.push_screen(
             CreateWorkspaceScreen(
                 allowed=allowed,
@@ -992,9 +1111,7 @@ class MainScreen(StatusScreen):
         if not self._running_overlay:
             return
         for ws in workspaces:
-            wid = str(getattr(ws, "id", "") or "")
-            if wid and wid in self._running_overlay:
-                ws.running = self._running_overlay[wid]
+            apply_overlay_to(self._running_overlay, ws)
 
     def _render_unreachable(self, label: str) -> None:
         """Show *label* as the only row in both workspace lists."""
@@ -1080,18 +1197,12 @@ class MainScreen(StatusScreen):
     async def _safe_list(self, *, owned: bool) -> list:
         state = self.app.tui_state
         try:
-            return await asyncio.to_thread(
-                state.list_owned_workspaces
-                if owned
-                else state.list_shared_workspaces
-            )
+            return await asyncio.to_thread(list_method(state, owned))
         except AuthError:
             raise
         except Exception as exc:
             if is_unreachable(exc):
-                raise ServerUnreachable(
-                    str(exc) or "server unreachable"
-                ) from exc
+                raise ServerUnreachable(unreachable_error_text(exc)) from exc
             # A non-transport failure (e.g. a decode error) with the server
             # reachable: preserve the historical "treat as empty" behaviour
             # rather than mislabel a healthy account as down.
@@ -1219,6 +1330,17 @@ class MainScreen(StatusScreen):
                 self._status_loop, name="status-ws"
             )
 
+    @staticmethod
+    def cancel_superseded(awaiting) -> None:
+        """Cancel (or retrieve) an awaiting task superseded by a drop."""
+        if not awaiting.done():
+            awaiting.cancel()
+        elif not awaiting.cancelled():
+            # Both finished on the same tick: retrieve (and discard)
+            # the outcome so asyncio doesn't warn it was never
+            # retrieved. The drop supersedes it either way.
+            awaiting.exception()
+
     async def _wait_drop_or(self, awaiting: asyncio.Future) -> bool:
         """Await ``awaiting`` unless a server-switch drop fires first.
 
@@ -1240,13 +1362,7 @@ class MainScreen(StatusScreen):
                 waiter.cancel()
             raise
         if waiter in done:
-            if not awaiting.done():
-                awaiting.cancel()
-            elif not awaiting.cancelled():
-                # Both finished on the same tick: retrieve (and discard)
-                # the outcome so asyncio doesn't warn it was never
-                # retrieved. The drop supersedes it either way.
-                awaiting.exception()
+            self.cancel_superseded(awaiting)
             return True
         waiter.cancel()
         return False
@@ -1303,6 +1419,28 @@ class MainScreen(StatusScreen):
             if not listener.done():
                 listener.cancel()
 
+    async def _listener_cycle(self, url: str, token: str) -> bool:
+        """Run one listener to its end, then handle the outcome.
+
+        True to re-dial (switch or elapsed backoff), False to exit
+        (expired / gave up / screen popped).
+        """
+        outcome = await self._run_status_listener(url, token)
+        if outcome == "switched":
+            return True
+        if outcome == "expired":
+            return False
+        self._ws_connected = False
+        # Connection lost (clean close or error). Reconnect with bounded
+        # backoff; the top-of-iteration guard catches a screen pop that
+        # lands during the backoff sleep.
+        delay_outcome = await self._wait_reconnect_delay()
+        if delay_outcome == "switched":
+            # Switch during the backoff sleep: skip the rest of the
+            # delay and re-dial the new server now (#2704).
+            return True
+        return delay_outcome != "exit"
+
     async def _status_loop(self) -> None:
         """Single reachability signal: maintain the status WS and drive the
         unreachable overlay from its lifecycle (#2052).
@@ -1319,7 +1457,7 @@ class MainScreen(StatusScreen):
         the new server immediately (#2704).
         """
         state = self.app.tui_state
-        if not state.current_url() or not state.token():
+        if not has_credentials(state):
             return
         while True:
             # Re-read BOTH url and token every iteration: a server switch
@@ -1339,23 +1477,7 @@ class MainScreen(StatusScreen):
             # captured, so clearing it here keeps the new connection from
             # being torn down the instant it is made.
             self._ws_drop.clear()
-            outcome = await self._run_status_listener(url, token)
-            if outcome == "switched":
-                continue
-            if outcome == "expired":
-                return
-            # The connection is over (clean close or error) — the backend is
-            # no longer WS-reachable from this screen's point of view.
-            self._ws_connected = False
-            # Connection lost (clean close or error). Reconnect with bounded
-            # backoff; the top-of-iteration guard catches a screen pop that
-            # lands during the backoff sleep.
-            delay_outcome = await self._wait_reconnect_delay()
-            if delay_outcome == "switched":
-                # Switch during the backoff sleep: skip the rest of the
-                # delay and re-dial the new server now (#2704).
-                continue
-            if delay_outcome == "exit":
+            if not await self._listener_cycle(url, token):
                 return
 
     async def _wait_reconnect_delay(self) -> str:
@@ -1417,44 +1539,56 @@ class MainScreen(StatusScreen):
         if result in ("expired", "no_token"):
             self.app.session_expired()
 
+    # Host lifecycle event type -> handler method name (#2527/#2661).
+    _LIFECYCLE_HANDLERS = {
+        "host_shutdown": "_lifecycle_host_shutdown",
+        "server_recycle": "_lifecycle_server_recycle",
+        "host_started": "_lifecycle_host_started",
+        "server_schedule_fired": "_lifecycle_schedule_fired",
+    }
+
+    def _lifecycle_host_shutdown(self, event: dict) -> None:
+        self.app.live_extra = "server: shutting down"
+        self._refresh_status()
+        self.app.notify("Server is shutting down", severity="warning")
+
+    def _lifecycle_server_recycle(self, event: dict) -> None:
+        phase = str(event.get("phase") or "")
+        word = {
+            "draining": "preparing to recycle",
+            "recycling": "recycling",
+        }.get(phase, "recycling")
+        self.app.live_extra = f"server: {word}"
+        self._refresh_status()
+        self.app.notify(f"Server is {word}")
+
+    def _lifecycle_host_started(self, event: dict) -> None:
+        self.app.live_extra = "server: back up"
+        self._refresh_status()
+
+    def _lifecycle_schedule_fired(self, event: dict) -> None:
+        action = str(event.get("action") or "action")
+        self.app.live_extra = f"server: scheduled {action} running"
+        self._refresh_status()
+        self.app.notify(
+            f"Scheduled server {action} is happening now",
+            severity="warning",
+        )
+
     def _apply_server_lifecycle_event(self, etype: str, event: dict) -> bool:
         """#2527/#2661: host lifecycle notices become a human-readable
         status line; notification only — the reconnect loop (silent first
         retry, backoff, unreachable overlay) is untouched, so a
         restart/shutdown never visually impedes reconnection. Returns True
         when the event was consumed."""
-        if etype == "host_shutdown":
-            self.app.live_extra = "server: shutting down"
-            self._refresh_status()
-            self.app.notify("Server is shutting down", severity="warning")
-            return True
-        if etype == "server_recycle":
-            phase = str(event.get("phase") or "")
-            word = {
-                "draining": "preparing to recycle",
-                "recycling": "recycling",
-            }.get(phase, "recycling")
-            self.app.live_extra = f"server: {word}"
-            self._refresh_status()
-            self.app.notify(f"Server is {word}")
-            return True
-        if etype == "host_started":
-            self.app.live_extra = "server: back up"
-            self._refresh_status()
-            return True
         if etype == "server_schedule":
             self._apply_server_schedule_event(event)
             return True
-        if etype == "server_schedule_fired":
-            action = str(event.get("action") or "action")
-            self.app.live_extra = f"server: scheduled {action} running"
-            self._refresh_status()
-            self.app.notify(
-                f"Scheduled server {action} is happening now",
-                severity="warning",
-            )
-            return True
-        return False
+        handler = self._LIFECYCLE_HANDLERS.get(etype)
+        if handler is None:
+            return False
+        getattr(self, handler)(event)
+        return True
 
     def _apply_server_schedule_event(self, event: dict) -> None:
         """#2661: pending server stop/recycle — show the next one as
@@ -1473,6 +1607,16 @@ class MainScreen(StatusScreen):
         self.app.live_extra = server_schedule_line(next_up)
         self._refresh_status()
 
+    def _apply_status_list_events(self, etype: str, event: dict) -> None:
+        """The list-mutating status events."""
+        if etype == "workspaces_changed":
+            self.refresh_lists()
+        elif etype == "container_status":
+            self._update_running(
+                str(event.get("workspace_id") or ""),
+                bool(event.get("running")),
+            )
+
     def _on_status_event(self, event: dict) -> None:
         etype = event.get("type", "event")
         if self._apply_server_lifecycle_event(etype, event):
@@ -1483,14 +1627,24 @@ class MainScreen(StatusScreen):
         if etype not in self._STATUS_SILENT_EVENTS:
             self.app.live_extra = f"live: {etype}"
             self._refresh_status()
-        if etype == "workspaces_changed":
-            self.refresh_lists()
-        elif etype == "container_status":
-            self._update_running(
-                str(event.get("workspace_id") or ""),
-                bool(event.get("running")),
-            )
+        self._apply_status_list_events(etype, event)
         self._forward_status_to_detail(event)
+
+    def _patch_running_row(self, item, ws) -> None:
+        """Repaint one list row's ● icon in place."""
+        try:
+            item.query_one(".ws-name").update(self._fmt_name(ws))
+        except NoMatches:
+            pass
+
+    def _patch_running_rows(self, workspace_id: str, ws) -> None:
+        """Repaint the ● icon on the workspace's row in both lists."""
+        for sel in ("#owned_list", "#shared_list"):
+            lv = self.query_one(sel, ListView)
+            for item in lv.query(ListItem):
+                if getattr(item, "workspace_id", None) == workspace_id:
+                    self._patch_running_row(item, ws)
+                    break
 
     def _update_running(self, workspace_id: str, running: bool) -> None:
         """Update a single workspace's ● icon in-place (#1791).
@@ -1510,15 +1664,7 @@ class MainScreen(StatusScreen):
         if ws is None:
             return
         ws.running = running
-        for sel in ("#owned_list", "#shared_list"):
-            lv = self.query_one(sel, ListView)
-            for item in lv.query(ListItem):
-                if getattr(item, "workspace_id", None) == workspace_id:
-                    try:
-                        item.query_one(".ws-name").update(self._fmt_name(ws))
-                    except NoMatches:
-                        pass
-                    break
+        self._patch_running_rows(workspace_id, ws)
         # The highlighted row's running state may have changed — refresh
         # the Stop/Start hint label so it never offers the wrong action.
         self._refresh_action_hints()
@@ -1581,19 +1727,8 @@ async def listen_for_status(
         ping_interval=_WS_PING_INTERVAL,
         ping_timeout=_WS_PING_TIMEOUT,
     ) as ws:
-        if on_connect is not None:
-            try:
-                on_connect()
-            except Exception:  # noqa: BLE001
-                logger.exception("status WS on_connect callback failed")
+        safe_on_connect(on_connect)
         async for raw in ws:
-            try:
-                event = json.loads(raw)
-            except (TypeError, ValueError):
-                continue
-            if not isinstance(event, dict):
-                continue
-            try:
-                on_event(event)
-            except Exception:  # noqa: BLE001
-                logger.exception("status WS event callback failed")
+            event = parse_status_event(raw)
+            if event is not None:
+                safe_on_event(on_event, event)

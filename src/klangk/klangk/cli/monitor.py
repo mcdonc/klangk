@@ -24,6 +24,36 @@ from . import context
 from .transport import ws_connect
 
 
+def truthy_env(msg: dict, key: str, env_name: str) -> dict[str, str]:
+    """{env_name: value} when *key* is present and truthy."""
+    value = msg.get(key)
+    return {env_name: str(value)} if value else {}
+
+
+def present_env(msg: dict, key: str, env_name: str) -> dict[str, str]:
+    """{env_name: value} when *key* is present (even falsy, e.g. seq 0)."""
+    value = msg.get(key)
+    return {env_name: str(value)} if value is not None else {}
+
+
+def health_event_env(msg: dict) -> dict[str, str]:
+    """Env vars for a ``service_health`` event."""
+    env = {
+        "KLANGK_HEALTHY": "true" if msg.get("healthy") else "false",
+        # ``running`` distinguishes "unhealthy check" from "container
+        # stopped" -- both have healthy=false, but a death frame carries
+        # running=false (#1175 item 2).  Defaults to true for older
+        # servers that don't send the field.
+        "KLANGK_RUNNING": "true" if msg.get("running", True) else "false",
+    }
+    env.update(truthy_env(msg, "health_message", "KLANGK_HEALTH_MESSAGE"))
+    env.update(
+        truthy_env(msg, "health_checked_at", "KLANGK_HEALTH_CHECKED_AT")
+    )
+    env.update(present_env(msg, "seq", "KLANGK_HEALTH_SEQ"))
+    return env
+
+
 def dispatch_monitor_event(msg: dict, command: list[str]) -> None:
     """Act on one server event.
 
@@ -47,21 +77,7 @@ def dispatch_monitor_event(msg: dict, command: list[str]) -> None:
     if wid is not None:
         env["KLANGK_WORKSPACE_ID"] = str(wid)
     if msg.get("type") == "service_health":
-        env["KLANGK_HEALTHY"] = "true" if msg.get("healthy") else "false"
-        # ``running`` distinguishes "unhealthy check" from "container
-        # stopped" -- both have healthy=false, but a death frame carries
-        # running=false (#1175 item 2).  Defaults to true for older
-        # servers that don't send the field.
-        env["KLANGK_RUNNING"] = "true" if msg.get("running", True) else "false"
-        health_msg = msg.get("health_message")
-        if health_msg:
-            env["KLANGK_HEALTH_MESSAGE"] = str(health_msg)
-        checked_at = msg.get("health_checked_at")
-        if checked_at:
-            env["KLANGK_HEALTH_CHECKED_AT"] = str(checked_at)
-        seq = msg.get("seq")
-        if seq is not None:
-            env["KLANGK_HEALTH_SEQ"] = str(seq)
+        env.update(health_event_env(msg))
     # FileNotFoundError (missing binary) propagates to the caller.
     subprocess.run(command, input=payload.encode(), env=env, check=False)
 
@@ -89,6 +105,18 @@ async def monitor_connection(
                 dispatch_monitor_event(msg, command)
 
 
+def type_allowed(etype, type_filter: set) -> bool:
+    """True when *etype* passes the --type filter."""
+    return not type_filter or etype in type_filter
+
+
+def workspace_allowed(wid, ws_filter: set) -> bool:
+    """True when *wid* passes the --workspace filter."""
+    if not ws_filter:
+        return True
+    return wid is not None and wid in ws_filter
+
+
 def parse_monitor_event(
     raw: str, type_filter: set, ws_filter: set
 ) -> dict | None:
@@ -101,10 +129,9 @@ def parse_monitor_event(
     etype = msg.get("type")
     if etype is None:
         return None  # control/ack messages aren't events
-    if type_filter and etype not in type_filter:
+    if not type_allowed(etype, type_filter):
         return None
-    wid = msg.get("workspace_id")
-    if ws_filter and (wid is None or wid not in ws_filter):
+    if not workspace_allowed(msg.get("workspace_id"), ws_filter):
         return None
     return msg
 
@@ -135,6 +162,39 @@ async def refresh_token_threaded(server_url: str, token: str) -> str | None:
     return None
 
 
+def classify_monitor_failure(exc: BaseException) -> tuple[bool, str]:
+    """``(auth_close, reason)`` for a monitor connection failure."""
+    if isinstance(exc, websockets.ConnectionClosed):
+        code = exc.rcvd.code if exc.rcvd else None
+        return code in (4001, 4002), f"closed (code {code})"
+    if isinstance(exc, websockets.InvalidStatus):
+        code = exc.response.status_code
+        return code in (4001, 4002), f"rejected (HTTP {code})"
+    return False, f"network error: {exc}"
+
+
+async def refresh_on_auth_close(server_spec: str, current_token: str) -> str:
+    """A fresh token after an auth close, or the current one.
+
+    A failed refresh still returns the current token so the monitor
+    keeps retrying — the server/token may recover.
+    """
+    new = await refresh_token_threaded(server_spec, current_token)
+    if new:
+        context.err.print("[green]Token refreshed.[/green]")
+    else:
+        context.err.print(
+            "[yellow]Token refresh failed; retrying with the"
+            " current token.[/yellow]"
+        )
+    return new or current_token
+
+
+def reconnects_exhausted(max_reconnects: int | None, attempt: int) -> bool:
+    """True when the reconnect budget is spent."""
+    return max_reconnects is not None and attempt >= max_reconnects
+
+
 async def monitor_run(
     server_spec: str,
     token: str,
@@ -161,7 +221,6 @@ async def monitor_run(
     )
     attempt = 0
     while True:
-        auth_close = False
         try:
             await monitor_connection(
                 server_spec,
@@ -171,33 +230,25 @@ async def monitor_run(
                 types,
                 workspaces,
             )
+            auth_close = False
             reason = "connection closed"
-        except websockets.ConnectionClosed as exc:
-            code = exc.rcvd.code if exc.rcvd else None
-            auth_close = code in (4001, 4002)
-            reason = f"closed (code {code})"
-        except websockets.InvalidStatus as exc:
-            code = exc.response.status_code
-            auth_close = code in (4001, 4002)
-            reason = f"rejected (HTTP {code})"
-        except (OSError, asyncio.TimeoutError) as exc:
-            reason = f"network error: {exc}"
+        except (
+            websockets.ConnectionClosed,
+            websockets.InvalidStatus,
+            OSError,
+            asyncio.TimeoutError,
+        ) as exc:
+            auth_close, reason = classify_monitor_failure(exc)
 
         # On an auth-related close, try to refresh the JWT. A successful
         # refresh lets the next attempt authenticate cleanly; a failed
         # one still reconnects (the server/token may recover).
         if auth_close:
-            new = await refresh_token_threaded(server_spec, current_token)
-            if new:
-                current_token = new
-                context.err.print("[green]Token refreshed.[/green]")
-            else:
-                context.err.print(
-                    "[yellow]Token refresh failed; retrying with the"
-                    " current token.[/yellow]"
-                )
+            current_token = await refresh_on_auth_close(
+                server_spec, current_token
+            )
 
-        if max_reconnects is not None and attempt >= max_reconnects:
+        if reconnects_exhausted(max_reconnects, attempt):
             context.err.print(
                 f"[red]{reason}; max reconnects ({max_reconnects})"
                 " reached, giving up.[/red]"
@@ -210,6 +261,16 @@ async def monitor_run(
             f" (attempt {attempt})...[/yellow]"
         )
         await asyncio.sleep(delay)
+
+
+def monitor_options(
+    command: list[str] | None, no_reconnect: bool, max_reconnects: int | None
+) -> tuple[list[str], int | None]:
+    """Resolve the command list and reconnect bound from the CLI flags."""
+    return (
+        list(command) if command else [],
+        0 if no_reconnect else max_reconnects,
+    )
 
 
 @context.app.command()
@@ -304,14 +365,16 @@ def monitor(
             "[red]Not logged in. Run `klangk login` first.[/red]"
         )
         raise typer.Exit(code=1)
-    effective_max = 0 if no_reconnect else max_reconnects
+    command, effective_max = monitor_options(
+        command, no_reconnect, max_reconnects
+    )
     try:
         asyncio.run(
             monitor_run(
                 surl,
                 token,
                 max_size=context.ws_max_size(),
-                command=list(command) if command else [],
+                command=command,
                 types=event_type,
                 workspaces=workspace,
                 max_reconnects=effective_max,

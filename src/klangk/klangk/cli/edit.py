@@ -42,6 +42,54 @@ CREATE_TIME_KEYS = {
 CREATE_TIME_SETTINGS_DEFAULTS = {"nix": False, "allow_sudo": True}
 
 
+def print_list_editor_state(items, header, empty_note) -> None:
+    """Show the numbered current list (or the empty note)."""
+    if items:
+        typer.echo(f"\n{header}:")
+        for i, item in enumerate(items, 1):
+            typer.echo(f"  {i}. {item}")
+    else:
+        typer.echo(f"\n{empty_note}")
+
+
+def prompt_list_add(items, add_prompt, validate) -> bool | None:
+    """One add prompt: True added / False invalid (retry) / None skipped."""
+    add = input(add_prompt).strip()
+    if not add:
+        return None
+    err = validate(add)
+    if err:
+        typer.echo(err)
+        return False
+    items.append(add)
+    return True
+
+
+def prompt_list_remove(items, remove_what) -> bool | None:
+    """One remove prompt: True removed / False invalid (retry) / None skipped."""
+    rm = input(f"Remove {remove_what} number (or Enter to skip): ").strip()
+    if not rm:
+        return None
+    try:
+        idx = int(rm) - 1
+    except ValueError:
+        typer.echo("Invalid number.")
+        return False
+    if not 0 <= idx < len(items):
+        typer.echo("Invalid number.")
+        return False
+    typer.echo(f"Removed: {items.pop(idx)}")
+    return True
+
+
+def next_list_outcome(items, *, add_prompt, remove_what, validate):
+    """One add/remove interaction: True/False (changed / retry) or None (done)."""
+    outcome = prompt_list_add(items, add_prompt, validate)
+    if outcome is None and items:
+        outcome = prompt_list_remove(items, remove_what)
+    return outcome
+
+
 def edit_list_interactively(
     items: list[str],
     *,
@@ -54,91 +102,81 @@ def edit_list_interactively(
     """Add/remove loop for a repeatable string list; True if changed."""
     changed = False
     while True:
-        if items:
-            typer.echo(f"\n{header}:")
-            for i, item in enumerate(items, 1):
-                typer.echo(f"  {i}. {item}")
-        else:
-            typer.echo(f"\n{empty_note}")
-
-        add = input(add_prompt).strip()
-        if add:
-            err = validate(add)
-            if err:
-                typer.echo(err)
-                continue
-            items.append(add)
+        print_list_editor_state(items, header, empty_note)
+        outcome = next_list_outcome(
+            items,
+            add_prompt=add_prompt,
+            remove_what=remove_what,
+            validate=validate,
+        )
+        if outcome is None:
+            return changed
+        if outcome:
             changed = True
-            continue
 
-        if items:
-            rm = input(
-                f"Remove {remove_what} number (or Enter to skip): "
-            ).strip()
-            if rm:
-                try:
-                    idx = int(rm) - 1
-                    if 0 <= idx < len(items):
-                        removed = items.pop(idx)
-                        typer.echo(f"Removed: {removed}")
-                        changed = True
-                        continue
-                    else:
-                        typer.echo("Invalid number.")
-                        continue
-                except ValueError:
-                    typer.echo("Invalid number.")
-                    continue
 
-        break  # both add and remove were skipped
-    return changed
+def print_env_state(env) -> None:
+    """Show the numbered current env vars (or the empty note)."""
+    if env:
+        typer.echo("\nCurrent environment variables:")
+        env_items = list(env.items())
+        for i, (k, v) in enumerate(env_items, 1):
+            typer.echo(f"  {i}. {k}={v}")
+    else:
+        typer.echo("\nNo environment variables configured.")
+
+
+def prompt_env_add(env) -> bool | None:
+    """One add prompt: True added / False invalid (retry) / None skipped."""
+    add = input("\nAdd env var (e.g. KEY=VALUE, or Enter to skip): ").strip()
+    if not add:
+        return None
+    if "=" not in add:
+        typer.echo("Invalid format, expected KEY=VALUE.")
+        return False
+    key, _, value = add.partition("=")
+    env[key] = value
+    return True
+
+
+def prompt_env_remove(env) -> bool | None:
+    """One remove prompt: True removed / False invalid (retry) / None skipped."""
+    rm = input("Remove env var number (or Enter to skip): ").strip()
+    if not rm:
+        return None
+    try:
+        idx = int(rm) - 1
+    except ValueError:
+        typer.echo("Invalid number.")
+        return False
+    env_items = list(env.items())
+    if not 0 <= idx < len(env_items):
+        typer.echo("Invalid number.")
+        return False
+    removed_key = env_items[idx][0]
+    del env[removed_key]
+    typer.echo(f"Removed: {removed_key}")
+    return True
+
+
+def next_env_outcome(env):
+    """One add/remove interaction: True/False (changed / retry) or None (done)."""
+    outcome = prompt_env_add(env)
+    if outcome is None and env:
+        outcome = prompt_env_remove(env)
+    return outcome
 
 
 def edit_env_interactively(env: dict) -> bool:
     """Add/remove loop for the env-var map; True if changed."""
     changed = False
     while True:
-        if env:
-            typer.echo("\nCurrent environment variables:")
-            env_items = list(env.items())
-            for i, (k, v) in enumerate(env_items, 1):
-                typer.echo(f"  {i}. {k}={v}")
-        else:
-            typer.echo("\nNo environment variables configured.")
-
-        add = input(
-            "\nAdd env var (e.g. KEY=VALUE, or Enter to skip): "
-        ).strip()
-        if add:
-            if "=" not in add:
-                typer.echo("Invalid format, expected KEY=VALUE.")
-                continue
-            key, _, value = add.partition("=")
-            env[key] = value
+        print_env_state(env)
+        outcome = next_env_outcome(env)
+        if outcome is None:
+            return changed
+        if outcome:
             changed = True
-            continue
-
-        if env:
-            rm = input("Remove env var number (or Enter to skip): ").strip()
-            if rm:
-                try:
-                    idx = int(rm) - 1
-                    env_items = list(env.items())
-                    if 0 <= idx < len(env_items):
-                        removed_key = env_items[idx][0]
-                        del env[removed_key]
-                        typer.echo(f"Removed: {removed_key}")
-                        changed = True
-                        continue
-                    else:
-                        typer.echo("Invalid number.")
-                        continue
-                except ValueError:
-                    typer.echo("Invalid number.")
-                    continue
-
-        break  # both add and remove were skipped
-    return changed
 
 
 def has_any_flags(
@@ -295,6 +333,18 @@ def interactive_edit_body(ws) -> dict:
     return body
 
 
+def clearable_body(clearable: dict, skip) -> dict:
+    """Body fields for clearable overrides; a falsy value maps to None
+    on the wire ('' clears back to the deploy default, #2768). *skip* is
+    the not-given marker filtered out (``SENTINEL`` for prompts, ``None``
+    for flags)."""
+    return {
+        key: value or None
+        for key, value in clearable.items()
+        if value is not skip
+    }
+
+
 def prompted_body_fields(
     ws, new_name, new_image, new_command, new_health_check, new_banner
 ) -> dict:
@@ -303,16 +353,25 @@ def prompted_body_fields(
     if new_name is not SENTINEL:
         body["name"] = new_name or ws.name  # don't allow empty name
     # A cleared (whitespace) answer maps to None on the wire (#2768).
-    clearable = {
-        "image": new_image,
-        "service_command": new_command,
-        "health_check": new_health_check,
-        "classification_banner": new_banner,
-    }
-    for key, value in clearable.items():
-        if value is not SENTINEL:
-            body[key] = value or None
+    body.update(
+        clearable_body(
+            {
+                "image": new_image,
+                "service_command": new_command,
+                "health_check": new_health_check,
+                "classification_banner": new_banner,
+            },
+            skip=SENTINEL,
+        )
+    )
     return body
+
+
+def changed_list_body(changed: bool, key: str, current) -> dict:
+    """Body field for one interactively edited list (only when changed)."""
+    if not changed:
+        return {}
+    return {key: current or None}
 
 
 def edited_list_body(
@@ -327,14 +386,16 @@ def edited_list_body(
 ) -> dict:
     """Body fields from the interactive list editors (changed lists only)."""
     body: dict = {}
-    if mounts_changed:
-        body["mounts"] = current_mounts or None
-    if env_changed:
-        body["env"] = current_env or None
-    if domains_changed:
-        body["allowed_domains"] = current_domains or None
-    if rejected_changed:
-        body["rejected_domains"] = current_rejected or None
+    body.update(changed_list_body(mounts_changed, "mounts", current_mounts))
+    body.update(changed_list_body(env_changed, "env", current_env))
+    body.update(
+        changed_list_body(domains_changed, "allowed_domains", current_domains)
+    )
+    body.update(
+        changed_list_body(
+            rejected_changed, "rejected_domains", current_rejected
+        )
+    )
     return body
 
 
@@ -348,6 +409,13 @@ def validated_specs_or_exit(values: list[str], validate) -> list[str]:
     return values
 
 
+def override_body(overrides: dict) -> dict:
+    """Body fields for the non-None overrides."""
+    return {
+        key: value for key, value in overrides.items() if value is not None
+    }
+
+
 def flag_scalar_body(
     *,
     name: str | None,
@@ -359,27 +427,37 @@ def flag_scalar_body(
     classification_banner: str | None,
 ) -> dict:
     """Body fields for the scalar (non-repeatable) flags."""
-    body: dict = {}
-    if name is not None:
-        body["name"] = name
+    body: dict = override_body(
+        {
+            "name": name,
+            # Mutable (#2719); takes effect on the next connect/start —
+            # never a restart-prompt field (existing sessions keep their
+            # layout until they end).
+            "per_handle_home": per_handle_home,
+            "auto_start": auto_start,
+        }
+    )
     # '' clears these back to the deploy default (None on the wire).
-    clearable = {
-        "image": image,
-        "service_command": command,
-        "health_check": health_check,
-        "classification_banner": classification_banner,
-    }
-    for key, value in clearable.items():
-        if value is not None:
-            body[key] = value or None
-    if auto_start is not None:
-        body["auto_start"] = auto_start
-    if per_handle_home is not None:
-        # Mutable (#2719); takes effect on the next connect/start —
-        # never a restart-prompt field (existing sessions keep their
-        # layout until they end).
-        body["per_handle_home"] = per_handle_home
+    body.update(
+        clearable_body(
+            {
+                "image": image,
+                "service_command": command,
+                "health_check": health_check,
+                "classification_banner": classification_banner,
+            },
+            skip=None,
+        )
+    )
     return body
+
+
+def list_flag_body(value, key: str, validate) -> dict:
+    """Body for one repeatable list flag; {} when the flag was not given."""
+    if not isinstance(value, list):
+        return {}
+    validated_specs_or_exit(value, validate)
+    return {key: value or None}
 
 
 def flag_list_body(
@@ -397,21 +475,20 @@ def flag_list_body(
 ) -> dict:
     """Body fields for the repeatable list flags and the settings bag."""
     body: dict = {}
-    if isinstance(mount, list):
-        validated_specs_or_exit(mount, validate_mount_spec)
-        body["mounts"] = mount or None
+    body.update(list_flag_body(mount, "mounts", validate_mount_spec))
     if isinstance(env, list):
         body["env"] = parse_env_list(env) or None
-    if isinstance(allow, list):
-        validated_specs_or_exit(allow, validate_allowed_domain_spec)
-        body["allowed_domains"] = allow or None
-    if isinstance(reject, list):
-        # CIDR is meaningless for a name-level NXDOMAIN deny-list (#2367).
-        validated_specs_or_exit(
+    body.update(
+        list_flag_body(allow, "allowed_domains", validate_allowed_domain_spec)
+    )
+    # CIDR is meaningless for a name-level NXDOMAIN deny-list (#2367).
+    body.update(
+        list_flag_body(
             reject,
+            "rejected_domains",
             lambda spec: validate_allowed_domain_spec(spec, allow_cidr=False),
         )
-        body["rejected_domains"] = reject or None
+    )
     merged = merged_flag_settings(
         ws, idle_timeout, cpu_limit, memory_limit, pids_limit, allow_sudo
     )
@@ -441,17 +518,32 @@ def merged_flag_settings(
     return merged
 
 
+def create_time_setting_changed(
+    bag: dict, old: dict, key: str, default
+) -> bool:
+    """True when a create-time settings key differs from its old value."""
+    return bag.get(key, default) != old.get(key, default)
+
+
+def settings_changed(ws, body: dict) -> bool:
+    """True when a create-time settings key (nix / allow_sudo) changed."""
+    if "settings" not in body:
+        return False
+    bag = body["settings"] or {}
+    old = ws.settings or {}
+    return any(
+        create_time_setting_changed(bag, old, key, default)
+        for key, default in CREATE_TIME_SETTINGS_DEFAULTS.items()
+    )
+
+
 def restart_needed(ws, body: dict) -> bool:
     """True if any create-time field changed on a running workspace."""
-    if ws.running and bool(body.keys() & CREATE_TIME_KEYS):
+    if not ws.running:
+        return False
+    if body.keys() & CREATE_TIME_KEYS:
         return True
-    if ws.running and "settings" in body:
-        bag = body["settings"] or {}
-        old = ws.settings or {}
-        for key, default in CREATE_TIME_SETTINGS_DEFAULTS.items():
-            if bag.get(key, default) != old.get(key, default):
-                return True
-    return False
+    return settings_changed(ws, body)
 
 
 def apply_edit(client, ws, body: dict, restart: bool) -> None:

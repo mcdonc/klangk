@@ -116,6 +116,19 @@ def _split_terminal_cmd(text: str) -> list[str] | None:
         return None
 
 
+def terminal_cmd_from_str(value: str) -> list[str] | None:
+    """A shell-string terminal-open-cmd, shlex-split."""
+    value = value.strip()
+    return _split_terminal_cmd(value) if value else None
+
+
+def terminal_cmd_from_list(value: list) -> list[str] | None:
+    """A list-of-strings terminal-open-cmd, copied (None when mistyped)."""
+    if not all(isinstance(v, str) for v in value):
+        return None
+    return list(value) if value else None
+
+
 def parse_terminal_open_cmd(value) -> list[str] | None:
     """Normalize a ``terminal-open-cmd`` yaml value to an argv list.
 
@@ -125,10 +138,9 @@ def parse_terminal_open_cmd(value) -> list[str] | None:
     inline shell instead of crashing the CLI/TUI (#2685).
     """
     if isinstance(value, str):
-        value = value.strip()
-        return _split_terminal_cmd(value) if value else None
-    if isinstance(value, list) and all(isinstance(v, str) for v in value):
-        return list(value) if value else None
+        return terminal_cmd_from_str(value)
+    if isinstance(value, list):
+        return terminal_cmd_from_list(value)
     return None
 
 
@@ -140,6 +152,21 @@ class ServerEntry:
     user: str | None = None
     forward_agent: bool | None = None
     ws_max_size: int | None = None
+
+
+def parse_server_entries(data: dict) -> dict[str, ServerEntry]:
+    """ServerEntry map from the klangk.yaml ``servers`` section."""
+    servers: dict[str, ServerEntry] = {}
+    for name, entry in (data.get("servers") or {}).items():
+        if not isinstance(entry, dict) or "url" not in entry:
+            continue
+        servers[name] = ServerEntry(
+            url=entry["url"],
+            user=entry.get("user"),
+            forward_agent=entry.get("forward-agent"),
+            ws_max_size=entry.get("ws-max-size"),
+        )
+    return servers
 
 
 @dataclass
@@ -157,23 +184,13 @@ class CLIConfig:
             return cls()
         text = CONFIG_PATH.read_text()
         data = yaml.safe_load(text) or {}
-        servers: dict[str, ServerEntry] = {}
-        for name, entry in (data.get("servers") or {}).items():
-            if not isinstance(entry, dict) or "url" not in entry:
-                continue
-            servers[name] = ServerEntry(
-                url=entry["url"],
-                user=entry.get("user"),
-                forward_agent=entry.get("forward-agent"),
-                ws_max_size=entry.get("ws-max-size"),
-            )
         return cls(
             forward_agent=data.get("forward-agent"),
             ws_max_size=data.get("ws-max-size"),
             terminal_open_cmd=parse_terminal_open_cmd(
                 data.get("terminal-open-cmd")
             ),
-            servers=servers,
+            servers=parse_server_entries(data),
         )
 
     def resolve_server(self, name_or_url: str) -> str:
@@ -267,6 +284,13 @@ def seed_config(server_url: str, user: str | None = None) -> None:
     CONFIG_PATH.write_text(header + servers_yaml)
 
 
+def load_yaml_config() -> dict:
+    """The parsed klangk.yaml (empty when the file is absent)."""
+    if not CONFIG_PATH.exists():
+        return {}
+    return yaml.safe_load(CONFIG_PATH.read_text()) or {}
+
+
 def add_server_to_config(
     alias: str, server_url: str, user: str | None = None
 ) -> None:
@@ -282,10 +306,7 @@ def add_server_to_config(
     must catch the error and surface it to the user (#1763).
     """
     CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    if CONFIG_PATH.exists():
-        data = yaml.safe_load(CONFIG_PATH.read_text()) or {}
-    else:
-        data = {}
+    data = load_yaml_config()
     servers = data.get("servers") or {}
     if alias in servers:
         raise AliasConflictError(f"Alias '{alias}' already exists.")
@@ -299,6 +320,24 @@ def add_server_to_config(
 
 class AliasConflictError(Exception):
     """Raised when renaming a server alias to one that already exists."""
+
+
+def check_alias_renaming(
+    old_alias: str, new_alias: str, servers: dict
+) -> None:
+    """Reject a rename onto an existing alias (same-alias updates pass)."""
+    if old_alias != new_alias and new_alias in servers:
+        raise AliasConflictError(f"Alias '{new_alias}' already exists.")
+
+
+def replaced_server_entry(existing, server_url: str, user) -> dict:
+    """The updated server entry, preserving fields the edit form omits
+    (forward-agent, ws-max-size)."""
+    entry = dict(existing) if isinstance(existing, dict) else {}
+    entry["url"] = server_url
+    if user:
+        entry["user"] = user
+    return entry
 
 
 def update_server_in_config(
@@ -316,21 +355,12 @@ def update_server_in_config(
     """
     if not CONFIG_PATH.exists():
         return False
-    data = yaml.safe_load(CONFIG_PATH.read_text()) or {}
+    data = load_yaml_config()
     servers = data.get("servers") or {}
     if old_alias not in servers:
         return False
-    if old_alias != new_alias and new_alias in servers:
-        raise AliasConflictError(f"Alias '{new_alias}' already exists.")
-    # Preserve fields not shown in the edit form (forward_agent, ws_max_size).
-    existing = servers[old_alias]
-    if isinstance(existing, dict):
-        entry = dict(existing)
-    else:
-        entry = {}
-    entry["url"] = server_url
-    if user:
-        entry["user"] = user
+    check_alias_renaming(old_alias, new_alias, servers)
+    entry = replaced_server_entry(servers[old_alias], server_url, user)
     if old_alias != new_alias:
         del servers[old_alias]
     servers[new_alias] = entry
@@ -372,6 +402,45 @@ class ServerState:
     users: dict[str, UserEntry] = field(default_factory=dict)
 
 
+def parse_user_entries(val: dict) -> dict[str, UserEntry]:
+    """UserEntry map from one state server section."""
+    users: dict[str, UserEntry] = {}
+    for uname, uval in (val.get("users") or {}).items():
+        if isinstance(uval, dict):
+            users[uname] = UserEntry(token=uval.get("token"))
+    return users
+
+
+def parse_server_states(data: dict) -> dict[str, ServerState]:
+    """ServerState map from the klangk-state.yaml data."""
+    servers: dict[str, ServerState] = {}
+    for key, val in data.items():
+        if key == "active-server":
+            continue
+        if not isinstance(val, dict):
+            continue
+        servers[key] = ServerState(
+            active_user=val.get("active-user"),
+            users=parse_user_entries(val),
+        )
+    return servers
+
+
+def server_state_data(ss: ServerState) -> dict:
+    """One ServerState as its klangk-state.yaml section ({} when empty)."""
+    server_data: dict = {}
+    if ss.active_user is not None:
+        server_data["active-user"] = ss.active_user
+    users_data = {
+        uname: {"token": ue.token}
+        for uname, ue in ss.users.items()
+        if ue.token is not None
+    }
+    if users_data:
+        server_data["users"] = users_data
+    return server_data
+
+
 @dataclass
 class CLIState:
     """Parsed klangk-state.yaml — auto-managed by the CLI."""
@@ -385,22 +454,10 @@ class CLIState:
             return cls()
         text = STATE_PATH.read_text()
         data = yaml.safe_load(text) or {}
-        active = data.get("active-server")
-        servers: dict[str, ServerState] = {}
-        for key, val in data.items():
-            if key == "active-server":
-                continue
-            if not isinstance(val, dict):
-                continue
-            users: dict[str, UserEntry] = {}
-            for uname, uval in (val.get("users") or {}).items():
-                if isinstance(uval, dict):
-                    users[uname] = UserEntry(token=uval.get("token"))
-            servers[key] = ServerState(
-                active_user=val.get("active-user"),
-                users=users,
-            )
-        return cls(active_server=active, servers=servers)
+        return cls(
+            active_server=data.get("active-server"),
+            servers=parse_server_states(data),
+        )
 
     def save(self) -> None:
         STATE_PATH.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -408,15 +465,7 @@ class CLIState:
         if self.active_server is not None:
             data["active-server"] = self.active_server
         for url, ss in self.servers.items():
-            server_data: dict = {}
-            if ss.active_user is not None:
-                server_data["active-user"] = ss.active_user
-            users_data: dict = {}
-            for uname, ue in ss.users.items():
-                if ue.token is not None:
-                    users_data[uname] = {"token": ue.token}
-            if users_data:
-                server_data["users"] = users_data
+            server_data = server_state_data(ss)
             if server_data:
                 data[url] = server_data
         content = yaml.dump(data, default_flow_style=False)

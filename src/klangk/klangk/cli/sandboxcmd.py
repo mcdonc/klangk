@@ -38,16 +38,8 @@ def resolve_workspace_and_url(
     return (ws, context.server_url(), context.session_token())
 
 
-async def sandbox_setup(ws, config, sandbox_root, handle):
-    """Copy files and run setup script on an open WebSocket.
-
-    Called once after workspace creation, before the shell starts.
-    The caller has already connected and called wait_container_ready.
-
-    Returns the setup script's exit code, or ``None`` if no setup
-    command was configured (in which case there is nothing to fail).
-    """
-    # Copy files into container home.
+async def copy_sandbox_files(ws, config, sandbox_root, handle) -> None:
+    """Copy the configured files into the container home (cat via exec)."""
     for host_path, container_dest in build_copy_pairs(
         config, sandbox_root, handle
     ):
@@ -73,6 +65,28 @@ async def sandbox_setup(ws, config, sandbox_root, handle):
                 f" failed (exit {exit_code})[/yellow]"
             )
 
+
+def setup_warning(exit_code: int, timeout) -> None:
+    """Warn on a failed or timed-out setup script."""
+    if exit_code == 124:
+        context.err.print(f"[yellow]Setup timed out after {timeout}s[/yellow]")
+    elif exit_code != 0:
+        context.err.print(
+            f"[yellow]Setup exited with code {exit_code}[/yellow]"
+        )
+
+
+async def sandbox_setup(ws, config, sandbox_root, handle):
+    """Copy files and run setup script on an open WebSocket.
+
+    Called once after workspace creation, before the shell starts.
+    The caller has already connected and called wait_container_ready.
+
+    Returns the setup script's exit code, or ``None`` if no setup
+    command was configured (in which case there is nothing to fail).
+    """
+    await copy_sandbox_files(ws, config, sandbox_root, handle)
+
     # Run setup script — stream output to stderr in real time.
     setup_cmd = resolve_setup_command(config, handle)
     if setup_cmd:
@@ -94,14 +108,7 @@ async def sandbox_setup(ws, config, sandbox_root, handle):
             stdout=sys.stderr.buffer,
             timeout=timeout,
         )
-        if exit_code == 124:
-            context.err.print(
-                f"[yellow]Setup timed out after {timeout}s[/yellow]"
-            )
-        elif exit_code != 0:
-            context.err.print(
-                f"[yellow]Setup exited with code {exit_code}[/yellow]"
-            )
+        setup_warning(exit_code, timeout)
         return exit_code
     return None
 
@@ -202,6 +209,29 @@ def run_sandbox_setup(
         raise typer.Exit(code=1) from None
 
 
+def load_config_or_exit(sandbox_root: Path):
+    """Load .klangk-sandbox.yaml or exit with the standard error."""
+    try:
+        return load_sandbox_config(sandbox_root)
+    except FileNotFoundError as e:
+        context.err.print(f"[red]{e}[/red]")
+        raise typer.Exit(code=1) from None
+    except ValueError as e:
+        context.err.print(f"[red]Invalid sandbox config:[/red] {e}")
+        raise typer.Exit(code=1) from None
+
+
+def needs_setup(created: bool, force: bool) -> bool:
+    """A fresh create or a --force re-run both require the setup pass."""
+    return created or force
+
+
+def maybe_reallow(force: bool, created: bool, client, ws_id: str) -> None:
+    """On a --force re-setup, flip back to allow and restart (#2404)."""
+    if force and not created:
+        reallow_workspace_for_setup(client, ws_id)
+
+
 @context.app.command()
 def sandbox(
     workspace: str = typer.Argument(help="Workspace name"),
@@ -229,14 +259,7 @@ def sandbox(
         raise typer.Exit(code=1)
 
     sandbox_root = Path(path).resolve()
-    try:
-        config = load_sandbox_config(sandbox_root)
-    except FileNotFoundError as e:
-        context.err.print(f"[red]{e}[/red]")
-        raise typer.Exit(code=1) from None
-    except ValueError as e:
-        context.err.print(f"[red]Invalid sandbox config:[/red] {e}")
-        raise typer.Exit(code=1) from None
+    config = load_config_or_exit(sandbox_root)
 
     client = context.client()
     handle = client.get_handle()
@@ -252,11 +275,8 @@ def sandbox(
         )
         created = True
 
-    need_setup = created or force
-
-    if need_setup:
-        if force and not created:
-            reallow_workspace_for_setup(client, ws.id)
+    if needs_setup(created, force):
+        maybe_reallow(force, created, client, ws.id)
         run_sandbox_setup(
             surl, token, workspace, ws.id, config, sandbox_root, handle, client
         )
@@ -353,6 +373,22 @@ async def reset_egress_and_stop(client, workspace_id: str) -> None:
     )
 
 
+async def wait_for_terminal_start(ws, timeout: float) -> None:
+    """Wait (bounded) for the terminal to start so the command actually
+    runs before we disconnect. Other messages are ignored."""
+    deadline = asyncio.get_event_loop().time() + timeout
+    while True:
+        remaining = deadline - asyncio.get_event_loop().time()
+        if remaining <= 0:
+            break
+        try:
+            raw = await asyncio.wait_for(ws.recv(), timeout=remaining)
+        except (asyncio.TimeoutError, websockets.ConnectionClosed):
+            break
+        if json.loads(raw).get("type") == "terminal_started":
+            break
+
+
 async def fire_service_command(
     ws, config, setup_ok: bool, timeout: float = 30
 ) -> None:
@@ -366,19 +402,35 @@ async def fire_service_command(
     await ws.send(
         json.dumps({"cmd": "terminal_start", "cols": 80, "rows": 24})
     )
-    # Wait (bounded) for the terminal to start so the command actually
-    # runs before we disconnect. Other messages are ignored.
-    deadline = asyncio.get_event_loop().time() + timeout
-    while True:
-        remaining = deadline - asyncio.get_event_loop().time()
-        if remaining <= 0:
-            break
-        try:
-            raw = await asyncio.wait_for(ws.recv(), timeout=remaining)
-        except (asyncio.TimeoutError, websockets.ConnectionClosed):
-            break
-        if json.loads(raw).get("type") == "terminal_started":
-            break
+    await wait_for_terminal_start(ws, timeout)
+
+
+def setup_succeeded(exit_code) -> bool:
+    """No setup command (None) or a zero exit — both count as success."""
+    return exit_code is None or exit_code == 0
+
+
+async def post_setup_actions(
+    ws,
+    config,
+    setup_ok: bool,
+    client,
+    workspace_id: str,
+    reset_to_interactive: bool,
+    skipped_reason,
+) -> None:
+    """Stop-and-reset or keep-allow-and-fire, per the posture decision."""
+    if reset_to_interactive and client is not None:
+        await reset_egress_and_stop(client, workspace_id)
+    else:
+        # Stay in allow (auto-start, no sidecar, or no client to
+        # decide). The container keeps running, so fire the service
+        # command now so it's up.
+        await fire_service_command(ws, config, setup_ok)
+        if client is not None:
+            context.err.print(
+                f"[dim]Workspace left in allow mode ({skipped_reason}).[/dim]"
+            )
 
 
 async def sandbox_setup_only(
@@ -426,7 +478,7 @@ async def sandbox_setup_only(
         # Mark setup_state before anything else (#1033). 'complete'
         # when setup ran and returned 0, or when there was no setup
         # command at all (nothing to fail); 'failed' otherwise.
-        setup_ok = exit_code is None or exit_code == 0
+        setup_ok = setup_succeeded(exit_code)
         await mark_setup_state(
             client, workspace_id, "complete" if setup_ok else "failed"
         )
@@ -434,15 +486,12 @@ async def sandbox_setup_only(
         reset_to_interactive, skipped_reason = await decide_egress_reset(
             config, client
         )
-        if reset_to_interactive and client is not None:
-            await reset_egress_and_stop(client, workspace_id)
-        else:
-            # Stay in allow (auto-start, no sidecar, or no client to
-            # decide). The container keeps running, so fire the service
-            # command now so it's up.
-            await fire_service_command(ws, config, setup_ok)
-            if client is not None:
-                context.err.print(
-                    "[dim]Workspace left in allow mode"
-                    f" ({skipped_reason}).[/dim]"
-                )
+        await post_setup_actions(
+            ws,
+            config,
+            setup_ok,
+            client,
+            workspace_id,
+            reset_to_interactive,
+            skipped_reason,
+        )

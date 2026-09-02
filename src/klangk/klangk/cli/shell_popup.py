@@ -162,6 +162,38 @@ def popup_session_names(workspace_id: str) -> tuple[str, str]:
     )
 
 
+def list_session_names(socket: str) -> list[str] | None:
+    """Session names on the socket, or None when no server is running."""
+    try:
+        proc = subprocess.run(
+            _tmux(socket, "list-sessions", "-F", "#{session_name}"),
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    return proc.stdout.splitlines()
+
+
+def session_pid_is_dead(name: str, alive=os.path.exists) -> int | None:
+    """The pid embedded in *name* when its process is dead, else None.
+
+    No pid in the name (old sessions, foreign sessions) → None (left
+    alone). This wrapper's own pid and live pids are left alone too.
+    """
+    m = re.search(r"-p(\d+)-[0-9a-f]+$", name)
+    if not m:
+        return None
+    pid = int(m.group(1))
+    if pid == os.getpid() or alive(f"/proc/{pid}"):
+        return None
+    return pid
+
+
 def sweep_dead_sessions(
     workspace_id: str, run=None, alive=os.path.exists
 ) -> int:
@@ -178,29 +210,14 @@ def sweep_dead_sessions(
     """
     socket = socket_path(workspace_id)
     runner = run or default_run
-    try:
-        proc = subprocess.run(
-            _tmux(socket, "list-sessions", "-F", "#{session_name}"),
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return 0
-    if proc.returncode != 0:
-        # No server running on the socket — nothing to sweep.
+    names = list_session_names(socket)
+    if names is None:
         return 0
     reaped = 0
-    for name in proc.stdout.splitlines():
-        m = re.search(r"-p(\d+)-[0-9a-f]+$", name)
-        if not m:
-            continue
-        pid = int(m.group(1))
-        if pid == os.getpid() or alive(f"/proc/{pid}"):
-            continue
-        runner(kill_session_cmd(socket, name), quiet=True)
-        reaped += 1
+    for name in names:
+        if session_pid_is_dead(name, alive) is not None:
+            runner(kill_session_cmd(socket, name), quiet=True)
+            reaped += 1
     return reaped
 
 
@@ -463,6 +480,12 @@ def default_attach(argv: list[str]) -> int:
     return subprocess.call(argv)
 
 
+def run_all(run, cmds) -> None:
+    """Run each tmux command built by a configure/binding helper."""
+    for cmd in cmds:
+        run(cmd)
+
+
 def run_consent_shell(
     *,
     workspace_id: str,
@@ -507,19 +530,16 @@ def run_consent_shell(
     # 1. outer session running the inner (normal) shell.
     run(new_detached_session(socket, outer, inner_argv, x=cols, y=rows))
     # 2. make the outer nearly invisible + inner-friendly.
-    for cmd in configure_outer_session(socket, outer):
-        run(cmd)
+    run_all(run, configure_outer_session(socket, outer))
     # 3. hidden decider session (sized to the popup so it doesn't reflow).
     run(new_detached_session(socket, hidden, decider_argv, x=pw, y=ph))
     # 3b. hide the hidden session's status bar so the popup shows only the
     #     decider (no tmux status bar across the popup's bottom).
-    for cmd in configure_hidden_session(socket, hidden):
-        run(cmd)
+    run_all(run, configure_hidden_session(socket, hidden))
     # 4. the C-a p reopen binding (no auto-show — the decider shows the popup
     #    itself when a held request arrives, so the shell isn't bothered at
     #    startup when there's nothing to decide).
-    for cmd in popup_binding_cmds(socket, hidden, w=pw, h=ph):
-        run(cmd)
+    run_all(run, popup_binding_cmds(socket, hidden, w=pw, h=ph))
     # 5. attach the user's terminal to the outer session (blocks). Cleanup
     #    runs even when the attach dies abnormally — the terminal window
     #    being closed delivers SIGHUP mid-attach, and an unhandled

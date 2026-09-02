@@ -28,6 +28,37 @@ from textual.widgets import (
 _ScreenResult = TypeVar("_ScreenResult")
 
 
+def status_core_segment(server: str | None, user: str | None) -> str:
+    """The server/user segment of the status line."""
+    return (
+        f"server: {server or '(none)'}   |   user: {user or '(not logged in)'}"
+    )
+
+
+def status_bar_text(
+    *,
+    server: str | None,
+    user: str | None,
+    extra: str = "",
+    last_login: str | None = None,
+) -> str:
+    """The full status-line text for the bar's state.
+
+    The live `extra` segment (host notices, the #2661 schedule countdown)
+    renders FIRST when set: it is the time-sensitive bit, and appending it
+    last let it fall off the right edge of a typical terminal once
+    server/user/last-login (~76 cols) had claimed the row — an invisible
+    countdown on the very screens that need it.
+    """
+    parts = []
+    if extra:
+        parts.append(extra)
+    parts.append(status_core_segment(server, user))
+    if last_login:
+        parts.append(f"last login: {last_login}")
+    return "   |   ".join(parts)
+
+
 class StatusBar(Static):
     """One-line bottom bar: current server, user, and live-state flag."""
 
@@ -49,24 +80,18 @@ class StatusBar(Static):
         extra: str = "",
         last_login: str | None = None,
     ) -> None:
-        # The live `extra` segment (host notices, the #2661 schedule
-        # countdown) renders FIRST when set: it is the time-sensitive
-        # bit, and appending it last let it fall off the right edge of
-        # a typical terminal once server/user/last-login (~76 cols)
-        # had claimed the row — an invisible countdown on the very
-        # screens that need it.
-        text = ""
-        if extra:
-            text += f"{extra}"
-        text += (
-            f"{'   |   ' if text else ''}server: {server or '(none)'}"
-            f"   |   user: {user or '(not logged in)'}"
-        )
-        if last_login:
-            text += f"   |   last login: {last_login}"
         # Render literally — server URL / user / live `extra` may contain
         # bracket characters that would otherwise be parsed as markup.
-        self.update(Text(text))
+        self.update(
+            Text(
+                status_bar_text(
+                    server=server,
+                    user=user,
+                    extra=extra,
+                    last_login=last_login,
+                )
+            )
+        )
 
 
 class ButtonRowModalScreen(ModalScreen[_ScreenResult]):
@@ -426,6 +451,14 @@ class ServerListView(SpatialListView):
     SPATIAL_DOWN_TARGET = "#server_input"
 
 
+def chain_position(chain: list[str], focused) -> int | None:
+    """The focused widget's index in *chain*, or None when outside it."""
+    fid = getattr(focused, "id", None) if focused else None
+    if not fid or fid not in chain:
+        return None
+    return chain.index(fid)
+
+
 class SpatialNavScreen(Screen):
     """Screen mixin for spatial Up/Down navigation between a chain of
     widgets (inputs, buttons) in reading order (#1781).
@@ -445,20 +478,18 @@ class SpatialNavScreen(Screen):
     ]
 
     def action_spatial_up(self) -> None:
-        fid = getattr(self.focused, "id", None) if self.focused else None
-        if not fid or fid not in self.SPATIAL_CHAIN:
+        pos = chain_position(self.SPATIAL_CHAIN, self.focused)
+        if pos is None:
             return
-        pos = self.SPATIAL_CHAIN.index(fid)
         if pos > 0:
             self.query_one(f"#{self.SPATIAL_CHAIN[pos - 1]}").focus()
         elif self.SPATIAL_UP_EXIT:
             self.query_one(f"#{self.SPATIAL_UP_EXIT}").focus()
 
     def action_spatial_down(self) -> None:
-        fid = getattr(self.focused, "id", None) if self.focused else None
-        if not fid or fid not in self.SPATIAL_CHAIN:
+        pos = chain_position(self.SPATIAL_CHAIN, self.focused)
+        if pos is None:
             return
-        pos = self.SPATIAL_CHAIN.index(fid)
         if pos < len(self.SPATIAL_CHAIN) - 1:
             self.query_one(f"#{self.SPATIAL_CHAIN[pos + 1]}").focus()
 
@@ -474,6 +505,19 @@ class NonFocusableVerticalScroll(VerticalScroll):
     can_focus = False
 
 
+def focused_id(focused) -> str | None:
+    """The focused widget's id, or None."""
+    return getattr(focused, "id", None) if focused else None
+
+
+def next_tab_ids(tab_order: list[str], base: str, step: int):
+    """The tab-cycle ids after *base*, stepping by *step* (wrapping)."""
+    idx = tab_order.index(base)
+    n = len(tab_order)
+    for i in range(1, n):
+        yield tab_order[(idx + step * i) % n]
+
+
 class TabSkipMixin:
     """Cycle Tab through a primary field set, skipping editor buttons/lists.
 
@@ -485,23 +529,33 @@ class TabSkipMixin:
     _TAB_ORDER: list[str] = []
     _LIST_TO_INPUT: dict[str, str] = {}
 
-    def on_key(self, event) -> None:
-        if event.key not in ("tab", "shift+tab"):
-            return
-        fid = getattr(self.focused, "id", None) if self.focused else None
+    def tab_base(self, fid: str | None) -> str | None:
+        """The tab-cycle base id for a focused widget, or None when outside.
+
+        A mapped editor list (``_LIST_TO_INPUT``) tabs from its entry
+        input's position (#1783).
+        """
         base = self._LIST_TO_INPUT.get(fid, fid)
         if base not in self._TAB_ORDER:
-            return
-        event.stop()
-        idx = self._TAB_ORDER.index(base)
-        step = 1 if event.key == "tab" else -1
-        n = len(self._TAB_ORDER)
-        for i in range(1, n):
-            nxt = (idx + step * i) % n
-            target = self.query_one(f"#{self._TAB_ORDER[nxt]}")
+            return None
+        return base
+
+    def focus_next_tab_target(self, base: str, step: int) -> None:
+        """Focus the next visible, enabled widget in the tab cycle."""
+        for nxt in next_tab_ids(self._TAB_ORDER, base, step):
+            target = self.query_one(f"#{nxt}")
             if target.display and not target.disabled:
                 target.focus()
                 return
+
+    def on_key(self, event) -> None:
+        if event.key not in ("tab", "shift+tab"):
+            return
+        base = self.tab_base(focused_id(self.focused))
+        if base is None:
+            return
+        event.stop()
+        self.focus_next_tab_target(base, 1 if event.key == "tab" else -1)
 
 
 class WorkspaceListView(SpatialListView):

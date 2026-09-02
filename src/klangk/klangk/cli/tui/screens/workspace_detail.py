@@ -99,6 +99,13 @@ def _append_str_rows(
             rows.append((label, value))
 
 
+def joined_field_value(value) -> str:
+    """One list/dict field as newline-joined text (a dict as ``k=v`` lines)."""
+    if isinstance(value, dict):
+        return "\n".join(f"{k}={v}" for k, v in value.items())
+    return "\n".join(str(v) for v in value)
+
+
 def _append_joined_rows(
     rows: list[tuple[str, str]], ws, fields: list[tuple[str, str]]
 ) -> None:
@@ -108,12 +115,103 @@ def _append_joined_rows(
         value = getattr(ws, attr)
         if not value:
             continue
-        if isinstance(value, dict):
-            rows.append(
-                (label, "\n".join(f"{k}={v}" for k, v in value.items()))
-            )
-        else:
-            rows.append((label, "\n".join(str(v) for v in value)))
+        rows.append((label, joined_field_value(value)))
+
+
+def body_width(body, screen_width: int) -> int:
+    """The render width for the detail table.
+
+    The body widget's *actual* content width, not the screen width: the
+    screen has horizontal chrome (borders/margins/scroll gutter), so
+    #detail_body is markedly narrower than self.size.width. Rendering at
+    the wider screen width produces full-width lines that the narrower
+    Static then re-wraps, which destroys the value column's hanging
+    indent — wrapped continuation lines fall back to the left margin
+    under the labels (#2190).
+    """
+    return body.container_size.width or body.size.width or screen_width or 80
+
+
+def detail_load_text(load_error) -> str:
+    """The load-failure text (a specific error, or the generic form)."""
+    return load_error or "Could not load workspace."
+
+
+# Event type -> handler method name for apply_status_event.
+STATUS_EVENT_APPLY = {
+    "workspaces_changed": "_apply_workspaces_changed",
+    "terminals_changed": "_apply_terminals_changed",
+    "container_status": "_apply_container_status_event",
+    "service_health": "_apply_service_health_event",
+}
+
+
+def workspace_id_text(ws) -> str:
+    """A workspace's id as text ("" when unset)."""
+    return str(getattr(ws, "id", "") or "")
+
+
+def event_workspace_id(event: dict) -> str:
+    """An event's workspace_id as text ("" when unset)."""
+    return str(event.get("workspace_id") or "")
+
+
+def ids_differ(eid: str, ws_id: str) -> bool:
+    """True when both ids are present and they don't match."""
+    return bool(eid and ws_id and eid != ws_id)
+
+
+def shell_failed(completed) -> bool:
+    """True when an inline shell launch exited non-zero."""
+    return completed is not None and completed.returncode != 0
+
+
+def valid_shared_target(target: str) -> bool:
+    """A ``handle:window`` key with exactly one colon."""
+    return ":" in target and target.count(":") == 1
+
+
+def adoptable_started(event: dict):
+    """The event's service_started_at when numeric, else None.
+
+    Type-checked before adoption: a malformed payload (string stamp)
+    would crash the uptime math later (#2029 audit).
+    """
+    started = event.get("service_started_at")
+    if isinstance(started, (int, float)) and not isinstance(started, bool):
+        return started
+    return None
+
+
+def restart_triggered(was_running: bool, old_started, ws) -> bool:
+    """A container start/restart that invalidates the whole screen (#1924)."""
+    return bool(
+        ws.running
+        and (not was_running or ws.service_started_at != old_started)
+    )
+
+
+def terminal_list_items(terminals: list) -> list:
+    """List rows for the own-terminals list (or the empty placeholder)."""
+    if not terminals:
+        return [ListItem(Label(Text("(no terminals)")), name="")]
+    return [
+        ListItem(
+            Label(
+                Text(
+                    f"{w.get('index', '')}  "
+                    f"{w.get('name') or w.get('index', '')}"
+                )
+            ),
+            name=str(w.get("index", "")),
+        )
+        for w in terminals
+    ]
+
+
+def others_shared_terminals(terminals, my_id) -> list:
+    """Shared windows excluding my own (already in the own list, #2164)."""
+    return [t for t in (terminals or []) if t.get("user_id") != my_id]
 
 
 class WorkspaceDetailScreen(StatusScreen):
@@ -395,7 +493,7 @@ class WorkspaceDetailScreen(StatusScreen):
         ws = self._ws
         body = self.query_one("#detail_body", Static)
         if ws is None:
-            body.update(Text(self._load_error or "Could not load workspace."))
+            body.update(Text(detail_load_text(self._load_error)))
             return
         # Toggle the 's' binding label between Stop / Start.
         self.BINDINGS = self._bindings_list("Stop" if ws.running else "Start")
@@ -406,20 +504,7 @@ class WorkspaceDetailScreen(StatusScreen):
         # survive; from_ansi reads ANSI escapes only, so values that look like
         # markup (e.g. an image named "[img]") still render literally rather
         # than being parsed as Textual markup.
-        #
-        # Render at the body widget's *actual* content width, not the screen
-        # width: the screen has horizontal chrome (borders/margins/scroll
-        # gutter), so #detail_body is markedly narrower than self.size.width.
-        # Rendering at the wider screen width produces full-width lines that
-        # the narrower Static then re-wraps, which destroys the value column's
-        # hanging indent — wrapped continuation lines fall back to the left
-        # margin under the labels (#2190).
-        width = (
-            body.container_size.width
-            or body.size.width
-            or self.size.width
-            or 80
-        )
+        width = body_width(body, self.size.width)
         body.update(
             Text.from_ansi(
                 self._render_detail(
@@ -454,6 +539,15 @@ class WorkspaceDetailScreen(StatusScreen):
         bar.update(Text(banner, style=marking_style(banner)))
 
     @staticmethod
+    def uptime_row(ws) -> tuple[str, str] | None:
+        """The uptime row for a running workspace (None before start)."""
+        if ws.running and ws.service_started_at:
+            elapsed = int(time.time() - ws.service_started_at)
+            if elapsed >= 0:
+                return "uptime", format_uptime(elapsed)
+        return None
+
+    @staticmethod
     def _detail_rows(ws, deploy_banner: str = "") -> list[tuple[str, str]]:
         """Build the (label, value) rows shown in the workspace detail table."""
         rows: list[tuple[str, str]] = [
@@ -461,10 +555,9 @@ class WorkspaceDetailScreen(StatusScreen):
             ("running", "yes" if ws.running else "no"),
             ("health", ws.health or "-"),
         ]
-        if ws.running and ws.service_started_at:
-            elapsed = int(time.time() - ws.service_started_at)
-            if elapsed >= 0:
-                rows.append(("uptime", format_uptime(elapsed)))
+        uptime = WorkspaceDetailScreen.uptime_row(ws)
+        if uptime:
+            rows.append(uptime)
         rows.extend(optional_detail_rows(ws, deploy_banner))
         return rows
 
@@ -570,6 +663,20 @@ class WorkspaceDetailScreen(StatusScreen):
         except NoMatches:
             pass
 
+    def _apply_workspaces_changed(self, event: dict) -> None:
+        """A workspaces_changed push: full reload."""
+        self.run_worker(self._reload_on_status, exit_on_error=False)
+
+    def _apply_container_status_event(self, event: dict) -> None:
+        """A container_status event, then a re-render."""
+        self._apply_container_status(event)
+        self.refresh_display()
+
+    def _apply_service_health_event(self, event: dict) -> None:
+        """A service_health event, then a re-render."""
+        self._apply_service_health(event)
+        self.refresh_display()
+
     def apply_status_event(self, event: dict) -> None:
         """Update running/health from a live status broadcast.
 
@@ -579,29 +686,19 @@ class WorkspaceDetailScreen(StatusScreen):
         """
         if not self._status_event_applies(event):
             return
-        etype = event.get("type")
-        if etype == "workspaces_changed":
-            self.run_worker(self._reload_on_status, exit_on_error=False)
+        handler = STATUS_EVENT_APPLY.get(event.get("type"))
+        if handler is None:
             return
-        if etype == "terminals_changed":
-            self._apply_terminals_changed(event)
-            return
-        if etype == "container_status":
-            self._apply_container_status(event)
-        elif etype == "service_health":
-            self._apply_service_health(event)
-        else:
-            return
-        self.refresh_display()
+        getattr(self, handler)(event)
 
     def _status_event_applies(self, event: dict) -> bool:
         """False when no workspace is mounted or the event is for a
         different workspace."""
         if self._ws is None:
             return False
-        ws_id = str(getattr(self._ws, "id", "") or "")
-        eid = str(event.get("workspace_id") or "")
-        return not (eid and ws_id and eid != ws_id)
+        return not ids_differ(
+            event_workspace_id(event), workspace_id_text(self._ws)
+        )
 
     def _apply_terminals_changed(self, event: dict) -> None:
         """A terminal was added / removed / renamed from another surface.
@@ -628,18 +725,13 @@ class WorkspaceDetailScreen(StatusScreen):
         was_running = self._ws.running
         old_started = self._ws.service_started_at
         self._ws.running = bool(event.get("running"))
-        # Type-check before adopting: a malformed payload (string stamp)
-        # would crash _tick_uptime's ``time.time() - started`` math
-        # later (#2029 audit).
-        started = event.get("service_started_at")
-        if isinstance(started, (int, float)) and not isinstance(started, bool):
+        started = adoptable_started(event)
+        if started is not None:
             self._ws.service_started_at = started
         # A container start or restart invalidates everything — uptime
         # resets, health resets, terminal sessions are gone. Do a full
         # reload so all detail-screen items reflect the new state (#1924).
-        if self._ws.running and (
-            not was_running or self._ws.service_started_at != old_started
-        ):
+        if restart_triggered(was_running, old_started, self._ws):
             self.run_worker(self._reload_on_restart, exit_on_error=False)
 
     def _apply_service_health(self, event: dict) -> None:
@@ -699,22 +791,7 @@ class WorkspaceDetailScreen(StatusScreen):
         async with self._render_lock:
             lv = self.query_one("#term_list", ListView)
             await lv.clear()
-            if not self.terminals:
-                items = [ListItem(Label(Text("(no terminals)")), name="")]
-            else:
-                items = [
-                    ListItem(
-                        Label(
-                            Text(
-                                f"{w.get('index', '')}  "
-                                f"{w.get('name') or w.get('index', '')}"
-                            )
-                        ),
-                        name=str(w.get("index", "")),
-                    )
-                    for w in self.terminals
-                ]
-            mount = lv.extend(items)
+            mount = lv.extend(terminal_list_items(self.terminals))
             # Keep focus on the list; skipped when a modal is open over this
             # screen so a background terminals_changed reload never yanks
             # focus out of the foreground dialog (#1956).
@@ -751,9 +828,7 @@ class WorkspaceDetailScreen(StatusScreen):
         # avoid freezing the TUI on the first detail-page open (#2164
         # review).
         my_id = await asyncio.to_thread(self._current_user_id)
-        self._shared_terminals = [
-            t for t in (terminals or []) if t.get("user_id") != my_id
-        ]
+        self._shared_terminals = others_shared_terminals(terminals, my_id)
         await self._render_shared_terminals()
 
     async def _render_shared_terminals(self) -> None:
@@ -801,24 +876,19 @@ class WorkspaceDetailScreen(StatusScreen):
         """
         return self.app.tui_state.current_user_id()
 
-    def on_list_view_selected(self, event: ListView.Selected) -> None:
-        """Spawn ``klangk shell`` for the selected terminal.
+    def launch_own_terminal(self, terminal: str) -> None:
+        """Shell into the selected own terminal.
 
-        Inline in this terminal (TUI suspended) by default, or in a new
-        terminal window when ``terminal-open-cmd`` is configured (#2685)."""
-        if event.control.id == "shared_term_list":
-            self._launch_shared_terminal(event)
-            return
-        terminal = getattr(event.item, "name", "") or ""
+        The list item is keyed by the window INDEX, but the shell must
+        target the window by its stable id (@N) so the backend selects
+        the existing window instead of creating a duplicate named after
+        the index (#1954). If no id can be resolved — stale list, or a
+        server contract violation (terminal.list_windows always sets
+        id) — refuse to spawn and refresh instead: falling back to the
+        raw index would reproduce the duplicate-window bug.
+        """
         if not terminal or self._ws is None:
             return
-        # The list item is keyed by the window INDEX, but the shell must
-        # target the window by its stable id (@N) so the backend selects
-        # the existing window instead of creating a duplicate named after
-        # the index (#1954). If no id can be resolved — stale list, or a
-        # server contract violation (terminal.list_windows always sets
-        # id) — refuse to spawn and refresh instead: falling back to the
-        # raw index would reproduce the duplicate-window bug.
         target = self._window_id_for(terminal)
         if target is None:
             self.msg(
@@ -827,12 +897,22 @@ class WorkspaceDetailScreen(StatusScreen):
             self.run_worker(self._load_terminals, exit_on_error=False)
             return
         completed = self._launch_shell(self._shell_argv(target))
-        if completed is not None and completed.returncode != 0:
+        if shell_failed(completed):
             # The shell exited non-zero — most likely the window was
             # deleted server-side between list refresh and selection.
             # Refresh so the dead row self-heals instead of failing
             # identically on every re-select (#1955 review).
             self.run_worker(self._load_terminals, exit_on_error=False)
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        """Spawn ``klangk shell`` for the selected terminal.
+
+        Inline in this terminal (TUI suspended) by default, or in a new
+        terminal window when ``terminal-open-cmd`` is configured (#2685)."""
+        if event.control.id == "shared_term_list":
+            self._launch_shared_terminal(event)
+            return
+        self.launch_own_terminal(getattr(event.item, "name", "") or "")
 
     def _shell_argv(self, target: str) -> list[str]:
         """The ``klangk shell`` argv for a terminal target on this workspace."""
@@ -900,6 +980,23 @@ class WorkspaceDetailScreen(StatusScreen):
             sys.stdout.flush()
             return subprocess.run(cmd)
 
+    def shared_launch_target(self, event) -> str | None:
+        """The validated ``handle:window`` target, or None.
+
+        None means no launch (nothing selected / not mounted) or an
+        invalid key (refresh already queued).
+        """
+        target = getattr(event.item, "name", "") or ""
+        if not target or self._ws is None:
+            return None
+        # A shared window named with a colon would confuse the
+        # ``handle:window`` parser; refuse rather than mis-target.
+        if not valid_shared_target(target):
+            self.msg("Invalid shared terminal — refreshing.", error=True)
+            self.run_worker(self._load_shared_terminals, exit_on_error=False)
+            return None
+        return target
+
     def _launch_shared_terminal(self, event: ListView.Selected) -> None:
         """Join the selected shared terminal via ``klangk shell <ws> <handle>:<win>``.
 
@@ -907,17 +1004,11 @@ class WorkspaceDetailScreen(StatusScreen):
         one the browser uses) — no new server code (#2164). The list item
         is keyed by the join target, so it's passed straight through.
         """
-        target = getattr(event.item, "name", "") or ""
-        if not target or self._ws is None:
-            return
-        # A shared window named with a colon would confuse the
-        # ``handle:window`` parser; refuse rather than mis-target.
-        if ":" not in target or target.count(":") != 1:
-            self.msg("Invalid shared terminal — refreshing.", error=True)
-            self.run_worker(self._load_shared_terminals, exit_on_error=False)
+        target = self.shared_launch_target(event)
+        if target is None:
             return
         completed = self._launch_shell(self._shell_argv(target))
-        if completed is not None and completed.returncode != 0:
+        if shell_failed(completed):
             # The shared window may have been unshared/closed server-side
             # between refresh and selection — refresh the shared list.
             self.run_worker(self._load_shared_terminals, exit_on_error=False)
@@ -964,28 +1055,33 @@ class WorkspaceDetailScreen(StatusScreen):
             "term_list"
         )
 
-    def action_delete_terminal(self) -> None:
+    def highlighted_own_window_key(self) -> str | None:
+        """The own-list highlighted row's key, or None (nothing to delete)."""
         if not self._own_list_focused():
-            return
+            return None
         lv = self.query_one("#term_list", ListView)
         child = lv.highlighted_child
-        if child is None:
-            return
-        if not child.name:
+        if child is None or not child.name:
+            return None
+        return child.name
+
+    def action_delete_terminal(self) -> None:
+        key = self.highlighted_own_window_key()
+        if key is None:
             return
         if len(self.terminals) <= 1:
             self.msg("Can't delete the last terminal.", error=True)
             return
         # Target the window by its stable id (@N), not the row index —
         # a stale list could otherwise close the wrong window (#1965).
-        window_id = self._window_id_for(child.name)
+        window_id = self._window_id_for(key)
         if window_id is None:
             self.msg(
                 "Terminal no longer exists — refreshing list.", error=True
             )
             self.run_worker(self._load_terminals, exit_on_error=False)
             return
-        label = self._terminal_label_for(child.name)
+        label = self._terminal_label_for(key)
         self.run_worker(
             self._do_delete_terminal(window_id, label), exit_on_error=False
         )

@@ -40,6 +40,22 @@ app = typer.Typer(
 err = Console(stderr=True)
 
 
+def timeout_detail(e: BaseException) -> str:
+    """A timeout error's message, or the generic wait wording if empty."""
+    return str(e) or "Timed out waiting for the server to respond"
+
+
+def print_ws_rejection(e: websockets.InvalidStatus) -> None:
+    """Report a handshake rejection; 4001/4002 mean the session expired."""
+    if e.response.status_code in (4001, 4002):
+        err.print(
+            "[red]Session expired. Run `klangk login`"
+            " to re-authenticate.[/red]"
+        )
+    else:
+        err.print(f"[red]Connection rejected: {e}[/red]")
+
+
 def run_ws_command(body):
     """Run an async ws command body, surfacing failures as a clean exit.
 
@@ -59,17 +75,10 @@ def run_ws_command(body):
         err.print(f"[red]{e}[/red]")
         raise typer.Exit(code=1) from None
     except asyncio.TimeoutError as e:
-        detail = str(e) or "Timed out waiting for the server to respond"
-        err.print(f"[red]{detail}[/red]")
+        err.print(f"[red]{timeout_detail(e)}[/red]")
         raise typer.Exit(code=1) from None
     except websockets.InvalidStatus as e:
-        if e.response.status_code in (4001, 4002):
-            err.print(
-                "[red]Session expired. Run `klangk login`"
-                " to re-authenticate.[/red]"
-            )
-        else:
-            err.print(f"[red]Connection rejected: {e}[/red]")
+        print_ws_rejection(e)
         raise typer.Exit(code=1) from None
 
 

@@ -132,6 +132,31 @@ def exec_cmd(
     raise typer.Exit(code=exit_code)
 
 
+def require_binary(name: str) -> str:
+    """Resolve *name* on PATH or exit with the standard error."""
+    path = shutil.which(name)
+    if not path:
+        context.err.print(f"[red]Cannot find {name} in PATH[/red]")
+        raise typer.Exit(code=1)
+    return path
+
+
+def ensure_sync_allowed(client, host: str | None, direction: str) -> None:
+    """Exit with a clear error if syncing via *host* is not permitted.
+
+    #2706/#2712: ``klangk sync`` rides the one-shot exec channel, gated
+    on the ``exec-and-sync`` permission. Fail fast with a clear
+    permission error; the server still enforces when rsync gets that
+    far. No-op when *host* is None (local side) or allowed.
+    """
+    if host and sync_denied(client, host):
+        context.err.print(
+            f"[red]Permission denied:[/red] syncing {direction} workspace"
+            f" '{host}' requires the exec-and-sync permission"
+        )
+        raise typer.Exit(code=1)
+
+
 @context.app.command(
     "sync",
     context_settings={
@@ -162,36 +187,12 @@ def sync(
     """
     context.require_auth()
 
-    klangk_bin = shutil.which("klangk")
-    if not klangk_bin:
-        context.err.print("[red]Cannot find klangk in PATH[/red]")
-        raise typer.Exit(code=1)
+    klangk_bin = require_binary("klangk")
+    rsync_bin = require_binary("rsync")
 
-    rsync_bin = shutil.which("rsync")
-    if not rsync_bin:
-        context.err.print("[red]Cannot find rsync in PATH[/red]")
-        raise typer.Exit(code=1)
-
-    # #2706/#2712: sync rides the one-shot exec channel, gated on the
-    # ``exec-and-sync`` permission — a remote source or destination
-    # means the user needs it on that workspace (either direction).
-    # Fail fast with a clear permission error; the server still enforces
-    # when rsync gets that far.
     client = context.client()
-    pull_host = remote_host(src)
-    if pull_host and sync_denied(client, pull_host):
-        context.err.print(
-            f"[red]Permission denied:[/red] syncing out of workspace"
-            f" '{pull_host}' requires the exec-and-sync permission"
-        )
-        raise typer.Exit(code=1)
-    push_host = remote_host(dest)
-    if push_host and sync_denied(client, push_host):
-        context.err.print(
-            f"[red]Permission denied:[/red] syncing into workspace"
-            f" '{push_host}' requires the exec-and-sync permission"
-        )
-        raise typer.Exit(code=1)
+    ensure_sync_allowed(client, remote_host(src), "out of")
+    ensure_sync_allowed(client, remote_host(dest), "into")
 
     cmd = [
         rsync_bin,

@@ -34,6 +34,33 @@ class ServerTransport:
     server_spec: str  # original spec for back-reference
 
 
+def is_http_url(server_spec: str) -> bool:
+    """True for an ``http://`` / ``https://`` URL (TCP server spec)."""
+    return server_spec.startswith("http://") or server_spec.startswith(
+        "https://"
+    )
+
+
+def ws_scheme_base(server_spec: str) -> str:
+    """Derive the WS scheme://host[:port] base from an http(s) URL."""
+    if server_spec.startswith("http://"):
+        return server_spec.replace("http://", "ws://", 1)
+    return server_spec.replace("https://", "wss://", 1)
+
+
+def tcp_transport(server_spec: str) -> ServerTransport:
+    """TCP transport for an http(s) server spec."""
+    ws_base = ws_scheme_base(server_spec)
+    return ServerTransport(
+        is_uds=False,
+        uds_path=None,
+        base_url=server_spec,
+        ws_uri=ws_base + "/ws",
+        ws_base=ws_base,
+        server_spec=server_spec,
+    )
+
+
 def resolve_transport(server_spec: str) -> ServerTransport:
     """Classify *server_spec* as TCP (URL) or UDS (socket path).
 
@@ -45,20 +72,8 @@ def resolve_transport(server_spec: str) -> ServerTransport:
         raise ValueError(
             "no server configured — run `klangk login` or pass --server."
         )
-    if server_spec.startswith("http://") or server_spec.startswith("https://"):
-        # TCP — derive WS URI from the URL.
-        if server_spec.startswith("http://"):
-            ws_base = server_spec.replace("http://", "ws://", 1)
-        else:
-            ws_base = server_spec.replace("https://", "wss://", 1)
-        return ServerTransport(
-            is_uds=False,
-            uds_path=None,
-            base_url=server_spec,
-            ws_uri=ws_base + "/ws",
-            ws_base=ws_base,
-            server_spec=server_spec,
-        )
+    if is_http_url(server_spec):
+        return tcp_transport(server_spec)
 
     # Not a URL — must be an absolute socket path.
     if not server_spec.startswith("/"):

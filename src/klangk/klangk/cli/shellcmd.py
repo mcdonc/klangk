@@ -170,17 +170,8 @@ def run_consent_popup(ws, terminal: str | None, forward_agent: bool) -> int:
     return rc
 
 
-def resolve_shell_workspace(client, workspace: str | None):
-    """Resolve the shell target: the named workspace, or an interactive
-    pick (auto-select when exactly one exists)."""
-    if workspace:
-        return context.resolve_or_exit(client, workspace)
-    workspaces = client.list_workspaces(all_pages=True)
-    if not workspaces:
-        typer.echo("No workspaces found — create one with klangk create.")
-        raise typer.Exit(code=1)
-    if len(workspaces) == 1:
-        return workspaces[0]
+def pick_workspace_interactively(workspaces):
+    """Prompt for a workspace pick from a numbered list."""
     typer.echo("Select a workspace:")
     for i, w in enumerate(workspaces, 1):
         typer.echo(f"  {i}. {w.name}")
@@ -192,6 +183,60 @@ def resolve_shell_workspace(client, workspace: str | None):
     except ValueError:
         raise typer.Exit(code=1)
     return workspaces[idx]
+
+
+def resolve_shell_workspace(client, workspace: str | None):
+    """Resolve the shell target: the named workspace, or an interactive
+    pick (auto-select when exactly one exists)."""
+    if workspace:
+        return context.resolve_or_exit(client, workspace)
+    workspaces = client.list_workspaces(all_pages=True)
+    if not workspaces:
+        typer.echo("No workspaces found — create one with klangk create.")
+        raise typer.Exit(code=1)
+    if len(workspaces) == 1:
+        return workspaces[0]
+    return pick_workspace_interactively(workspaces)
+
+
+def normalize_shell_flags(
+    forward_agent: bool | None, no_consent_popup: bool
+) -> tuple[bool | None, bool]:
+    """Normalize flags called directly (not via typer) to their defaults.
+
+    When called directly, ``forward_agent`` may be a
+    ``typer.models.OptionInfo`` instead of bool/None; normalize to None
+    (and ``no_consent_popup`` to False).
+    """
+    if not isinstance(forward_agent, bool):
+        forward_agent = None
+    if not isinstance(no_consent_popup, bool):
+        no_consent_popup = False
+    return forward_agent, no_consent_popup
+
+
+def resolved_forward_agent(forward_agent: bool | None) -> bool:
+    """The forward-agent decision: CLI flag wins, then the config default."""
+    return resolve_forward_agent(
+        forward_agent,
+        config_default=context.cfg().get_forward_agent(context.server_url())
+        or False,
+    )
+
+
+def popup_shell_applicable(ws, no_consent_popup: bool, client) -> bool:
+    """True when the shell should wrap in the consent-popup russian-doll."""
+    return consent_popup_enabled(ws, no_consent_popup) and member_may_decide(
+        client, ws.id
+    )
+
+
+def shell_rejected(e: websockets.InvalidStatus) -> None:
+    """Report a rejected shell handshake after restoring the terminal."""
+    reset_terminal()
+    drain_stdin()
+    context.print_ws_rejection(e)
+    raise typer.Exit(code=1) from None
 
 
 @context.app.command()
@@ -225,12 +270,9 @@ def shell(
     ),
 ) -> None:
     """Connect to a workspace shell."""
-    # When called directly (not via typer CLI), forward_agent may be a
-    # typer.models.OptionInfo instead of bool/None.  Normalize to None.
-    if not isinstance(forward_agent, bool):
-        forward_agent = None
-    if not isinstance(no_consent_popup, bool):
-        no_consent_popup = False
+    forward_agent, no_consent_popup = normalize_shell_flags(
+        forward_agent, no_consent_popup
+    )
     token = context.session_token()
     if not token:
         context.err.print(
@@ -247,14 +289,8 @@ def shell(
     context.err.print(
         "[dim]Exit this shell: press Enter, then ~. (like ssh).[/dim]"
     )
-    forward_agent = resolve_forward_agent(
-        forward_agent,
-        config_default=context.cfg().get_forward_agent(context.server_url())
-        or False,
-    )
-    if consent_popup_enabled(ws, no_consent_popup) and member_may_decide(
-        client, ws.id
-    ):
+    forward_agent = resolved_forward_agent(forward_agent)
+    if popup_shell_applicable(ws, no_consent_popup, client):
         # Wrap the normal shell in the consent-popup russian-doll (#2383).
         # Falls back to the plain attach below when tmux is prevented, opted
         # out (--no-consent-popup / the inner re-invocation), the workspace
@@ -274,16 +310,7 @@ def shell(
         )
         context.err.print(f"Disconnected from [bold]{ws.name}[/bold].")
     except websockets.InvalidStatus as e:
-        reset_terminal()
-        drain_stdin()
-        if e.response.status_code in (4001, 4002):
-            context.err.print(
-                "[red]Session expired. Run `klangk login`"
-                " to re-authenticate.[/red]"
-            )
-        else:
-            context.err.print(f"[red]Connection rejected: {e}[/red]")
-        raise typer.Exit(code=1) from None
+        shell_rejected(e)
     except ConnectionError as e:
         reset_terminal()
         drain_stdin()

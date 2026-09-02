@@ -303,6 +303,15 @@ def build_detach_command(socket_path: str, session: str) -> list[str]:
     return ["tmux", "-S", socket_path, "detach-client", "-s", session]
 
 
+FRAME_APPLY = {
+    "egress_request": "_apply_request",
+    "egress_resolved": "_apply_resolved",
+    "egress_rules": "_apply_rules",
+    "revoke_ack": "_apply_revoke_ack",
+    "pause_ack": "_apply_pause_ack",
+}
+
+
 class ConsentDeciderController:
     """Pure state machine over the consent-decider WS protocol (#2310).
 
@@ -359,11 +368,10 @@ class ConsentDeciderController:
         rid = msg.get("request_id")
         ok = bool(msg.get("ok"))
         if ok and isinstance(rid, str) and self.rules is not None:
-            self.rules = replace(
-                self.rules,
-                allowed=tuple(r for r in self.rules.allowed if r.id != rid),
-                denied=tuple(r for r in self.rules.denied if r.id != rid),
+            allowed, denied = rules_without(
+                self.rules.allowed, self.rules.denied, rid
             )
+            self.rules = replace(self.rules, allowed=allowed, denied=denied)
         return REVOKE_ACK, (
             rid if isinstance(rid, str) else None,
             ok,
@@ -398,21 +406,12 @@ class ConsentDeciderController:
             return IGNORED, None
         if not isinstance(msg, dict):
             return IGNORED, None
-        mtype = msg.get("type")
-        if mtype == "egress_request":
-            return self._apply_request(msg)
-        if mtype == "egress_resolved":
-            return self._apply_resolved(msg)
-        if mtype == "egress_rules":
-            return self._apply_rules(msg)
-        if mtype == "revoke_ack":
-            return self._apply_revoke_ack(msg)
-        if mtype == "pause_ack":
-            return self._apply_pause_ack(msg)
-        if mtype == "pong":
-            return PONG, None
-        if mtype == "error":
-            return ERROR, str(msg.get("message", ""))
+        handler = FRAME_APPLY.get(msg.get("type"))
+        if handler is not None:
+            return getattr(self, handler)(msg)
+        outcome = static_frame_outcome(msg)
+        if outcome is not None:
+            return outcome
         return IGNORED, None
 
     def ordered(self) -> list[ConsentRequest]:
@@ -489,20 +488,79 @@ def _parse_request(obj: object) -> ConsentRequest | None:
     requested_at = obj.get("requested_at")
     if not isinstance(requested_at, (int, float)):
         requested_at = 0
-    port = obj.get("dest_port")
-    pid = obj.get("pid")
     return ConsentRequest(
         id=rid,
         workspace_id=wid,
-        dest_host=str(obj.get("dest_host") or ""),
-        dest_port=int(port) if isinstance(port, (int, float)) else None,
+        dest_host=text_field(obj, "dest_host"),
+        dest_port=request_port_or_none(obj.get("dest_port")),
         process_name=obj.get("process_name"),
-        # bool is an int subclass -- exclude it so pid=True doesn't yield 1.
-        pid=pid
-        if isinstance(pid, int) and not isinstance(pid, bool)
-        else None,
+        pid=pid_or_none(obj.get("pid")),
         requested_at=float(requested_at),
     )
+
+
+def rules_without(allowed, denied, rid: str) -> tuple:
+    """(allowed, denied) with rule *rid* dropped from each."""
+    return (
+        tuple(r for r in allowed if r.id != rid),
+        tuple(r for r in denied if r.id != rid),
+    )
+
+
+def static_frame_outcome(msg: dict) -> tuple[str, object] | None:
+    """The outcome for a type with no state to apply (pong/error), or None."""
+    mtype = msg.get("type")
+    if mtype == "pong":
+        return PONG, None
+    if mtype == "error":
+        return ERROR, str(msg.get("message", ""))
+    return None
+
+
+def text_field(obj: dict, key: str, default: str = "") -> str:
+    """A frame field as text (a falsy value maps to *default*)."""
+    return str(obj.get(key) or default)
+
+
+def numeric_excluding_bool(value):
+    """*value* when numeric with bools excluded, else None."""
+    return (
+        value
+        if isinstance(value, (int, float)) and not isinstance(value, bool)
+        else None
+    )
+
+
+def request_port_or_none(value):
+    """A request frame's dest_port as int (bools pass, as before), or None."""
+    return int(value) if isinstance(value, (int, float)) else None
+
+
+def rule_port_or_none(value):
+    """A rule row's dest_port as int (bools excluded), or None."""
+    port = numeric_excluding_bool(value)
+    return int(port) if port is not None else None
+
+
+def rule_decided_at_or_none(value):
+    """A rule row's decided_at as float (bools excluded), or None."""
+    decided = numeric_excluding_bool(value)
+    return float(decided) if decided is not None else None
+
+
+def pid_or_none(value):
+    """A request frame's pid as int; bool excluded (bool is an int subclass)."""
+    return (
+        value
+        if isinstance(value, int) and not isinstance(value, bool)
+        else None
+    )
+
+
+def paused_until_or_none(value):
+    """A pause frame's until as float (bools excluded), or None."""
+    until = numeric_excluding_bool(value)
+    return float(until) if until is not None else None
 
 
 def _parse_rule_rows(raw) -> list[ConsentRule]:
@@ -543,22 +601,15 @@ def _parse_rule(obj: object) -> ConsentRule | None:
     """Build a :class:`ConsentRule` from one row of an ``egress_rules`` frame."""
     if not isinstance(obj, dict):
         return None
-    decided_at = obj.get("decided_at")
-    port = obj.get("dest_port")
     duration = obj.get("duration")
     return ConsentRule(
-        id=str(obj.get("id") or ""),
-        dest_host=str(obj.get("dest_host") or ""),
-        dest_port=int(port)
-        if isinstance(port, (int, float)) and not isinstance(port, bool)
-        else None,
+        id=text_field(obj, "id"),
+        dest_host=text_field(obj, "dest_host"),
+        dest_port=rule_port_or_none(obj.get("dest_port")),
         process_name=obj.get("process_name"),
-        decision=str(obj.get("decision") or ""),
+        decision=text_field(obj, "decision"),
         duration=duration if isinstance(duration, str) else None,
-        decided_at=float(decided_at)
-        if isinstance(decided_at, (int, float))
-        and not isinstance(decided_at, bool)
-        else None,
+        decided_at=rule_decided_at_or_none(obj.get("decided_at")),
         decided_by=obj.get("decided_by"),
     )
 
@@ -573,12 +624,7 @@ def _parse_pause(obj: object) -> PauseState | None:
     """
     if not isinstance(obj, dict) or obj.get("paused") is not True:
         return None
-    until = obj.get("until")
-    return PauseState(
-        until=float(until)
-        if isinstance(until, (int, float)) and not isinstance(until, bool)
-        else None
-    )
+    return PauseState(until=paused_until_or_none(obj.get("until")))
 
 
 def _rule_sort_key(rule: ConsentRule) -> tuple[int, float]:
@@ -586,6 +632,92 @@ def _rule_sort_key(rule: ConsentRule) -> tuple[int, float]:
     if rule.decided_at is None:
         return (1, 0.0)
     return (0, -rule.decided_at)
+
+
+def ws_refused(exc: BaseException) -> bool:
+    """True when a ws loop failure was a refused handshake (403, #2490)."""
+    if isinstance(exc, websockets.InvalidStatus):
+        if exc.response.status_code == 403:
+            return True
+        # A proxy/gateway error (502/503...) is transient -- retry.
+        logger.debug("consent-decide ws handshake failed: %s", exc)
+    else:
+        logger.debug("consent-decide ws dropped: %s", exc)
+    return False
+
+
+def closed_code(exc: websockets.ConnectionClosed) -> int | None:
+    """The close code from a ConnectionClosed (None when absent)."""
+    return exc.rcvd.code if exc.rcvd else None
+
+
+async def cancel_and_await(task) -> None:
+    """Cancel a task and swallow its result/exception."""
+    task.cancel()
+    try:
+        await task
+    except (asyncio.CancelledError, Exception):
+        pass
+
+
+def remove_stale_rows(lv, current_ids: set) -> None:
+    """Drop resolved/expired rows (leave survivors untouched -> no flicker)."""
+    for child in list(lv.children):
+        rid = getattr(child, "request_id", None)
+        if rid is not None and rid not in current_ids:
+            child.remove()
+
+
+def active_pause(rules, controller) -> PauseState | None:
+    """The live (unexpired) pause state, if any (#2498)."""
+    if rules is None or controller.pause_expired(rules):
+        return None
+    return rules.paused
+
+
+def pause_expired_flag(rules, controller) -> bool:
+    """True when a finite pause window has elapsed (#2498)."""
+    return rules is not None and controller.pause_expired(rules)
+
+
+def show_popup_to_clients(clients, sock: str, sess: str) -> None:
+    """display-popup on each shell client; subprocess errors swallowed."""
+    w, h = DEFAULT_POPUP_SIZE
+    for client in clients:
+        try:
+            subprocess.run(
+                show_popup_argv(sock, sess, client, w=w, h=h),
+                capture_output=True,
+                timeout=3,
+            )
+        except Exception:  # noqa: BLE001
+            logger.debug("consent-decide popup show failed")
+
+
+def revocable_rule_ids(rules) -> list[str]:
+    """The revocable rule ids (allowed then denied), for change detection."""
+    if rules is None:
+        return []
+    return [r.id for r in rules.allowed] + [r.id for r in rules.denied]
+
+
+def verdict_label(rule, controller, *, deny: bool) -> str:
+    """The duration label for an active verdict row."""
+    if rule.duration == DURATION_FOREVER:
+        return "forever"
+    if rule.duration == DURATION_TILRESTART:
+        return "until restart"
+    rem = controller.rule_remaining(rule)
+    # Guard None before formatting: a timed verdict with a null
+    # decided_at or an unknown duration has no countdown. Both allow
+    # and deny must degrade the same way (else fmt_duration(None)
+    # raises TypeError on a deny) -- the parser permits these rows, so
+    # rendering must too.
+    if rem is None:
+        return ""
+    if deny:
+        return f"{fmt_duration(rem)} left"
+    return f"expires in {fmt_duration(rem)}"
 
 
 class ConsentDeciderApp(App):
@@ -816,6 +948,21 @@ class ConsentDeciderApp(App):
         self._refresh()
         return refusals
 
+    def _mark_connected(self, ws) -> None:
+        """Record the fresh connection and clear any refusal flag."""
+        self._ws = ws
+        self._connected = True
+        # Healed: the refusal cause went away -- back to normal
+        # connected/reconnect reporting.
+        self._refused = False
+
+    async def _reconnect_wait(self, auth_close: bool, attempt: int) -> None:
+        """Rotate the token after an auth close, then backoff-sleep."""
+        if auth_close:
+            await self._rotate_token()
+        await asyncio.sleep(self._backoff(attempt))
+        self._refresh()
+
     async def _ws_loop(self) -> None:
         """Connect -> pump -> reconnect loop, until :attr:`_stop` is set.
 
@@ -852,24 +999,13 @@ class ConsentDeciderApp(App):
                     query={"workspace": self.workspace_id},
                     user_agent_header=USER_AGENT,
                 ) as ws:
-                    self._ws = ws
-                    self._connected = True
+                    self._mark_connected(ws)
                     attempt = 0
                     refusals = 0
-                    if self._refused:
-                        # Healed: the refusal cause went away -- back to
-                        # normal connected/reconnect reporting.
-                        self._refused = False
                     self._refresh()
                     auth_close = await self._pump(ws)
-            except websockets.InvalidStatus as e:
-                if e.response.status_code == 403:
-                    refused = True
-                else:
-                    # A proxy/gateway error (502/503...) is transient -- retry.
-                    logger.debug("consent-decide ws handshake failed: %s", e)
             except Exception as e:  # noqa: BLE001
-                logger.debug("consent-decide ws dropped: %s", e)
+                refused = ws_refused(e)
             finally:
                 self._ws = None
                 self._connected = False
@@ -878,11 +1014,8 @@ class ConsentDeciderApp(App):
                 continue
             if self._stop:
                 break
-            if auth_close:
-                await self._rotate_token()
             attempt += 1
-            await asyncio.sleep(self._backoff(attempt))
-            self._refresh()
+            await self._reconnect_wait(auth_close, attempt)
 
     async def refresh_token(self) -> str | None:
         """Refresh the JWT off the event loop (the HTTP call is blocking)."""
@@ -926,18 +1059,34 @@ class ConsentDeciderApp(App):
                 try:
                     raw = await ws.recv()
                 except websockets.ConnectionClosed as exc:
-                    code = exc.rcvd.code if exc.rcvd else None
-                    auth_close = code in (4001, 4002)
+                    auth_close = closed_code(exc) in (4001, 4002)
                     break
                 action, payload = self.controller.apply_frame(raw)
                 self._react(action, payload)
         finally:
-            ping.cancel()
-            try:
-                await ping
-            except (asyncio.CancelledError, Exception):
-                pass
+            await cancel_and_await(ping)
         return auth_close
+
+    def _react_ack(self, action: str, payload) -> None:
+        """React to a revoke/pause ack payload; flash on failure."""
+        if action == REVOKE_ACK:
+            # payload = (request_id, ok). A failed revoke (not an
+            # active verdict, wrong workspace, or the sidecar never
+            # acked the drop) leaves the row enforced -- flash so
+            # the decider knows it is still in effect, never silent.
+            # Success needs no flash; the controller already dropped
+            # the row and the refresh re-renders the list without it.
+            _rid, ok = payload  # type: ignore[misc]
+            if not ok:
+                self.flash("revoke failed — still in effect")
+        else:
+            # payload = (ok, until). A failed pause/unpause flashes;
+            # success is reflected by the refreshed egress_rules
+            # frame the server broadcasts (no flash needed).
+            ok, _until = payload  # type: ignore[misc]
+            if not ok:
+                self.flash("pause failed")
+        self._refresh()
 
     def _react(self, action: str, payload) -> None:
         """React to one parsed frame outcome (isolated render; see _pump)."""
@@ -957,25 +1106,8 @@ class ConsentDeciderApp(App):
         try:
             if action == ERROR:
                 self.flash(str(payload))
-            elif action == REVOKE_ACK:
-                # payload = (request_id, ok). A failed revoke (not an
-                # active verdict, wrong workspace, or the sidecar never
-                # acked the drop) leaves the row enforced -- flash so
-                # the decider knows it is still in effect, never silent.
-                # Success needs no flash; the controller already dropped
-                # the row and the refresh re-renders the list without it.
-                _rid, ok = payload  # type: ignore[misc]
-                if not ok:
-                    self.flash("revoke failed — still in effect")
-                self._refresh()
-            elif action == PAUSE_ACK:
-                # payload = (ok, until). A failed pause/unpause flashes;
-                # success is reflected by the refreshed egress_rules
-                # frame the server broadcasts (no flash needed).
-                ok, _until = payload  # type: ignore[misc]
-                if not ok:
-                    self.flash("pause failed")
-                self._refresh()
+            elif action in (REVOKE_ACK, PAUSE_ACK):
+                self._react_ack(action, payload)
             else:
                 self._refresh()
         except Exception:
@@ -1017,11 +1149,7 @@ class ConsentDeciderApp(App):
         """Drop resolved/expired rows, repaint survivors in place, append
         new ones (stable order). Returns the ids of the appended rows."""
         current_ids = {req.id for req in ordered}
-        # Drop resolved/expired rows (leave survivors untouched -> no flicker).
-        for child in list(lv.children):
-            rid = getattr(child, "request_id", None)
-            if rid is not None and rid not in current_ids:
-                child.remove()
+        remove_stale_rows(lv, current_ids)
         # Repaint survivors' countdown in place; append only new rows.
         existing = {getattr(c, "request_id", None): c for c in lv.children}
         new_ids: list[str] = []
@@ -1034,6 +1162,13 @@ class ConsentDeciderApp(App):
                 self._update_item(item, req)
         return new_ids
 
+    def _focus_survivor(self, focused_id, current_ids) -> bool:
+        """Refocus the previously-focused survivor, if it still exists."""
+        if focused_id is not None and focused_id in current_ids:
+            self._select_by_id(focused_id)
+            return True
+        return False
+
     def _apply_focus_policy(
         self, new_ids, current_ids, focused_id, focused_index
     ) -> None:
@@ -1043,8 +1178,8 @@ class ConsentDeciderApp(App):
         deciding doesn't strand the user on an unfocused list."""
         if new_ids:
             self._select_by_id(new_ids[0])
-        elif focused_id is not None and focused_id in current_ids:
-            self._select_by_id(focused_id)
+        elif self._focus_survivor(focused_id, current_ids):
+            pass
         elif focused_id is not None:
             self._select_index((focused_index or 0) - 1)
 
@@ -1229,7 +1364,7 @@ class ConsentDeciderApp(App):
         finite window that has elapsed is treated as not paused (#2498).
         """
         rules = self.controller.rules
-        expired = rules is not None and self.controller.pause_expired(rules)
+        expired = pause_expired_flag(rules, self.controller)
         if expired:
             # #2498: the finite window elapsed locally -- the workspace is
             # effectively unpaused, so clear the stale countdown and fall
@@ -1244,7 +1379,8 @@ class ConsentDeciderApp(App):
                 getattr(b, "pause_duration", None) == target, "pause-active"
             )
         countdown = self.query_one("#pause-countdown", Static)
-        if rules is not None and rules.paused is not None and not expired:
+        pause = active_pause(rules, self.controller)
+        if pause is not None:
             rem = self.controller.pause_remaining(rules)
             countdown.update(
                 "paused until restart"
@@ -1437,17 +1573,8 @@ class ConsentDeciderApp(App):
             return False
         if hidden_has_client(sock, sess):
             return True  # popup already open
-        w, h = DEFAULT_POPUP_SIZE
         clients = outer_clients(sock, sess)
-        for client in clients:
-            try:
-                subprocess.run(
-                    show_popup_argv(sock, sess, client, w=w, h=h),
-                    capture_output=True,
-                    timeout=3,
-                )
-            except Exception:  # noqa: BLE001
-                logger.debug("consent-decide popup show failed")
+        show_popup_to_clients(clients, sock, sess)
         return bool(clients)
 
     def decide(self, decision: str) -> None:
@@ -1697,6 +1824,32 @@ class RulesScreen(Screen):
             focused = self._last_focused_rule_id
         return focused
 
+    def _append_rule_rows(self, lv, rules) -> None:
+        """Append one row per active verdict (allows then denies)."""
+        for r in rules.allowed:
+            lv.append(self._rule_item(r, DECISION_ALLOWED))
+        for r in rules.denied:
+            lv.append(self._rule_item(r, DECISION_DENIED))
+
+    def _restore_rule_focus(self, lv, focused) -> None:
+        """Restore focus to the surviving rule after the refresh pass."""
+
+        def _restore_focus(_lv=lv, _focused=focused) -> None:
+            for index, child in enumerate(_lv.children):
+                if getattr(child, "rule_id", None) == _focused:
+                    _lv.index = index
+                    return
+            # The focused rule left the snapshot (revoke ack elsewhere /
+            # expiry): fall to a deterministic neighbor -- the old focus
+            # position clamped to the new list -- never silently index 0
+            # of a reordered list.
+            if _lv.children:
+                _lv.index = min(
+                    self._last_focused_rule_index, len(_lv.children) - 1
+                )
+
+        lv.call_after_refresh(_restore_focus)
+
     def _rebuild_rule_list(self, rules: EgressRules | None) -> None:
         """Rebuild the revoke selector from the controller's rules (#2341).
 
@@ -1719,39 +1872,16 @@ class RulesScreen(Screen):
         revokes the intended row.
         """
         lv = self.query_one("#rules-list", ListView)
-        desired: list[str] = []
-        if rules is not None:
-            desired += [r.id for r in rules.allowed]
-            desired += [r.id for r in rules.denied]
+        desired = revocable_rule_ids(rules)
         current = [getattr(c, "rule_id", None) for c in lv.children]
         if current == desired:
             return  # unchanged -> no flicker
         focused = self._capture_focused_rule_id(lv)
         lv.clear()
         if rules is not None:
-            for r in rules.allowed:
-                lv.append(self._rule_item(r, DECISION_ALLOWED))
-            for r in rules.denied:
-                lv.append(self._rule_item(r, DECISION_DENIED))
+            self._append_rule_rows(lv, rules)
         if focused is not None:
-            # Restore focus to the surviving rule. ``lv.clear()`` schedules an
-            # index reset that would clobber a synchronous set, so defer the
-            # restore to after the refresh pass lands it.
-            def _restore_focus(_lv=lv, _focused=focused) -> None:
-                for index, child in enumerate(_lv.children):
-                    if getattr(child, "rule_id", None) == _focused:
-                        _lv.index = index
-                        return
-                # The focused rule left the snapshot (revoke ack elsewhere /
-                # expiry): fall to a deterministic neighbor -- the old focus
-                # position clamped to the new list -- never silently index 0
-                # of a reordered list.
-                if _lv.children:
-                    _lv.index = min(
-                        self._last_focused_rule_index, len(_lv.children) - 1
-                    )
-
-            lv.call_after_refresh(_restore_focus)
+            self._restore_rule_focus(lv, focused)
 
     @staticmethod
     def _rule_item(rule: ConsentRule, decision: str) -> ListItem:
@@ -1836,21 +1966,5 @@ class RulesScreen(Screen):
         if rule.dest_port is not None:
             host = f"{host}:{rule.dest_port}"
         proc = f"  ({rule.process_name})" if rule.process_name else ""
-        if rule.duration == DURATION_FOREVER:
-            label = "forever"
-        elif rule.duration == DURATION_TILRESTART:
-            label = "until restart"
-        else:
-            rem = controller.rule_remaining(rule)
-            # Guard None before formatting: a timed verdict with a null
-            # decided_at or an unknown duration has no countdown. Both allow
-            # and deny must degrade the same way (else fmt_duration(None)
-            # raises TypeError on a deny) -- the parser permits these rows, so
-            # rendering must too.
-            if rem is None:
-                label = ""
-            elif deny:
-                label = f"{fmt_duration(rem)} left"
-            else:
-                label = f"expires in {fmt_duration(rem)}"
+        label = verdict_label(rule, controller, deny=deny)
         return f"{escape(host)}{escape(proc)}  [dim]{escape(label)}[/dim]"

@@ -60,6 +60,18 @@ def admin_error(resp) -> None:
     raise typer.Exit(code=1)
 
 
+def user_row(u: dict) -> tuple[str, ...]:
+    """One table row for ``admin users ls``."""
+    return (
+        u["id"],
+        u["email"],
+        u.get("handle") or "",
+        "yes" if u.get("verified") else "no",
+        u.get("provider") or "password",
+        (u.get("created_at") or "")[:10],
+    )
+
+
 @admin_users_app.command("ls")
 def admin_users_ls(
     page: int = typer.Option(1, "--page", help="Page number"),
@@ -91,14 +103,7 @@ def admin_users_ls(
     table.add_column("Provider")
     table.add_column("Created")
     for u in users:
-        table.add_row(
-            u["id"],
-            u["email"],
-            u.get("handle") or "",
-            "yes" if u.get("verified") else "no",
-            u.get("provider") or "password",
-            (u.get("created_at") or "")[:10],
-        )
+        table.add_row(*user_row(u))
     total = body.get("total", len(users))
     console.print(table)
     if total > len(users):
@@ -106,6 +111,25 @@ def admin_users_ls(
             f"\n[dim]Showing {len(users)} of {total} "
             f"(use --page to see more)[/dim]"
         )
+
+
+def search_user_matches(search_json: list[dict], email: str) -> list[dict]:
+    """Exact email-or-handle matches from the prefix-match search."""
+    return [
+        u
+        for u in search_json
+        if u.get("email") == email or u.get("handle") == email
+    ]
+
+
+def prompt_new_password() -> str:
+    """Prompt for a new password twice, exiting on mismatch."""
+    password = Prompt.ask("[bold]New password[/bold]", password=True)
+    confirm = Prompt.ask("[bold]Confirm password[/bold]", password=True)
+    if password != confirm:
+        context.err.print("[red]Passwords do not match[/red]")
+        raise typer.Exit(code=1)
+    return password
 
 
 @admin_users_app.command("set-password")
@@ -137,11 +161,7 @@ def admin_users_set_password(
     client.check_auth(search)
     if search.status_code != 200:
         admin_error(search)
-    matches = [
-        u
-        for u in search.json()
-        if u.get("email") == email or u.get("handle") == email
-    ]
+    matches = search_user_matches(search.json(), email)
     if not matches:
         context.err.print(
             f"[red]No user found with email or handle {email}[/red]"
@@ -150,11 +170,7 @@ def admin_users_set_password(
     user_id = matches[0]["id"]
 
     if password is None:
-        password = Prompt.ask("[bold]New password[/bold]", password=True)
-        confirm = Prompt.ask("[bold]Confirm password[/bold]", password=True)
-        if password != confirm:
-            context.err.print("[red]Passwords do not match[/red]")
-            raise typer.Exit(code=1)
+        password = prompt_new_password()
 
     resp = client.patch(
         f"/api/v1/users/{user_id}",
