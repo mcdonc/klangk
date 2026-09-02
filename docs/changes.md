@@ -1940,6 +1940,17 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Static egress: off-list DNS names return NXDOMAIN (#3041).** A
+  `static` workspace with egress filtering resolved every off-list name
+  through the upstream resolver when the consent stack was wired (which is
+  every filtered workspace) — a resolution oracle and a DNS exfiltration
+  channel that bypassed the allow-list. klangkd now passes the workspace's
+  `egress_mode` to the network sidecar explicitly
+  (`KLANGKNETWORK_EGRESS_MODE`), and the sidecar refuses off-list queries
+  locally in `static` mode. `interactive` and `allow` modes are unchanged
+  (they resolve and gate the connection at the SYN). See
+  [Egress filtering](features/egress-filtering.md).
+
 - **Tab-strip sync survives a container restart (#3015).** The
   server's tmux window watcher was built once per workspace session
   and never replaced when the container was recycled while members

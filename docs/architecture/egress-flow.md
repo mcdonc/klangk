@@ -21,9 +21,12 @@ is about what happens at runtime, inside the [network sidecar][egress-issue].
    (`allowed_domains`) or an in-effect consent allow resolves normally and
    each resolved IP gets a port-scoped `ACCEPT` rule — no consent involved.
    A name on the reject-list (`rejected_domains`) gets `NXDOMAIN`
-   unconditionally. An off-list name **still resolves** (the workspace gets
-   the IP), but the proxy only records the IP→host mapping — the connection
-   itself is gated next.
+   unconditionally. An off-list name in `interactive`/`allow` mode **still
+   resolves** (the workspace gets the IP), but the proxy only records the
+   IP→host mapping — the connection itself is gated next. In `static` mode
+   the off-list name gets `NXDOMAIN` locally — the query is never forwarded
+   (#3041), so there is no resolution oracle and no DNS exfiltration
+   channel.
 2. **The connection SYN is gate 2.** The kernel `OUTPUT` chain walks its
    rules top-down: learned `ACCEPT`/`REJECT` rules (inserted at the top at
    runtime) first, then the static startup rules (loopback, established,
@@ -63,13 +66,13 @@ flowchart TD
         LRN["forward upstream, answer the client,<br/>install port-scoped ACCEPT rules for each<br/>resolved IP (lifetime: DNS TTL, capped at a<br/>timed allow's remaining window)"]
         REC["forward upstream, answer the client,<br/>record the IP-to-host mapping only - NO ACCEPT"]
         NXD["NXDOMAIN"]
-        CLI{"consent wiring configured?"}
+        MODE{"KLANGKNETWORK_EGRESS_MODE<br/>+ consent wiring?"}
         RJ -->|"match - unconditional, every mode"| NXD
         RJ -->|no| PF
         PF -->|match| LRN
-        PF -->|no| CLI
-        CLI -->|yes| REC
-        CLI -->|"no (no consent endpoint)"| NXD
+        PF -->|no| MODE
+        MODE -->|"interactive/allow (consent wired)"| REC
+        MODE -->|"static - refused locally, never forwarded (#3041)<br/>or no consent wiring"| NXD
     end
     REDIR --> RJ
 
@@ -182,13 +185,13 @@ leading-dot form to cover subdomains.
 
 The two sides of a verdict are deliberately asymmetric:
 
-|                   | Allow                                                                                                | Deny                                                                                        |
-| ----------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| Fast path         | learned `ACCEPT` rule (per-IP) + hostname memory                                                     | forged RST (immediate `ECONNREFUSED`) + temporary `REJECT` rule (per-IP)                    |
-| Memory scope      | hostname:port in the in-session allow list; future DNS lookups of the host allow-learn automatically | hostname:port in the in-session deny list — covers CDN-rotated IPs the per-IP REJECT misses |
-| Lifetime          | the verdict's duration (`once` learns nothing)                                                       | the verdict's duration (`once` rejects only that connection)                                |
-| Across restarts   | `forever` → appended to `allowed_domains` (persisted, re-read at sidecar start)                      | `forever` → appended to `rejected_domains` (persisted)                                      |
-| Static complement | a name off the allow-list resolves but is denied at the SYN                                          | a name on the reject-list never resolves (`NXDOMAIN`)                                       |
+|                   | Allow                                                                                                                              | Deny                                                                                        |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| Fast path         | learned `ACCEPT` rule (per-IP) + hostname memory                                                                                   | forged RST (immediate `ECONNREFUSED`) + temporary `REJECT` rule (per-IP)                    |
+| Memory scope      | hostname:port in the in-session allow list; future DNS lookups of the host allow-learn automatically                               | hostname:port in the in-session deny list — covers CDN-rotated IPs the per-IP REJECT misses |
+| Lifetime          | the verdict's duration (`once` learns nothing)                                                                                     | the verdict's duration (`once` rejects only that connection)                                |
+| Across restarts   | `forever` → appended to `allowed_domains` (persisted, re-read at sidecar start)                                                    | `forever` → appended to `rejected_domains` (persisted)                                      |
+| Static complement | a name off the allow-list is denied at gate 1 (`static` NXDOMAINs it, #3041; `interactive`/`allow` resolve it and deny at the SYN) | a name on the reject-list never resolves (`NXDOMAIN`)                                       |
 
 An allow is hostname-shaped and forward-looking (the next DNS query
 re-learns fresh IPs); a deny is IP-shaped at the kernel (REJECT on the

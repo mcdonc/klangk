@@ -867,6 +867,9 @@ class TestStartContainer:
         assert kwargs["dns"] == ["1.1.1.1"]
         assert "KLANGKNETWORK_EGRESS_ALLOW=github.com:443" in kwargs["env"]
         assert "KLANGKNETWORK_EGRESS_UPSTREAM=8.8.8.8" in kwargs["env"]
+        # #3041: the egress mode is passed explicitly (default static) so the
+        # sidecar never infers it from consent-client presence.
+        assert "KLANGKNETWORK_EGRESS_MODE=static" in kwargs["env"]
         # #2254 review: the network sidecar is labelled with this klangk instance so
         # the startup reaper culls any leftover network sidecar at boot.
         assert (
@@ -1476,11 +1479,60 @@ class TestStartContainer:
             for e in env
         )
         assert "KLANGKNETWORK_EGRESS_NFQUEUE_NUM=5139" in env
+        assert "KLANGKNETWORK_EGRESS_MODE=interactive" in env
         assert not any("TOKEN" in e for e in env)
         # the workspace token was written to the bind-mounted file ...
         assert (tmp_path / "ws-tokens" / WS).read_text() == "ws-tok"
         # ... and bind-mounted read-only into the sidecar
         assert any("workspace-token:ro" in b for b in kwargs.get("binds", []))
+
+    async def test_start_network_sidecar_static_mode_env_with_consent(
+        self, monkeypatch, tmp_path
+    ):
+        # #3041: the exact misconfiguration the bug lived in -- a STATIC
+        # workspace with the consent stack wired (every filtered workspace
+        # gets CONSENT_URL, #2242/#2311). The mode env must say static so the
+        # sidecar NXDOMAINs off-list names despite the consent client being
+        # present (it used to infer interactive from client presence and
+        # resolve them -- a resolution oracle + DNS exfil channel).
+        import types as _types
+
+        WS = "abcdef12-abcd-1234-5678-bbbbbbbbbbbb"
+        monkeypatch.setattr(
+            self.registry.app.state.settings,
+            "network_sidecar_image",
+            "net-img",
+        )
+        monkeypatch.setattr(
+            self.registry.app.state.settings, "egress_port", "8997"
+        )
+        monkeypatch.setattr(
+            self.registry.app.state.settings, "data_dir", str(tmp_path)
+        )
+        monkeypatch.setattr(
+            self.registry.app.state,
+            "consent_sweeper",
+            _types.SimpleNamespace(),
+            raising=False,
+        )
+        monkeypatch.setattr(
+            self.registry.app.state,
+            "auth",
+            _types.SimpleNamespace(create_workspace_token=lambda ws: "ws-tok"),
+            raising=False,
+        )
+        from klangk import netfilter as _nf
+
+        monkeypatch.setattr(_nf, "detect_host_resolvers", lambda: ["8.8.8.8"])
+        with patch_podman(self.registry) as p:
+            await self.registry.start_network_sidecar(
+                WS, ["github.com:443"], egress_mode="static"
+            )
+        env = p.create_container.call_args.kwargs["env"]
+        # consent stack wired ...
+        assert any("KLANGKNETWORK_EGRESS_CONSENT_URL=" in e for e in env)
+        # ... AND the mode says static -- the pair the sidecar keys on.
+        assert "KLANGKNETWORK_EGRESS_MODE=static" in env
 
     def test_write_sidecar_token_atomic(self, monkeypatch, tmp_path):
         # The sidecar reads this file per POST; writes must be atomic (no
