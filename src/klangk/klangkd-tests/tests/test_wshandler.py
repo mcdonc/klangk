@@ -223,7 +223,7 @@ async def _empty_async_generator():
         yield
 
 
-def _base_conn(user=None, ws=None, app_state=None):
+def _base_conn(user=None, ws=None, app_state=None, perms=()):
     if ws is None:
         ws = _mock_sock()
     if user is None:
@@ -234,7 +234,15 @@ def _base_conn(user=None, ws=None, app_state=None):
         }
     if app_state is None:
         app_state = _make_app_state()
-    return Connection(ws, user, app_state)
+    conn = Connection(ws, user, app_state)
+    if perms:
+        granted = frozenset(perms)
+
+        async def _perm(perm):
+            return perm in granted
+
+        conn.has_perm = _perm  # type: ignore[method-assign]
+    return conn
 
 
 @asynccontextmanager
@@ -245,19 +253,21 @@ async def _conn_in_workspace(
     container_id: str = "cid",
     user_home: str | None = None,
     app_state=None,
+    perms=(),
 ):
     """Yield ``(sock, conn, session, app_state)`` registered in workspace state.
 
     Creates a mock socket and Connection, registers it as a subscriber
     of a fresh WorkspaceSession, and tears the registration down on exit.
     The yielded ``session`` may be mutated (e.g. ``terminal_windows``)
-    by the caller before use.
+    by the caller before use. *perms* overrides ``has_perm`` (the
+    synthetic workspace has no ACL rows, so real checks deny).
     """
     if app_state is None:
         app_state = _make_app_state()
     sockets = app_state.state.sockets
     sock = _mock_sock()
-    conn = _base_conn(user=user, ws=sock, app_state=app_state)
+    conn = _base_conn(user=user, ws=sock, app_state=app_state, perms=perms)
     conn.workspace_id = workspace_id
     conn.container_id = container_id
     conn._user_home = user_home
@@ -3667,7 +3677,7 @@ class TestSSHAgentHandlers:
 
     async def test_ssh_agent_start_success(self):
         sock = _mock_sock()
-        conn = _base_conn(ws=sock)
+        conn = _base_conn(ws=sock, perms=("code-in-isolation",))
         conn.container_id = "cid"
         mock_proc = AsyncMock()
         mock_proc.stdout = AsyncMock()
@@ -3705,7 +3715,7 @@ class TestSSHAgentHandlers:
         hits — the event must fire only after the bound poll.
         """
         sock = _mock_sock()
-        conn = _base_conn(ws=sock)
+        conn = _base_conn(ws=sock, perms=("code-in-isolation",))
         conn.container_id = "cid"
         mock_proc = AsyncMock()
         mock_proc.stdout = AsyncMock()
@@ -3746,7 +3756,7 @@ class TestSSHAgentHandlers:
         clients waiting on an event that never comes.
         """
         sock = _mock_sock()
-        conn = _base_conn(ws=sock)
+        conn = _base_conn(ws=sock, perms=("code-in-isolation",))
         conn.container_id = "cid"
         mock_proc = AsyncMock()
         mock_proc.stdout = AsyncMock()
@@ -3778,7 +3788,7 @@ class TestSSHAgentHandlers:
     async def test_ssh_agent_start_ready_error_sends_started_anyway(self):
         """A podman failure during the readiness poll is not fatal (#2535)."""
         sock = _mock_sock()
-        conn = _base_conn(ws=sock)
+        conn = _base_conn(ws=sock, perms=("code-in-isolation",))
         conn.container_id = "cid"
         mock_proc = AsyncMock()
         mock_proc.stdout = AsyncMock()
@@ -3812,7 +3822,7 @@ class TestSSHAgentHandlers:
         import base64
 
         sock = _mock_sock()
-        conn = _base_conn(ws=sock)
+        conn = _base_conn(ws=sock, perms=("code-in-isolation",))
         conn.container_id = "cid"
         mock_proc = AsyncMock()
         mock_proc.stdin = AsyncMock()
@@ -3852,7 +3862,7 @@ class TestSSHAgentHandlers:
 
     async def test_stop_ssh_agent_cleanup_on_disconnect(self):
         sock = _mock_sock()
-        conn = _base_conn(ws=sock)
+        conn = _base_conn(ws=sock, perms=("code-in-isolation",))
         conn.container_id = "cid"
         mock_proc = AsyncMock()
         mock_proc.kill = MagicMock()
@@ -3874,7 +3884,7 @@ class TestSSHAgentHandlers:
         import base64
 
         sock = _mock_sock()
-        conn = _base_conn(ws=sock)
+        conn = _base_conn(ws=sock, perms=("code-in-isolation",))
         conn.container_id = "cid"
         mock_proc = AsyncMock()
         read_data = [b"agent-response", b""]
@@ -4037,6 +4047,10 @@ class TestSshAgentForwarder:
             app=SimpleNamespace(
                 state=SimpleNamespace(podman=_mock_pod, terminal=_mock_term)
             ),
+            # #3022: start() gates on the session permissions before
+            # spawning the relay; the collaborator tests hold the
+            # own-terminal permission.
+            has_perm=AsyncMock(return_value=True),
         )
         return SshAgentForwarder(conn), sock
 
@@ -6674,7 +6688,7 @@ class TestTerminalWindowHandlers:
 
     async def test_new_window_success(self):
         sock = _mock_sock()
-        conn = _base_conn(ws=sock)
+        conn = _base_conn(ws=sock, perms=("code-in-isolation",))
         conn.container_id = "cid"
         conn._user_home = "/home/alice"
         with patch.object(
@@ -6694,7 +6708,7 @@ class TestTerminalWindowHandlers:
         # #1885/#1894: creating a window pushes the window list to the
         # user's /ws status connections (e.g. the TUI). Guarded on workspace_id.
         sock = _mock_sock()
-        conn = _base_conn(ws=sock)
+        conn = _base_conn(ws=sock, perms=("code-in-isolation",))
         conn.container_id = "cid"
         conn._user_home = "/home/alice"
         conn.workspace_id = "ws-1"
@@ -6720,7 +6734,7 @@ class TestTerminalWindowHandlers:
 
     async def test_new_window_with_name(self):
         sock = _mock_sock()
-        conn = _base_conn(ws=sock)
+        conn = _base_conn(ws=sock, perms=("code-in-isolation",))
         conn.container_id = "cid"
         conn._user_home = "/home/alice"
         with patch.object(
@@ -6736,7 +6750,7 @@ class TestTerminalWindowHandlers:
 
     async def test_new_window_error(self):
         sock = _mock_sock()
-        conn = _base_conn(ws=sock)
+        conn = _base_conn(ws=sock, perms=("code-in-isolation",))
         conn.container_id = "cid"
         conn._user_home = "/home/alice"
         with patch.object(
@@ -6750,7 +6764,7 @@ class TestTerminalWindowHandlers:
 
     async def test_select_window_by_index(self):
         sock = _mock_sock()
-        conn = _base_conn(ws=sock)
+        conn = _base_conn(ws=sock, perms=("code-in-isolation",))
         conn.container_id = "cid"
         conn._user_home = "/home/alice"
         with patch.object(
@@ -6762,7 +6776,7 @@ class TestTerminalWindowHandlers:
 
     async def test_select_window_by_id(self):
         sock = _mock_sock()
-        conn = _base_conn(ws=sock)
+        conn = _base_conn(ws=sock, perms=("code-in-isolation",))
         conn.container_id = "cid"
         conn._user_home = "/home/alice"
         with patch.object(
@@ -6774,7 +6788,7 @@ class TestTerminalWindowHandlers:
 
     async def test_select_window_error(self):
         sock = _mock_sock()
-        conn = _base_conn(ws=sock)
+        conn = _base_conn(ws=sock, perms=("code-in-isolation",))
         conn.container_id = "cid"
         conn._user_home = "/home/alice"
         with patch.object(
@@ -6788,7 +6802,7 @@ class TestTerminalWindowHandlers:
 
     async def test_close_window(self):
         sock = _mock_sock()
-        conn = _base_conn(ws=sock)
+        conn = _base_conn(ws=sock, perms=("code-in-isolation",))
         conn.container_id = "cid"
         conn._user_home = "/home/alice"
         two_windows = [
@@ -6811,7 +6825,7 @@ class TestTerminalWindowHandlers:
 
     async def test_close_last_window_refused(self):
         sock = _mock_sock()
-        conn = _base_conn(ws=sock)
+        conn = _base_conn(ws=sock, perms=("code-in-isolation",))
         conn.container_id = "cid"
         conn._user_home = "/home/alice"
         one_window = [
@@ -6826,7 +6840,10 @@ class TestTerminalWindowHandlers:
     async def test_close_shared_window_broadcasts(self, user, app_state):
         """Closing a shared window broadcasts updated shared_terminals."""
         async with _conn_in_workspace(
-            user, "ws-1", user_home="/home/admin"
+            user,
+            "ws-1",
+            user_home="/home/admin",
+            perms=("code-in-isolation",),
         ) as (sock, conn, session, app_state):
             session.terminal_windows[user["id"]] = [
                 {"name": "bash", "index": 0, "id": "@0", "shared": True},
@@ -6860,7 +6877,7 @@ class TestTerminalWindowHandlers:
 
     async def test_close_window_error(self):
         sock = _mock_sock()
-        conn = _base_conn(ws=sock)
+        conn = _base_conn(ws=sock, perms=("code-in-isolation",))
         conn.container_id = "cid"
         conn._user_home = "/home/alice"
         two_windows = [
@@ -6881,7 +6898,7 @@ class TestTerminalWindowHandlers:
 
     async def test_close_window_by_id(self):
         sock = _mock_sock()
-        conn = _base_conn(ws=sock)
+        conn = _base_conn(ws=sock, perms=("code-in-isolation",))
         conn.container_id = "cid"
         conn._user_home = "/home/alice"
         two_windows = [
@@ -6906,7 +6923,7 @@ class TestTerminalWindowHandlers:
 
     async def test_close_window_prefers_window_id(self):
         sock = _mock_sock()
-        conn = _base_conn(ws=sock)
+        conn = _base_conn(ws=sock, perms=("code-in-isolation",))
         conn.container_id = "cid"
         conn._user_home = "/home/alice"
         two_windows = [
@@ -6931,7 +6948,7 @@ class TestTerminalWindowHandlers:
 
     async def test_rename_window(self):
         sock = _mock_sock()
-        conn = _base_conn(ws=sock)
+        conn = _base_conn(ws=sock, perms=("code-in-isolation",))
         conn.container_id = "cid"
         conn._user_home = "/home/alice"
         with (
@@ -6955,7 +6972,7 @@ class TestTerminalWindowHandlers:
 
     async def test_rename_window_no_name(self):
         sock = _mock_sock()
-        conn = _base_conn(ws=sock)
+        conn = _base_conn(ws=sock, perms=("code-in-isolation",))
         conn.container_id = "cid"
         conn._user_home = "/home/alice"
         await conn.handle_terminal_rename_window({"index": 0})
@@ -6965,7 +6982,7 @@ class TestTerminalWindowHandlers:
 
     async def test_rename_window_error(self):
         sock = _mock_sock()
-        conn = _base_conn(ws=sock)
+        conn = _base_conn(ws=sock, perms=("code-in-isolation",))
         conn.container_id = "cid"
         conn._user_home = "/home/alice"
         with patch.object(
@@ -6989,7 +7006,10 @@ class TestTerminalWindowHandlers:
         race).
         """
         async with _conn_in_workspace(
-            user, "ws-1", user_home="/home/admin"
+            user,
+            "ws-1",
+            user_home="/home/admin",
+            perms=("code-in-isolation",),
         ) as (sock, conn, session, app_state):
             session.terminal_windows[user["id"]] = [
                 {"name": "bash", "index": 0, "id": "@0", "shared": True}
@@ -7032,7 +7052,10 @@ class TestTerminalWindowHandlers:
         a terminal_windows frame.
         """
         async with _conn_in_workspace(
-            user, "ws-1", user_home="/home/admin"
+            user,
+            "ws-1",
+            user_home="/home/admin",
+            perms=("code-in-isolation",),
         ) as (sock, conn, session, app_state):
             renamed = [
                 {
@@ -7071,7 +7094,7 @@ class TestTerminalWindowHandlers:
 
     async def test_list_windows(self):
         sock = _mock_sock()
-        conn = _base_conn(ws=sock)
+        conn = _base_conn(ws=sock, perms=("code-in-isolation",))
         conn.container_id = "cid"
         conn._user_home = "/home/alice"
         with patch.object(
@@ -7088,7 +7111,7 @@ class TestTerminalWindowHandlers:
 
     async def test_list_windows_error(self):
         sock = _mock_sock()
-        conn = _base_conn(ws=sock)
+        conn = _base_conn(ws=sock, perms=("code-in-isolation",))
         conn.container_id = "cid"
         conn._user_home = "/home/alice"
         with patch.object(
@@ -7099,6 +7122,162 @@ class TestTerminalWindowHandlers:
             await conn.handle_terminal_list_windows()
         sent = sock.send_json.call_args[0][0]
         assert sent["type"] == "error"
+
+
+class TestJoinOnlyMemberFrameGates:
+    """#3022: the connect gate is ``join-workspace``, so a member can
+    hold it while holding no terminal powers at all. Every frame that
+    execs into the container must then refuse on its own — historically
+    these rode on the connect handshake checking ``terminal``.
+
+    A join-only member (or a spectator whose grouped joiner session
+    exists) must get the machine-readable ``forbidden`` refusal and
+    cause no podman/tmux work.
+    """
+
+    def _join_only_conn(self):
+        sock = _mock_sock()
+        # Join-only member: holds the connect gate and nothing else.
+        conn = _base_conn(ws=sock, perms=("join-workspace",))
+        conn.container_id = "cid"
+        conn._user_home = "/home/alice"
+        conn.workspace_id = "ws-1"
+        return sock, conn
+
+    async def test_own_window_frames_refused(self):
+        sock, conn = self._join_only_conn()
+        handlers = (
+            conn.handle_terminal_new_window,
+            conn.handle_terminal_select_window,
+            conn.handle_terminal_close_window,
+            conn.handle_terminal_rename_window,
+            conn.handle_terminal_list_windows,
+        )
+        with (
+            patch.object(
+                _mock_term, "new_window", new=AsyncMock()
+            ) as mock_new,
+            patch.object(
+                _mock_term, "select_window", new=AsyncMock()
+            ) as mock_sel,
+            patch.object(
+                _mock_term, "close_window", new=AsyncMock()
+            ) as mock_close,
+            patch.object(
+                _mock_term, "rename_window", new=AsyncMock()
+            ) as mock_rename,
+            patch.object(
+                _mock_term, "list_windows", new=AsyncMock()
+            ) as mock_list,
+        ):
+            for handler, msg in (
+                (handlers[0], {}),
+                (handlers[1], {"index": 0}),
+                (handlers[2], {"index": 0}),
+                (handlers[3], {"index": 0, "name": "x"}),
+                (handlers[4], None),
+            ):
+                if msg is None:
+                    await handler()
+                else:
+                    await handler(msg)
+        for mock in (mock_new, mock_sel, mock_close, mock_rename, mock_list):
+            mock.assert_not_called()
+        refusals = [
+            c.args[0]
+            for c in sock.send_json.call_args_list
+            if c.args[0].get("type") == "error"
+        ]
+        assert len(refusals) == 5
+        for frame in refusals:
+            assert frame["message"] == "Permission denied"
+            # Deliberately code-less: a stamped `forbidden` would make
+            # the frontend swap the whole page for the access-revoked
+            # view (#2891 reserves that code for connect-level refusals).
+            assert "code" not in frame
+
+    async def test_ssh_agent_start_refused(self):
+        """No own-terminal/exec permission → no relay spawned in the
+        container (no pkill/rm/socat podman work at all)."""
+        sock, conn = self._join_only_conn()
+        with (
+            patch.object(_mock_pod, "exec_container", new=AsyncMock()) as pod,
+            patch("asyncio.create_subprocess_exec", new=AsyncMock()) as spawn,
+        ):
+            await conn.handle_ssh_agent_start()
+        pod.assert_not_called()
+        spawn.assert_not_called()
+        frame = sock.send_json.call_args[0][0]
+        assert frame["message"] == "Permission denied"
+        assert "code" not in frame
+        assert conn.ssh_agent.proc is None
+
+    async def test_ssh_agent_start_allowed_for_exec_only_member(self):
+        """``exec-and-sync`` alone also permits the relay: exec sessions
+        wire SSH_AUTH_SOCK to the same per-user socket (#2001)."""
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock, perms=("exec-and-sync",))
+        conn.container_id = "cid"
+        mock_proc = AsyncMock()
+        mock_proc.stdout = AsyncMock()
+        mock_proc.stdout.read = AsyncMock(return_value=b"")
+        mock_proc.stdin = AsyncMock()
+        mock_proc.kill = MagicMock()
+        mock_proc.wait = AsyncMock()
+        with (
+            patch.object(
+                _mock_pod,
+                "exec_container",
+                new=AsyncMock(return_value=(0, "", "")),
+            ),
+            patch(
+                "asyncio.create_subprocess_exec",
+                new=AsyncMock(return_value=mock_proc),
+            ),
+        ):
+            await conn.handle_ssh_agent_start()
+            assert conn.ssh_agent.task is not None
+            await conn.ssh_agent.task
+        msg = sock.send_json.call_args[0][0]
+        assert msg["type"] == "ssh_agent_started"
+
+    async def test_join_only_member_refused_via_real_acl(
+        self, user, app_state
+    ):
+        """The gate walks the REAL ACL, not the has_perm override — pins
+        the permission string against a typo (a misspelled name would
+        silently deny seeded roles instead). Mirrors the #2975
+        connect-gate tests: stored ACEs, no overrides."""
+        from klangk import model
+
+        sock = _mock_sock()
+        member = await app_state.state.model.users.create_user(
+            "join-only@example.com", "pw", verified=True
+        )
+        workspace = await _create_workspace_with_acl(
+            app_state, user["id"], "join-only-real-acl"
+        )
+        # Stored grants: exactly the connect gate, nothing else.
+        await app_state.state.model.acl.add_acl_entry(
+            f"/workspaces/{workspace['id']}",
+            100,
+            model.ACTION_ALLOW,
+            "join-workspace",
+            model.PRINCIPAL_USER,
+            user_id=member["id"],
+        )
+        conn = _base_conn(user=member, ws=sock, app_state=app_state)
+        conn.workspace_id = workspace["id"]
+        conn.container_id = "cid"
+        conn._user_home = "/home/joinonly"
+
+        with patch.object(_mock_term, "new_window", new=AsyncMock()) as mock:
+            await conn.handle_terminal_new_window({})
+        mock.assert_not_called()
+        frame = sock.send_json.call_args[0][0]
+        assert frame["type"] == "error"
+        assert frame["message"] == "Permission denied"
+        assert "code" not in frame
 
 
 class TestTerminalController:
