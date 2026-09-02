@@ -290,10 +290,17 @@ async def create_volume(
     user: dict = Depends(acl.has_permission("manage-volumes")),
     app=Depends(get_app_dep),
 ):
-    if await app.state.podman.inspect_volume(body.name) is not None:
-        raise HTTPException(
-            status_code=409, detail=f"Volume {body.name!r} already exists"
-        )
+    existing = await app.state.podman.inspect_volume(body.name)
+    if existing is not None:
+        labels = existing.get("Labels") or {}
+        if labels.get("klangk.instance") == app.state.util.instance_id():
+            raise HTTPException(
+                status_code=409, detail=f"Volume {body.name!r} already exists"
+            )
+    # A non-managed name (another instance's or the operator's volume)
+    # falls through to create_volume, which surfaces podman's own
+    # "volume already exists" failure instead of confirming the
+    # volume's existence with a 409 (#2973).
     info = await app.state.podman.create_volume(
         body.name,
         {

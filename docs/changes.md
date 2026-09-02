@@ -1816,6 +1816,14 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Volume-create conflict check no longer leaks foreign volume names
+  (#2973).** `POST /api/v1/volumes` answered 409 for any podman volume
+  name that existed on the host, letting a user probe for volumes the
+  Klangk instance doesn't manage (other instances', operator-created).
+  The 409 is now returned only for volumes labeled with this instance's
+  id; other names fall through to the create, which fails with podman's
+  own name-conflict error.
+
 - **GitHub device-flow gate now normalizes the git host (#2963).**
   With `KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID` configured, a remote
   written as `https://github.com:443/...`, `https://GitHub.com/...`, or
