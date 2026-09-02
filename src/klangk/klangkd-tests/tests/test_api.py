@@ -6806,7 +6806,7 @@ class TestVolumeRoutes:
         with patch.object(
             _mock_pod,
             "inspect_volume",
-            AsyncMock(return_value={"Name": "dup-vol"}),
+            AsyncMock(return_value=_managed_volume(user["id"])),
         ):
             resp = await client.post(
                 "/api/v1/volumes",
@@ -6814,6 +6814,45 @@ class TestVolumeRoutes:
                 headers=headers,
             )
         assert resp.status_code == 409
+
+    async def test_create_volume_foreign_instance_not_enumerable(
+        self, app, user
+    ):
+        """#2973: a volume owned by another instance must not confirm its
+        existence via 409 — the create falls through to podman, and the
+        client sees a bare 500 whose body carries no probed name
+        (podman's own conflict text stays in the server log)."""
+        mock_create = AsyncMock(
+            side_effect=podman.PodmanError(
+                500, "volume with name 'foreign-vol' already exists"
+            )
+        )
+        with (
+            patch.object(
+                _mock_pod,
+                "inspect_volume",
+                AsyncMock(
+                    return_value={
+                        "Name": "foreign-vol",
+                        "Labels": {"klangk.instance": "other"},
+                    }
+                ),
+            ),
+            patch.object(_mock_pod, "create_volume", mock_create),
+        ):
+            transport = ASGITransport(app=app, raise_app_exceptions=False)
+            async with AsyncClient(
+                transport=transport, base_url="http://test"
+            ) as c:
+                headers = await _auth_headers(c)
+                resp = await c.post(
+                    "/api/v1/volumes",
+                    json={"name": "foreign-vol"},
+                    headers=headers,
+                )
+        assert mock_create.await_count == 1
+        assert resp.status_code == 500
+        assert "foreign-vol" not in resp.text
 
     async def test_create_volume_error_propagates(self, client, user):
         headers = await _auth_headers(client)

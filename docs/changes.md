@@ -216,6 +216,15 @@ operators or integrators to act when upgrading.
 
 ### Security
 
+- **Volume-create conflict check no longer leaks foreign volume names
+  (#2973).** `POST /api/v1/volumes` answered 409 for any podman volume
+  name that existed on the host, letting a user probe for volumes the
+  Klangk instance doesn't manage (other instances', operator-created).
+  The 409 is now returned only for volumes labeled with this instance's
+  id; other names fall through to the create, which fails podman-side —
+  the client sees a bare internal error with no probed name, and
+  podman's conflict text reaches only the server log.
+
 - **`/llm-proxy` endpoints now require a workspace JWT (#2959).** The
   backend validates the workspace token itself, mirroring the egress
   proxy's `forward_auth` check. Previously the backend routes were
