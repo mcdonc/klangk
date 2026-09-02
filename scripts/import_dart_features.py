@@ -74,17 +74,19 @@ def scan_feature_dir(name: str, features_dir: str) -> dict | None:
     """One features/<name> entry's metadata, or None when it has no Dart
     package (missing pubspec/feature.dart) or declares no plugins (a
     feature with neither a ToolPlugin nor a WorkspaceTabPlugin isn't a
-    klangk feature)."""
+    klangk feature). The pubspec is parsed BEFORE the plugin scan so a
+    malformed pubspec aborts the build loudly (matching the original
+    read order), rather than being silently skipped."""
     dart_dir = os.path.join(features_dir, name, "klangk")
     pubspec_file = os.path.join(dart_dir, "pubspec.yaml")
     feature_dart = os.path.join(dart_dir, "lib", "feature.dart")
     if not os.path.isfile(pubspec_file) or not os.path.isfile(feature_dart):
         return None
+    with open(pubspec_file) as f:
+        pubspec = yaml.safe_load(f)
     tool_classes, tab_classes = dart_package_classes(dart_dir)
     if not tool_classes and not tab_classes:
         return None
-    with open(pubspec_file) as f:
-        pubspec = yaml.safe_load(f)
     package_name = pubspec.get("name", f"klangk_feature_{name}")
     return {
         "name": name,

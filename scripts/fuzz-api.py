@@ -944,7 +944,9 @@ def fuzz_random_path(rng: random.Random) -> str:
 def fill_named_placeholders(rng: random.Random, path: str) -> str:
     """Substitute the non-id placeholders ({role} from the known role
     list, {invitation_id}/{name}/{provider_id} as fuzzed values) and the
-    synthetic {random_path} catch-all."""
+    synthetic {random_path} catch-all. The {random_path} replacement is
+    LAST and whole-path -- it must never share a template with the named
+    placeholders, or the extra fuzz draw would shift the seed sequence."""
     for placeholder, draw in _NAMED_PLACEHOLDER_DRAWS.items():
         if placeholder in path:
             path = path.replace(placeholder, draw(rng))

@@ -242,7 +242,7 @@ async def send_denied(
         send_nxdomain(s, data, addr)
 
 
-def _handle_rejected(
+def handle_rejected(
     s: socket.socket, data: bytes, addr: tuple[str, int], qname: str
 ) -> bool:
     """Static deny-list (#2367): a rejected name is NXDOMAIN'd unconditionally,
@@ -282,7 +282,7 @@ async def handle_packet(
     # bypass NFQUEUE entirely.
     if client is not None:
         client.bump_activity()
-    if _handle_rejected(s, data, addr, qname):
+    if handle_rejected(s, data, addr, qname):
         return
     ports = ports_for(qname)
     deny, port_set = decision(qname, ports)
