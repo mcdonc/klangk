@@ -33,6 +33,7 @@ import 'workspace_sharing_panel.dart';
 import 'terminal_tabs_view.dart';
 import 'workspace_connector.dart';
 import 'consent_surface.dart';
+import 'permission_gate.dart';
 import 'terminal_tab_gate.dart';
 
 class WorkspacePage extends StatefulWidget {
@@ -259,8 +260,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
   }
 
   bool _hasPerm(String perm) =>
-      _workspacePermissions.contains(perm) ||
-      _workspacePermissions.contains('*');
+      permGranted(permissions: _workspacePermissions, permission: perm);
 
   Future<void> _connectToWorkspace() async {
     final wsClient = context.read<WsClient>();
