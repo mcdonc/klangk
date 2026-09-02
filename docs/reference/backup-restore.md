@@ -45,12 +45,16 @@ The data dir is the single most important artifact. It holds:
   Homes are plain directories bind-mounted into containers as `/home`; they are
   _not_ podman volumes.
 - `workspaces/<workspace id>/config` — per-workspace config directories.
+- `branding/` — fallback branding location, used by deployments that place
+  branding under the data dir instead of the customize dir
+  (see [Customizing](../deployment/customizing.md)).
 
 ### Podman named volumes
 
 Named volumes are the volumes users can attach to workspaces (created from the
 UI, the `klangk volumes create` CLI command, or a workspace mount spec like
-`mydata:/data`). Every one klangk manages carries three labels:
+`mydata:/data`). Every one klangk manages carries two labels, and a third
+when a specific user owns it:
 
 ```text
 klangk.managed=true      managed by klangk (never touched by other tooling)
@@ -146,7 +150,8 @@ fuse-overlayfs upper dir — outside the data dir). Back up:
 
 Do not chase these after a restore — the backend recreates them at boot:
 
-- `<state_dir>/klangk.sock`, the PID file, and the rendered proxy config.
+- `<state_dir>/klangk.sock` and the PID file (the proxy config itself is
+  pushed to Caddy over its admin API, never written to disk).
 - `<state_dir>/ssl/ca-bundle.crt` (rebuilt from the customize dir's `certs/`).
 - `<data_dir>/ws-tokens/` (sidecar auth tokens).
 - Workspace containers and network sidecars themselves — containers are
@@ -162,7 +167,7 @@ rootless and rootful podman have **separate** volume stores, so a backup taken
 from the wrong one finds no volumes.
 
 !!! note
-`podman volume export` / `podman volume import` need **podman 5.0+**.
+`podman volume export` / `podman volume import` need **podman 4.2+**.
 
 !!! tip
 In the [Docker deployment](../deployment/docker.md) podman runs _inside_ the
@@ -172,18 +177,21 @@ note that podman's volumes live inside the container's writable layer —
 they do **not** survive `docker rm` of the container, which is exactly why
 the export step below matters.
 
-### 1. Stop the site
+### 1. Quiesce the site
 
 Stop klangkd gracefully — do not just power off the host. On SIGTERM klangkd
-stops and removes all workspace containers first, so no process is writing into
-a volume while it is being exported:
+stops and removes all workspace containers first, so no process is writing
+into a volume while it is being exported:
 
 ```bash
-# systemd / packaged deployment
+# systemd / packaged deployment — podman runs on the host
 systemctl stop klangkd
 
-# Docker deployment
-docker stop klangk
+# Docker deployment — podman runs INSIDE the still-running klangk container.
+# docker exec needs a running container, so do NOT stop the container yet;
+# stop the workspace containers inside it instead (klangkd does not restart
+# them — autostart applies only at daemon boot):
+docker exec klangk podman stop --all --timeout 5
 ```
 
 ### 2. Back up the named volumes
@@ -214,15 +222,37 @@ done
 (The `grep .` and the `if` simply keep a site with no named volumes from
 erroring — an empty `podman volume inspect` invocation is an error.)
 
-### 3. Back up the data dir and everything else
+### 3. Stop the rest (Docker only) and back up the data dir
+
+In the Docker deployment, stop the container now — the volume exports above
+were the last step that needed it running:
 
 ```bash
-# The data dir (substitute your KLANGKD_DATA_DIR; Docker: the klangk-data volume)
+docker stop klangk   # Docker deployment only
+```
+
+The data dir must exist — a tar of an unset variable produces an empty archive
+that _looks_ like a successful backup:
+
+```bash
+# systemd / packaged deployment — the data dir is a host path
+DATA_DIR="${KLANGKD_DATA_DIR:-$HOME/.local/state/klangkd/data}"
+test -d "$DATA_DIR" || { echo "data dir $DATA_DIR not found" >&2; exit 1; }
 tar -C "$(dirname "$DATA_DIR")" -czf "$BACKUP/data-dir.tar.gz" "$(basename "$DATA_DIR")"
 
-# Config file + customize dir, if they exist
-tar -C ~ -czf "$BACKUP/config.tar.gz" \
-  .config/klangkd 2>/dev/null || true
+# Docker deployment — the data dir is the klangk-data volume; archive it
+# through a throwaway container (same tarball layout: a top-level data/ member)
+docker run --rm -v klangk-data:/data -v "$BACKUP:/backup" alpine \
+  tar -C / -czf /backup/data-dir.tar.gz data
+```
+
+Then everything else:
+
+```bash
+# Config file + customize dir, if they exist (skip cleanly when not)
+if test -d ~/.config/klangkd; then
+  tar -C ~ -czf "$BACKUP/config.tar.gz" .config/klangkd
+fi
 
 # Env config: copy the unit file / .env / docker-compose.yml you deploy with
 cp /etc/systemd/system/klangkd.service "$BACKUP/" 2>/dev/null || true
@@ -253,16 +283,26 @@ files on the new host, **exactly as they were** (same `KLANGKD_JWT_SECRET`,
 same paths). Then restore the data dir:
 
 ```bash
+DATA_DIR="${KLANGKD_DATA_DIR:-$HOME/.local/state/klangkd/data}"
 mkdir -p "$(dirname "$DATA_DIR")"
 tar -C "$(dirname "$DATA_DIR")" -xzf "$BACKUP/data-dir.tar.gz"
 ```
 
 !!! tip
 In the Docker deployment the data dir is the `klangk-data` volume — restore
-into it with a throwaway container, not a host path:
-`docker run --rm -v klangk-data:/data -v "$PWD:/backup" alpine \
-    tar -C /data -xzf /backup/data-dir.tar.gz` (where `$PWD` holds the
-extracted tarball).
+into it with a throwaway container, mirroring the backup command (both sides
+use a top-level `data/` tar member, so no `--strip-components` is needed — but
+do not mix this pair with the host-path form above):
+
+```bash
+docker run --rm -v klangk-data:/data -v "$BACKUP:/backup" alpine \
+  tar -C / -xzf /backup/data-dir.tar.gz
+```
+
+Verify the restore landed at the volume root — `instance-id` and `klangk.db`
+directly under the mount, **not** under a nested `data/` — before starting the
+container. A nested restore regenerates the instance id silently and orphans
+every labeled volume.
 
 #### Instance identity: the `instance-id` file
 

@@ -405,9 +405,10 @@ sync` report a clear permission-denied error.
 - **Backup and restore docs (#2999).** New "Backup and Restore" reference
   chapter covering the full-site backup set (data dir, labeled podman
   volumes with their labels, env + config file + `file:` secrets,
-  customization tree, host bind-mount sources, locally-built images),
-  with tested backup and restore procedures and the instance-id /
-  volume-label constraints that make a restore succeed.
+  customization tree, host bind-mount sources, locally-built images)
+  and backup/restore procedures for both the packaged and Docker
+  deployments, including the instance-id and volume-label constraints
+  that make a restore succeed.
 
 - **Live permission lists in the Sharing tab (#2986).** Each role
   bucket (owners, collaborators, coders, spectators) now lists the
