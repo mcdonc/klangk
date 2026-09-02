@@ -1472,6 +1472,11 @@ stop)`) and a `server: stop at 23:00 (in 1h 12m)` status line in the
 
 ### Changed
 
+- **Server admin schedule list (#3002).** The explanatory paragraph
+  ("A stop exits the server process…") no longer renders above the
+  schedule list on the Server admin tab; the list now fills the tab
+  directly.
+
 - **Password-field visibility toggle (#2893).** The "eye" toggle on
   password fields (login, settings, invitations, password reset, admin
   user forms) is no longer a Tab stop — Tab moves only between input
