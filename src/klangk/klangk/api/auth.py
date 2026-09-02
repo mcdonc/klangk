@@ -209,6 +209,33 @@ resend_timestamps: dict[str, float] = {}
 RESEND_COOLDOWN_SECONDS = 60
 
 
+def _rate_limited(timestamps: dict, cooldown: float, email: str) -> bool:
+    """True when *email* hit its per-address cooldown window; otherwise
+    records this attempt. Bounds both size and retention of the window
+    (stale entries are pruned on each call)."""
+    now = time.time()
+    prune_timestamps(timestamps, cooldown, now)
+    last = timestamps.get(email, 0)
+    if now - last < cooldown:
+        return True
+    timestamps[email] = now
+    return False
+
+
+async def _authorize_resend(app, user, req, lockout_key, attempt_info) -> None:
+    """401 unless the email+password pair authorizes a resend.
+
+    Same lockout accounting as login (#2618): failures are recorded on
+    the lockout key. Without this the endpoint accepted unlimited
+    password guesses — the 60s cooldown only bounds email sending and
+    only applies after the check succeeds.
+    """
+    password_ok = await auth.verify_login_password(user, req.password)
+    if user is None or not user.get("password_hash") or not password_ok:
+        await app.state.auth.record_login_failure(lockout_key, attempt_info)
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+
 @router.post("/auth/resend-verification")
 async def resend_verification(
     req: auth.EmailRequest,
@@ -217,44 +244,21 @@ async def resend_verification(
 ):
     """Resend verification email. Requires email+password to prevent abuse."""
     user = await app.state.model.users.get_user_by_email(req.email)
-    # Same lockout accounting as login (#2618): key on the resolved
-    # user's canonical email (raw input for unknown addresses), check
-    # before the expensive verify, and record failures on a bad
-    # password. Without this the endpoint accepted unlimited password
-    # guesses — the 60s cooldown below only bounds email sending and
-    # only applies after the check succeeds.
+    # Lockout key: the resolved user's canonical email when known, the
+    # raw input for unknown addresses (#2618).
     lockout_key = user["email"] if user else req.email
     attempt_info = await app.state.auth.check_login_lockout(lockout_key)
-    # OIDC-only users have no password hash; unknown users have no
-    # account. Both verify against the dummy hash so the failure path
-    # costs one full password verify either way — response timing
-    # cannot enumerate accounts (#2618). Authorization still requires
-    # a real hash to have matched. The dummy hash is minted off the
-    # event loop too — the one-time PBKDF2 cost must never block
-    # request handling (functools.cache makes later calls free).
-    password_hash = (user.get("password_hash") if user else None) or (
-        await asyncio.to_thread(auth.dummy_verify_hash)
-    )
-    password_ok = await asyncio.to_thread(
-        auth.verify_password, req.password, password_hash
-    )
-    if user is None or not user.get("password_hash") or not password_ok:
-        await app.state.auth.record_login_failure(lockout_key, attempt_info)
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+    await _authorize_resend(app, user, req, lockout_key, attempt_info)
     if user.get("verified"):
         raise HTTPException(status_code=400, detail="Account already verified")
     await app.state.auth.clear_login_failures(lockout_key)
 
     # Rate limit: one resend per email per minute
-    now = time.time()
-    prune_timestamps(resend_timestamps, RESEND_COOLDOWN_SECONDS, now)
-    last = resend_timestamps.get(req.email, 0)
-    if now - last < RESEND_COOLDOWN_SECONDS:
+    if _rate_limited(resend_timestamps, RESEND_COOLDOWN_SECONDS, req.email):
         raise HTTPException(
             status_code=429,
             detail="Please wait before requesting another email",
         )
-    resend_timestamps[req.email] = now
 
     hostname, proto, base_path = request.app.state.util.derive_hosting_info(
         request.headers, request.client.host if request.client else None
@@ -302,15 +306,11 @@ async def forgot_password(
         return {"status": "sent"}
 
     # Rate limit: one reset email per address per minute
-    now = time.time()
-    prune_timestamps(reset_timestamps, RESET_COOLDOWN_SECONDS, now)
-    last = reset_timestamps.get(req.email, 0)
-    if now - last < RESET_COOLDOWN_SECONDS:
+    if _rate_limited(reset_timestamps, RESET_COOLDOWN_SECONDS, req.email):
         raise HTTPException(
             status_code=429,
             detail="Please wait before requesting another email",
         )
-    reset_timestamps[req.email] = now
 
     hostname, proto, base_path = request.app.state.util.derive_hosting_info(
         request.headers, request.client.host if request.client else None
@@ -597,6 +597,28 @@ async def get_me(
     }
 
 
+async def _oidc_logout_url(request: Request, user: dict) -> str | None:
+    """The IdP logout URL when *user* is an OIDC user whose provider has
+    logout_redirect enabled; ``None`` for local users (or a missing
+    provider/URL)."""
+    db_user = await request.app.state.model.users.get_user_by_email(
+        user["email"]
+    )
+    if not db_user or db_user.get("provider", "local") == "local":
+        return None
+    provider = request.app.state.oidc.get_provider(db_user["provider"])
+    if not provider:
+        return None
+    hostname, proto, base_path = request.app.state.util.derive_hosting_info(
+        request.headers,
+        request.client.host if request.client else None,
+    )
+    post_logout_uri = f"{proto}://{hostname}{base_path}/#/login"
+    return await request.app.state.oidc.build_logout_url(
+        provider, post_logout_uri
+    )
+
+
 @router.post("/auth/logout")
 async def logout(
     request: Request,
@@ -627,24 +649,9 @@ async def logout(
         return result
     # If the user logged in via OIDC and the provider has logout_redirect
     # enabled, return the IdP logout URL so the frontend can redirect.
-    db_user = await request.app.state.model.users.get_user_by_email(
-        user["email"]
-    )
-    if db_user and db_user.get("provider", "local") != "local":
-        provider = request.app.state.oidc.get_provider(db_user["provider"])
-        if provider:
-            hostname, proto, base_path = (
-                request.app.state.util.derive_hosting_info(
-                    request.headers,
-                    request.client.host if request.client else None,
-                )
-            )
-            post_logout_uri = f"{proto}://{hostname}{base_path}/#/login"
-            logout_url = await request.app.state.oidc.build_logout_url(
-                provider, post_logout_uri
-            )
-            if logout_url:
-                result["oidc_logout_url"] = logout_url
+    logout_url = await _oidc_logout_url(request, user)
+    if logout_url:
+        result["oidc_logout_url"] = logout_url
     return result
 
 
@@ -707,6 +714,18 @@ async def accept_invite(req: AcceptInviteRequest, request: Request):
 # ---------------------------------------------------------------------------
 
 
+def _is_local_url(parsed) -> bool:
+    """The parsed URL must be plain http to loopback with an explicit
+    port and no userinfo."""
+    return (
+        parsed.scheme == "http"
+        and parsed.username is None
+        and parsed.password is None
+        and parsed.hostname in ("localhost", "127.0.0.1")
+        and parsed.port is not None
+    )
+
+
 def _valid_cli_redirect(url: str | None) -> bool:
     """True if *url* is a permitted CLI redirect target (localhost only).
 
@@ -722,14 +741,7 @@ def _valid_cli_redirect(url: str | None) -> bool:
     if not url:
         return False
     try:
-        parsed = urlparse(url)
-        return (
-            parsed.scheme == "http"
-            and parsed.username is None
-            and parsed.password is None
-            and parsed.hostname in ("localhost", "127.0.0.1")
-            and parsed.port is not None
-        )
+        return _is_local_url(urlparse(url))
     except ValueError:
         # Malformed URL (e.g. non-integer port) — reject, don't 500.
         return False
@@ -813,6 +825,18 @@ def _derive_redirect_uri(request: Request, provider_id: str) -> str:
     return f"{proto}://{hostname}{base_path}{API_PREFIX}/auth/oidc/{provider_id}/callback"
 
 
+def _cookie_state_matches(cookie_data, state: str) -> bool:
+    """The cookie must decode to a dict whose state echoes the
+    callback's."""
+    return isinstance(cookie_data, dict) and cookie_data.get("state") == state
+
+
+def _valid_verifier(verifier) -> bool:
+    """The PKCE verifier is required downstream; a cookie missing it
+    must 400, not KeyError-500."""
+    return isinstance(verifier, str) and bool(verifier)
+
+
 def _validate_state_cookie(
     request: Request, provider_id: str, state: str
 ) -> dict:
@@ -831,18 +855,24 @@ def _validate_state_cookie(
             status_code=400, detail="Invalid OIDC state cookie"
         )
 
-    if not isinstance(cookie_data, dict) or cookie_data.get("state") != state:
+    if not _cookie_state_matches(cookie_data, state):
         raise HTTPException(status_code=400, detail="State mismatch")
 
-    # The PKCE verifier is required downstream; a cookie missing it
-    # must 400, not KeyError-500.
-    verifier = cookie_data.get("verifier")
-    if not isinstance(verifier, str) or not verifier:
+    if not _valid_verifier(cookie_data.get("verifier")):
         raise HTTPException(
             status_code=400, detail="Invalid OIDC state cookie"
         )
 
     return cookie_data
+
+
+def _require_oidc_claims(claims: dict) -> None:
+    """502 when the ID token lacks a usable sub/email pair."""
+    if not claims.get("sub") or not claims.get("email"):
+        raise HTTPException(
+            status_code=502,
+            detail="ID token missing sub or email claim",
+        )
 
 
 async def _exchange_and_validate_token(
@@ -881,13 +911,7 @@ async def _exchange_and_validate_token(
             status_code=502, detail="ID token validation failed"
         ) from None
 
-    sub = claims.get("sub")
-    email = claims.get("email")
-    if not sub or not email:
-        raise HTTPException(
-            status_code=502,
-            detail="ID token missing sub or email claim",
-        )
+    _require_oidc_claims(claims)
 
     return claims, tokens
 
@@ -956,6 +980,32 @@ def _build_redirect_response(
     return response
 
 
+def _require_verified_email(provider, claims: dict) -> None:
+    """403 unless the IdP verified the email claim — or the operator
+    trusts this IdP's email claims (``trust-email: true`` in the
+    provider config)."""
+    if not provider.trust_email and claims.get("email_verified") is not True:
+        raise HTTPException(
+            status_code=403,
+            detail="Email not verified by identity provider",
+        )
+
+
+async def _call_login_hook(request: Request, provider, claims, email, tokens):
+    """Run the OIDC login hook (if configured); any failure denies the
+    login (403)."""
+    try:
+        return await request.app.state.oidc.call_login_hook(
+            provider, claims, email, tokens
+        )
+    except Exception:
+        logger.exception("OIDC login hook failed for provider %s", provider)
+        raise HTTPException(
+            status_code=403,
+            detail="Login denied by server policy",
+        ) from None
+
+
 @router.get("/auth/oidc/{provider_id}/callback")
 async def oidc_callback(
     provider_id: str,
@@ -989,23 +1039,12 @@ async def oidc_callback(
 
     # Require email_verified unless the operator trusts this IdP's
     # email claims (trust-email: true in the provider config).
-    if not provider.trust_email and claims.get("email_verified") is not True:
-        raise HTTPException(
-            status_code=403,
-            detail="Email not verified by identity provider",
-        )
+    _require_verified_email(provider, claims)
 
     # Call the OIDC login hook (if configured).
-    try:
-        hook_groups = await request.app.state.oidc.call_login_hook(
-            provider, claims, email, tokens
-        )
-    except Exception:
-        logger.exception("OIDC login hook failed for provider %s", provider)
-        raise HTTPException(
-            status_code=403,
-            detail="Login denied by server policy",
-        ) from None
+    hook_groups = await _call_login_hook(
+        request, provider, claims, email, tokens
+    )
 
     user = await _find_or_create_user(
         request.app, provider_id, claims["sub"], email

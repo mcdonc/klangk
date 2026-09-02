@@ -42,17 +42,21 @@ class SendInviteRequest(BaseModel):
     email: str
 
 
-def _validate_root_acl(entries, resource: str) -> None:
-    """Root ACL must keep Authenticated view access."""
-    if resource != "/":
-        return
-    has_auth_view = any(
+def _auth_view_entry(e) -> bool:
+    """True when an entry grants view (or wildcard) to Authenticated."""
+    return (
         e.action == ACTION_ALLOW
         and e.principal_type == PRINCIPAL_SYSTEM
         and e.system_principal == SYSTEM_AUTHENTICATED
         and e.permission in ("view", "*")
-        for e in entries
     )
+
+
+def _validate_root_acl(entries, resource: str) -> None:
+    """Root ACL must keep Authenticated view access."""
+    if resource != "/":
+        return
+    has_auth_view = any(_auth_view_entry(e) for e in entries)
     if not has_auth_view:
         raise HTTPException(
             status_code=400,
@@ -350,6 +354,32 @@ class UpdateUserRequest(auth.BaseModel):
     disabled: bool | None = None
 
 
+async def _require_user(app, user_id: str) -> dict:
+    """The user row; 404 when it does not exist."""
+    user = await app.state.model.users.get_user_by_id(user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    return user
+
+
+async def _update_user_password(app, user_id: str, password: str) -> None:
+    """Validate + persist a password change from the admin console."""
+    app.state.auth.validate_password(password)
+    await app.state.auth.validate_password_not_reused(user_id, password)
+    password_hash = await asyncio.to_thread(auth.hash_password, password)
+    await app.state.model.users.update_password(user_id, password_hash)
+
+
+async def _update_user_handle(app, user_id: str, handle: str) -> None:
+    """Set + propagate a handle change to live WS sessions; 400 on an
+    invalid handle."""
+    try:
+        await app.state.model.users.set_user_handle(user_id, handle)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    await wshandler.refresh_user_handle(app.state.sockets, user_id, handle)
+
+
 @router.patch("/users/{user_id}")
 async def update_user(
     user_id: str,
@@ -357,31 +387,28 @@ async def update_user(
     admin: dict = Depends(acl.has_permission("manage-users")),
     app=Depends(get_app_dep),
 ):
-    user = await app.state.model.users.get_user_by_id(user_id)
-    if user is None:
-        raise HTTPException(status_code=404, detail="User not found")
+    await _require_user(app, user_id)
     if req.email is not None:
         await app.state.model.users.update_email(user_id, req.email)
     if req.password is not None:
-        app.state.auth.validate_password(req.password)
-        await app.state.auth.validate_password_not_reused(
-            user_id, req.password
-        )
-        password_hash = await asyncio.to_thread(
-            auth.hash_password, req.password
-        )
-        await app.state.model.users.update_password(user_id, password_hash)
+        await _update_user_password(app, user_id, req.password)
     if req.handle is not None:
-        try:
-            await app.state.model.users.set_user_handle(user_id, req.handle)
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
-        await wshandler.refresh_user_handle(
-            app.state.sockets, user_id, req.handle
-        )
+        await _update_user_handle(app, user_id, req.handle)
     if req.disabled is not None:
         await _update_user_disabled(app, req, user_id, admin)
     return {"status": "updated"}
+
+
+def _reject_self_disable(
+    req: UpdateUserRequest, user_id: str, admin: dict
+) -> None:
+    """An admin must not disable their own account (#2588) — the
+    only accounts that can re-enable are the admin group's."""
+    if req.disabled and user_id == admin["id"]:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot disable your own account",
+        )
 
 
 async def _update_user_disabled(
@@ -389,13 +416,7 @@ async def _update_user_disabled(
 ) -> None:
     """Apply a disabled flag: guard self-disable, persist, and cut the
     user's live connections when disabling (#2588)."""
-    # An admin must not disable their own account (#2588) — the
-    # only accounts that can re-enable are the admin group's.
-    if req.disabled and user_id == admin["id"]:
-        raise HTTPException(
-            status_code=400,
-            detail="Cannot disable your own account",
-        )
+    _reject_self_disable(req, user_id, admin)
     try:
         updated = await app.state.model.users.set_user_disabled(
             user_id, req.disabled
@@ -787,24 +808,37 @@ async def cancel_server_schedule(
 # --- Container lifecycle events (#2923) ---
 
 
-async def _annotate_events(app, rows: list[dict]) -> list[dict]:
-    """Resolve workspace names and actor emails for one page of events.
-
-    Cosmetic joins bounded by the page size: a deleted workspace or a
-    purged user yields ``None`` and the client falls back to the raw id.
-    System/agent actors carry no email by construction.
-    """
+async def _workspace_names(app, rows: list[dict]) -> dict:
+    """One workspace-name lookup per distinct workspace id in the page;
+    a deleted workspace yields ``None`` and the client falls back to
+    the raw id."""
     names: dict[str, str | None] = {}
-    emails: dict[str, str | None] = {}
     for row in rows:
         wid = row["workspace_id"]
         if wid not in names:
             ws = await app.state.model.workspaces.get_workspace(wid)
             names[wid] = ws["name"] if ws else None
+    return names
+
+
+async def _actor_emails(app, rows: list[dict]) -> dict:
+    """One email lookup per distinct human actor id in the page. A
+    purged user yields ``None``; system/agent actors carry no email by
+    construction."""
+    emails: dict[str, str | None] = {}
+    for row in rows:
         actor_id = row["actor_id"]
         if row["actor_type"] == "user" and actor_id not in emails:
             user = await app.state.model.users.get_user_by_id(actor_id)
             emails[actor_id] = user["email"] if user else None
+    return emails
+
+
+async def _annotate_events(app, rows: list[dict]) -> list[dict]:
+    """Resolve workspace names and actor emails for one page of events
+    (cosmetic joins bounded by the page size)."""
+    names = await _workspace_names(app, rows)
+    emails = await _actor_emails(app, rows)
     return [
         {
             **row,

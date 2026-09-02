@@ -71,22 +71,28 @@ def get(entry: dict, key: str, default: object = _SENTINEL) -> object:
     raise KeyError(key)
 
 
+def _resolve_ca_cert(entry: dict, config_dir: str | None) -> str | None:
+    """The provider's CA cert path, resolved against *config_dir* when
+    relative (external-config loading; inline loading passes ``None`` —
+    relative paths are not meaningful without a file to be relative
+    to)."""
+    ca_cert = get(entry, "ca-cert", None)
+    if ca_cert and config_dir and not os.path.isabs(ca_cert):
+        return os.path.join(config_dir, ca_cert)
+    return ca_cert
+
+
 def _parse_providers(
     entries: list[dict], config_dir: str | None = None
 ) -> list[OIDCProvider]:
     """Parse a list of raw provider dicts into OIDCProvider objects.
 
     Shared by both inline (config-file ``oidc_providers:``) and external
-    (``KLANGKD_OIDC_CONFIG``) loading paths.  *config_dir* is used to resolve
-    relative ``ca-cert`` paths — ``None`` when loaded inline (relative paths
-    are not meaningful without a file to be relative to).
+    (``KLANGKD_OIDC_CONFIG``) loading paths.
     """
     providers = []
     for entry in entries:
         secret = resolve_file_value(get(entry, "client-secret", ""))
-        ca_cert = get(entry, "ca-cert", None)
-        if ca_cert and config_dir and not os.path.isabs(ca_cert):
-            ca_cert = os.path.join(config_dir, ca_cert)
         providers.append(
             OIDCProvider(
                 id=entry["id"],
@@ -95,7 +101,7 @@ def _parse_providers(
                 client_id=get(entry, "client-id"),
                 client_secret=secret or "",
                 scopes=entry.get("scopes", "openid email profile"),
-                ca_cert=ca_cert,
+                ca_cert=_resolve_ca_cert(entry, config_dir),
                 token_validation_pem=get(entry, "token-validation-pem", None),
                 logout_redirect=get(entry, "logout-redirect", False),
                 trust_email=get(entry, "trust-email", False),
@@ -436,13 +442,37 @@ class OIDC:
 
     # --- login hook ---
 
+    def _load_hook_module(self, path: str):
+        """Import the hook script directly via ``importlib.util`` — it
+        does **not** need to be on ``PYTHONPATH``."""
+        spec = importlib.util.spec_from_file_location(
+            "_klangk_login_hook", path
+        )
+        if spec is None or spec.loader is None:
+            raise ConfigurationError(
+                f"KLANGKD_OIDC_LOGIN_HOOK: could not load: {path!r}"
+            )
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def _load_hook_callable(self, mod, path: str, func_name: str):
+        """The hook function from *mod*; ``ConfigurationError`` when
+        missing or not callable."""
+        hook = getattr(mod, func_name, None)
+        if hook is None or not callable(hook):
+            raise ConfigurationError(
+                f"KLANGKD_OIDC_LOGIN_HOOK: {func_name!r} not found or not "
+                f"callable in {path!r}"
+            )
+        return hook
+
     def load_login_hook(self) -> None:
         """Load the OIDC login hook from KLANGKD_OIDC_LOGIN_HOOK.
 
         The value is a file path to a Python script, optionally followed
         by ``:func_name``.  If the function name is omitted it defaults
-        to ``on_login``.  The file is loaded directly via
-        ``importlib.util`` — it does **not** need to be on ``PYTHONPATH``.
+        to ``on_login``.
 
         The hook is called after ID token validation and before user
         provisioning.  It combines login validation and group mapping:
@@ -465,21 +495,8 @@ class OIDC:
             raise ConfigurationError(
                 f"KLANGKD_OIDC_LOGIN_HOOK: file not found: {path!r}"
             )
-        spec = importlib.util.spec_from_file_location(
-            "_klangk_login_hook", path
-        )
-        if spec is None or spec.loader is None:
-            raise ConfigurationError(
-                f"KLANGKD_OIDC_LOGIN_HOOK: could not load: {path!r}"
-            )
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-        hook = getattr(mod, func_name, None)
-        if hook is None or not callable(hook):
-            raise ConfigurationError(
-                f"KLANGKD_OIDC_LOGIN_HOOK: {func_name!r} not found or not "
-                f"callable in {path!r}"
-            )
+        mod = self._load_hook_module(path)
+        hook = self._load_hook_callable(mod, path, func_name)
         self.login_hook = hook
         self.login_hook_is_async = inspect.iscoroutinefunction(hook)
         logger.info("OIDC login hook loaded: %s", raw)
