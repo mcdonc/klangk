@@ -6,6 +6,7 @@ import 'package:http/testing.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:klangk_frontend/admin/admin_users_page.dart';
+import 'package:klangk_frontend/admin/container_events_panel.dart';
 import 'package:klangk_frontend/auth/auth_service.dart';
 import 'package:klangk_frontend/ws/ws_client.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
@@ -126,6 +127,20 @@ void main() {
     );
   }
 
+  /// The panel alone (no admin-page chrome), for surface-size tests
+  /// that exercise the table under width constraint (#3006).
+  Widget buildPanel() {
+    return MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (_) => AuthService()),
+        ChangeNotifierProvider(create: (_) => WsClient()),
+      ],
+      child: const MaterialApp(
+        home: Scaffold(body: ContainerEventsPanel()),
+      ),
+    );
+  }
+
   /// Pump the page on a wide surface (the admin tab row overflows on the
   /// default 800px test surface) and settle. Optionally navigates to the
   /// Events tab before settling.
@@ -140,13 +155,13 @@ void main() {
   }
 
   /// Serve the container-events endpoint via [eventsFor] (called with the
-  /// parsed limit/offset/workspace_id of each request) plus the empty
+  /// parsed limit/offset/workspace query of each request) plus the empty
   /// users/groups/schedule loads so the page itself renders.
   List<http.Request> serveEvents(
     http.Response Function(
       int limit,
       int offset,
-      String? workspaceId,
+      String? workspace,
     ) eventsFor,
   ) {
     final requests = <http.Request>[];
@@ -156,8 +171,8 @@ void main() {
         requests.add(request);
         final limit = int.parse(request.url.queryParameters['limit'] ?? '50');
         final offset = int.parse(request.url.queryParameters['offset'] ?? '0');
-        final workspaceId = request.url.queryParameters['workspace_id'];
-        return eventsFor(limit, offset, workspaceId);
+        final workspace = request.url.queryParameters['workspace'];
+        return eventsFor(limit, offset, workspace);
       }
       if (request.url.path == '/api/v1/users') {
         return http.Response(
@@ -184,7 +199,7 @@ void main() {
 
   group('AdminUsersPage events tab', () {
     testWidgets('renders history rows from the paged envelope', (tester) async {
-      serveEvents((limit, offset, workspaceId) => http.Response(
+      serveEvents((limit, offset, workspace) => http.Response(
             _eventsEnvelope([
               _event(
                 'ws-1',
@@ -224,7 +239,7 @@ void main() {
     });
 
     testWidgets('next/prev page through the history', (tester) async {
-      serveEvents((limit, offset, workspaceId) => http.Response(
+      serveEvents((limit, offset, workspace) => http.Response(
             _eventsEnvelope(
               [
                 _event('ws-${offset + 1}', workspaceName: 'page-ws'),
@@ -263,17 +278,16 @@ void main() {
 
     testWidgets('workspace filter debounces into a fresh query',
         (tester) async {
-      final requests =
-          serveEvents((limit, offset, workspaceId) => http.Response(
-                _eventsEnvelope(
-                  [
-                    if (workspaceId != null)
-                      _event(workspaceId, workspaceName: 'Filtered WS'),
-                  ],
-                  total: workspaceId == null ? 0 : 1,
-                ),
-                200,
-              ));
+      final requests = serveEvents((limit, offset, workspace) => http.Response(
+            _eventsEnvelope(
+              [
+                if (workspace != null)
+                  _event(workspace, workspaceName: 'Filtered WS'),
+              ],
+              total: workspace == null ? 0 : 1,
+            ),
+            200,
+          ));
 
       await pumpPage(tester);
 
@@ -286,8 +300,36 @@ void main() {
 
       expect(find.text('Filtered WS'), findsOneWidget);
       final query = requests.last.url.queryParameters;
-      expect(query['workspace_id'], 'ws-filtered');
+      // #3006: the id-or-name `workspace` query param.
+      expect(query['workspace'], 'ws-filtered');
+      expect(query['workspace_id'], isNull);
       expect(query['offset'], '0');
+    });
+
+    testWidgets('table rows fit a narrow viewport (#3006)', (tester) async {
+      // The whole point of the flex-weight rewrite: at 400px the seven
+      // columns ellipsize instead of laying out past the right edge.
+      // Long values stay present for finders (ellipsis is paint-only)
+      // and no RenderFlex overflow exception is thrown.
+      serveEvents((limit, offset, workspace) => http.Response(
+            _eventsEnvelope([
+              _event(
+                'ws-narrow',
+                workspaceName: 'narrow-ws',
+                containerId: 'cid-0123456789abcdef',
+                networkNamespace: 'sidecar-ns-0123456789',
+              ),
+            ], total: 1),
+            200,
+          ));
+
+      await tester.binding.setSurfaceSize(const Size(400, 900));
+      await tester.pumpWidget(buildPanel());
+      await tester.pumpAndSettle();
+
+      expect(tester.takeException(), isNull);
+      expect(find.text('cid-0123456789abcdef'), findsOneWidget);
+      expect(find.text('sidecar-ns-0123456789'), findsOneWidget);
     });
 
     testWidgets('tab hidden without the permission', (tester) async {

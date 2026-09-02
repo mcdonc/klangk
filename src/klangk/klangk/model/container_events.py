@@ -73,6 +73,31 @@ _EVENT_COLUMNS = (
 )
 
 
+def workspace_filter_clause(
+    workspace: str | None, workspace_id: str | None
+) -> tuple[str, list]:
+    """WHERE clause + params narrowing event reads to one workspace.
+
+    ``workspace`` (#3006) is the id-or-name query the admin UI sends:
+    an exact workspace-id match or a workspace whose *name* contains the
+    text, so typing either narrows the history. It wins over the legacy
+    exact ``workspace_id`` param when both are sent. Name matching is
+    SQLite ``LIKE`` — ASCII case-insensitive, ``%``/``_`` wildcards not
+    escaped (the same convention as the other admin filters). An empty
+    string for either param means no filter, so a degenerate
+    ``?workspace=`` cannot silently narrow the audit history.
+    """
+    if workspace:
+        return (
+            " WHERE (workspace_id = ? OR workspace_id IN"
+            " (SELECT id FROM workspaces WHERE name LIKE '%' || ? || '%'))",
+            [workspace, workspace],
+        )
+    if workspace_id:
+        return " WHERE workspace_id = ?", [workspace_id]
+    return "", []
+
+
 def actor_type_for(actor_id: str | None) -> str:
     """Classify an acting principal id into an ``actor_type``."""
     if actor_id is None:
@@ -134,27 +159,29 @@ class ContainerEventsModel(Submodel):
         self,
         workspace_id: str | None = None,
         *,
+        workspace: str | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> list[dict]:
-        """Newest-first event history, optionally filtered to a workspace."""
-        sql = f"SELECT {_EVENT_COLUMNS} FROM container_events"
-        params: list = []
-        if workspace_id is not None:
-            sql += " WHERE workspace_id = ?"
-            params.append(workspace_id)
+        """Newest-first event history, optionally filtered to a workspace
+        (exact ``workspace_id``, or id-or-name via ``workspace``)."""
+        where, params = workspace_filter_clause(workspace, workspace_id)
+        sql = f"SELECT {_EVENT_COLUMNS} FROM container_events{where}"
         sql += " ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?"
         rows = await self.app.state.db.fetchall(sql, (*params, limit, offset))
         return [row_to_dict(row) for row in rows]
 
-    async def count_events(self, workspace_id: str | None = None) -> int:
+    async def count_events(
+        self,
+        workspace_id: str | None = None,
+        *,
+        workspace: str | None = None,
+    ) -> int:
         """Row count for paging, with the same optional workspace filter."""
-        sql = "SELECT COUNT(*) FROM container_events"
-        params: tuple = ()
-        if workspace_id is not None:
-            sql += " WHERE workspace_id = ?"
-            params = (workspace_id,)
-        row = await self.app.state.db.fetchone(sql, params)
+        where, params = workspace_filter_clause(workspace, workspace_id)
+        row = await self.app.state.db.fetchone(
+            f"SELECT COUNT(*) FROM container_events{where}", tuple(params)
+        )
         return row[0] if row else 0
 
     async def prune(self, now: float | None = None) -> int:

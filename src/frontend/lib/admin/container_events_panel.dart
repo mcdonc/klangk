@@ -2,10 +2,10 @@
 /// Admin → Events tab: paged container start/stop history (#2923).
 ///
 /// Reads the `container_events` audit table (#2915) through
-/// `GET /api/v1/events` — newest first, optional
-/// workspace-id filter, offset-based paging. The tab itself is gated on
+/// `GET /api/v1/events` — newest first, optional id-or-name workspace
+/// filter (#3006), offset-based paging. The tab itself is gated on
 /// the dedicated `manage-events` permission over
-/// `/admin/container-events` (see [AdminUsersPage]); admins hold it via
+/// `/events` (see [AdminUsersPage]); admins hold it via
 /// the `/admin` wildcard, other principals only via an explicit grant.
 library;
 
@@ -86,7 +86,7 @@ class _ContainerEventsPanelState extends State<ContainerEventsPanel> {
       final query = <String, String>{
         'limit': '$_pageSize',
         'offset': '$offset',
-        if (_workspaceQuery.isNotEmpty) 'workspace_id': _workspaceQuery,
+        if (_workspaceQuery.isNotEmpty) 'workspace': _workspaceQuery,
       };
       final auth = context.read<AuthService>();
       final resp = await auth.authGet(
@@ -173,7 +173,7 @@ class _ContainerEventsPanelState extends State<ContainerEventsPanel> {
                   controller: _workspaceController,
                   decoration: const InputDecoration(
                     isDense: true,
-                    labelText: 'Filter by workspace id',
+                    labelText: 'Filter by workspace id or name',
                     border: OutlineInputBorder(),
                     prefixIcon: Icon(Icons.filter_list),
                   ),
@@ -223,6 +223,20 @@ class _ContainerEventsPanelState extends State<ContainerEventsPanel> {
     );
   }
 
+  /// Column labels with the flex weights shared by the header row and
+  /// every data row: aligned columns that always share the panel width,
+  /// so nothing scrolls off the screen edge (#3006). Long cell values
+  /// ellipsize; a tooltip carries the full text.
+  static const _columns = <(String, int)>[
+    ('When', 3),
+    ('Workspace', 3),
+    ('Event', 2),
+    ('Actor', 3),
+    ('Cause', 2),
+    ('Container', 3),
+    ('Network ns', 3),
+  ];
+
   Widget _buildBody() {
     if (_loading && _events.isEmpty) {
       return const Center(child: CircularProgressIndicator());
@@ -245,42 +259,73 @@ class _ContainerEventsPanelState extends State<ContainerEventsPanel> {
     if (_events.isEmpty) {
       return const Center(child: Text('No container events recorded'));
     }
-    return ScrollConfiguration(
-      behavior: ScrollConfiguration.of(context).copyWith(scrollbars: true),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: SingleChildScrollView(
-          child: DataTable(
-            headingTextStyle: const TextStyle(
-              color: KColors.textSecondary,
-              fontWeight: FontWeight.bold,
-            ),
-            columns: const [
-              DataColumn(label: Text('When')),
-              DataColumn(label: Text('Workspace')),
-              DataColumn(label: Text('Event')),
-              DataColumn(label: Text('Actor')),
-              DataColumn(label: Text('Cause')),
-              DataColumn(label: Text('Container')),
-              DataColumn(label: Text('Network ns')),
-            ],
-            rows: [
-              for (final row in _events)
-                DataRow(
-                  cells: [
-                    DataCell(Text(_timeLabel(row['created_at']))),
-                    DataCell(Text(_workspaceLabel(row))),
-                    DataCell(_eventChip(row['event'] as String? ?? '')),
-                    DataCell(Text(_actorLabel(row))),
-                    DataCell(Text(row['cause'] as String? ?? '')),
-                    DataCell(Text(_containerLabel(row))),
-                    DataCell(Text(row['network_namespace'] as String? ?? '')),
-                  ],
+    return Column(
+      children: [
+        Container(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+          decoration: const BoxDecoration(
+            border: Border(bottom: BorderSide(color: KColors.borderDefault)),
+          ),
+          child: Row(
+            children: [
+              for (final (label, flex) in _columns)
+                Expanded(
+                  flex: flex,
+                  child: Text(
+                    label,
+                    style: const TextStyle(
+                      color: KColors.textSecondary,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 12,
+                    ),
+                  ),
                 ),
             ],
           ),
         ),
+        Expanded(
+          child: ListView.builder(
+            itemCount: _events.length,
+            itemBuilder: (ctx, i) => _eventRow(_events[i]),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _eventRow(Map<String, dynamic> row) {
+    // Cells built in _columns order; the flex weights below always come
+    // from the same _columns iteration, so a column reorder cannot
+    // relabel the header while leaving the old weight on a cell.
+    final cells = <Widget>[
+      _textCell(_timeLabel(row['created_at'])),
+      _textCell(_workspaceLabel(row)),
+      _eventChip(row['event'] as String? ?? ''),
+      _textCell(_actorLabel(row)),
+      _textCell(row['cause'] as String? ?? ''),
+      _textCell(_containerLabel(row)),
+      _textCell(row['network_namespace'] as String? ?? ''),
+    ];
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      decoration: const BoxDecoration(
+        border: Border(bottom: BorderSide(color: KColors.borderMuted)),
       ),
+      child: Row(
+        children: [
+          for (final (i, (_, flex)) in _columns.indexed)
+            Expanded(flex: flex, child: cells[i]),
+        ],
+      ),
+    );
+  }
+
+  /// One ellipsized table cell; the tooltip keeps the full value
+  /// reachable when the flex share is too narrow to show it.
+  Widget _textCell(String text) {
+    return Tooltip(
+      message: text,
+      child: Text(text, maxLines: 1, overflow: TextOverflow.ellipsis),
     );
   }
 
@@ -302,6 +347,8 @@ class _ContainerEventsPanelState extends State<ContainerEventsPanel> {
       ),
       child: Text(
         event,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
         style: const TextStyle(color: Colors.white, fontSize: 12),
       ),
     );

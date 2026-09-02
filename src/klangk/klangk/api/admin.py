@@ -840,6 +840,7 @@ async def list_container_events(
     request: Request,
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
+    workspace: str | None = None,
     workspace_id: str | None = None,
     viewer: dict = Depends(acl.has_permission("manage-events")),
 ):
@@ -847,17 +848,24 @@ async def list_container_events(
 
     Newest-first rows from the ``container_events`` audit table
     (#2915) plus the filter-matching total, optionally narrowed to one
-    workspace. Gated on the dedicated ``manage-events`` permission
-    over the URL-derived resource ``/events``: the admin group holds it
-    through the seeded Allow row, and a non-admin gets it only via an
-    explicit ACE on that resource — read-only audit access without
-    full admin.
+    workspace: ``workspace`` (#3006) matches an exact workspace id or a
+    workspace-name substring, while the legacy ``workspace_id`` stays
+    an exact-id match. Gated on the dedicated ``manage-events``
+    permission over the URL-derived resource ``/events``: the admin
+    group holds it through the seeded Allow row, and a non-admin gets
+    it only via an explicit ACE on that resource — read-only audit
+    access without full admin.
     """
     app = request.app
     rows = await app.state.model.container_events.list_events(
-        workspace_id, limit=limit, offset=offset
+        workspace_id=workspace_id,
+        workspace=workspace,
+        limit=limit,
+        offset=offset,
     )
-    total = await app.state.model.container_events.count_events(workspace_id)
+    total = await app.state.model.container_events.count_events(
+        workspace_id=workspace_id, workspace=workspace
+    )
     return {
         "items": await _annotate_events(app, rows),
         "total": total,
