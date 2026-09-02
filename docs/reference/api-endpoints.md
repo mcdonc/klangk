@@ -805,8 +805,12 @@ No request body.
 
 ### GET `/api/v1/workspaces/{id}/roles`
 
-List role groups for a workspace and their members. Each workspace has
-four roles: `owners`, `coders`, `collaborators`, `spectators`.
+List role groups for a workspace, their members, and each group's
+effective permissions. Each workspace has four roles: `owners`,
+`coders`, `collaborators`, `spectators`. `permissions` is read live
+from the ACEs on `/workspaces/{id}` (not inherited from ancestors),
+so post-seed ACL edits are reflected; a `*` grant expands to the
+whole vocabulary, including the literal `*`.
 
 **Auth:** JWT required. User must have `share-workspace` permission on `/workspaces/{id}`.
 
@@ -818,7 +822,8 @@ No request body.
     "role": "owners",
     "group_id": "uuid",
     "group_name": "owners-uuid",
-    "members": [{ "id": "uuid", "email": "user@example.com" }]
+    "members": [{ "id": "uuid", "email": "user@example.com" }],
+    "permissions": ["*", "view", "terminal"]
   }
 ]
 ```

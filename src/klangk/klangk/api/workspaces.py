@@ -55,6 +55,7 @@ from ..util import (
     sanitize_disposition_name,
 )
 from .common import (
+    ALL_PERMISSIONS,
     WorkspaceAclEntry,
     autostart_allowed,
     serialize_acl_entries,
@@ -1522,6 +1523,32 @@ async def remove_workspace_member(
 ROLE_GROUP_SUFFIXES = ["owners", "coders", "collaborators", "spectators"]
 
 
+def _group_effective_permissions(
+    resource: str, group_id: str, entries: dict[str, list[dict]]
+) -> list[str]:
+    """Effective permission list for a role group on ``resource``.
+
+    Evaluates the preloaded ACE map in memory with the group as the sole
+    principal. ``user_id`` is the empty-string sentinel, never ``None``:
+    a malformed user-principal ACE with a NULL ``user_id`` must not
+    ``None == None``-match the synthetic principal the way it would match
+    no real user (#2987 review). A ``*`` grant therefore expands to the
+    whole vocabulary — including the literal ``*`` — which callers can
+    collapse for display. Mirrors how ``permissions_for_resources``
+    computes a user's effective permissions (#2986).
+    """
+    principals = {
+        "user_id": "",
+        "group_ids": [group_id],
+        "authenticated": True,
+    }
+    return [
+        p
+        for p in ALL_PERMISSIONS
+        if acl.check_permission_inmemory(resource, principals, p, entries)
+    ]
+
+
 @router.get("/workspaces/{workspace_id}/roles")
 async def get_workspace_roles(
     workspace_id: str,
@@ -1530,7 +1557,19 @@ async def get_workspace_roles(
     ),
     app=Depends(get_app_dep),
 ):
-    """Return the workspace's role groups with their members."""
+    """Return the workspace's role groups with members and grants.
+
+    Each role carries ``permissions``: the group's effective permissions
+    on ``/workspaces/{id}``, read from the live ACEs on that node so
+    post-seed ACL edits are reflected (#2986). Only the workspace's own
+    node is preloaded — deliberately not the ancestor walk
+    ``check_permission`` uses: role groups are scope-locked to their own
+    workspace node (#2750), so walking up could only misattribute
+    inherited everyone/authenticated grants (e.g. the seeded ``Allow view
+    Authenticated`` on ``/``) to every bucket.
+    """
+    resource = f"/workspaces/{workspace_id}"
+    entries = await app.state.model.acl.get_acl_entries_map([resource])
     roles = []
     for suffix in ROLE_GROUP_SUFFIXES:
         group_name = f"{suffix}-{workspace_id}"
@@ -1546,6 +1585,9 @@ async def get_workspace_roles(
                 "members": [
                     {"id": m["id"], "email": m["email"]} for m in members
                 ],
+                "permissions": _group_effective_permissions(
+                    resource, group["id"], entries
+                ),
             }
         )
     return roles

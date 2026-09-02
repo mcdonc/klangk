@@ -41,15 +41,6 @@ class WorkspaceSharingPanelState extends State<WorkspaceSharingPanel> {
 
   static const _roleOrder = ['owners', 'collaborators', 'coders', 'spectators'];
 
-  static const _roleDescriptions = {
-    'owners': 'Full admin access',
-    'coders':
-        'Use isolated terminals, spectate on shared terminals, files + upload/download',
-    'collaborators':
-        'Use isolated and shared terminals, share terminals, files + upload/download',
-    'spectators': 'Watch shared terminals',
-  };
-
   static const _roleIcons = {
     'owners': Icons.shield,
     'coders': Icons.code,
@@ -235,11 +226,14 @@ class WorkspaceSharingPanelState extends State<WorkspaceSharingPanel> {
 
   @override
   Widget build(BuildContext context) {
+    // Buckets span ~3/4 of the screen so the permission lists have room
+    // to lay out on one or two rows (#2986).
+    final maxPanelWidth = MediaQuery.of(context).size.width * 0.75;
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: Center(
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 500),
+          constraints: BoxConstraints(maxWidth: maxPanelWidth),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -287,12 +281,28 @@ class WorkspaceSharingPanelState extends State<WorkspaceSharingPanel> {
     );
   }
 
+  /// A quiet outlined pill for one granted permission (or the collapsed
+  /// "All permissions" label): no fill, muted border and text — it must
+  /// not compete with the member chips beside it.
+  Widget _permissionTag(String label) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: KColors.borderMuted),
+        ),
+        child: Text(
+          label,
+          style: const TextStyle(color: KColors.textSecondary, fontSize: 10),
+        ),
+      );
+
   Widget _buildRoleBucket(Map<String, dynamic> role) {
     final roleName = role['role'] as String;
     final members = role['members'] as List? ?? [];
+    final permissions =
+        (role['permissions'] as List? ?? []).whereType<String>().toList();
     final icon = _roleIcons[roleName] ?? Icons.group;
     final color = _roleColors[roleName] ?? KColors.accentBlue;
-    final desc = _roleDescriptions[roleName] ?? '';
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
@@ -317,16 +327,7 @@ class WorkspaceSharingPanelState extends State<WorkspaceSharingPanel> {
                     fontSize: 14,
                   ),
                 ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    desc,
-                    style: const TextStyle(
-                      color: KColors.textSecondary,
-                      fontSize: 11,
-                    ),
-                  ),
-                ),
+                const Spacer(),
                 if (widget.canEditAcl)
                   IconButton(
                     icon: const Icon(Icons.person_add, size: 16),
@@ -340,6 +341,19 @@ class WorkspaceSharingPanelState extends State<WorkspaceSharingPanel> {
                   ),
               ],
             ),
+            if (permissions.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              if (permissions.contains('*'))
+                _permissionTag('All permissions')
+              else
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 4,
+                  children: [
+                    for (final p in permissions) _permissionTag(p),
+                  ],
+                ),
+            ],
             if (members.isEmpty)
               const Padding(
                 padding: EdgeInsets.only(top: 4),
