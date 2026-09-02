@@ -1825,6 +1825,16 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Blank terminal for members joining a running workspace (#3000).**
+  Opening a workspace whose container is already running (a member
+  opening a shared workspace after the owner) could leave the Terminal
+  tab permanently blank: the one-shot `container_ready` event fired
+  before the permission-gated terminal view mounted, so the terminal
+  was never started. The WebSocket client now tracks container
+  readiness, and a late-mounting terminal view catches up from that
+  state instead of waiting for an event that never re-fires. This also
+  un-breaks the deterministically red `browser-delegate` frontend-E2E
+  test.
 - **GitHub device-flow gate now normalizes the git host (#2963).**
   With `KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID` configured, a remote
   written as `https://github.com:443/...`, `https://GitHub.com/...`, or

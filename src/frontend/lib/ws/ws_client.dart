@@ -191,6 +191,20 @@ class WsClient extends ChangeNotifier {
   Stream<Map<String, dynamic>> get customEvents =>
       _customEventController.stream;
 
+  /// Whether the workspace container is currently ready, tracked from the
+  /// typed `container_ready` frame and the CUSTOM `container_ready` /
+  /// `container_stopped` events. The CUSTOM event is one-shot (no replay:
+  /// the server holds it until `ui_ready`, then emits it once), so a
+  /// terminal widget that mounts after it fired — the #2988 permission-
+  /// gated Terminal tab can build after `ui_ready` when the permissions
+  /// fetch loses the race to an already-running container (#3000) —
+  /// catches up by reading this instead of waiting for an event that will
+  /// never re-fire.
+  bool _containerReady = false;
+
+  /// See [_containerReady].
+  bool get containerReady => _containerReady;
+
   /// Fires when a shared terminal is deleted.
   Stream<Map<String, dynamic>> get sharedTerminalDeleted =>
       _sharedTerminalDeletedController.stream;
@@ -381,7 +395,7 @@ class WsClient extends ChangeNotifier {
     'workspaces_changed': (json) => _workspacesChangedController.add(null),
     'container_status': _containerStatusController.add,
     'service_health': _serviceHealthController.add,
-    'event': _customEventController.add,
+    'event': _onCustomEvent,
     'host_shutdown': (json) => _onHostNotice('Server shutting down'),
     'host_started': (json) => _onHostNotice(null),
     'server_schedule': (json) {
@@ -409,6 +423,19 @@ class WsClient extends ChangeNotifier {
       }
     },
   };
+
+  /// Forward a CUSTOM event to [customEvents], tracking the container's
+  /// readiness so late-mounting widgets can query it (#3000).
+  void _onCustomEvent(Map<String, dynamic> json) {
+    final event = json['event'] as Map<String, dynamic>?;
+    final name = event?['name'] as String?;
+    if (name == 'container_ready') {
+      _containerReady = true;
+    } else if (name == 'container_stopped') {
+      _containerReady = false;
+    }
+    _customEventController.add(json);
+  }
 
   /// Set/clear the host lifecycle notice and notify listeners (#2527).
   /// Notification only — the reconnect loop is untouched, so a restart/
@@ -446,6 +473,10 @@ class WsClient extends ChangeNotifier {
       onDone: () {
         _stopHeartbeat();
         _connected = false;
+        // #3000: readiness tracked with the socket that reported it — a
+        // remounting terminal must not start a PTY into a container this
+        // connection can no longer reach.
+        _containerReady = false;
         _pendingWorkspaceId ??= _currentWorkspaceId;
         _currentWorkspaceId = null;
         _serviceCommand = null;
@@ -504,6 +535,7 @@ class WsClient extends ChangeNotifier {
   }
 
   void _onContainerReady(Map<String, dynamic> json) {
+    _containerReady = true;
     _currentWorkspaceId = json['workspaceId'] as String?;
     _currentUserId = json['userId'] as String?;
     _serviceCommand = json['serviceCommand'] as String?;
@@ -551,6 +583,7 @@ class WsClient extends ChangeNotifier {
     _connected = false;
     _connecting = false;
     _currentWorkspaceId = null;
+    _containerReady = false; // see [containerReady] (#3000)
     _serverSchedules = null;
     notifyListeners();
   }
@@ -584,6 +617,7 @@ class WsClient extends ChangeNotifier {
     _reconnectAttempt = 0;
     _pendingWorkspaceId = null;
     _stopHeartbeat();
+    _containerReady = false; // see [#containerReady] (#3000)
     _send({'cmd': 'workspace_disconnect'});
     _currentWorkspaceId = null;
     notifyListeners();
