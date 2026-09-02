@@ -6761,10 +6761,26 @@ class TestVolumeRoutes:
     plain (non-admin) user."""
 
     async def test_list_volumes_shows_whole_inventory(
-        self, client, admin_user
+        self, client, admin_user, user, app_state
     ):
-        """An admin sees every instance volume, with the creator label
-        surfaced as provenance (no longer an access filter)."""
+        """An admin sees every instance volume with creator provenance
+        (no longer an access filter), the creator's handle, and the
+        workspaces mounting each volume (#2993)."""
+        await app_state.state.model.workspaces.create_workspace(
+            user["id"],
+            "ws-uses-vol",
+            # A path mount must not count as volume usage; the named
+            # one must.
+            mounts=["my-vol:/data", "/host/path:/ro"],
+        )
+        await app_state.state.model.workspaces.create_workspace(
+            admin_user["id"],
+            "aaa-ws",
+            mounts=["my-vol:/x"],
+        )
+        await app_state.state.model.workspaces.create_workspace(
+            user["id"], "no-mounts-ws"
+        )
         headers = await _admin_login(client)
         with patch.object(
             _mock_pod,
@@ -6776,16 +6792,33 @@ class TestVolumeRoutes:
                         "CreatedAt": "2026-01-01T00:00:00Z",
                         "Labels": {
                             "klangk.instance": _instance_id(),
-                            "klangk.user-id": "owner-a",
+                            "klangk.user-id": user["id"],
                         },
                     },
+                    # Same creator again: the handle lookup dedups.
                     {
-                        "Name": "other-vol",
+                        "Name": "my-vol-2",
+                        "CreatedAt": "2026-01-01T00:00:00Z",
+                        "Labels": {
+                            "klangk.instance": _instance_id(),
+                            "klangk.user-id": user["id"],
+                        },
+                    },
+                    # Deleted creator: the label stays provenance, the
+                    # handle resolves to None.
+                    {
+                        "Name": "orphan-vol",
                         "CreatedAt": "2026-01-02T00:00:00Z",
                         "Labels": {
                             "klangk.instance": _instance_id(),
-                            "klangk.user-id": "owner-b",
+                            "klangk.user-id": "ghost-user",
                         },
+                    },
+                    # Runtime-created volume with no creator label.
+                    {
+                        "Name": "system-vol",
+                        "CreatedAt": "2026-01-03T00:00:00Z",
+                        "Labels": {"klangk.instance": _instance_id()},
                     },
                 ]
             ),
@@ -6793,9 +6826,14 @@ class TestVolumeRoutes:
             resp = await client.get("/api/v1/volumes", headers=headers)
         assert resp.status_code == 200
         data = resp.json()
-        assert [(v["name"], v["user_id"]) for v in data] == [
-            ("my-vol", "owner-a"),
-            ("other-vol", "owner-b"),
+        assert [
+            (v["name"], v["user_id"], v["created_by"], v["workspaces"])
+            for v in data
+        ] == [
+            ("my-vol", user["id"], user["handle"], ["aaa-ws", "ws-uses-vol"]),
+            ("my-vol-2", user["id"], user["handle"], []),
+            ("orphan-vol", "ghost-user", None, []),
+            ("system-vol", None, None, []),
         ]
 
     async def test_list_volumes_requires_view_volumes(self, client, user):

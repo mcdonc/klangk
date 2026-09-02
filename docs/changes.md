@@ -42,7 +42,8 @@ operators or integrators to act when upgrading.
   survive below the new admin rows — re-grant via the ACL editor if a
   deploy wants self-service volumes back). The listing returns the
   deployment's whole instance-managed inventory — the creator label
-  is provenance in the new `user_id` field, no longer a filter — and
+  is provenance (`user_id` plus the creator's handle `created_by`),
+  and each row lists the workspace names mounting it (`workspaces`);
   `manage-volumes` holders may delete any instance volume.
 
 - **Deploy-wide consent decider removed (#2976).** The

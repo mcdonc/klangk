@@ -715,6 +715,19 @@ class WorkspacesModel(Submodel):
                 db, user_id, name, **insert
             )
 
+    async def workspace_mount_rows(self) -> list[dict]:
+        """Every workspace's ``(name, mounts)`` row.
+
+        The admin volume listing builds its usage map on this (#2993):
+        which workspace mounts reference each named volume. ``mounts``
+        is the raw JSON blob column (NULL when the workspace has no
+        extra mounts); the decoding stays with the caller.
+        """
+        rows = await self.app.state.db.fetchall(
+            "SELECT name, mounts FROM workspaces"
+        )
+        return [{"name": r["name"], "mounts": r["mounts"]} for r in rows]
+
     async def list_workspaces(
         self,
         user_id: str,

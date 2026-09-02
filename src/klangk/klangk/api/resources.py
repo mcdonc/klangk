@@ -4,6 +4,7 @@ former files and images submodules (images.py was misnamed: it lists
 volumes too)."""
 
 import io
+import json
 import logging
 import posixpath
 
@@ -253,6 +254,50 @@ async def list_images(
 # --- Volume management ---
 
 
+def _named_volume_sources(mounts) -> list[str]:
+    """The named-volume sources in a workspace's mounts list.
+
+    A mount spec is ``<source>:<dest>``; a source with no ``/`` that
+    doesn't start with ``.`` is a named volume — the same rule as
+    ``container.spec.is_named_volume``, inlined so the api layer
+    doesn't reach into the container package.
+    """
+    sources = []
+    for spec in mounts or []:
+        source = spec.split(":")[0]
+        if "/" not in source and not source.startswith("."):
+            sources.append(source)
+    return sources
+
+
+def _volume_usage_map(rows) -> dict[str, list[str]]:
+    """Volume name → the workspace names whose mounts use it (#2993)."""
+    usage: dict[str, list[str]] = {}
+    for row in rows:
+        mounts = json.loads(row["mounts"]) if row["mounts"] else None
+        for source in _named_volume_sources(mounts):
+            usage.setdefault(source, []).append(row["name"])
+    for names in usage.values():
+        names.sort()
+    return usage
+
+
+async def _creator_handles(app, volumes) -> dict[str, str | None]:
+    """Creator ``klangk.user-id`` label → the user's handle (#2993).
+
+    A label whose user no longer exists (deleted creator) maps to
+    ``None`` — the id stays in ``user_id`` as provenance.
+    """
+    handles: dict[str, str | None] = {}
+    for v in volumes:
+        uid = (v.get("Labels") or {}).get("klangk.user-id")
+        if not uid or uid in handles:
+            continue
+        creator = await app.state.model.users.get_user_by_id(uid)
+        handles[uid] = (creator or {}).get("handle") or None
+    return handles
+
+
 @router.get("/volumes")
 async def list_volumes(
     _user: dict = Depends(acl.has_permission("view-volumes")),
@@ -264,16 +309,25 @@ async def list_volumes(
     visibility keys on it); ``manage-volumes`` covers create/delete.
     The ``klangk.user-id`` label is surfaced as provenance, not used
     as an access filter — an admin operating the tab sees every
-    volume this instance manages.
+    volume this instance manages, who created it (``created_by``, the
+    creator's handle), and which workspaces mount it (``workspaces``).
     """
     volumes = await app.state.podman.list_volumes(
         f"klangk.instance={app.state.util.instance_id()}"
     )
+    usage = _volume_usage_map(
+        await app.state.model.workspaces.workspace_mount_rows()
+    )
+    handles = await _creator_handles(app, volumes)
     return [
         {
             "name": v["Name"],
             "created": v.get("CreatedAt", ""),
             "user_id": (v.get("Labels") or {}).get("klangk.user-id"),
+            "created_by": handles.get(
+                (v.get("Labels") or {}).get("klangk.user-id")
+            ),
+            "workspaces": usage.get(v["Name"], []),
         }
         for v in volumes
     ]

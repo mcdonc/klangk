@@ -1530,13 +1530,21 @@ void main() {
 
   group('AdminUsersPage volumes tab', () {
     /// A volume row as `GET /api/v1/volumes` serves it (#2993): name,
-    /// created, and the creator label as provenance.
+    /// created, the creator label as provenance, the creator's handle,
+    /// and the workspaces mounting it.
     Map<String, dynamic> _volume(
       String name,
-      String userId, [
-      String created = '2026-01-02T03:04:05Z',
-    ]) =>
-        {'name': name, 'created': created, 'user_id': userId};
+      String userId, {
+      String? createdBy,
+      List<String> workspaces = const [],
+    }) =>
+        {
+          'name': name,
+          'created': '2026-01-02T03:04:05Z',
+          'user_id': userId,
+          'created_by': createdBy,
+          'workspaces': workspaces,
+        };
 
     /// Serve the volume inventory via [volumes] and capture DELETE
     /// calls into [deletes]; a successful DELETE removes the volume
@@ -1596,10 +1604,15 @@ void main() {
           matching: find.byType(SkeuoTab),
         );
 
-    testWidgets('lists the inventory with creator provenance', (tester) async {
+    testWidgets('lists the inventory with creator and usage', (tester) async {
       final deletes = <String>[];
       serveVolumes([
-        _volume('ws-cache', 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'),
+        _volume(
+          'ws-cache',
+          'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+          createdBy: 'alice',
+          workspaces: ['ws-one', 'ws-two'],
+        ),
         _volume('extra-mount', '11111111-2222-3333-4444-555555555555'),
       ], deletes);
 
@@ -1611,8 +1624,13 @@ void main() {
 
       expect(find.text('ws-cache'), findsOneWidget);
       expect(find.text('extra-mount'), findsOneWidget);
-      // The creator label shows as provenance (leading id chars).
-      expect(find.textContaining('by aaaaaaaa…'), findsOneWidget);
+      // The creator's handle shows (@alice); a volume with no resolvable
+      // creator falls back to the raw label's leading characters.
+      expect(find.textContaining('by @alice'), findsOneWidget);
+      expect(find.textContaining('by 11111111'), findsOneWidget);
+      // Workspace usage: named per volume, 'Unused' when none mount it.
+      expect(find.text('Used by ws-one, ws-two'), findsOneWidget);
+      expect(find.text('Unused'), findsOneWidget);
       expect(find.byTooltip('Delete volume'), findsNWidgets(2));
       expect(deletes, isEmpty);
     });

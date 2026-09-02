@@ -1557,10 +1557,17 @@ class _VolumesTabState extends State<_VolumesTab> {
         final createdRaw = volume['created'] as String? ?? '';
         final created =
             createdRaw.length >= 10 ? createdRaw.substring(0, 10) : createdRaw;
-        // Provenance only (#2993): who created the volume. The raw
-        // user id is opaque, so only its leading characters show.
+        // Who created it (#2993): the creator's handle when the user
+        // still exists, else the raw label's leading characters as a
+        // fallback (deleted creator / runtime-created without a
+        // label → provenance only).
+        final handle = volume['created_by'] as String? ?? '';
         final userId = volume['user_id'] as String? ?? '';
-        final owner = userId.length >= 8 ? userId.substring(0, 8) : userId;
+        final owner = handle.isNotEmpty
+            ? '@$handle'
+            : (userId.length >= 8 ? userId.substring(0, 8) : userId);
+        // Which workspaces mount this volume (#2993).
+        final workspaces = (volume['workspaces'] as List? ?? []).cast<String>();
         return Card(
           margin: const EdgeInsets.only(bottom: 8),
           child: ListTile(
@@ -1569,12 +1576,24 @@ class _VolumesTabState extends State<_VolumesTab> {
               child: Icon(Icons.storage, color: Colors.white),
             ),
             title: Text(name),
-            subtitle: Text(
-              owner.isEmpty
-                  ? 'Created $created'
-                  : 'Created $created · by $owner…',
-              style: const TextStyle(color: KColors.textSecondary),
+            subtitle: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  owner.isEmpty
+                      ? 'Created $created'
+                      : 'Created $created · by $owner',
+                  style: const TextStyle(color: KColors.textSecondary),
+                ),
+                Text(
+                  workspaces.isEmpty
+                      ? 'Unused'
+                      : 'Used by ${workspaces.join(', ')}',
+                  style: const TextStyle(color: KColors.textSecondary),
+                ),
+              ],
             ),
+            isThreeLine: true,
             trailing: widget.canManage
                 ? IconButton(
                     icon: const Icon(
