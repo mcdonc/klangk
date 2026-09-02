@@ -245,7 +245,9 @@ class Lifecycle:
         # separately (a read-only volumes auditor holds view alone).
         # No trailing Deny Everyone row: unauthenticated requests die
         # at the JWT middleware before any ACL check, and no-match is
-        # already default-deny.
+        # already default-deny. The ancestor-walk consequence (a `*`
+        # row on / can grant volume access) is documented in
+        # docs/reference/acl.md (#2974 decision).
         for permission in ("view-volumes", "manage-volumes"):
             await self.app.state.model.acl.add_acl_entry(
                 "/volumes",

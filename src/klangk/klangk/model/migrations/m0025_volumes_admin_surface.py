@@ -10,18 +10,24 @@ by default, delegable). #2974 splits the endpoint gates:
 - ``DELETE /api/v1/volumes/…`` → ``manage-volumes``
 
 and re-seeds ``/volumes`` to the admins group, view + manage. The
-per-user ``klangk.user-id`` runtime scoping is dropped for the same
-reason: a ``manage-volumes`` holder administers every managed volume
-(the label survives for provenance).
+endpoint-level per-user ownership check on DELETE is dropped for
+the same reason: a ``manage-volumes`` holder administers every
+managed volume (the label survives for provenance; the
+``ensure_volumes`` mount-time validation at container assembly is
+unaffected, #2974).
 
 This migration rewrites existing deployments to the new shape:
 
 - Deletes rows on ``/volumes`` that match the retired seed exactly
   (Allow ``manage-volumes`` Authenticated, Deny ``*`` Everyone) — they
-  are the defaults this change replaces, not operator intent.
+  are the defaults this change replaces, not operator intent. This
+  runs even when the deployment has no ``admins`` group: the
+  over-broad Allow Authenticated grant must not survive an upgrade
+  just because the grantee group is missing.
 - Inserts Allow ``view-volumes`` + Allow ``manage-volumes`` for the
-  admins group at positions 0/1, unless a row already grants that
-  permission on ``/volumes`` (idempotent; operator-staged rows win).
+  admins group unless a row already *allows* that permission on
+  ``/volumes`` (idempotent; operator-staged Allow rows win — a staged
+  Deny does not suppress the insert, so admins keep the surface).
 - Custom rows the operator added (anything that is not the retired
   seed pair) are left untouched.
 
@@ -85,11 +91,15 @@ async def _delete_retired_seed_rows(db, rows) -> None:
             )
 
 
-async def _permission_exists(db, permission: str) -> bool:
+async def _permission_allowed(db, permission: str) -> bool:
+    # Allow rows only: a staged Deny must not suppress the admins'
+    # Allow insert (first-match-wins still lets the operator's Deny
+    # take effect for the principals it covers).
     cursor = await db.execute(
         "SELECT COUNT(*) FROM acl_entries"
-        " WHERE resource = '/volumes' AND permission = ?",
-        (permission,),
+        " WHERE resource = '/volumes' AND permission = ?"
+        " AND action = ?",
+        (permission, ACTION_ALLOW),
     )
     return (await cursor.fetchone())[0] > 0
 
@@ -107,15 +117,17 @@ async def apply(db) -> None:
     if (await cursor.fetchone())[0] == 0:
         return  # fresh database — the boot seeds own it
 
-    group_id = await _admins_group_id(db)
-    if group_id is None:
-        return  # no admins group: nothing to grant; rows left untouched
-
     rows = await _rows(db)
     await _delete_retired_seed_rows(db, rows)
 
+    group_id = await _admins_group_id(db)
+    if group_id is None:
+        # Nothing to grant — but the retired rows are already gone, so
+        # /volumes is locked rather than left world-manageable.
+        return
+
     for permission in _ADMIN_PERMISSIONS:
-        if await _permission_exists(db, permission):
+        if await _permission_allowed(db, permission):
             continue  # operator-staged or already migrated
         # Append rather than assume 0/1: a deployment whose retired
         # pair was only half-customized keeps rows at those positions,

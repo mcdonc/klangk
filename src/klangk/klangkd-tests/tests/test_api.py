@@ -6799,6 +6799,20 @@ class TestVolumeRoutes:
         resp = await client.get("/api/v1/volumes", headers=headers)
         assert resp.status_code == 403
 
+    async def test_mutate_volumes_requires_manage_permission(
+        self, client, user
+    ):
+        """#2974: a user with no /volumes grants at all cannot create or
+        delete — the manage gate must hold for the mutating endpoints
+        too, not just alongside a view grant."""
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/volumes", json={"name": "nope"}, headers=headers
+        )
+        assert resp.status_code == 403
+        resp = await client.delete("/api/v1/volumes/nope", headers=headers)
+        assert resp.status_code == 403
+
     async def test_delegated_viewer_lists_but_cannot_mutate(
         self, client, user, app_state
     ):

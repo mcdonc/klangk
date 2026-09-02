@@ -1957,6 +1957,9 @@ class _VolumesTabState extends State<_VolumesTab> {
   }
 
   Future<void> _deleteVolume(String name) async {
+    // Capture before the first await — the dialog/request can outlive
+    // the widget (same pattern as _deleteUser).
+    final auth = context.read<AuthService>();
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -1984,16 +1987,22 @@ class _VolumesTabState extends State<_VolumesTab> {
     );
     if (confirm != true) return;
 
-    final auth = context.read<AuthService>();
     final resp = await auth.authDelete('/api/v1/volumes/$name');
     if (resp.statusCode == 200) {
+      if (!mounted) return;
       await _loadVolumes();
     } else {
       if (!mounted) return;
-      final detail =
-          (jsonDecode(resp.body) as Map<String, dynamic>)['detail'] as String?;
+      String detail = 'Failed to delete volume';
+      try {
+        detail = (jsonDecode(resp.body) as Map<String, dynamic>)['detail']
+                as String? ??
+            detail;
+      } catch (e) {
+        debugPrint('[AdminUsersPage] parse delete-volume error: $e');
+      }
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(detail ?? 'Failed to delete volume')),
+        SnackBar(content: Text(detail)),
       );
     }
   }

@@ -51,6 +51,7 @@ Klangk uses an Access Control List (ACL) system to manage permissions. Instead o
 | `/volumes`     | Allow  | group:admins  | `view-volumes`           |
 | `/volumes`     | Allow  | group:admins  | `manage-volumes`         |
 | `/images`      | Allow  | Authenticated | `view-images`            |
+| `/images`      | Deny   | Everyone      | `*`                      |
 | `/admin`       | Allow  | group:admins  | `*` (admin marker only)  |
 | `/admin`       | Deny   | Everyone      | `*`                      |
 
@@ -59,6 +60,15 @@ the `admins` group can create workspaces or hold a `manage-*`
 permission; unauthenticated users are denied everything. `/admin`
 checks nothing anymore (#2944) — its `*` row only marks "instance
 administrator" for permission-map consumers.
+
+`/volumes` carries no trailing Deny Everyone row (#2974): a no-match
+walk is already default-deny, and unauthenticated requests are
+rejected by the JWT middleware before any ACL check. One consequence
+of the ancestor walk (`/volumes` falls through to `/`): a row on `/`
+whose permission is `*` (e.g. an operator-added `Allow * Authenticated`)
+can grant volume access. Every other first-class resource blocks that
+with its own terminal Deny — keep such `/` wildcard rows in mind when
+editing the root resource.
 
 ### Granting workspace creation to non-admin users
 

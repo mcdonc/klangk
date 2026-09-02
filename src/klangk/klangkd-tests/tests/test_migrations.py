@@ -2785,9 +2785,36 @@ class TestM0025VolumesAdminSurface:
         finally:
             await db.__aexit__(None, None, None)
 
-    async def test_no_admins_group_leaves_rows(self, tmp_path):
-        """Without an admins group there is nothing to grant; the
-        retired rows are left as-is (early return)."""
+    async def test_staged_deny_does_not_suppress_allow(self, tmp_path):
+        """A staged Deny row is not a grant: the admins' Allow is still
+        inserted (first-match-wins lets the operator's Deny keep its
+        effect for the principals it covers)."""
+        from klangk.model import ACTION_ALLOW, ACTION_DENY
+        from klangk.model.migrations import m0025_volumes_admin_surface
+
+        db = await self._db(tmp_path)
+        try:
+            await db.execute(
+                "INSERT INTO acl_entries"
+                " (resource, position, action, principal_type, group_id,"
+                "  permission)"
+                " VALUES ('/volumes', 0, ?, 2, 'g-auditors', 'view-volumes'),"
+                "        ('/', 0, 1, 3, NULL, 'view')",
+                (ACTION_DENY,),
+            )
+            await db.commit()
+            await m0025_volumes_admin_surface.migration.apply(db)
+            rows = await self._rows(db, "/volumes")
+            assert (0, ACTION_DENY, "g-auditors", None, "view-volumes") in rows
+            assert (1, ACTION_ALLOW, "g-admin", None, "view-volumes") in rows
+            assert (2, ACTION_ALLOW, "g-admin", None, "manage-volumes") in rows
+        finally:
+            await db.__aexit__(None, None, None)
+
+    async def test_no_admins_group_still_retires_seed_rows(self, tmp_path):
+        """Without an admins group there is nothing to grant, but the
+        retired over-broad Allow Authenticated row must not survive the
+        upgrade — /volumes ends up locked rather than world-manageable."""
         from klangk.model.migrations import m0025_volumes_admin_surface
 
         db = await self._db(tmp_path)
@@ -2803,6 +2830,6 @@ class TestM0025VolumesAdminSurface:
             )
             await db.commit()
             await m0025_volumes_admin_surface.migration.apply(db)
-            assert len(await self._rows(db, "/volumes")) == 2
+            assert await self._rows(db, "/volumes") == []
         finally:
             await db.__aexit__(None, None, None)

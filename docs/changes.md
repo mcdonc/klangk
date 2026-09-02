@@ -35,7 +35,7 @@ operators or integrators to act when upgrading.
 - **`/volumes` is now an admin surface (#2974).** The volume listing
   checks the new `view-volumes` permission on `/volumes`, and
   create/delete check `manage-volumes` — both seeded Allow for the
-  `admins` group (migration m0024 rewrites the #2946 Allow
+  `admins` group (migration m0025 rewrites the #2946 Allow
   Authenticated rows on existing deployments; operator-customized
   rows are preserved). Non-admin users lose volume API access by
   default — re-grant via the ACL editor if a deploy wants them back.

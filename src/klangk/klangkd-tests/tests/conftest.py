@@ -281,7 +281,7 @@ async def admin_group(app_state):
             system_principal=SYSTEM_EVERYONE,
         )
     # /volumes admin surface (#2974): view + manage to admins —
-    # mirrors the updated seed_default_acls / m0024.
+    # mirrors the updated seed_default_acls / m0025.
     for position, permission in enumerate(("view-volumes", "manage-volumes")):
         await acl.add_acl_entry(
             "/volumes",

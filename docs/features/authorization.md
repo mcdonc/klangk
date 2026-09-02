@@ -72,7 +72,7 @@ same recipe as
 
 The Volumes tab in the Admin panel shows the deployment's klangk-managed
 podman volumes — every volume on the instance, with its creating user as
-provenance and a delete action. There is no create surface in the tab:
+provenance (when the volume carries the label) and a delete action. There is no create surface in the tab:
 workspace extra-mount volumes are provisioned automatically at container
 assembly.
 

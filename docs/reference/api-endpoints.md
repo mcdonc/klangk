@@ -589,6 +589,10 @@ No request body.
 ]
 ```
 
+`owner` is the creating user's id taken from the `klangk.user-id`
+label — `null` when the volume carries no label (e.g. volumes
+provisioned without a user in the loop).
+
 ---
 
 ### GET `/api/v1/workspaces`

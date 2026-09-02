@@ -4653,7 +4653,11 @@ class TestVolumes:
             status_code=200,
             json=MagicMock(
                 return_value=[
-                    {"name": "vol-1", "created": "2026-01-01T00:00:00Z"},
+                    {
+                        "name": "vol-1",
+                        "created": "2026-01-01T00:00:00Z",
+                        "owner": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+                    }
                 ]
             ),
         )
@@ -4665,6 +4669,8 @@ class TestVolumes:
         result = runner.invoke(main.app, ["volumes", "ls"])
         assert result.exit_code == 0
         assert "vol-1" in result.stdout
+        # #2974: the owner column shows the creating user's id prefix.
+        assert "aaaaaaaa" in result.stdout
 
     def test_volumes_ls_empty(self, logged_in_cfg, monkeypatch):
         from klangk.cli import main
