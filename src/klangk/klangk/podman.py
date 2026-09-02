@@ -63,12 +63,21 @@ class PodmanError(Exception):
         super().__init__(f"[{status}] {message}")
 
 
+_NOT_FOUND_HINTS = ("no such", "not found", "no container")
+_IN_USE_HINTS = ("in use", "being used", "already in use")
+
+
+def _matches_any(low: str, hints: tuple[str, ...]) -> bool:
+    """True when any hint appears in the lowercased stderr."""
+    return any(h in low for h in hints)
+
+
 def classify(stderr: str) -> int:
     """Map podman stderr text to an HTTP-like status code."""
     low = stderr.lower()
-    if "no such" in low or "not found" in low or "no container" in low:
+    if _matches_any(low, _NOT_FOUND_HINTS):
         return 404
-    if "in use" in low or "being used" in low or "already in use" in low:
+    if _matches_any(low, _IN_USE_HINTS):
         return 409
     return 500
 
@@ -136,21 +145,21 @@ class Podman:
             return True
 
     @staticmethod
-    def _finish_podman_run(
-        proc,
-        timed_out: bool,
+    def _timeout_rc(
         err: str,
         cmd_label: str,
         timeout: float | None,
-        args: list[str],
-        check: bool,
-        timings: tuple[float, float, float, float],
+        timed_out: bool,
+        rc: int,
     ) -> tuple[int, str]:
-        """Apply the timeout override, log timings, and enforce *check*."""
-        rc = proc.returncode or 0
-        if timed_out:
-            rc = -1
-            err = err or f"{cmd_label} timed out after {timeout}s"
+        """(rc, err) with the timeout override applied."""
+        if not timed_out:
+            return rc, err
+        return -1, err or f"{cmd_label} timed out after {timeout}s"
+
+    @staticmethod
+    def _log_podman_timing(cmd_label: str, timings, err: str) -> None:
+        """Debug-log the phase timings; a slow run's stderr rides along."""
         t0, t1, t2, t3 = timings
         elapsed = t3 - t0
         logger.debug(
@@ -166,6 +175,22 @@ class Podman:
             logger.debug(
                 "podman-timing: %s stderr: %s", cmd_label, err.strip()
             )
+
+    @staticmethod
+    def _finish_podman_run(
+        proc,
+        timed_out: bool,
+        err: str,
+        cmd_label: str,
+        timeout: float | None,
+        args: list[str],
+        check: bool,
+        timings: tuple[float, float, float, float],
+    ) -> tuple[int, str]:
+        """Apply the timeout override, log timings, and enforce *check*."""
+        rc = proc.returncode or 0
+        rc, err = Podman._timeout_rc(err, cmd_label, timeout, timed_out, rc)
+        Podman._log_podman_timing(cmd_label, timings, err)
         if check and rc != 0:
             raise PodmanError(
                 classify(err), err.strip() or f"podman {args[0]}"
@@ -344,6 +369,30 @@ class Podman:
         return args
 
     @staticmethod
+    def _hooks_dir_args(hooks_dir: list[str] | None) -> list[str]:
+        """``--hooks-dir`` global flags — podman global flags precede the
+        subcommand, and podman does not persist them from create to
+        start."""
+        args: list[str] = []
+        for d in hooks_dir or []:
+            args += ["--hooks-dir", d]
+        return args
+
+    @staticmethod
+    def _publish_args(publish: list | None) -> list[str]:
+        """``-p`` flags for ``(host_port, container_port)`` or
+        ``(bind_addr, host_port, container_port)`` entries."""
+        args: list[str] = []
+        for entry in publish or []:
+            if len(entry) == 3:
+                bind, host_port, container_port = entry
+                args += ["-p", f"{bind}:{host_port}:{container_port}"]
+            else:
+                host_port, container_port = entry
+                args += ["-p", f"{host_port}:{container_port}"]
+        return args
+
+    @staticmethod
     def _create_storage_args(
         binds: list[str] | None,
         tmpfs: dict[str, str] | None,
@@ -357,14 +406,7 @@ class Podman:
             args += ["-v", bind]
         for path, opts in (tmpfs or {}).items():
             args += ["--tmpfs", f"{path}:{opts}"]
-        for entry in publish or []:
-            if len(entry) == 3:
-                bind, host_port, container_port = entry
-                args += ["-p", f"{bind}:{host_port}:{container_port}"]
-            else:
-                host_port, container_port = entry
-                args += ["-p", f"{host_port}:{container_port}"]
-        return args
+        return args + Podman._publish_args(publish)
 
     @staticmethod
     def _create_dns_args(
@@ -374,12 +416,13 @@ class Podman:
     ) -> list[str]:
         """Hosts-file / DNS server / DNS search flags."""
         args: list[str] = []
-        for host in add_hosts or []:
-            args += ["--add-host", host]
-        for server in dns or []:
-            args += ["--dns", server]
-        for domain in dns_search or []:
-            args += ["--dns-search", domain]
+        for flag, values in (
+            ("--add-host", add_hosts),
+            ("--dns", dns),
+            ("--dns-search", dns_search),
+        ):
+            for value in values or []:
+                args += [flag, value]
         return args
 
     async def create_container(
@@ -440,9 +483,7 @@ class Podman:
         # --hooks-dir is a podman global flag (before the subcommand), not a
         # create flag. Placing it after "create" causes podman to silently
         # ignore it. Global flags must precede the subcommand.
-        args: list[str] = []
-        for d in hooks_dir or []:
-            args += ["--hooks-dir", d]
+        args: list[str] = self._hooks_dir_args(hooks_dir)
         args += self._create_base_args(
             name, pull, replace, init, interactive, userns
         )
@@ -473,9 +514,7 @@ class Podman:
         ``create``.  OCI hooks are discovered and executed at ``start``
         time, so omitting the flag here silently skips all hooks.
         """
-        args: list[str] = []
-        for d in hooks_dir or []:
-            args += ["--hooks-dir", d]
+        args: list[str] = self._hooks_dir_args(hooks_dir)
         args += ["start", container_id]
         await self.run(args, timeout=120.0)
 
@@ -581,6 +620,27 @@ class Podman:
         )
         return await self.run_raw(args, check=False, timeout=timeout)
 
+    def _stream_failure(
+        self, proc, container_id: str, cmd: list[str], yielded: bool
+    ) -> None:
+        """Warn on a failed stream; abort (raise) only when no data was
+        produced — if data was yielded the response is already in-flight
+        and may be valid (e.g. tar exits 1 when files change during
+        archiving)."""
+        if proc.returncode == 0:
+            return
+        logger.warning(
+            "exec_container_stream command failed (rc=%d): %s %s",
+            proc.returncode,
+            container_id,
+            cmd,
+        )
+        if not yielded:
+            raise PodmanError(
+                proc.returncode,
+                f"stream command exited with code {proc.returncode}",
+            )
+
     async def exec_container_stream(
         self,
         container_id: str,
@@ -618,21 +678,21 @@ class Podman:
             if proc.returncode is None:
                 proc.kill()
             await proc.wait()
-        if proc.returncode != 0:
-            logger.warning(
-                "exec_container_stream command failed (rc=%d): %s %s",
-                proc.returncode,
-                container_id,
-                cmd,
-            )
-            # Only abort the stream if no data was produced; if data was
-            # yielded the response is already in-flight and may be valid
-            # (e.g. tar exits 1 when files change during archiving).
-            if not yielded:
-                raise PodmanError(
-                    proc.returncode,
-                    f"stream command exited with code {proc.returncode}",
-                )
+        self._stream_failure(proc, container_id, cmd, yielded)
+
+    async def _stop_before_remove(self, container_id: str) -> bool:
+        """Graceful stop first (conmon cleanup kills pasta). False when
+        the container is already gone — remove is then a no-op."""
+        rc, _out, err = await self.run(
+            ["stop", "-t", "5", container_id], check=False
+        )
+        return not (rc != 0 and classify(err) == 404)
+
+    def _raise_rm_error(self, rc: int, err: str) -> None:
+        """Raise for a failed ``podman rm``, except when the container is
+        already gone."""
+        if rc != 0 and classify(err) != 404:
+            raise PodmanError(classify(err), err.strip() or "podman rm")
 
     async def remove_container(
         self, container_id: str, *, force: bool = True
@@ -644,20 +704,14 @@ class Podman:
         ``podman rm -f`` skips cleanup and can leave orphaned pasta
         processes holding ports indefinitely (podman#14276).
         """
-        if force:
-            # Graceful stop triggers conmon cleanup (kills pasta).
-            rc, _out, err = await self.run(
-                ["stop", "-t", "5", container_id], check=False
-            )
-            if rc != 0 and classify(err) == 404:
-                return  # already gone
+        if force and not await self._stop_before_remove(container_id):
+            return  # already gone
         args = ["rm"]
         if force:
             args.append("-f")  # catch stragglers
         args.append(container_id)
         rc, _out, err = await self.run(args, check=False)
-        if rc != 0 and classify(err) != 404:
-            raise PodmanError(classify(err), err.strip() or "podman rm")
+        self._raise_rm_error(rc, err)
 
     async def list_containers(self, label: str) -> list[dict]:
         """List containers matching ``label`` (``key=value``)."""
@@ -702,12 +756,7 @@ class Podman:
         subset of what GET returns, never more.
         """
         volumes = await self.list_volumes(f"klangk.instance={instance}")
-        return sum(
-            1
-            for v in volumes
-            if (v.get("Labels") or {}).get("klangk.instance") == instance
-            and (v.get("Labels") or {}).get("klangk.user-id") == user_id
-        )
+        return sum(1 for v in volumes if _is_user_volume(v, instance, user_id))
 
     async def remove_volume(self, name: str) -> None:
         """Remove a volume.
@@ -721,6 +770,17 @@ class Podman:
 
 
 # --- Exec sessions ---
+
+
+def _is_user_volume(v: dict, instance: str, user_id: str) -> bool:
+    """The quota-matching label rule: the instance label is re-checked
+    defensively — a stray out-of-band volume must not consume quota —
+    plus the user-id label (#2972)."""
+    labels = v.get("Labels") or {}
+    return (
+        labels.get("klangk.instance") == instance
+        and labels.get("klangk.user-id") == user_id
+    )
 
 
 class ExecSession:
@@ -805,33 +865,40 @@ class ExecSession:
             command,
         )
 
+    async def _pump_stdout(self, stdout) -> None:
+        """Read chunks to the bounded queue (a full queue blocks,
+        back-pressuring the process via its kernel pipe buffer)."""
+        while True:
+            data = await stdout.read(65536)
+            if not data:
+                break
+            await self._output_queue.put(data)
+
+    async def _await_proc_exit(self) -> None:
+        """Wait (bounded) for the process to exit so returncode is set
+        before the caller reads it."""
+        if self._proc is None or self._proc.returncode is not None:
+            return
+        try:
+            await asyncio.wait_for(self._proc.wait(), timeout=5)
+        except (
+            asyncio.TimeoutError,
+            ProcessLookupError,
+            OSError,
+        ):
+            pass
+
     async def _read_stdout(self) -> None:
         """Read stdout in a background task and queue chunks."""
         assert self._proc is not None
         assert self._proc.stdout is not None
         try:
-            while True:
-                data = await self._proc.stdout.read(65536)
-                if not data:
-                    break
-                # Bounded queue: blocks when full, back-pressuring the
-                # process via its kernel pipe buffer.
-                await self._output_queue.put(data)
+            await self._pump_stdout(self._proc.stdout)
         except asyncio.CancelledError:
             raise
         except OSError:
             pass
-        # Wait for the process to exit so returncode is set before
-        # the caller reads it.
-        if self._proc and self._proc.returncode is None:
-            try:
-                await asyncio.wait_for(self._proc.wait(), timeout=5)
-            except (
-                asyncio.TimeoutError,
-                ProcessLookupError,
-                OSError,
-            ):
-                pass
+        await self._await_proc_exit()
         self._output_queue.send_sentinel()
 
     @property
@@ -860,6 +927,11 @@ class ExecSession:
         if self._proc is not None and self._proc.stdin is not None:
             self._proc.stdin.close()
 
+    def _read_task_done(self) -> bool:
+        """True when the stdout producer finished (its sentinel may have
+        been dropped when the queue was full)."""
+        return self._read_task is not None and self._read_task.done()
+
     async def output(self) -> AsyncGenerator[bytes, None]:
         """Yield stdout data as it arrives."""
         while self._running:
@@ -868,44 +940,53 @@ class ExecSession:
                     self._output_queue.get(), timeout=1.0
                 )
             except asyncio.TimeoutError:
-                # Producer finished but sentinel was dropped (queue was full).
-                if self._read_task is not None and self._read_task.done():
+                if self._read_task_done():
                     break
                 continue
             if data is None:
                 break
             yield data
 
+    async def _cancel_read_task(self) -> None:
+        """Cancel (and await) the stdout read task."""
+        if self._read_task is None:
+            return
+        self._read_task.cancel()
+        try:
+            await self._read_task
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            logger.exception("Error awaiting exec read task")
+        self._read_task = None
+
+    def _save_returncode(self) -> None:
+        """Record the current exit code (when set) for post-stop reads."""
+        if self._proc is not None and self._proc.returncode is not None:
+            self._returncode = self._proc.returncode
+
+    async def _terminate_proc(self) -> None:
+        """Terminate the exec process — TERM, 5s wait, KILL — saving its
+        exit code so ``returncode`` stays accessible after stop()."""
+        if not self._proc:
+            return
+        self._save_returncode()
+        try:
+            self._proc.terminate()
+            await asyncio.wait_for(self._proc.wait(), timeout=5)
+        except (ProcessLookupError, asyncio.TimeoutError, OSError):
+            try:
+                self._proc.kill()
+            except (ProcessLookupError, OSError):
+                pass
+        self._save_returncode()
+        self._proc = None
+
     async def stop(self) -> None:
         """Stop the exec session and clean up."""
         self._running = False
-
-        if self._read_task is not None:
-            self._read_task.cancel()
-            try:
-                await self._read_task
-            except asyncio.CancelledError:
-                pass
-            except Exception:
-                logger.exception("Error awaiting exec read task")
-            self._read_task = None
-
-        if self._proc:
-            # Save exit code before nulling _proc so returncode stays
-            # accessible after stop().
-            if self._proc.returncode is not None:
-                self._returncode = self._proc.returncode
-            try:
-                self._proc.terminate()
-                await asyncio.wait_for(self._proc.wait(), timeout=5)
-            except (ProcessLookupError, asyncio.TimeoutError, OSError):
-                try:
-                    self._proc.kill()
-                except (ProcessLookupError, OSError):
-                    pass
-            if self._proc.returncode is not None:
-                self._returncode = self._proc.returncode
-            self._proc = None
+        await self._cancel_read_task()
+        await self._terminate_proc()
         logger.info("Exec session stopped for container %s", self.container_id)
 
     @property
