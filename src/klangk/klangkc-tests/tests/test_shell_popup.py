@@ -929,6 +929,11 @@ class TestMemberMayDecide:
         )
 
     def test_false_for_no_grants(self):
+        # Defensive shape: an explicit empty list for the resource. The real
+        # endpoint omits the resource entirely for a zero-grants member (that
+        # case is covered by test_true_when_resource_missing_from_response and
+        # fails open); this pins that an empty list is read as no consent
+        # authority, not as an error.
         assert (
             cli_main.member_may_decide(self._client([]), self.WS_ID) is False
         )

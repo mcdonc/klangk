@@ -810,6 +810,7 @@ OUTCOME_NAMES: dict[str, str] = {
     "CONN-NOT-CLEAN": "connection not cleanly refused / a resolve frame wasn't seen.",
     "AB-HELD-HUNG": "concurrent A/B hold hung (NFQUEUE/DNS; possibly a concurrent-hold issue).",
     "ISOLATION-BROKEN": "a workspace-scoped decider saw another workspace's request. #2392",
+    "DEPLOYWIDE-ACCEPTED": "a no-workspace decider handshake was accepted -- the cross-workspace consent path is back. #2976",
     "UNEXPECTED-ERROR": "a phase bring-up or per-step exception (an unexpected error).",
     "AUDIT-MISLABELED": "expired/denied audit distinction broken (timeout audited as deny, or vice-versa). #2392",
     "ALLOWLIST-PROMPTED": "an allow-list-covered host prompted for consent (a real static-allow invariant break). #2419",
@@ -3626,7 +3627,11 @@ class SmokeTest:
         """#2976: a decider handshake with no ``workspace`` param must be
         refused pre-accept (uvicorn answers a bare HTTP 403). An accepted
         one would be a cross-workspace consent path -- anyone with an
-        admin-ish grant deciding for every workspace."""
+        admin-ish grant deciding for every workspace.
+
+        NB: a 403 here is also what an invalid/expired token yields -- the
+        token is proven live by the app's own decider connect earlier in
+        the run, so a 403 at this point is the workspace-param refusal."""
         step = _Step(
             self.summary.total, "(no-workspace)", "n/a", False, "scope-nw", "-"
         )
