@@ -85,16 +85,43 @@ def admin_status(token: str | None) -> bool | None:
     return is_admin
 
 
+def identity_lines(email, user_id) -> list[str]:
+    """The user= / user_id= plain-status lines."""
+    return [f"user={email or 'unknown'}", f"user_id={user_id or 'unknown'}"]
+
+
+def admin_field(is_admin) -> str | None:
+    """The admin= plain-status line, or None when unknown."""
+    if is_admin is None:
+        return None
+    return f"admin={'yes' if is_admin else 'no'}"
+
+
 def print_status_plain(url, token, email, user_id, is_admin) -> None:
     print(f"server={url or '(none)'}")
     if token:
-        print(f"user={email or 'unknown'}")
-        print(f"user_id={user_id or 'unknown'}")
+        for line in identity_lines(email, user_id):
+            print(line)
         print("status=logged_in")
-        if is_admin is not None:
-            print(f"admin={'yes' if is_admin else 'no'}")
+        admin = admin_field(is_admin)
+        if admin:
+            print(admin)
     else:
         print("status=not_logged_in")
+
+
+def identity_rows(email, user_id) -> list[tuple[str, str]]:
+    """The User / User ID table rows."""
+    return [("User", email or "unknown"), ("User ID", user_id or "unknown")]
+
+
+def admin_row(is_admin) -> tuple[str, str] | None:
+    """The Admin table row, or None when unknown."""
+    if is_admin:
+        return "Admin", "[green]yes[/green]"
+    if is_admin is False:
+        return "Admin", "no"
+    return None
 
 
 def print_status_table(url, token, email, user_id, is_admin) -> None:
@@ -104,16 +131,31 @@ def print_status_table(url, token, email, user_id, is_admin) -> None:
     table.add_column()
     table.add_row("Server", url or "(none)")
     if token:
-        table.add_row("User", email or "unknown")
-        table.add_row("User ID", user_id or "unknown")
+        for label, value in identity_rows(email, user_id):
+            table.add_row(label, value)
         table.add_row("Status", "[green]logged in[/green]")
-        if is_admin:
-            table.add_row("Admin", "[green]yes[/green]")
-        elif is_admin is False:
-            table.add_row("Admin", "no")
+        admin = admin_row(is_admin)
+        if admin:
+            table.add_row(*admin)
     else:
         table.add_row("Status", "[yellow]not logged in[/yellow]")
     console.print(table)
+
+
+def current_session_info() -> tuple[
+    str | None, str | None, str | None, str | None
+]:
+    """(url, token, email, user_id) for the active session.
+
+    status works even with no active server (unlike other commands), so
+    url — and everything derived from it — may be None.
+    """
+    url = context.server_override or context.state().active_server
+    state = context.state()
+    token = state.get_token(url) if url else None
+    email = state.get_email(url) if url else None
+    user_id = decode_token_claims(token).get("sub") if token else None
+    return url, token, email, user_id
 
 
 @context.app.command()
@@ -121,12 +163,7 @@ def status(
     plain: bool = typer.Option(False, "--plain", help="Plain text output"),
 ) -> None:
     """Show connection info (server, user, admin status)."""
-    # status works even with no active server (unlike other commands).
-    url = context.server_override or context.state().active_server
-    state = context.state()
-    token = state.get_token(url) if url else None
-    email = state.get_email(url) if url else None
-    user_id = decode_token_claims(token).get("sub") if token else None
+    url, token, email, user_id = current_session_info()
     is_admin = admin_status(token)
     if plain:
         print_status_plain(url, token, email, user_id, is_admin)

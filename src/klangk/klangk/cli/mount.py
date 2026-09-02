@@ -20,14 +20,8 @@ _VALID_MOUNT_OPTIONS = {
 }
 
 
-def validate_mount_spec(spec: str) -> str | None:
-    """Validate a container mount spec string.
-
-    Returns None if valid, or an error message string if invalid.
-    Valid forms: source:dest or source:dest:options
-    The container path (dest) must be absolute.
-    """
-    parts = spec.split(":")
+def mount_format_error(spec: str, parts: list[str]) -> str | None:
+    """Shape / source / destination format errors for a mount spec."""
     if len(parts) < 2 or len(parts) > 3:
         return (
             f"Invalid mount {spec!r}: "
@@ -41,11 +35,30 @@ def validate_mount_spec(spec: str) -> str | None:
             f"Invalid mount {spec!r}: "
             "container path must be absolute (start with /)"
         )
+    return None
+
+
+def mount_options_error(spec: str, options: str) -> str | None:
+    """An unknown-option error for a mount spec's options segment."""
+    for opt in options.split(","):
+        if opt and opt not in _VALID_MOUNT_OPTIONS:
+            return f"Invalid mount {spec!r}: unknown option {opt!r}"
+    return None
+
+
+def validate_mount_spec(spec: str) -> str | None:
+    """Validate a container mount spec string.
+
+    Returns None if valid, or an error message string if invalid.
+    Valid forms: source:dest or source:dest:options
+    The container path (dest) must be absolute.
+    """
+    parts = spec.split(":")
+    err = mount_format_error(spec, parts)
+    if err:
+        return err
     if len(parts) == 3:
-        options = parts[2]
-        for opt in options.split(","):
-            if opt and opt not in _VALID_MOUNT_OPTIONS:
-                return f"Invalid mount {spec!r}: unknown option {opt!r}"
+        return mount_options_error(spec, parts[2])
     return None
 
 
@@ -100,6 +113,13 @@ def validate_allowed_domain_spec(
     return None
 
 
+def cidr_port_error(spec: str, port: str) -> str | None:
+    """The CIDR-port range error, if *port* is not 1–65535 digits."""
+    if not port or not port.isdigit() or int(port) > 65535:
+        return f"Invalid allowed-domain {spec!r}: CIDR port must be 1–65535"
+    return None
+
+
 def _validate_cidr_domain_spec(spec: str, s: str) -> str | None:
     """Client-side IPv4 CIDR pre-check, mirroring the server's
     :func:`klangk.netfilter.valid_cidr_spec` (#1935).
@@ -113,10 +133,9 @@ def _validate_cidr_domain_spec(spec: str, s: str) -> str | None:
     port: str | None = None
     if ":" in s:
         cidr, port = s.rsplit(":", 1)
-        if not port or not port.isdigit() or int(port) > 65535:
-            return (
-                f"Invalid allowed-domain {spec!r}: CIDR port must be 1–65535"
-            )
+        err = cidr_port_error(spec, port)
+        if err:
+            return err
     try:
         ipaddress.IPv4Network(cidr, strict=False)
     except ValueError:

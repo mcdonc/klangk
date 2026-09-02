@@ -28,6 +28,24 @@ class SandboxConfig:
     volumes: list[str] = field(default_factory=list)
 
 
+def parse_setup_timeout(sandbox: dict) -> int:
+    """The sandbox section's setup-timeout, or 300 when absent."""
+    setup_timeout = sandbox.get(
+        "setup-timeout", sandbox.get("setup_timeout", 300)
+    )
+    try:
+        return int(setup_timeout)
+    except (TypeError, ValueError):
+        raise ValueError(
+            f"setup-timeout must be an integer, got {setup_timeout!r}"
+        )
+
+
+def list_field(raw: dict, name: str) -> list[str]:
+    """A top-level config list, defaulting to empty."""
+    return raw.get(name) or []
+
+
 def load_sandbox_config(sandbox_root: Path) -> SandboxConfig:
     """Parse ``.klangk-sandbox.yaml`` under *sandbox_root*.
 
@@ -45,16 +63,6 @@ def load_sandbox_config(sandbox_root: Path) -> SandboxConfig:
     workspace = raw.get("workspace") or {}
     sandbox = raw.get("sandbox") or {}
 
-    setup_timeout = sandbox.get(
-        "setup-timeout", sandbox.get("setup_timeout", 300)
-    )
-    try:
-        setup_timeout = int(setup_timeout)
-    except (TypeError, ValueError):
-        raise ValueError(
-            f"setup-timeout must be an integer, got {setup_timeout!r}"
-        )
-
     return SandboxConfig(
         image=workspace.get("image"),
         service_command=workspace.get(
@@ -68,10 +76,10 @@ def load_sandbox_config(sandbox_root: Path) -> SandboxConfig:
         ),
         mount_at=sandbox.get("mount-at", sandbox.get("mount_at", "~/work")),
         setup=sandbox.get("setup"),
-        setup_timeout=setup_timeout,
-        copy=raw.get("copy") or [],
-        mounts=raw.get("mounts") or [],
-        volumes=raw.get("volumes") or [],
+        setup_timeout=parse_setup_timeout(sandbox),
+        copy=list_field(raw, "copy"),
+        mounts=list_field(raw, "mounts"),
+        volumes=list_field(raw, "volumes"),
     )
 
 

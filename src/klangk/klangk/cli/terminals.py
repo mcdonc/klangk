@@ -216,6 +216,16 @@ def resolve_own_window(
     return _resolve_window_by_name(own_windows, terminal)
 
 
+def ambiguous_name_error(
+    name_matches: list[dict], terminal: str
+) -> tuple[dict | None, str | None]:
+    """The error payload for a name matching several windows (#2192)."""
+    ids = ", ".join(w["id"] for w in name_matches if w.get("id"))
+    return None, (
+        f"Multiple terminals named '{terminal}'; specify one by id: {ids}"
+    )
+
+
 def _resolve_window_by_name(
     own_windows: list[dict], terminal: str
 ) -> tuple[dict | None, str | None]:
@@ -223,10 +233,7 @@ def _resolve_window_by_name(
     are an error rather than a silent first match."""
     name_matches = [w for w in own_windows if w.get("name") == terminal]
     if len(name_matches) > 1:
-        ids = ", ".join(w["id"] for w in name_matches if w.get("id"))
-        return None, (
-            f"Multiple terminals named '{terminal}'; specify one by id: {ids}"
-        )
+        return ambiguous_name_error(name_matches, terminal)
     if not name_matches:
         return None, f"Terminal '{terminal}' not found"
     return name_matches[0], None
