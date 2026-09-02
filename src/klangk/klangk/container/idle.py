@@ -75,29 +75,41 @@ class IdleMonitor:
                 pass
             now = time.time()
             for cid, wid in self._idle_overdue(now):
-                logger.info(
-                    "Stopping idle container %s (workspace %s)",
-                    cid,
-                    wid,
-                )
-                state = registry.states.get(wid)
-                if state:
-                    await self._run_idle_callbacks(state, wid)
-                await registry.notify_workspace_killed(wid, container_id=cid)
-                await registry.stop_and_remove_container(
-                    cid, cause=CAUSE_IDLE_TIMEOUT
-                )
-
+                await self._stop_idle_workspace(registry, cid, wid)
             # Periodic orphan sidecar-token sweep (#2309): reclaim
             # ws-tokens/<id> files whose workspace row is gone. Piggybacks
             # on this loop (no separate task); self-throttled to scan at
             # most every ORPHAN_TOKEN_SWEEP_INTERVAL.
-            if now - last_token_sweep >= ORPHAN_TOKEN_SWEEP_INTERVAL:
-                last_token_sweep = now
-                try:
-                    await registry.sweep_orphaned_sidecar_tokens()
-                except Exception as e:
-                    logger.warning("Orphan sidecar-token sweep failed: %s", e)
+            last_token_sweep = await self._sweep_tokens_if_due(
+                registry, last_token_sweep, now
+            )
+
+    async def _stop_idle_workspace(self, registry, cid: str, wid: str) -> None:
+        """Notify + stop one idle workspace's container."""
+        logger.info(
+            "Stopping idle container %s (workspace %s)",
+            cid,
+            wid,
+        )
+        state = registry.states.get(wid)
+        if state:
+            await self._run_idle_callbacks(state, wid)
+        await registry.notify_workspace_killed(wid, container_id=cid)
+        await registry.stop_and_remove_container(cid, cause=CAUSE_IDLE_TIMEOUT)
+
+    async def _sweep_tokens_if_due(
+        self, registry, last_sweep: float, now: float
+    ) -> float:
+        """Run the orphan sidecar-token sweep when due; returns the
+        (possibly advanced) last-sweep timestamp. A failing sweep still
+        advances it."""
+        if now - last_sweep >= ORPHAN_TOKEN_SWEEP_INTERVAL:
+            try:
+                await registry.sweep_orphaned_sidecar_tokens()
+            except Exception as e:
+                logger.warning("Orphan sidecar-token sweep failed: %s", e)
+            return now
+        return last_sweep
 
     def _cleanup_interval(self) -> float:
         """Half the smallest active idle timeout (floor 2s), else the

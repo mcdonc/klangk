@@ -43,6 +43,11 @@ _NETWORK_SIDECAR_NFQUEUE = 5139
 ORPHAN_TOKEN_SWEEP_INTERVAL = 300
 
 
+def _first_container_name(c: dict) -> str:
+    names = c.get("Names") or []
+    return names[0] if names else ""
+
+
 def container_ident(c: dict) -> str:
     """Best-effort identifier for a ``podman ps`` container dict.
 
@@ -51,11 +56,17 @@ def container_ident(c: dict) -> str:
     present. Shared by the sidecar removal sweep and the registry reaps
     (#2548).
     """
-    ident = c.get("Id") or c.get("ID") or ""
-    if not ident:
-        names = c.get("Names") or []
-        ident = names[0] if names else ""
-    return ident
+    ident = c.get("Id") or c.get("ID")
+    return ident or _first_container_name(c)
+
+
+def labeled_role_ident(c: dict, role: str) -> str | None:
+    """Ident of a listed container when its ``klangk.role`` label is
+    *role*, else None (no ident / different role)."""
+    labels = c.get("Labels") or {}
+    if labels.get("klangk.role") != role:
+        return None
+    return container_ident(c) or None
 
 
 def labeled_workspace_id(c: dict) -> str | None:
@@ -73,6 +84,32 @@ def labeled_workspace_id(c: dict) -> str | None:
     if labels.get("klangk.role") != "workspace":
         return None
     return labels.get("klangk.workspace") or None
+
+
+def _remaining_sidecar_idents(containers: list[dict]) -> set[str]:
+    """Idents of the sidecar-role containers in a listing."""
+    return {
+        container_ident(c)
+        for c in containers
+        if (c.get("Labels") or {}).get("klangk.role") == "network-sidecar"
+    }
+
+
+def _forwarded_egress_env() -> list[str]:
+    """Operator-tunable sidecar env opts (TTL floor, sweep cadence, debug
+    RST, activity gate), forwarded when set in klangkd's environment —
+    see the notes in ``_network_sidecar_env``."""
+    forwarded = []
+    for opt in (
+        "KLANGKNETWORK_EGRESS_MIN_TTL",
+        "KLANGKNETWORK_EGRESS_SWEEP_INTERVAL",
+        "KLANGKNETWORK_EGRESS_DEBUG_RST",
+        "KLANGKNETWORK_EGRESS_ACTIVITY_GATE",
+    ):
+        value = os.environ.get(opt)
+        if value:
+            forwarded.append(f"{opt}={value}")
+    return forwarded
 
 
 class NetworkSidecarMixin:
@@ -161,26 +198,47 @@ class NetworkSidecarMixin:
         except Exception as e:
             logger.warning("Cannot list workspace ids for token sweep: %s", e)
             return 0
+        return self._unlink_orphaned_tokens(token_dir, names, existing)
+
+    def _unlink_orphaned_tokens(
+        self, token_dir: str, names: list[str], existing: set[str]
+    ) -> int:
+        """Unlink token files whose workspace row is gone; transient
+        ``.tmp`` files and non-files are skipped. Returns the count."""
         removed = 0
         for name in names:
-            # Skip transient write_sidecar_token temp files: unlinking one
-            # races the writer (os.replace would then FileNotFoundError).
-            if name.endswith(".tmp"):
-                continue
-            path = os.path.join(token_dir, name)
-            if not os.path.isfile(path):
-                continue
-            if name in existing:
-                continue
-            try:
-                os.unlink(path)
+            path = self._orphaned_token_path(token_dir, name, existing)
+            if path is not None and self._unlink_token_file(path, name):
                 removed += 1
-                logger.info("Removed orphaned sidecar token %s", name)
-            except OSError as e:
-                logger.warning(
-                    "Could not remove orphaned token %s: %s", name, e
-                )
         return removed
+
+    def _orphaned_token_path(
+        self, token_dir: str, name: str, existing: set[str]
+    ) -> str | None:
+        """Path of one token file to remove — not a transient ``.tmp``,
+        a real file, with no workspace row — or None to skip it.
+
+        Skipping ``.tmp`` matters: unlinking one races the writer
+        (os.replace would then FileNotFoundError)."""
+        if name.endswith(".tmp"):
+            return None
+        path = os.path.join(token_dir, name)
+        if not os.path.isfile(path):
+            return None
+        if name in existing:
+            return None
+        return path
+
+    def _unlink_token_file(self, path: str, name: str) -> bool:
+        """Unlink one orphaned token file; failures are logged and
+        swallowed so one stuck file never aborts the sweep."""
+        try:
+            os.unlink(path)
+            logger.info("Removed orphaned sidecar token %s", name)
+            return True
+        except OSError as e:
+            logger.warning("Could not remove orphaned token %s: %s", name, e)
+            return False
 
     async def start_network_sidecar(
         self,
@@ -259,16 +317,9 @@ class NetworkSidecarMixin:
             # race that made the iptables REJECT rule flaky. Safe to grant
             # here (unlike on the workspace): the sidecar runs only klangk's
             # own proxy, no untrusted code.
-            sidecar_kwargs = dict(
-                cap_add=["NET_ADMIN", "NET_RAW"],
-                dns=["1.1.1.1"],
-                env=env,
-                labels=labels,
-                publish=publish,
-                pull="missing",
+            sidecar_kwargs = self._sidecar_create_kwargs(
+                env, labels, publish, binds
             )
-            if binds:
-                sidecar_kwargs["binds"] = binds
             cid = await self.app.state.podman.create_container(
                 name, image, **sidecar_kwargs
             )
@@ -302,6 +353,22 @@ class NetworkSidecarMixin:
             )
             raise
 
+    def _sidecar_create_kwargs(
+        self, env: list[str], labels: dict, publish, binds: list[str]
+    ) -> dict:
+        """create_container kwargs for the network sidecar."""
+        kwargs = dict(
+            cap_add=["NET_ADMIN", "NET_RAW"],
+            dns=["1.1.1.1"],
+            env=env,
+            labels=labels,
+            publish=publish,
+            pull="missing",
+        )
+        if binds:
+            kwargs["binds"] = binds
+        return kwargs
+
     async def _remove_sidecar_attempts(
         self, workspace_id: str, containers: list[dict]
     ) -> list[tuple[str, podman.PodmanError]]:
@@ -309,11 +376,8 @@ class NetworkSidecarMixin:
         failed."""
         failures: list[tuple[str, podman.PodmanError]] = []
         for c in containers:
-            labels = c.get("Labels") or {}
-            if labels.get("klangk.role") != "network-sidecar":
-                continue
-            ident = container_ident(c)
-            if not ident:
+            ident = labeled_role_ident(c, "network-sidecar")
+            if ident is None:
                 continue
             exc = await self._force_remove_sidecar(workspace_id, ident)
             if exc is not None:
@@ -342,11 +406,7 @@ class NetworkSidecarMixin:
         remaining = await self._list_workspace_containers(workspace_id)
         if remaining is None:
             return None
-        remaining_sidecars = {
-            container_ident(c)
-            for c in remaining
-            if (c.get("Labels") or {}).get("klangk.role") == "network-sidecar"
-        }
+        remaining_sidecars = _remaining_sidecar_idents(remaining)
         return [(i, e) for i, e in failures if i in remaining_sidecars]
 
     def _network_sidecar_labels(
@@ -393,9 +453,8 @@ class NetworkSidecarMixin:
             if _NETWORK_SIDECAR_READY_TOKEN in logs:
                 ready = True
                 break
-            state = await self.app.state.podman.inspect_container(cid)
-            status = (state or {}).get("State", {}).get("Status", "")
-            if status in ("exited", "stopped"):
+            status = await self._sidecar_exit_status(cid)
+            if status:
                 raise podman.PodmanError(
                     500,
                     f"network sidecar {name} exited before the DNS proxy "
@@ -409,6 +468,14 @@ class NetworkSidecarMixin:
                 f"within {NETWORK_SIDECAR_READY_TIMEOUT:.0f}s; the "
                 "workspace would join an unfiltered netns",
             )
+
+    async def _sidecar_exit_status(self, cid: str) -> str:
+        """The sidecar's Status when it already exited/stopped, else ''."""
+        state = await self.app.state.podman.inspect_container(cid)
+        status = (state or {}).get("State", {}).get("Status", "")
+        if status in ("exited", "stopped"):
+            return status
+        return ""
 
     def _network_sidecar_env(
         self,
@@ -438,15 +505,7 @@ class NetworkSidecarMixin:
         # ACTIVITY_GATE (default 60s) likewise: the idle fuzz harness
         # (scripts/fuzz-idle.py, #2514) lowers it so the sidecar's
         # egress-activity bumps are observable at its seconds-scale timeouts.
-        for _opt in (
-            "KLANGKNETWORK_EGRESS_MIN_TTL",
-            "KLANGKNETWORK_EGRESS_SWEEP_INTERVAL",
-            "KLANGKNETWORK_EGRESS_DEBUG_RST",
-            "KLANGKNETWORK_EGRESS_ACTIVITY_GATE",
-        ):
-            _v = os.environ.get(_opt)
-            if _v:
-                env.append(f"{_opt}={_v}")
+        env.extend(_forwarded_egress_env())
         binds = []
         # #2242/#2311: consent recording runs for every filtered workspace
         # when the consent stack is wired, regardless of egress_mode -- the
@@ -456,21 +515,27 @@ class NetworkSidecarMixin:
         # (write_sidecar_token), not baked in env (it rotates). The sweeper
         # attribute gates the stack being present at all.
         if getattr(self.app.state, "consent_sweeper", None) is not None:
-            port = self.app.state.settings.egress_port
-            env.append(
-                "KLANGKNETWORK_EGRESS_CONSENT_URL="
-                f"http://host.containers.internal:{port}"
-                "/internal/egress-consent/events"
-            )
-            env.append(
-                f"KLANGKNETWORK_EGRESS_NFQUEUE_NUM={_NETWORK_SIDECAR_NFQUEUE}"
-            )
-            token = self.app.state.auth.create_workspace_token(workspace_id)
-            self.write_sidecar_token(workspace_id, token)
-            binds.append(
-                f"{self._sidecar_token_path(workspace_id)}"
-                ":/run/klangk/workspace-token:ro"
-            )
+            consent_env, binds = self._consent_stack_env(workspace_id)
+            env.extend(consent_env)
+        return env, binds
+
+    def _consent_stack_env(
+        self, workspace_id: str
+    ) -> tuple[list[str], list[str]]:
+        """(env entries, binds) wiring the sidecar to the consent stack."""
+        port = self.app.state.settings.egress_port
+        env = [
+            "KLANGKNETWORK_EGRESS_CONSENT_URL="
+            f"http://host.containers.internal:{port}"
+            "/internal/egress-consent/events",
+            f"KLANGKNETWORK_EGRESS_NFQUEUE_NUM={_NETWORK_SIDECAR_NFQUEUE}",
+        ]
+        token = self.app.state.auth.create_workspace_token(workspace_id)
+        self.write_sidecar_token(workspace_id, token)
+        binds = [
+            f"{self._sidecar_token_path(workspace_id)}"
+            ":/run/klangk/workspace-token:ro"
+        ]
         return env, binds
 
     def _network_sidecar_upstream(self) -> str:
@@ -618,11 +683,8 @@ class NetworkSidecarMixin:
         if containers is None:
             return
         for c in containers:
-            labels = c.get("Labels") or {}
-            if labels.get("klangk.role") != "workspace":
-                continue
-            ident = container_ident(c)
-            if not ident:
+            ident = labeled_role_ident(c, "workspace")
+            if ident is None:
                 continue
             try:
                 await self.app.state.podman.remove_container(ident, force=True)

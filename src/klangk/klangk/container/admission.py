@@ -128,6 +128,45 @@ MACHINE_MEMORY_TTL_SECONDS = 300.0
 machine_memory_cache: dict[str, tuple[float, int | None]] = {}
 
 
+def _machine_memory_of(entry) -> int | None:
+    """Configured machine memory in bytes when parseable and sane
+    (>= the 64 MiB unit-mismatch floor), else None."""
+    try:
+        value = int(entry["Memory"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if value < _MIN_MACHINE_MEMORY_BYTES:
+        return None
+    return value
+
+
+def _default_machine_memory(machines: list) -> int | None:
+    """Memory of the machine flagged ``Default: true``."""
+    for entry in machines:
+        if entry.get("Default") is True:
+            mem = _machine_memory_of(entry)
+            if mem is not None:
+                return mem
+    return None
+
+
+def _named_machine_memory(machines: list) -> int | None:
+    """Memory of the canonical default-named machine."""
+    for entry in machines:
+        if entry.get("Name") == "podman-machine-default":
+            mem = _machine_memory_of(entry)
+            if mem is not None:
+                return mem
+    return None
+
+
+def _single_machine_memory(machines: list) -> int | None:
+    """Memory of the one machine in an exactly-one-machine setup."""
+    if len(machines) == 1:
+        return _machine_memory_of(machines[0])
+    return None
+
+
 def _pick_machine_memory(machines) -> int | None:
     """Pick the machine whose configured memory caps the measurement.
 
@@ -140,28 +179,14 @@ def _pick_machine_memory(machines) -> int | None:
     """
     if not isinstance(machines, list) or not machines:
         return None
-
-    def memory_of(entry) -> int | None:
-        try:
-            value = int(entry["Memory"])
-        except (KeyError, TypeError, ValueError):
-            return None
-        if value < _MIN_MACHINE_MEMORY_BYTES:
-            return None
-        return value
-
-    for entry in machines:
-        if entry.get("Default") is True:
-            mem = memory_of(entry)
-            if mem is not None:
-                return mem
-    for entry in machines:
-        if entry.get("Name") == "podman-machine-default":
-            mem = memory_of(entry)
-            if mem is not None:
-                return mem
-    if len(machines) == 1:
-        return memory_of(machines[0])
+    for pick in (
+        _default_machine_memory,
+        _named_machine_memory,
+        _single_machine_memory,
+    ):
+        mem = pick(machines)
+        if mem is not None:
+            return mem
     return None
 
 
@@ -181,6 +206,30 @@ async def run_podman_json(*cmd: str):
     if proc.returncode != 0:
         raise OSError(f"{' '.join(cmd)} exited {proc.returncode}")
     return json.loads(out.decode(errors="replace"))
+
+
+def _fresh_cache_entry(
+    podman_bin: str, now
+) -> tuple[float, int | None] | None:
+    """The machine-memory cache entry when still fresh, else None."""
+    entry = machine_memory_cache.get(podman_bin)
+    if entry is None or now() - entry[0] >= MACHINE_MEMORY_TTL_SECONDS:
+        return None
+    return entry
+
+
+async def _measure_machine_memory(podman_bin: str, runner) -> int | None:
+    """Fresh machine-memory cap via ``machine ls``; None on any
+    failure (no podman, no machine, unparseable output)."""
+    if runner is None:
+        runner = run_podman_json
+    try:
+        machines = await runner(
+            podman_bin, "machine", "ls", "--format", "json"
+        )
+    except (OSError, ValueError):
+        return None
+    return _pick_machine_memory(machines)
 
 
 async def podman_machine_memory_bytes(
@@ -205,19 +254,10 @@ async def podman_machine_memory_bytes(
     """
     if _now is None:
         _now = time.monotonic
-    cached = machine_memory_cache.get(podman_bin)
-    if cached is not None and _now() - cached[0] < MACHINE_MEMORY_TTL_SECONDS:
+    cached = _fresh_cache_entry(podman_bin, _now)
+    if cached is not None:
         return cached[1]
-    if runner is None:
-        runner = run_podman_json
-    try:
-        machines = await runner(
-            podman_bin, "machine", "ls", "--format", "json"
-        )
-    except (OSError, ValueError):
-        cap = None
-    else:
-        cap = _pick_machine_memory(machines)
+    cap = await _measure_machine_memory(podman_bin, runner)
     machine_memory_cache[podman_bin] = (_now(), cap)
     return cap
 
@@ -358,6 +398,16 @@ class AdmissionControl:
             or registry.workspace_operation_in_flight(ws_id)
         )
 
+    def _committed_sibling_count(
+        self, registry, owned: list[str], workspace_id: str
+    ) -> int:
+        """Owned workspaces other than *workspace_id* holding capacity."""
+        return sum(
+            1
+            for wid in owned
+            if wid != workspace_id and self._committed(registry, wid)
+        )
+
     async def check_user_quota(self, workspace_id: str, ws: dict) -> None:
         """Refuse starts past ``max_running_workspaces_per_user``.
 
@@ -374,11 +424,7 @@ class AdmissionControl:
             return
         registry = self.app.state.container_registry
         owned = await self._owned_ids(ws.get("user_id"))
-        running = sum(
-            1
-            for wid in owned
-            if wid != workspace_id and self._committed(registry, wid)
-        )
+        running = self._committed_sibling_count(registry, owned, workspace_id)
         if running >= limit:
             raise WorkspaceCapacityError(
                 f"workspace quota reached: {running} of this user's "
@@ -409,26 +455,42 @@ class AdmissionControl:
         bound it.
         """
         registry = self.app.state.container_registry
+        owner_id = (ws or {}).get("user_id")
+        owned = await self._owned_ids(owner_id)
+        return await self._sum_sibling_limits(registry, workspace_id, owned)
+
+    async def _sum_sibling_limits(
+        self, registry, workspace_id: str, owned: list[str]
+    ) -> int:
+        """Sum the resolved limits of the owned siblings that are
+        mid-start/stop (in flight) right now."""
         committed = 0
-        owned = await self._owned_ids((ws or {}).get("user_id"))
         for wid in owned:
             if wid == workspace_id:
                 continue
             if not registry.workspace_operation_in_flight(wid):
                 continue
-            sibling = (
-                await self.app.state.model.workspaces.get_workspace_by_id(wid)
-            )
-            if sibling is None:
-                continue
-            limit = resolve_memory_limit(self.app, sibling.get("settings"))
-            if not limit:
-                continue
-            try:
-                committed += parse_size_bytes(limit)
-            except ValueError:  # pragma: no cover — validated upstream
-                continue
+            limit_bytes = await self._sibling_limit_bytes(wid)
+            if limit_bytes is not None:
+                committed += limit_bytes
         return committed
+
+    async def _sibling_limit_bytes(self, wid: str) -> int | None:
+        """Resolved memory limit (bytes) of one sibling start, or None
+        when the row is gone or its limit is unset (unbounded) — an
+        unbounded commitment cannot be quantified."""
+        sibling = await self.app.state.model.workspaces.get_workspace_by_id(
+            wid
+        )
+        if sibling is None:
+            return None
+        limit = resolve_memory_limit(self.app, sibling.get("settings"))
+        if not limit:
+            return None
+        try:
+            return parse_size_bytes(limit)
+        except ValueError:  # pragma: no cover — validated upstream
+            return None
 
     async def check_host_memory(
         self,
@@ -453,19 +515,8 @@ class AdmissionControl:
         # Parsed outside the measurement guard: a malformed limit string
         # is a config error (surfaced as such), not "unmeasurable".
         limit_bytes = parse_size_bytes(limit)
-        try:
-            available = await available_memory_bytes(
-                self.app.state.settings.podman_bin or "podman"
-            )
-        except (OSError, ValueError) as e:
-            if not self._warned_unmeasurable:
-                self._warned_unmeasurable = True
-                logger.warning(
-                    "Admission memory check degraded: cannot measure host "
-                    "memory availability (%s); allowing starts without "
-                    "the capacity check",
-                    e,
-                )
+        available = await self._measure_available_bytes()
+        if available is None:
             return
         # A measurement that works again re-arms the warning.
         self._warned_unmeasurable = False
@@ -484,3 +535,21 @@ class AdmissionControl:
                 "free host memory, or lower the workspace memory limit "
                 "(KLANGKD_CONTAINER_MEMORY_LIMIT)."
             )
+
+    async def _measure_available_bytes(self) -> int | None:
+        """Available host memory bytes, or None when unmeasurable on
+        this platform (fail-open, with a one-time degradation warning)."""
+        try:
+            return await available_memory_bytes(
+                self.app.state.settings.podman_bin or "podman"
+            )
+        except (OSError, ValueError) as e:
+            if not self._warned_unmeasurable:
+                self._warned_unmeasurable = True
+                logger.warning(
+                    "Admission memory check degraded: cannot measure host "
+                    "memory availability (%s); allowing starts without "
+                    "the capacity check",
+                    e,
+                )
+            return None

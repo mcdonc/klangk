@@ -231,6 +231,19 @@ def resolve_tmp_size(app, workspace_settings: dict | None) -> str | None:
     )
 
 
+def _missing_hosting_value(
+    hosting_hostname: str | None,
+    hosting_proto: str | None,
+    hosting_base_path: str | None,
+) -> bool:
+    """True when any hosting value is omitted (the floor is needed)."""
+    return (
+        hosting_hostname is None
+        or hosting_proto is None
+        or hosting_base_path is None
+    )
+
+
 def hosting_floor(
     app,
     hosting_hostname: str | None,
@@ -239,10 +252,8 @@ def hosting_floor(
 ) -> tuple[str, str, str]:
     """Fill any omitted hosting value with the resolver's floor
     (``derive_hosting_info`` with no request)."""
-    if (
-        hosting_hostname is None
-        or hosting_proto is None
-        or hosting_base_path is None
+    if _missing_hosting_value(
+        hosting_hostname, hosting_proto, hosting_base_path
     ):
         h, p, b = app.state.util.derive_hosting_info(None, None)
         # Use ``is None`` (not ``or``): an explicit empty base_path
@@ -394,46 +405,96 @@ async def _ensure_named_volume(app, user_id, podman, source: str) -> None:
     validate an existing one belongs to this instance and user."""
     info = await podman.inspect_volume(source)
     if info is None:
-        labels = {
-            "klangk.managed": "true",
-            "klangk.instance": app.state.util.instance_id(),
-        }
-        if user_id:
-            labels["klangk.user-id"] = user_id
-            # Per-user volume quota (#2972): this start-path auto-create
-            # is the second door that mints user-owned volumes (the
-            # POST /volumes route is the first) — a user at quota must
-            # not bypass the cap by adding mounts to a workspace. Same
-            # per-user lock as the route, so a concurrent API create
-            # and this start cannot each pass a cap they jointly exceed.
-            # The ValueError surfaces as a clear start error
-            # (registry.start_container maps it).
-            quota = app.state.settings.volume_quota_per_user
-            if quota > 0:
-                async with podman.volume_create_lock(user_id):
-                    count = await podman.count_user_volumes(
-                        app.state.util.instance_id(), user_id
-                    )
-                    if count >= quota:
-                        raise ValueError(
-                            f"volume quota reached: {count} of this "
-                            "user's volumes already exist and the server "
-                            f"caps it at {quota} "
-                            "(KLANGKD_VOLUME_QUOTA_PER_USER); remove a "
-                            "volume mount or delete a volume first"
-                        )
-                    await podman.create_volume(source, labels)
-                return
-        await podman.create_volume(source, labels)
+        await _create_named_volume(app, user_id, podman, source)
         return
+    _validate_volume_ownership(app, user_id, source, info)
+
+
+async def _create_named_volume(app, user_id, podman, source: str) -> None:
+    """Create a named volume, instance-labelled and owner-tagged."""
+    labels = {
+        "klangk.managed": "true",
+        "klangk.instance": app.state.util.instance_id(),
+    }
+    if user_id:
+        labels["klangk.user-id"] = user_id
+        quota = app.state.settings.volume_quota_per_user
+        if quota > 0:
+            await _create_volume_under_quota(
+                app, user_id, podman, source, labels, quota
+            )
+            return
+    await podman.create_volume(source, labels)
+
+
+async def _create_volume_under_quota(
+    app, user_id, podman, source: str, labels: dict, quota: int
+) -> None:
+    """Create one volume under the per-user lock, refusing at the cap.
+
+    Per-user volume quota (#2972): this start-path auto-create is the
+    second door that mints user-owned volumes (the POST /volumes route
+    is the first) — a user at quota must not bypass the cap by adding
+    mounts to a workspace. Same per-user lock as the route, so a
+    concurrent API create and this start cannot each pass a cap they
+    jointly exceed. The ValueError surfaces as a clear start error
+    (registry.start_container maps it).
+    """
+    async with podman.volume_create_lock(user_id):
+        count = await podman.count_user_volumes(
+            app.state.util.instance_id(), user_id
+        )
+        if count >= quota:
+            raise ValueError(
+                f"volume quota reached: {count} of this "
+                "user's volumes already exist and the server "
+                f"caps it at {quota} "
+                "(KLANGKD_VOLUME_QUOTA_PER_USER); remove a "
+                "volume mount or delete a volume first"
+            )
+        await podman.create_volume(source, labels)
+
+
+def _foreign_volume_owner(vol_owner: str | None, user_id: str | None) -> bool:
+    """True when the volume is tagged to a different user than the
+    starter (both must be known to compare)."""
+    return bool(vol_owner) and bool(user_id) and vol_owner != user_id
+
+
+def _validate_volume_ownership(
+    app, user_id: str | None, source: str, info: dict
+) -> None:
+    """An existing volume must belong to this instance and user."""
     vol_labels = info.get("Labels") or {}
     if vol_labels.get("klangk.instance") != app.state.util.instance_id():
         raise ValueError(
             f"Volume {source!r} is not managed by this klangk instance"
         )
     vol_owner = vol_labels.get("klangk.user-id")
-    if vol_owner and user_id and vol_owner != user_id:
+    if _foreign_volume_owner(vol_owner, user_id):
         raise ValueError(f"Volume {source!r} belongs to another user")
+
+
+async def _ensure_one_volume(
+    app, user_id: str | None, podman, mount_spec: str
+) -> None:
+    """Create/validate the source of one extra mount."""
+    source = mount_spec.split(":")[0]
+    if is_named_volume(source):
+        # Defense in depth (#3018): validate_mount_spec already
+        # rejects unsafe names at the API boundary, but a row
+        # created before that gate (or written by another path)
+        # must never reach podman argv either — _ensure_named_volume
+        # appends the name verbatim to the command line.
+        if not valid_volume_name(source):
+            raise ValueError(
+                f"Volume name {source!r} is not podman-safe "
+                "(must start alphanumeric, contain only "
+                "[a-zA-Z0-9_.-], and be at most 64 chars)"
+            )
+        await _ensure_named_volume(app, user_id, podman, source)
+    elif not os.path.exists(source):
+        raise ValueError(f"Bind mount source does not exist: {source}")
 
 
 async def ensure_volumes(
@@ -446,22 +507,7 @@ async def ensure_volumes(
     if not extra_mounts:
         return
     for mount_spec in extra_mounts:
-        source = mount_spec.split(":")[0]
-        if is_named_volume(source):
-            # Defense in depth (#3018): validate_mount_spec already
-            # rejects unsafe names at the API boundary, but a row
-            # created before that gate (or written by another path)
-            # must never reach podman argv either — _ensure_named_volume
-            # appends the name verbatim to the command line.
-            if not valid_volume_name(source):
-                raise ValueError(
-                    f"Volume name {source!r} is not podman-safe "
-                    "(must start alphanumeric, contain only "
-                    "[a-zA-Z0-9_.-], and be at most 64 chars)"
-                )
-            await _ensure_named_volume(app, user_id, podman, source)
-        elif not os.path.exists(source):
-            raise ValueError(f"Bind mount source does not exist: {source}")
+        await _ensure_one_volume(app, user_id, podman, mount_spec)
 
 
 async def nix_binds(
