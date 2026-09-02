@@ -32,6 +32,18 @@ operators or integrators to act when upgrading.
 
 ### Breaking
 
+- **Deploy-wide consent decider removed (#2976).** The
+  `/ws/consent-decider` handshake without a `?workspace=` param is now
+  refused (HTTP 403): consent authority is strictly per-workspace
+  (`egress-consent` on `/workspaces/{id}`), and `manage-server-schedule`
+  no longer authorizes any consent path. Operators who relied on a
+  standing admin decider covering every interactive workspace lose that
+  override: a workspace with no connected member decider now reverts to
+  its static allow-list. The `klangk shell` popup decider and the web
+  workspace page both register a decider whenever the member holds
+  `egress-consent`, so interactive workspaces keep working for their own
+  members.
+
 - **Workspace-sphere permission names (#2946).** Every stored ACE and
   every client that checks a workspace permission must use the new
   specific names: `create-workspace` (on `/workspaces`),

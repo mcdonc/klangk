@@ -70,13 +70,6 @@ class TestConsentDeciderRegistry:
         assert reg.has_decider(WS2) is False
         assert reg.deciders_for(WS2) == []
 
-    async def test_deploy_wide_decider_covers_every_workspace(self):
-        reg = ConsentDeciderRegistry(_app())
-        reg.register("admin", None, "admin@example.com", _FakeSock())
-        assert reg.has_decider(WS) is True
-        assert reg.has_decider(WS2) is True
-        assert set(reg.deciders_for(WS)) == {"admin"}
-
     async def test_register_is_idempotent_on_decider_id(self):
         reg = ConsentDeciderRegistry(_app())
         reg.register("d1", WS, "a@x", _FakeSock())
@@ -124,7 +117,7 @@ class TestConsentDeciderRegistry:
     async def test_stop_clears_all_and_is_idempotent(self):
         reg = ConsentDeciderRegistry(_app())
         reg.register("d1", WS, "a@x", _FakeSock())
-        reg.register("d2", None, "b@x", _FakeSock())
+        reg.register("d2", WS2, "b@x", _FakeSock())
         await reg.stop()
         assert reg._deciders == {}
         assert reg._reaper is None
@@ -143,16 +136,6 @@ class TestConsentDeciderRegistryBroadcast:
         assert len(s1.sent) == 1
         assert len(s2.sent) == 1
         assert s3.sent == []  # different workspace, not delivered
-
-    async def test_broadcast_includes_deploy_wide_deciders(self):
-        reg = ConsentDeciderRegistry(_app())
-        deploy, scoped = _FakeSock(), _FakeSock()
-        reg.register("admin", None, "admin@x", deploy)  # deploy-wide
-        reg.register("d2", WS, "a@x", scoped)  # scoped to WS
-        delivered = reg.broadcast(WS, {"type": "egress_request"})
-        assert delivered == 2
-        assert len(deploy.sent) == 1
-        assert len(scoped.sent) == 1
 
     async def test_broadcast_prunes_dead_deciders(self):
         reg = ConsentDeciderRegistry(_app())
@@ -493,41 +476,43 @@ class TestConsentDeciderWS:
         assert "refused: Forbidden" in caplog.text
         assert "user=a@x" in caplog.text
 
-    async def test_deploy_wide_decider_unaffected_by_static_mode(self):
-        # #2394: deploy-wide deciders (no ?workspace=) cover all interactive
-        # workspaces without flipping a static one's behavior, so the
-        # egress_mode check is skipped for them -- they register normally and
-        # the workspace model is never consulted.
-        from fastapi import WebSocketDisconnect
-
+    async def test_missing_workspace_param_is_refused(self):
+        # #2976: consent is strictly a workspace concern -- there is no
+        # deploy-wide decider flavor, so a handshake with no ``workspace``
+        # param is refused before any authz check.
         from klangk.wshandler.decider import handle_consent_decider
 
-        app = _ws_app({"id": "u1", "email": "admin@x"}, egress_mode="static")
-        ws = _FakeWS(
-            {"token": "tok"},  # no workspace -> deploy-wide
-            [WebSocketDisconnect()],
-        )
+        app = _ws_app({"id": "u1", "email": "admin@x"})
+        ws = _FakeWS({"token": "tok"}, [])  # no workspace param
         await handle_consent_decider(ws, app)
-        assert ws.accepted is True
-        assert ws.closed is None
-        app.state.model.workspaces.get_workspace.assert_not_awaited()
-
-    async def test_non_admin_deploy_wide_is_forbidden(self):
-        from klangk.wshandler.decider import handle_consent_decider
-
-        app = _ws_app({"id": "u1", "email": "a@x"}, allowed=False)
-        ws = _FakeWS({"token": "tok"}, [])  # no workspace -> deploy-wide
-        await handle_consent_decider(ws, app)
-        assert ws.closed == (4003, "Forbidden")
+        assert ws.closed == (4003, "workspace query parameter is required")
         assert ws.accepted is False
+        assert app.state.consent_deciders.has_decider(WS) is False
+        assert app.state.consent_deciders.has_decider(WS2) is False
 
-    async def test_deploy_wide_gate_checks_server_schedule(self):
-        """#2944: the deploy-wide handshake checks manage-server-schedule
-        on /server (previously the legacy admin-on-/admin gate) — pin
-        the exact resource and permission so a regression back to the
-        old names fails here, not in production."""
-        from fastapi import WebSocketDisconnect
+    async def test_missing_workspace_refusal_is_logged(self, caplog):
+        # #2490: the missing-workspace refusal is logged like every other
+        # pre-accept refusal (the close code/reason never reach the client).
+        import logging
 
+        from klangk.wshandler.decider import handle_consent_decider
+
+        app = _ws_app({"id": "u1", "email": "admin@x"})
+        ws = _FakeWS({"token": "tok"}, [])  # no workspace param
+        with caplog.at_level(
+            logging.WARNING, logger="klangk.wshandler.decider"
+        ):
+            await handle_consent_decider(ws, app)
+        assert "refused: workspace query parameter is required" in caplog.text
+        assert "workspace=missing" in caplog.text
+
+    async def test_manage_server_schedule_grants_no_consent_path(self):
+        """#2976: the deploy-wide flavor is gone, so ``manage-server-schedule``
+        must not authorize any consent path. A member holding only it (an
+        instance admin with no egress-consent grant on the workspace) is
+        refused at the workspace-scoped handshake, and the gate checks
+        exactly ``egress-consent`` on ``/workspaces/{id}`` -- never
+        ``/server``."""
         from klangk.wshandler.decider import handle_consent_decider
 
         app = _ws_app({"id": "u1", "email": "admin@x"})
@@ -538,12 +523,13 @@ class TestConsentDeciderWS:
             return perm == "manage-server-schedule"
 
         app.state.acl.check_permission = AsyncMock(side_effect=check)
-        ws = _FakeWS({"token": "tok"}, [WebSocketDisconnect()])
+        ws = _FakeWS({"token": "tok", "workspace": WS}, [])
         await handle_consent_decider(ws, app)
-        assert ws.accepted is True
-        assert ("/server", "manage-server-schedule") in checked
-        # The old gate must not appear at all.
-        assert ("/admin", "admin") not in checked
+        assert ws.closed == (4003, "Forbidden")
+        assert ws.accepted is False
+        # The only consent gate is egress-consent on the workspace resource.
+        assert checked == [(f"/workspaces/{WS}", "egress-consent")]
+        assert ("/server", "manage-server-schedule") not in checked
 
     async def test_ping_touches_and_pongs(self):
         from fastapi import WebSocketDisconnect
@@ -695,47 +681,6 @@ class TestConsentDeciderWS:
         ]
         assert acks and acks[0]["ok"] is True
 
-    async def test_pause_deploy_wide_decider_nacks(self):
-        # A deploy-wide decider (no workspace) has no single workspace to
-        # pause -> nack without calling the coordinator.
-        from fastapi import WebSocketDisconnect
-
-        from klangk.wshandler.decider import handle_consent_decider
-
-        app = _ws_app({"id": "u1", "email": "admin@x"})
-        ws = _FakeWS(
-            {"token": "tok"},  # no workspace -> deploy-wide
-            ['{"type":"pause","duration":"1h"}', WebSocketDisconnect()],
-        )
-        await handle_consent_decider(ws, app)
-        app.state.consent_coordinator.pause.assert_not_awaited()
-        acks = [
-            json.loads(m)
-            for m in ws.sent
-            if json.loads(m).get("type") == "pause_ack"
-        ]
-        assert acks and acks[0]["ok"] is False
-
-    async def test_unpause_deploy_wide_decider_nacks(self):
-        # A deploy-wide decider has no single workspace to unpause either.
-        from fastapi import WebSocketDisconnect
-
-        from klangk.wshandler.decider import handle_consent_decider
-
-        app = _ws_app({"id": "u1", "email": "admin@x"})
-        ws = _FakeWS(
-            {"token": "tok"},  # no workspace -> deploy-wide
-            ['{"type":"unpause"}', WebSocketDisconnect()],
-        )
-        await handle_consent_decider(ws, app)
-        app.state.consent_coordinator.unpause.assert_not_awaited()
-        acks = [
-            json.loads(m)
-            for m in ws.sent
-            if json.loads(m).get("type") == "pause_ack"
-        ]
-        assert acks and acks[0]["ok"] is False
-
     async def test_pause_requires_no_permission_beyond_registration(self):
         # #2883: the old ``share-terminals`` bar is gone -- pause/unpause
         # ride the connection's own ``egress-consent`` gate. A coder
@@ -853,19 +798,6 @@ class TestConsentDeciderWS:
         await handle_consent_decider(ws, app)
         app.state.consent_coordinator.resolve.assert_not_awaited()
         assert any(json.loads(m).get("type") == "error" for m in ws.sent)
-
-    async def test_deploy_wide_when_no_workspace_param(self):
-        from fastapi import WebSocketDisconnect
-
-        from klangk.wshandler.decider import handle_consent_decider
-
-        app = _ws_app({"id": "u1", "email": "admin@example.com"})
-        ws = _FakeWS({"token": "tok"}, [WebSocketDisconnect()])
-        # While connected it would cover every workspace; after disconnect,
-        # nothing remains.
-        await handle_consent_decider(ws, app)
-        assert app.state.consent_deciders.has_decider(WS) is False
-        assert app.state.consent_deciders.has_decider(WS2) is False
 
     async def test_verdict_resolve_error_does_not_tear_down_connection(self):
         # a verdict whose resolve() raises is logged + swallowed -- the

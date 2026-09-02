@@ -6,6 +6,10 @@ Standalone, human-run, not in CI (no ``test_`` prefix). Invoke under devenv:
     devenv --quiet shell -- \\
         python src/klangk/klangkd-tests/e2e-tests/smoketest_egress.py [--count N]
 
+Add ``--as-member`` (#2976) to run the consent flow as a plain workspace
+member (coders role, no instance-admin grants) instead of the seeded
+admin; the admin only bootstraps (member user, workspaces, role shares).
+
 Brings up a real klangkd, creates a workspace with an allow-list + interactive
 egress, attaches the real ConsentDeciderApp decider, then for N fuzzed
 destinations: ``podman exec`` a curl, wait for the consent request if one is
@@ -46,6 +50,7 @@ if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
 import httpx  # noqa: E402
+import websockets  # noqa: E402
 
 from _e2e_server import start_server, stop_server, tracked_mkdtemp, ws_connect  # noqa: E402
 
@@ -87,6 +92,12 @@ EXPECT_NOT0 = "not0"  # no-response (timeout) -> exit != 0
 # deterministically and a denied one reaches exit 7 (forged RST). example.com is
 # seeded onto the allow-list; the rest are off-list. Raw IPs are exploratory.
 _ALLOW_LIST = ["example.com"]
+
+# The --as-member acting identity (#2976): a plain user with no instance
+# grants. The seeded admin creates + shares workspaces to this user's
+# coders role; every consent operation then runs on this token.
+MEMBER_EMAIL = "smoke-member@example.com"
+MEMBER_PASSWORD = "smokepass"
 # A workspace-level deny-list baked into the main workspace (#2367). A rejected
 # host is pre-emptively denied at the sidecar -- no consent request is ever
 # surfaced, even in interactive mode. kernel.org is fresh (not in the fuzz pool
@@ -719,10 +730,8 @@ _DETAIL_PREFIX_NAMES: list[tuple[str, str]] = [
     ("B sidecar not ready", "NO-EXPECTED-REQUEST"),
     ("A-scoped decider saw B's request", "ISOLATION-BROKEN"),
     ("B deny let the connection through", "DENY-RELEASED"),
-    ("deploy-wide's B deny let it through", "DENY-RELEASED"),
-    ("deploy-wide didn't see A", "NO-EXPECTED-REQUEST"),
-    ("deploy-wide saw A but the app didn't", "NO-EXPECTED-REQUEST"),
-    ("deploy-wide didn't see B", "NO-EXPECTED-REQUEST"),
+    ("deploy-wide connect was accepted", "DEPLOYWIDE-ACCEPTED"),
+    ("no-workspace handshake failed unexpectedly", "UNEXPECTED-ERROR"),
     ("could not set up the scope phase", "UNEXPECTED-ERROR"),
     ("no hold surfaced", "NO-EXPECTED-REQUEST"),
     ("expired but the connection succeeded", "NORESPONSE-OK"),
@@ -811,6 +820,7 @@ OUTCOME_NAMES: dict[str, str] = {
     "CONN-NOT-CLEAN": "connection not cleanly refused / a resolve frame wasn't seen.",
     "AB-HELD-HUNG": "concurrent A/B hold hung (NFQUEUE/DNS; possibly a concurrent-hold issue).",
     "ISOLATION-BROKEN": "a workspace-scoped decider saw another workspace's request. #2392",
+    "DEPLOYWIDE-ACCEPTED": "a no-workspace decider handshake was accepted -- the cross-workspace consent path is back. #2976",
     "UNEXPECTED-ERROR": "a phase bring-up or per-step exception (an unexpected error).",
     "AUDIT-MISLABELED": "expired/denied audit distinction broken (timeout audited as deny, or vice-versa). #2392",
     "ALLOWLIST-PROMPTED": "an allow-list-covered host prompted for consent (a real static-allow invariant break). #2419",
@@ -827,7 +837,7 @@ OUTCOME_NAMES: dict[str, str] = {
     "PAUSE-REFUSED": "an off-list host was refused or hung while paused instead of auto-allowing -- the pause did not take effect at the gate. #2332",
     "PAUSE-POLICY-BYPASS": "a static policy (allow-list / rejected_domains) was bypassed or changed while paused -- pause must affect only the interactive hold, not the DNS-layer lists. #2332",
     "PAUSE-RESUME-BROKEN": "after resume, an off-list host was not re-held for consent (the pause lingered, or the re-hold failed). #2332",
-    "PAUSE-ACK-FAILED": "the pause/unpause pause_ack came back not-ok (protocol: unknown duration, or a deploy-wide decider). #2332/#2389/#2883",
+    "PAUSE-ACK-FAILED": "the pause/unpause pause_ack came back not-ok (protocol: unknown duration). #2332/#2389/#2883",
     "FANOUT-SERIALIZED": "N concurrent off-list connects did not all surface a held request simultaneously (the NFQUEUE consumer serialized them -- a #2331/#2337 regression).",
     "CONCURRENT-NOT-DEDUPED": "concurrent connections to the same destination each produced a prompt (the coordinator's per-destination dedup is broken -- each should collapse to one).",
     "ONCE-CROSS-CONN": "a `once` verdict on one connection released a separate concurrent connection to the same host (the verdict leaked across connections -- #2361).",
@@ -902,6 +912,10 @@ class SmokeTest:
         self._owned_server: dict | None = None
         self.server: dict | None = None
         self.auth: dict | None = None
+        # The bootstrap identity (seeded admin): workspace create/delete,
+        # member provisioning, and the no-workspace decider probe. Equals
+        # self.auth unless --as-member splits them.
+        self.admin_auth: dict | None = None
         self.ws_id: str | None = None
         self.ws_conn = None
         self._drain_task: asyncio.Task | None = None
@@ -923,8 +937,8 @@ class SmokeTest:
         # Extra deciders / workspaces / terminal-WS opened by the decider-scope
         # + audit phases. Closed + deleted in teardown so nothing leaks into
         # the no-decider phase (the #2413 leak class) or past the run. A phase
-        # also closes its own deciders eagerly: the deploy-wide one covers
-        # workspace A and would otherwise keep it interactive.
+        # also closes its own deciders eagerly: a live one keeps its workspace
+        # interactive and would break the no-decider phase premise.
         self._extra_deciders: list[RawDecider] = []
         self._extra_ws_ids: list[str] = []
         self._extra_ws_conns: list[tuple] = []
@@ -1200,15 +1214,16 @@ class SmokeTest:
             raise SystemExit(2)
 
     @staticmethod
-    def _login(url: str) -> dict:
+    def _login(
+        url: str,
+        identifier: str = "smoke@example.com",
+        password: str = "smokepass",
+    ) -> dict:
         client = httpx.Client(base_url=url, timeout=30)
         try:
             r = client.post(
                 "/api/v1/auth/login",
-                json={
-                    "identifier": "smoke@example.com",
-                    "password": "smokepass",
-                },
+                json={"identifier": identifier, "password": password},
             )
             if r.status_code != 200:
                 raise RuntimeError(f"login failed: {r.status_code} {r.text}")
@@ -1219,6 +1234,78 @@ class SmokeTest:
             "token": token,
             "headers": {"Authorization": f"Bearer {token}"},
         }
+
+    @staticmethod
+    def _ensure_member(server: dict, admin: dict) -> None:
+        """Create the plain member user for --as-member (idempotent).
+
+        The member is deliberately NOT added to any instance group: no
+        admins membership, no manage-* grants -- consent authority must
+        come from the workspace ACL alone (#2976). A 400 "already
+        registered" (a rerun against the same server) is tolerated.
+        """
+        client = httpx.Client(
+            base_url=server["url"], headers=admin["headers"], timeout=30
+        )
+        try:
+            r = client.post(
+                "/api/v1/users",
+                json={"email": MEMBER_EMAIL, "password": MEMBER_PASSWORD},
+            )
+            if r.status_code not in (
+                200,
+                201,
+            ) and "already registered" not in (r.text or ""):
+                raise RuntimeError(
+                    f"member create failed: {r.status_code} {r.text}"
+                )
+        finally:
+            client.close()
+
+    @staticmethod
+    def _share_coder(server: dict, admin: dict, ws_id: str) -> None:
+        """Add the member to the workspace's coders role group.
+
+        Coders hold exactly the member consent profile (#2883): terminal,
+        egress-consent, restart, files -- and NOT the owner `*`. Every
+        workspace the member acts on must be shared this way (workspace
+        creation is admin-only, #2569).
+        """
+        client = httpx.Client(
+            base_url=server["url"], headers=admin["headers"], timeout=30
+        )
+        try:
+            r = client.post(
+                f"/api/v1/workspaces/{ws_id}/roles/coders",
+                json={"email": MEMBER_EMAIL},
+            )
+            if r.status_code != 200:
+                raise RuntimeError(
+                    f"member share failed: {r.status_code} {r.text}"
+                )
+        finally:
+            client.close()
+
+    async def _new_workspace(self, *args, **kwargs) -> str:
+        """Create a workspace the acting identity can use.
+
+        Creation always runs as the bootstrap (admin) identity --
+        `create-workspace` is admin-gated (#2569) -- and under --as-member
+        the workspace is then shared to the member's coders role so the
+        member's decider/terminal connections on it are authorized.
+        """
+        ws_id = await asyncio.to_thread(
+            self._create_workspace,
+            self.server,
+            self.admin_auth,
+            *args,
+            **kwargs,
+        )
+        if self.args.as_member:
+            await asyncio.to_thread(
+                self._share_coder, self.server, self.admin_auth, ws_id
+            )
+        return ws_id
 
     @staticmethod
     def _create_workspace(
@@ -1401,10 +1488,28 @@ class SmokeTest:
             self._owned_server = self._start_server()
             self.server = self._owned_server
             print(f"started klangkd: {self.server['url']}")
-        self.auth = await asyncio.to_thread(self._login, self.server["url"])
-        self.ws_id = await asyncio.to_thread(
-            self._create_workspace, self.server, self.auth
+        self.admin_auth = await asyncio.to_thread(
+            self._login, self.server["url"]
         )
+        self.auth = self.admin_auth
+        if self.args.as_member:
+            # #2976 posture: run the whole consent flow as a plain member.
+            # The admin only bootstraps (member user + workspace + coders
+            # share); the member's authority is the workspace ACL alone.
+            await asyncio.to_thread(
+                self._ensure_member, self.server, self.admin_auth
+            )
+            self.auth = await asyncio.to_thread(
+                self._login,
+                self.server["url"],
+                MEMBER_EMAIL,
+                MEMBER_PASSWORD,
+            )
+            print(
+                f"acting as member {MEMBER_EMAIL} "
+                f"(coders role; no instance-admin grants)"
+            )
+        self.ws_id = await self._new_workspace()
         print(f"workspace {self.ws_id}  allow-list={_ALLOW_LIST}  interactive")
         await self._wait_container_ready()
         self.container = _container_for_workspace(self.ws_id)
@@ -1899,7 +2004,7 @@ class SmokeTest:
 
     async def _connect_raw_decider(
         self,
-        workspace_id: str | None = None,
+        workspace_id: str,
         attempts: int = 4,
         *,
         ping: bool = False,
@@ -1923,13 +2028,12 @@ class SmokeTest:
         # (The prior framing as a TCP-proxy flakiness workaround was
         # disproven -- the proxy is Caddy and reliable, #2398.)
         #
-        # workspace_id scopes the decider: a real id -> workspace-scoped
-        # (needs terminal access); None -> deploy-wide (needs admin, decides
-        # for every workspace). Used by the decider-scope phase's
-        # isolation / coverage probes (#2392).
-        url = f"/ws/consent-decider?token={self.auth['token']}"
-        if workspace_id is not None:
-            url += f"&workspace={workspace_id}"
+        # workspace_id scopes the decider: a workspace id -> that
+        # workspace's consent (needs egress-consent on it). Consent is
+        # strictly workspace-scoped (#2976); there is no deploy-wide
+        # flavor. Used by the decider-scope phase's isolation probe
+        # (#2392) and the multi-decider/audit phases.
+        url = f"/ws/consent-decider?token={self.auth['token']}&workspace={workspace_id}"
         last: Exception | None = None
         for i in range(attempts):
             began = time.time()
@@ -2666,10 +2770,7 @@ class SmokeTest:
         cont: str | None = None
         conn = None
         try:
-            ws_id = await asyncio.to_thread(
-                self._create_workspace,
-                self.server,
-                self.auth,
+            ws_id = await self._new_workspace(
                 allow,
                 [],
                 f"smoke-hostscope-{int(time.time() * 1000) % 100000}",
@@ -2815,10 +2916,7 @@ class SmokeTest:
         cont: str | None = None
         conn = None
         try:
-            ws_id = await asyncio.to_thread(
-                self._create_workspace,
-                self.server,
-                self.auth,
+            ws_id = await self._new_workspace(
                 allow,
                 [],
                 f"smoke-portscope-{int(time.time() * 1000) % 100000}",
@@ -2992,10 +3090,7 @@ class SmokeTest:
         cont: str | None = None
         conn = None
         try:
-            ws_id = await asyncio.to_thread(
-                self._create_workspace,
-                self.server,
-                self.auth,
+            ws_id = await self._new_workspace(
                 allow,
                 [],
                 f"smoke-coresident-{int(time.time() * 1000) % 100000}",
@@ -3189,7 +3284,7 @@ class SmokeTest:
             "-",
         )
         static_ws = await asyncio.to_thread(
-            self._create_static_workspace, self.server, self.auth
+            self._create_static_workspace, self.server, self.admin_auth
         )
         try:
             url = (
@@ -3248,7 +3343,7 @@ class SmokeTest:
                     pass
         finally:
             await asyncio.to_thread(
-                self._delete_workspace, self.server, self.auth, static_ws
+                self._delete_workspace, self.server, self.admin_auth, static_ws
             )
 
     async def run_rejected_phase(self, pilot) -> None:
@@ -3503,31 +3598,37 @@ class SmokeTest:
             self._abort = True
 
     async def run_decider_scope_phase(self, pilot) -> None:
-        """Workspace-scoped vs deploy-wide decider authz (#2392).
+        """Workspace-scoped decider isolation + no-deploy-wide refusal
+        (#2392, #2976).
 
         Cross-workspace isolation: a decider scoped to workspace A must NOT
         receive workspace B's ``egress_request`` (the registry's
-        ``deciders_for`` filters by scope). Deploy-wide coverage: an admin
-        decider (no ``workspace`` param) receives ``egress_request`` from
-        EVERY workspace. Both are driven on the real stack with a second
-        interactive workspace B.
+        ``deciders_for`` filters by scope). Driven on the real stack with a
+        second interactive workspace B.
 
-        ``pilot`` drives the textual app (decider #1, scoped to A = the
-        isolation subject); we read its ``controller.pending`` directly.
+        No deploy-wide flavor: a decider handshake with no ``workspace``
+        param must be refused (#2976) -- an accepted one would be a
+        cross-workspace consent path again.
+
+        ``pilot`` is unused (signature symmetry); the textual app (decider
+        #1, scoped to A = the isolation subject) is read directly via its
+        ``controller.pending``.
         """
         if not self.args.decider_scope:
             return
         print(
-            "\n--- decider scope: workspace-scoped isolation + deploy-wide ---"
+            "\n--- decider scope: workspace-scoped isolation + no deploy-wide ---"
         )
         d_b: RawDecider | None = None
-        d_dep: RawDecider | None = None
         cont_b: str | None = None
         step_tag = "create B"
         try:
-            ws_b = await asyncio.to_thread(
-                self._create_workspace, self.server, self.auth
-            )
+            # 0) no deploy-wide flavor (#2976): the no-workspace handshake
+            #    is refused pre-accept (uvicorn answers a bare HTTP 403).
+            step_tag = "no-workspace handshake"
+            await self._probe_no_workspace_decider_refused()
+
+            ws_b = await self._new_workspace()
             self._extra_ws_ids.append(ws_b)
             print(f"workspace B {ws_b}  (interactive, for scope isolation)")
             # Keep B's container up + confirm readiness. A second workspace's
@@ -3544,10 +3645,6 @@ class SmokeTest:
             d_b = await self._connect_raw_decider(ws_b, ping=True)
             self._extra_deciders.append(d_b)
             await d_b.settle()
-            step_tag = "deploy-wide decider"
-            d_dep = await self._connect_raw_decider(None, ping=True)
-            self._extra_deciders.append(d_dep)
-            await d_dep.settle()
 
             # 1) isolation + B readiness: B's off-list SYN is held; d_b sees
             #    it, the A-scoped app does NOT. If d_b never sees it, B's
@@ -3600,100 +3697,6 @@ class SmokeTest:
                 if sx == MISMATCH and not self.args.continue_run:
                     self._abort = True
                     return
-
-            # 2) deploy-wide positive control: an A off-list SYN reaches the
-            #    deploy-wide decider AND the A-scoped app (proves d_dep really
-            #    receives frames, so #3's "didn't see B" can't be a false neg).
-            host_a = "rust-lang.org"  # fresh
-            ca = _canonical(host_a)
-            step_a = _Step(
-                self.summary.total, host_a, "domain", False, "scope-A", "-"
-            )
-            of_a = f"/tmp/smoke_scope_a_{self.summary.total}.out"
-            _trigger(self.container, host_a, of_a)
-            rid_a = await d_dep.wait_for(ca, 20.0)
-            app_a = (
-                await _wait_for_request(self.app, ca, 8.0) if rid_a else None
-            )
-            if rid_a is None:
-                self._record_probe(
-                    step_a,
-                    "A off-list -> deploy-wide",
-                    "no-request(!)",
-                    None,
-                    FINDING,
-                    "deploy-wide didn't see A (A sidecar readiness, #2417)",
-                )
-            else:
-                if app_a is not None:
-                    self.app._decide_id(app_a, DECISION_ALLOWED, DURATION_ONCE)
-                    await pilot.pause()
-                    await _wait_resolved(self.app, app_a, 15.0)
-                text_a = await _wait_result(self.container, of_a)
-                ec_a = _parse_exit(text_a)
-                if app_a is not None:
-                    sx, dx = PASS, ""
-                else:
-                    sx, dx = (
-                        FINDING,
-                        "deploy-wide saw A but the app didn't (timing)",
-                    )
-                self._record_probe(
-                    step_a,
-                    "A off-list -> deploy-wide + app",
-                    "covered" if app_a else "partial",
-                    ec_a,
-                    sx,
-                    dx,
-                )
-                if sx == MISMATCH and not self.args.continue_run:
-                    self._abort = True
-                    return
-
-            # 3) deploy-wide sees B: the SAME deploy-wide decider receives a B
-            #    off-list SYN -- coverage is deploy-wide, not A-scoped.
-            host_b2 = "elixir-lang.org"  # fresh
-            cb2 = _canonical(host_b2)
-            step_b2 = _Step(
-                self.summary.total, host_b2, "domain", False, "scope-B2", "-"
-            )
-            of_b2 = f"/tmp/smoke_scope_b2_{self.summary.total}.out"
-            _trigger(cont_b, host_b2, of_b2)
-            rid_b2 = await d_dep.wait_for(cb2, 20.0)
-            if rid_b2 is None:
-                self._record_probe(
-                    step_b2,
-                    "B off-list -> deploy-wide",
-                    "no-request(!)",
-                    None,
-                    FINDING,
-                    "deploy-wide didn't see B (B sidecar readiness, #2417)",
-                )
-            else:
-                await d_b.verdict(rid_b2, DECISION_DENIED, DURATION_ONCE)
-                await d_b.wait_resolution(rid_b2, 15.0)
-                text_b2 = await _wait_result(cont_b, of_b2)
-                ec_b2 = _parse_exit(text_b2)
-                if ec_b2 == EXIT_REFUSED:
-                    sx, dx = PASS, ""
-                elif ec_b2 == 0:
-                    sx, dx = MISMATCH, "deploy-wide's B deny let it through"
-                else:
-                    sx, dx = (
-                        FINDING,
-                        f"B2 conn not cleanly refused (exit {ec_b2})",
-                    )
-                self._record_probe(
-                    step_b2,
-                    "B off-list -> deploy-wide too",
-                    "covered",
-                    ec_b2,
-                    sx,
-                    dx,
-                )
-                if sx == MISMATCH and not self.args.continue_run:
-                    self._abort = True
-                    return
         except Exception as e:  # noqa: BLE001
             self._record_probe(
                 _Step(
@@ -3708,13 +3711,72 @@ class SmokeTest:
             if not self.args.continue_run:
                 self._abort = True
         finally:
-            # CRITICAL: the deploy-wide decider covers workspace A, so a live one
-            # keeps A interactive and breaks the no-decider phase premise (the
-            # #2413 leak class). Close both eagerly; teardown is a backstop
-            # (double-close is a safe no-op).
-            for d in (d_dep, d_b):
-                if d is not None:
-                    await d.close()
+            # CRITICAL: a live d_b keeps workspace B interactive (and would
+            # break later phases' premises), so close it eagerly; teardown is
+            # a backstop (double-close is a safe no-op).
+            if d_b is not None:
+                await d_b.close()
+
+    async def _probe_no_workspace_decider_refused(self) -> None:
+        """#2976: a decider handshake with no ``workspace`` param must be
+        refused pre-accept (uvicorn answers a bare HTTP 403). An accepted
+        one would be a cross-workspace consent path -- anyone with an
+        admin-ish grant deciding for every workspace.
+
+        NB: a 403 here is also what an invalid/expired token yields -- the
+        token is proven live by the app's own decider connect earlier in
+        the run, so a 403 at this point is the workspace-param refusal.
+        Deliberately probed with the ADMIN token (#2976): the admin is the
+        strongest principal -- if even it cannot register without a
+        workspace, no lesser identity can either."""
+        step = _Step(
+            self.summary.total, "(no-workspace)", "n/a", False, "scope-nw", "-"
+        )
+        try:
+            ws_nw = await ws_connect(
+                self.server,
+                f"/ws/consent-decider?token={self.admin_auth['token']}",
+                open_timeout=15,
+            )
+        except websockets.InvalidStatus as e:
+            if e.response.status_code == 403:
+                self._record_probe(
+                    step, "no-workspace handshake", "refused", None, PASS, ""
+                )
+                return
+            self._record_probe(
+                step,
+                "no-workspace handshake",
+                f"http {e.response.status_code}",
+                None,
+                FINDING,
+                "no-workspace handshake failed unexpectedly",
+            )
+            return
+        except Exception as e:  # noqa: BLE001
+            self._record_probe(
+                step,
+                "no-workspace handshake",
+                "error",
+                None,
+                FINDING,
+                f"no-workspace handshake failed unexpectedly: {e!r}",
+            )
+            return
+        # Accepted -- the cross-workspace path is back. Close it so it
+        # cannot hold workspaces interactive for later phases.
+        await ws_nw.close()
+        self._record_probe(
+            step,
+            "no-workspace handshake",
+            "accepted(!)",
+            None,
+            MISMATCH,
+            "deploy-wide connect was accepted (cross-workspace consent "
+            "path is back, #2976)",
+        )
+        if not self.args.continue_run:
+            self._abort = True
 
     async def run_audit_distinction_phase(self, pilot) -> None:
         """Audit distinction: ``expired`` (timeout) vs ``denied`` (human) (#2392).
@@ -3922,10 +3984,7 @@ class SmokeTest:
         conn = None
         drain = None
         try:
-            ws_id = await asyncio.to_thread(
-                self._create_workspace,
-                self.server,
-                self.auth,
+            ws_id = await self._new_workspace(
                 [],  # no allow-list: allow mode permits all non-rejected hosts
                 ["evil.example.com"],  # rejected -> sidecar NXDOMAIN
                 f"smoke-allow-{int(time.time() * 1000) % 100000}",
@@ -4132,10 +4191,7 @@ class SmokeTest:
         conn = None
         d: RawDecider | None = None
         try:
-            rws = await asyncio.to_thread(
-                self._create_workspace,
-                self.server,
-                self.auth,
+            rws = await self._new_workspace(
                 [],  # no allow-list: every probe host prompts
                 [],  # no rejected-list
                 f"smoke-restart-{int(time.time() * 1000) % 100000}",
@@ -4434,10 +4490,7 @@ class SmokeTest:
         conn = None
         d: RawDecider | None = None
         try:
-            pws = await asyncio.to_thread(
-                self._create_workspace,
-                self.server,
-                self.auth,
+            pws = await self._new_workspace(
                 [host_allow],  # allow-list: DNS-layer allow, pause-independent
                 [host_rej],  # rejected: DNS-layer NXDOMAIN, pause-independent
                 f"smoke-pause-{int(time.time() * 1000) % 100000}",
@@ -4985,7 +5038,10 @@ class SmokeTest:
             for wid in self._extra_ws_ids:
                 try:
                     await asyncio.to_thread(
-                        self._delete_workspace, self.server, self.auth, wid
+                        self._delete_workspace,
+                        self.server,
+                        self.admin_auth,
+                        wid,
                     )
                 except Exception:
                     pass
@@ -5011,7 +5067,10 @@ class SmokeTest:
         ):
             try:
                 await asyncio.to_thread(
-                    self._delete_workspace, self.server, self.auth, self.ws_id
+                    self._delete_workspace,
+                    self.server,
+                    self.admin_auth,
+                    self.ws_id,
                 )
             except Exception:
                 pass
@@ -5189,7 +5248,7 @@ def main() -> int:
         "--no-decider-scope",
         dest="decider_scope",
         action="store_false",
-        help="skip the workspace-scoped vs deploy-wide decider phase (#2392)",
+        help="skip the workspace-scoped decider isolation phase (#2392/#2976)",
     )
     p.add_argument(
         "--no-audit-distinction",
@@ -5266,6 +5325,20 @@ def main() -> int:
         action="store_false",
         help="skip the co-resident-hosts phase (canary for per-IP allow/revoke "
         "sharing, #2352/#2440)",
+    )
+    p.add_argument(
+        "--as-member",
+        dest="as_member",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="run the consent flow as a plain workspace member instead of "
+        "the seeded admin (#2976): the admin only bootstraps (create the "
+        "member, the workspaces, and share them to its coders role), then "
+        "every decider connection, verdict, and terminal WS runs on the "
+        "member's token -- consent authority flows from the workspace ACL "
+        "alone, with no instance-admin grants anywhere in the run. The "
+        "no-workspace decider probe still uses the admin token (the "
+        "strongest principal).",
     )
     p.add_argument(
         "--cleanup",

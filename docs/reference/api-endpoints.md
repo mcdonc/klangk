@@ -1891,10 +1891,11 @@ decider is connected (and pinging inside
 `KLANGKD_CONSENT_DECIDER_TIMEOUT`), held egress requests are offered to
 it for accept/deny; the `klangk consent-decide` command drives this
 socket. Requires the `egress-consent` permission on the workspace
-(see [Egress Filtering](../features/egress-filtering.md)).
+(see [Egress Filtering](../features/egress-filtering.md)). Deciders are
+strictly workspace-scoped (#2976): the `workspace` query param is
+required — a handshake without it is refused.
 
-**Auth:** JWT required. Optional query param: `workspace` (omit for
-deploy-wide deciding).
+**Auth:** JWT required. Query param: `workspace` (the workspace id).
 
 ---
 

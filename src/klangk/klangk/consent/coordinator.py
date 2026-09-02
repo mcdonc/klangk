@@ -670,7 +670,7 @@ class ConsentCoordinator:
         """Broadcast the pending request to the workspace's deciders (#2244).
 
         Pushes an ``egress_request`` frame to every live decider for the
-        workspace (and deploy-wide). Until a decider responds with a verdict,
+        workspace. Until a decider responds with a verdict,
         the hold simply waits for its timeout (or a ``resolve`` call) -- the
         hold is correct end-to-end regardless: it fail-closes on timeout.
         """
@@ -686,19 +686,13 @@ class ConsentCoordinator:
             str(request.get("id"))[:8],
         )
 
-    async def snapshot(self, workspace_id: str | None) -> list[dict]:
+    async def snapshot(self, workspace_id: str) -> list[dict]:
         """Pending-request frames for a newly-connected decider (replay).
 
         A decider that connects mid-flight sees the workspace's current holds
         so it can act on in-flight requests, not just ones created after it
-        joined. Deploy-wide deciders (``workspace_id`` None) get no snapshot
-        for now -- a cross-workspace pending list is a follow-up. Caveat: a
-        deploy-only decider connecting after holds exist will not see them, so
-        those holds time out fail-closed; they still receive NEW holds live via
-        :meth:`_fanout`.
+        joined.
         """
-        if workspace_id is None:
-            return []
         rows = await self.app.state.model.egress_consent.list_requests(
             workspace_id, decision=DECISION_PENDING
         )
@@ -716,17 +710,13 @@ class ConsentCoordinator:
             if row["id"] in self._holds
         ]
 
-    async def rules_frame(self, workspace_id: str | None) -> dict | None:
+    async def rules_frame(self, workspace_id: str) -> dict | None:
         """Build an ``egress_rules`` snapshot for a workspace (#2335 slice A).
 
         The in-effect consent verdicts (grouped allow/deny) + the static
         allow-list, for the decider's rule-management view. Returns None for a
-        missing/deleted workspace (the caller skips the frame); deploy-wide
-        deciders (workspace None) get no frame for now (a cross-workspace view
-        is a follow-up, matching :meth:`snapshot`).
+        missing/deleted workspace (the caller skips the frame).
         """
-        if workspace_id is None:
-            return None
         ws = await self.app.state.model.workspaces.get_workspace(workspace_id)
         if ws is None:
             return None

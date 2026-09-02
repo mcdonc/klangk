@@ -616,14 +616,13 @@ class ConsentDeciderService extends ChangeNotifier {
   }
 
   /// Apply a `pause_ack` (#2494 review): a nack reverts the highlight (the
-  /// server refused -- missing `share-terminals`, deploy-wide decider, bad
-  /// duration -- so no window was set) and flashes which op failed; a
-  /// success applies the ack's own pause state as an authoritative fallback
-  /// -- the refreshed `egress_rules` broadcast normally lands first (the
-  /// server awaits it before acking), but the broadcast is best-effort
-  /// server-side, so without this the display could sit stale after a
-  /// successful pause. Null `until` on an ok ack means the pause was cleared
-  /// (unpause).
+  /// server refused -- unknown duration, for instance -- so no window was
+  /// set) and flashes which op failed; a success applies the ack's own
+  /// pause state as an authoritative fallback -- the refreshed
+  /// `egress_rules` broadcast normally lands first (the server awaits it
+  /// before acking), but the broadcast is best-effort server-side, so
+  /// without this the display could sit stale after a successful pause.
+  /// Null `until` on an ok ack means the pause was cleared (unpause).
   void _applyPauseAck(bool ok, double? until) {
     final op = _pendingPauseOp;
     _pendingPauseOp = null;
