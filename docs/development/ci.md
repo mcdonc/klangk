@@ -6,7 +6,6 @@ triggering.
 
 ## Tests
 
-
 | Workflow                | File                             | Trigger                                        |
 | ----------------------- | -------------------------------- | ---------------------------------------------- |
 | **Python Tests**        | `backend-tests.yml`              | PRs; pushes to `release/**`                    |
@@ -17,7 +16,7 @@ triggering.
 | **E2E: Frontend Tests** | `frontend-e2e-tests.yml`         | Changes to `src/klangk/`, `src/frontend/`      |
 | **E2E: Sandbox Tests**  | `sandbox-e2e-tests.yml`          | PRs (stock runners; `nix` opt-in via dispatch) |
 | **E2E: Cross-Browser**  | `frontend-e2e-cross-browser.yml` | Scheduled (every 6 hours), release branches    |
-| **E2E: Super (host)**    | `super-e2e.yml`                  | Manual, release branches (#2561)                |
+| **E2E: Super (host)**   | `super-e2e.yml`                  | Manual, release branches (#2561)               |
 | **API Fuzz**            | `fuzz-check.yml`                 | PRs; pushes to `release/**`                    |
 | **macOS Smoke**         | `macos-smoke.yml`                | PRs; pushes to `release/**`                    |
 
@@ -55,7 +54,7 @@ runners; the self-hosted NixOS runner is an opt-in via `workflow_dispatch`
 | --------------- | ---------------- | ----------------------- | ---------------------------------------------------------------------------------------- |
 | **Release**     | `release.yml`    | Push a `v*` tag         | Build and publish host container **and** the `klangk` wheel to PyPI (trusted publishing) |
 | **Dist Smoke**  | `dist-smoke.yml` | Manual                  | Verify the to-be-published wheel serves a working login page before tagging (#1611)      |
-| **Deploy Docs** | `docs.yml`       | Push a `v*` tag, manual | Deploy docs to GitHub Pages                                                              |
+| **Deploy Docs** | `docs.yml`       | Push a `v*` tag, manual | Deploy versioned docs to GitHub Pages via the gh-pages branch (#687)                     |
 
 Releases are cut by pushing a `v*` tag; see
 [Releasing](releasing.md) for the full procedure.
