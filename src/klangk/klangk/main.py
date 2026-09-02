@@ -149,6 +149,19 @@ async def role_scope_error_handler(request, exc):  # noqa: ARG001
     return JSONResponse(status_code=400, content={"detail": str(exc)})
 
 
+async def admin_group_protection_error_handler(request, exc):  # noqa: ARG001
+    """Reject writes that would break the ``admins`` group's identity
+    (#2995).
+
+    Raised at the model choke points (``update_group`` /
+    ``delete_group``) when a rename would move the ``admins`` name on or
+    off a group or the group itself would be deleted — ``is_admin``
+    derives from membership in a group named ``admins``; translated to
+    HTTP 400 here so route handlers carry no per-endpoint guard code.
+    """
+    return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+
 def register_exception_handlers(application: FastAPI) -> None:
     """Register global exception handlers on a FastAPI application.
 
@@ -161,6 +174,9 @@ def register_exception_handlers(application: FastAPI) -> None:
     )
     application.add_exception_handler(
         model.WorkspaceRoleScopeError, role_scope_error_handler
+    )
+    application.add_exception_handler(
+        model.AdminGroupProtectionError, admin_group_protection_error_handler
     )
 
 

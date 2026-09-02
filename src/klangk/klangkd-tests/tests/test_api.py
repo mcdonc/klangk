@@ -9316,6 +9316,63 @@ class TestGroupEndpoints:
         )
         assert resp.status_code == 200
 
+    async def test_admins_group_cannot_be_renamed(
+        self, client, app, admin_user, app_state
+    ):
+        """#2995: is_admin derives from a group *named* admins — a
+        rename away strips every admin's status, so it is rejected.
+        Descriptions stay editable."""
+        headers = await self._admin_headers(client)
+        group = await app_state.state.model.users.get_group_by_name("admins")
+        resp = await client.patch(
+            f"/api/v1/groups/{group['id']}",
+            headers=headers,
+            json={"name": "super-admins"},
+        )
+        assert resp.status_code == 400
+        assert "cannot be renamed" in resp.json()["detail"]
+        # The description path still works (no rename involved).
+        resp = await client.patch(
+            f"/api/v1/groups/{group['id']}",
+            headers=headers,
+            json={"description": "Instance administrators"},
+        )
+        assert resp.status_code == 200
+
+    async def test_admins_name_cannot_be_claimed(
+        self, client, app, admin_user
+    ):
+        """A delegated group manager must not mint a second admins
+        group by renaming an ordinary group onto the reserved name
+        (#2995)."""
+        headers = await self._admin_headers(client)
+        resp = await client.post(
+            "/api/v1/groups",
+            headers=headers,
+            json={"name": "impostors"},
+        )
+        group_id = resp.json()["id"]
+        resp = await client.patch(
+            f"/api/v1/groups/{group_id}",
+            headers=headers,
+            json={"name": "admins"},
+        )
+        assert resp.status_code == 400
+        assert "reserved" in resp.json()["detail"]
+
+    async def test_admins_group_cannot_be_deleted(
+        self, client, app, admin_user, app_state
+    ):
+        """#2995: deleting the admins group would strip every
+        instance-admin's is_admin; rejected with 400."""
+        headers = await self._admin_headers(client)
+        group = await app_state.state.model.users.get_group_by_name("admins")
+        resp = await client.delete(
+            f"/api/v1/groups/{group['id']}", headers=headers
+        )
+        assert resp.status_code == 400
+        assert "cannot be deleted" in resp.json()["detail"]
+
     async def test_delete_group_not_found(self, client, admin_user):
         headers = await self._admin_headers(client)
         resp = await client.delete(
@@ -9485,6 +9542,29 @@ class TestACLEndpoints:
         assert "view-images" in perms
         assert "view" in perms
 
+    async def test_my_permissions_flag_ignores_admin_acl(
+        self, client, admin_user, user, app_state
+    ):
+        """The is_admin flag derives from admins-group membership ONLY
+        (#2995): a hand-written Allow * ACE on the retired /admin
+        resource must not flip it — nothing derives from the ACL tree
+        anymore."""
+        await app_state.state.model.acl.add_acl_entry(
+            "/admin",
+            0,
+            model.ACTION_ALLOW,
+            "*",
+            model.PRINCIPAL_USER,
+            user_id=user["id"],
+        )
+        headers = await _auth_headers(client)
+        resp = await client.get("/api/v1/my-permissions", headers=headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["is_admin"] is False
+        # /admin is not a static resource, so the ACE surfaces nowhere.
+        assert "/admin" not in data["permissions"]
+
     async def test_my_permissions_for_resource(self, client, ws_admin):
         """Check permissions for a specific resource."""
         headers = await _auth_headers(client)
@@ -9522,7 +9602,7 @@ class TestACLEndpoints:
         assert "terminal" not in perms
 
 
-class TestAdminResourceACL:
+class TestResourceAcl:
     def test_workspace_scope_classification(self):
         """#2764: ``workspace_scope`` classifies the admin-ACL target.
 

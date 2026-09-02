@@ -56,9 +56,10 @@ Klangk uses an Access Control List (ACL) system to manage permissions. Instead o
 These defaults mean: any logged-in user can view pages; only members of
 the `admins` group can create workspaces or hold a `manage-*`
 permission; unauthenticated users are denied everything. There is no
-`/admin` resource (#2995): instance-admin status derives from
-`admins`-group membership, surfaced as the `is_admin` flag on
-`/api/v1/my-permissions`.
+`/admin` resource (#2995) — it is neither seeded nor checked by any
+endpoint; instance-admin status derives from `admins`-group membership,
+surfaced as the `is_admin` flag on `/api/v1/my-permissions`. The
+`admins` group itself cannot be renamed or deleted.
 
 The `/images` Allow Authenticated row is the deliberate exception to
 the admin-default convention (#2974): the listing's consumers are the

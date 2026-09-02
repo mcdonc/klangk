@@ -70,6 +70,22 @@ class WorkspaceRoleScopeError(ValueError):
     """
 
 
+class AdminGroupProtectionError(ValueError):
+    """Raised when a write would break the ``admins`` group's identity
+    (#2995).
+
+    The ``/my-permissions`` ``is_admin`` flag derives from membership
+    in a group *named* ``admins`` — renaming that group away strips
+    every instance-admin's status (and the inactivity sweep's admin
+    exemption), while renaming another group onto the name (or deleting
+    the real one and re-creating it) lets a delegated group manager
+    mint an ``admins`` group of their own. Renames and deletes of the
+    ``admins`` group are rejected at the model choke points; a global
+    handler translates this to HTTP 400, like
+    ``AgentPrincipalError``.
+    """
+
+
 # Cached agent user dict (populated after seeding).
 agent_user_cache: dict | None = None
 
@@ -631,7 +647,14 @@ class UsersModel(Submodel):
             }
 
     async def delete_group(self, group_id: str) -> bool:
-        """Delete a group. Returns True if deleted."""
+        """Delete a group. Returns True if deleted.
+
+        Raises ``AdminGroupProtectionError`` for the ``admins`` group
+        (#2995): deleting it would strip every instance-admin's
+        ``is_admin`` (and the inactivity sweep's admin exemption), and
+        the next boot would mint an empty replacement group.
+        """
+        await self._reject_admin_group_delete(group_id)
         async with self.app.state.db.transaction() as db:
             cursor = await db.execute(
                 "DELETE FROM groups WHERE id = ?", (group_id,)
@@ -651,9 +674,12 @@ class UsersModel(Submodel):
         source marker **plus** the workspace-id suffix of their name
         (teardown, ownership transfer, and the ACL scope guard all parse
         it), so a rename would orphan them on delete or point the guard
-        at the wrong workspace. Descriptions stay editable.
+        at the wrong workspace. Descriptions stay editable. Raises
+        ``AdminGroupProtectionError`` when the rename would move the
+        ``admins`` name on or off a group (#2995).
         """
         await self._reject_role_group_rename(group_id, name)
+        await self._reject_admin_group_rename(group_id, name)
         updates = _group_update_fields(name, description)
         if not updates:
             return False
@@ -681,6 +707,50 @@ class UsersModel(Submodel):
             "Workspace role group names are managed by the system"
             " and cannot be changed"
         )
+
+    async def _group_name(self, group_id: str) -> str | None:
+        """The group's current name, or None when the id is unknown."""
+        row = await self.app.state.db.fetchone(
+            "SELECT name FROM groups WHERE id = ?", (group_id,)
+        )
+        return row["name"] if row is not None else None
+
+    async def _reject_admin_group_rename(
+        self, group_id: str, name: str | None
+    ) -> None:
+        """Guard: the ``admins`` group's name is load-bearing (#2995).
+
+        Renaming the group away flips every instance-admin's
+        ``is_admin`` off; renaming another group onto the name mints a
+        fake ``admins`` group. Both rejected; descriptions stay
+        editable and a same-name no-op passes.
+        """
+        if name is None:
+            return
+        current = await self._group_name(group_id)
+        if current is None:
+            return
+        if current == ADMIN_GROUP_NAME and name != ADMIN_GROUP_NAME:
+            raise AdminGroupProtectionError(
+                "The admins group cannot be renamed: instance-admin"
+                " status derives from its name (#2995)"
+            )
+        if current != ADMIN_GROUP_NAME and name == ADMIN_GROUP_NAME:
+            raise AdminGroupProtectionError(
+                "The name 'admins' is reserved for the instance-admin"
+                " group (#2995)"
+            )
+
+    async def _reject_admin_group_delete(self, group_id: str) -> None:
+        """Guard: the ``admins`` group cannot be deleted (#2995) —
+        ``is_admin`` derives from membership in it, so a delete strips
+        every instance-admin's status and the next boot would mint an
+        empty replacement."""
+        if await self._group_name(group_id) == ADMIN_GROUP_NAME:
+            raise AdminGroupProtectionError(
+                "The admins group cannot be deleted: instance-admin"
+                " status derives from membership in it (#2995)"
+            )
 
     async def add_user_to_group(
         self, user_id: str, group_id: str, source: str = "manual"
@@ -1023,7 +1093,7 @@ class UsersModel(Submodel):
         cutoff = datetime.now(timezone.utc) - timedelta(days=days)
         # Resolve the admins group on the pool connection *before* the
         # transaction opens — no pool acquisition inside it (#2978).
-        admin_group = await self.get_group_by_name("admins")
+        admin_group = await self.get_group_by_name(ADMIN_GROUP_NAME)
         async with self.app.state.db.transaction() as db:
             admin_ids = await self._admin_member_ids(db, admin_group)
             cursor = await db.execute(

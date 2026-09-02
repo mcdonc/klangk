@@ -442,7 +442,9 @@ sync` report a clear permission-denied error.
   it). The `/admin` ACL tree is retired with it: no rows are seeded,
   `/admin` no longer appears in the permission map or the ACL browser,
   and migration m0027 deletes any stored `/admin` rows (they answered
-  no check). See
+  no check). Because the group's name is now load-bearing, the
+  `admins` group can no longer be renamed or deleted (HTTP 400), and
+  the name cannot be claimed by another group. See
   [ACL reference](reference/acl.md).
 
 - **`workspace` filter on `GET /api/v1/events` (#3006).** The Admin →
