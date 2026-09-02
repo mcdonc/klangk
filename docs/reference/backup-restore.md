@@ -49,7 +49,7 @@ The data dir is the single most important artifact. It holds:
 ### Podman named volumes
 
 Named volumes are the volumes users can attach to workspaces (created from the
-UI, the `klangk volume create` CLI command, or a workspace mount spec like
+UI, the `klangk volumes create` CLI command, or a workspace mount spec like
 `mydata:/data`). Every one klangk manages carries three labels:
 
 ```text
@@ -58,7 +58,7 @@ klangk.instance=<id>     which klangk site owns it
 klangk.user-id=<id>      which user owns it (volumes created via the API)
 ```
 
-The labels are not decoration: the volume listing (`klangk volume ls`, the
+The labels are not decoration: the volume listing (`klangk volumes ls`, the
 workspace editor's volume picker) filters on `klangk.instance` +
 `klangk.user-id`, and starting a workspace whose volume carries a different
 instance label is refused. **A restored volume without its original labels is
@@ -315,7 +315,7 @@ Then verify, in order:
 1. `GET /api/v1/version` (or the login page) responds.
 2. Log in as a known user; the users list is intact.
 3. Start a workspace that has files in its home; the files are there.
-4. `klangk volume ls` (as a user who owned volumes) lists the restored volumes.
+4. `klangk volumes ls` (as a user who owned volumes) lists the restored volumes.
 5. Start a workspace that mounts a named volume; it mounts without the
    `not managed by this klangk instance` error.
 
