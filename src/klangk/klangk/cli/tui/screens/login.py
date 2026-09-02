@@ -32,6 +32,53 @@ from .base import (
 )
 
 
+def append_known_servers(lv, known, current) -> None:
+    """Append one row per known server alias."""
+    for s in known:
+        lv.append(ListItem(Label(server_row_label(s, current)), name=s.url))
+
+
+def first_provider_id(providers) -> str | None:
+    """The first well-formed provider entry's id, or None.
+
+    A malformed payload (non-dict entry, missing/non-string/empty id)
+    degrades to None instead of a KeyError crash (#2029 audit). An
+    empty string would dial /auth/oidc//login -> 404 (#2029 review).
+    """
+    return next(
+        (
+            p["id"]
+            for p in providers
+            if isinstance(p, dict) and isinstance(p.get("id"), str) and p["id"]
+        ),
+        None,
+    )
+
+
+def server_row_label(s, current) -> Text:
+    """One known-server row (the active server marked with *)."""
+    mark = "*" if s.url == current else " "
+    return Text(
+        f"{mark} {s.alias}  ({s.url})",
+        overflow="ellipsis",
+        no_wrap=True,
+    )
+
+
+def uds_row_label(uds: str) -> Text:
+    """The auto-detected local-klangkd UDS row."""
+    return Text(
+        f"  Local klangkd (UDS)  ({uds})",
+        overflow="ellipsis",
+        no_wrap=True,
+    )
+
+
+def should_offer_uds(uds, current, known_urls) -> bool:
+    """Offer the default UDS only when no alias already covers it."""
+    return bool(uds and uds != current and uds not in known_urls)
+
+
 class LoginScreen(SpatialNavScreen, StatusScreen):
     """Credential screen that also picks the server to log into.
 
@@ -129,24 +176,12 @@ class LoginScreen(SpatialNavScreen, StatusScreen):
         current = self.app.tui_state.current_url()
         known = self.app.tui_state.known_servers()
         known_urls = {s.url for s in known}
-        for s in known:
-            mark = "*" if s.url == current else " "
-            label = Text(
-                f"{mark} {s.alias}  ({s.url})",
-                overflow="ellipsis",
-                no_wrap=True,
-            )
-            lv.append(ListItem(Label(label), name=s.url))
+        append_known_servers(lv, known, current)
         uds = self.app.tui_state.default_uds()
         # Only offer the auto-detected default UDS if no alias already covers
         # it (otherwise it would duplicate the persisted alias row).
-        if uds and uds != current and uds not in known_urls:
-            label = Text(
-                f"  Local klangkd (UDS)  ({uds})",
-                overflow="ellipsis",
-                no_wrap=True,
-            )
-            lv.append(ListItem(Label(label), name=uds))
+        if should_offer_uds(uds, current, known_urls):
+            lv.append(ListItem(Label(uds_row_label(uds)), name=uds))
         # Autofocus the first server entry (#1826).
         if lv.query(ListItem):
             lv.focus()
@@ -344,20 +379,7 @@ class LoginScreen(SpatialNavScreen, StatusScreen):
 
     async def _do_login_oidc(self) -> None:
         providers = await asyncio.to_thread(self.app.tui_state.oidc_providers)
-        # Pick the first well-formed provider entry; a malformed payload
-        # (non-dict entry, missing/non-string/empty id) degrades to the "no
-        # provider" message instead of a KeyError crash (#2029 audit). An
-        # empty string would dial /auth/oidc//login -> 404 (#2029 review).
-        provider_id = next(
-            (
-                p["id"]
-                for p in providers
-                if isinstance(p, dict)
-                and isinstance(p.get("id"), str)
-                and p["id"]
-            ),
-            None,
-        )
+        provider_id = first_provider_id(providers)
         if provider_id is None:
             self._set_message("No SSO provider configured.", error=True)
             return

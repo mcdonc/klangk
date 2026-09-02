@@ -60,6 +60,19 @@ KLANGK_THEME = Theme(
 )
 
 
+def screens_above(stack: list, target: Screen) -> list[Screen]:
+    """The screens above *target* (top-down order); target itself excluded."""
+    to_remove: list[Screen] = []
+    # A prior membership guard means the reversed walk always hits target
+    # (identity compare), so the loop can never exhaust: the arc to the
+    # pop loop without a break is unreachable.
+    for screen in reversed(stack):  # pragma: no branch
+        if screen is target:
+            break
+        to_remove.append(screen)
+    return to_remove
+
+
 class KlangkApp(App):
     """Interactive TUI over the existing klangk client."""
 
@@ -334,6 +347,21 @@ class KlangkApp(App):
 
         self.run_worker(_logout, exit_on_error=False)
 
+    def pop_planned_screens(self, to_remove: list[Screen]) -> None:
+        """Pop each planned screen, stopping if the stack diverges.
+
+        Defensive: ``pop_screen`` is synchronous, so today the live top
+        always equals the next planned screen and the loop ends by
+        exhausting ``to_remove``. The check keeps it correct if the
+        stack is ever changed between iterations (e.g. a re-entrant
+        pop) — stop rather than pop a screen we didn't plan to, and
+        never index an empty stack.
+        """
+        for screen in to_remove:
+            if not self.screen_stack or self.screen_stack[-1] is not screen:
+                break
+            self.pop_screen()
+
     def pop_above(self, target: Screen) -> bool:
         """Pop every screen above ``target`` (leaving it on top), safely.
 
@@ -355,24 +383,7 @@ class KlangkApp(App):
         """
         if target not in self.screen_stack:
             return False
-        to_remove: list[Screen] = []
-        # The membership guard above means the reversed walk always hits
-        # target (identity compare), so the loop can never exhaust: the
-        # arc to the pop loop without a break is unreachable.
-        for screen in reversed(self.screen_stack):  # pragma: no branch
-            if screen is target:
-                break
-            to_remove.append(screen)
-        for screen in to_remove:
-            # Defensive: ``pop_screen`` is synchronous, so today the live top
-            # always equals the next planned screen and the loop ends by
-            # exhausting ``to_remove``. The check keeps it correct if the
-            # stack is ever changed between iterations (e.g. a re-entrant
-            # pop) — stop rather than pop a screen we didn't plan to, and
-            # never index an empty stack.
-            if not self.screen_stack or self.screen_stack[-1] is not screen:
-                break
-            self.pop_screen()
+        self.pop_planned_screens(screens_above(self.screen_stack, target))
         return bool(self.screen_stack) and self.screen_stack[-1] is target
 
     def server_changed(self) -> None:
