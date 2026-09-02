@@ -32,6 +32,19 @@ operators or integrators to act when upgrading.
 
 ### Breaking
 
+- **`/volumes` is now an admin surface (#2974).** The volume listing
+  checks the new `view-volumes` permission on `/volumes`, and
+  create/delete check `manage-volumes` — both seeded Allow for the
+  `admins` group (migration m0024 rewrites the #2946 Allow
+  Authenticated rows on existing deployments; operator-customized
+  rows are preserved). Non-admin users lose volume API access by
+  default — re-grant via the ACL editor if a deploy wants them back.
+  The listing now returns the whole deployment inventory (each entry
+  carries the creating user as `owner`) and `manage-volumes` holders
+  can delete any managed volume — the per-user ownership scoping is
+  gone. The web frontend gains a Volumes tab under Admin (view +
+  delete), and the CLI volume commands are now admin-gated.
+
 - **Deploy-wide consent decider removed (#2976).** The
   `/ws/consent-decider` handshake without a `?workspace=` param is now
   refused (HTTP 403): consent authority is strictly per-workspace

@@ -45,6 +45,7 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
 
   bool _canUsers = false;
   bool _canGroups = false;
+  bool _canVolumes = false;
   bool _canInvitations = false;
   bool _canServer = false;
   bool _canEvents = false;
@@ -100,6 +101,10 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     _canInvitations = auth.hasPermission('/invitations', 'manage-invitations');
     _canServer = auth.hasPermission('/server', 'manage-server-schedule');
     _canEvents = auth.hasPermission('/events', 'manage-events');
+    // #2974: the Volumes tab is the /volumes admin surface — visible to
+    // view-volumes holders (read-only auditors), deleting needs
+    // manage-volumes (checked inside the tab).
+    _canVolumes = auth.hasPermission('/volumes', 'view-volumes');
     // The Access Control browser reads /acl/*, gated on `manage-acls`
     // (#2940) — root-equivalent (it can rewrite ACLs on any
     // resource), so it is granted only to administrators.
@@ -540,6 +545,13 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
         label: 'Events',
         icon: Icons.history,
         view: const ContainerEventsPanel(),
+      );
+    }
+    if (_canVolumes) {
+      addTab(
+        label: 'Volumes',
+        icon: Icons.storage,
+        view: const _VolumesTab(key: ValueKey('volumes-tab')),
       );
     }
     // The Access Control browser reads /acl/*, gated on
@@ -1890,6 +1902,158 @@ class _SystemAgentBadge extends StatelessWidget {
   }
 }
 
+/// Volumes tab (#2974): the /volumes admin surface — the deployment's
+/// klangk-managed volume inventory with per-volume provenance and a
+/// delete action. Visible to view-volumes holders (read-only
+/// auditors); the delete action additionally requires manage-volumes.
+/// No create surface: workspace extra-mount volumes are provisioned
+/// at container assembly (ensure_volumes), and the CLI admin commands
+/// remain the scripting path.
+class _VolumesTab extends StatefulWidget {
+  const _VolumesTab({super.key});
+
+  @override
+  State<_VolumesTab> createState() => _VolumesTabState();
+}
+
+class _VolumesTabState extends State<_VolumesTab> {
+  List<Map<String, dynamic>> _volumes = [];
+  bool _loading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadVolumes();
+  }
+
+  Future<void> _loadVolumes() async {
+    try {
+      final auth = context.read<AuthService>();
+      final resp = await auth.authGet('/api/v1/volumes');
+      if (resp.statusCode == 200) {
+        if (!mounted) return;
+        setState(() {
+          _volumes =
+              (jsonDecode(resp.body) as List).cast<Map<String, dynamic>>();
+          _loading = false;
+          _error = null;
+        });
+      } else {
+        if (!mounted) return;
+        setState(() {
+          _error = 'Failed to load volumes: ${resp.statusCode}';
+          _loading = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('[AdminUsersPage] load volumes failed: $e');
+      if (!mounted) return;
+      setState(() {
+        _error = 'Could not load volumes. Please try again.';
+        _loading = false;
+      });
+    }
+  }
+
+  Future<void> _deleteVolume(String name) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete Volume'),
+        content: Text(
+          'Delete the volume "$name"? Its data is destroyed; workspaces '
+          'mounting it will fail to start.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            style: TextButton.styleFrom(foregroundColor: KColors.accentRed),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(
+              backgroundColor: KColors.accentRed,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+
+    final auth = context.read<AuthService>();
+    final resp = await auth.authDelete('/api/v1/volumes/$name');
+    if (resp.statusCode == 200) {
+      await _loadVolumes();
+    } else {
+      if (!mounted) return;
+      final detail =
+          (jsonDecode(resp.body) as Map<String, dynamic>)['detail'] as String?;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(detail ?? 'Failed to delete volume')),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) return const Center(child: CircularProgressIndicator());
+    if (_error != null) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(_error!),
+            const SizedBox(height: 8),
+            FilledButton(onPressed: _loadVolumes, child: const Text('Retry')),
+          ],
+        ),
+      );
+    }
+    if (_volumes.isEmpty) {
+      return const Center(child: Text('No volumes'));
+    }
+    final canManage =
+        context.read<AuthService>().hasPermission('/volumes', 'manage-volumes');
+    return RefreshIndicator(
+      onRefresh: _loadVolumes,
+      child: ListView.builder(
+        padding: const EdgeInsets.all(16),
+        itemCount: _volumes.length,
+        itemBuilder: (ctx, i) {
+          final volume = _volumes[i];
+          final name = volume['name'] as String? ?? '';
+          final created = (volume['created'] as String?) ?? '';
+          final owner = (volume['owner'] as String?) ?? '';
+          final ownerTag = owner.length >= 8 ? owner.substring(0, 8) : owner;
+          return Card(
+            margin: const EdgeInsets.only(bottom: 8),
+            child: ListTile(
+              leading: const Icon(Icons.storage),
+              title: Text(name, key: const ValueKey('volume-name')),
+              subtitle: Text(
+                created.isNotEmpty
+                    ? 'Created $created · owner $ownerTag'
+                    : 'owner $ownerTag',
+              ),
+              trailing: canManage
+                  ? IconButton(
+                      icon: const Icon(Icons.delete_outline),
+                      tooltip: 'Delete volume',
+                      onPressed: () => _deleteVolume(name),
+                    )
+                  : null,
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
 /// ACL browser tab: shows the static resource tree and lets you edit ACLs.
 class _AclBrowserTab extends StatefulWidget {
   const _AclBrowserTab();
@@ -1932,7 +2096,8 @@ class _AclBrowserTabState extends State<_AclBrowserTab> {
     '/invitations': 'manage-invitations',
     '/server': 'manage-server-schedule',
     '/events': 'manage-events (read-only audit)',
-    '/volumes': 'manage-volumes — self-service volumes (Allow Authenticated)',
+    '/volumes':
+        'view-volumes — see the volume inventory; manage-volumes — delete',
     '/images': 'view-images — the image/capability listing',
     '/acl': 'manage-acls — root-equivalent, administrators only',
   };

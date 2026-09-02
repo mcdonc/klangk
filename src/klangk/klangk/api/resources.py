@@ -263,20 +263,26 @@ async def list_images(
 
 @router.get("/volumes")
 async def list_volumes(
-    user: dict = Depends(acl.has_permission("manage-volumes")),
+    _user: dict = Depends(acl.has_permission("view-volumes")),
     app=Depends(get_app_dep),
 ):
+    """List the deployment's klangk-managed volumes (#2974).
+
+    Admin-surface view: every volume on the instance, with the
+    creating user's id as ``owner`` (provenance — the ``klangk.user-id``
+    label the create path stamps). Viewers need ``view-volumes``;
+    the seeded grant is the admins group, delegable read-only.
+    """
     volumes = await app.state.podman.list_volumes(
         f"klangk.instance={app.state.util.instance_id()}"
     )
-    uid = user["id"]
     return [
         {
             "name": v["Name"],
             "created": v.get("CreatedAt", ""),
+            "owner": (v.get("Labels") or {}).get("klangk.user-id"),
         }
         for v in volumes
-        if (v.get("Labels") or {}).get("klangk.user-id") == uid
     ]
 
 
@@ -318,7 +324,7 @@ async def create_volume(
 @router.delete("/volumes/{name}")
 async def delete_volume(
     name: str,
-    user: dict = Depends(acl.has_permission("manage-volumes")),
+    _user: dict = Depends(acl.has_permission("manage-volumes")),
     app=Depends(get_app_dep),
 ):
     info = await app.state.podman.inspect_volume(name)
@@ -330,11 +336,9 @@ async def delete_volume(
             status_code=404,
             detail="Volume not managed by this Klangk instance",
         )
-    if labels.get("klangk.user-id") != user["id"]:
-        raise HTTPException(
-            status_code=403,
-            detail="Volume belongs to another user",
-        )
+    # No per-user ownership check (#2974): manage-volumes is the
+    # admin-surface grant — holders administer every managed volume,
+    # not just their own. The user-id label survives for provenance.
     try:
         await app.state.podman.remove_volume(name)
     except PodmanError as e:

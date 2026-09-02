@@ -239,19 +239,32 @@ class Lifecycle:
                 PRINCIPAL_SYSTEM,
                 system_principal=SYSTEM_EVERYONE,
             )
-        # #2946 self-service surfaces, granted to every authenticated
-        # user by default (a deploy that wants them restricted denies
-        # or scopes these rows in the ACL editor):
-        #   /volumes    manage-volumes — user-owned volumes (label-
-        #                               scoped per user at runtime)
+        # /volumes admin surface (#2974): the inventory tab in /admin —
+        # view-volumes gates the listing (GET), manage-volumes the
+        # mutating endpoints (POST/DELETE). Both to admins, delegable
+        # separately (a read-only volumes auditor holds view alone).
+        # No trailing Deny Everyone row: unauthenticated requests die
+        # at the JWT middleware before any ACL check, and no-match is
+        # already default-deny.
+        for permission in ("view-volumes", "manage-volumes"):
+            await self.app.state.model.acl.add_acl_entry(
+                "/volumes",
+                0 if permission == "view-volumes" else 1,
+                ACTION_ALLOW,
+                permission,
+                PRINCIPAL_GROUP,
+                group_id=admin_group_id,
+            )
+        # #2946 self-service surface, granted to every authenticated
+        # user by default (a deploy that wants it restricted denies
+        # or scopes the rows in the ACL editor):
         #   /images     view-images    — the image/nix/sudo capability
         #                               listing (create/edit UIs)
         # NB: /llm-proxy is NOT here — #2959 gives it its own
         # workspace-token-only gate, independent of the ACL system.
-        for resource, permission in (
-            ("/volumes", "manage-volumes"),
-            ("/images", "view-images"),
-        ):
+        # (#2974: the /volumes rows above moved to the admins group;
+        # the /images rework lands in its own PR.)
+        for resource, permission in (("/images", "view-images"),):
             await self.app.state.model.acl.add_acl_entry(
                 resource,
                 0,

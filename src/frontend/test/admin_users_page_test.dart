@@ -465,6 +465,138 @@ void main() {
     });
   });
 
+  group('AdminUsersPage volumes tab', () {
+    /// Mock client serving [permissions] plus a /volumes listing.
+    /// DELETE mutates [volumes] so the reload reflects the deletion.
+    void serveVolumes(
+      Map<String, List<String>> permissions,
+      List<Map<String, dynamic>> volumes,
+    ) {
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path.contains('/api/v1/config')) {
+          return http.Response(
+            jsonEncode({'login_banner_title': '', 'login_banner': ''}),
+            200,
+          );
+        }
+        if (request.url.path.contains('/api/v1/my-permissions')) {
+          return http.Response(
+            jsonEncode({
+              'user_id': 'admin-user',
+              'email': 'admin@example.com',
+              'permissions': permissions,
+              'groups': [],
+            }),
+            200,
+          );
+        }
+        if (request.url.path == '/api/v1/volumes' && request.method == 'GET') {
+          return http.Response(jsonEncode(volumes), 200);
+        }
+        if (request.url.path.startsWith('/api/v1/volumes/') &&
+            request.method == 'DELETE') {
+          final name = request.url.path.split('/').last;
+          volumes.removeWhere((v) => v['name'] == name);
+          return http.Response(jsonEncode({'status': 'deleted'}), 200);
+        }
+        return http.Response('Not found', 404);
+      });
+    }
+
+    testWidgets('lists the deployment volume inventory for an admin',
+        (tester) async {
+      serveVolumes({
+        '/users': ['manage-users'],
+        '/volumes': ['view-volumes', 'manage-volumes'],
+      }, [
+        {
+          'name': 'vol-a',
+          'created': '2026-01-01T00:00:00Z',
+          'owner': 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+        },
+        {
+          'name': 'vol-b',
+          'created': '2026-02-02T00:00:00Z',
+          'owner': '12345678-1234-1234-1234-123456789012',
+        },
+      ]);
+
+      await pumpPage(tester);
+
+      expect(find.text('Volumes'), findsOneWidget);
+      await tester.tap(find.text('Volumes'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('vol-a'), findsOneWidget);
+      expect(find.text('vol-b'), findsOneWidget);
+      // Provenance: the creating user's id prefix rides each row.
+      expect(find.textContaining('owner aaaaaaaa'), findsOneWidget);
+      expect(find.textContaining('owner 12345678'), findsOneWidget);
+      // manage-volumes holder: delete offered.
+      expect(find.byTooltip('Delete volume'), findsNWidgets(2));
+    });
+
+    testWidgets('view-only delegate sees the tab without delete actions',
+        (tester) async {
+      serveVolumes({
+        '/volumes': ['view-volumes'],
+      }, [
+        {
+          'name': 'vol-a',
+          'created': '2026-01-01T00:00:00Z',
+          'owner': 'aaaaaaaa-bbbb',
+        },
+      ]);
+
+      await pumpPage(tester);
+
+      // view-volumes alone admits into the admin section (#2974).
+      expect(find.text('Volumes'), findsOneWidget);
+      await tester.tap(find.text('Volumes'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('vol-a'), findsOneWidget);
+      expect(find.byTooltip('Delete volume'), findsNothing);
+    });
+
+    testWidgets('deletes a volume after confirmation', (tester) async {
+      final volumes = <Map<String, dynamic>>[
+        {
+          'name': 'vol-a',
+          'created': '2026-01-01T00:00:00Z',
+          'owner': 'aaaaaaaa-bbbb',
+        },
+      ];
+      serveVolumes({
+        '/volumes': ['view-volumes', 'manage-volumes'],
+      }, volumes);
+
+      await pumpPage(tester);
+      await tester.tap(find.text('Volumes'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('Delete volume'));
+      await tester.pumpAndSettle();
+      expect(find.text('Delete Volume'), findsOneWidget);
+      await tester.tap(find.widgetWithText(FilledButton, 'Delete'));
+      await tester.pumpAndSettle();
+
+      // The deletion hit the backend and the listing reloaded empty.
+      expect(volumes, isEmpty);
+      expect(find.text('No volumes'), findsOneWidget);
+    });
+
+    testWidgets('hides the Volumes tab without the permission', (tester) async {
+      serveVolumes({
+        '/users': ['manage-users'],
+      }, []);
+
+      await pumpPage(tester);
+
+      expect(find.text('Volumes'), findsNothing);
+    });
+  });
+
   group('AdminUsersPage groups tab', () {
     /// Pump the page on the users tab, then switch to the Groups tab.
     Future<void> pumpGroupsTab(WidgetTester tester) async {

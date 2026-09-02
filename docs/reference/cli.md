@@ -297,9 +297,9 @@ klangk admin users set-password user@example.com   # set/reset a password (admin
 klangk admin invitations send user@example.com     # send an invitation email (admin only)
 klangk admin invitations ls                       # list all invitations (admin only)
 klangk images                       # list available container images
-klangk volumes ls                   # list your podman volumes
-klangk volumes create nix-store     # create a named volume (owned by you)
-klangk volumes rm nix-store         # delete a volume (must be yours)
+klangk volumes ls                   # list the deployment's podman volumes (admin)
+klangk volumes create nix-store     # create a named volume (admin)
+klangk volumes rm nix-store         # delete a volume (admin)
 ```
 
 `klangk status` shows the active server, your user id/email, and whether

@@ -277,12 +277,19 @@ class TestSeedDefaultAcls:
         ]
         assert users[1]["system_principal"] == model.SYSTEM_AUTHENTICATED
         assert users[2]["action"] == model.ACTION_DENY
-        # ...and the self-service trio seeds Allow Authenticated +
-        # Deny Everyone.
-        for resource, permission in (
-            ("/volumes", "manage-volumes"),
-            ("/images", "view-images"),
-        ):
+        # #2974: /volumes seeds the admin surface — Allow view-volumes +
+        # Allow manage-volumes for admins, no Deny row (no-match is
+        # default-deny; unauthenticated dies at the JWT middleware).
+        volumes = await app_state.state.model.acl.get_acl_entries("/volumes")
+        assert [
+            (e["position"], e["permission"], e["group_id"]) for e in volumes
+        ] == [
+            (0, "view-volumes", admin_group_id),
+            (1, "manage-volumes", admin_group_id),
+        ]
+        # ...and /images still seeds the #2946 self-service pair:
+        # Allow Authenticated + Deny Everyone.
+        for resource, permission in (("/images", "view-images"),):
             entries = await app_state.state.model.acl.get_acl_entries(resource)
             assert len(entries) == 2, resource
             allow, deny = entries
