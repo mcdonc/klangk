@@ -3887,9 +3887,49 @@ class TestMainCLI:
         assert body["settings"] == {"allow_sudo": True}
 
     def test_edit_sudo_flip_prompts_restart(self, logged_in_cfg, monkeypatch):
-        """#2017: --no-sudo on a running workspace is a create-time change
-        (the sudoers rule) — the CLI must offer a restart, like the TUI
-        and web panel do."""
+        """#2017: --no-sudo on a running opted-in workspace is a
+        create-time change (the sudoers rule) — the CLI must offer a
+        restart, like the TUI and web panel do."""
+        from klangk.cli import main
+
+        ws = Workspace(
+            id="ws1" + "0" * 52,
+            name="my-ws",
+            created_at="2025-01-01T00:00:00Z",
+            running=True,
+            settings={"allow_sudo": True},
+        )
+        client = MagicMock()
+        client.resolve_workspace.return_value = ws
+        client.put.return_value = MagicMock(status_code=200)
+
+        with patch.object(context_mod, "client", return_value=client):
+            answers = []
+
+            def _answer(prompt):
+                answers.append(prompt)
+                return "n"
+
+            with patch("builtins.input", side_effect=_answer):
+                from typer.testing import CliRunner
+
+                runner = CliRunner()
+                result = runner.invoke(
+                    main.app,
+                    ["edit", "my-ws", "--no-sudo"],
+                )
+                assert result.exit_code == 0
+                # The restart offer fired (its warning goes to stderr).
+                assert answers and "restart now?" in answers[0].lower()
+
+        client.restart_workspace.assert_not_called()  # declined
+
+    def test_edit_sudo_lockdown_on_absent_bag_no_prompt(
+        self, logged_in_cfg, monkeypatch
+    ):
+        """#3047: an absent bag key already means OFF, so --no-sudo on a
+        running workspace with no stored posture is not a create-time
+        change — no restart offer fires."""
         from klangk.cli import main
 
         ws = Workspace(
@@ -3918,10 +3958,7 @@ class TestMainCLI:
                     ["edit", "my-ws", "--no-sudo"],
                 )
                 assert result.exit_code == 0
-                # The restart offer fired (its warning goes to stderr).
-                assert answers and "restart now?" in answers[0].lower()
-
-        client.restart_workspace.assert_not_called()  # declined
+                assert answers == []  # no restart offer
 
     def test_edit_sudo_flip_on_stopped_ws_no_prompt(
         self, logged_in_cfg, monkeypatch

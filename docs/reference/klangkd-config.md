@@ -321,7 +321,7 @@ override it per-workspace (`settings.idle_timeout` — see
 | `allowed_images`                    |                                 | `KLANGKD_ALLOWED_IMAGES`                    |
 | `allowed_mount_roots`               |                                 | `KLANGKD_ALLOWED_MOUNT_ROOTS`               |
 | `allow_autostart`                   |                                 | `KLANGKD_ALLOW_AUTOSTART`                   |
-| `allow_sudo`                        | `true`                          | `KLANGKD_ALLOW_SUDO`                        |
+| `allow_sudo`                        | `true` (ceiling only)           | `KLANGKD_ALLOW_SUDO`                        |
 | `per_handle_home`                   | `false`                         | `KLANGKD_PER_HANDLE_HOME`                   |
 | `classification_banner`             |                                 | `KLANGKD_CLASSIFICATION_BANNER`             |
 | `container_subnets`                 | _(auto-derived)_                | `KLANGKD_CONTAINER_SUBNETS`                 |

@@ -39,7 +39,7 @@ CREATE_TIME_KEYS = {
 # /nix mount, #2233) and allow_sudo (the sudoers rule, #2017). A flip on
 # a running workspace needs a restart to take effect — the TUI and web
 # panel detect the same pair.
-CREATE_TIME_SETTINGS_DEFAULTS = {"nix": False, "allow_sudo": True}
+CREATE_TIME_SETTINGS_DEFAULTS = {"nix": False, "allow_sudo": False}
 
 
 def print_list_editor_state(items, header, empty_note) -> None:
@@ -607,10 +607,10 @@ def edit(
         None,
         "--sudo/--no-sudo",
         help=(
-            "Workspace sudo posture (server-permitting): --no-sudo locks "
-            "this workspace down (no passwordless sudo) even when the "
-            "server allows it; --sudo reverts to the server default. "
-            "Applies when the container is next created"
+            "Workspace sudo posture (server-permitting): off unless the "
+            "workspace opts in with --sudo. --no-sudo locks it down "
+            "(no passwordless sudo). Applies when the container is next "
+            "created"
         ),
     ),
     classification_banner: str | None = typer.Option(

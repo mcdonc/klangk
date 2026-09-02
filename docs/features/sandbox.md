@@ -99,9 +99,12 @@ sandbox:
 | `setup-timeout` | no       | `300`    | Maximum seconds the setup script may run before being killed. Set to `0` to disable.                          |
 
 The setup script runs once — on workspace creation, not on
-reconnect. It runs as the `klangk` user inside the container. If
-`KLANGKD_ALLOW_SUDO` is enabled on the server, the script can use
-`sudo` for system-level setup (installing packages, etc.).
+reconnect. It runs as the `klangk` user inside the container. The
+script can use `sudo` for system-level setup (installing packages,
+etc.) only when the workspace has opted in to sudo (`allow_sudo: true`,
+see [Container
+packages](container-packages.md)) **and** `KLANGKD_ALLOW_SUDO` is
+enabled on the server (the ceiling).
 
 > **`~` and the home layout:** In `mount-at`, `copy` destinations,
 > and `mounts` destinations, `~` always expands to `/home/{handle}` —
@@ -272,14 +275,15 @@ The setup script runs inside the container as the `klangk` user. It
 has access to everything that's been mounted and copied. The working
 directory is the sandbox root (the `mount-at` path).
 
-**Important:** The `klangk` user has passwordless sudo by default (the
-deploy-wide `KLANGKD_ALLOW_SUDO` defaults to on). When sudo is disabled
-deploy-wide, or the workspace is individually locked down
-(`allow_sudo: false`), setup scripts are limited to user-space operations
-(installing to `~`, downloading binaries, etc.). To install system
-packages with `apt`, install nix, or modify system files, the server
-administrator must leave `KLANGKD_ALLOW_SUDO` enabled (the default) in
-the server's `.env` file.
+**Important:** Sudo is off by default for every workspace (#3047) —
+the workspace must opt in (`allow_sudo: true` in its settings, or the
+_Allow sudo_ toggle / `klangk create --sudo`). When sudo is off, setup
+scripts are limited to user-space operations (installing to `~`,
+downloading binaries, etc.). To install system packages with `apt`,
+install nix, or modify system files, the workspace must be opted in AND
+the server administrator must leave `KLANGKD_ALLOW_SUDO` enabled (the
+default — it is the ceiling that permits the opt-in) in the server's
+`.env` file.
 
 ### Where the service command runs (and how to install for it)
 
@@ -331,7 +335,8 @@ export HOME="${KLANGKWS_AGENT_HOME:-/home/klangk}"
 # setup.sh
 set -euo pipefail
 
-# Install nix (requires sudo — KLANGKD_ALLOW_SUDO, on by default)
+# Install nix (requires sudo — the workspace opted in AND
+# KLANGKD_ALLOW_SUDO, on by default)
 if ! command -v nix &>/dev/null; then
   curl -L https://nixos.org/nix/install | sh -s -- --no-daemon
 fi
@@ -474,5 +479,6 @@ klangk shell myproj -A
   check.
 - **`KLANGKD_IMAGE_NAME` / `KLANGKD_ALLOWED_IMAGES`**: The `image`
   field must match one of the server's allowed images.
-- **`KLANGKD_ALLOW_SUDO`**: Must be enabled on the server for setup
-  scripts that need `sudo` (e.g., installing system packages, nix).
+- **`KLANGKD_ALLOW_SUDO`**: Must be enabled on the server (it is the
+  ceiling that permits the per-workspace opt-in) for setup scripts that
+  need `sudo` (e.g., installing system packages, nix).

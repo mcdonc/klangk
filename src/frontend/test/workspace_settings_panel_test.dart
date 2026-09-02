@@ -535,10 +535,11 @@ void main() {
   });
 
   group('sudo toggle', () {
-    // #2017: the per-workspace sudo lock-down toggle. The deploy-wide
+    // #2017/#3046: the per-workspace sudo toggle. The deploy-wide
     // allow_sudo is a ceiling, so the toggle is shown only when the
     // deploy allows sudo; it is pre-populated from settings.allow_sudo
-    // (absent = true = follow the deploy posture), always emits an
+    // (absent = false = locked-down in the UI, #3046 — the server still
+    // resolves absent as follow-deploy until saved), always emits an
     // explicit value (full-replace bag), and prompts a restart on a
     // running workspace (the sudoers rule is written at create time).
     testWidgets('hides the toggle when the deploy forbids sudo',
@@ -579,8 +580,9 @@ void main() {
       expect(cb.value, isFalse);
     });
 
-    testWidgets('sends allow_sudo=false when unchecked and restarts',
-        (tester) async {
+    testWidgets(
+        'defaults to unchecked (absent bag) and sends allow_sudo=false with'
+        ' no restart notice (#3047)', (tester) async {
       Map<String, dynamic>? savedBody;
       testAuthHttpClientOverride = MockClient((request) async {
         final p = request.url.path;
@@ -617,8 +619,70 @@ void main() {
       await tester.pumpAndSettle();
 
       final sudo = find.widgetWithText(CheckboxListTile, 'Allow sudo');
+      // #3046: absent bag key reads as locked-down — no tap needed.
+      expect((tester.widget(sudo) as CheckboxListTile).value, isFalse);
       await tester.ensureVisible(sudo);
-      await tester.tap(sudo); // starts checked — uncheck locks down
+      await tester.pump();
+      await _scrollToAndTap(tester, find.text('Save'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(savedBody, isNotNull);
+      expect(savedBody!['settings']['allow_sudo'], isFalse);
+      // #3047: an absent key already means OFF, so storing an explicit
+      // false is not a posture flip — no restart notice.
+      expect(
+          find.textContaining('Restart the workspace to apply'), findsNothing);
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pumpAndSettle();
+    });
+
+    testWidgets(
+        'unchecking an opted-in workspace flips posture and notices a restart'
+        ' (#3047)', (tester) async {
+      Map<String, dynamic>? savedBody;
+      testAuthHttpClientOverride = MockClient((request) async {
+        final p = request.url.path;
+        if (p == '/api/v1/config') {
+          return http.Response(jsonEncode({'sudo_available': true}), 200);
+        }
+        if (p == '/api/v1/workspaces') {
+          return http.Response(
+            jsonEncode([
+              {
+                ..._workspace,
+                'running': true,
+                'settings': {'allow_sudo': true},
+              }
+            ]),
+            200,
+          );
+        }
+        if (p == '/api/v1/workspaces/shared') {
+          return http.Response(jsonEncode([]), 200);
+        }
+        if (p == '/api/v1/images') {
+          return http.Response(
+            jsonEncode({
+              'default': 'klangk-pi',
+              'allowed': ['klangk-pi'],
+            }),
+            200,
+          );
+        }
+        if (p == '/api/v1/workspaces/$_wsId' && request.method == 'PUT') {
+          savedBody = jsonDecode(request.body) as Map<String, dynamic>;
+          return http.Response(jsonEncode({'status': 'updated'}), 200);
+        }
+        return http.Response('not found', 404);
+      });
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      final sudo = find.widgetWithText(CheckboxListTile, 'Allow sudo');
+      expect((tester.widget(sudo) as CheckboxListTile).value, isTrue);
+      await tester.ensureVisible(sudo);
+      await tester.tap(sudo); // uncheck = lock the workspace down
       await tester.pump();
       await _scrollToAndTap(tester, find.text('Save'));
       await tester.pump();

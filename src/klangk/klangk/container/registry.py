@@ -1604,11 +1604,11 @@ class ContainerRegistry(NetworkSidecarMixin):
             spec.workspace_id
         )
         slug = workspace_name_slug((ws_row or {}).get("name") or "")
-        # #2017: sudo posture. The deploy-wide allow_sudo is a ceiling; a
-        # per-workspace settings-bag override (allow_sudo: false) may only
-        # lock the workspace down further, never enable sudo on a deploy
-        # that forbids it. Read live off settings (the app-ownership rule);
-        # applies to newly-created containers.
+        # #2017/#3047: sudo posture. The bag value is the sole source
+        # (absent = off, true opts in); the deploy-wide allow_sudo flag
+        # is only a ceiling — a workspace true can never grant sudo on a
+        # deploy that forbids it. Read live off settings (the
+        # app-ownership rule); applies to newly-created containers.
         allow_sudo = resolve_allow_sudo(
             ws_row, parse_bool_setting(self.app.state.settings.allow_sudo)
         )

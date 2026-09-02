@@ -107,25 +107,28 @@ def test_parse_allow_sudo():
 
 
 def test_resolve_allow_sudo_ceiling():
-    # #2017: deploy allow_sudo is a ceiling. Unset workspace value
-    # follows the deploy posture; an explicit workspace value may only
-    # further restrict (False), never enable sudo above the deploy.
-    assert ws.resolve_allow_sudo({"settings": {}}, True) is True
+    # #2017/#3047: the bag value is the sole posture source — absent
+    # means OFF (locked down). The deploy allow_sudo flag is only a
+    # ceiling ("the box may be checked"): a workspace true can never
+    # grant sudo on a deploy that forbids it, and the flag alone grants
+    # nothing.
+    assert ws.resolve_allow_sudo({"settings": {}}, True) is False
     assert ws.resolve_allow_sudo({"settings": {}}, False) is False
-    assert ws.resolve_allow_sudo({"settings": None}, True) is True
-    assert ws.resolve_allow_sudo(None, True) is True
-    # Lock-down wins even on a sudo-enabled deploy.
+    assert ws.resolve_allow_sudo({"settings": None}, True) is False
+    assert ws.resolve_allow_sudo(None, True) is False
+    # Opt-in wins only on a sudo-enabled deploy.
     assert (
-        ws.resolve_allow_sudo({"settings": {"allow_sudo": False}}, True)
-        is False
+        ws.resolve_allow_sudo({"settings": {"allow_sudo": True}}, True) is True
     )
     # A workspace "true" can never raise sudo past a forbidding deploy.
     assert (
         ws.resolve_allow_sudo({"settings": {"allow_sudo": True}}, False)
         is False
     )
+    # Lock-down stays locked regardless of the deploy flag.
     assert (
-        ws.resolve_allow_sudo({"settings": {"allow_sudo": True}}, True) is True
+        ws.resolve_allow_sudo({"settings": {"allow_sudo": False}}, True)
+        is False
     )
 
 

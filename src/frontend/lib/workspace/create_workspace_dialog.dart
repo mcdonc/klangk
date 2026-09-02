@@ -93,11 +93,10 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
   bool _autoStart = false;
   bool _nixEnabled = false;
 
-  // #2017: per-workspace sudo posture. Starts checked = follow the deploy
-  // posture; unchecking locks this workspace down (no passwordless sudo
-  // even on a sudo-enabled deploy). Only sent when unchecked (True is the
-  // bag's default and the deploy setting stays the ceiling).
-  bool _sudoEnabled = true;
+  // #2017: per-workspace sudo posture. Starts unchecked = locked down
+  // (#3046); checking opts this workspace in (the deploy setting stays
+  // the ceiling). Only sent when unchecked (True is the bag's default).
+  bool _sudoEnabled = false;
   // #2721: home layout. Starts on the deploy default when known; null
   // (unknown) hides the toggle and omits the field.
   bool? _perHandleHome;
@@ -274,9 +273,9 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
     }
     final settings = _collectSettings();
     if (widget.nixAvailable && _nixEnabled) settings['nix'] = true;
-    if (widget.sudoAvailable && !_sudoEnabled) {
-      settings['allow_sudo'] = false;
-    }
+    // #3047: always emit an explicit value when the toggle is shown —
+    // an absent key now means OFF (the bag is the sole posture source).
+    if (widget.sudoAvailable) settings['allow_sudo'] = _sudoEnabled;
     if (settings.isNotEmpty) body['settings'] = settings;
 
     try {
@@ -395,9 +394,9 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
                             ),
                           ),
                         ],
-                        // #2017: per-workspace sudo lock-down (only when the
-                        // deploy allows sudo — it's a ceiling, so the toggle
-                        // can only opt this workspace out).
+                        // #2017/#3046: per-workspace sudo posture (only
+                        // when the deploy allows sudo — it's a ceiling,
+                        // so the toggle can only opt in below it).
                         if (widget.sudoAvailable) ...[
                           const SizedBox(height: 16),
                           Material(
@@ -405,13 +404,12 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
                             child: CheckboxListTile(
                               value: _sudoEnabled,
                               onChanged: (v) =>
-                                  setState(() => _sudoEnabled = v ?? true),
+                                  setState(() => _sudoEnabled = v ?? false),
                               title: const Text('Allow sudo'),
                               subtitle: const Text(
-                                'Uncheck to lock this workspace down '
-                                '(no passwordless sudo) even when the server '
-                                'allows it; applies at the next container '
-                                'start',
+                                'Check to allow passwordless sudo '
+                                '(off by default); applies at the next '
+                                'container start',
                               ),
                               controlAffinity: ListTileControlAffinity.leading,
                               contentPadding: EdgeInsets.zero,

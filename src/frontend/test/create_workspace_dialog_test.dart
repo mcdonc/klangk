@@ -1180,7 +1180,7 @@ void main() {
           find.widgetWithText(CheckboxListTile, 'Allow sudo'), findsOneWidget);
     });
 
-    testWidgets('sends settings.allow_sudo=false when sudo unchecked (#2017)',
+    testWidgets('defaults to unchecked and sends allow_sudo=false (#3046)',
         (tester) async {
       Map<String, dynamic>? postedBody;
       testAuthHttpClientOverride = mockClient((request) async {
@@ -1200,18 +1200,51 @@ void main() {
 
       final sudo = find.widgetWithText(CheckboxListTile, 'Allow sudo');
       await tester.ensureVisible(sudo);
-      await tester.tap(sudo); // starts checked — uncheck locks down
-      await tester.pump();
+      // #3046: starts unchecked (locked down) — no tap needed.
+      expect((tester.widget(sudo) as CheckboxListTile).value, isFalse);
       await tester.enterText(_nameField(), 'Locked');
       await tester.tap(find.text('Create'));
       await tester.pump();
       await tester.pump();
 
       expect(postedBody, isNotNull);
-      // Only the lock-down is emitted: a checked toggle is the bag's
-      // default (follow the deploy posture), and the deploy setting
-      // stays the ceiling (#2017).
+      // The lock-down is emitted by default; opting in emits an explicit
+      // true (#3047 — the bag is the sole posture source, absent = off;
+      // the deploy flag stays the ceiling).
       expect(postedBody!['settings'], {'allow_sudo': false});
+    });
+
+    testWidgets('opting in (check) sends allow_sudo=true (#3047)',
+        (tester) async {
+      Map<String, dynamic>? postedBody;
+      testAuthHttpClientOverride = mockClient((request) async {
+        if (request.url.path == '/api/v1/workspaces' &&
+            request.method == 'POST') {
+          postedBody = jsonDecode(request.body) as Map<String, dynamic>;
+          return http.Response(
+            jsonEncode({'id': 'ws-1', 'name': 'OptIn', 'created_at': ''}),
+            200,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+      await tester.pumpWidget(buildDialog(sudoAvailable: true));
+      await tester.pump(); // post-frame callback
+      await tester.pump(); // dialog renders
+
+      final sudo = find.widgetWithText(CheckboxListTile, 'Allow sudo');
+      await tester.ensureVisible(sudo);
+      await tester.tap(sudo); // starts unchecked — check opts in
+      await tester.pump();
+      await tester.enterText(_nameField(), 'OptIn');
+      await tester.tap(find.text('Create'));
+      await tester.pump();
+      await tester.pump();
+
+      expect(postedBody, isNotNull);
+      // #3047: the bag is the sole posture source — opting in emits an
+      // explicit true (an absent key means OFF).
+      expect(postedBody!['settings'], {'allow_sudo': true});
     });
   });
 }

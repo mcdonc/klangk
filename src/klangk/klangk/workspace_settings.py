@@ -256,11 +256,11 @@ SCHEMA: dict[str, Callable[[str, Any], Any]] = {
     # (Nix.ensure_workspace_nix) when a backend is configured (``nix_seed``,
     # #2219/#2220).
     "nix": coerce_bool,
-    # #2017: per-workspace sudo flag. The deploy-wide ``allow_sudo`` is a
-    # *ceiling*: the workspace value may only further restrict (see
-    # :func:`resolve_allow_sudo`). Defaults to True (follow the deploy
-    # posture); an explicit False locks the workspace down with ``!ALL``
-    # even on a deploy where sudo is on.
+    # #2017/#3047: per-workspace sudo flag. The deploy-wide
+    # ``allow_sudo`` is only a ceiling ("the box may be checked", see
+    # :func:`resolve_allow_sudo`); the bag value is the sole posture
+    # source — absent means sudo is OFF, ``true`` opts in (capped by the
+    # deploy flag), ``false`` locks the workspace down with ``!ALL``.
     "allow_sudo": coerce_bool,
 }
 
@@ -460,17 +460,17 @@ def resolve_tmp_size(
 
 
 def resolve_allow_sudo(workspace: dict | None, deploy_default: bool) -> bool:
-    """Resolve the effective sudo posture for a workspace (#2017).
+    """Resolve the effective sudo posture for a workspace (#2017/#3047).
 
-    Unlike the other resolvers, the deploy-wide ``allow_sudo`` is a
-    **ceiling**, not a fallback the workspace may raise: the per-workspace
-    value defaults to ``True`` (follow the deploy posture) and may only
-    further restrict, so ``effective = workspace AND deploy``. A workspace
-    can lock itself down (``allow_sudo: false`` → ``!ALL`` sudoers rule) on
-    a sudo-enabled deploy, but can never grant itself sudo on a deploy that
-    forbids it.
+    The per-workspace bag value is the **sole posture source**: an
+    absent ``allow_sudo`` key means sudo is OFF (locked down) — a
+    workspace opts in by storing ``allow_sudo: true``. The deploy-wide
+    ``allow_sudo`` flag is only a **ceiling** ("is the box allowed to be
+    checked"): ``effective = workspace AND deploy``, so a workspace
+    ``true`` can never grant sudo on a deploy that forbids it, but the
+    flag itself grants nothing.
     """
-    return bool(resolve(workspace, "allow_sudo", True)) and bool(
+    return bool(resolve(workspace, "allow_sudo", False)) and bool(
         deploy_default
     )
 

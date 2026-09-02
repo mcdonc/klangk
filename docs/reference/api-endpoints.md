@@ -451,8 +451,9 @@ and the branding / feature flags the pre-auth UI needs. An
 default + enabled flag (the egress perimeter is not exposed pre-auth)
 and the deploy-level capability toggles `nix_available` /
 `sudo_available` (#2974 — moved off the images listing; whether the
-per-workspace nix mount can arm, and whether the deploy allows sudo at
-all), plus any feature-declared frontend config keys and
+per-workspace nix mount can arm, and whether the deploy's sudo ceiling
+permits the per-workspace opt-in — sudo itself is off unless the
+workspace's settings store `allow_sudo: true`), plus any feature-declared frontend config keys and
 `features_enable` when set.
 
 **Auth:** None (public payload; authenticated callers get a few extra
@@ -1429,7 +1430,7 @@ keys (unknown keys are rejected with `400`):
 | `pids_limit`     | int     | `--pids-limit` (e.g. `512`).                                                                                      |
 | `tmp_size`       | string  | `/tmp` tmpfs size (e.g. `"4g"`).                                                                                  |
 | `nix`            | bool    | Mount a per-workspace `/nix`.                                                                                     |
-| `allow_sudo`     | bool    | Restrict sudo (deploy `KLANGKD_ALLOW_SUDO` is a ceiling).                                                         |
+| `allow_sudo`     | bool    | Per-workspace sudo opt-in; absent = off (deploy `KLANGKD_ALLOW_SUDO` is a ceiling).                               |
 
 `classification_banner` is the workspace's classification marking,
 rendered as the persistent banner on the workspace page (#2768). Free

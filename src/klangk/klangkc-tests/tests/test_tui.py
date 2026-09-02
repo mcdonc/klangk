@@ -9485,9 +9485,9 @@ async def test_create_screen_sudo_hidden_when_not_available(monkeypatch):
         assert cb.disabled is True
 
 
-async def test_create_screen_sudo_unchecked_sends_lockdown(monkeypatch):
-    """#2017: when the deploy allows sudo the toggle shows (checked);
-    unchecking it sends settings.allow_sudo=False on create."""
+async def test_create_screen_sudo_defaults_to_lockdown(monkeypatch):
+    """#3046: the create toggle defaults to unchecked (lock down), so an
+    untouched create sends settings.allow_sudo=False."""
 
     async def noop(*a, **k):
         return None
@@ -9512,12 +9512,47 @@ async def test_create_screen_sudo_unchecked_sends_lockdown(monkeypatch):
         cs = app.screen
         sudo = cs.query_one("#allow_sudo", Checkbox)
         assert sudo.display is True
-        assert sudo.value is True  # default = follow the deploy posture
-        sudo.value = False  # lock this workspace down
+        assert sudo.value is False  # #3046: default = locked down
         cs.query_one("#name").value = "ws"
         cs._create()
         await app.workers.wait_for_complete()
         assert captured["k"]["settings"] == {"allow_sudo": False}
+
+
+async def test_create_screen_sudo_checked_sends_opt_in(monkeypatch):
+    """#2017/#3047: checking the toggle (opt in) sends an explicit
+    allow_sudo=True — the bag is the sole posture source, so an absent
+    key would mean OFF."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    captured = {}
+
+    def create(name, **k):
+        captured["k"] = k
+        return _wsobj(name)
+
+    app = KlangkApp(
+        _create_state(
+            create=create,
+            deploy_toggles=lambda: (False, True),
+        )
+    )
+    async with app.run_test(size=(140, 40)) as pilot:
+        app.screen.action_create()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        cs = app.screen
+        sudo = cs.query_one("#allow_sudo", Checkbox)
+        assert sudo.display is True
+        assert sudo.value is False  # #3046: default = locked down
+        sudo.value = True  # opt in to sudo
+        cs.query_one("#name").value = "ws"
+        cs._create()
+        await app.workers.wait_for_complete()
+        assert captured["k"]["settings"] == {"allow_sudo": True}
 
 
 # ---------------------------------------------------------------------------
@@ -9941,7 +9976,7 @@ async def test_edit_screen_sudo_hidden_when_not_available(monkeypatch):
 
 async def test_edit_screen_sudo_prepopulated_and_sent(monkeypatch):
     """#2017: the edit toggle reflects settings.allow_sudo (absent =
-    checked = follow the deploy posture) and sends an explicit value on
+    unchecked = locked down, #3046) and sends an explicit value on
     save — the full-replace PUT needs it to revert a stored lock-down."""
 
     async def noop(*a, **k):
@@ -9970,9 +10005,9 @@ async def test_edit_screen_sudo_prepopulated_and_sent(monkeypatch):
 
 
 async def test_edit_screen_sudo_unchecked_sends_lockdown(monkeypatch):
-    """#2017: unchecking the toggle on an unrestricted workspace sends
-    settings.allow_sudo=False (the only restrictive direction — the
-    deploy setting stays the ceiling)."""
+    """#2017/#3046: an absent bag key reads as locked-down in the edit
+    form (matching the create default), so an untouched save stores the
+    lock-down explicitly."""
 
     async def noop(*a, **k):
         return None
@@ -9991,14 +10026,64 @@ async def test_edit_screen_sudo_unchecked_sends_lockdown(monkeypatch):
         await pilot.pause()
         es = app.screen
         sudo = es.query_one("#allow_sudo", Checkbox)
-        assert sudo.value is True  # absent bag key = follow the deploy
-        sudo.value = False  # lock this workspace down
+        assert sudo.value is False  # #3046: absent bag key = locked down
         es.save()
         await app.workers.wait_for_complete()
         assert captured["settings"] == {
             "idle_timeout": 300,
             "allow_sudo": False,
         }
+
+
+async def test_edit_screen_sudo_untouched_absent_no_restart(monkeypatch):
+    """#3047: an absent bag key already means OFF, so an untouched save
+    on a running workspace is not a posture flip — no restart is
+    offered (the sudoers rule is written at container-create time; only
+    an actual flip needs the restart). The image matches the workspace
+    so the image field can't be the trigger."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    ws = _wsobj("alpha", running=True, image="base")
+    app = KlangkApp(_edit_state(ws))
+    async with app.run_test() as pilot:
+        _edit_screen(app, ws, sudo_available=True)
+        await pilot.pause()
+        es = app.screen
+        sudo = es.query_one("#allow_sudo", Checkbox)
+        assert sudo.value is False  # #3046: absent bag key = locked down
+        es.save()  # untouched posture stores the explicit lock-down
+        await app.workers.wait_for_complete()
+        assert not isinstance(app.screen, ConfirmScreen)  # no offer
+
+
+async def test_edit_screen_sudo_optin_to_lockdown_prompts_restart(
+    monkeypatch,
+):
+    """#2017/#3047: unchecking an opted-in workspace is an effective
+    posture flip (true → false) — a restart must be offered (the
+    sudoers rule is written at container-create time)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    ws = _wsobj(
+        "alpha", running=True, image="base", settings={"allow_sudo": True}
+    )
+    app = KlangkApp(_edit_state(ws))
+    async with app.run_test() as pilot:
+        _edit_screen(app, ws, sudo_available=True)
+        await pilot.pause()
+        es = app.screen
+        sudo = es.query_one("#allow_sudo", Checkbox)
+        assert sudo.value is True  # pre-populated from the stored opt-in
+        sudo.value = False  # lock the workspace down
+        es.save()
+        await app.workers.wait_for_complete()
+        assert isinstance(app.screen, ConfirmScreen)  # restart offered
 
 
 async def test_edit_screen_nix_preserves_unmanaged_settings(monkeypatch):
