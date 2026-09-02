@@ -208,6 +208,140 @@ void main() {
     });
   });
 
+  group('WsClient.containerReady (#3000)', () {
+    test('typed container_ready frame marks the container ready', () async {
+      final client = WsClient();
+      final channel = _FakeWebSocketChannel();
+      client.connectForTest(channel);
+      expect(client.containerReady, isFalse);
+
+      channel.serverSend({
+        'type': 'container_ready',
+        'workspaceId': 'ws-1',
+      });
+      await Future.delayed(Duration.zero);
+
+      expect(client.containerReady, isTrue);
+      client.dispose();
+    });
+
+    test('CUSTOM container_ready event marks the container ready', () async {
+      final client = WsClient();
+      final channel = _FakeWebSocketChannel();
+      client.connectForTest(channel);
+
+      channel.serverSend({
+        'type': 'event',
+        'event': {
+          'type': 'CUSTOM',
+          'name': 'container_ready',
+          'value': {},
+        },
+      });
+      await Future.delayed(Duration.zero);
+
+      expect(client.containerReady, isTrue);
+      client.dispose();
+    });
+
+    test('CUSTOM container_stopped event clears the flag', () async {
+      final client = WsClient();
+      final channel = _FakeWebSocketChannel();
+      client.connectForTest(channel);
+      channel.serverSend({
+        'type': 'container_ready',
+        'workspaceId': 'ws-1',
+      });
+      await Future.delayed(Duration.zero);
+      expect(client.containerReady, isTrue);
+
+      channel.serverSend({
+        'type': 'event',
+        'event': {
+          'type': 'CUSTOM',
+          'name': 'container_stopped',
+        },
+      });
+      await Future.delayed(Duration.zero);
+
+      expect(client.containerReady, isFalse);
+      client.dispose();
+    });
+
+    test('socket close clears the flag', () async {
+      final client = WsClient();
+      final channel = _FakeWebSocketChannel();
+      client.connectForTest(channel);
+      channel.serverSend({
+        'type': 'container_ready',
+        'workspaceId': 'ws-1',
+      });
+      await Future.delayed(Duration.zero);
+      expect(client.containerReady, isTrue);
+
+      channel.serverClose();
+      await Future.delayed(Duration.zero);
+
+      expect(client.containerReady, isFalse);
+      client.dispose();
+    });
+
+    test('disconnectWorkspace clears the flag', () async {
+      final client = WsClient();
+      final channel = _FakeWebSocketChannel();
+      client.connectForTest(channel);
+      channel.serverSend({
+        'type': 'container_ready',
+        'workspaceId': 'ws-1',
+      });
+      await Future.delayed(Duration.zero);
+      expect(client.containerReady, isTrue);
+
+      client.disconnectWorkspace();
+
+      expect(client.containerReady, isFalse);
+      client.dispose();
+    });
+
+    test('socket error clears the flag', () async {
+      final client = WsClient();
+      final channel = _FakeWebSocketChannel();
+      client.connectForTest(channel);
+      channel.serverSend({
+        'type': 'container_ready',
+        'workspaceId': 'ws-1',
+      });
+      await Future.delayed(Duration.zero);
+      expect(client.containerReady, isTrue);
+
+      channel.serverError('boom');
+      await Future.delayed(Duration.zero);
+
+      expect(client.containerReady, isFalse);
+      client.dispose();
+    });
+
+    test('unrelated CUSTOM events leave the flag untouched', () async {
+      final client = WsClient();
+      final channel = _FakeWebSocketChannel();
+      client.connectForTest(channel);
+      channel.serverSend({
+        'type': 'container_ready',
+        'workspaceId': 'ws-1',
+      });
+      await Future.delayed(Duration.zero);
+
+      channel.serverSend({
+        'type': 'event',
+        'event': {'type': 'CUSTOM', 'name': 'something_else'},
+      });
+      await Future.delayed(Duration.zero);
+
+      expect(client.containerReady, isTrue);
+      client.dispose();
+    });
+  });
+
   group('WsClient.disconnect', () {
     test('disconnect resets state', () {
       final client = WsClient();

@@ -17,7 +17,16 @@ class _MockWsClient extends WsClient {
   final List<String> sentCommands = [];
   final bool hasWorkspace;
 
-  _MockWsClient({this.hasWorkspace = true});
+  /// #3000: simulates the client having already seen container_ready
+  /// before the widget mounts (typed frame arrived, one-shot CUSTOM event
+  /// lost to a late-mounting terminal).
+  final bool containerReadyOverride;
+
+  _MockWsClient(
+      {this.hasWorkspace = true, this.containerReadyOverride = false});
+
+  @override
+  bool get containerReady => containerReadyOverride;
 
   @override
   Stream<Map<String, dynamic>> get customEvents => _events.stream;
@@ -84,6 +93,74 @@ void main() {
       expect(find.byType(TerminalView), findsNothing);
       await tester.pumpAndSettle();
       expect(find.byType(TerminalView), findsOneWidget);
+      client.close();
+    });
+
+    testWidgets(
+        'starts the terminal without a container_ready event when the '
+        'container was already ready before mount (#3000)', (tester) async {
+      // The #2988 permission-gated Terminal tab can mount after the
+      // one-shot CUSTOM container_ready event fired (the permissions fetch
+      // lost the race to an already-running container). The widget must
+      // catch up from the client's tracked state instead of waiting for
+      // an event that never re-fires.
+      final client = _MockWsClient(containerReadyOverride: true);
+      await tester.pumpWidget(_build(client));
+      await tester.pumpAndSettle();
+
+      // No container_ready was emitted on customEvents — the start must
+      // come from the tracked-state catch-up, at the measured grid.
+      final starts = client.sentCommands
+          .where((c) => c.startsWith('terminal_start:'))
+          .toList();
+      expect(starts.length, 1);
+      final resizes = client.sentCommands
+          .where((c) => c.startsWith('terminal_resize:'))
+          .toList();
+      expect(resizes, isNotEmpty);
+      expect(starts.single.split(':')[1], resizes.last.split(':')[1]);
+      client.close();
+    });
+
+    testWidgets(
+        'does not start the terminal on mount when the container '
+        'was never ready (#3000)', (tester) async {
+      final client = _MockWsClient(containerReadyOverride: false);
+      await tester.pumpWidget(_build(client));
+      await tester.pumpAndSettle();
+
+      expect(client.sentCommands.where((c) => c.startsWith('terminal_start')),
+          isEmpty);
+      client.close();
+    });
+
+    testWidgets('container_stopped disarms a pending catch-up start (#3000)',
+        (tester) async {
+      // Mount with the container already ready (pending start armed at
+      // initState), then the container stops before the first measured
+      // resize — the armed start must not fire into the dead container.
+      final fontGate = Completer<ByteData>();
+      final realFont =
+          await rootBundle.load('assets/fonts/JetBrainsMono-Regular.ttf');
+      GhosttyTerminalState.loadFontAsset = (_) => fontGate.future;
+      addTearDown(() => GhosttyTerminalState.loadFontAsset = rootBundle.load);
+
+      final client = _MockWsClient(containerReadyOverride: true);
+      await tester.pumpWidget(_build(client));
+      expect(find.byType(TerminalView), findsNothing);
+
+      client.emit({
+        'type': 'event',
+        'event': {'type': 'CUSTOM', 'name': 'container_stopped'},
+      });
+      await tester.pump();
+
+      // Font loads, the view lays out and measures — no start may fire.
+      fontGate.complete(realFont);
+      await tester.pumpAndSettle();
+
+      expect(client.sentCommands.where((c) => c.startsWith('terminal_start')),
+          isEmpty);
       client.close();
     });
 

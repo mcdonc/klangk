@@ -120,6 +120,17 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
       _terminal.write(utf8.encode(data));
     });
     _eventSub = widget.wsClient.customEvents.listen(_handleEvent);
+    // #3000: the CUSTOM container_ready event is one-shot, and this widget
+    // can mount after it fired — the Terminal tab is permission-gated
+    // (#2988) and the permissions fetch can lose the race to an already-
+    // running container (a member joining an owner-started workspace gets
+    // container_ready in ~0.2s). Catch up from the client's tracked state:
+    // arm the pending start so the first measured resize creates the PTY,
+    // exactly as if the event had arrived just before mounting. A widget
+    // that mounts before the event still takes the normal event path.
+    if (widget.wsClient.containerReady) {
+      _startPending = true;
+    }
     // When the terminal gains focus (e.g. user clicks the terminal or
     // switches tabs), re-register this tab's browser ID so bridge
     // requests route to the active browser tab.
@@ -289,6 +300,13 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
         // size, so the pty isn't created at the 80x24 seed.
         _startPending = true;
       }
+    } else if (event['type'] == 'CUSTOM' &&
+        event['name'] == 'container_stopped') {
+      // Disarm a pending start (#3000 review): if the container stops
+      // between mount and the first measured resize, the armed start
+      // would otherwise fire into a dead container once layout happens.
+      // A later container_ready re-arms it.
+      _startPending = false;
     }
   }
 
