@@ -37,7 +37,7 @@ operators or integrators to act when upgrading.
   gate), while `POST /volumes` and `DELETE /volumes/{name}` keep
   `manage-volumes` — both seeded Allow for the `admins` group only,
   so non-admin users lose volume list/create/delete access on
-  upgrade (migration m0025 replaces the old rows; custom operator
+  upgrade (migration m0026 replaces the old rows; custom operator
   rows that don't match the seeded shapes survive below the new admin
   rows — re-grant via the ACL editor if a deploy wants self-service
   volumes back). The tab lists and deletes volumes (delete needs
