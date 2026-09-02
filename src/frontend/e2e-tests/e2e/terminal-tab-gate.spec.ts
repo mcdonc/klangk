@@ -58,46 +58,54 @@ async function grantViaAcl(
 }
 
 /** Turn on Flutter's semantics tree so the canvas-rendered tab labels
- *  become visible to text locators. openWorkspace clicks the a11y
- *  invoker when it is already up — the early return covers that case;
- *  the invoker click covers the race where it attached too late for
- *  that (the prompt re-appears a few seconds after each route load). */
+ *  become visible to text locators. The invoker is a zero-sized
+ *  <flt-semantics-placeholder role=button> — not a <button> tag, and with
+ *  no text content — so nothing in the login path can enable semantics
+ *  for us: resolve it by role and click it (the password-history /
+ *  workspace-export pattern). Deciding on the flt-semantics node count,
+ *  not on a tab label, keeps this race-free: a populated tree means
+ *  semantics are on regardless of mount timing (the tab-strip wait is
+ *  the test's own assertion), an empty one means the invoker is still
+ *  there to click. */
 async function ensureSemantics(page: Page) {
-  if (
-    await page
-      .getByText("Files", { exact: true })
-      .first()
-      .isVisible()
-      .catch(() => false)
-  ) {
-    return;
-  }
+  const populated = () =>
+    page.evaluate(() => document.querySelectorAll("flt-semantics *").length);
+  if ((await populated()) > 0) return;
   const btn = page.getByRole("button", { name: /^Enable accessibility$/i });
   await btn.waitFor({ state: "attached", timeout: 30_000 });
   await btn.evaluate((el) => (el as HTMLElement).click());
-  await page.waitForTimeout(500);
+  await expect
+    .poll(populated, {
+      timeout: 15_000,
+      message: "flt-semantics tree populated",
+    })
+    .toBeGreaterThan(0);
 }
 
 /** Owner + workspace + a genuine non-admin member whose ONLY grants are
  *  `permissions`, as direct user ACEs — no role group, so none of the
  *  default buckets' incidental `terminal` leaks in. The only delta
- *  between the two tests below is one ACE. */
+ *  between the two tests below is one ACE. `tag` keeps the per-test
+ *  email prefixes distinct: the tests run in parallel and a shared
+ *  prefix plus a same-millisecond Date.now() would collide on
+ *  registration (duplicate email → hard setup failure). */
 async function setupMemberWithGrants(
   request: APIRequestContext,
+  tag: string,
   permissions: string[],
 ): Promise<{
   memberEmail: string;
   workspaceId: string;
   cleanup: () => Promise<void>;
 }> {
-  const ownerEmail = `term-gate-owner-${Date.now()}@test.example.com`;
+  const ownerEmail = `term-gate-${tag}-owner-${Date.now()}@test.example.com`;
   const owner = await registerUser(request, ownerEmail);
   const { workspaceId, cleanup } = await createWorkspace(
     request,
     owner.headers,
     "term-gate",
   );
-  const memberEmail = `term-gate-member-${Date.now()}@test.example.com`;
+  const memberEmail = `term-gate-${tag}-member-${Date.now()}@test.example.com`;
   const member = await registerUser(request, memberEmail, { admin: false });
   expect(member.userId).toBeTruthy();
   await grantViaAcl(
@@ -117,6 +125,7 @@ test.describe("Terminal tab permission gate (#3023)", () => {
   }) => {
     const { memberEmail, workspaceId, cleanup } = await setupMemberWithGrants(
       request,
+      "files-only",
       ["join-workspace", "files-view"],
     );
     try {
@@ -145,6 +154,7 @@ test.describe("Terminal tab permission gate (#3023)", () => {
   }) => {
     const { memberEmail, workspaceId, cleanup } = await setupMemberWithGrants(
       request,
+      "term-holder",
       ["join-workspace", "files-view", "terminal"],
     );
     try {
