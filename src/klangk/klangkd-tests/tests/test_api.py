@@ -14100,6 +14100,78 @@ class TestContainerEventsAPI:
         assert data["limit"] == 2
         assert data["offset"] == 1
 
+    async def test_workspace_query_matches_id_or_name(
+        self, client, app, admin_user
+    ):
+        """#3006: the unified ``workspace`` param accepts an exact id or a
+        name substring."""
+        headers = await self._admin_headers(client)
+        ws_a = await self._make_workspace(client, headers, "alpha-lab")
+        ws_b = await self._make_workspace(client, headers, "beta-lab")
+        events = app.state.model.container_events
+        await events.record(ws_a, EVENT_START, CAUSE_API, container_id="a-0")
+        await events.record(ws_b, EVENT_START, CAUSE_API, container_id="b-0")
+
+        # An exact id through the unified param narrows like workspace_id.
+        resp = await client.get(
+            "/api/v1/events", headers=headers, params={"workspace": ws_a}
+        )
+        assert resp.status_code == 200, resp.text
+        assert [i["container_id"] for i in resp.json()["items"]] == ["a-0"]
+
+        # A name substring narrows to every workspace whose name matches.
+        resp = await client.get(
+            "/api/v1/events", headers=headers, params={"workspace": "alpha"}
+        )
+        data = resp.json()
+        assert data["total"] == 1
+        assert [i["container_id"] for i in data["items"]] == ["a-0"]
+
+        resp = await client.get(
+            "/api/v1/events", headers=headers, params={"workspace": "lab"}
+        )
+        assert resp.json()["total"] == 2
+
+        # A query matching no id and no name yields an empty page.
+        resp = await client.get(
+            "/api/v1/events", headers=headers, params={"workspace": "nope"}
+        )
+        data = resp.json()
+        assert data["total"] == 0
+        assert data["items"] == []
+
+        # The unified param wins over the legacy exact workspace_id.
+        resp = await client.get(
+            "/api/v1/events",
+            headers=headers,
+            params={"workspace": "alpha", "workspace_id": ws_b},
+        )
+        assert [i["container_id"] for i in resp.json()["items"]] == ["a-0"]
+
+    async def test_empty_workspace_params_are_no_filter(
+        self, client, app, admin_user
+    ):
+        """#3009 review: ``?workspace=`` (empty string) must not degrade
+        into a name-substring filter — ``LIKE '%%'`` matches every *live*
+        workspace and would silently hide deleted-workspace history."""
+        headers = await self._admin_headers(client)
+        events = app.state.model.container_events
+        await events.record(
+            "gone-ws", EVENT_STOP, CAUSE_DELETE, container_id="g-0"
+        )
+        await events.record(
+            "live-ws", EVENT_START, CAUSE_API, container_id="l-0"
+        )
+
+        for key in ("workspace", "workspace_id"):
+            resp = await client.get(
+                "/api/v1/events", headers=headers, params={key: ""}
+            )
+            assert resp.status_code == 200, (key, resp.text)
+            data = resp.json()
+            assert data["total"] == 2, (key, data)
+            assert len(data["items"]) == 2, (key, data)
+
     async def test_deleted_workspace_and_purged_actor_fall_back_to_ids(
         self, client, app, admin_user
     ):

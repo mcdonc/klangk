@@ -420,6 +420,11 @@ sync` report a clear permission-denied error.
   deployments, including the instance-id and volume-label constraints
   that make a restore succeed.
 
+- **`workspace` filter on `GET /api/v1/events` (#3006).** The Admin →
+  Events filter now accepts a workspace name as well as a workspace id:
+  the new `workspace` query param matches an exact id or a workspace-name
+  substring. The legacy `workspace_id` param keeps its exact-id behavior.
+
 - **Live permission lists in the Sharing tab (#2986).** Each role
   bucket (owners, collaborators, coders, spectators) now lists the
   permissions its group actually holds on the workspace, read live
@@ -1847,6 +1852,12 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   custom `features.yaml` if present.
 
 ### Fixed
+
+- **Admin → Events table no longer runs off the screen (#3006).** The
+  table columns now share the panel width — long container ids and
+  network-namespace names ellipsize with a tooltip carrying the full
+  value — instead of laying out wider than the viewport and pushing
+  content past the right-hand screen edge.
 
 - **Blank terminal for members joining a running workspace (#3000).**
   Opening a workspace whose container is already running (e.g. a member
