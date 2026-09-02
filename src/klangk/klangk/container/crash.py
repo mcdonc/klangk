@@ -678,7 +678,7 @@ class CrashRecoveryMonitor:
             )
         except Exception as e:  # pragma: no cover - defensive
             logger.warning("Workspace %s restart: lookup failed: %s", ws_id, e)
-            return None
+            ws = None
         if ws is None:
             self.trackers.pop(ws_id, None)
             logger.info(

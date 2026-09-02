@@ -1315,8 +1315,8 @@ class TestCrashBranchGaps2834:
 
     def test_non_int_exit_code_falls_back_to_plain_exit(self):
         # A defensive non-int ExitCode (inspect payload from a future
-        # podman) must surface as the generic message, not raise on
-        # the > 128 comparison.
+        # podman) surfaces as the generic message: the isinstance guard
+        # skips the signal-kill classification for it.
         cause, msg = classify_death(inspect_dead(exit_code="137"))
         assert (cause, msg) == (
             "exited",
