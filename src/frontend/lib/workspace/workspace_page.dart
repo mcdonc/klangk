@@ -33,6 +33,7 @@ import 'workspace_sharing_panel.dart';
 import 'terminal_tabs_view.dart';
 import 'workspace_connector.dart';
 import 'consent_surface.dart';
+import 'terminal_tab_gate.dart';
 
 class WorkspacePage extends StatefulWidget {
   final String workspaceId;
@@ -467,9 +468,11 @@ class _WorkspacePageState extends State<WorkspacePage> {
       // shares a terminal — swapping the page for an error view with no
       // user action at all. Also gated on `terminal` (#2975 review):
       // without it there is no Terminal tab to render the stream in —
-      // joining would subscribe to PTY frames nothing displays.
+      // joining would subscribe to PTY frames nothing displays. Uses the
+      // same predicate as the tab mount (#3023): no `terminal` → no
+      // Terminal surface at all.
       if (_activeSharedTerminal == null &&
-          _hasPerm('terminal') &&
+          terminalTabAllowed(permissions: _workspacePermissions) &&
           !_hasPerm('code-in-isolation') &&
           _hasPerm('spectate-on-shared-terminals') &&
           wsClient.sharedTerminals.isNotEmpty) {
@@ -721,10 +724,12 @@ class _WorkspacePageState extends State<WorkspacePage> {
             )
           : null,
       featureTabs: _featureTabs,
-      // #2975: no `terminal` permission → no Terminal tab at all (the
+      // #2975/#3023: no `terminal` permission → no Terminal tab at all (the
       // #2886 files-view mount pattern) — `join-workspace` alone renders
       // the workspace, so a files-only member sees exactly the Files tab.
-      terminal: _hasPerm('terminal')
+      // The gate is a pure predicate (terminal_tab_gate.dart) so the
+      // my-permissions wiring is unit-testable directly.
+      terminal: terminalTabAllowed(permissions: _workspacePermissions)
           ? TerminalTabsView(
               wsClient: wsClient,
               terminalKey: _terminalKey,

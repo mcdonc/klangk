@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:klangk_frontend/workspace/workspace_overlays.dart';
 import 'package:klangk_frontend/workspace/consent_surface.dart';
+import 'package:klangk_frontend/workspace/terminal_tab_gate.dart';
 
 void main() {
   Widget wrap(Widget child) => MaterialApp(home: Scaffold(body: child));
@@ -380,6 +381,76 @@ void main() {
         consentSurfaceAllowed(
           egressMode: 'static',
           permissions: ['egress-consent', '*'],
+        ),
+        isFalse,
+      );
+    });
+  });
+
+  /// #3023: the Terminal-tab mount gate. Pure predicate, unit-tested
+  /// directly (the full WorkspacePage cannot be mounted — see the header
+  /// note). Both outcomes pair with the IdeLayout tests
+  /// (ide_layout_test.dart, 'terminal-permission gating (#2975)'):
+  /// false → terminal pane is null → no tab; true → tab mounts with its
+  /// inner gates (`code-in-isolation`, `spectate-on-shared-terminals`)
+  /// unchanged.
+  group('terminalTabAllowed (#3023)', () {
+    test('member whose grants omit terminal sees no Terminal tab', () {
+      // A custom ACL granting files-only access: join-workspace renders
+      // the page, files-view renders the Files tab, no terminal.
+      expect(
+        terminalTabAllowed(
+          permissions: ['join-workspace', 'files-view'],
+        ),
+        isFalse,
+      );
+    });
+
+    test('member holding terminal sees the tab exactly as today', () {
+      expect(
+        terminalTabAllowed(
+          permissions: [
+            'join-workspace',
+            'files-view',
+            'terminal',
+            'code-in-isolation',
+          ],
+        ),
+        isTrue,
+      );
+    });
+
+    test('spectator-style grant (terminal + spectate) mounts the tab', () {
+      expect(
+        terminalTabAllowed(
+          permissions: [
+            'join-workspace',
+            'view',
+            'terminal',
+            'spectate-on-shared-terminals',
+          ],
+        ),
+        isTrue,
+      );
+    });
+
+    test('owner wildcard mounts the tab', () {
+      expect(terminalTabAllowed(permissions: ['*']), isTrue);
+    });
+
+    test('no permissions at all never mounts (fail-closed)', () {
+      expect(terminalTabAllowed(permissions: []), isFalse);
+    });
+
+    test('terminal-like names do not satisfy the gate', () {
+      // Not `terminal`: fail closed on near-miss names.
+      expect(
+        terminalTabAllowed(
+          permissions: [
+            'join-workspace',
+            'share-terminals',
+            'spectate-on-shared-terminals',
+          ],
         ),
         isFalse,
       );
