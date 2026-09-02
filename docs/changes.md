@@ -32,6 +32,23 @@ operators or integrators to act when upgrading.
 
 ### Breaking
 
+- **Volumes are an admin surface (#2993).** `GET /volumes` now checks
+  the new `view-volumes` permission (the admin Volumes tab's listing
+  gate), while `POST /volumes` and `DELETE /volumes/{name}` keep
+  `manage-volumes` — both seeded Allow for the `admins` group only,
+  so non-admin users lose volume list/create/delete access on
+  upgrade (migration m0026 replaces the old rows; custom operator
+  rows that don't match the seeded shapes survive below the new admin
+  rows — re-grant via the ACL editor if a deploy wants self-service
+  volumes back). The tab lists and deletes volumes (delete needs
+  `manage-volumes`); there is no create surface, and
+  `manage-volumes` holders may delete any instance volume. The
+  listing now returns the whole inventory — creator provenance,
+  using-workspace names, search, and paging — in a
+  `{volumes, page, page_size, total}` envelope documented in
+  `docs/reference/api-endpoints.md`; `klangk volumes ls` ships with
+  it, but external API consumers must read the envelope.
+
 - **Deploy-wide consent decider removed (#2976).** The
   `/ws/consent-decider` handshake without a `?workspace=` param is now
   refused (HTTP 403): consent authority is strictly per-workspace

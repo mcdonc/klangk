@@ -239,11 +239,26 @@ class Lifecycle:
                 PRINCIPAL_SYSTEM,
                 system_principal=SYSTEM_EVERYONE,
             )
+        # /volumes: the admin volume surface (#2993) — the listing
+        # gate splits from the write gate per endpoint (GET needs
+        # view-volumes; POST/DELETE keep manage-volumes), both granted
+        # to the admins group like every other admin tab's first-class
+        # resource. The caller-scoped user-id label stays provenance
+        # only. No trailing Deny Everyone row: the JWT middleware
+        # rejects unauthenticated callers before any ACL check, and
+        # default-deny covers the no-match case.
+        for permission in ("view-volumes", "manage-volumes"):
+            await self.app.state.model.acl.add_acl_entry(
+                "/volumes",
+                0 if permission == "view-volumes" else 1,
+                ACTION_ALLOW,
+                permission,
+                PRINCIPAL_GROUP,
+                group_id=admin_group_id,
+            )
         # #2946 self-service surfaces, granted to every authenticated
         # user by default (a deploy that wants them restricted denies
         # or scopes these rows in the ACL editor):
-        #   /volumes    manage-volumes — user-owned volumes (label-
-        #                               scoped per user at runtime)
         #   /images     view-images    — the image listing the
         #                               create/edit UIs read
         # /images gets no trailing Deny Everyone row (#2994): no
@@ -255,22 +270,6 @@ class Lifecycle:
         # deployments.
         # NB: /llm-proxy is NOT here — #2959 gives it its own
         # workspace-token-only gate, independent of the ACL system.
-        await self.app.state.model.acl.add_acl_entry(
-            "/volumes",
-            0,
-            ACTION_ALLOW,
-            "manage-volumes",
-            PRINCIPAL_SYSTEM,
-            system_principal=SYSTEM_AUTHENTICATED,
-        )
-        await self.app.state.model.acl.add_acl_entry(
-            "/volumes",
-            1,
-            ACTION_DENY,
-            "*",
-            PRINCIPAL_SYSTEM,
-            system_principal=SYSTEM_EVERYONE,
-        )
         await self.app.state.model.acl.add_acl_entry(
             "/images",
             0,

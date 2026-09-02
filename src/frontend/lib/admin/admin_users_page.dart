@@ -49,6 +49,10 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
   bool _canServer = false;
   bool _canEvents = false;
   bool _canAcl = false;
+  // The Volumes tab (#2993) splits view from manage: view-volumes
+  // keys the tab (the listing), manage-volumes the delete action.
+  bool _canVolumes = false;
+  bool _canManageVolumes = false;
 
   // Pending invitation count for the tab badge — updated by the
   // _InvitationsTab widget via callback.
@@ -104,6 +108,11 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     // (#2940) — root-equivalent (it can rewrite ACLs on any
     // resource), so it is granted only to administrators.
     _canAcl = auth.hasPermission('/acl', 'manage-acls');
+    // #2993: the Volumes admin tab offers view + delete only — no
+    // create surface. Visibility keys on view-volumes (GET /volumes);
+    // the per-row delete additionally needs manage-volumes.
+    _canVolumes = auth.hasPermission('/volumes', 'view-volumes');
+    _canManageVolumes = auth.hasPermission('/volumes', 'manage-volumes');
   }
 
   Future<void> _loadUsers({int page = 1}) async {
@@ -470,6 +479,7 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     if (_canInvitations) types.add('invitations');
     if (_canServer) types.add('server');
     if (_canEvents) types.add('events');
+    if (_canVolumes) types.add('volumes');
     // The Access Control browser reads /acl/*, gated on
     // `manage-acls` (#2940) — a delegated container-events auditor
     // (#2923) gets only the Events tab, not a dead ACL tab.
@@ -542,6 +552,16 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
         view: const ContainerEventsPanel(),
       );
     }
+    // The Volumes tab (#2993): the deployment's instance-managed
+    // volume inventory — listing plus delete, no create.
+    if (_canVolumes) {
+      addTab(
+        label: 'Volumes',
+        icon: Icons.storage,
+        view: _VolumesTab(
+            key: const ValueKey('volumes-tab'), canManage: _canManageVolumes),
+      );
+    }
     // The Access Control browser reads /acl/*, gated on
     // `manage-acls` (#2940) — shown exactly to its holders.
     if (_canAcl) {
@@ -574,7 +594,8 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
       'invitations' ||
       'groups' ||
       'server' ||
-      'events' =>
+      'events' ||
+      'volumes' =>
         null, // FABs inside tabs
       _ => null,
     };
@@ -1418,6 +1439,275 @@ class _InvitationsTabState extends State<_InvitationsTab> {
 }
 
 // ---------------------------------------------------------------------------
+// Volumes tab
+// ---------------------------------------------------------------------------
+
+/// The Volumes admin tab (#2993): the deployment's instance-managed
+/// volume inventory — view and delete only, no create (volume creation
+/// is runtime-auto per workspace, or the CLI's volume commands). The
+/// tab keys on `view-volumes`; the delete action additionally needs
+/// `manage-volumes`.
+class _VolumesTab extends StatefulWidget {
+  final bool canManage;
+
+  const _VolumesTab({super.key, required this.canManage});
+
+  @override
+  State<_VolumesTab> createState() => _VolumesTabState();
+}
+
+class _VolumesTabState extends State<_VolumesTab> {
+  List<Map<String, dynamic>> _volumes = [];
+  bool _loading = true;
+  String? _error;
+
+  // Server-side pagination / sort / filter state (#2993), mirroring
+  // the sibling admin tabs (q matches volume name, creator handle,
+  // or a using workspace's name).
+  int _page = 1;
+  final int _pageSize = 10;
+  int _total = 0;
+  String _sort = 'created';
+  String _order = 'desc';
+  String _query = '';
+  final TextEditingController _searchController = TextEditingController();
+  Timer? _queryDebounce;
+
+  /// URL-encode a query param map (sorted for stable, cacheable URLs).
+  static String _encodeQuery(Map<String, String> params) {
+    final pairs = <String>[];
+    for (final key in params.keys.toList()..sort()) {
+      pairs.add(
+        '${Uri.encodeQueryComponent(key)}='
+        '${Uri.encodeQueryComponent(params[key]!)}',
+      );
+    }
+    return pairs.join('&');
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _searchController.addListener(() {
+      final value = _searchController.text;
+      if (value == _query) return;
+      _query = value;
+      _queryDebounce?.cancel();
+      _queryDebounce = Timer(
+        const Duration(milliseconds: 300),
+        () => _loadVolumes(page: 1),
+      );
+    });
+    _loadVolumes();
+  }
+
+  @override
+  void dispose() {
+    _queryDebounce?.cancel();
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  /// Select a sort column, or toggle direction if already selected —
+  /// mirrors the sibling tabs (name reads naturally ascending; created
+  /// descending).
+  Future<void> _changeSort(String sortKey) async {
+    if (_sort == sortKey) {
+      setState(() => _order = _order == 'asc' ? 'desc' : 'asc');
+    } else {
+      setState(() {
+        _sort = sortKey;
+        _order = sortKey == 'created' ? 'desc' : 'asc';
+      });
+    }
+    await _loadVolumes(page: 1);
+  }
+
+  Future<void> _loadVolumes({int page = 1}) async {
+    setState(() {
+      _page = page;
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final auth = context.read<AuthService>();
+      final query = <String, String>{
+        'page': '$_page',
+        'page_size': '$_pageSize',
+        'sort': _sort,
+        'order': _order,
+      };
+      final q = _query.trim();
+      if (q.isNotEmpty) query['q'] = q;
+      final resp = await auth.authGet(
+        '/api/v1/volumes?${_encodeQuery(query)}',
+      );
+      if (!mounted) return;
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body) as Map<String, dynamic>;
+        setState(() {
+          _volumes = (data['volumes'] as List).cast<Map<String, dynamic>>();
+          _total = (data['total'] as num).toInt();
+          _loading = false;
+        });
+      } else {
+        setState(() {
+          _error = 'Failed to load volumes: ${resp.statusCode}';
+          _loading = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('[AdminUsersPage] load volumes failed: $e');
+      if (mounted) {
+        setState(() {
+          _error = 'Could not load volumes. Please try again.';
+          _loading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _deleteVolume(Map<String, dynamic> volume) async {
+    final name = volume['name'] as String;
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete Volume'),
+        content: Text(
+          'Delete volume "$name"? Workspaces using it lose its data.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            style: TextButton.styleFrom(foregroundColor: KColors.accentRed),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(
+              backgroundColor: KColors.accentRed,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+    final auth = context.read<AuthService>();
+    final resp = await auth.authDelete('/api/v1/volumes/$name');
+    if (!mounted) return;
+    if (resp.statusCode == 200) {
+      await _loadVolumes();
+    } else {
+      String detail;
+      try {
+        detail = jsonDecode(resp.body)['detail'] ?? 'Error ${resp.statusCode}';
+      } catch (_) {
+        detail = 'Error ${resp.statusCode}';
+      }
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(detail)));
+    }
+  }
+
+  Widget _buildVolumesList() {
+    if (_loading) return const Center(child: CircularProgressIndicator());
+    if (_error != null) return Center(child: Text(_error!));
+    if (_volumes.isEmpty) return const Center(child: Text('No volumes'));
+    return ListView.builder(
+      padding: const EdgeInsets.all(16),
+      itemCount: _volumes.length,
+      itemBuilder: (ctx, i) {
+        final volume = _volumes[i];
+        final name = volume['name'] as String? ?? '';
+        final createdRaw = volume['created'] as String? ?? '';
+        final created =
+            createdRaw.length >= 10 ? createdRaw.substring(0, 10) : createdRaw;
+        // Who created it (#2993): the creator's handle when the user
+        // still exists, else the raw label's leading characters as a
+        // fallback (deleted creator / runtime-created without a
+        // label → provenance only).
+        final handle = volume['created_by'] as String? ?? '';
+        final userId = volume['user_id'] as String? ?? '';
+        final owner = handle.isNotEmpty
+            ? '@$handle'
+            : (userId.length >= 8 ? userId.substring(0, 8) : userId);
+        // Which workspaces mount this volume (#2993).
+        final workspaces = (volume['workspaces'] as List? ?? []).cast<String>();
+        return Card(
+          margin: const EdgeInsets.only(bottom: 8),
+          child: ListTile(
+            leading: const CircleAvatar(
+              backgroundColor: KColors.accentBlue,
+              child: Icon(Icons.storage, color: Colors.white),
+            ),
+            title: Text(name),
+            subtitle: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  owner.isEmpty
+                      ? 'Created $created'
+                      : 'Created $created · by $owner',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: KColors.textSecondary),
+                ),
+                Text(
+                  workspaces.isEmpty
+                      ? 'Unused'
+                      : 'Used by ${workspaces.join(', ')}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: KColors.textSecondary),
+                ),
+              ],
+            ),
+            isThreeLine: true,
+            trailing: widget.canManage
+                ? IconButton(
+                    icon: const Icon(
+                      Icons.delete_outline,
+                      color: KColors.accentRed,
+                    ),
+                    tooltip: 'Delete volume',
+                    onPressed: () => _deleteVolume(volume),
+                  )
+                : null,
+          ),
+        );
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Column(
+        children: [
+          _AdminListToolbar(
+            key: const ValueKey('admin-volumes-toolbar'),
+            columns: const [('Name', 'name'), ('Created', 'created')],
+            sort: _sort,
+            order: _order,
+            onChangeSort: _changeSort,
+            searchController: _searchController,
+            searchHint: 'Filter by name, creator, or workspace…',
+            page: _page,
+            pageSize: _pageSize,
+            total: _total,
+            onPage: (p) => _loadVolumes(page: p),
+          ),
+          Expanded(child: _buildVolumesList()),
+        ],
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Dialogs
 // ---------------------------------------------------------------------------
 
@@ -1932,7 +2222,8 @@ class _AclBrowserTabState extends State<_AclBrowserTab> {
     '/invitations': 'manage-invitations',
     '/server': 'manage-server-schedule',
     '/events': 'manage-events (read-only audit)',
-    '/volumes': 'manage-volumes — self-service volumes (Allow Authenticated)',
+    '/volumes':
+        'view-volumes — the Volumes tab listing; manage-volumes — create/delete',
     '/images': 'view-images — the image/capability listing',
     '/acl': 'manage-acls — root-equivalent, administrators only',
   };

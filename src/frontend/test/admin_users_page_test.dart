@@ -9,6 +9,7 @@ import 'package:klangk_frontend/admin/admin_users_page.dart';
 import 'package:klangk_frontend/admin/server_schedule_panel.dart';
 import 'package:klangk_frontend/auth/auth_service.dart';
 import 'package:klangk_frontend/utils/system_agent.dart';
+import 'package:klangk_frontend/widgets/skeuo_tab.dart';
 import 'package:klangk_frontend/ws/ws_client.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 
@@ -1524,6 +1525,246 @@ void main() {
         find.textContaining('manage-acls — root-equivalent'),
         findsOneWidget,
       );
+    });
+  });
+
+  group('AdminUsersPage volumes tab', () {
+    /// A volume row as `GET /api/v1/volumes` serves it (#2993): name,
+    /// created, the creator label as provenance, the creator's handle,
+    /// and the workspaces mounting it.
+    Map<String, dynamic> _volume(
+      String name,
+      String userId, {
+      String? createdBy,
+      List<String> workspaces = const [],
+    }) =>
+        {
+          'name': name,
+          'created': '2026-01-02T03:04:05Z',
+          'user_id': userId,
+          'created_by': createdBy,
+          'workspaces': workspaces,
+        };
+
+    /// Serve the volume inventory via [volumes] and capture DELETE
+    /// calls into [deletes]; a successful DELETE removes the volume
+    /// from the served list so the reload sees it gone. view-volumes
+    /// keys the tab; manage-volumes the delete action.
+    void serveVolumes(
+      List<Map<String, dynamic>> volumes,
+      List<String> deletes, {
+      bool canManage = true,
+    }) {
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path.contains('/api/v1/config')) {
+          return http.Response(
+            jsonEncode({'login_banner_title': '', 'login_banner': ''}),
+            200,
+          );
+        }
+        if (request.url.path.contains('/api/v1/my-permissions')) {
+          return http.Response(
+            jsonEncode({
+              'user_id': 'admin-user',
+              'email': 'admin@example.com',
+              'permissions': {
+                '/users': ['manage-users'],
+                '/volumes': [
+                  'view-volumes',
+                  if (canManage) 'manage-volumes',
+                ],
+              },
+              'groups': [],
+            }),
+            200,
+          );
+        }
+        if (request.url.path == '/api/v1/volumes' && request.method == 'GET') {
+          // The paged envelope (#2993), honoring q/page/page_size the
+          // way the backend does (q matches name, handle, workspace).
+          final q = (request.url.queryParameters['q'] ?? '').toLowerCase();
+          final page = int.parse(request.url.queryParameters['page'] ?? '1');
+          final pageSize =
+              int.parse(request.url.queryParameters['page_size'] ?? '10');
+          bool matches(Map<String, dynamic> v) {
+            final handle = (v['created_by'] as String?) ?? '';
+            final workspaces = (v['workspaces'] as List).cast<String>();
+            return (v['name'] as String).toLowerCase().contains(q) ||
+                handle.toLowerCase().contains(q) ||
+                workspaces.any((w) => w.toLowerCase().contains(q));
+          }
+
+          final filtered =
+              q.isEmpty ? volumes : volumes.where(matches).toList();
+          final start = (page - 1) * pageSize;
+          return http.Response(
+            jsonEncode({
+              'volumes': filtered.skip(start).take(pageSize).toList(),
+              'page': page,
+              'page_size': pageSize,
+              'total': filtered.length,
+            }),
+            200,
+          );
+        }
+        if (request.url.path.startsWith('/api/v1/volumes/') &&
+            request.method == 'DELETE') {
+          deletes.add(request.url.path);
+          volumes.removeWhere(
+            (v) => '/api/v1/volumes/${v['name']}' == request.url.path,
+          );
+          return http.Response('{}', 200);
+        }
+        if (request.url.path == '/api/v1/users') {
+          return http.Response(_usersEnvelope([]), 200);
+        }
+        return http.Response('Not found', 404);
+      });
+    }
+
+    /// The Volumes tab in the tab strip (the ACL browser sidebar also
+    /// labels a 'Volumes' node, so scope to the SkeuoTab row).
+    Finder volumesTab() => find.ancestor(
+          of: find.text('Volumes'),
+          matching: find.byType(SkeuoTab),
+        );
+
+    /// The Volumes tab's toolbar (the sibling tabs' toolbars are also
+    /// built inside the IndexedStack — scope to this one's key).
+    Finder inVolumesToolbar(Finder inner) => find.descendant(
+          of: find.byKey(const ValueKey('admin-volumes-toolbar')),
+          matching: inner,
+        );
+
+    testWidgets('lists the inventory with creator and usage', (tester) async {
+      final deletes = <String>[];
+      serveVolumes([
+        _volume(
+          'ws-cache',
+          'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+          createdBy: 'alice',
+          workspaces: ['ws-one', 'ws-two'],
+        ),
+        _volume('extra-mount', '11111111-2222-3333-4444-555555555555'),
+      ], deletes);
+
+      await pumpPage(tester);
+
+      expect(volumesTab(), findsOneWidget);
+      await tester.tap(volumesTab());
+      await tester.pumpAndSettle();
+
+      // The toolbar is there with its search field.
+      expect(
+        find.byKey(const ValueKey('admin-volumes-toolbar')),
+        findsOneWidget,
+      );
+      expect(inVolumesToolbar(find.byType(TextField)), findsOneWidget);
+      expect(find.text('ws-cache'), findsOneWidget);
+      expect(find.text('extra-mount'), findsOneWidget);
+      // The creator's handle shows (@alice); a volume with no resolvable
+      // creator falls back to the raw label's leading characters.
+      expect(find.textContaining('by @alice'), findsOneWidget);
+      expect(find.textContaining('by 11111111'), findsOneWidget);
+      // Workspace usage: named per volume, 'Unused' when none mount it.
+      expect(find.text('Used by ws-one, ws-two'), findsOneWidget);
+      expect(find.text('Unused'), findsOneWidget);
+      expect(find.byTooltip('Delete volume'), findsNWidgets(2));
+      expect(deletes, isEmpty);
+    });
+
+    testWidgets('search filters the listing server-side', (tester) async {
+      final deletes = <String>[];
+      serveVolumes([
+        _volume('ws-cache', 'aaaaaaaa', createdBy: 'alice'),
+        _volume('extra-mount', '11111111', createdBy: 'bob'),
+      ], deletes);
+
+      await pumpPage(tester);
+      await tester.tap(volumesTab());
+      await tester.pumpAndSettle();
+
+      await tester.enterText(
+        inVolumesToolbar(find.byType(TextField)),
+        'ws-cache',
+      );
+      // The 300ms debounce fires, the fetch runs, the list narrows.
+      await tester.pump(const Duration(milliseconds: 350));
+      await tester.pumpAndSettle();
+
+      // Scoped to the list: the search field itself holds the text.
+      expect(
+        find.descendant(of: find.byType(Card), matching: find.text('ws-cache')),
+        findsOneWidget,
+      );
+      expect(find.text('extra-mount'), findsNothing);
+      expect(deletes, isEmpty);
+    });
+
+    testWidgets('deletes after a confirmation', (tester) async {
+      final deletes = <String>[];
+      serveVolumes([_volume('ws-cache', 'aaaaaaaa')], deletes);
+
+      await pumpPage(tester);
+      await tester.tap(volumesTab());
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('Delete volume'));
+      await tester.pumpAndSettle();
+      expect(find.text('Delete Volume'), findsOneWidget);
+      await tester.tap(find.widgetWithText(FilledButton, 'Delete'));
+      await tester.pumpAndSettle();
+
+      expect(deletes, ['/api/v1/volumes/ws-cache']);
+      expect(find.text('No volumes'), findsOneWidget);
+    });
+
+    testWidgets('view-only holder lists but gets no delete action',
+        (tester) async {
+      final deletes = <String>[];
+      serveVolumes([_volume('ws-cache', 'aaaaaaaa')], deletes,
+          canManage: false);
+
+      await pumpPage(tester);
+      await tester.tap(volumesTab());
+      await tester.pumpAndSettle();
+
+      expect(find.text('ws-cache'), findsOneWidget);
+      expect(find.byTooltip('Delete volume'), findsNothing);
+      expect(deletes, isEmpty);
+    });
+
+    testWidgets('hides the Volumes tab without view-volumes', (tester) async {
+      // manage-users only — no /volumes grant, so no Volumes tab.
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path.contains('/api/v1/config')) {
+          return http.Response(
+            jsonEncode({'login_banner_title': '', 'login_banner': ''}),
+            200,
+          );
+        }
+        if (request.url.path.contains('/api/v1/my-permissions')) {
+          return http.Response(
+            jsonEncode({
+              'user_id': 'admin-user',
+              'email': 'admin@example.com',
+              'permissions': {
+                '/users': ['manage-users'],
+              },
+              'groups': [],
+            }),
+            200,
+          );
+        }
+        if (request.url.path == '/api/v1/users') {
+          return http.Response(_usersEnvelope([]), 200);
+        }
+        return http.Response('Not found', 404);
+      });
+
+      await pumpPage(tester);
+
+      expect(volumesTab(), findsNothing);
     });
   });
 }

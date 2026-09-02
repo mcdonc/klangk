@@ -73,6 +73,7 @@ from klangk.model.migrations import m0022_workspace_permission_renames
 from klangk.model.migrations import m0023_self_service_resources
 from klangk.model.migrations import m0024_join_workspace_permission
 from klangk.model.migrations import m0025_drop_dead_images_deny_row
+from klangk.model.migrations import m0026_volumes_admin_surface
 from klangk.model.migrations.base import Migration
 
 __all__ = ["MIGRATIONS", "Migration", "run_migrations"]
@@ -106,6 +107,7 @@ MIGRATIONS: list[Migration] = [
     m0023_self_service_resources.migration,
     m0024_join_workspace_permission.migration,
     m0025_drop_dead_images_deny_row.migration,
+    m0026_volumes_admin_surface.migration,
 ]
 
 

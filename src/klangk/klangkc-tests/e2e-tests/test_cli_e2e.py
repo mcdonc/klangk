@@ -1518,7 +1518,14 @@ class TestAllowedMountRoots:
 
 
 class TestVolumeUserIsolation:
-    """Verify that a user cannot mount another user's volume."""
+    """Volume ownership is isolated at runtime; management is admin-only.
+
+    Mounting another user's named volume is rejected at container
+    assembly (``ensure_volumes``, no HTTP ACL involved), while the
+    ``volumes`` CLI surface — list, create, delete — is the #2993
+    admin surface: seeded Allow for the admins group only, so a plain
+    registered user is denied on every command.
+    """
 
     @pytest.fixture(autouse=True, scope="class")
     @staticmethod
@@ -1615,47 +1622,50 @@ class TestVolumeUserIsolation:
                 capture_output=True,
             )
 
-    def test_volumes_ls_only_own(self):
-        """Each user only sees their own volumes via 'volumes ls'."""
+    def test_volumes_non_admin_denied(self):
+        """A plain registered user is denied the whole volumes surface
+        (#2993): list, create, and delete all fail with a nonzero
+        exit."""
+        env_b = self._env_b
+
+        result = run(["klangk", "volumes", "create", "vol-b"], env=env_b)
+        assert result.returncode != 0
+        assert "403" in result.stderr or "denied" in result.stderr.lower()
+
+        result = run(["klangk", "volumes", "ls", "--plain"], env=env_b)
+        assert result.returncode != 0
+        assert "403" in result.stderr or "denied" in result.stderr.lower()
+
+        # rm has an explicit 403 path: a clean 'Permission denied' error.
+        result = run(["klangk", "volumes", "rm", "vol-b"], env=env_b)
+        assert result.returncode != 0
+        assert "Permission denied" in result.stderr
+
+    def test_volumes_admin_manages_all_volumes(self):
+        """The admin holds the whole surface: create, list (the whole
+        instance inventory), and delete — including deleting a volume
+        while a non-admin is refused on the same name (#2993)."""
         env_a = self._env_a
         env_b = self._env_b
 
-        # User A creates a volume
         result = run(["klangk", "volumes", "create", "vol-a"], env=env_a)
         assert result.returncode == 0
         try:
-            # User B creates a volume
-            result = run(["klangk", "volumes", "create", "vol-b"], env=env_b)
-            assert result.returncode == 0
-            try:
-                # User A should see vol-a but not vol-b
-                result = run(["klangk", "volumes", "ls", "--plain"], env=env_a)
-                assert "vol-a" in result.stdout
-                assert "vol-b" not in result.stdout
+            # The non-admin cannot delete what the admin created.
+            result = run(["klangk", "volumes", "rm", "vol-a"], env=env_b)
+            assert result.returncode != 0
+            assert "Permission denied" in result.stderr
 
-                # User B should see vol-b but not vol-a
-                result = run(["klangk", "volumes", "ls", "--plain"], env=env_b)
-                assert "vol-b" in result.stdout
-                assert "vol-a" not in result.stdout
-            finally:
-                run(["klangk", "volumes", "rm", "vol-b"], env=env_b)
+            # The admin lists the instance inventory and deletes from it.
+            result = run(["klangk", "volumes", "ls", "--plain"], env=env_a)
+            assert result.returncode == 0
+            assert "vol-a" in result.stdout
         finally:
             run(["klangk", "volumes", "rm", "vol-a"], env=env_a)
 
-    def test_volumes_rm_other_user_rejected(self):
-        """A user cannot delete another user's volume."""
-        env_a = self._env_a
-        env_b = self._env_b
-
-        # User A creates a volume
-        result = run(["klangk", "volumes", "create", "vol-private"], env=env_a)
+        result = run(["klangk", "volumes", "ls", "--plain"], env=env_a)
         assert result.returncode == 0
-        try:
-            # User B tries to delete it — should fail
-            result = run(["klangk", "volumes", "rm", "vol-private"], env=env_b)
-            assert result.returncode != 0
-        finally:
-            run(["klangk", "volumes", "rm", "vol-private"], env=env_a)
+        assert "vol-a" not in result.stdout
 
 
 class TestTerminalSharing:

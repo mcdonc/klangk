@@ -225,10 +225,15 @@ def volumes_list(
     """List klangk-managed container volumes."""
     context.require_auth()
     client = context.client()
-    resp = client.get("/api/v1/volumes")
+    resp = client.get("/api/v1/volumes?page_size=200")
     client.check_auth(resp)
     resp.raise_for_status()
-    volumes = resp.json()
+    # Paged envelope (#2993): {volumes, page, page_size, total}. The
+    # explicit page_size keeps the whole inventory on one page (the
+    # server default is 10 — the invitations-listing precedent);
+    # .get() degrades to an empty listing against a pre-envelope
+    # server shape, like the sibling envelope readers.
+    volumes = resp.json().get("volumes", [])
     if not volumes:
         typer.echo("No volumes.")
         return

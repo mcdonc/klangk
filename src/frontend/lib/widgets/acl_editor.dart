@@ -79,6 +79,7 @@ class AclEditorState extends State<AclEditor> {
     'manage-events',
     'search-users',
     'manage-volumes',
+    'view-volumes',
     'view-images',
   ];
 

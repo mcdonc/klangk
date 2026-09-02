@@ -24,6 +24,7 @@ Klangk uses an Access Control List (ACL) system to manage permissions. Instead o
 ├── /server                    (flat — lifecycle schedules)
 ├── /events                    (flat — read-only audit)
 ├── /acl                       (flat — the ACL editor itself)
+├── /volumes                   (flat — the admin volume inventory)
 └── /admin                     (marker only — nothing checks here, #2944)
 ```
 
@@ -47,8 +48,8 @@ Klangk uses an Access Control List (ACL) system to manage permissions. Instead o
 | `/events`      | Deny   | Everyone      | `*`                      |
 | `/acl`         | Allow  | group:admins  | `manage-acls`            |
 | `/acl`         | Deny   | Everyone      | `*`                      |
-| `/volumes`     | Allow  | Authenticated | `manage-volumes`         |
-| `/volumes`     | Deny   | Everyone      | `*`                      |
+| `/volumes`     | Allow  | group:admins  | `view-volumes`           |
+| `/volumes`     | Allow  | group:admins  | `manage-volumes`         |
 | `/images`      | Allow  | Authenticated | `view-images`            |
 | `/images`      | Deny   | Everyone      | `*`                      |
 | `/admin`       | Allow  | group:admins  | `*` (admin marker only)  |
@@ -72,6 +73,18 @@ requests are rejected by the JWT middleware before any ACL check.
 permissions on `/images` include the `view` inherited from `/` —
 visible in `/my-permissions`; nothing checks it.)
 
+`/volumes` is the one `manage-*` resource whose read side is split
+out (#2993): the admin Volumes tab lists and deletes volumes, and a
+read-only "volumes auditor" delegation makes sense, so
+`GET /volumes` checks `view-volumes` while `POST`/`DELETE` check
+`manage-volumes` — the action-specific naming pattern of
+`/acl`+`manage-acls`, `/server`+`manage-server-schedule`, and
+`/images`+`view-images`. The volume listing shows the deployment's
+whole instance-managed inventory (the per-user creator label is
+provenance, not an access filter). Deploys that want self-service
+volumes back grant `manage-volumes` to `Authenticated` or a group via
+the ACL editor. No trailing Deny Everyone row is seeded on `/volumes` either,
+for the same reason.
 ### Granting workspace creation to non-admin users
 
 By default only administrators can create workspaces (#2569). To allow
@@ -191,8 +204,10 @@ all, #2886).
 ### First-class resource permissions
 
 Every governed surface is a first-class top-level resource (#2944);
-each carries **one** flat `manage-*` permission covering all of its
-actions — no per-action splits:
+each carries a flat `manage-*` permission covering its actions. The
+one split: `/volumes` also has a read-side `view-volumes` (#2993) —
+the listing gate of its admin tab, separate from `manage-volumes` so
+a read-only volumes auditor can be delegated:
 
 | Permission               | Where it is checked | Controls                                                                                                                                                              |
 | ------------------------ | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -203,9 +218,9 @@ actions — no per-action splits:
 | `manage-server-schedule` | `/server`           | Server stop/recycle schedules: list, create, cancel                                                                                                                   |
 | `manage-events`          | `/events`           | Read the container start/stop history (`GET /events`) — read-only audit                                                                                               |
 | `manage-acls`            | `/acl`              | The Access Control browser: read and rewrite ACL entries on **any** resource via `GET/PUT /acl/*` — root-equivalent, see below                                        |
-| `manage-volumes`         | `/volumes`          | Self-service volumes (still label-scoped to the caller at runtime) — Allow Authenticated by default (#2946)                                                           |
-| `view-images`            | `/images`           | The image listing the create/edit UIs read (#2946; Allow Authenticated by default — the deliberate, ACL-editor-modifiable exception, #2974)                           |
-| `search-users`           | `/users`            | The member-picker type-ahead (`GET /users/search`) — Allow Authenticated by default (#2946)                                                                           |
+| `view-volumes`           | `/volumes`          | The volume inventory listing (`GET /volumes`) — the admin Volumes tab's gate; Allow group:admins by default (#2993)                                                   |
+| `manage-volumes`         | `/volumes`          | Create/delete instance-managed volumes (`POST /volumes`, `DELETE /volumes/{name}`) — Allow group:admins by default (#2993); the CLI's volume commands use it too      |
+| `view-images`            | `/images`           | The image listing the create/edit UIs read (#2946; Allow Authenticated by default — the deliberate, ACL-editor-modifiable exception, #2974)                           || `search-users`           | `/users`            | The member-picker type-ahead (`GET /users/search`) — Allow Authenticated by default (#2946)                                                                           |
 | `admin`                  | `/admin`            | The instance-administrator **marker** only (`*` row); nothing checks it anywhere anymore (#2944, #2946 — the transfer gate now checks `transfer-workspace`)           |
 
 `PUT /acl/resource` additionally requires `share-advanced` on the target

@@ -4652,9 +4652,14 @@ class TestVolumes:
         client.get.return_value = MagicMock(
             status_code=200,
             json=MagicMock(
-                return_value=[
-                    {"name": "vol-1", "created": "2026-01-01T00:00:00Z"},
-                ]
+                return_value={
+                    "volumes": [
+                        {"name": "vol-1", "created": "2026-01-01T00:00:00Z"},
+                    ],
+                    "page": 1,
+                    "page_size": 10,
+                    "total": 1,
+                }
             ),
         )
         monkeypatch.setattr(context_mod, "client", lambda: client)
@@ -4666,13 +4671,33 @@ class TestVolumes:
         assert result.exit_code == 0
         assert "vol-1" in result.stdout
 
+    def test_volumes_ls_requests_full_page(self, logged_in_cfg, monkeypatch):
+        """#2993 review: the listing request must pin page_size=200 —
+        the server default is 10, and a bare GET silently hid every
+        volume past the newest ten from the admin."""
+        from klangk.cli import main
+
+        client = MagicMock()
+        client.get.return_value = MagicMock(
+            status_code=200,
+            json=MagicMock(return_value={"volumes": [], "total": 0}),
+        )
+        monkeypatch.setattr(context_mod, "client", lambda: client)
+
+        from typer.testing import CliRunner
+
+        runner = CliRunner()
+        result = runner.invoke(main.app, ["volumes", "ls"])
+        assert result.exit_code == 0
+        assert "page_size=200" in client.get.call_args.args[0]
+
     def test_volumes_ls_empty(self, logged_in_cfg, monkeypatch):
         from klangk.cli import main
 
         client = MagicMock()
         client.get.return_value = MagicMock(
             status_code=200,
-            json=MagicMock(return_value=[]),
+            json=MagicMock(return_value={"volumes": [], "total": 0}),
         )
         monkeypatch.setattr(context_mod, "client", lambda: client)
 
@@ -4690,7 +4715,10 @@ class TestVolumes:
         client.get.return_value = MagicMock(
             status_code=200,
             json=MagicMock(
-                return_value=[{"name": "vol-1", "created": "2026-01-01"}]
+                return_value={
+                    "volumes": [{"name": "vol-1", "created": "2026-01-01"}],
+                    "total": 1,
+                }
             ),
         )
         monkeypatch.setattr(context_mod, "client", lambda: client)

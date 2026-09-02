@@ -4,6 +4,7 @@ former files and images submodules (images.py was misnamed: it lists
 volumes too)."""
 
 import io
+import json
 import logging
 import posixpath
 
@@ -253,23 +254,133 @@ async def list_images(
 # --- Volume management ---
 
 
+def _named_volume_sources(mounts) -> list[str]:
+    """The named-volume sources in a workspace's mounts list.
+
+    A mount spec is ``<source>:<dest>``; a source with no ``/`` that
+    doesn't start with ``.`` is a named volume — the same rule as
+    ``container.spec.is_named_volume``, inlined so the api layer
+    doesn't reach into the container package.
+    """
+    sources = []
+    for spec in mounts or []:
+        source = spec.split(":")[0]
+        if "/" not in source and not source.startswith("."):
+            sources.append(source)
+    return sources
+
+
+def _volume_usage_map(rows) -> dict[str, list[str]]:
+    """Volume name → the workspace names whose mounts use it (#2993)."""
+    usage: dict[str, list[str]] = {}
+    for row in rows:
+        mounts = json.loads(row["mounts"]) if row["mounts"] else None
+        for source in _named_volume_sources(mounts):
+            usage.setdefault(source, []).append(row["name"])
+    for names in usage.values():
+        names.sort()
+    return usage
+
+
+async def _creator_handles(app, volumes) -> dict[str, str | None]:
+    """Creator ``klangk.user-id`` label → the user's handle (#2993).
+
+    A label whose user no longer exists (deleted creator) maps to
+    ``None`` — the id stays in ``user_id`` as provenance.
+    """
+    handles: dict[str, str | None] = {}
+    for v in volumes:
+        uid = (v.get("Labels") or {}).get("klangk.user-id")
+        if not uid or uid in handles:
+            continue
+        creator = await app.state.model.users.get_user_by_id(uid)
+        handles[uid] = (creator or {}).get("handle") or None
+    return handles
+
+
+def _volume_matches(item: dict, needle: str) -> bool:
+    """Whether a listing row matches the search needle — volume name,
+    creator handle, or a using workspace's name (case-insensitive)."""
+    return (
+        needle in item["name"].lower()
+        or needle in (item["created_by"] or "").lower()
+        or any(needle in w.lower() for w in item["workspaces"])
+    )
+
+
+def _sort_volume_items(items: list[dict], sort: str, order: str) -> None:
+    """Sort listing rows in place by the whitelisted key (``name`` or
+    ``created``; unknown → created) with the name tiebreaker always
+    ascending — the list_users/list_workspaces posture (``ORDER BY col
+    DESC, id``). Two stable sorts: name first, then the primary key.
+    ``created`` is podman's RFC3339Nano string; lexicographic order is
+    exact within one UTC offset (the stored-format reality of this
+    field) and approximate across a DST boundary.
+    """
+    primary = "name" if sort == "name" else "created"
+    items.sort(key=lambda it: it["name"])
+    items.sort(
+        key=lambda it: it[primary] or "",
+        reverse=order.lower() == "desc",
+    )
+
+
 @router.get("/volumes")
 async def list_volumes(
-    user: dict = Depends(acl.has_permission("manage-volumes")),
+    page: int = 1,
+    page_size: int = 10,
+    sort: str = "created",
+    order: str = "desc",
+    q: str | None = None,
+    _user: dict = Depends(acl.has_permission("view-volumes")),
     app=Depends(get_app_dep),
 ):
+    """The whole instance-managed volume inventory (#2993).
+
+    The admin tab's listing gate is ``view-volumes`` (the tab's
+    visibility keys on it); ``manage-volumes`` covers create/delete.
+    The ``klangk.user-id`` label is surfaced as provenance, not used
+    as an access filter — an admin operating the tab sees every
+    volume this instance manages, who created it (``created_by``, the
+    creator's handle), and which workspaces mount it (``workspaces``).
+
+    Server-side paginated/sorted/filtered like the other admin tabs:
+    ``q`` matches volume name, creator handle, or a using workspace
+    name (case-insensitive substring); ``sort`` is ``name`` | ``created``;
+    returns the paged envelope ``{volumes, page, page_size, total}``.
+    """
     volumes = await app.state.podman.list_volumes(
         f"klangk.instance={app.state.util.instance_id()}"
     )
-    uid = user["id"]
-    return [
+    usage = _volume_usage_map(
+        await app.state.model.workspaces.workspace_mount_rows()
+    )
+    handles = await _creator_handles(app, volumes)
+    items = [
         {
             "name": v["Name"],
             "created": v.get("CreatedAt", ""),
+            "user_id": (v.get("Labels") or {}).get("klangk.user-id"),
+            "created_by": handles.get(
+                (v.get("Labels") or {}).get("klangk.user-id")
+            ),
+            "workspaces": usage.get(v["Name"], []),
         }
         for v in volumes
-        if (v.get("Labels") or {}).get("klangk.user-id") == uid
     ]
+    if q:
+        needle = q.lower()
+        items = [it for it in items if _volume_matches(it, needle)]
+    _sort_volume_items(items, sort, order)
+    page = max(1, page)
+    page_size = max(1, min(page_size, 200))
+    start = (page - 1) * page_size
+    return {
+        "volumes": items[start : start + page_size],
+        "page": page,
+        "page_size": page_size,
+        "total": len(items),
+    }
 
 
 class CreateVolumeRequest(BaseModel):
@@ -295,7 +406,7 @@ async def create_volume(
     # name in the body. 500-vs-200 still hints at existence, but no
     # longer with a 409 + echoed detail (#2973). In-instance cross-user
     # names still 409 (issue scope: instance-managed volumes only; the
-    # admin-surface rework, #2989, narrows who can call this at all).
+    # admin-surface rework, #2993, narrows who can call this at all).
     info = await app.state.podman.create_volume(
         body.name,
         {
@@ -310,9 +421,16 @@ async def create_volume(
 @router.delete("/volumes/{name}")
 async def delete_volume(
     name: str,
-    user: dict = Depends(acl.has_permission("manage-volumes")),
+    _user: dict = Depends(acl.has_permission("manage-volumes")),
     app=Depends(get_app_dep),
 ):
+    """Delete an instance-managed volume (#2993).
+
+    ``manage-volumes`` is the whole gate — the surface is admin-only
+    by seed, so the former per-user label check is gone (the admin
+    tab lists and deletes any volume this instance manages). The
+    creator label stays on the row as provenance.
+    """
     info = await app.state.podman.inspect_volume(name)
     if info is None:
         raise HTTPException(status_code=404, detail="Volume not found")
@@ -321,11 +439,6 @@ async def delete_volume(
         raise HTTPException(
             status_code=404,
             detail="Volume not managed by this Klangk instance",
-        )
-    if labels.get("klangk.user-id") != user["id"]:
-        raise HTTPException(
-            status_code=403,
-            detail="Volume belongs to another user",
         )
     try:
         await app.state.podman.remove_volume(name)
