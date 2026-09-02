@@ -425,14 +425,18 @@ class WsClient extends ChangeNotifier {
   };
 
   /// Forward a CUSTOM event to [customEvents], tracking the container's
-  /// readiness so late-mounting widgets can query it (#3000).
+  /// readiness so late-mounting widgets can query it (#3000). Matches the
+  /// widget-side `_handleEvent` strictness: only CUSTOM container events
+  /// move the flag.
   void _onCustomEvent(Map<String, dynamic> json) {
     final event = json['event'] as Map<String, dynamic>?;
-    final name = event?['name'] as String?;
-    if (name == 'container_ready') {
-      _containerReady = true;
-    } else if (name == 'container_stopped') {
-      _containerReady = false;
+    if (event?['type'] == 'CUSTOM') {
+      final name = event!['name'] as String?;
+      if (name == 'container_ready') {
+        _containerReady = true;
+      } else if (name == 'container_stopped') {
+        _containerReady = false;
+      }
     }
     _customEventController.add(json);
   }
@@ -512,6 +516,9 @@ class WsClient extends ChangeNotifier {
         _errorController.add(WsError(message: 'WebSocket error: $e'));
         _stopHeartbeat();
         _connected = false;
+        // #3000: same invariant as onDone — readiness does not survive the
+        // socket that reported it.
+        _containerReady = false;
         _pendingWorkspaceId ??= _currentWorkspaceId;
         _currentWorkspaceId = null;
         terminalWindows = [];

@@ -303,6 +303,24 @@ void main() {
       client.dispose();
     });
 
+    test('socket error clears the flag', () async {
+      final client = WsClient();
+      final channel = _FakeWebSocketChannel();
+      client.connectForTest(channel);
+      channel.serverSend({
+        'type': 'container_ready',
+        'workspaceId': 'ws-1',
+      });
+      await Future.delayed(Duration.zero);
+      expect(client.containerReady, isTrue);
+
+      channel.serverError('boom');
+      await Future.delayed(Duration.zero);
+
+      expect(client.containerReady, isFalse);
+      client.dispose();
+    });
+
     test('unrelated CUSTOM events leave the flag untouched', () async {
       final client = WsClient();
       final channel = _FakeWebSocketChannel();

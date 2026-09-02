@@ -134,6 +134,36 @@ void main() {
       client.close();
     });
 
+    testWidgets('container_stopped disarms a pending catch-up start (#3000)',
+        (tester) async {
+      // Mount with the container already ready (pending start armed at
+      // initState), then the container stops before the first measured
+      // resize — the armed start must not fire into the dead container.
+      final fontGate = Completer<ByteData>();
+      final realFont =
+          await rootBundle.load('assets/fonts/JetBrainsMono-Regular.ttf');
+      GhosttyTerminalState.loadFontAsset = (_) => fontGate.future;
+      addTearDown(() => GhosttyTerminalState.loadFontAsset = rootBundle.load);
+
+      final client = _MockWsClient(containerReadyOverride: true);
+      await tester.pumpWidget(_build(client));
+      expect(find.byType(TerminalView), findsNothing);
+
+      client.emit({
+        'type': 'event',
+        'event': {'type': 'CUSTOM', 'name': 'container_stopped'},
+      });
+      await tester.pump();
+
+      // Font loads, the view lays out and measures — no start may fire.
+      fontGate.complete(realFont);
+      await tester.pumpAndSettle();
+
+      expect(client.sentCommands.where((c) => c.startsWith('terminal_start')),
+          isEmpty);
+      client.close();
+    });
+
     testWidgets('sends terminal_start on container_ready', (tester) async {
       final client = _MockWsClient();
       await tester.pumpWidget(_build(client));

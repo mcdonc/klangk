@@ -300,6 +300,13 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
         // size, so the pty isn't created at the 80x24 seed.
         _startPending = true;
       }
+    } else if (event['type'] == 'CUSTOM' &&
+        event['name'] == 'container_stopped') {
+      // Disarm a pending start (#3000 review): if the container stops
+      // between mount and the first measured resize, the armed start
+      // would otherwise fire into a dead container once layout happens.
+      // A later container_ready re-arms it.
+      _startPending = false;
     }
   }
 
