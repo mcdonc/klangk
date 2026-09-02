@@ -54,6 +54,30 @@ from typing import Any, Callable
 _MEMORY_LIMIT_RE = re.compile(r"^(?P<num>\d+(\.\d+)?)[kKmMgGtTpP]?[bB]?$")
 
 
+def _int_from_string(key: str, value: str) -> int:
+    """A settings int from its string form (``"512"``)."""
+    s = value.strip()
+    if not s:
+        raise ValueError(f"settings.{key} must not be empty")
+    try:
+        # int("1.5") raises — that's what we want (reject non-integer
+        # strings); int("0x10", base=10) is the documented base-10 parse.
+        return int(s, base=10)
+    except ValueError as exc:
+        raise ValueError(
+            f"settings.{key} must be an integer, got {value!r}"
+        ) from exc
+
+
+def _int_from_float(key: str, value: float) -> int:
+    """A settings int from a float (whole floats only)."""
+    if value.is_integer():
+        return int(value)
+    raise ValueError(
+        f"settings.{key} must be an integer, got non-integer float {value!r}"
+    )
+
+
 def _coerce_int(key: str, value: Any) -> int:
     """Coerce a settings value to an ``int`` (no sign gating).
 
@@ -71,24 +95,9 @@ def _coerce_int(key: str, value: Any) -> int:
     if isinstance(value, int):
         return value
     if isinstance(value, float):
-        if value.is_integer():
-            return int(value)
-        raise ValueError(
-            f"settings.{key} must be an integer, got non-integer float"
-            f" {value!r}"
-        )
+        return _int_from_float(key, value)
     if isinstance(value, str):
-        s = value.strip()
-        if not s:
-            raise ValueError(f"settings.{key} must not be empty")
-        try:
-            # int("1.5") raises — that's what we want (reject non-integer
-            # strings); int("0x10", base=10) is the documented base-10 parse.
-            return int(s, base=10)
-        except ValueError as exc:
-            raise ValueError(
-                f"settings.{key} must be an integer, got {value!r}"
-            ) from exc
+        return _int_from_string(key, value)
     raise ValueError(
         f"settings.{key} must be an integer, got {type(value).__name__}"
     )
@@ -118,26 +127,21 @@ def _coerce_nonnegative_int(key: str, value: Any) -> int:
     return n
 
 
-def _coerce_float(key: str, value: Any) -> float:
-    """Coerce a settings value to a positive ``float`` (CPU limit)."""
-    if isinstance(value, bool):
-        raise ValueError(f"settings.{key} must be a number, not a boolean")
-    if isinstance(value, (int, float)):
-        f = float(value)
-    elif isinstance(value, str):
-        s = value.strip()
-        if not s:
-            raise ValueError(f"settings.{key} must not be empty")
-        try:
-            f = float(s)
-        except ValueError as exc:
-            raise ValueError(
-                f"settings.{key} must be a number, got {value!r}"
-            ) from exc
-    else:
+def _float_from_string(key: str, value: str) -> float:
+    """A settings float from its string form."""
+    s = value.strip()
+    if not s:
+        raise ValueError(f"settings.{key} must not be empty")
+    try:
+        return float(s)
+    except ValueError as exc:
         raise ValueError(
-            f"settings.{key} must be a number, got {type(value).__name__}"
-        )
+            f"settings.{key} must be a number, got {value!r}"
+        ) from exc
+
+
+def _require_positive_float(key: str, f: float) -> float:
+    """Reject non-positive numbers (a 0 limit is not a limit)."""
     if f <= 0:
         raise ValueError(
             f"settings.{key} must be a positive number, got {f!r}"
@@ -145,17 +149,38 @@ def _coerce_float(key: str, value: Any) -> float:
     return f
 
 
+def _coerce_float(key: str, value: Any) -> float:
+    """Coerce a settings value to a positive ``float`` (CPU limit)."""
+    if isinstance(value, bool):
+        raise ValueError(f"settings.{key} must be a number, not a boolean")
+    if isinstance(value, (int, float)):
+        f = float(value)
+    elif isinstance(value, str):
+        f = _float_from_string(key, value)
+    else:
+        raise ValueError(
+            f"settings.{key} must be a number, got {type(value).__name__}"
+        )
+    return _require_positive_float(key, f)
+
+
+def _memory_from_number(key: str, value: Any) -> str:
+    """A bare-byte integer/float re-stringified into the podman form
+    (the stored bag always carries the size-string form)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(
+            f"settings.{key} must be a size string (e.g. '2g', '512m'),"
+            f" got {type(value).__name__}"
+        )
+    return str(int(value))
+
+
 def _coerce_memory(key: str, value: Any) -> str:
     """Coerce a settings value to a podman memory-limit string (``2g``)."""
     if not isinstance(value, str):
         # Allow an integer/float of bare bytes for ergonomics, then
         # re-stringify so the stored bag always carries the podman form.
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise ValueError(
-                f"settings.{key} must be a size string (e.g. '2g', '512m'),"
-                f" got {type(value).__name__}"
-            )
-        value = str(int(value))
+        value = _memory_from_number(key, value)
     value = value.strip()
     m = _MEMORY_LIMIT_RE.match(value)
     if not m:
@@ -175,6 +200,22 @@ def _coerce_memory(key: str, value: Any) -> str:
     return value
 
 
+# Boolean spellings accepted in the per-workspace settings bag.
+_TRUE_STRINGS = frozenset({"true", "1", "yes", "on"})
+_FALSE_STRINGS = frozenset({"false", "0", "no", "off", ""})
+
+
+def _bool_from_string(value: str) -> bool | None:
+    """The bool named by a settings string, or ``None`` when it names
+    none."""
+    v = value.strip().lower()
+    if v in _TRUE_STRINGS:
+        return True
+    if v in _FALSE_STRINGS:
+        return False
+    return None
+
+
 def coerce_bool(key: str, value: Any) -> bool:
     """Coerce a settings value to a bool.
 
@@ -183,15 +224,19 @@ def coerce_bool(key: str, value: Any) -> bool:
     """
     if isinstance(value, bool):
         return value
+    if _coerce_bool_like(key, value) is None:
+        raise ValueError(f"settings.{key}={value!r} is not a boolean")
+    return _coerce_bool_like(key, value)
+
+
+def _coerce_bool_like(key: str, value: Any) -> bool | None:
+    """The bool named by *value* (number or spelling), or None when the
+    value names no bool."""
     if isinstance(value, (int, float)) and value in (0, 1):
         return bool(value)
     if isinstance(value, str):
-        v = value.strip().lower()
-        if v in ("true", "1", "yes", "on"):
-            return True
-        if v in ("false", "0", "no", "off", ""):
-            return False
-    raise ValueError(f"settings.{key}={value!r} is not a boolean")
+        return _bool_from_string(value)
+    return None
 
 
 # Schema: each known settings key maps to a normalizer that validates +
@@ -252,6 +297,45 @@ def validate_settings(
     return normalized
 
 
+def _normalizer_for(key: Any) -> Callable[[str, Any], Any]:
+    """The schema normalizer for *key*, rejecting non-string and unknown
+    keys with the shared client-safe messages."""
+    if not isinstance(key, str):
+        raise ValueError(
+            f"settings keys must be strings, got {type(key).__name__}"
+        )
+    normalizer = SCHEMA.get(key)
+    if normalizer is None:
+        raise ValueError(
+            f"Unknown setting {key!r}; known settings: "
+            f"{sorted(KNOWN_SETTINGS)}"
+        )
+    return normalizer
+
+
+def _require_patch_shape(patch: Any) -> None:
+    """A settings PATCH body must be a non-empty JSON object."""
+    if patch is None:
+        raise ValueError("settings patch must not be empty")
+    if not isinstance(patch, dict):
+        raise ValueError(
+            "settings patch must be a JSON object (dict), got"
+            f" {type(patch).__name__}"
+        )
+    if not patch:
+        raise ValueError("settings patch must not be empty")
+
+
+def _patch_entry(key: Any, value: Any) -> Any:
+    """One patch entry: the ``None`` deletion marker is preserved; every
+    other value is coerced. Key/unknown-key errors surface even for a
+    marker entry."""
+    normalizer = _normalizer_for(key)
+    if value is None:
+        return None
+    return normalizer(key, value)
+
+
 def validate_settings_patch(
     patch: dict[str, Any] | None,
 ) -> dict[str, Any]:
@@ -268,34 +352,23 @@ def validate_settings_patch(
     or ``{}``) raises ``ValueError`` — a PATCH that changes nothing is a
     client error, not a silent no-op.
     """
-    if patch is None:
-        raise ValueError("settings patch must not be empty")
-    if not isinstance(patch, dict):
-        raise ValueError(
-            "settings patch must be a JSON object (dict), got"
-            f" {type(patch).__name__}"
-        )
-    if not patch:
-        raise ValueError("settings patch must not be empty")
+    _require_patch_shape(patch)
     result: dict[str, Any] = {}
     for key, value in patch.items():
-        if not isinstance(key, str):
-            raise ValueError(
-                f"settings keys must be strings, got {type(key).__name__}"
-            )
-        normalizer = SCHEMA.get(key)
-        if normalizer is None:
-            raise ValueError(
-                f"Unknown setting {key!r}; known settings: "
-                f"{sorted(KNOWN_SETTINGS)}"
-            )
         # None is the deletion marker — preserved through validation so
         # the model merge can act on it. Everything else is coerced.
-        if value is None:
-            result[key] = None
-        else:
-            result[key] = normalizer(key, value)
+        result[key] = _patch_entry(key, value)
     return result
+
+
+def _normalized_pair(key: Any, value: Any) -> tuple[str, Any] | None:
+    """The normalized (key, value) pair, or ``None`` when the value is an
+    explicit null (dropped in a full-replace bag). Key/unknown-key errors
+    surface before the null drop."""
+    normalizer = _normalizer_for(key)
+    if value is None:
+        return None
+    return key, normalizer(key, value)
 
 
 def _validate_settings_dict(
@@ -317,19 +390,9 @@ def _validate_settings_dict(
         )
     normalized: dict[str, Any] = {}
     for key, value in settings.items():
-        if not isinstance(key, str):
-            raise ValueError(
-                f"settings keys must be strings, got {type(key).__name__}"
-            )
-        normalizer = SCHEMA.get(key)
-        if normalizer is None:
-            raise ValueError(
-                f"Unknown setting {key!r}; known settings: "
-                f"{sorted(KNOWN_SETTINGS)}"
-            )
-        if value is None:
-            continue
-        normalized[key] = normalizer(key, value)
+        pair = _normalized_pair(key, value)
+        if pair is not None:
+            normalized[pair[0]] = pair[1]
     return normalized
 
 
@@ -412,6 +475,14 @@ def resolve_allow_sudo(workspace: dict | None, deploy_default: bool) -> bool:
     )
 
 
+def _nix_echo(previous: dict[str, Any] | None) -> bool:
+    """True when the stored bag already has ``nix=true`` — an echo of an
+    existing opt-in, not a new one (the TUI and web panel PUT a
+    full-replace bag merged over the existing one, so a legacy nix
+    workspace stays editable while the flag is off)."""
+    return previous is not None and bool(previous.get("nix"))
+
+
 def validate_nix_optin(
     bag: dict[str, Any] | None,
     *,
@@ -433,7 +504,7 @@ def validate_nix_optin(
     """
     if nix_available or not (bag or {}).get("nix"):
         return
-    if previous is not None and previous.get("nix"):
+    if _nix_echo(previous):
         return
     raise ValueError(
         "settings.nix=true requires the nix feature to be enabled on the "

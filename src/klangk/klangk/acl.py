@@ -16,18 +16,25 @@ from .model import (
 )
 
 
+def _matches_system_principal(ace: dict, principals: dict) -> bool:
+    """A system ACE matches Everyone always, Authenticated when the
+    caller is signed in."""
+    sp = ace["system_principal"]
+    if sp == SYSTEM_EVERYONE:
+        return True
+    if sp == SYSTEM_AUTHENTICATED:
+        return principals["authenticated"]
+    return False
+
+
 def ace_matches_principals(ace: dict, principals: dict) -> bool:
     """Check whether a single ACE matches the given principals."""
     pt = ace["principal_type"]
     if pt == PRINCIPAL_SYSTEM:
-        sp = ace["system_principal"]
-        if sp == SYSTEM_EVERYONE:
-            return True
-        if sp == SYSTEM_AUTHENTICATED:
-            return principals["authenticated"]
-    elif pt == PRINCIPAL_USER:
+        return _matches_system_principal(ace, principals)
+    if pt == PRINCIPAL_USER:
         return ace["user_id"] == principals["user_id"]
-    elif pt == PRINCIPAL_GROUP:
+    if pt == PRINCIPAL_GROUP:
         return ace["group_id"] in principals["group_ids"]
     return False
 
@@ -47,6 +54,15 @@ def resource_ancestors(resource_path: str) -> list[str]:
         parent = path.rsplit("/", 1)[0]
         path = parent if parent else "/"
     return paths
+
+
+def _ace_decision(ace: dict, permission: str) -> bool | None:
+    """The ACE's decision for *permission*: True/False when it applies
+    (wildcard or exact permission match), ``None`` when it doesn't
+    apply and the walk continues."""
+    if ace["permission"] != "*" and ace["permission"] != permission:
+        return None
+    return ace["action"] == ACTION_ALLOW
 
 
 def check_permission_inmemory(
@@ -69,9 +85,29 @@ def check_permission_inmemory(
     for path in resource_ancestors(resource_path):
         for ace in entries_by_resource.get(path, ()):
             if ace_matches_principals(ace, principals):
-                if ace["permission"] == "*" or ace["permission"] == permission:
-                    return ace["action"] == ACTION_ALLOW
+                decision = _ace_decision(ace, permission)
+                if decision is not None:
+                    return decision
     return False
+
+
+def _logical_path(request: Request) -> str:
+    """The request URL path with the versioned API prefix stripped."""
+    path = request.url.path
+    if path.startswith(API_PREFIX + "/"):
+        return path[len(API_PREFIX) :]
+    return path
+
+
+def _granted_permissions(
+    res: str, principals: dict, permissions: list[str], entries: dict
+) -> list[str]:
+    """The subset of *permissions* effectively granted on *res*."""
+    return [
+        p
+        for p in permissions
+        if check_permission_inmemory(res, principals, p, entries)
+    ]
 
 
 def request_to_resource(request: Request) -> str:
@@ -92,10 +128,7 @@ def request_to_resource(request: Request) -> str:
       /acl/...             -> /acl
     """
     # Strip the versioned API prefix to get the logical resource path.
-    path = request.url.path
-    if path.startswith(API_PREFIX + "/"):
-        path = path[len(API_PREFIX) :]
-    parts = path.strip("/").split("/")
+    parts = _logical_path(request).strip("/").split("/")
     if not parts or parts[0] == "":
         return "/"
 
@@ -253,11 +286,7 @@ class ACL:
         )
         result: dict[str, list[str]] = {}
         for res in resources:
-            perms = [
-                p
-                for p in permissions
-                if check_permission_inmemory(res, principals, p, entries)
-            ]
+            perms = _granted_permissions(res, principals, permissions, entries)
             if perms:
                 result[res] = perms
         return result

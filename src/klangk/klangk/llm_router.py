@@ -113,6 +113,42 @@ _PROVIDER_DEFAULTS: dict[str, str] = {
 _INDIRECT_KEYS = frozenset({"api_key", "api_base"})
 
 
+def _split_entry(entry: str) -> tuple[str, str, str]:
+    """(litellm_model, api_base, api_key): the **first** colon bounds
+    the model, the **last** colon of the remainder bounds the key."""
+    first_colon = entry.find(":")
+    if first_colon == -1:
+        return entry, "", ""
+    litellm_model = entry[:first_colon]
+    rest = entry[first_colon + 1 :]
+    last_colon = rest.rfind(":")
+    if last_colon == -1:
+        return litellm_model, rest, ""
+    return litellm_model, rest[:last_colon], rest[last_colon + 1 :]
+
+
+def _resolve_api_base(api_base: str, litellm_model: str) -> str:
+    """A known provider's default base URL when none was given (only a
+    ``provider/model`` string names a provider)."""
+    if "/" not in litellm_model:
+        return api_base
+    provider = litellm_model.split("/", 1)[0]
+    if api_base or provider not in _PROVIDER_DEFAULTS:
+        return api_base
+    return _PROVIDER_DEFAULTS[provider]
+
+
+def _model_params(litellm_model: str, api_base: str, api_key: str) -> dict:
+    """The ``litellm_params`` dict — api_base/api_key present only when
+    set."""
+    params: dict = {"model": litellm_model}
+    if api_base:
+        params["api_base"] = api_base
+    if api_key:
+        params["api_key"] = api_key
+    return params
+
+
 def parse_model_entry(entry: str) -> dict:
     """Parse a ``provider/model:api_base:api_key`` string into a LiteLLM
     ``model_list`` entry dict.
@@ -124,46 +160,34 @@ def parse_model_entry(entry: str) -> dict:
 
     Returns a dict suitable for inclusion in LiteLLM's ``model_list``.
     """
-    first_colon = entry.find(":")
-    if first_colon == -1:
-        litellm_model = entry
-        api_base = ""
-        api_key = ""
-    else:
-        litellm_model = entry[:first_colon]
-        rest = entry[first_colon + 1 :]
-        last_colon = rest.rfind(":")
-        if last_colon == -1:
-            api_base = rest
-            api_key = ""
-        else:
-            api_base = rest[:last_colon]
-            api_key = rest[last_colon + 1 :]
-
-    if "/" in litellm_model:
-        provider, model_name = litellm_model.split("/", 1)
-    else:
-        provider = ""
-        model_name = litellm_model
-
-    if not api_base and provider in _PROVIDER_DEFAULTS:
-        api_base = _PROVIDER_DEFAULTS[provider]
-
-    params: dict = {"model": litellm_model}
-    if api_base:
-        params["api_base"] = api_base
-    if api_key:
-        params["api_key"] = api_key
-
+    litellm_model, api_base, api_key = _split_entry(entry)
+    model_name = (
+        litellm_model.split("/", 1)[1]
+        if "/" in litellm_model
+        else litellm_model
+    )
+    api_base = _resolve_api_base(api_base, litellm_model)
     return {
         "model_name": model_name,
-        "litellm_params": params,
+        "litellm_params": _model_params(litellm_model, api_base, api_key),
     }
 
 
 def _normalize_key(key: str) -> str:
     """Convert kebab-case to snake_case."""
     return key.replace("-", "_")
+
+
+def _normalize_params(v: dict[str, Any]) -> dict[str, Any]:
+    """Normalize one ``litellm_params`` block: kebab→snake keys,
+    ``file:``/``cmd:`` indirection resolved on secret-bearing values."""
+    params: dict[str, Any] = {}
+    for pk, pv in v.items():
+        npk = _normalize_key(pk)
+        if npk in _INDIRECT_KEYS and isinstance(pv, str):
+            pv = resolve_indirection(pv, npk) or ""
+        params[npk] = pv
+    return params
 
 
 def normalize_dict_entry(entry: dict[str, Any]) -> dict[str, Any]:
@@ -181,13 +205,7 @@ def normalize_dict_entry(entry: dict[str, Any]) -> dict[str, Any]:
         if nk == "params":
             nk = "litellm_params"
         if nk == "litellm_params" and isinstance(v, dict):
-            params: dict[str, Any] = {}
-            for pk, pv in v.items():
-                npk = _normalize_key(pk)
-                if npk in _INDIRECT_KEYS and isinstance(pv, str):
-                    pv = resolve_indirection(pv, npk) or ""
-                params[npk] = pv
-            norm[nk] = params
+            norm[nk] = _normalize_params(v)
         else:
             norm[nk] = v
     return norm
@@ -295,6 +313,17 @@ class LLMRouter:
         if self.active:
             logger.info("llm router reconfigured")
 
+    def _resolve_router_model(self, kwargs: dict) -> None:
+        """Default ``model`` to the first configured model when the
+        request's model is empty, missing, or matches no configured
+        ``model_name``."""
+        model = kwargs.get("model", "")
+        names = self.get_model_names()
+        if not names:
+            raise RuntimeError("LLM router has no models configured")
+        if not model or model not in names:
+            kwargs["model"] = names[0]
+
     async def acompletion(self, **kwargs: Any) -> Any:
         """Proxy to ``litellm.Router.acompletion`` or passthrough.
 
@@ -307,12 +336,7 @@ class LLMRouter:
             return await self._passthrough_completion(**kwargs)
         if self._router is None:
             raise RuntimeError("LLM router not configured")
-        model = kwargs.get("model", "")
-        names = self.get_model_names()
-        if not names:
-            raise RuntimeError("LLM router has no models configured")
-        if not model or model not in names:
-            kwargs["model"] = names[0]
+        self._resolve_router_model(kwargs)
         return await self._router.acompletion(**kwargs)
 
     def _passthrough_headers(self) -> dict[str, str]:

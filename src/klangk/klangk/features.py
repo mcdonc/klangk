@@ -70,6 +70,11 @@ MAX_MANIFEST_BYTES = 1024 * 1024
 _REMOVED_FEATURES = {"chat"}
 
 
+def _feature_names(raw: str) -> set[str]:
+    """The stripped, non-empty names in a comma-separated feature list."""
+    return {part for part in (e.strip() for e in raw.split(",")) if part}
+
+
 def warn_removed_features(raw: str | None) -> None:
     """Log a tailored warning for removed feature names in *raw*.
 
@@ -79,8 +84,7 @@ def warn_removed_features(raw: str | None) -> None:
     """
     if not raw:
         return
-    names = {part for part in (e.strip() for e in raw.split(",")) if part}
-    for name in names & _REMOVED_FEATURES:
+    for name in _feature_names(raw) & _REMOVED_FEATURES:
         logger.warning(
             "feature %r was removed from Klangk; ignoring it in "
             "KLANGKD_FEATURES_ENABLE (remove the entry to silence this "
@@ -309,6 +313,49 @@ class Features:
             )
         return result
 
+    def _frontend_key_ok(self, key) -> bool:
+        """A usable config key: a string carrying the feature-config
+        prefix. Anything else is logged and skipped — the prefix is the
+        feature-config namespace (#1662)."""
+        if isinstance(key, str) and key.startswith(CONTAINER_ENV_KEY_PREFIX):
+            return True
+        logger.warning(
+            "features.json frontend-scope config key %r — "
+            "missing KLANGKWS_FEATURE_ prefix; skipping. Rebuild "
+            "with a corrected feature.",
+            key,
+        )
+        return False
+
+    def _frontend_entry(self, key, spec, features_config):
+        """One ``(json_key, value)`` pair for a frontend-scope config
+        spec, or ``None`` when the spec is skipped."""
+        if not isinstance(spec, dict):
+            return None
+        if spec.get("scope", "container") not in _FRONTEND_SCOPES:
+            return None
+        if not self._frontend_key_ok(key):
+            return None
+        default = spec.get("default", "")
+        # Strip the KLANGKWS_FEATURE_ prefix and lowercase the suffix
+        # for the JSON key (e.g. KLANGKWS_FEATURE_BOING_SPEED →
+        # boing_speed). The prefix is enforced above; the suffix is
+        # the feature-owned name, surfaced un-prefixed to the frontend.
+        json_key = key[len(CONTAINER_ENV_KEY_PREFIX) :].lower()
+        value = resolve_dynamic_config(
+            key, default, features_config=features_config
+        )
+        return json_key, value or ""
+
+    def _add_frontend_entries(
+        self, result: dict[str, str], config: dict, features_config
+    ) -> None:
+        """Add every frontend-scope config entry of one feature block."""
+        for key, spec in config.items():
+            entry = self._frontend_entry(key, spec, features_config)
+            if entry is not None:
+                result[entry[0]] = entry[1]
+
     def frontend_config(self) -> dict[str, str]:
         """Return config entries for the ``GET /api/config`` response.
 
@@ -334,34 +381,7 @@ class Features:
             config = feature.get("config", {})
             if not isinstance(config, dict):
                 continue
-            for key, spec in config.items():
-                if not isinstance(spec, dict):
-                    continue
-                scope = spec.get("scope", "container")
-                if scope not in _FRONTEND_SCOPES:
-                    continue
-                if not isinstance(key, str) or not key.startswith(
-                    CONTAINER_ENV_KEY_PREFIX
-                ):
-                    logger.warning(
-                        "features.json frontend-scope config key %r — "
-                        "missing KLANGKWS_FEATURE_ prefix; skipping. Rebuild "
-                        "with a corrected feature.",
-                        key,
-                    )
-                    continue
-                default = spec.get("default", "")
-                # Strip the KLANGKWS_FEATURE_ prefix and lowercase the suffix
-                # for the JSON key (e.g. KLANGKWS_FEATURE_BOING_SPEED →
-                # boing_speed). The prefix is enforced above; the suffix is
-                # the feature-owned name, surfaced un-prefixed to the frontend.
-                json_key = key[len(CONTAINER_ENV_KEY_PREFIX) :].lower()
-                result[json_key] = (
-                    resolve_dynamic_config(
-                        key, default, features_config=features_config
-                    )
-                    or ""
-                )
+            self._add_frontend_entries(result, config, features_config)
         return result
 
     def features_enable(self) -> str | None:
