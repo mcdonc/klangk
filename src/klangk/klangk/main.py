@@ -394,6 +394,21 @@ app = typer.Typer(
 )
 
 
+def _default_config_path() -> str:
+    """The default config path, generating a template on first run."""
+    path = first_run.default_config_path()
+    if os.path.isfile(path):
+        return path
+    try:
+        first_run.generate_default_config(path)
+    except FileExistsError:
+        # Race: another klangkd (e.g. a systemd restart overlap)
+        # generated the file between our isfile check and the open.
+        # Treat it as "the file is there now" and proceed.
+        pass
+    return path
+
+
 def resolve_config_path(config: str | None) -> str:
     """Resolve the ``--config`` value into a path or the 'none' sentinel.
 
@@ -417,16 +432,7 @@ def resolve_config_path(config: str | None) -> str:
     missing explicitly-required file.
     """
     if config is None:
-        path = first_run.default_config_path()
-        if not os.path.isfile(path):
-            try:
-                first_run.generate_default_config(path)
-            except FileExistsError:
-                # Race: another klangkd (e.g. a systemd restart overlap)
-                # generated the file between our isfile check and the open.
-                # Treat it as "the file is there now" and proceed.
-                pass
-        return path
+        return _default_config_path()
     if config == "none":
         return "none"
     path = Path(config)
@@ -438,41 +444,54 @@ def resolve_config_path(config: str | None) -> str:
     return str(path)
 
 
+def _read_instance_id(settings: KlangkSettings) -> str | None:
+    """The instance id on disk, read-only; ``None`` when absent or blank.
+
+    Read the same way :meth:`Util.resolve_instance_id` does, but never
+    generates one — the pre-app callers here treat a missing id as
+    "no running instance to collide with".
+    """
+    instance_id_path = Path(settings.data_dir) / "instance-id"
+    try:
+        return instance_id_path.read_text().strip() or None
+    except (FileNotFoundError, ValueError):
+        return None
+
+
+def _live_foreign_pid(pid_path: Path, pid: int) -> bool:
+    """True when *pid* is a live process other than ours.
+
+    A dead (or invalid) PID is a stale PID file — unlinked on the way.
+    A PID we cannot signal exists but belongs to another user.
+    """
+    try:
+        os.kill(pid, 0)
+    except (ProcessLookupError, OverflowError):
+        # Stale PID file — clean it up.
+        pid_path.unlink(missing_ok=True)
+        return False
+    except PermissionError:
+        return True
+    # Don't treat our own PID as a conflict (e.g., after a crash that
+    # left the PID file behind and the OS recycled the PID).
+    return pid != os.getpid()
+
+
 def check_pid_preflight(settings: KlangkSettings) -> int | None:
     """Return the PID of a live klangkd for this instance, or ``None``.
 
     Mirrors :meth:`Util.check_pid_file` but runs *before* the app is
     built so the launcher can abort before touching the UDS (#1837).
     """
-    # Read the instance ID the same way Util.resolve_instance_id does,
-    # but read-only — don't generate one; if the file is missing there
-    # is no running instance to collide with.
-    instance_id_path = Path(settings.data_dir) / "instance-id"
-    try:
-        instance_id = instance_id_path.read_text().strip()
-    except (FileNotFoundError, ValueError):
+    instance_id = _read_instance_id(settings)
+    if instance_id is None:
         return None
-    if not instance_id:
-        return None
-
     pid_path = Path(settings.state_dir) / f"klangk-{instance_id}.pid"
     try:
         pid = int(pid_path.read_text().strip())
     except (FileNotFoundError, ValueError):
         return None
-
-    try:
-        os.kill(pid, 0)
-    except (ProcessLookupError, OverflowError):
-        # Stale PID file — clean it up.
-        pid_path.unlink(missing_ok=True)
-        return None
-    except PermissionError:
-        return pid
-
-    if pid == os.getpid():
-        return None
-    return pid
+    return pid if _live_foreign_pid(pid_path, pid) else None
 
 
 # Per-instance marker recording the live winner PID whose duplicate-launch
@@ -494,12 +513,8 @@ def refusal_marker_path(settings: KlangkSettings) -> Path | None:
     Sibling of the pidfile (``klangk-<instance>.refusal`` in the state dir).
     ``None`` (no dedup — always emit) when there is no instance id on disk.
     """
-    instance_id_path = Path(settings.data_dir) / "instance-id"
-    try:
-        instance_id = instance_id_path.read_text().strip()
-    except (FileNotFoundError, ValueError):
-        return None
-    if not instance_id:
+    instance_id = _read_instance_id(settings)
+    if instance_id is None:
         return None
     return (
         Path(settings.state_dir)
@@ -565,6 +580,33 @@ def config_error_exit_status(app_state) -> int | None:
     return EX_CONFIG
 
 
+def _brew_prefix() -> str:
+    """The Homebrew prefix (via ``brew --prefix``), or "" when brew is
+    absent or fails to answer within 5s."""
+    brew = shutil.which("brew")
+    if not brew:
+        return ""
+    try:
+        result = subprocess.run(
+            [brew, "--prefix"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        return result.stdout.strip()
+    except (subprocess.TimeoutExpired, OSError):
+        return ""
+
+
+def _existing_gnubin_dirs(prefix: str) -> list[str]:
+    """The Homebrew gnubin dirs that exist on this machine."""
+    gnubin_dirs = [
+        os.path.join(prefix, "opt", "coreutils", "libexec", "gnubin"),
+        os.path.join(prefix, "opt", "gnu-tar", "libexec", "gnubin"),
+    ]
+    return [d for d in gnubin_dirs if os.path.isdir(d)]
+
+
 def prepend_gnubin_paths() -> None:
     """On macOS, prepend Homebrew gnubin dirs to ``PATH`` (#1947).
 
@@ -581,30 +623,52 @@ def prepend_gnubin_paths() -> None:
     """
     if platform.system() != "Darwin":
         return
-    brew = shutil.which("brew")
-    if not brew:
-        return
-    try:
-        result = subprocess.run(
-            [brew, "--prefix"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        prefix = result.stdout.strip()
-    except (subprocess.TimeoutExpired, OSError):
-        return
+    prefix = _brew_prefix()
     if not prefix:
         return
-    gnubin_dirs = [
-        os.path.join(prefix, "opt", "coreutils", "libexec", "gnubin"),
-        os.path.join(prefix, "opt", "gnu-tar", "libexec", "gnubin"),
-    ]
-    existing = [d for d in gnubin_dirs if os.path.isdir(d)]
+    existing = _existing_gnubin_dirs(prefix)
     if existing:
         os.environ["PATH"] = (
             os.pathsep.join(existing) + os.pathsep + os.environ.get("PATH", "")
         )
+
+
+def _prepare_uds_bind(uds_path: str) -> None:
+    """Unlink a stale UDS socket and ensure its parent dir is private
+    (0700) so only the klangk user can open the socket — the same-uid
+    trust boundary Util.set_uds_mode relies on."""
+    try:
+        os.unlink(uds_path)
+    except FileNotFoundError:
+        pass
+    Path(uds_path).parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+
+
+def _run_server(server, uds_path: str, app_state) -> None:
+    """Run uvicorn, mapping a UDS bind failure to ``exit(1)`` and a
+    deterministic config refusal to ``EX_CONFIG`` (#2666)."""
+    try:
+        server.run()
+    except OSError as exc:
+        logger.error(
+            "uvicorn failed to bind UDS at %s: %s — exiting", uds_path, exc
+        )
+        sys.exit(1)
+    except SystemExit:
+        # uvicorn exits STARTUP_FAILURE (3) for every startup failure. If the
+        # failure was a deterministic config error (flagged by the lifespan
+        # on app.state), translate to EX_CONFIG (78) so supervisors can stop
+        # restart-looping a config that cannot fix itself (#2666).
+        config_status = config_error_exit_status(app_state)
+        if config_status is None:
+            raise
+        logger.error(
+            "klangkd refused to start over a configuration error — exiting "
+            "with status %d (EX_CONFIG); restarting cannot fix this, fix "
+            "the config instead",
+            config_status,
+        )
+        raise SystemExit(config_status) from None
 
 
 @app.callback()
@@ -677,14 +741,8 @@ def main(
 
     # Bind the UDS. A stale socket from a kill -9'd process makes the
     # bind fail with EADDRINUSE — unlink first (the pidfile guard in the
-    # lifespan refuses a concurrent klangkd). Ensure the parent dir is
-    # private (0700) so only the klangk user can open the socket — the
-    # same-uid trust boundary Util.set_uds_mode relies on.
-    try:
-        os.unlink(uds_path)
-    except FileNotFoundError:
-        pass
-    Path(uds_path).parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    # lifespan refuses a concurrent klangkd).
+    _prepare_uds_bind(uds_path)
     # Construct the app explicitly and pass the object to uvicorn (not a
     # ``module:app`` string import). This avoids the module-level
     # ``app = build_app()`` global — there's one ``build_app(settings)`` call,
@@ -715,28 +773,7 @@ def main(
             ws_ping_timeout=20,
         )
     )
-    try:
-        server.run()
-    except OSError as exc:
-        logger.error(
-            "uvicorn failed to bind UDS at %s: %s — exiting", uds_path, exc
-        )
-        sys.exit(1)
-    except SystemExit:
-        # uvicorn exits STARTUP_FAILURE (3) for every startup failure. If the
-        # failure was a deterministic config error (flagged by the lifespan
-        # on app.state), translate to EX_CONFIG (78) so supervisors can stop
-        # restart-looping a config that cannot fix itself (#2666).
-        config_status = config_error_exit_status(asgi_app.state)
-        if config_status is None:
-            raise
-        logger.error(
-            "klangkd refused to start over a configuration error — exiting "
-            "with status %d (EX_CONFIG); restarting cannot fix this, fix "
-            "the config instead",
-            config_status,
-        )
-        raise SystemExit(config_status) from None
+    _run_server(server, uds_path, asgi_app.state)
 
 
 def make_graceful_exit_server(asgi_app):

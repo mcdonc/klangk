@@ -255,6 +255,23 @@ def parse_tmux_version(out: str) -> tuple[int, int] | None:
     return (int(m.group(1)), int(m.group(2)))
 
 
+def _tmux_warning(message: str, manager: str | None) -> CheckResult:
+    """A consent-popup warning result carrying the tmux install hint."""
+    return CheckResult(
+        name="tmux (consent popup)",
+        ok=False,
+        is_warning=True,
+        message=message,
+        hint=install_hint("tmux", manager),
+    )
+
+
+def _tmux_probe_text(out: str) -> str:
+    """The raw ``tmux -V`` text for a warning message (or a note that
+    the probe itself failed)."""
+    return out.strip()[:40] or "tmux -V failed"
+
+
 def check_tmux_version(manager: str | None) -> CheckResult:
     """Check host tmux is new enough for the consent-popup shell layer (#2383).
 
@@ -271,28 +288,18 @@ def check_tmux_version(manager: str | None) -> CheckResult:
         )
     rc, out, _err = run(["tmux", "-V"])
     ver = parse_tmux_version(out) if rc == 0 else None
-    label = ".".join(map(str, ver)) if ver is not None else "unknown"
     if ver is None:
-        return CheckResult(
-            name="tmux (consent popup)",
-            ok=False,
-            is_warning=True,
-            message=(
-                f"tmux version unparseable ({out.strip()[:40] or 'tmux -V failed'});"
-                " consent popup needs >= 3.2"
-            ),
-            hint=install_hint("tmux", manager),
+        return _tmux_warning(
+            f"tmux version unparseable ({_tmux_probe_text(out)});"
+            " consent popup needs >= 3.2",
+            manager,
         )
+    label = ".".join(map(str, ver))
     if ver < TMUX_MIN_VERSION:
-        return CheckResult(
-            name="tmux (consent popup)",
-            ok=False,
-            is_warning=True,
-            message=(
-                f"tmux {label} < 3.2 — consent popup unavailable"
-                " (plain shell attach used)"
-            ),
-            hint=install_hint("tmux", manager),
+        return _tmux_warning(
+            f"tmux {label} < 3.2 — consent popup unavailable"
+            " (plain shell attach used)",
+            manager,
         )
     return CheckResult(
         name="tmux (consent popup)",
@@ -386,6 +393,35 @@ def check_gnu_stat(manager: str | None) -> CheckResult:
     )
 
 
+def _user_range_present(content: str, user: str) -> bool:
+    """True when a subuid/subgid file carries a range line for *user*."""
+    return any(line.startswith(f"{user}:") for line in content.splitlines())
+
+
+def _missing_subuid_result(
+    user: str, path_name: str, label: str | None
+) -> CheckResult:
+    """A failed subuid/subgid result with the usermod fix hint.
+
+    A ``None`` label means the file itself is missing, not just the
+    user's range.
+    """
+    message = (
+        f"{path_name} does not exist"
+        if label is None
+        else f"no {label} range for user '{user}' in {path_name}"
+    )
+    return CheckResult(
+        name="subuid/subgid",
+        ok=False,
+        message=message,
+        hint=(
+            f"sudo usermod --add-subuids 100000-165535 "
+            f"--add-subgids 100000-165535 {user}"
+        ),
+    )
+
+
 def check_subuid(user: str) -> CheckResult:
     """Check /etc/subuid has a range for the given user."""
     if platform.system() == "Darwin":
@@ -400,28 +436,9 @@ def check_subuid(user: str) -> CheckResult:
     ]:
         p = Path(path_name)
         if not p.exists():
-            return CheckResult(
-                name="subuid/subgid",
-                ok=False,
-                message=f"{path_name} does not exist",
-                hint=(
-                    f"sudo usermod --add-subuids 100000-165535 "
-                    f"--add-subgids 100000-165535 {user}"
-                ),
-            )
-        content = p.read_text()
-        if not any(
-            line.startswith(f"{user}:") for line in content.splitlines()
-        ):
-            return CheckResult(
-                name="subuid/subgid",
-                ok=False,
-                message=f"no {label} range for user '{user}' in {path_name}",
-                hint=(
-                    f"sudo usermod --add-subuids 100000-165535 "
-                    f"--add-subgids 100000-165535 {user}"
-                ),
-            )
+            return _missing_subuid_result(user, path_name, None)
+        if not _user_range_present(p.read_text(), user):
+            return _missing_subuid_result(user, path_name, label)
     return CheckResult(
         name="subuid/subgid",
         ok=True,
@@ -541,6 +558,39 @@ _REQUIRED_BINARIES: list[tuple[str, list[str]]] = [
 ]
 
 
+def _check_ip_command(report: DoctorReport, manager: str | None) -> None:
+    """Optional ``ip`` check for container subnet auto-detection (#2089);
+    a missing binary downgrades to a warning with the fallback note."""
+    ip_result = check_binary("ip", ["ip", "-V"], manager)
+    if not ip_result.ok:
+        ip_result.is_warning = True
+        ip_result.message = (
+            "ip not found — container subnet auto-detection will fall "
+            "back to broad RFC1918 ranges (172.16/12 + 10/8). Install "
+            "the iproute/iproute2 package for your distro for precise "
+            "detection, or set KLANGKD_CONTAINER_SUBNETS explicitly."
+        )
+    report.add(ip_result)
+
+
+def _check_linux_prereqs(
+    report: DoctorReport, user: str, manager: str | None
+) -> None:
+    """Linux-only rootless prereqs: newuidmap (warning-grade when
+    missing) and the subuid/subgid ranges.
+
+    fuse-overlayfs and slirp4netns are no longer checked — modern podman
+    (4.x+) uses native kernel overlayfs and pasta respectively; the
+    end-to-end rootless check below validates that storage and
+    networking actually work (#1950).
+    """
+    result = check_binary("newuidmap", [], manager)
+    if not result.ok:
+        result.is_warning = True
+    report.add(result)
+    report.add(check_subuid(user))
+
+
 def run_doctor(*, verbose: bool = False) -> DoctorReport:
     """Run all doctor checks and return the report."""
     report = DoctorReport()
@@ -558,37 +608,16 @@ def run_doctor(*, verbose: bool = False) -> DoctorReport:
     # GNU tar and GNU du (special: must verify GNU, not just present)
     report.add(check_gnu_tar(manager))
     report.add(check_gnu_du(manager))
-    # GNU stat: only the nix btrfs-snapshot backend needs `stat -f -c %T`
-    # (Linux-only); not required on macOS.
     if platform.system() != "Darwin":
+        # GNU stat: only the nix btrfs-snapshot backend needs
+        # `stat -f -c %T` (Linux-only); not required on macOS.
         report.add(check_gnu_stat(manager))
-
-    # 1b. Optional: ip command for container subnet auto-detection (#2089)
-    if platform.system() != "Darwin":
-        ip_result = check_binary("ip", ["ip", "-V"], manager)
-        if not ip_result.ok:
-            ip_result.is_warning = True
-            ip_result.message = (
-                "ip not found — container subnet auto-detection will fall "
-                "back to broad RFC1918 ranges (172.16/12 + 10/8). Install "
-                "the iproute/iproute2 package for your distro for precise "
-                "detection, or set KLANGKD_CONTAINER_SUBNETS explicitly."
-            )
-        report.add(ip_result)
+        # Optional: ip command for container subnet auto-detection (#2089)
+        _check_ip_command(report, manager)
 
     # 2. Rootless podman prereqs
     if platform.system() != "Darwin":
-        # Linux: check newuidmap (suid helper for rootless user
-        # namespaces). fuse-overlayfs and slirp4netns are no longer
-        # checked — modern podman (4.x+) uses native kernel overlayfs
-        # and pasta respectively; the end-to-end rootless check below
-        # validates that storage and networking actually work (#1950).
-        result = check_binary("newuidmap", [], manager)
-        if not result.ok:
-            result.is_warning = True
-        report.add(result)
-
-        report.add(check_subuid(user))
+        _check_linux_prereqs(report, user, manager)
     else:
         report.add(check_podman_machine())
 
@@ -630,39 +659,35 @@ def append_failure_block(
         lines.append("")
 
 
-def format_report(report: DoctorReport) -> str:
-    """Format a doctor report for terminal output."""
-    lines: list[str] = []
-    manager = detect_package_manager()
-
+def _report_header(lines: list[str]) -> None:
+    """The doctor banner with the detected package manager."""
     lines.append("klangkd doctor")
     lines.append("=" * 40)
+    manager = detect_package_manager()
     if manager:
         lines.append(f"Package manager: {manager}")
     else:
         lines.append("Package manager: (none detected)")
     lines.append("")
 
-    for r in report.results:
-        _append_result_line(lines, r)
 
-    lines.append("")
+def _finish_report(lines: list[str], report: DoctorReport) -> str:
+    """Append the summary tally and, when anything failed, repeat each
+    failure with its fix so the user doesn't have to scroll back up
+    through a long check list (#1968)."""
     errors = report.errors
     warnings = report.warnings
-    ok_count = sum(1 for r in report.results if r.ok)
+    ok_count = len(report.results) - len(errors) - len(warnings)
+    if not errors and not warnings:
+        lines.append(f"All {ok_count} checks passed.")
+        return "\n".join(lines)
     if errors:
         lines.append(
             f"{ok_count} passed, {len(errors)} errors,"
             f" {len(warnings)} warnings"
         )
-    elif warnings:
-        lines.append(f"{ok_count} passed, {len(warnings)} warnings")
     else:
-        lines.append(f"All {ok_count} checks passed.")
-        return "\n".join(lines)
-
-    # Repeat each failure with its fix so the user doesn't have to
-    # scroll back up through a long check list (#1968).
+        lines.append(f"{ok_count} passed, {len(warnings)} warnings")
     lines.append("")
     append_failure_block(
         lines, errors, "✗", "Errors (must fix before starting klangkd):"
@@ -670,8 +695,17 @@ def format_report(report: DoctorReport) -> str:
     append_failure_block(
         lines, warnings, "⚠", "Warnings (recommended but not required):"
     )
-
     return "\n".join(lines)
+
+
+def format_report(report: DoctorReport) -> str:
+    """Format a doctor report for terminal output."""
+    lines: list[str] = []
+    _report_header(lines)
+    for r in report.results:
+        _append_result_line(lines, r)
+    lines.append("")
+    return _finish_report(lines, report)
 
 
 def doctor_main(verbose: bool = False) -> int:

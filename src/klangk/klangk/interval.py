@@ -56,20 +56,23 @@ class IntervalWorker:
                 pass
             self._task = None
 
+    async def _guarded_sweep(self) -> None:
+        """One sweep; non-cancellation failures are logged and swallowed
+        (the loop continues). Cancellation propagates."""
+        try:
+            await self.sweep()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("%s failed", self.log_label, exc_info=True)
+
     async def run(self) -> None:
         # 0.0 sweeps once immediately on startup, then every interval.
         next_sweep = 0.0
         try:
             while True:
                 if time.monotonic() >= next_sweep:
-                    try:
-                        await self.sweep()
-                    except asyncio.CancelledError:
-                        raise
-                    except Exception:
-                        logger.warning(
-                            "%s failed", self.log_label, exc_info=True
-                        )
+                    await self._guarded_sweep()
                     next_sweep = time.monotonic() + self.interval
                 await asyncio.sleep(max(0.0, next_sweep - time.monotonic()))
         except asyncio.CancelledError:
