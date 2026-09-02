@@ -5471,6 +5471,64 @@ class TestWorkspaceRoles:
         roles = {r["role"]: r for r in resp.json()}
         assert "share-advanced" in roles["spectators"]["permissions"]
 
+        # No inherited root grants: the seeded `Allow view Authenticated`
+        # on `/` must not surface in every bucket (#2987 review) — the
+        # roles read evaluates only the workspace's own node.
+        assert "view" not in roles["spectators"]["permissions"]
+
+        # A malformed user-principal ACE with a NULL user_id (inert for
+        # every real principal) must not None==None-match its way into
+        # any group's list (#2987 review).
+        await app_state.state.model.acl.add_acl_entry(
+            f"/workspaces/{ws_id}",
+            position=101,
+            action=model.ACTION_ALLOW,
+            permission="egress-consent",
+            principal_type=model.PRINCIPAL_USER,
+        )
+        resp = await client.get(
+            f"/api/v1/workspaces/{ws_id}/roles", headers=headers
+        )
+        roles = {r["role"]: r for r in resp.json()}
+        assert "egress-consent" not in roles["spectators"]["permissions"]
+
+        # First-match-wins: a deny positioned before the group's allow
+        # removes the permission from the bucket exactly as it would
+        # deny a real member.
+        await app_state.state.model.acl.replace_acl_entries(
+            f"/workspaces/{ws_id}",
+            [
+                {
+                    "position": 0,
+                    "action": model.ACTION_DENY,
+                    "permission": "terminal",
+                    "principal_type": model.PRINCIPAL_GROUP,
+                    "group_id": roles["spectators"]["group_id"],
+                },
+                {
+                    "position": 1,
+                    "action": model.ACTION_ALLOW,
+                    "permission": "terminal",
+                    "principal_type": model.PRINCIPAL_GROUP,
+                    "group_id": roles["spectators"]["group_id"],
+                },
+                # Keep the creator's own wildcard so the share-gated
+                # roles read below stays authorized.
+                {
+                    "position": 2,
+                    "action": model.ACTION_ALLOW,
+                    "permission": "*",
+                    "principal_type": model.PRINCIPAL_USER,
+                    "user_id": user["id"],
+                },
+            ],
+        )
+        resp = await client.get(
+            f"/api/v1/workspaces/{ws_id}/roles", headers=headers
+        )
+        roles = {r["role"]: r for r in resp.json()}
+        assert "terminal" not in roles["spectators"]["permissions"]
+
     async def test_creator_in_owners_group(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(

@@ -1529,14 +1529,16 @@ def _group_effective_permissions(
     """Effective permission list for a role group on ``resource``.
 
     Evaluates the preloaded ACE map in memory with the group as the sole
-    principal (``user_id=None`` matches no user ACE; everyone/authenticated
-    grants apply to any member). A ``*`` grant therefore expands to the
+    principal. ``user_id`` is the empty-string sentinel, never ``None``:
+    a malformed user-principal ACE with a NULL ``user_id`` must not
+    ``None == None``-match the synthetic principal the way it would match
+    no real user (#2987 review). A ``*`` grant therefore expands to the
     whole vocabulary — including the literal ``*`` — which callers can
     collapse for display. Mirrors how ``permissions_for_resources``
     computes a user's effective permissions (#2986).
     """
     principals = {
-        "user_id": None,
+        "user_id": "",
         "group_ids": [group_id],
         "authenticated": True,
     }
@@ -1557,14 +1559,17 @@ async def get_workspace_roles(
 ):
     """Return the workspace's role groups with members and grants.
 
-    Each role carries ``permissions``: the group's effective permissions on
-    ``/workspaces/{id}``, read from the live ACEs (one preload for all
-    groups) so post-seed ACL edits are reflected (#2986).
+    Each role carries ``permissions``: the group's effective permissions
+    on ``/workspaces/{id}``, read from the live ACEs on that node so
+    post-seed ACL edits are reflected (#2986). Only the workspace's own
+    node is preloaded — deliberately not the ancestor walk
+    ``check_permission`` uses: role groups are scope-locked to their own
+    workspace node (#2750), so walking up could only misattribute
+    inherited everyone/authenticated grants (e.g. the seeded ``Allow view
+    Authenticated`` on ``/``) to every bucket.
     """
     resource = f"/workspaces/{workspace_id}"
-    entries = await app.state.model.acl.get_acl_entries_map(
-        acl.resource_ancestors(resource)
-    )
+    entries = await app.state.model.acl.get_acl_entries_map([resource])
     roles = []
     for suffix in ROLE_GROUP_SUFFIXES:
         group_name = f"{suffix}-{workspace_id}"
