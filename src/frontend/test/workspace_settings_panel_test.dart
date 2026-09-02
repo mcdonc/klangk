@@ -579,8 +579,9 @@ void main() {
       expect(cb.value, isFalse);
     });
 
-    testWidgets('sends allow_sudo=false when unchecked and restarts',
-        (tester) async {
+    testWidgets(
+        'defaults to unchecked (absent bag) and sends allow_sudo=false'
+        ' with a restart notice (#3046)', (tester) async {
       Map<String, dynamic>? savedBody;
       testAuthHttpClientOverride = MockClient((request) async {
         final p = request.url.path;
@@ -617,8 +618,9 @@ void main() {
       await tester.pumpAndSettle();
 
       final sudo = find.widgetWithText(CheckboxListTile, 'Allow sudo');
+      // #3046: absent bag key reads as locked-down — no tap needed.
+      expect((tester.widget(sudo) as CheckboxListTile).value, isFalse);
       await tester.ensureVisible(sudo);
-      await tester.tap(sudo); // starts checked — uncheck locks down
       await tester.pump();
       await _scrollToAndTap(tester, find.text('Save'));
       await tester.pump();

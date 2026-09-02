@@ -144,13 +144,14 @@ _EDITOR_INPUT_HANDLERS = {
 
 
 def compose_general_pane(
-    image_select, *, name="", auto_start=False, nix=False, allow_sudo=True
+    image_select, *, name="", auto_start=False, nix=False, allow_sudo=False
 ) -> ComposeResult:
     """The General tab: identity + the three deploy-gated toggles.
 
     Shared by the create and edit forms (#1891, #2904) — the panes build
     the same widget tree; the seeds differ (create defaults vs the
-    workspace's current values)."""
+    workspace's current values). #3046: the sudo toggle defaults to
+    unchecked (lock down) — the user opts in to sudo."""
     with TabPane("General", id="general_pane"):
         yield Horizontal(
             Static("Name"), Input(value=name, id="name"), classes="field-row"
@@ -1349,7 +1350,8 @@ class EditWorkspaceScreen(WorkspaceFormMixin, TabSkipMixin, StatusScreen):
         # the server has a nix backend, matching the edit panel / create dialog.
         self._nix_available = bool(nix_available)
         # #2017: per-workspace sudo lock-down toggle, seeded from the bag
-        # (absent = True = follow the deploy posture). Hidden unless the
+        # (#3046: absent = False — the UI reads an unspecified bag as
+        # locked-down, matching the create default). Hidden unless the
         # deploy allows sudo (the knob can only lock down below that).
         self._sudo_available = bool(sudo_available)
         self._mounts: list[str]

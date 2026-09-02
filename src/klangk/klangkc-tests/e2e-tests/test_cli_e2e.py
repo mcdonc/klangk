@@ -1095,6 +1095,58 @@ class TestVolumes:
         # May show "No volumes." or an empty table
 
 
+class TestSudoLifecycle:
+    """#3046: the per-workspace sudo posture flips with a plain edit —
+    each flip offers a restart that rewrites the sudoers rule
+    (klangk-configure-sudo runs on every container start, resolving the
+    settings bag then), so no manual container recreation is needed."""
+
+    @pytest.fixture(autouse=True, scope="class")
+    @staticmethod
+    def workspace(cli_config):
+        run(["klangk", "create", "e2e-sudo", "--sudo"], env=cli_config["env"])
+        yield
+        run(["klangk", "rm", "e2e-sudo"], env=cli_config["env"])
+
+    def test_sudo_works_after_create(self, cli_config):
+        result = run(
+            ["klangk", "exec", "e2e-sudo", "sudo", "-n", "true"],
+            env=cli_config["env"],
+            timeout=180,
+        )
+        assert result.returncode == 0
+
+    def test_edit_off_locks_sudo_down(self, cli_config):
+        result = run(
+            ["klangk", "edit", "e2e-sudo", "--no-sudo"],
+            input="y\n",  # accept the offered restart
+            env=cli_config["env"],
+        )
+        assert result.returncode == 0
+        assert "Updated" in result.stdout
+        result = run(
+            ["klangk", "exec", "e2e-sudo", "sudo", "-n", "true"],
+            env=cli_config["env"],
+            timeout=180,
+        )
+        assert result.returncode != 0  # !ALL rule denies sudo
+
+    def test_edit_back_on_restores_sudo(self, cli_config):
+        result = run(
+            ["klangk", "edit", "e2e-sudo", "--sudo"],
+            input="y\n",  # accept the offered restart
+            env=cli_config["env"],
+        )
+        assert result.returncode == 0
+        assert "Updated" in result.stdout
+        result = run(
+            ["klangk", "exec", "e2e-sudo", "sudo", "-n", "true"],
+            env=cli_config["env"],
+            timeout=180,
+        )
+        assert result.returncode == 0  # NOPASSWD:ALL restored
+
+
 class TestAuthError:
     def test_command_without_login_shows_clean_error(self, server, tmp_path):
         """Commands that need auth should show a clean error, not a traceback."""

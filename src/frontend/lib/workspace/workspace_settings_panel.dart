@@ -385,9 +385,9 @@ class _SettingsFormState extends State<_SettingsForm> {
   // when the server has a nix backend (widget.nixAvailable).
   bool _nixEnabled = false;
 
-  // #2017: per-workspace sudo posture, seeded from the bag (absent =
-  // true = follow the deploy posture).
-  bool _sudoEnabled = true;
+  // #2017: per-workspace sudo posture, seeded from the bag (#3046:
+  // absent = false = locked-down, matching the create default).
+  bool _sudoEnabled = false;
   // #2721: home layout, seeded from the workspace. Mutable (#2719): a
   // flip applies from the next connect/start.
   bool _perHandleHome = true;
@@ -462,7 +462,7 @@ class _SettingsFormState extends State<_SettingsForm> {
       text: settings['idle_timeout']?.toString() ?? '',
     );
     _nixEnabled = (settings['nix'] as bool?) ?? false;
-    _sudoEnabled = (settings['allow_sudo'] as bool?) ?? true;
+    _sudoEnabled = (settings['allow_sudo'] as bool?) ?? false;
     _cpuLimitCtrl = TextEditingController(
       text: settings['cpu_limit']?.toString() ?? '',
     );
@@ -520,7 +520,7 @@ class _SettingsFormState extends State<_SettingsForm> {
     } // coverage:ignore-end
     if (oldSettings['allow_sudo'] != newSettings['allow_sudo']) {
       // coverage:ignore-start
-      _sudoEnabled = (newSettings['allow_sudo'] as bool?) ?? true;
+      _sudoEnabled = (newSettings['allow_sudo'] as bool?) ?? false;
     } // coverage:ignore-end
     if (old.workspace['image'] != widget.workspace['image']) {
       _selectedImage =
@@ -909,12 +909,11 @@ class _SettingsFormState extends State<_SettingsForm> {
             type: MaterialType.transparency,
             child: CheckboxListTile(
               value: _sudoEnabled,
-              onChanged: (v) => setState(() => _sudoEnabled = v ?? true),
+              onChanged: (v) => setState(() => _sudoEnabled = v ?? false),
               title: const Text('Allow sudo'),
               subtitle: const Text(
-                'Uncheck to lock this workspace down (no passwordless '
-                'sudo) even when the server allows it; applies at the '
-                'next container start',
+                'Check to allow passwordless sudo (off by default); '
+                'applies at the next container start',
               ),
               controlAffinity: ListTileControlAffinity.leading,
               contentPadding: EdgeInsets.zero,

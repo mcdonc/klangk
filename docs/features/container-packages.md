@@ -92,7 +92,10 @@ A workspace can also be locked down individually below the deploy
 default (sudo-disabled) even on a sudo-enabled server — the owner (or a
 member with edit permission on the workspace) sets `allow_sudo: false` in
 the workspace settings (`klangk edit --no-sudo`, or the _Allow sudo_
-toggle in the workspace settings UI). The lock-down applies at the next
+toggle in the workspace settings UI — which defaults to unchecked, so a
+workspace created without touching the toggle is locked down; the
+deploy-wide default still applies to workspaces created via the API with
+no `allow_sudo` key, #3046). The lock-down applies at the next
 container start.
 
 ### Without sudo
