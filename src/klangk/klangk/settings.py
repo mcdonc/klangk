@@ -103,6 +103,29 @@ _CONTAINER_MEM_LIMIT_RE = re.compile(
 XDG_SUBDIR = "klangkd"
 
 
+def _is_unset(v) -> bool:
+    """True when a raw setting value is ``None`` or empty.
+
+    Shared first check of the strict coercers: unset env / empty YAML
+    means "use the default", never an error.
+    """
+    return v is None or v == ""
+
+
+def _reject_bool_or_float(v, *, bool_msg: str, float_msg: str) -> None:
+    """Raise ``ValueError`` when *v* is a bool or a native float.
+
+    Shared type guard for the strict integer coercers (#2303 / #2603):
+    a bool or a native YAML float must abort startup rather than
+    silently truncate. The messages are caller-supplied so each coercer
+    keeps its exact operator-facing wording.
+    """
+    if isinstance(v, bool):
+        raise ValueError(bool_msg)
+    if isinstance(v, float):
+        raise ValueError(float_msg)
+
+
 def _coerce_prune_int(v, name: str, *, default: int) -> int:
     """Shared coercion for the #2303 prune knobs (retention days / row cap).
 
@@ -113,18 +136,19 @@ def _coerce_prune_int(v, name: str, *, default: int) -> int:
     truncated ``0.5`` days would silently disable the feature). ``0`` is
     the meaningful floor for both knobs (it disables).
     """
-    if v is None or v == "":
+    if _is_unset(v):
         return default
-    if isinstance(v, bool):
-        raise ValueError(
+    _reject_bool_or_float(
+        v,
+        bool_msg=(
             f"{name}={v!r} must be a non-negative integer (0 disables), "
             "not a boolean."
-        )
-    if isinstance(v, float):
-        raise ValueError(
+        ),
+        float_msg=(
             f"{name}={v!r} must be a non-negative integer (0 disables) -- "
             "use an integer like 30, not 0.5."
-        )
+        ),
+    )
     try:
         value = int(v)
     except (TypeError, ValueError) as exc:
@@ -139,18 +163,13 @@ def _coerce_prune_int(v, name: str, *, default: int) -> int:
     return value
 
 
-def _coerce_positive_float(v, name: str) -> float | None:
-    """Coerce *v* to a finite positive float or None; raise with *name*.
+def _parse_positive_float(v, name: str) -> float:
+    """``float(v)`` with strict finite/positive checking (#2562 / #2603).
 
-    Shared body of the numeric limit validators (#2562): ``None``/empty
-    → ``None`` (no cap); non-numeric, non-finite (``nan``/``inf``), or
-    ``<= 0`` raises ``ValueError`` naming *name* (the ENV_VAR string) so
-    ``KlangkSettings(...)`` construction fails and the server refuses to
-    boot (#34: a safety control must not silently disable itself on a
-    typo).
+    Shared body of the two positive-float coercers: non-numeric input
+    raises with the *unset* hint; nan/inf or ``<= 0`` raises the
+    finite/positive error, both naming *name*.
     """
-    if v is None or v == "":
-        return None
     try:
         value = float(v)
     except (TypeError, ValueError) as exc:
@@ -165,6 +184,21 @@ def _coerce_positive_float(v, name: str) -> float | None:
     return value
 
 
+def _coerce_positive_float(v, name: str) -> float | None:
+    """Coerce *v* to a finite positive float or None; raise with *name*.
+
+    Shared body of the numeric limit validators (#2562): ``None``/empty
+    → ``None`` (no cap); non-numeric, non-finite (``nan``/``inf``), or
+    ``<= 0`` raises ``ValueError`` naming *name* (the ENV_VAR string) so
+    ``KlangkSettings(...)`` construction fails and the server refuses to
+    boot (#34: a safety control must not silently disable itself on a
+    typo).
+    """
+    if _is_unset(v):
+        return None
+    return _parse_positive_float(v, name)
+
+
 def _coerce_positive_int(v, name: str) -> int | None:
     """Coerce *v* to a positive int or None; raise with *name*.
 
@@ -173,7 +207,7 @@ def _coerce_positive_int(v, name: str) -> int | None:
     rather than silently truncated; non-integer or ``<= 0`` raises
     (``0`` is "unset", not a cap).
     """
-    if v is None or v == "":
+    if _is_unset(v):
         return None
     if isinstance(v, float):
         raise ValueError(
@@ -246,16 +280,17 @@ def _coerce_setting_int(
     time.
     """
     v = _resolve_numeric_indirection(v, name)
-    if v is None or v == "":
+    if _is_unset(v):
         return default
-    if isinstance(v, bool):
-        raise ValueError(
+    _reject_bool_or_float(
+        v,
+        bool_msg=(
             f"{name}={v!r} must be an integer >= {minimum}, not a boolean."
-        )
-    if isinstance(v, float):
-        raise ValueError(
+        ),
+        float_msg=(
             f"{name}={v!r} must be an integer, not a float (use 5, not 5.0)."
-        )
+        ),
+    )
     try:
         value = int(v)
     except (TypeError, ValueError) as exc:
@@ -281,24 +316,13 @@ def _coerce_setting_float(
     typo).
     """
     v = _resolve_numeric_indirection(v, name)
-    if v is None or v == "":
+    if _is_unset(v):
         return default
     if isinstance(v, bool):
         raise ValueError(
             f"{name}={v!r} must be a positive number, not a boolean."
         )
-    try:
-        value = float(v)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(
-            f"{name}={v!r} must be a positive number, or unset."
-        ) from exc
-    if not math.isfinite(value) or value <= 0:
-        raise ValueError(
-            f"{name}={v!r} must be a finite, positive number "
-            "(nan/inf and <= 0 are rejected)."
-        )
-    return value
+    return _parse_positive_float(v, name)
 
 
 def parse_bool_setting(value: str | None) -> bool:
@@ -395,6 +419,27 @@ def _safe_getuser() -> str:
         return "user"
 
 
+def _default_state_dir() -> str:
+    """Derive the default ``state_dir``; raise when no home is derivable.
+
+    If neither ``$XDG_STATE_HOME`` nor ``$HOME`` is set (the pathological
+    case — no way to compute a home path), the default cannot be derived
+    and we raise, preserving the fail-fast intent (#1461) for the
+    genuinely-unconfigured case. We check ``$HOME`` directly rather than
+    probing ``expanduser("~")``, which falls back to the pwd database
+    (the real home from /etc/passwd) when HOME is unset and so would
+    never actually be "~".
+    """
+    if not os.environ.get("HOME") and not os.environ.get("XDG_STATE_HOME"):
+        raise ValueError(
+            "KLANGKD_STATE_DIR is required (env var or config file), "
+            "and no default could be derived: $XDG_STATE_HOME and $HOME "
+            "are both unset. Set KLANGKD_STATE_DIR to the runtime state "
+            "directory (UDS socket, rendered proxy config, pid file)."
+        )
+    return os.path.join(_xdg_state_home(), XDG_SUBDIR)
+
+
 # Re-exported for backward compat — callers that ``from ..util import ...``
 # still work because util.py re-exports these.  ``resolve_indirection`` is
 # NOT exported: ``file:``/``cmd:`` resolution now happens once, inside
@@ -436,6 +481,36 @@ def _read_file(value: str) -> tuple[str | None, OSError | None]:
         return None, e
 
 
+def _resolve_file_ref(value: str, key: str) -> str | None:
+    """Resolve one ``file:`` reference; log strerror-only on failure."""
+    contents, err = _read_file(value)
+    if err is not None:
+        # Log only the OS-level message (err.strerror, a fixed string
+        # like "No such file or directory") + the var name — never the
+        # value or err.filename (both derived from value, which may name
+        # a secret).
+        logger.error(
+            "Cannot read %s: %s",
+            key or "config value",
+            err.strerror or "I/O error",
+        )
+        return None
+    return contents
+
+
+def _resolve_cmd_ref(value: str, key: str) -> str | None:
+    """Resolve one ``cmd:`` reference; log the failure reason."""
+    contents, err = run_cmd_value(value)
+    if err is not None:
+        logger.error(
+            "Cannot resolve %s via cmd: %s",
+            key or "config value",
+            err,
+        )
+        return None
+    return contents
+
+
 def resolve_indirection(value: str | None, key: str = "") -> str | None:
     """Resolve ``file:`` / ``cmd:`` prefixes on a raw config value.
 
@@ -462,29 +537,9 @@ def resolve_indirection(value: str | None, key: str = "") -> str | None:
     if value is None:
         return None
     if value.startswith("file:"):
-        contents, err = _read_file(value)
-        if err is not None:
-            # Log only the OS-level message (err.strerror, a fixed string
-            # like "No such file or directory") + the var name — never the
-            # value or err.filename (both derived from value, which may name
-            # a secret).
-            logger.error(
-                "Cannot read %s: %s",
-                key or "config value",
-                err.strerror or "I/O error",
-            )
-            return None
-        return contents
+        return _resolve_file_ref(value, key)
     if value.startswith("cmd:"):
-        contents, err = run_cmd_value(value)
-        if err is not None:
-            logger.error(
-                "Cannot resolve %s via cmd: %s",
-                key or "config value",
-                err,
-            )
-            return None
-        return contents
+        return _resolve_cmd_ref(value, key)
     return value
 
 
@@ -1382,23 +1437,13 @@ class KlangkSettings(BaseSettings):
         ``KLANGKD_PLUGINS_DIR`` env var exists at any layer.
         """
         if not self.state_dir:
-            # If neither $XDG_STATE_HOME nor $HOME is set (the pathological
-            # case — no way to compute a home path), the default cannot be
-            # derived; fail fast per #1461 rather than silently dereferencing
-            # an empty/root path. We check $HOME directly rather than
-            # probing expanduser("~"), which falls back to the pwd database
-            # (the real home from /etc/passwd) when HOME is unset and so
-            # would never actually be "~".
-            if not os.environ.get("HOME") and not os.environ.get(
-                "XDG_STATE_HOME"
-            ):
-                raise ValueError(
-                    "KLANGKD_STATE_DIR is required (env var or config file), "
-                    "and no default could be derived: $XDG_STATE_HOME and $HOME "
-                    "are both unset. Set KLANGKD_STATE_DIR to the runtime state "
-                    "directory (UDS socket, rendered proxy config, pid file)."
-                )
-            self.state_dir = os.path.join(_xdg_state_home(), XDG_SUBDIR)
+            self.state_dir = _default_state_dir()
+        self._derive_missing_defaults()
+        return self
+
+    def _derive_missing_defaults(self) -> None:
+        """Derive ``data_dir`` / ``config_dir`` / ``customize_dir`` /
+        ``default_user`` when unset (see ``require_dirs``)."""
         if not self.data_dir:
             self.data_dir = os.path.join(self.state_dir, "data")
         # config_dir is the config-tree root (the state_tree analogue of
@@ -1416,7 +1461,6 @@ class KlangkSettings(BaseSettings):
         # intentional deployments that stage a specific admin email.
         if not self.default_user:
             self.default_user = f"{_safe_getuser()}@example.com"
-        return self
 
     @model_validator(mode="after")
     def _resolve_socket_and_ports(self) -> "KlangkSettings":
@@ -1438,23 +1482,7 @@ class KlangkSettings(BaseSettings):
           the egress port + a loud deprecation warning.
         - both set → ``egress_port`` wins, ``proxy_port`` ignored + a warning.
         """
-        # --- KLANGKD_PROXY_PORT → egress_port fold ---
-        if self.proxy_port is not None:
-            if self.egress_port is not None:
-                logger.warning(
-                    "KLANGKD_PROXY_PORT is ignored because KLANGKD_EGRESS_PORT "
-                    "is also set; KLANGKD_EGRESS_PORT takes precedence. "
-                    "KLANGKD_PROXY_PORT is deprecated — remove it and use "
-                    "KLANGKD_EGRESS_PORT."
-                )
-            else:
-                logger.warning(
-                    "KLANGKD_PROXY_PORT is deprecated; rename it to "
-                    "KLANGKD_EGRESS_PORT. Its value is used as the egress "
-                    "port for this run, but a future release will stop "
-                    "recognizing KLANGKD_PROXY_PORT."
-                )
-                self.egress_port = self.proxy_port
+        self._fold_proxy_port()
         if self.egress_port is None:
             self.egress_port = "8995"
 
@@ -1468,14 +1496,7 @@ class KlangkSettings(BaseSettings):
                 "bind two server blocks to the same port."
             )
 
-        # --- socket default + length guard (#1531, #1542) ---
-        if self.socket is None:
-            self.socket = os.path.join(self.state_dir, "klangk.sock")
-        # --- caddy admin socket default + length guard (#1636) ---
-        if self.caddy_admin_socket is None:
-            self.caddy_admin_socket = os.path.join(
-                self.state_dir, "caddy-admin.sock"
-            )
+        self._default_sockets()
         # Portable bound: macOS sun_path is 104 usable bytes; Linux is 107.
         # Use the smaller so one check is correct on both platforms.
         # Applied to BOTH UDS paths the engines bind: the backend socket
@@ -1493,6 +1514,36 @@ class KlangkSettings(BaseSettings):
             max_socket_len,
         )
         return self
+
+    def _fold_proxy_port(self) -> None:
+        """Apply the ``KLANGKD_PROXY_PORT`` → ``egress_port`` deprecation
+        ladder (warnings + fold; see ``_resolve_socket_and_ports``)."""
+        if self.proxy_port is None:
+            return
+        if self.egress_port is not None:
+            logger.warning(
+                "KLANGKD_PROXY_PORT is ignored because KLANGKD_EGRESS_PORT "
+                "is also set; KLANGKD_EGRESS_PORT takes precedence. "
+                "KLANGKD_PROXY_PORT is deprecated — remove it and use "
+                "KLANGKD_EGRESS_PORT."
+            )
+            return
+        logger.warning(
+            "KLANGKD_PROXY_PORT is deprecated; rename it to "
+            "KLANGKD_EGRESS_PORT. Its value is used as the egress "
+            "port for this run, but a future release will stop "
+            "recognizing KLANGKD_PROXY_PORT."
+        )
+        self.egress_port = self.proxy_port
+
+    def _default_sockets(self) -> None:
+        """Default the two UDS paths under ``state_dir`` (#1531, #1636)."""
+        if self.socket is None:
+            self.socket = os.path.join(self.state_dir, "klangk.sock")
+        if self.caddy_admin_socket is None:
+            self.caddy_admin_socket = os.path.join(
+                self.state_dir, "caddy-admin.sock"
+            )
 
     @staticmethod
     def _enforce_socket_length(value: str, env_var: str, max_len: int) -> None:
@@ -1729,13 +1780,12 @@ class KlangkSettings(BaseSettings):
         bogus value aborts boot rather than silently leaving logging at the
         wrong verbosity — the same fail-fast posture as ``auth_modes``.
         """
-        if v is None or v == "":
+        if _is_unset(v):
             return "INFO"
         upper = v.strip().upper()
-        named = getattr(logging, upper, None)
-        if isinstance(named, int) and not upper.isdigit():
-            return upper
         if upper.isdigit():
+            return upper
+        if isinstance(getattr(logging, upper, None), int):
             return upper
         raise ValueError(
             f"KLANGKD_LOG_LEVEL={v!r} is invalid. "
@@ -1776,15 +1826,7 @@ class KlangkSettings(BaseSettings):
         """A domain-list setting's items: a comma-separated string (env var)
         or a real list (YAML), stripped + de-emptied; a wrong type raises
         ValueError (startup aborts — see the coerce methods' docstrings)."""
-        if isinstance(v, str):
-            parts = [s.strip() for s in v.split(",")]
-            return [p for p in parts if p]
-        if isinstance(v, list):
-            return [str(s).strip() for s in v if str(s).strip()]
-        raise ValueError(
-            f"{setting}={v!r} must be a list or "
-            f"a comma-separated string (got {type(v).__name__})."
-        )
+        return _setting_items(v, setting)
 
     @field_validator("netfilter_default_domains", mode="before")
     @classmethod
@@ -2122,35 +2164,62 @@ class KlangkSettings(BaseSettings):
         raw = _llm_model_entries(v)
         if not raw:
             return None
-        items: list[str | dict] = []
-        for entry in raw:
-            if isinstance(entry, dict):
-                items.append(entry)
-            else:
-                item = str(entry).strip()
-                if item.count(":") < 2:
-                    raise ValueError(
-                        f"KLANGKD_LLM_MODELS entry {item!r} "
-                        f"must be 'provider/model:api_base:api_key' "
-                        f"(need at least two colons separating the three "
-                        f"fields)."
-                    )
-                items.append(item)
-        return items
+        return [_llm_model_entry(entry) for entry in raw]
+
+
+def _llm_model_entry(entry) -> str | dict:
+    """Normalize one ``KLANGKD_LLM_MODELS`` entry (#2070).
+
+    Dict entries pass through; string entries are stripped and must carry
+    at least two colons (``provider/model:api_base:api_key``).
+    """
+    if isinstance(entry, dict):
+        return entry
+    item = str(entry).strip()
+    if item.count(":") < 2:
+        raise ValueError(
+            f"KLANGKD_LLM_MODELS entry {item!r} "
+            f"must be 'provider/model:api_base:api_key' "
+            f"(need at least two colons separating the three fields)."
+        )
+    return item
 
 
 def _llm_model_entries(v) -> list:
     """KLANGKD_LLM_MODELS entries: a comma-separated string (env) or a real
     list (YAML), stripped + de-emptied; a wrong type raises ValueError."""
+    return _setting_items(v, "KLANGKD_LLM_MODELS", stringify=False)
+
+
+def _setting_items(v, label: str, *, stringify: bool = True) -> list:
+    """Split a str-or-list setting value into stripped, non-empty items.
+
+    Env vars deliver a comma-separated string; the YAML source delivers
+    a native list. Any other type raises ``ValueError`` naming *label*
+    (startup aborts). ``stringify=False`` keeps native list entries
+    as-is (``llm_models`` list entries may be LiteLLM-native dicts).
+    """
     if isinstance(v, str):
-        raw = [s.strip() for s in v.split(",")]
-        return [i for i in raw if i]
+        return _str_setting_items(v)
     if isinstance(v, list):
-        return [i for i in v if i]
+        return _list_setting_items(v, stringify=stringify)
     raise ValueError(
-        f"KLANGKD_LLM_MODELS={v!r} must be a list or "
+        f"{label}={v!r} must be a list or "
         f"a comma-separated string (got {type(v).__name__})."
     )
+
+
+def _str_setting_items(value: str) -> list[str]:
+    """Stripped, non-empty items of a comma-separated string."""
+    parts = [part.strip() for part in value.split(",")]
+    return [part for part in parts if part]
+
+
+def _list_setting_items(items: list, *, stringify: bool) -> list:
+    """Non-empty items of a native list, optionally str()'d + stripped."""
+    if stringify:
+        items = [str(item).strip() for item in items]
+    return [item for item in items if item]
 
 
 # ---------------------------------------------------------------------------
@@ -2219,21 +2288,30 @@ def resolve_dynamic_config(
         resolved = resolve_indirection(raw, key)
         return resolved if resolved is not None else default
     if features_config is not None:
-        fc_raw = features_config.get(key)
-        if fc_raw is None:
-            # #1737: the block may use the short, JSON-style key (e.g.
-            # ``soliplex_url``) instead of the full declared name
-            # (``KLANGKWS_FEATURE_SOLIPLEX_URL``). Try the stripped, lowercased
-            # form so operators can write either. Env stays full-prefixed —
-            # only the config-file block accepts the short form.
-            fc_raw = features_config.get(
-                key.removeprefix(_FEATURE_CONFIG_PREFIX).lower()
-            )
-        if fc_raw is not None:
-            resolved = resolve_indirection(fc_raw, key)
-            if resolved is not None:
-                return resolved
-            # A bad file:/cmd: ref in the YAML value: resolve_indirection
-            # already logged it; fall through to the feature default rather
-            # than silently treating the broken ref as the value.
+        resolved = _resolve_features_config(features_config, key)
+        if resolved is not None:
+            return resolved
     return default
+
+
+def _resolve_features_config(
+    features_config: Mapping[str, str], key: str
+) -> str | None:
+    """Resolve *key* against the ``features_config:`` block (#1659, #1737).
+
+    The block accepts the full declared name
+    (``KLANGKWS_FEATURE_SOLIPLEX_URL``) or the stripped, lowercased short
+    form (``soliplex_url``); env stays full-prefixed. Returns the
+    ``file:``/``cmd:``-resolved value, or ``None`` when the key is absent
+    or its ref failed to resolve — the caller falls through to the
+    feature default (a bad ref does not abort boot here; a bad env ref
+    behaves the same way).
+    """
+    fc_raw = features_config.get(key)
+    if fc_raw is None:
+        fc_raw = features_config.get(
+            key.removeprefix(_FEATURE_CONFIG_PREFIX).lower()
+        )
+    if fc_raw is None:
+        return None
+    return resolve_indirection(fc_raw, key)
