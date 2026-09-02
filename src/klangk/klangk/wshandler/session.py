@@ -71,6 +71,18 @@ def spawn_session_task(coro: Coroutine[Any, Any, Any]) -> asyncio.Task:
     return task
 
 
+def _merged_window_entry(w: dict, prev: dict | None) -> dict:
+    """One merged entry: shared flags carry over from the old entry, and
+    the agent's ``service-cmd`` window is shared by definition (#1114)."""
+    prev_shared = prev.get("shared", False) if prev else False
+    return {
+        "id": w["id"],
+        "name": w["name"],
+        "index": w["index"],
+        "shared": (w["name"] == SERVICE_CMD_WINDOW or prev_shared),
+    }
+
+
 def merge_window_entries(old: list[dict], windows: list[dict]) -> list[dict]:
     """Fold a fresh tmux ``list_windows`` result into the session map.
 
@@ -92,16 +104,7 @@ def merge_window_entries(old: list[dict], windows: list[dict]) -> list[dict]:
     old_by_id = {w["id"]: w for w in old if "id" in w}
     entries = []
     for w in windows:
-        prev = old_by_id.get(w["id"])
-        prev_shared = prev.get("shared", False) if prev else False
-        entries.append(
-            {
-                "id": w["id"],
-                "name": w["name"],
-                "index": w["index"],
-                "shared": (w["name"] == SERVICE_CMD_WINDOW or prev_shared),
-            }
-        )
+        entries.append(_merged_window_entry(w, old_by_id.get(w["id"])))
     return entries
 
 
@@ -169,26 +172,30 @@ def get_shared_terminals(ws_session, sockets: "WebSocketState") -> list[dict]:
     return terminals
 
 
+def _shared_ids(windows: list[dict]) -> set:
+    """Ids of the shared windows in a list."""
+    return {w["id"] for w in windows if w.get("shared") and "id" in w}
+
+
 def _shared_id_sets(
     old: list[dict], new_entries: list[dict]
 ) -> tuple[set, set]:
     """(old, new) sets of shared-window ids."""
-    old_shared = {w["id"] for w in old if w.get("shared") and "id" in w}
-    new_shared = {w["id"] for w in new_entries if w.get("shared")}
-    return old_shared, new_shared
+    return _shared_ids(old), _shared_ids(new_entries)
+
+
+def _shared_names(windows: list[dict]) -> set:
+    """(id, name) pairs of the shared windows in a list."""
+    return {
+        (w["id"], w["name"]) for w in windows if w.get("shared") and "id" in w
+    }
 
 
 def _shared_name_sets(
     old: list[dict], new_entries: list[dict]
 ) -> tuple[set, set]:
     """(old, new) sets of (id, name) pairs for shared windows."""
-    old_shared_names = {
-        (w["id"], w["name"]) for w in old if w.get("shared") and "id" in w
-    }
-    new_shared_names = {
-        (w["id"], w["name"]) for w in new_entries if w.get("shared")
-    }
-    return old_shared_names, new_shared_names
+    return _shared_names(old), _shared_names(new_entries)
 
 
 def _shared_set_changed(old: list[dict], new_entries: list[dict]) -> bool:
@@ -300,16 +307,7 @@ class WorkspaceSession:
         self.browser_subscribers.clear()
         self.terminal_windows.clear()
         self.agent_handle = None
-        # Cancel the token renewal loop so it doesn't keep renewing
-        # tokens for a container that has been killed or reset.
-        task = self._token_renewal_task
-        if task is not None and not task.done():
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
-        self._token_renewal_task = None
+        await self._cancel_token_renewal()
         self.workspace_token_expiry = None
         if self._window_sync_handle is not None:
             self._window_sync_handle.cancel()
@@ -320,6 +318,18 @@ class WorkspaceSession:
             spawn_session_task(watcher.stop())
         self._last_windows.clear()
         self._window_generations.clear()
+
+    async def _cancel_token_renewal(self) -> None:
+        """Cancel the token renewal loop so it doesn't keep renewing
+        tokens for a container that has been killed or reset."""
+        task = self._token_renewal_task
+        if task is not None and not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        self._token_renewal_task = None
 
     async def add_subscriber(
         self,
@@ -430,7 +440,7 @@ class WorkspaceSession:
             return
         watcher = self._window_watcher
         if watcher is not None:
-            if watcher.container_id == self.container_id and watcher.alive:
+            if self._watcher_reusable(watcher):
                 return
             self._window_watcher = None
             spawn_session_task(watcher.stop())
@@ -440,6 +450,11 @@ class WorkspaceSession:
             self._schedule_window_sync,
         )
         spawn_session_task(self._window_watcher.start())
+
+    def _watcher_reusable(self, watcher) -> bool:
+        """True when the existing watcher is bound to the current
+        container and still alive."""
+        return watcher.container_id == self.container_id and watcher.alive
 
     def _schedule_window_sync(self) -> None:
         """Debounce a burst of control-mode events into one re-sync."""
@@ -485,96 +500,111 @@ class WorkspaceSession:
             return
         sockets = self.app.state.sockets
         terminal = self.app.state.terminal
-        user_ids = self._connected_user_ids(sockets)
-        for uid in user_ids:
-            # Stamp the apply generation before the exec (#2653): the
-            # list_windows below is a podman round-trip that can straddle
-            # a command handler's tmux mutation and its apply. If the
-            # counter moved by the time the exec returns, a newer list
-            # was applied while we were in flight and this snapshot is
-            # stale — applying it would revert the map, the baseline,
-            # and the client frames to the pre-mutation state.
-            generation = self._window_generations.get(uid, 0)
-            try:
-                windows = await terminal.list_windows(self.container_id, uid)
-            except Exception:
-                continue
-            if self._window_generations.get(uid, 0) != generation:
-                # Stale in-flight snapshot (#2653): the newer applied
-                # list already updated the map, the baseline, and the
-                # broadcasts; drop ours instead of reverting them.
-                continue
-            if self._last_windows.get(uid) == windows:
-                continue
-            self._last_windows[uid] = windows
-            # Update the in-memory map BEFORE broadcasting (#2633 CI
-            # race): share/unshare read terminal_windows, and a client
-            # acting on this frame must find every listed window in the
-            # map. Without this, a watcher frame that beat
-            # _start_terminal's sync left the map empty/stale and
-            # ``klangk terminal share`` blind-timed-out on the missing
-            # window.
-            shared_changed = self.apply_window_list(uid, windows)
-            self._send_windows_to_user(sockets, uid, windows)
-            # A rename/close/add that touched a shared window must also
-            # reach shared-terminal viewers: this path can be the first
-            # to apply the change (under load its list_windows exec can
-            # beat the command handler's), and the handler's own delta
-            # check would then see no change (#2651).
-            if shared_changed:
-                self.broadcast_shared_terminals()
+        for uid in self._connected_user_ids(sockets):
+            await self._sync_user_windows(uid, sockets, terminal)
+
+    async def _sync_user_windows(self, uid: str, sockets, terminal) -> None:
+        """Re-sync one user's windows, dropping a stale in-flight snapshot
+        (#2653) and a no-change one (#2161)."""
+        # Stamp the apply generation before the exec (#2653): the
+        # list_windows below is a podman round-trip that can straddle
+        # a command handler's tmux mutation and its apply. If the
+        # counter moved by the time the exec returns, a newer list
+        # was applied while we were in flight and this snapshot is
+        # stale — applying it would revert the map, the baseline,
+        # and the client frames to the pre-mutation state.
+        generation = self._window_generations.get(uid, 0)
+        try:
+            windows = await terminal.list_windows(self.container_id, uid)
+        except Exception:
+            return
+        if self._window_generations.get(uid, 0) != generation:
+            # Stale in-flight snapshot (#2653): the newer applied
+            # list already updated the map, the baseline, and the
+            # broadcasts; drop ours instead of reverting them.
+            return
+        if self._last_windows.get(uid) == windows:
+            return
+        self._last_windows[uid] = windows
+        # Update the in-memory map BEFORE broadcasting (#2633 CI
+        # race): share/unshare read terminal_windows, and a client
+        # acting on this frame must find every listed window in the
+        # map. Without this, a watcher frame that beat
+        # _start_terminal's sync left the map empty/stale and
+        # ``klangk terminal share`` blind-timed-out on the missing
+        # window.
+        shared_changed = self.apply_window_list(uid, windows)
+        self._send_windows_to_user(sockets, uid, windows)
+        # A rename/close/add that touched a shared window must also
+        # reach shared-terminal viewers: this path can be the first
+        # to apply the change (under load its list_windows exec can
+        # beat the command handler's), and the handler's own delta
+        # check would then see no change (#2651).
+        if shared_changed:
+            self.broadcast_shared_terminals()
 
     async def _token_renewal_loop(self) -> None:
         """Periodically renew the workspace token before it expires."""
         while True:
-            expiry = self.workspace_token_expiry
-            if expiry is None:
+            if not await self._token_renewal_step():
                 return
 
-            # Renew at 80% of the token lifetime.
-            lifetime = self.app.state.auth.workspace_token_expire_hours * 3600
-            delay = lifetime * 0.8
-            try:
-                await asyncio.sleep(delay)
-            except asyncio.CancelledError:
-                return
+    async def _token_renewal_step(self) -> bool:
+        """One renewal cycle; True to continue looping, False to stop."""
+        if self.workspace_token_expiry is None:
+            return False
+        # Renew at 80% of the token lifetime.
+        lifetime = self.app.state.auth.workspace_token_expire_hours * 3600
+        if not await self._sleep_or_stop(lifetime * 0.8):
+            return False
+        if self.container_id is None:
+            return False
+        if await self._renew_workspace_token():
+            return True
+        return await self._sleep_or_stop(60)
 
-            container_id = self.container_id
-            if container_id is None:
-                return
+    @staticmethod
+    async def _sleep_or_stop(delay: float) -> bool:
+        """Await a delay; False when cancelled (the caller should stop)."""
+        try:
+            await asyncio.sleep(delay)
+        except asyncio.CancelledError:
+            return False
+        return True
 
-            try:
-                new_token = self.app.state.auth.create_workspace_token(
-                    self.workspace_id
-                )
-                await self.app.state.terminal.set_workspace_token(
-                    container_id, new_token
-                )
-                # #2242: refresh the sidecar's bind-mounted token file too —
-                # it can't be exec-pushed (no token-setter in the sidecar
-                # image), so it reads this file on each consent POST.
-                self.app.state.container_registry.write_sidecar_token(
-                    self.workspace_id, new_token
-                )
-                self.workspace_token_expiry = datetime.now(
-                    timezone.utc
-                ) + timedelta(
-                    hours=self.app.state.auth.workspace_token_expire_hours
-                )
-                logger.info(
-                    "Renewed workspace token for %s",
-                    self.workspace_id,
-                )
-            except Exception:
-                logger.warning(
-                    "Failed to renew workspace token for %s, retrying in 60s",
-                    self.workspace_id,
-                    exc_info=True,
-                )
-                try:
-                    await asyncio.sleep(60)
-                except asyncio.CancelledError:
-                    return
+    async def _renew_workspace_token(self) -> bool:
+        """Mint and push a fresh workspace token; True on success, False
+        to retry after the backoff."""
+        try:
+            new_token = self.app.state.auth.create_workspace_token(
+                self.workspace_id
+            )
+            await self.app.state.terminal.set_workspace_token(
+                self.container_id, new_token
+            )
+            # #2242: refresh the sidecar's bind-mounted token file too —
+            # it can't be exec-pushed (no token-setter in the sidecar
+            # image), so it reads this file on each consent POST.
+            self.app.state.container_registry.write_sidecar_token(
+                self.workspace_id, new_token
+            )
+            self.workspace_token_expiry = datetime.now(
+                timezone.utc
+            ) + timedelta(
+                hours=self.app.state.auth.workspace_token_expire_hours
+            )
+            logger.info(
+                "Renewed workspace token for %s",
+                self.workspace_id,
+            )
+            return True
+        except Exception:
+            logger.warning(
+                "Failed to renew workspace token for %s, retrying in 60s",
+                self.workspace_id,
+                exc_info=True,
+            )
+            return False
 
     def broadcast_to_browsers(self, message: dict) -> int:
         """Send message to browser subscribers only, removing dead ones."""
@@ -837,13 +867,7 @@ class WebSocketState:
         socks = list(self.connections.keys())
         self.connections.clear()
 
-        # Cancel abandoned browser-delegate requests so they don't fire
-        # against state we're about to drop.
-        for fut, _sock in self.pending_browser_requests.values():
-            if not fut.done():
-                fut.cancel()
-        self.pending_browser_requests.clear()
-        self.streaming_browser_requests.clear()
+        self._cancel_pending_browser_requests()
 
         # Reset each workspace session (cancels token-renewal tasks,
         # clears subscriber sets) then drop the entries.
@@ -852,7 +876,20 @@ class WebSocketState:
         for session in sessions:
             await session.reset()
 
-        # Tell every client to reconnect (1012 = "service restart").
+        await self._close_all_sockets(socks)
+
+    def _cancel_pending_browser_requests(self) -> None:
+        """Cancel abandoned browser-delegate requests so they don't fire
+        against state we're about to drop."""
+        for fut, _sock in self.pending_browser_requests.values():
+            if not fut.done():
+                fut.cancel()
+        self.pending_browser_requests.clear()
+        self.streaming_browser_requests.clear()
+
+    @staticmethod
+    async def _close_all_sockets(socks) -> None:
+        """Tell every client to reconnect (1012 = "service restart")."""
         for sock in socks:
             try:
                 await sock.close(code=1012)
@@ -938,12 +975,7 @@ class WebSocketState:
         preload-then-evaluate shape ``permissions_for_resources`` uses)
         — a transition burst doesn't re-query identical paths per user.
         """
-        by_user: dict[str, list[tuple[SafeWebSocket, "Connection"]]] = {}
-        for sock, conn in self.connections.items():
-            uid = conn.user.get("id")
-            if uid is None:
-                continue
-            by_user.setdefault(uid, []).append((sock, conn))
+        by_user = self._connections_by_user(self.connections)
         if not by_user:
             return
         resource = f"/workspaces/{workspace_id}"
@@ -958,13 +990,31 @@ class WebSocketState:
                 resource, principals, "monitor-workspace", entries
             ):
                 continue
-            for sock, _conn in conns:
-                try:
-                    sock.send_json(message)
-                except WS_ERRORS:
-                    dead.append(sock)
+            dead += self._deliver_to_sockets(conns, message)
         for sock in dead:
             self.connections.pop(sock, None)
+
+    @staticmethod
+    def _connections_by_user(connections) -> dict:
+        """Authenticated connections grouped by user id."""
+        by_user: dict[str, list[tuple[SafeWebSocket, "Connection"]]] = {}
+        for sock, conn in connections.items():
+            uid = conn.user.get("id")
+            if uid is None:
+                continue
+            by_user.setdefault(uid, []).append((sock, conn))
+        return by_user
+
+    @staticmethod
+    def _deliver_to_sockets(conns, message: dict) -> list:
+        """Send *message* to each (sock, conn) pair; returns dead sockets."""
+        dead = []
+        for sock, _conn in conns:
+            try:
+                sock.send_json(message)
+            except WS_ERRORS:
+                dead.append(sock)
+        return dead
 
     async def notify_container_status(
         self,
@@ -1039,10 +1089,7 @@ class WebSocketState:
         """
         dead = []
         for sock, conn in self.connections.items():
-            uid = conn.user.get("id")
-            if uid is None or (user_id is not None and uid != user_id):
-                continue
-            if predicate is not None and not predicate(conn):
+            if not self._connection_matches(conn, user_id, predicate):
                 continue
             try:
                 sock.send_json(message)
@@ -1050,6 +1097,20 @@ class WebSocketState:
                 dead.append(sock)
         for sock in dead:
             self.connections.pop(sock, None)
+
+    @staticmethod
+    def _connection_matches(conn, user_id: str | None, predicate) -> bool:
+        """Whether a connection receives a fan-out message."""
+        uid = conn.user.get("id")
+        if not WebSocketState._user_targeted(uid, user_id):
+            return False
+        return predicate is None or predicate(conn)
+
+    @staticmethod
+    def _user_targeted(uid, user_id: str | None) -> bool:
+        """Whether the connection's user is the fan-out target
+        (None = every authenticated user)."""
+        return uid is not None and (user_id is None or uid == user_id)
 
     def notify_host_shutdown(self) -> None:
         """Broadcast host-shutdown to all connections (#2527).
@@ -1149,8 +1210,7 @@ class WebSocketState:
         from ``registry.states`` and thus skipped (the container-death
         hole is #1175 item 2).
         """
-        conn = self.connections.get(sock)
-        user_id = conn.user.get("id") if conn else None
+        user_id = self._snapshot_user_id(sock)
         if user_id is None:
             return
         registry = self.app.state.container_registry
@@ -1159,24 +1219,40 @@ class WebSocketState:
         # window must not be overwritten by a stale replay frame — the
         # per-workspace seq bumps on every emit and the state is dropped
         # on death, so a mismatch means a newer frame already went out.
-        candidates = [
-            (cs, cs.health_seq)
-            for cs in registry.states.values()
-            if cs.health_check is not None and cs.health_status is not None
-        ]
+        candidates = self._health_candidates(registry)
         if not candidates:
             return
-        acl = self.app.state.acl
-        principals = await acl.get_principals(user_id)
-        resources = [f"/workspaces/{cs.workspace_id}" for cs, _ in candidates]
-        allowed = await acl.permissions_for_resources(
-            resources, principals, ["monitor-workspace"]
-        )
+        allowed = await self._allowed_health_resources(candidates, user_id)
         for cs, seq in candidates:
             if not self._replay_service_health(
                 sock, registry, cs, seq, allowed
             ):
                 break
+
+    def _snapshot_user_id(self, sock) -> str | None:
+        """The connected user's id for the snapshot socket."""
+        conn = self.connections.get(sock)
+        return conn.user.get("id") if conn else None
+
+    @staticmethod
+    def _health_candidates(registry) -> list:
+        """(state, seq) pairs of workspaces the registry has already
+        checked (health_check configured, at least one poll done)."""
+        return [
+            (cs, cs.health_seq)
+            for cs in registry.states.values()
+            if cs.health_check is not None and cs.health_status is not None
+        ]
+
+    async def _allowed_health_resources(self, candidates, user_id) -> set:
+        """The candidate resources the user may observe
+        (``monitor-workspace``, #2783)."""
+        acl = self.app.state.acl
+        principals = await acl.get_principals(user_id)
+        resources = [f"/workspaces/{cs.workspace_id}" for cs, _ in candidates]
+        return await acl.permissions_for_resources(
+            resources, principals, ["monitor-workspace"]
+        )
 
     def send_health_heartbeats(self) -> None:
         """Send a liveness heartbeat to connections that opted in.
@@ -1307,16 +1383,7 @@ class WebSocketState:
         request_id = msg.get("id")
         if not request_id:
             return
-        # Streaming request: the response is the terminal "done" item.
-        stream_entry = self.streaming_browser_requests.get(request_id)
-        if stream_entry is not None:
-            queue, expected_sock = stream_entry
-            if self._wrong_connection(request_id, expected_sock, sender):
-                return
-            result = {
-                k: v for k, v in msg.items() if k not in ("id", "cmd", "type")
-            }
-            queue.put_nowait({"type": "done", "result": result})
+        if self._resolve_streaming_response(msg, request_id, sender):
             return
         entry = self.pending_browser_requests.get(request_id)
         if entry is None:
@@ -1329,6 +1396,28 @@ class WebSocketState:
         if self._wrong_connection(request_id, expected_sock, sender):
             return
         self.pending_browser_requests.pop(request_id, None)
+        self._complete_pending(future, msg)
+
+    def _resolve_streaming_response(
+        self, msg: dict, request_id: str, sender
+    ) -> bool:
+        """Resolve a streaming request's terminal "done" item; False
+        when *request_id* is not a streaming request."""
+        stream_entry = self.streaming_browser_requests.get(request_id)
+        if stream_entry is None:
+            return False
+        queue, expected_sock = stream_entry
+        if self._wrong_connection(request_id, expected_sock, sender):
+            return True
+        result = {
+            k: v for k, v in msg.items() if k not in ("id", "cmd", "type")
+        }
+        queue.put_nowait({"type": "done", "result": result})
+        return True
+
+    @staticmethod
+    def _complete_pending(future: asyncio.Future, msg: dict) -> None:
+        """Deliver the response unless the waiter already went away."""
         if not future.done():
             future.set_result(msg)
 
