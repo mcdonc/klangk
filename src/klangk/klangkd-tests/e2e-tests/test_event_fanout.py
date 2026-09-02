@@ -208,12 +208,40 @@ class TestEventFanout:
 
                 async def restart_and_watch(ws):
                     """Trigger the restart on ws1, drain ws until the
-                    container_ready CUSTOM event (the restart tears down
-                    and recreates the container, which takes seconds)."""
+                    container_ready CUSTOM event (the restart recreates
+                    the stopped container, which takes seconds)."""
                     await ws.send(json.dumps({"cmd": "restart_container"}))
                     return await recv_until(
                         ws, is_custom("container_ready"), timeout=60
                     )
+
+                # Settle: ws_connect returns on the TYPED container_ready,
+                # but each connection's own post-ui_ready CUSTOM
+                # container_ready status event is still queued — drain it
+                # so it cannot satisfy the restart assertions below.
+                await asyncio.gather(
+                    recv_until(ws1, is_custom("container_ready"), timeout=10),
+                    recv_until(ws2, is_custom("container_ready"), timeout=10),
+                )
+
+                # Stop the container first — the production restart flow
+                # (#3008 repro): the overlay's Restart button fires on a
+                # STOPPED container, which is (re)created on restart. (On
+                # a running container the start path just reuses it.)
+                resp = server["client"].post(
+                    f"/api/v1/workspaces/{workspace_id}/stop",
+                    headers=auth["headers"],
+                    timeout=30,
+                )
+                assert resp.status_code == 200
+                await asyncio.gather(
+                    recv_until(
+                        ws1, is_custom("container_stopped"), timeout=30
+                    ),
+                    recv_until(
+                        ws2, is_custom("container_stopped"), timeout=30
+                    ),
+                )
 
                 msgs1, msgs2 = await asyncio.gather(
                     restart_and_watch(ws1),
