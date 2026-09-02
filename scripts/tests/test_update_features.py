@@ -263,6 +263,14 @@ class TestMainPayloadDir:
         shutil.rmtree(payload_path, ignore_errors=True)
 
 
+def assert_skipped_entry(entry: dict) -> None:
+    """A --local-only git entry carries sha='skipped' + its source for
+    traceability."""
+    assert entry["sha"] == "skipped", f"expected sha='skipped'; got {entry!r}"
+    assert entry["git"].endswith("/repo.git")
+    assert entry["ref"] == "v1.0"
+
+
 class TestLocalOnlyFlag:
     """--local-only skips git-sourced features without hitting the network (#1664).
 
@@ -327,12 +335,7 @@ class TestLocalOnlyFlag:
         assert set(entries) == {"local-one", "remote-one"}, (
             f"lock should list both features; got {sorted(entries)}"
         )
-        assert entries["remote-one"]["sha"] == "skipped", (
-            f"remote-one should be sha='skipped'; got {entries['remote-one']!r}"
-        )
-        # The git URL + ref are preserved in the lock for traceability.
-        assert entries["remote-one"]["git"].endswith("/repo.git")
-        assert entries["remote-one"]["ref"] == "v1.0"
+        assert_skipped_entry(entries["remote-one"])
 
     def test_local_only_off_by_default(self, tmp_path, monkeypatch):
         """Without --local-only, a git entry with an unresolvable ref fails

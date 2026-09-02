@@ -21,12 +21,11 @@ import sys
 from pathlib import Path
 
 
-def _resolve_against_bases(map_dir: Path, stripped: str) -> Path | None:
-    """Try every directory between map_dir and `/`, plus $HOME. dart2js
+def ancestor_bases(map_dir: Path) -> list[Path]:
+    """Every directory between map_dir and `/`, plus $HOME. dart2js
     emits paths with a `../` depth that doesn't quite match the map file's
     directory (app `lib/` paths are off by one, pub-cache paths by several),
-    so walk up and try each candidate base — the first one where stripped
-    resolves is the source."""
+    so each candidate base gets tried."""
     bases: list[Path] = []
     cur = map_dir
     while True:
@@ -36,7 +35,13 @@ def _resolve_against_bases(map_dir: Path, stripped: str) -> Path | None:
         cur = cur.parent
     if Path.home() not in bases:
         bases.append(Path.home())
-    for base in bases:
+    return bases
+
+
+def _resolve_against_bases(map_dir: Path, stripped: str) -> Path | None:
+    """Try every candidate base — the first one where stripped resolves is
+    the source."""
+    for base in ancestor_bases(map_dir):
         cand = (base / stripped).resolve()
         if cand.is_file():
             return cand
@@ -58,6 +63,19 @@ def resolve(uri: str, flutter_sdk: Path, map_dir: Path) -> Path | None:
     return None
 
 
+def find_bare_filename(map_dir: Path, stripped: str) -> Path | None:
+    """Bare filename fallback: dart2js emits `main.dart` and
+    `web_plugin_registrant.dart` without a directory prefix. Search the
+    Flutter project (map_dir's grandparent) for the first match."""
+    if "/" in stripped:
+        return None
+    project = map_dir.parent.parent
+    for candidate in project.rglob(stripped):
+        if candidate.is_file():
+            return candidate
+    return None
+
+
 def _resolve_relative_uri(uri: str, map_dir: Path) -> Path | None:
     """Resolve dart2js's relative emitted paths, which carry one too many
     `../` for the actual map-file directory (the relative form treats
@@ -75,15 +93,7 @@ def _resolve_relative_uri(uri: str, map_dir: Path) -> Path | None:
     cand = _resolve_against_bases(map_dir, stripped)
     if cand is not None:
         return cand
-    # Bare filename fallback: dart2js emits `main.dart` and
-    # `web_plugin_registrant.dart` without a directory prefix. Search the
-    # Flutter project (map_dir's grandparent) for the first match.
-    if "/" not in stripped:
-        project = map_dir.parent.parent
-        for candidate in project.rglob(stripped):
-            if candidate.is_file():
-                return candidate
-    return None
+    return find_bare_filename(map_dir, stripped)
 
 
 def inline_map(map_path: Path, flutter_sdk: Path) -> tuple[int, int]:

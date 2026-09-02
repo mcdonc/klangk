@@ -47,8 +47,9 @@ _HELPER = _SCRIPTS_DIR / "_podman_common.sh"
 _HELPER_CONSUMER_SCRIPTS = [_SCRIPTS_DIR / "build-workspace-image.sh"]
 
 
-def _assert_guard_pattern(where: Path, text: str) -> None:
-    """The four-line remote-feature guard contract, wherever it lives."""
+def _assert_calls_update_features(where: Path, text: str) -> None:
+    """The script calls update_features.py behind the env guard, with
+    --local-only."""
     assert "update_features.py" in text, (
         f"{where.name} no longer calls update_features.py — "
         f"guard test is stale, investigate"
@@ -63,7 +64,10 @@ def _assert_guard_pattern(where: Path, text: str) -> None:
         f"{where.name} references the env var but doesn't pass "
         f"--local-only to update_features.py"
     )
-    # The polarity guard: the default (env var unset) must skip remote.
+
+
+def _assert_guard_polarity(where: Path, text: str) -> None:
+    """The polarity guard: the default (env var unset) must skip remote."""
     assert "KLANGKBUILD_BUILD_INCLUDE_REMOTE:-0" in text, (
         f"{where.name} doesn't default KLANGKBUILD_BUILD_INCLUDE_REMOTE to '0' "
         f"— the polarity may be flipped, making remote-fetch the default "
@@ -73,6 +77,12 @@ def _assert_guard_pattern(where: Path, text: str) -> None:
         f"{where.name} doesn't compare against '1' — polarity may be "
         f"flipped (re-exposes CI to upstream failures)"
     )
+
+
+def _assert_guard_pattern(where: Path, text: str) -> None:
+    """The four-line remote-feature guard contract, wherever it lives."""
+    _assert_calls_update_features(where, text)
+    _assert_guard_polarity(where, text)
 
 
 def test_build_scripts_check_env_var():

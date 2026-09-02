@@ -55,6 +55,53 @@ def remove(ip: str, port: int | None) -> None:
     )
 
 
+def _floored_expire(ttl: int | float, floor: bool) -> float:
+    """The rule/record expiry for a TTL of ``ttl``: floored at
+    :data:`MIN_TTL` when ``floor`` (the static-spec DNS learn), verbatim when
+    not (a consent-verdict TTL -- see :func:`allow`)."""
+    return time.time() + (max(ttl, MIN_TTL) if floor else ttl)
+
+
+def _record_allow(ip: str, port: int | None, expire: float) -> None:
+    """Create/refresh the learned IP's ``LEARNED`` record for an allow
+    (caller holds :data:`LOCK`)."""
+    rec = LEARNED.get(ip)
+    if rec is None:
+        LEARNED[ip] = {
+            "expire": expire,
+            "rule_expire": expire,
+            "ports": {port},
+            "host": None,
+        }
+        return
+    rec["expire"] = max(rec["expire"], expire)
+    # rule_expire is the ACCEPT rule's lifetime, kept SEPARATE from the
+    # host-mapping expire so a re-resolve's longer DNS TTL can't extend
+    # a consent allow's rule past its verdict (#2408). max() preserves
+    # the longest across static re-learns (#2256); for a consent allow
+    # it is just the verdict's TTL (the pre-existing rule_expire is
+    # absent -- only record_hosts has touched the record -- and `or
+    # 0.0` coerces the None).
+    rec["rule_expire"] = max(rec.get("rule_expire") or 0.0, expire)
+    rec["ports"].add(port)
+    # ``host`` (set by record_hosts) is preserved across re-learn.
+
+
+def _supersede_port_denies(ip: str) -> None:
+    """Remove any lingering per-port REJECTs for ``ip`` (caller holds LOCK).
+
+    An all-ports allow (the consent path) supersedes any prior per-port
+    denies for this IP -- otherwise the all-ports ACCEPT at the top of
+    OUTPUT would silently shadow a lingering REJECT (the decider allowed
+    the host, so a prior port-specific deny no longer applies)."""
+    for key in [k for k in REJECTED if k[0] == ip]:
+        try:
+            remove_reject(*key)
+        except Exception:
+            pass
+        del REJECTED[key]
+
+
 def allow(ip: str, port: int | None, ttl: int | float, floor: bool = True) -> None:
     """Install (if new) the ACCEPT for ``ip[:port]`` and refresh its TTL.
 
@@ -65,7 +112,7 @@ def allow(ip: str, port: int | None, ttl: int | float, floor: bool = True) -> No
     0-TTL-DNS-response safety net (a resolver may hand back a 0-TTL A record,
     and that must not yank the rule the workspace needs to reach the IP it
     just resolved). A *consent-verdict* TTL is the user's intent, not a DNS
-    TTL, so the consent paths (:func:`decide_and_verdict`, the ``cb``
+    TTL, so the consent paths (:func:`nfqueue.decide_and_verdict`, the ``cb``
     in-session auto-allow, and a capped :func:`learn_all`) pass
     ``floor=False`` -- a timed verdict's rule lapses at the verdict, not at
     MIN_TTL (#2465: otherwise a ``5s`` verdict's rule lived 30s under the
@@ -81,40 +128,12 @@ def allow(ip: str, port: int | None, ttl: int | float, floor: bool = True) -> No
     executor (see :func:`learn_all` / :func:`async_sweeper`), so the lock
     genuinely serializes them; contention is negligible.
     """
-    expire = time.time() + (max(ttl, MIN_TTL) if floor else ttl)
+    expire = _floored_expire(ttl, floor)
     with LOCK:
         install(ip, port)
-        rec = LEARNED.get(ip)
-        if rec is None:
-            LEARNED[ip] = {
-                "expire": expire,
-                "rule_expire": expire,
-                "ports": {port},
-                "host": None,
-            }
-        else:
-            rec["expire"] = max(rec["expire"], expire)
-            # rule_expire is the ACCEPT rule's lifetime, kept SEPARATE from the
-            # host-mapping expire so a re-resolve's longer DNS TTL can't extend
-            # a consent allow's rule past its verdict (#2408). max() preserves
-            # the longest across static re-learns (#2256); for a consent allow
-            # it is just the verdict's TTL (the pre-existing rule_expire is
-            # absent -- only record_hosts has touched the record -- and `or
-            # 0.0` coerces the None).
-            rec["rule_expire"] = max(rec.get("rule_expire") or 0.0, expire)
-            rec["ports"].add(port)
-            # ``host`` (set by record_hosts) is preserved across re-learn.
-        # An all-ports allow (the consent path) supersedes any prior per-port
-        # denies for this IP -- otherwise the all-ports ACCEPT at the top of
-        # OUTPUT would silently shadow a lingering REJECT (the decider allowed
-        # the host, so a prior port-specific deny no longer applies).
+        _record_allow(ip, port, expire)
         if port is None:
-            for key in [k for k in REJECTED if k[0] == ip]:
-                try:
-                    remove_reject(*key)
-                except Exception:
-                    pass
-                del REJECTED[key]
+            _supersede_port_denies(ip)
 
 
 def _reject_rule_args(ip: str, port: int, sport: int = 0) -> list[str]:
@@ -182,6 +201,19 @@ def reject(ip: str, port: int, ttl: float, sport: int = 0) -> None:
         REJECTED[(ip, port, sport)] = max(REJECTED.get((ip, port, sport), 0.0), expire)
 
 
+def _drop_targets(host: str) -> set[str]:
+    """The candidate IPs a host revoke must touch (caller holds LOCK):
+    every learned IP that resolved to ``host`` (via ``LEARNED[ip]["host"]``,
+    set by ``record_hosts`` for every resolved name, allow-listed or not),
+    plus the host string itself (a direct-IP connect that never went through
+    DNS, and a direct-IP allow whose ``host`` is ``None``)."""
+    host_l = host.lower()
+    ips = [
+        ip for ip, rec in LEARNED.items() if (rec.get("host") or "").lower() == host_l
+    ]
+    return {ip for ip in ips} | {host_l, host}
+
+
 def drop_for_host(host: str, decision: str) -> set[str]:
     """Drop the sidecar's rules for a host (revocation, #2339).
 
@@ -190,8 +222,7 @@ def drop_for_host(host: str, decision: str) -> set[str]:
     ``denied``: remove the temporary REJECT rules for the host's IPs (stop
     force-rejecting; the host is again subject to the allow-list).
 
-    Returns the set of candidate IPs (the host's resolved IPs + the host
-    string itself, for a direct-IP connect) so the caller --
+    Returns the set of candidate IPs so the caller --
     :meth:`SidecarConsentClient.handle_drop_rule`, on the event loop -- can
     clear the loop-only ``SESSION_HOST_ALLOWS``/``VERDICT_CACHE`` state
     (via :func:`drop_session_hosts` / :func:`clear_verdict_cache`). Those
@@ -212,19 +243,8 @@ def drop_for_host(host: str, decision: str) -> set[str]:
     other too. A correct per-host revoke for co-resident hosts (CDN/S3/Cloudflare
     fronted sites) needs L7/SNI filtering, which is a separate feature (#2352).
     """
-    host_l = host.lower()
     with LOCK:
-        ips = [
-            ip
-            for ip, rec in LEARNED.items()
-            if (rec.get("host") or "").lower() == host_l
-        ]
-        # IPs that resolved to this host, plus the host itself if it's a
-        # direct-IP connect/allow (the scan above misses a direct-IP allow,
-        # whose host record is None).
-        targets = {ip for ip in ips}
-        targets.add(host_l)
-        targets.add(host)
+        targets = _drop_targets(host)
         if decision == "allowed":
             _drop_learned_rules(targets)
         elif decision == "denied":
@@ -232,16 +252,22 @@ def drop_for_host(host: str, decision: str) -> set[str]:
     return targets
 
 
+def _remove_learned_ports(ip: str) -> None:
+    """Remove every learned ACCEPT rule for ``ip``'s recorded ports
+    (best-effort: a failed delete drops one rule, not the whole revoke)."""
+    for port in list(LEARNED[ip]["ports"]):
+        try:
+            remove(ip, port)
+        except Exception:
+            pass
+
+
 def _drop_learned_rules(targets: set[str]) -> None:
     """Remove the learned ACCEPT rules (+ ``LEARNED`` records) for the
     target IPs (best-effort: a failed delete drops one rule, not the whole
     revoke). Caller holds ``LOCK``."""
     for ip in [i for i in targets if i in LEARNED]:
-        for port in list(LEARNED[ip]["ports"]):
-            try:
-                remove(ip, port)
-            except Exception:
-                pass
+        _remove_learned_ports(ip)
         del LEARNED[ip]
 
 
@@ -256,30 +282,49 @@ def _drop_reject_rules(targets: set[str]) -> None:
         del REJECTED[key]
 
 
+def _sweep_learned_rules(ip: str, rec: dict, now: float) -> set | None:
+    """Rule sweep for one learned IP: delete the ACCEPT rules whose lifetime
+    elapsed, returning the swept ports (or None when nothing swept). The
+    lifetime is ``rule_expire`` when set (a consent allow, whose verdict must
+    outlive the host-mapping's DNS TTL, #2408), else ``expire`` (static
+    re-learn / backward compat)."""
+    rule_expire = rec.get("rule_expire", rec["expire"])
+    if not (rec["ports"] and rule_expire <= now):
+        return None
+    ports = set(rec["ports"])
+    for port in ports:
+        try:
+            remove(ip, port)
+        except Exception:
+            pass  # a transient failure drops one rule, not the sweep
+    return ports
+
+
 def _sweep_learned_record(
     ip: str, rec: dict, now: float, expired: list[tuple[str, set]]
 ) -> None:
     """Sweep one learned-IP record in place (caller holds ``LOCK``):
-
-    rule sweep -- the ACCEPT rule's lifetime is rule_expire when set (a
-    consent allow, whose verdict must outlive the host-mapping's DNS TTL,
-    #2408), else expire (static re-learn / backward compat); record sweep --
-    drop the host mapping once its own expire elapses and no ACCEPT rule
-    remains."""
-    rule_expire = rec.get("rule_expire", rec["expire"])
-    if rec["ports"] and rule_expire <= now:
-        ports = set(rec["ports"])
-        for port in ports:
-            try:
-                remove(ip, port)
-            except Exception:
-                pass  # a transient failure drops one rule, not the sweep
+    rule sweep via :func:`_sweep_learned_rules`; record sweep -- drop the
+    host mapping once its own expire elapses and no ACCEPT rule remains."""
+    ports = _sweep_learned_rules(ip, rec, now)
+    if ports:
         expired.append((ip, ports))
         rec["ports"] = set()  # rule gone; keep record for naming
     # Record sweep: drop the host mapping once its own expire elapses
     # and no ACCEPT rule remains.
     if rec["expire"] <= now and not rec["ports"]:
         del LEARNED[ip]
+
+
+def _sweep_rejected(now: float) -> None:
+    """Remove temporary REJECT (tcp-reset) rules whose TTL elapsed
+    (best-effort; caller holds ``LOCK``)."""
+    for key in [k for k, exp in REJECTED.items() if exp <= now]:
+        try:
+            remove_reject(*key)
+        except Exception:
+            pass
+        del REJECTED[key]
 
 
 def sweep_once(now: float | None = None) -> list[tuple[str, set]]:
@@ -309,13 +354,7 @@ def sweep_once(now: float | None = None) -> list[tuple[str, set]]:
     with LOCK:
         for ip, rec in list(LEARNED.items()):
             _sweep_learned_record(ip, rec, now, expired)
-        # also sweep temporary REJECT (tcp-reset) rules for denied connections
-        for key in [k for k, exp in REJECTED.items() if exp <= now]:
-            try:
-                remove_reject(*key)
-            except Exception:
-                pass
-            del REJECTED[key]
+        _sweep_rejected(now)
     return expired
 
 
@@ -410,13 +449,26 @@ def install_acct(exclude_ip: str | None = None) -> None:
         pass
 
 
+def _acct_bytes_from_output(out: str) -> int:
+    """The byte count on the ``--comment``-tagged accounting rule line, or 0
+    when the rule is absent or the columns don't parse. With ``-v`` the first
+    two columns are pkts/bytes; ``-x`` makes bytes exact (no K/M suffix)."""
+    for line in out.splitlines():
+        if ACCT_COMMENT in line:
+            parts = line.split()  # parts[0]=pkts, parts[1]=bytes (the -v cols)
+            try:
+                return int(parts[1])
+            except (IndexError, ValueError):
+                return 0
+    return 0
+
+
 def acct_bytes() -> int:
     """Current byte count on the accounting rule, or 0 if absent/unreadable.
 
-    Parsed from ``iptables -t mangle -L OUTPUT -v -x -n``: with ``-v`` the first
-    two columns are pkts/bytes, ``-x`` makes bytes exact (no K/M suffix), and
-    the ``--comment`` tag uniquely identifies the rule line. 0 on any parse /
-    subprocess failure so the sampler treats a missing rule as a flat baseline
+    Parsed from ``iptables -t mangle -L OUTPUT -v -x -n``; the ``--comment``
+    tag uniquely identifies the rule line. 0 on any parse / subprocess
+    failure so the sampler treats a missing rule as a flat baseline
     (never as a burst of activity).
     """
     try:
@@ -428,16 +480,7 @@ def acct_bytes() -> int:
         ).stdout
     except Exception:
         return 0
-    for line in out.splitlines():
-        if ACCT_COMMENT in line:
-            parts = line.split()  # parts[0]=pkts, parts[1]=bytes (the -v cols)
-            if len(parts) >= 2:
-                try:
-                    return int(parts[1])
-                except ValueError:
-                    return 0
-            return 0
-    return 0
+    return _acct_bytes_from_output(out)
 
 
 def learn_all(

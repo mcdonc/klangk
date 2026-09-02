@@ -54,6 +54,14 @@ def test_devenv_wires_the_scripts():
         assert f"scripts/{path}" in nix, f"{name} must delegate to the script"
 
 
+def assert_proxy_split(up: str) -> None:
+    """same-origin split: /api and /ws to the backend, rest to the dev
+    server."""
+    assert "handle /api/*" in up and "handle /ws" in up, (
+        "the proxy must route /api/* and /ws to the backend"
+    )
+
+
 def test_up_boots_all_pieces():
     """The harness must compose backend, proxy, seed, and flutter run."""
     up = _UP.read_text()
@@ -63,10 +71,7 @@ def test_up_boots_all_pieces():
     assert "flutter run --debug -d chrome" in up, (
         "fmtk-up must start the debug flutter run"
     )
-    # same-origin split: /api and /ws to the backend, rest to the dev server
-    assert "handle /api/*" in up and "handle /ws" in up, (
-        "the proxy must route /api/* and /ws to the backend"
-    )
+    assert_proxy_split(up)
 
 
 def test_up_reuses_kept_services_for_fast_relaunch():
@@ -82,6 +87,13 @@ def test_up_reuses_kept_services_for_fast_relaunch():
     assert "--no-pub" in up, "skip pub get when package_config is fresh"
 
 
+def assert_no_debug_port_flag(chrome: str) -> None:
+    """The wrapper must not add --remote-debugging-port (flutter's own flag
+    wins; the port is discovered from the process list instead)."""
+    active = [ln for ln in chrome.splitlines() if not ln.lstrip().startswith("#")]
+    assert not any("--remote-debugging-port" in ln for ln in active)
+
+
 def test_up_uses_the_chrome_wrapper():
     """The debug run must load the app through the proxy via the wrapper."""
     assert "fmtk-chrome.sh" in _UP.read_text(), (
@@ -89,11 +101,7 @@ def test_up_uses_the_chrome_wrapper():
     )
     chrome = _CHROME.read_text()
     assert "8124" in chrome, "the wrapper must rewrite to the proxy origin"
-    active = [ln for ln in chrome.splitlines() if not ln.lstrip().startswith("#")]
-    assert not any("--remote-debugging-port" in ln for ln in active), (
-        "the wrapper must not add --remote-debugging-port (flutter's own "
-        "flag wins; the port is discovered from the process list instead)"
-    )
+    assert_no_debug_port_flag(chrome)
 
 
 def test_down_stops_the_right_processes():
@@ -110,6 +118,18 @@ def test_down_stops_the_right_processes():
         assert pattern in down, f"fmtk-down must handle: {pattern}"
 
 
+def assert_removed_fixtures_absent(seed: str) -> None:
+    """The pre-#2881 fixture names are gone."""
+    for removed in ("fmtk-sharer", "fmtk-acler", "fmtk-viewer"):
+        assert removed not in seed, f"the {removed} fixture was removed"
+
+
+def assert_role_buckets_seeded(seed: str) -> None:
+    """One fixture member per role bucket."""
+    for role in ("collaborators", "coders", "spectators"):
+        assert f'"{role}"' in seed, f"a fixture must sit in {role}"
+
+
 def test_seed_matrix_wiring():
     """Fixture wiring: admin-group owner plus one member per role bucket.
 
@@ -122,10 +142,8 @@ def test_seed_matrix_wiring():
     assert "fmtk-admin" in seed and '"admins"' in seed, (
         "fmtk-admin must exist and join the admins group"
     )
-    for removed in ("fmtk-sharer", "fmtk-acler", "fmtk-viewer"):
-        assert removed not in seed, f"the {removed} fixture was removed"
-    for role in ("collaborators", "coders", "spectators"):
-        assert f'"{role}"' in seed, f"a fixture must sit in {role}"
+    assert_removed_fixtures_absent(seed)
+    assert_role_buckets_seeded(seed)
     assert "owner_token" in seed, (
         "the workspace must be created with fmtk-admin's token (ownership)"
     )

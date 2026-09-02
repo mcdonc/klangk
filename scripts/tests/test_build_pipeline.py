@@ -141,6 +141,60 @@ def _materialize(payload_dir):
 # ────────────────────────────────────────────────────────────────────────────
 
 
+def materialized_feature_names(payload) -> set:
+    """The feature dirs materialized in the payload (features.lock — a
+    file — and dot-dirs excluded)."""
+    return {
+        p
+        for p in os.listdir(payload)
+        if (payload / p).is_dir() and not p.startswith(".")
+    }
+
+
+def lock_feature_names(payload) -> set:
+    """The feature names listed in the payload's features.lock."""
+    import yaml
+
+    lock = yaml.safe_load((payload / "features.lock").read_text())
+    return {e["name"] for e in lock["features"]}
+
+
+def assert_tab_aggregator_present(source: str) -> None:
+    """The workspace-tab aggregator (#1975) is always emitted — its absence
+    would break main.dart's active-set filter at runtime."""
+    assert "createAllNamedWorkspaceTabs()" in source, (
+        "createAllNamedWorkspaceTabs() aggregator not emitted"
+    )
+
+
+def assert_feature_imported(source: str, name: str, cls: str) -> None:
+    """The feature's package is imported + its class instantiated in the
+    aggregators."""
+    pkg = f"klangk_feature_{name.replace('-', '_')}"
+    assert f"import 'package:{pkg}/feature.dart';" in source, (
+        f"{pkg} not imported by the aggregator"
+    )
+    assert f"{cls}()" in source, (
+        f"{cls}() not instantiated in createAllFeatures/createAllNamedFeatures"
+    )
+
+
+def assert_not_imported(source: str, name: str) -> None:
+    """A feature WITHOUT a klangk/ dir must not appear in the Dart
+    aggregator."""
+    pkg = f"klangk_feature_{name.replace('-', '_')}"
+    assert f"import 'package:{pkg}/" not in source, (
+        f"{name} has no klangk/ dir but leaked into the Dart aggregator"
+    )
+
+
+def assert_tab_emitted(source: str, name: str, cls: str) -> None:
+    """The feature's tab class is emitted into the tab aggregator."""
+    assert f"(name: '{name}', tab: {cls}())," in source, (
+        f"{cls}() not instantiated in createAllNamedWorkspaceTabs"
+    )
+
+
 class TestPipelineRuns:
     """update_features + import_dart_features succeed against the real repo."""
 
@@ -155,21 +209,14 @@ class TestPipelineRuns:
 
         # Every declared feature is symlinked into the payload dir. Filter to
         # directories — features.lock (a file) also lives there.
-        materialized = {
-            p
-            for p in os.listdir(payload)
-            if (payload / p).is_dir() and not p.startswith(".")
-        }
+        materialized = materialized_feature_names(payload)
         assert materialized == EXPECTED_FEATURE_NAMES, (
             f"materialized set != declared set — drift in features.yaml "
             f"or features/. materialized={sorted(materialized)}"
         )
 
         # features.lock lists EVERY declared feature.
-        import yaml
-
-        lock = yaml.safe_load((payload / "features.lock").read_text())
-        lock_names = {e["name"] for e in lock["features"]}
+        lock_names = lock_feature_names(payload)
         assert lock_names == EXPECTED_FEATURE_NAMES, (
             f"features.lock names != all declared: {sorted(lock_names)}"
         )
@@ -187,33 +234,17 @@ class TestPipelineRuns:
 
         # Every Dart-bearing feature's class is imported + instantiated.
         for name, cls in EXPECTED_DART_FEATURES.items():
-            pkg = f"klangk_feature_{name.replace('-', '_')}"
-            assert f"import 'package:{pkg}/feature.dart';" in source, (
-                f"{pkg} not imported by the aggregator"
-            )
-            assert f"{cls}()" in source, (
-                f"{cls}() not instantiated in createAllFeatures/createAllNamedFeatures"
-            )
+            assert_feature_imported(source, name, cls)
 
         # Features WITHOUT a klangk/ dir must not appear in the Dart aggregator.
-        non_dart = EXPECTED_FEATURE_NAMES - EXPECTED_DART_PACKAGE_FEATURES
-        for name in non_dart:
-            pkg = f"klangk_feature_{name.replace('-', '_')}"
-            assert f"import 'package:{pkg}/" not in source, (
-                f"{name} has no klangk/ dir but leaked into the Dart aggregator"
-            )
+        for name in EXPECTED_FEATURE_NAMES - EXPECTED_DART_PACKAGE_FEATURES:
+            assert_not_imported(source, name)
 
-        # The workspace-tab aggregator (#1975) is always emitted — its
-        # absence would break main.dart's active-set filter at runtime.
-        assert "createAllNamedWorkspaceTabs()" in source, (
-            "createAllNamedWorkspaceTabs() aggregator not emitted"
-        )
-        # Chat is the first checked-in tab-only feature (#1976): its ChatTab
-        # is emitted into the tab aggregator.
+        # The workspace-tab aggregator (#1975) is always emitted.
+        assert_tab_aggregator_present(source)
+        # Tab-only features (#1976) land in the tab aggregator.
         for name, cls in EXPECTED_DART_TAB_FEATURES.items():
-            assert f"(name: '{name}', tab: {cls}())," in source, (
-                f"{cls}() not instantiated in createAllNamedWorkspaceTabs"
-            )
+            assert_tab_emitted(source, name, cls)
 
     def test_named_aggregator_names_match_feature_names(self, tmp_path, monkeypatch):
         """createAllNamedFeatures() emits records whose `name` matches the
@@ -249,6 +280,25 @@ class TestPipelineRuns:
 # ────────────────────────────────────────────────────────────────────────────
 
 
+def assert_single_feature(
+    features: list, tool_classes: list, tab_classes: list
+) -> dict:
+    """find_features found exactly one feature with the given classes."""
+    assert len(features) == 1
+    feat = features[0]
+    assert feat["tool_classes"] == tool_classes
+    assert feat["tab_classes"] == tab_classes
+    return feat
+
+
+def assert_tab_only_dart(dart: str, name: str, cls: str) -> None:
+    """The tab-only feature's class appears in the tab aggregator exactly
+    once — never leaked into createAllFeatures / createAllNamedFeatures."""
+    assert "createAllNamedWorkspaceTabs()" in dart
+    assert f"(name: '{name}', tab: {cls}())," in dart
+    assert dart.count(f"{cls}()") == 1, "tab class leaked into a tool aggregator"
+
+
 class TestWorkspaceTabAggregator:
     """createAllNamedWorkspaceTabs() (#1975): a feature may contribute a
     workspace tab with or without a ToolPlugin."""
@@ -272,11 +322,7 @@ class TestWorkspaceTabAggregator:
         self._write_feature(tmp_path, "notes", src)
 
         features = import_dart_features.find_features(str(tmp_path))
-        assert len(features) == 1
-        feat = features[0]
-        assert feat["name"] == "notes"
-        assert feat["tool_classes"] == []
-        assert feat["tab_classes"] == ["NotesTab"]
+        assert_single_feature(features, [], ["NotesTab"])
 
         # A tab-only feature still appears in the features.json manifest
         # (collect_feature_metadata iterates features, not tool_classes).
@@ -286,11 +332,7 @@ class TestWorkspaceTabAggregator:
         assert [m["name"] for m in meta] == ["notes"]
 
         dart = import_dart_features.generate_dart(features)
-        assert "createAllNamedWorkspaceTabs()" in dart
-        assert "(name: 'notes', tab: NotesTab())," in dart
-        # The tab class appears exactly once — only in the tab aggregator,
-        # never leaked into createAllFeatures / createAllNamedFeatures.
-        assert dart.count("NotesTab()") == 1, "tab class leaked into a tool aggregator"
+        assert_tab_only_dart(dart, "notes", "NotesTab")
 
     def test_both_tool_and_tab_feature(self, tmp_path):
         """A feature declaring both a ToolPlugin and a WorkspaceTabPlugin
@@ -304,10 +346,7 @@ class TestWorkspaceTabAggregator:
         self._write_feature(tmp_path, "chat", src)
 
         features = import_dart_features.find_features(str(tmp_path))
-        assert len(features) == 1
-        feat = features[0]
-        assert feat["tool_classes"] == ["ChatFeature"]
-        assert feat["tab_classes"] == ["ChatTab"]
+        assert_single_feature(features, ["ChatFeature"], ["ChatTab"])
 
         dart = import_dart_features.generate_dart(features)
         assert "(name: 'chat', feature: ChatFeature())," in dart
@@ -326,6 +365,43 @@ class TestWorkspaceTabAggregator:
 # src/klangk/klangk/features.py; if the runtime's expectations change, both
 # this test (real manifest) and test_features.py (synthetic) must update.
 # ────────────────────────────────────────────────────────────────────────────
+
+
+def assert_manifest_feature_types(f: dict) -> None:
+    """The feature entry's string fields + the config dict."""
+    for field in ("name", "version", "description"):
+        assert isinstance(f[field], str)
+    assert bool(f["name"]), f"feature name empty: {f!r}"
+    assert isinstance(f["config"], dict)
+
+
+def assert_manifest_feature_shape(f: dict) -> None:
+    """One features[] entry carries the runtime-required keys/types."""
+    assert isinstance(f, dict)
+    for key in ("name", "version", "description", "config"):
+        assert key in f, f"feature {f.get('name')} missing {key}"
+    assert_manifest_feature_types(f)
+
+
+def assert_config_key_shape(f: dict, key: str, spec: dict) -> None:
+    """One config key's entry carries {description, default, scope} with a
+    valid scope."""
+    assert isinstance(spec, dict), f"feature {f['name']} config {key} is not a dict"
+    for subkey in ("description", "default", "scope"):
+        assert subkey in spec, f"feature {f['name']} config {key} missing {subkey}"
+    assert spec["scope"] in {"container", "frontend", "both"}, (
+        f"feature {f['name']} config {key} has invalid scope {spec['scope']!r}"
+    )
+
+
+def declared_container_keys(manifest: dict) -> set:
+    """Keys declared in some feature's config with container/both scope."""
+    return {
+        key
+        for f in manifest["features"]
+        for key, spec in f["config"].items()
+        if spec["scope"] in {"container", "both"}
+    }
 
 
 class TestManifestContract:
@@ -348,13 +424,7 @@ class TestManifestContract:
         manifest = self._build_manifest(tmp_path, monkeypatch)
         feature_names = set()
         for f in manifest["features"]:
-            assert isinstance(f, dict)
-            for key in ("name", "version", "description", "config"):
-                assert key in f, f"feature {f.get('name')} missing {key}"
-            assert isinstance(f["name"], str) and f["name"]
-            assert isinstance(f["version"], str)
-            assert isinstance(f["description"], str)
-            assert isinstance(f["config"], dict)
+            assert_manifest_feature_shape(f)
             feature_names.add(f["name"])
         # features[] carries only Dart features — TS-only features are absent
         # (wheel/workspace activation asymmetry, #1655).
@@ -365,21 +435,10 @@ class TestManifestContract:
 
     def test_every_config_key_has_valid_shape_and_scope(self, tmp_path, monkeypatch):
         manifest = self._build_manifest(tmp_path, monkeypatch)
-        valid_scopes = {"container", "frontend", "both"}
         all_keys = {}
         for f in manifest["features"]:
             for key, spec in f["config"].items():
-                assert isinstance(spec, dict), (
-                    f"feature {f['name']} config {key} is not a dict"
-                )
-                for subkey in ("description", "default", "scope"):
-                    assert subkey in spec, (
-                        f"feature {f['name']} config {key} missing {subkey}"
-                    )
-                assert spec["scope"] in valid_scopes, (
-                    f"feature {f['name']} config {key} has invalid scope "
-                    f"{spec['scope']!r}"
-                )
+                assert_config_key_shape(f, key, spec)
                 all_keys[key] = spec["scope"]
         # Spot-check the keys declared today (the chat feature's agent
         # on-switch was removed with the chat feature, #2716).
@@ -431,14 +490,11 @@ class TestManifestContract:
         """Every container_env_key is declared in some feature's config with
         scope container/both — the bridge Features.container_env() depends on."""
         manifest = self._build_manifest(tmp_path, monkeypatch)
-        declared_container_keys = set()
-        for f in manifest["features"]:
-            for key, spec in f["config"].items():
-                if spec["scope"] in {"container", "both"}:
-                    declared_container_keys.add(key)
-        assert set(manifest["container_env_keys"]) <= declared_container_keys, (
+        assert set(manifest["container_env_keys"]) <= declared_container_keys(
+            manifest
+        ), (
             f"container_env_keys names keys not declared with container/both scope: "
-            f"{set(manifest['container_env_keys']) - declared_container_keys}"
+            f"{set(manifest['container_env_keys']) - declared_container_keys(manifest)}"
         )
         # Spot-check the one key actually declared today.
         assert manifest["container_env_keys"] == EXPECTED_CONTAINER_ENV_KEYS

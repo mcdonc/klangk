@@ -103,17 +103,37 @@ def _repo_origin_url():
         return ""
 
 
+def clear_dest(dest: str) -> None:
+    """Remove an old materialized feature at dest (dir, symlink, or broken
+    symlink) so it can be replaced."""
+    if not (os.path.islink(dest) or os.path.exists(dest)):
+        return
+    if os.path.islink(dest):
+        os.unlink(dest)
+    else:
+        shutil.rmtree(dest)
+
+
 def _copy_feature_tree(source, dest):
     """Copy a feature directory tree into dest, dropping any .git inside."""
-    if os.path.islink(dest) or os.path.exists(dest):
-        if os.path.islink(dest):
-            os.unlink(dest)
-        else:
-            shutil.rmtree(dest)
+    clear_dest(dest)
     shutil.copytree(source, dest)
     git_dir = os.path.join(dest, ".git")
     if os.path.exists(git_dir):
         shutil.rmtree(git_dir)
+
+
+def is_local_repo_feature(git_url: str, subpath: str, local_origin: str) -> bool:
+    """Is the feature's git source this repo AND the local path present?
+    The unresolvable-ref fallback applies only then (GitHub PR builds check
+    out a synthesized merge commit whose SHA exists only on the runner, so
+    `git ls-remote` can never resolve it)."""
+    local_path = os.path.join(ROOT, subpath) if subpath else ROOT
+    return (
+        bool(local_origin)
+        and _normalize_git_url(git_url) == local_origin
+        and os.path.isdir(local_path)
+    )
 
 
 def _feature_from_local_tree(
@@ -131,15 +151,11 @@ def _feature_from_local_tree(
     already-checked-out working tree (which has the exact content being
     built) instead of cloning; never silently degrade to the remote's default
     branch."""
-    dest = os.path.join(features_dir, name)
-    local_path = os.path.join(ROOT, subpath) if subpath else ROOT
-    if not (
-        local_origin
-        and _normalize_git_url(git_url) == local_origin
-        and os.path.isdir(local_path)
-    ):
+    if not is_local_repo_feature(git_url, subpath, local_origin):
         print(f"  ERROR: Could not resolve ref '{ref}' for {git_url}", file=sys.stderr)
         return None
+    dest = os.path.join(features_dir, name)
+    local_path = os.path.join(ROOT, subpath) if subpath else ROOT
     print(
         f"  {name}: ref '{ref}' not on remote; "
         f"using local working tree {subpath or '.'}/"
@@ -152,6 +168,80 @@ def _feature_from_local_tree(
         "ref": ref,
         "sha": "local",
     }
+
+
+def clone_at_ref(git_url: str, ref: str, clone_dir: str) -> bool:
+    """Clone git_url into clone_dir at ref: a shallow branch clone first,
+    falling back to a full clone + checkout when ref is a SHA. False (with
+    an ERROR print) when the clone/checkout fails."""
+    result = subprocess.run(
+        ["git", "clone", "--depth=1", "--branch", ref, git_url, clone_dir],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    if result.returncode == 0:
+        return True
+    # ref might be a SHA (not a branch name); full clone + checkout.
+    result = subprocess.run(
+        ["git", "clone", git_url, clone_dir],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    if result.returncode != 0:
+        print(
+            f"  ERROR: git clone failed: {result.stderr.strip()}",
+            file=sys.stderr,
+        )
+        return False
+    checkout = subprocess.run(
+        ["git", "checkout", ref],
+        cwd=clone_dir,
+        capture_output=True,
+        text=True,
+    )
+    if checkout.returncode != 0:
+        print(
+            f"  ERROR: git checkout '{ref}' failed: {checkout.stderr.strip()}",
+            file=sys.stderr,
+        )
+        return False
+    return True
+
+
+def clone_head(clone_dir: str) -> str:
+    """The checked-out HEAD SHA."""
+    return subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=clone_dir,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+
+def head_matches_ref(clone_dir: str, sha: str, ref: str) -> bool:
+    """Guard against silently landing on the default branch: the checked-out
+    HEAD must match the ref we resolved on the remote."""
+    head = clone_head(clone_dir)
+    if head != sha:
+        print(
+            f"  ERROR: checked-out HEAD {head[:12]} != resolved {sha[:12]} "
+            f"for '{ref}'; refusing to use default-branch content",
+            file=sys.stderr,
+        )
+        return False
+    return True
+
+
+def feature_source(clone_dir: str, subpath: str, git_url: str) -> str | None:
+    """The feature tree inside the clone (subpath or the clone root); None
+    (with an ERROR print) when the subpath doesn't exist."""
+    source = os.path.join(clone_dir, subpath) if subpath else clone_dir
+    if not os.path.isdir(source):
+        print(f"  ERROR: path '{subpath}' not found in {git_url}", file=sys.stderr)
+        return None
+    return source
 
 
 def fetch_feature(feature, features_dir):
@@ -188,61 +278,13 @@ def fetch_feature(feature, features_dir):
     # Clone into temp dir, then check out the resolved ref.
     with tempfile.TemporaryDirectory() as tmpdir:
         clone_dir = os.path.join(tmpdir, "repo")
-        result = subprocess.run(
-            ["git", "clone", "--depth=1", "--branch", ref, git_url, clone_dir],
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
-        if result.returncode != 0:
-            # ref might be a SHA (not a branch name); full clone + checkout.
-            result = subprocess.run(
-                ["git", "clone", git_url, clone_dir],
-                capture_output=True,
-                text=True,
-                timeout=120,
-            )
-            if result.returncode != 0:
-                print(
-                    f"  ERROR: git clone failed: {result.stderr.strip()}",
-                    file=sys.stderr,
-                )
-                return None
-            checkout = subprocess.run(
-                ["git", "checkout", ref],
-                cwd=clone_dir,
-                capture_output=True,
-                text=True,
-            )
-            if checkout.returncode != 0:
-                print(
-                    f"  ERROR: git checkout '{ref}' failed: {checkout.stderr.strip()}",
-                    file=sys.stderr,
-                )
-                return None
-
-        # Guard against silently landing on the default branch: the checked-out
-        # HEAD must match the ref we resolved on the remote.
-        head = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            cwd=clone_dir,
-            capture_output=True,
-            text=True,
-        ).stdout.strip()
-        if head != sha:
-            print(
-                f"  ERROR: checked-out HEAD {head[:12]} != resolved {sha[:12]} "
-                f"for '{ref}'; refusing to use default-branch content",
-                file=sys.stderr,
-            )
+        if not clone_at_ref(git_url, ref, clone_dir):
             return None
-
-        source = os.path.join(clone_dir, subpath) if subpath else clone_dir
-
-        if not os.path.isdir(source):
-            print(f"  ERROR: path '{subpath}' not found in {git_url}", file=sys.stderr)
+        if not head_matches_ref(clone_dir, sha, ref):
             return None
-
+        source = feature_source(clone_dir, subpath, git_url)
+        if source is None:
+            return None
         _copy_feature_tree(source, dest)
 
     return {"name": name, "git": git_url, "path": subpath, "ref": ref, "sha": sha}
@@ -263,14 +305,7 @@ def link_feature(feature, features_dir):
         return None
 
     dest = os.path.join(features_dir, name)
-
-    # Remove old version (dir, symlink, or broken symlink)
-    if os.path.islink(dest) or os.path.exists(dest):
-        if os.path.islink(dest):
-            os.unlink(dest)
-        else:
-            shutil.rmtree(dest)
-
+    clear_dest(dest)
     os.symlink(source, dest)
     print(f"  {name}: {source} (local symlink)")
     return {"name": name, "path": source}
@@ -333,6 +368,15 @@ def parse_args(argv=None):
     return parser.parse_args(argv)
 
 
+def filter_to_only(features: list, only: str) -> list:
+    """The entries matching the ``only`` feature name; exit(1) when absent."""
+    matched = [p for p in features if feature_name(p) == only]
+    if not matched:
+        print(f"Feature '{only}' not found in features.yaml", file=sys.stderr)
+        sys.exit(1)
+    return matched
+
+
 def select_features(config: dict, only: str | None) -> list:
     """The declared features, filtered to ``only`` when one is named."""
     features = config.get("features", [])
@@ -340,12 +384,26 @@ def select_features(config: dict, only: str | None) -> list:
         print("No features listed in features.yaml")
         return []
     if only:
-        matched = [p for p in features if feature_name(p) == only]
-        if not matched:
-            print(f"Feature '{only}' not found in features.yaml", file=sys.stderr)
-            sys.exit(1)
-        return matched
+        return filter_to_only(features, only)
     return features
+
+
+def skipped_lock_entry(feature: dict, lock_map: dict) -> dict:
+    """The lock entry for a git feature skipped under --local-only: every
+    declared feature appears in the lock (shape consistency) without
+    fetching. Preserve a real SHA from the prior lock if one exists (an
+    interleaved `update_features <name>` may have already resolved it) —
+    only write sha='skipped' when there's nothing better to keep."""
+    prior = lock_map.get(feature["name"])
+    prior_sha = prior.get("sha") if prior else None
+    sha = prior_sha if prior_sha and prior_sha != "skipped" else "skipped"
+    return {
+        "name": feature["name"],
+        "git": feature["git"],
+        "path": feature.get("path", ""),
+        "ref": feature.get("ref", "main"),
+        "sha": sha,
+    }
 
 
 def materialize_feature(feature: dict, args, lock_map: dict, payload_dir: str):
@@ -356,20 +414,7 @@ def materialize_feature(feature: dict, args, lock_map: dict, payload_dir: str):
                 f"  SKIP: {feature['name']} (git entry, --local-only)",
                 file=sys.stderr,
             )
-            # Record the skip in the lock so its shape stays consistent
-            # (every declared feature appears) without fetching. Preserve
-            # a real SHA from the prior lock if one exists (an interleaved
-            # `update_features <name>` may have already resolved it) — only
-            # write sha='skipped' when there's nothing better to keep.
-            prior = lock_map.get(feature["name"])
-            prior_sha = prior.get("sha") if prior else None
-            lock_map[feature["name"]] = {
-                "name": feature["name"],
-                "git": feature["git"],
-                "path": feature.get("path", ""),
-                "ref": feature.get("ref", "main"),
-                "sha": prior_sha if prior_sha and prior_sha != "skipped" else "skipped",
-            }
+            lock_map[feature["name"]] = skipped_lock_entry(feature, lock_map)
             return None
         return fetch_feature(feature, payload_dir)
     if "path" in feature:
@@ -381,58 +426,84 @@ def materialize_feature(feature: dict, args, lock_map: dict, payload_dir: str):
     return None
 
 
+def declared_feature_names(config: dict) -> set:
+    """Names of features.yaml entries that declare a source (git or path)."""
+    return {
+        feature_name(p) for p in config.get("features", []) if "git" in p or "path" in p
+    }
+
+
+def remove_feature_dir(payload_dir: str, name: str) -> None:
+    """Remove a materialized feature (symlink or tree)."""
+    feature_dir = os.path.join(payload_dir, name)
+    if os.path.islink(feature_dir):
+        os.unlink(feature_dir)
+    elif os.path.isdir(feature_dir):
+        shutil.rmtree(feature_dir)
+    else:
+        return
+    print(f"  Removed {name} (no longer in features.yaml)")
+
+
 def prune_dropped_features(config: dict, lock_map: dict, payload_dir: str) -> None:
     """Remove features that were in the old lockfile but dropped from
     features.yaml."""
-    yaml_names = {
-        feature_name(p) for p in config.get("features", []) if "git" in p or "path" in p
-    }
+    yaml_names = declared_feature_names(config)
     for name in list(lock_map):
         if name not in yaml_names:
-            feature_dir = os.path.join(payload_dir, name)
-            if os.path.islink(feature_dir):
-                os.unlink(feature_dir)
-                print(f"  Removed {name} (no longer in features.yaml)")
-            elif os.path.isdir(feature_dir):
-                shutil.rmtree(feature_dir)
-                print(f"  Removed {name} (no longer in features.yaml)")
+            remove_feature_dir(payload_dir, name)
             del lock_map[name]
 
 
-def main(argv=None):
-    args = parse_args(argv)
-
+def load_config() -> dict | None:
+    """Parse features.yaml; None (with an ERROR print) when it's missing."""
     if not os.path.isfile(YAML_PATH):
         print(
             f"ERROR: {YAML_PATH} not found — the feature declaration list is "
             "checked into the repo at its root. Run from a klangk checkout.",
             file=sys.stderr,
         )
+        return None
+    with open(YAML_PATH) as f:
+        return yaml.safe_load(f)
+
+
+def print_fetch_plan(features: list, payload_dir: str, args) -> None:
+    """Announce the fetch + remind about --payload-dir when defaulted."""
+    print(f"Fetching {len(features)} feature{'s' if len(features) != 1 else ''}...")
+    if not args.payload_dir:
+        print(f"  (payload dir: {payload_dir} — pass --payload-dir to pin it)")
+
+
+def materialize_all(features: list, args, lock_map: dict, payload_dir: str) -> None:
+    """Fetch/link every selected feature, merging lock entries."""
+    for feature in features:
+        entry = materialize_feature(feature, args, lock_map, payload_dir)
+        if entry:
+            lock_map[entry["name"]] = entry
+
+
+def main(argv=None):
+    args = parse_args(argv)
+
+    config = load_config()
+    if config is None:
         return 1
 
     payload_dir = args.payload_dir or _make_temp_payload_dir()
     os.makedirs(payload_dir, exist_ok=True)
     lock_path = os.path.join(payload_dir, "features.lock")
 
-    with open(YAML_PATH) as f:
-        config = yaml.safe_load(f)
-
     features = select_features(config, args.only)
     if not features:
         return 0
 
-    print(f"Fetching {len(features)} feature{'s' if len(features) != 1 else ''}...")
-    if not args.payload_dir:
-        print(f"  (payload dir: {payload_dir} — pass --payload-dir to pin it)")
+    print_fetch_plan(features, payload_dir, args)
 
     # Preserve existing lock entries when updating a single feature
-    old_lock = read_lock(lock_path)
-    lock_map = dict(old_lock)
+    lock_map = dict(read_lock(lock_path))
 
-    for feature in features:
-        entry = materialize_feature(feature, args, lock_map, payload_dir)
-        if entry:
-            lock_map[entry["name"]] = entry
+    materialize_all(features, args, lock_map, payload_dir)
 
     if not args.only:
         prune_dropped_features(config, lock_map, payload_dir)

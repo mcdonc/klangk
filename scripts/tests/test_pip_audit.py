@@ -50,11 +50,16 @@ def review_dates(comment_lines):
     return [m.group(1) for m in map(REVIEW_RE.match, comment_lines) if m]
 
 
+def assert_ids_well_formed(ids: list) -> None:
+    """Every advisory ID matches the ID grammar."""
+    for vuln_id in ids:
+        assert ID_RE.match(vuln_id), f"malformed advisory ID: {vuln_id}"
+
+
 def test_ids_are_well_formed_and_unique():
     ids = [vuln_id for vuln_id, _ in entries()]
     assert ids, "allowlist is empty — drop the file and its wiring instead"
-    for vuln_id in ids:
-        assert ID_RE.match(vuln_id), f"malformed advisory ID: {vuln_id}"
+    assert_ids_well_formed(ids)
     assert len(ids) == len(set(ids)), "duplicate advisory ID in allowlist"
 
 

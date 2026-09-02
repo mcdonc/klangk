@@ -45,9 +45,8 @@ def test_script_exists_and_is_executable():
     assert first.startswith("#!"), "scripts/deploy-docs.py needs a shebang"
 
 
-def test_script_uses_mike_python_api_with_redirect_aliases():
-    """The deploy must keep every prior version and alias safely."""
-    script = _SCRIPT.read_text()
+def assert_mike_alias_api(script: str) -> None:
+    """The mike deploy uses redirect aliases + refreshes the latest alias."""
     assert "AliasType.redirect" in script, (
         "deploy must use redirect alias pages — GitHub Pages does not serve symlinks"
     )
@@ -58,6 +57,10 @@ def test_script_uses_mike_python_api_with_redirect_aliases():
     assert "update_aliases=True" in script, (
         "deploy without update_aliases leaves the latest alias stale"
     )
+
+
+def assert_gh_pages_sync(script: str) -> None:
+    """The deploy syncs gh-pages from origin + tolerates empty redeploys."""
     assert "update_from_upstream" in script, (
         "deploy must sync the local gh-pages branch from origin first — "
         "otherwise every deploy clobbers all earlier versions"
@@ -66,6 +69,13 @@ def test_script_uses_mike_python_api_with_redirect_aliases():
         "re-deploying unchanged docs raises GitEmptyCommit; it must be "
         "treated as a no-op, not a failure"
     )
+
+
+def test_script_uses_mike_python_api_with_redirect_aliases():
+    """The deploy must keep every prior version and alias safely."""
+    script = _SCRIPT.read_text()
+    assert_mike_alias_api(script)
+    assert_gh_pages_sync(script)
 
 
 def test_script_versions_the_build_and_root_redirect():
@@ -84,13 +94,8 @@ def test_script_versions_the_build_and_root_redirect():
     )
 
 
-def test_workflow_deploys_via_gh_pages_branch():
-    """The workflow pushes a versioned gh-pages branch, not artifacts."""
-    workflow = _WORKFLOW.read_text()
-    assert "fetch-depth: 0" in workflow, (
-        "checkout must fetch all refs so mike sees origin/gh-pages"
-    )
-    assert "contents: write" in workflow, "pushing gh-pages needs contents: write"
+def assert_no_deploy_pages_flow(workflow: str) -> None:
+    """The removed actions/deploy-pages flow's permissions/steps are gone."""
     assert "pages: write" not in workflow, (
         "the pages: write permission belongs to the removed actions/deploy-pages flow"
     )
@@ -98,15 +103,19 @@ def test_workflow_deploys_via_gh_pages_branch():
         "the id-token: write permission belongs to the removed "
         "actions/deploy-pages flow"
     )
-    assert "squidfunk/mike.git" in workflow, (
-        "CI must install squidfunk's mike fork — the PyPI mike builds via "
-        "mkdocs and cannot parse zensical.toml"
-    )
     assert "deploy-pages" not in workflow, (
         "docs now deploy from the gh-pages branch, not a workflow artifact"
     )
     assert "upload-pages-artifact" not in workflow, (
         "docs now deploy from the gh-pages branch, not a workflow artifact"
+    )
+
+
+def assert_gh_pages_push(workflow: str) -> None:
+    """The workflow installs squidfunk's mike fork + pushes gh-pages."""
+    assert "squidfunk/mike.git" in workflow, (
+        "CI must install squidfunk's mike fork — the PyPI mike builds via "
+        "mkdocs and cannot parse zensical.toml"
     )
     assert "git push origin gh-pages" in workflow, (
         "the workflow must push the gh-pages branch mike committed to"
@@ -114,3 +123,14 @@ def test_workflow_deploys_via_gh_pages_branch():
     assert "MIKE_DOCS_VERSION:" in workflow, (
         "the workflow must pass the extracted version to deploy-docs.py"
     )
+
+
+def test_workflow_deploys_via_gh_pages_branch():
+    """The workflow pushes a versioned gh-pages branch, not artifacts."""
+    workflow = _WORKFLOW.read_text()
+    assert "fetch-depth: 0" in workflow, (
+        "checkout must fetch all refs so mike sees origin/gh-pages"
+    )
+    assert "contents: write" in workflow, "pushing gh-pages needs contents: write"
+    assert_no_deploy_pages_flow(workflow)
+    assert_gh_pages_push(workflow)

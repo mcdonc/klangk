@@ -49,6 +49,20 @@ def _clock(ts: float | None) -> str:
     return time.strftime("%H:%M:%S", time.localtime(ts)) if ts else ""
 
 
+def consent_row(row: tuple) -> list:
+    """One table row from a consent record (decision styled by verdict)."""
+    host, port, decision, scope, req_at, dec_at, by = row
+    dest = f"{host}:{port}" if port else host
+    return [
+        dest,
+        Text(decision, style=_DECISION_STYLE.get(decision, "")),
+        _clock(req_at),
+        _clock(dec_at),
+        scope or "",
+        by or "",
+    ]
+
+
 def _render(rows: list[tuple], ws: str) -> Table:
     table = Table(
         title=f"egress consent -- workspace {ws[:8]}",
@@ -63,16 +77,8 @@ def _render(rows: list[tuple], ws: str) -> Table:
     if not rows:
         table.add_row(Text("no requests yet", style="dim"), "", "", "", "", "")
         return table
-    for host, port, decision, scope, req_at, dec_at, by in rows:
-        dest = f"{host}:{port}" if port else host
-        table.add_row(
-            dest,
-            Text(decision, style=_DECISION_STYLE.get(decision, "")),
-            _clock(req_at),
-            _clock(dec_at),
-            scope or "",
-            by or "",
-        )
+    for row in rows:
+        table.add_row(*consent_row(row))
     return table
 
 

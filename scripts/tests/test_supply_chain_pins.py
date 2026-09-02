@@ -71,27 +71,51 @@ def _arg(df: Path, name: str) -> str:
 # ── Base/host images: immutable digest references ───────────────────────────
 
 
+def assert_hex64_arg(df: Path, name: str) -> None:
+    """A Dockerfile ARG is a 64-hex-char sha256."""
+    assert _HEX64.match(_arg(df, name)), f"{name} must be a 64-hex-char sha256"
+
+
+def assert_sha256_verified(text: str, path: str) -> None:
+    """``$sha <path>`` is piped into sha256sum -c before the tarball is used."""
+    assert re.search(rf"\$\{{sha\}}\s+{re.escape(path)}.*\| sha256sum -c -", text), (
+        f"{path} must be verified (sha256sum -c) before use"
+    )
+
+
+def assert_from_ref_pinned(df: Path, ref: str, stage_names: set) -> None:
+    """One FROM target is digest-pinned (ARG refs + local stage aliases
+    exempt)."""
+    if ref.startswith("$"):
+        return  # ARG reference (value pinned elsewhere)
+    if ref.lower() in stage_names:
+        return  # local build-stage alias
+    assert "@sha256:" in ref, (
+        f"{df}: FROM {ref} is not pinned by digest (#2063) — "
+        f"mutable-tag base images let the registry serve "
+        f"different content for the same reference"
+    )
+
+
+def assert_from_lines_pinned(df: Path) -> None:
+    """Every FROM in one Dockerfile is a digest ref, ARG reference, or a
+    local build-stage alias — never a mutable registry tag."""
+    text = df.read_text()
+    froms = re.findall(r"(?im)^FROM\s+(\S+)", text)
+    assert froms, f"{df} has no FROM lines — test is stale"
+    # Stage names defined in this file (``FROM … AS name``) may be used as
+    # later FROM targets without a digest.
+    stage_names = {
+        m.lower() for m in re.findall(r"(?im)^FROM\s+\S+\s+AS\s+(\S+)", text)
+    }
+    for ref in froms:
+        assert_from_ref_pinned(df, ref, stage_names)
+
+
 class TestFromLinesPinnedByDigest:
     def test_every_image_dockerfile_from_line_is_digest_arg_or_alias(self):
         for df in _IMAGE_DOCKERFILES:
-            text = df.read_text()
-            froms = re.findall(r"(?im)^FROM\s+(\S+)", text)
-            assert froms, f"{df} has no FROM lines — test is stale"
-            # Stage names defined in this file (``FROM … AS name``) may be
-            # used as later FROM targets without a digest.
-            stage_names = {
-                m.lower() for m in re.findall(r"(?im)^FROM\s+\S+\s+AS\s+(\S+)", text)
-            }
-            for ref in froms:
-                if ref.startswith("$"):
-                    continue  # ARG reference (value pinned elsewhere)
-                if ref.lower() in stage_names:
-                    continue  # local build-stage alias
-                assert "@sha256:" in ref, (
-                    f"{df}: FROM {ref} is not pinned by digest (#2063) — "
-                    f"mutable-tag base images let the registry serve "
-                    f"different content for the same reference"
-                )
+            assert_from_lines_pinned(df)
 
     def test_workspace_base_image_arg_is_digest(self):
         ref = _arg(_WORKSPACE_DF, "WORKSPACE_BASE_IMAGE")
@@ -154,6 +178,13 @@ class TestFromLinesPinnedByDigest:
 # ── Workspace image: verified tarballs (pi agent, uv, process-compose) ───────
 
 
+def assert_no_piped_curl(df: Path, line: str) -> None:
+    """One Dockerfile line is not a piped curl (unverified network input)."""
+    assert not re.search(r"curl[^|]*\|", line), (
+        f"piped curl in {df.name} (unverified network input, #2063): {line.strip()}"
+    )
+
+
 class TestWorkspaceTarballPins:
     def test_pi_agent_tarball_is_sha512_verified(self):
         text = _WORKSPACE_DF.read_text()
@@ -178,25 +209,17 @@ class TestWorkspaceTarballPins:
         assert "astral.sh" not in text, (
             "uv must not be installed via the astral.sh piped installer (#2063)"
         )
-        assert re.search(r"\$\{sha\}\s+/tmp/uv\.tar\.gz.*\| sha256sum -c -", text), (
-            "uv tarball must be verified (sha256sum -c) before extraction"
-        )
+        assert_sha256_verified(text, "/tmp/uv.tar.gz")
         for arch in ("AMD64", "ARM64"):
-            assert _HEX64.match(_arg(_WORKSPACE_DF, f"UV_SHA256_{arch}")), (
-                f"UV_SHA256_{arch} must be a 64-hex-char sha256"
-            )
+            assert_hex64_arg(_WORKSPACE_DF, f"UV_SHA256_{arch}")
         # Both arches must map to their own pin inside the build.
         assert 'sha="$UV_SHA256_AMD64"' in text and 'sha="$UV_SHA256_ARM64"' in text
 
     def test_process_compose_is_per_arch_sha256_verified(self):
         text = _WORKSPACE_DF.read_text()
-        assert re.search(
-            r"\$\{sha\}\s+/tmp/process-compose\.tar\.gz.*\| sha256sum -c -", text
-        ), "process-compose tarball must be verified (sha256sum -c) before tar"
+        assert_sha256_verified(text, "/tmp/process-compose.tar.gz")
         for arch in ("AMD64", "ARM64"):
-            assert _HEX64.match(
-                _arg(_WORKSPACE_DF, f"PROCESS_COMPOSE_SHA256_{arch}")
-            ), f"PROCESS_COMPOSE_SHA256_{arch} must be a 64-hex-char sha256"
+            assert_hex64_arg(_WORKSPACE_DF, f"PROCESS_COMPOSE_SHA256_{arch}")
 
     def test_no_unverified_curl_pipes(self):
         r"""No `curl ... | sh` / `curl ... | tar` piping in the image
@@ -213,13 +236,23 @@ class TestWorkspaceTarballPins:
                 ln for ln in text.splitlines() if not ln.lstrip().startswith("#")
             ]
             for line in code_lines:
-                assert not re.search(r"curl[^|]*\|", line), (
-                    f"piped curl in {df.name} (unverified network input, "
-                    f"#2063): {line.strip()}"
-                )
+                assert_no_piped_curl(df, line)
 
 
 # ── Apt repo keys: verified before entering a keyring ───────────────────────
+
+
+def assert_caddy_sources_inline(text: str) -> None:
+    """The Caddy sources list is written inline, not fetched over the
+    network."""
+    assert (
+        "echo 'deb [signed-by=/usr/share/keyrings/caddy-stable-archive-keyring.gpg]"
+        " https://dl.cloudsmith.io/public/caddy/stable/deb/debian any-version main'"
+        in text
+    ), "Caddy apt sources list must be written inline (#2063)"
+    assert "debian.deb.txt" not in text, (
+        "Caddy sources list must not be fetched from the network (#2063)"
+    )
 
 
 class TestAptRepoKeyPins:
@@ -233,15 +266,7 @@ class TestAptRepoKeyPins:
         assert _HEX64.match(_arg(_HOST_DF, "CADDY_REPO_KEY_SHA256")), (
             "CADDY_REPO_KEY_SHA256 must be a 64-hex-char sha256"
         )
-        # The sources list is written inline, not fetched over the network.
-        assert (
-            "echo 'deb [signed-by=/usr/share/keyrings/caddy-stable-archive-keyring.gpg]"
-            " https://dl.cloudsmith.io/public/caddy/stable/deb/debian any-version main'"
-            in text
-        ), "Caddy apt sources list must be written inline (#2063)"
-        assert "debian.deb.txt" not in text, (
-            "Caddy sources list must not be fetched from the network (#2063)"
-        )
+        assert_caddy_sources_inline(text)
 
     def test_nodesource_and_githubcli_keys_are_verified(self):
         text = _WORKSPACE_BASE_DF.read_text()

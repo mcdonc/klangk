@@ -46,8 +46,9 @@ def _md_escape(text: str) -> str:
     return (text or "").replace("|", "\\|").replace("\n", " ").strip()
 
 
-def load_results(path: str | None) -> list[dict]:
-    raw = sys.stdin.read() if not path or path == "-" else open(path).read()
+def parse_scan(raw: str) -> list[dict]:
+    """Parse the Trivy scan JSON; exit(2) on invalid JSON/shape. Returns
+    the Results array (empty when absent)."""
     try:
         data = json.loads(raw)
     except json.JSONDecodeError as exc:
@@ -59,23 +60,49 @@ def load_results(path: str | None) -> list[dict]:
     return data.get("Results", []) or []
 
 
+def load_results(path: str | None) -> list[dict]:
+    raw = sys.stdin.read() if not path or path == "-" else open(path).read()
+    return parse_scan(raw)
+
+
+def is_fixable(v: dict) -> bool:
+    """A HIGH/CRITICAL vuln is fixable when a fixed version exists;
+    anything else (a known no-fix status -- ``affected``, ``fix_deferred``,
+    ``will_not_fix``, ``end_of_life`` -- or no fixed version at all) can't
+    be acted on now."""
+    return bool(v.get("FixedVersion"))
+
+
+def high_critical_vulns(results: list[dict]) -> list[dict]:
+    """Every HIGH/CRITICAL vulnerability across the scan results."""
+    out = []
+    for res in results:
+        for v in res.get("Vulnerabilities") or []:
+            if v.get("Severity") in ("CRITICAL", "HIGH"):
+                out.append(v)
+    return out
+
+
 def collect(results: list[dict]) -> tuple[list[dict], list[dict]]:
     """Return (no_fix_vulns, fixable_vulns) restricted to HIGH/CRITICAL."""
     no_fix: list[dict] = []
     fixable: list[dict] = []
-    for res in results:
-        for v in res.get("Vulnerabilities") or []:
-            if v.get("Severity") not in ("CRITICAL", "HIGH"):
-                continue
-            if v.get("FixedVersion"):
-                fixable.append(v)
-            elif v.get("Status") in NO_FIX_STATUSES:
-                no_fix.append(v)
-            else:
-                # Severity HIGH/CRITICAL with neither a fixed version nor a
-                # known no-fix status — treat as no-fix (can't act on it).
-                no_fix.append(v)
+    for v in high_critical_vulns(results):
+        (fixable if is_fixable(v) else no_fix).append(v)
     return no_fix, fixable
+
+
+def merge_vuln_entry(entry: dict, v: dict) -> None:
+    """Merge one vuln into its CVE entry: keep the most severe severity
+    observed + record the package's (installed, fixed) pair."""
+    if SEVERITY_RANK.get(v.get("Severity"), 99) < SEVERITY_RANK.get(
+        entry["severity"], 99
+    ):
+        entry["severity"] = v.get("Severity")
+    pkg = v.get("PkgName") or "?"
+    entry["packages"].setdefault(
+        pkg, (v.get("InstalledVersion") or "", v.get("FixedVersion") or "")
+    )
 
 
 def group_by_cve(vulns: list[dict]) -> list[dict]:
@@ -96,20 +123,39 @@ def group_by_cve(vulns: list[dict]) -> list[dict]:
                 "packages": {},  # pkg -> (installed, fixed)
             },
         )
-        # Keep the most severe severity observed.
-        if SEVERITY_RANK.get(v.get("Severity"), 99) < SEVERITY_RANK.get(
-            entry["severity"], 99
-        ):
-            entry["severity"] = v.get("Severity")
-        pkg = v.get("PkgName") or "?"
-        entry["packages"].setdefault(
-            pkg, (v.get("InstalledVersion") or "", v.get("FixedVersion") or "")
-        )
+        merge_vuln_entry(entry, v)
     # Sort: CRITICAL first, then HIGH, then alphabetical.
     return sorted(
         by_cve.values(),
         key=lambda e: (SEVERITY_RANK.get(e["severity"], 99), e["cve"]),
     )
+
+
+def fixable_table_lines(fixable_cves: list[dict]) -> list[str]:
+    """The fix-available markdown table rows (one row per CVE+package)."""
+    lines = []
+    for e in fixable_cves:
+        for pkg, (inst, fixed) in sorted(e["packages"].items()):
+            lines.append(
+                f"| {e['cve']} | {e['severity']} | "
+                f"{_md_escape(pkg)} | {_md_escape(inst)} | "
+                f"{_md_escape(fixed)} |"
+            )
+    return lines
+
+
+def no_fix_table_lines(no_fix_cves: list[dict]) -> list[str]:
+    """The no-upstream-fix markdown table rows (one row per CVE)."""
+    lines = []
+    for e in no_fix_cves:
+        pkgs = ", ".join(sorted(e["packages"]))
+        if len(pkgs) > 60:
+            pkgs = pkgs[:59] + "…"
+        lines.append(
+            f"| {e['cve']} | {e['severity']} | `{e['status']}` | "
+            f"{_md_escape(pkgs)} | {_md_escape(_short(e['title']))} |"
+        )
+    return lines
 
 
 def render(no_fix: list[dict], fixable: list[dict]) -> str:
@@ -149,13 +195,7 @@ def render(no_fix: list[dict], fixable: list[dict]) -> str:
         lines.append("")
         lines.append("| CVE | Severity | Package | Installed | Fixed |")
         lines.append("| --- | --- | --- | --- | --- |")
-        for e in fixable_cves:
-            for pkg, (inst, fixed) in sorted(e["packages"].items()):
-                lines.append(
-                    f"| {e['cve']} | {e['severity']} | "
-                    f"{_md_escape(pkg)} | {_md_escape(inst)} | "
-                    f"{_md_escape(fixed)} |"
-                )
+        lines.extend(fixable_table_lines(fixable_cves))
         lines.append("")
 
     lines.append(
@@ -173,14 +213,7 @@ def render(no_fix: list[dict], fixable: list[dict]) -> str:
         lines.append("")
         lines.append("| CVE | Severity | Status | Packages | Title |")
         lines.append("| --- | --- | --- | --- | --- |")
-        for e in no_fix_cves:
-            pkgs = ", ".join(sorted(e["packages"]))
-            if len(pkgs) > 60:
-                pkgs = pkgs[:59] + "…"
-            lines.append(
-                f"| {e['cve']} | {e['severity']} | `{e['status']}` | "
-                f"{_md_escape(pkgs)} | {_md_escape(_short(e['title']))} |"
-            )
+        lines.extend(no_fix_table_lines(no_fix_cves))
         lines.append("")
 
     lines.append("<details><summary>Status legend</summary>")

@@ -210,6 +210,13 @@ class Server:
         self.proc._log_file = log_file  # type: ignore[attr-defined]
         self._wait_ready()
 
+    def _health_ok(self, client: httpx.Client) -> bool:
+        """One /health probe; False on a transport error."""
+        try:
+            return client.get("/health").status_code == 200
+        except httpx.HTTPError:
+            return False
+
     def _wait_ready(self, timeout: float = 90) -> None:
         deadline = time.monotonic() + timeout
         with httpx.Client(base_url=self.url, timeout=2) as client:
@@ -218,11 +225,8 @@ class Server:
                     raise RuntimeError(
                         f"klangkd exited early:\n{self._read_log()[-4000:]}"
                     )
-                try:
-                    if client.get("/health").status_code == 200:
-                        return
-                except httpx.HTTPError:
-                    pass
+                if self._health_ok(client):
+                    return
                 time.sleep(0.5)
         raise RuntimeError(
             f"klangkd not healthy within {timeout}s:\n{self._read_log()[-4000:]}"
@@ -244,18 +248,7 @@ class Server:
         text = self._read_log()
         new = text[self._log_scan_offset :]
         self._log_scan_offset = len(text)
-        hits = []
-        for line in new.splitlines():
-            low = line.lower()
-            if (
-                any(
-                    kw in low for kw in ("traceback", "unhandled", "exception", "fatal")
-                )
-                and "INFO" not in line
-                and "WARNING" not in line
-            ):
-                hits.append(line.strip())
-        return hits
+        return [line.strip() for line in new.splitlines() if log_line_is_anomaly(line)]
 
     def stop(self) -> None:
         proc = self.proc
@@ -271,14 +264,43 @@ class Server:
                     log_file.close()
         self._cleanup_containers()
 
+    def _instance_id(self) -> str:
+        """This instance's id from the data dir ("" when absent/unreadable)."""
+        try:
+            with open(os.path.join(self.data_dir, "instance-id")) as fh:
+                return fh.read().strip()
+        except OSError:
+            return ""
+
+    def _rm_role_containers(self, instance_id: str, role: str) -> None:
+        """Force-remove every podman container labelled with this
+        instance+role."""
+        result = subprocess.run(
+            [
+                PODMAN,
+                "ps",
+                "-a",
+                "-q",
+                "--filter",
+                f"label=klangk.instance={instance_id}",
+                "--filter",
+                f"label=klangk.role={role}",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        ids = result.stdout.split()
+        if ids:
+            subprocess.run(
+                [PODMAN, "rm", "-f", *ids],
+                capture_output=True,
+                timeout=60,
+            )
+
     def _cleanup_containers(self) -> None:
         """Remove any podman containers labelled with this instance's id."""
-        id_file = os.path.join(self.data_dir, "instance-id")
-        try:
-            with open(id_file) as fh:
-                instance_id = fh.read().strip()
-        except OSError:
-            return
+        instance_id = self._instance_id()
         if not instance_id:
             return
         try:
@@ -286,28 +308,7 @@ class Server:
             # sidecar's netns, so podman refuses to remove a sidecar with
             # a live dependent (#2476).
             for role in ("workspace", "network-sidecar"):
-                result = subprocess.run(
-                    [
-                        PODMAN,
-                        "ps",
-                        "-a",
-                        "-q",
-                        "--filter",
-                        f"label=klangk.instance={instance_id}",
-                        "--filter",
-                        f"label=klangk.role={role}",
-                    ],
-                    capture_output=True,
-                    text=True,
-                    timeout=30,
-                )
-                ids = result.stdout.split()
-                if ids:
-                    subprocess.run(
-                        [PODMAN, "rm", "-f", *ids],
-                        capture_output=True,
-                        timeout=60,
-                    )
+                self._rm_role_containers(instance_id, role)
         except (FileNotFoundError, subprocess.TimeoutExpired):
             pass
 
@@ -315,6 +316,15 @@ class Server:
 # ---------------------------------------------------------------------------
 # Anomalies
 # ---------------------------------------------------------------------------
+
+
+def log_line_is_anomaly(line: str) -> bool:
+    """Does a log line look like an unhandled exception? INFO/WARNING lines
+    are excluded -- an invalid KLANGKD_IDLE_TIMEOUT_SECONDS draw legitimately
+    warns at startup."""
+    low = line.lower()
+    has_kw = any(kw in low for kw in ("traceback", "unhandled", "exception", "fatal"))
+    return has_kw and "INFO" not in line and "WARNING" not in line
 
 
 class Anomalies:
@@ -588,6 +598,14 @@ def global_tick(global_timeout: int) -> int:
     return max(10, min(60, global_timeout // 3))
 
 
+def live_override_values(specs: list[WsSpec]) -> list[int]:
+    """Every override value that can ever be live in the wave: the initial
+    per-workspace overrides plus the runtime-change values."""
+    values = [s.override for s in specs if s.override is not None]
+    values += [s.runtime_change[1] for s in specs if s.runtime_change is not None]
+    return values
+
+
 def wave_tick_bound(specs: list[WsSpec], global_timeout: int) -> int:
     """A conservative upper bound on the cleanup loop's tick for the wave.
 
@@ -597,10 +615,8 @@ def wave_tick_bound(specs: list[WsSpec], global_timeout: int) -> int:
     any ``v in S``. So the max of ``v//2`` over every value that can ever
     be live (plus the no-override global tick) bounds every phase.
     """
-    values = [s.override for s in specs if s.override is not None]
-    values += [s.runtime_change[1] for s in specs if s.runtime_change is not None]
     bounds = [global_tick(global_timeout), 2]
-    bounds += [v // 2 for v in values]
+    bounds += [v // 2 for v in live_override_values(specs)]
     return max(bounds)
 
 
@@ -618,6 +634,17 @@ def draw_override(rng: random.Random, bogus_global: bool) -> int | None:
     return draw  # None or 0
 
 
+def runtime_change_tuple(kind: str | None) -> tuple[str, int] | None:
+    """The ``(kind, value)`` change for a drawn kind (None -> no change)."""
+    if kind == "shorten":
+        return ("shorten", 3)
+    if kind == "lengthen":
+        return ("lengthen", 30)
+    if kind == "zero":
+        return ("zero", 0)
+    return None
+
+
 def draw_runtime_change(rng: random.Random, pattern: str):
     """Draw the mid-flight change, only where the outcome stays
     deterministic: no-activity patterns may shorten (reap sooner must be
@@ -631,13 +658,7 @@ def draw_runtime_change(rng: random.Random, pattern: str):
         kind = rng.choices([None, "lengthen", "zero"], weights=[7, 1, 1])[0]
     else:
         kind = None
-    if kind == "shorten":
-        return ("shorten", 3)
-    if kind == "lengthen":
-        return ("lengthen", 30)
-    if kind == "zero":
-        return ("zero", 0)
-    return None
+    return runtime_change_tuple(kind)
 
 
 def apply_effective_timeout(
@@ -660,17 +681,26 @@ def apply_effective_timeout(
     return eff
 
 
+def spec_expects_alive(spec: WsSpec, pattern: str, eff: int) -> bool:
+    """Does the drawn spec expect to stay alive (vs be reaped)? A zero
+    override / a >=60s effective timeout never reaps in-window; an activity
+    pattern keeps it alive; a lengthen/zero runtime change must not be
+    reaped in-window."""
+    if spec.override == 0 or eff >= 60:
+        return True
+    if pattern in ("term_under", "egress", "mixed"):
+        return True
+    return spec.runtime_change is not None and spec.runtime_change[0] in (
+        "lengthen",
+        "zero",
+    )
+
+
 def expected_outcome(spec: WsSpec, pattern: str, eff: int) -> str:
     """The observable expectation for the drawn spec."""
     if spec.override == 0 or eff >= 60:
         spec.loose_alive = eff >= 60
-        return "alive"
-    if pattern in ("term_under", "egress", "mixed"):
-        return "alive"
-    if spec.runtime_change is not None and spec.runtime_change[0] in (
-        "lengthen",
-        "zero",
-    ):
+    if spec_expects_alive(spec, pattern, eff):
         return "alive"  # must not be reaped in-window
     return "reap"
 
@@ -727,6 +757,26 @@ async def wait_running(
     raise RuntimeError(f"container never became running; last={last!r}")
 
 
+def check_idle_reported(
+    ctx: Ctx, spec: WsSpec, reported, wall: float, tol: float, phase: str
+) -> None:
+    """Assert idle_seconds is numeric and tracks wall-clock idle."""
+    if not isinstance(reported, (int, float)):
+        ctx.anomalies.add(
+            "idle-secs",
+            f"{spec.name}: idle_seconds not numeric: {reported!r}",
+            scenario=spec.scenario_json(),
+        )
+        return
+    if abs(reported - wall) > tol:
+        ctx.anomalies.add(
+            "idle-secs",
+            f"{spec.name} ({phase}): idle_seconds={reported} but wall "
+            f"idle={wall:.1f}s (tolerance +/-{tol}s)",
+            scenario=spec.scenario_json(),
+        )
+
+
 async def check_idle_seconds(
     ctx: Ctx, spec: WsSpec, last_activity: float, tick: int, phase: str
 ) -> None:
@@ -737,80 +787,73 @@ async def check_idle_seconds(
     wall = time.monotonic() - last_activity
     if wall < tick + 2:
         return  # too close to the last bump to assert tightly
-    reported = st.get("idle_seconds")
-    if not isinstance(reported, (int, float)):
+    check_idle_reported(
+        ctx, spec, st.get("idle_seconds"), wall, tick + IDLE_SECS_TOL, phase
+    )
+
+
+async def probe_invalid_patches(ctx: Ctx, spec: WsSpec) -> None:
+    """PATCH values the settings coercion must reject (workspace_settings.py
+    _coerce_nonnegative_int): negative, non-numeric string, empty string,
+    non-integer float. Each must 400, never 5xx."""
+    for bad in (-5, "notanumber", "", 1.5):
+        resp = await ctx.api.patch_settings(spec.ws_id, {"idle_timeout": bad})
+        if not 400 <= resp.status_code < 500:
+            ctx.anomalies.add(
+                "invalid-patch",
+                f"{spec.name}: PATCH idle_timeout={bad!r} -> "
+                f"{resp.status_code} (expected 4xx)",
+                scenario=spec.scenario_json(),
+            )
+
+
+async def apply_idle_override(ctx: Ctx, spec: WsSpec) -> None:
+    """PATCH the per-workspace idle_timeout override."""
+    resp = await ctx.api.patch_settings(spec.ws_id, {"idle_timeout": spec.override})
+    if resp.status_code != 200:
         ctx.anomalies.add(
-            "idle-secs",
-            f"{spec.name}: idle_seconds not numeric: {reported!r}",
-            scenario=spec.scenario_json(),
-        )
-        return
-    tol = tick + IDLE_SECS_TOL
-    if abs(reported - wall) > tol:
-        ctx.anomalies.add(
-            "idle-secs",
-            f"{spec.name} ({phase}): idle_seconds={reported} but wall "
-            f"idle={wall:.1f}s (tolerance +/-{tol}s)",
+            "patch",
+            f"{spec.name}: PATCH override {spec.override} -> {resp.status_code}",
             scenario=spec.scenario_json(),
         )
 
 
 async def configure_workspace(ctx: Ctx, spec: WsSpec) -> None:
     """Apply the scenario's settings patches (invalid-probe + override)."""
-    api = ctx.api
     if spec.invalid_patch:
-        # Values the settings coercion must reject (workspace_settings.py
-        # _coerce_nonnegative_int): negative, non-numeric string, empty
-        # string, non-integer float. Each must 400, never 5xx.
-        for bad in (-5, "notanumber", "", 1.5):
-            resp = await api.patch_settings(spec.ws_id, {"idle_timeout": bad})
-            if not 400 <= resp.status_code < 500:
-                ctx.anomalies.add(
-                    "invalid-patch",
-                    f"{spec.name}: PATCH idle_timeout={bad!r} -> "
-                    f"{resp.status_code} (expected 4xx)",
-                    scenario=spec.scenario_json(),
-                )
+        await probe_invalid_patches(ctx, spec)
         spec.note("invalid-patches-sent")
     if spec.override is not None:
-        resp = await api.patch_settings(spec.ws_id, {"idle_timeout": spec.override})
-        if resp.status_code != 200:
-            ctx.anomalies.add(
-                "patch",
-                f"{spec.name}: PATCH override {spec.override} -> {resp.status_code}",
-                scenario=spec.scenario_json(),
-            )
+        await apply_idle_override(ctx, spec)
         spec.note(f"override={spec.override}")
 
 
-async def start_scenario_workspace(
-    ctx: Ctx, spec: WsSpec
-) -> tuple[WsTerminal | None, dict]:
-    """Start the workspace per its pattern; returns (terminal-or-None,
-    running-status)."""
-    api = ctx.api
-    term: WsTerminal | None = None
-    if spec.pattern in WS_PATTERNS:
-        term = WsTerminal(ctx.server, api.token, spec.ws_id)
-        spec.note("ws-connect")
-        await term.connect()
-        if spec.pattern != "quiet_ws":
-            await term.start_terminal()
-            await asyncio.sleep(1)
-            await term.send_input(" ")
-    else:
-        spec.note("api-start")
-        resp = await api.start(spec.ws_id)
-        if resp.status_code != 200:
-            ctx.anomalies.add(
-                "start",
-                f"{spec.name}: start -> {resp.status_code}",
-            )
-    st = await wait_running(ctx, spec)
-    cid = st.get("container_id") or ""
-    spec.note(f"running cid={cid[:12]}")
+async def start_ws_terminal(ctx: Ctx, spec: WsSpec) -> WsTerminal:
+    """Connect a WS session + open a terminal for a WS-driven pattern
+    (quiet_ws stops at the connect)."""
+    term = WsTerminal(ctx.server, ctx.api.token, spec.ws_id)
+    spec.note("ws-connect")
+    await term.connect()
+    if spec.pattern != "quiet_ws":
+        await term.start_terminal()
+        await asyncio.sleep(1)
+        await term.send_input(" ")
+    return term
 
-    # Sanity: the status endpoint reports the effective timeout.
+
+async def api_start(ctx: Ctx, spec: WsSpec) -> None:
+    """Start the workspace via the plain API (idle/egress patterns)."""
+    spec.note("api-start")
+    resp = await ctx.api.start(spec.ws_id)
+    if resp.status_code != 200:
+        ctx.anomalies.add(
+            "start",
+            f"{spec.name}: start -> {resp.status_code}",
+        )
+
+
+def check_status_timeout(ctx: Ctx, spec: WsSpec, st: dict) -> None:
+    """Sanity: the status endpoint reports the effective timeout."""
     if st.get("idle_timeout") != spec.eff_timeout:
         ctx.anomalies.add(
             "status-timeout",
@@ -819,6 +862,22 @@ async def start_scenario_workspace(
             f"{spec.eff_timeout}",
             scenario=spec.scenario_json(),
         )
+
+
+async def start_scenario_workspace(
+    ctx: Ctx, spec: WsSpec
+) -> tuple[WsTerminal | None, dict]:
+    """Start the workspace per its pattern; returns (terminal-or-None,
+    running-status)."""
+    term: WsTerminal | None = None
+    if spec.pattern in WS_PATTERNS:
+        term = await start_ws_terminal(ctx, spec)
+    else:
+        await api_start(ctx, spec)
+    st = await wait_running(ctx, spec)
+    cid = st.get("container_id") or ""
+    spec.note(f"running cid={cid[:12]}")
+    check_status_timeout(ctx, spec, st)
     return term, st
 
 
@@ -882,6 +941,40 @@ async def send_keepalive(
         state["last_activity"] = time.monotonic()
 
 
+def pattern_gaps(spec: WsSpec, tick: int) -> tuple[int, int, int]:
+    """``(gap_under, gap_over, cadence)`` for the spec's effective timeout."""
+    eff0 = spec.eff_timeout
+    gap_under = max(1, eff0 - 2) if eff0 > 3 else 1
+    gap_over = eff0 + tick + 6
+    cadence = max(1, min(2, eff0 // 3)) if eff0 > 0 else 2
+    return gap_under, gap_over, cadence
+
+
+async def sleep_term_over(term, state: dict, gap_over: int) -> None:
+    """term_over's burst: lands beyond timeout+tick, so the reaper must
+    reap between bursts (timer reset)."""
+    await asyncio.sleep(gap_over)
+    if term is not None:
+        await term.send_input(" ")
+    state["last_activity"] = time.monotonic()
+
+
+def stops_mid_gone_silent(spec: WsSpec, seq: int, gap_under: int) -> bool:
+    """stops_mid: silent after enough bursts to have been keep-alive."""
+    bursts = max(2, int(spec.eff_timeout * 1.5 / gap_under))
+    return seq >= bursts
+
+
+async def sleep_stops_mid(spec: WsSpec, seq: int, gap_under: int) -> bool:
+    """stops_mid's tick: silent (False) after enough bursts to have been
+    keep-alive."""
+    if stops_mid_gone_silent(spec, seq, gap_under):
+        spec.note("gone-silent")
+        return False  # silence -> reap expected
+    await asyncio.sleep(gap_under)
+    return True
+
+
 async def pattern_sleep(
     spec: WsSpec,
     state: dict,
@@ -897,18 +990,9 @@ async def pattern_sleep(
     elif spec.pattern == "term_under":
         await asyncio.sleep(gap_under)
     elif spec.pattern == "term_over":
-        # The next burst lands beyond timeout+tick: the
-        # reaper must reap between bursts (timer reset).
-        await asyncio.sleep(gap_over)
-        if term is not None:
-            await term.send_input(" ")
-        state["last_activity"] = time.monotonic()
+        await sleep_term_over(term, state, gap_over)
     elif spec.pattern == "stops_mid":
-        bursts = max(2, int(spec.eff_timeout * 1.5 / gap_under))
-        if seq >= bursts:
-            spec.note("gone-silent")
-            return False  # silence -> reap expected
-        await asyncio.sleep(gap_under)
+        return await sleep_stops_mid(spec, seq, gap_under)
     else:  # egress / mixed
         await asyncio.sleep(cadence)
     return True
@@ -926,40 +1010,76 @@ async def run_activity_pattern(
 ) -> None:
     """Drive the scenario's keep-alive / silence pattern until stopped,
     the container vanishes, or a podman-exec error lands."""
-    eff0 = spec.eff_timeout
-    gap_under = max(1, eff0 - 2) if eff0 > 3 else 1
-    gap_over = eff0 + tick + 6
-    cadence = max(1, min(2, eff0 // 3)) if eff0 > 0 else 2
+    gap_under, gap_over, cadence = pattern_gaps(spec, tick)
     seq = 0
-    try:
-        while not stop_pattern.is_set():
-            seq += 1
-            try:
-                await send_keepalive(ctx, spec, state, term, cid, seq)
-            except subprocess.CalledProcessError as exc:
-                if is_container_gone_error(exc):
-                    gone.set()
-                    return  # container vanished mid-pattern
-                ctx.anomalies.add(
-                    "pattern-error",
-                    f"{spec.name}: podman exec rc={exc.returncode}",
-                    scenario=spec.scenario_json(),
-                )
-                return
-            if not await pattern_sleep(
-                spec, state, term, seq, gap_under, gap_over, cadence
-            ):
-                return  # gone-silent (stops_mid)
-    except asyncio.CancelledError:
-        raise
+    while not stop_pattern.is_set():
+        seq += 1
+        try:
+            await send_keepalive(ctx, spec, state, term, cid, seq)
+        except subprocess.CalledProcessError as exc:
+            if is_container_gone_error(exc):
+                gone.set()
+                return  # container vanished mid-pattern
+            ctx.anomalies.add(
+                "pattern-error",
+                f"{spec.name}: podman exec rc={exc.returncode}",
+                scenario=spec.scenario_json(),
+            )
+            return
+        if not await pattern_sleep(
+            spec, state, term, seq, gap_under, gap_over, cadence
+        ):
+            return  # gone-silent (stops_mid)
+
+
+async def launch_scenario_tasks(
+    ctx: Ctx, spec: WsSpec, state: dict, term, cid: str, tick: int
+) -> tuple:
+    """Create the runtime-change + activity-pattern tasks. Returns
+    ``(pattern_task, change_task, gone, stop_pattern)``."""
+    change_task: asyncio.Task | None = None
+    if spec.runtime_change is not None:
+        change_task = asyncio.create_task(
+            apply_runtime_change(ctx, ctx.api, spec, state)
+        )
+    gone = asyncio.Event()
+    stop_pattern = asyncio.Event()
+    pattern_task = asyncio.create_task(
+        run_activity_pattern(ctx, spec, state, term, cid, gone, stop_pattern, tick)
+    )
+    return pattern_task, change_task, gone, stop_pattern
+
+
+async def observe_scenario(
+    ctx: Ctx, spec: WsSpec, state: dict, tick: int, gone: asyncio.Event, cid: str
+) -> None:
+    """Supervise the observers: a runtime change can flip the expected
+    outcome mid-flight (shorten -> reap, lengthen/zero -> alive), so the
+    observer is re-picked whenever ``expect`` changes; each observer returns
+    False on a flip (unfinished) and True when done."""
+    while True:
+        if state["expect"] == "reap":
+            done = await _observe_reap(ctx, spec, state, tick, gone, cid)
+        else:
+            done = await _observe_alive(ctx, spec, state, tick, gone)
+        if done:
+            return
+
+
+async def cleanup_scenario(api: Api, spec: WsSpec, term) -> None:
+    """Close the terminal + delete the workspace (row + container)."""
+    if term is not None:
+        await term.close()
+    if spec.ws_id:
+        await api.delete(spec.ws_id)
+        spec.note("deleted")
 
 
 async def run_ws_scenario(ctx: Ctx, spec: WsSpec, tick: int) -> None:
     """One workspace lifecycle: create -> configure -> start -> activity
     pattern -> invariants -> restart check -> cleanup."""
-    api = ctx.api
     spec.note("create")
-    spec.ws_id = await api.create_workspace(spec.name)
+    spec.ws_id = await ctx.api.create_workspace(spec.name)
     term: WsTerminal | None = None
     try:
         # -- configure ------------------------------------------------------
@@ -976,32 +1096,12 @@ async def run_ws_scenario(ctx: Ctx, spec: WsSpec, tick: int) -> None:
         }
 
         # -- optional runtime change, applied mid-flight ----------------------
-        change_task: asyncio.Task | None = None
-        if spec.runtime_change is not None:
-            change_task = asyncio.create_task(
-                apply_runtime_change(ctx, api, spec, state)
-            )
-
-        # -- activity pattern -------------------------------------------------
-        gone = asyncio.Event()
-        stop_pattern = asyncio.Event()
-        pattern_task = asyncio.create_task(
-            run_activity_pattern(ctx, spec, state, term, cid, gone, stop_pattern, tick)
+        # -- activity pattern + observation -----------------------------------
+        pattern_task, change_task, gone, stop_pattern = await launch_scenario_tasks(
+            ctx, spec, state, term, cid, tick
         )
-
-        # -- observation ------------------------------------------------------
-        # A runtime change can flip the expected outcome mid-flight
-        # (shorten -> reap, lengthen/zero -> alive), so a supervisor
-        # re-picks the observer whenever ``expect`` changes; each observer
-        # returns False on a flip (unfinished) and True when done.
         try:
-            while True:
-                if state["expect"] == "reap":
-                    done = await _observe_reap(ctx, spec, state, tick, gone, cid)
-                else:
-                    done = await _observe_alive(ctx, spec, state, tick, gone)
-                if done:
-                    break
+            await observe_scenario(ctx, spec, state, tick, gone, cid)
         finally:
             stop_pattern.set()
             await cancel_scenario_tasks(pattern_task, change_task)
@@ -1013,30 +1113,31 @@ async def run_ws_scenario(ctx: Ctx, spec: WsSpec, tick: int) -> None:
             timeline=spec.timeline[-20:],
         )
     finally:
-        if term is not None:
-            await term.close()
-        if spec.ws_id:
-            await api.delete(spec.ws_id)
-            spec.note("deleted")
+        await cleanup_scenario(ctx.api, spec, term)
+
+
+async def confirm_container_removed(ctx: Ctx, spec: WsSpec, cid: str) -> None:
+    """After the reap the container must be fully removed from podman (no
+    stopped-but-not-removed leaks)."""
+    if not cid:
+        return
+    removed_by = time.monotonic() + REMOVE_GRACE
+    while time.monotonic() < removed_by:
+        if not await container_exists(cid):
+            return
+        await asyncio.sleep(2)
+    ctx.anomalies.add(
+        "not-removed",
+        f"{spec.name}: container {cid[:12]} still in podman "
+        f"ps -a {REMOVE_GRACE}s after running=false "
+        "(stopped-but-not-removed leak)",
+        scenario=spec.scenario_json(),
+    )
 
 
 async def confirm_reap_cleanup(ctx: Ctx, spec: WsSpec, cid: str) -> None:
     """After the reap: the container is fully removed and the row survives."""
-    if cid:
-        removed_by = time.monotonic() + REMOVE_GRACE
-        while time.monotonic() < removed_by:
-            if not await container_exists(cid):
-                break
-            await asyncio.sleep(2)
-        else:
-            ctx.anomalies.add(
-                "not-removed",
-                f"{spec.name}: container {cid[:12]} still in podman "
-                f"ps -a {REMOVE_GRACE}s after running=false "
-                "(stopped-but-not-removed leak)",
-                scenario=spec.scenario_json(),
-            )
-    # The row must survive the reap...
+    await confirm_container_removed(ctx, spec, cid)
     if not await ctx.api.workspace_row_exists(spec.ws_id):
         ctx.anomalies.add(
             "row-gone",
@@ -1045,10 +1146,20 @@ async def confirm_reap_cleanup(ctx: Ctx, spec: WsSpec, cid: str) -> None:
         )
 
 
+async def await_restart_running(api: Api, ws_id: str) -> bool:
+    """True once the workspace is running again within RESTART_TIMEOUT."""
+    deadline = time.monotonic() + RESTART_TIMEOUT
+    while time.monotonic() < deadline:
+        st = await api.status(ws_id)
+        if st is not None and st.get("running"):
+            return True
+        await asyncio.sleep(2)
+    return False
+
+
 async def confirm_restart(ctx: Ctx, spec: WsSpec) -> None:
     """...and the workspace restarts cleanly after the reap."""
-    api = ctx.api
-    resp = await api.start(spec.ws_id)
+    resp = await ctx.api.start(spec.ws_id)
     if resp.status_code != 200:
         ctx.anomalies.add(
             "restart-failed",
@@ -1056,15 +1167,7 @@ async def confirm_restart(ctx: Ctx, spec: WsSpec) -> None:
             scenario=spec.scenario_json(),
         )
         return
-    deadline = time.monotonic() + RESTART_TIMEOUT
-    restarted = False
-    while time.monotonic() < deadline:
-        st = await api.status(spec.ws_id)
-        if st is not None and st.get("running"):
-            restarted = True
-            break
-        await asyncio.sleep(2)
-    if restarted:
+    if await await_restart_running(ctx.api, spec.ws_id):
         spec.note("restarted-ok")
     else:
         ctx.anomalies.add(
@@ -1072,6 +1175,35 @@ async def confirm_restart(ctx: Ctx, spec: WsSpec) -> None:
             f"{spec.name}: not running within {RESTART_TIMEOUT}s of restart after reap",
             scenario=spec.scenario_json(),
         )
+
+
+async def running_status(api: Api, ws_id: str) -> bool | None:
+    """The /status running flag, or None when the status call itself failed
+    (a non-200) -- callers treat that as "keep waiting", not as a verdict."""
+    st = await api.status(ws_id)
+    if st is None:
+        return None
+    return bool(st.get("running"))
+
+
+async def reap_wait_tick(
+    ctx: Ctx, spec: WsSpec, la: float, tick: int, checked: bool
+) -> bool:
+    """Still running inside the reap window: one idle_seconds check + a
+    sleep. Returns the updated checked flag."""
+    if not checked:
+        await check_idle_seconds(ctx, spec, la, tick, "reap-wait")
+        checked = True
+    await asyncio.sleep(2)
+    return checked
+
+
+async def finish_reap(ctx: Ctx, spec: WsSpec, cid: str) -> None:
+    """running=false (or gone): the reap happened -- confirm full removal
+    plus a clean restart."""
+    spec.note("reaped")
+    await confirm_reap_cleanup(ctx, spec, cid)
+    await confirm_restart(ctx, spec)
 
 
 async def _observe_reap(
@@ -1085,14 +1217,12 @@ async def _observe_reap(
     """Expect stopped+removed within timeout + tick + slack of the last
     activity; the row survives; a restart returns to running. Returns
     False (unfinished) when a runtime change flipped the expectation."""
-    api = ctx.api
     checked_idle = False
     while True:
         if state["expect"] != "reap":
             return False  # flipped (lengthen/zero) -> supervisor re-picks
         la, eff = state["last_activity"], state["eff"]
-        deadline = la + eff + tick + REAP_SLACK
-        if time.monotonic() > deadline:
+        if time.monotonic() > la + eff + tick + REAP_SLACK:
             ctx.anomalies.add(
                 "not-reaped",
                 f"{spec.name}: not reaped "
@@ -1102,18 +1232,62 @@ async def _observe_reap(
                 timeline=spec.timeline[-20:],
             )
             return True
-        st = await api.status(spec.ws_id)
-        if st is not None and st.get("running"):
-            if not checked_idle:
-                await check_idle_seconds(ctx, spec, la, tick, "reap-wait")
-                checked_idle = True
-            await asyncio.sleep(2)
+        if await running_status(ctx.api, spec.ws_id):
+            checked_idle = await reap_wait_tick(ctx, spec, la, tick, checked_idle)
             continue
-        # running=false (or gone): reaped. Confirm full removal.
-        spec.note("reaped")
-        await confirm_reap_cleanup(ctx, spec, cid)
-        await confirm_restart(ctx, spec)
+        await finish_reap(ctx, spec, cid)
         return True
+
+
+def alive_window(spec: WsSpec, eff0: int) -> float:
+    """The observation window for an alive expectation: a nominal 30s when
+    there is no meaningful deadline (loose/3600s fallback, or a zero
+    timeout), else factor x effective timeout (capped)."""
+    if spec.loose_alive or eff0 == 0:
+        return 30
+    return min(ALIVE_FACTOR * max(eff0, 1), ALIVE_CAP)
+
+
+def report_vanished_while_active(ctx: Ctx, spec: WsSpec, eff: int) -> None:
+    """Anomaly: the container vanished while the pattern was still driving
+    activity."""
+    ctx.anomalies.add(
+        "reaped-while-active",
+        f"{spec.name}: container vanished while the pattern was "
+        f"still driving activity (timeout={eff}s, "
+        f"pattern={spec.pattern})",
+        scenario=spec.scenario_json(),
+        timeline=spec.timeline[-20:],
+    )
+
+
+def report_stopped_while_active(ctx: Ctx, spec: WsSpec, la: float, eff: int) -> None:
+    """Anomaly: running=false while active (a stopped container can't be
+    un-stopped by later activity)."""
+    ctx.anomalies.add(
+        "reaped-while-active",
+        f"{spec.name}: running=false while active (timeout={eff}s, "
+        f"pattern={spec.pattern}, {time.monotonic() - la:.0f}s "
+        f"after last activity)",
+        scenario=spec.scenario_json(),
+        timeline=spec.timeline[-20:],
+    )
+
+
+async def alive_violation(
+    ctx: Ctx, spec: WsSpec, state: dict, gone: asyncio.Event
+) -> bool:
+    """True (reporting an anomaly) when the workspace was reaped while
+    active: the container vanished (podman exec rc 125), or running=false
+    (a stopped container can't be un-stopped by later activity)."""
+    la, eff = state["last_activity"], state["eff"]
+    if gone.is_set():
+        report_vanished_while_active(ctx, spec, eff)
+        return True
+    if await running_status(ctx.api, spec.ws_id) is False:
+        report_stopped_while_active(ctx, spec, la, eff)
+        return True
+    return False
 
 
 async def _observe_alive(
@@ -1129,41 +1303,15 @@ async def _observe_alive(
     pattern keeps refreshing that, so a last-activity anchor would never
     expire for a continuously-active workspace). Returns False (unfinished)
     when a runtime change flipped the expectation to reap."""
-    api = ctx.api
     started = time.monotonic()
-    eff0 = state["eff"]
-    if spec.loose_alive or eff0 == 0:
-        window = 30  # no meaningful deadline; just must keep running
-    else:
-        window = min(ALIVE_FACTOR * max(eff0, 1), ALIVE_CAP)
+    window = alive_window(spec, state["eff"])
     while True:
         if state["expect"] != "alive":
             return False  # flipped (shorten) -> supervisor re-picks
         if time.monotonic() > started + window:
             spec.note("alive-ok")
             return True
-        la, eff = state["last_activity"], state["eff"]
-        if gone.is_set():
-            ctx.anomalies.add(
-                "reaped-while-active",
-                f"{spec.name}: container vanished while the pattern was "
-                f"still driving activity (timeout={eff}s, "
-                f"pattern={spec.pattern})",
-                scenario=spec.scenario_json(),
-                timeline=spec.timeline[-20:],
-            )
-            return True
-        st = await api.status(spec.ws_id)
-        if st is not None and not st.get("running"):
-            # A stopped container can't be un-stopped by later activity.
-            ctx.anomalies.add(
-                "reaped-while-active",
-                f"{spec.name}: running=false while active (timeout={eff}s, "
-                f"pattern={spec.pattern}, {time.monotonic() - la:.0f}s "
-                f"after last activity)",
-                scenario=spec.scenario_json(),
-                timeline=spec.timeline[-20:],
-            )
+        if await alive_violation(ctx, spec, state, gone):
             return True
         await asyncio.sleep(2)
 
@@ -1173,24 +1321,30 @@ async def _observe_alive(
 # ---------------------------------------------------------------------------
 
 
+def lengthened_timeout(s: WsSpec) -> int:
+    """The effective timeout counting a lengthen runtime change."""
+    eff = s.eff_timeout
+    if s.runtime_change and s.runtime_change[0] == "lengthen":
+        eff += s.runtime_change[1]
+    return eff
+
+
+def spec_observe_cost(s: WsSpec, tick: int) -> float:
+    """Rough upper bound on one spec's observation window: the reap window
+    (timeout + tick + slack + removal grace) for a reap expectation, else
+    the alive window (a nominal 30s when there is no meaningful deadline)."""
+    if s.expect != "alive":
+        return s.eff_timeout + tick + REAP_SLACK + REMOVE_GRACE
+    if s.loose_alive or s.eff_timeout == 0:
+        return 30
+    eff = lengthened_timeout(s)
+    return min(ALIVE_FACTOR * max(eff, 1), ALIVE_CAP)
+
+
 def est_wave_cost(specs: list[WsSpec], tick: int) -> float:
     """Rough upper bound on one wave's wall time (for budget planning)."""
     bringup = 60
-    obs = 0.0
-    for s in specs:
-        if s.expect == "alive":
-            if s.loose_alive or s.eff_timeout == 0:
-                obs = max(obs, 30)
-            else:
-                eff = s.eff_timeout
-                if s.runtime_change and s.runtime_change[0] == "lengthen":
-                    eff += s.runtime_change[1]
-                obs = max(obs, min(ALIVE_FACTOR * max(eff, 1), ALIVE_CAP))
-        else:
-            obs = max(
-                obs,
-                s.eff_timeout + tick + REAP_SLACK + REMOVE_GRACE,
-            )
+    obs = max(spec_observe_cost(s, tick) for s in specs) if specs else 0.0
     return bringup + obs + 90  # + restart/delete headroom
 
 
@@ -1222,6 +1376,25 @@ def report_anomalies(anomalies: Anomalies) -> int:
     return 1
 
 
+def over_budget(args, cost: float, deadline: float) -> bool:
+    """Would the next wave exceed the duration budget? (--waves overrides
+    the budget check.)"""
+    if args.waves:
+        return False
+    return time.monotonic() + cost > deadline
+
+
+def log_wave_plan(waves_run: int, specs: list[WsSpec], tick: int) -> None:
+    """Print the wave's drawn plan."""
+    print(f"-- wave {waves_run} (tick bound {tick}s)")
+    for spec in specs:
+        print(
+            f"   {spec.name}: pattern={spec.pattern} "
+            f"override={spec.override} eff={spec.eff_timeout}s "
+            f"change={spec.runtime_change} -> {spec.expect}"
+        )
+
+
 async def run_wave(
     server: Server,
     anomalies: Anomalies,
@@ -1246,7 +1419,7 @@ async def run_wave(
     )
     tick = wave_tick_bound(specs, global_timeout)
     cost = est_wave_cost(specs, tick)
-    if not args.waves and time.monotonic() + cost > deadline:
+    if over_budget(args, cost, deadline):
         print(
             f"stopping: next wave (~{cost:.0f}s) would exceed the "
             f"{args.duration}m budget"
@@ -1259,18 +1432,100 @@ async def run_wave(
             "specs": [spec.scenario_json() for spec in specs],
         }
     )
-    print(f"-- wave {waves_run} (tick bound {tick}s)")
-    for spec in specs:
-        print(
-            f"   {spec.name}: pattern={spec.pattern} "
-            f"override={spec.override} eff={spec.eff_timeout}s "
-            f"change={spec.runtime_change} -> {spec.expect}"
-        )
+    log_wave_plan(waves_run, specs, tick)
     await asyncio.gather(*(run_ws_scenario(ctx, spec, tick) for spec in specs))
     for hit in server.scan_log_anomalies():
         anomalies.add("server-log", hit, wave=waves_run)
     await ctx.api.aclose()
     return Ctx(server, Api(server, anomalies), anomalies)
+
+
+def server_env_for(args, global_raw: str) -> dict[str, str]:
+    """The klangkd env for the run: the drawn global idle timeout. Image
+    default: the ambient KLANGKD_IMAGE_NAME (forwarded by clean_env for the
+    devenv-built image) or the plain settings default; --image overrides."""
+    env = {"KLANGKD_IDLE_TIMEOUT_SECONDS": global_raw}
+    if args.image:
+        env["KLANGKD_IMAGE_NAME"] = args.image
+    return env
+
+
+def waves_done(args, waves_run: int) -> bool:
+    """--waves count reached?"""
+    return bool(args.waves) and waves_run >= args.waves
+
+
+async def run_waves(
+    server: Server,
+    anomalies: Anomalies,
+    rng: random.Random,
+    args,
+    global_timeout: int,
+    bogus_global: bool,
+    deadline: float,
+    scenario_log: list[dict],
+) -> int:
+    """Draw + run waves until the --waves count or the time budget says
+    stop; returns the waves run."""
+    waves_run = 0
+    while True:
+        if waves_done(args, waves_run):
+            break
+        ctx = await run_wave(
+            server,
+            anomalies,
+            rng,
+            args,
+            global_timeout,
+            bogus_global,
+            waves_run,
+            deadline,
+            scenario_log,
+        )
+        if ctx is None:
+            break
+        waves_run += 1
+    for hit in server.scan_log_anomalies():
+        anomalies.add("server-log", hit, wave="final")
+    return waves_run
+
+
+def write_scenario_log(
+    log_dir: str, seed: int, global_raw: str, scenario_log: list[dict]
+) -> None:
+    """Persist the drawn scenario plan for post-run diagnosis."""
+    with open(os.path.join(log_dir, "scenarios.json"), "w") as fh:
+        json.dump(
+            {
+                "seed": seed,
+                "global_idle_env": global_raw,
+                "waves": scenario_log,
+            },
+            fh,
+            indent=2,
+        )
+
+
+def print_run_header(args, log_dir: str, global_raw: str, global_timeout: int) -> None:
+    print("== klangk idle-timeout fuzz ==")
+    print(f"seed={args.seed} duration={args.duration}m log_dir={log_dir}")
+    print(
+        f"global KLANGKD_IDLE_TIMEOUT_SECONDS={global_raw!r} "
+        f"(effective {global_timeout}s)"
+    )
+
+
+def print_run_report(
+    args, log_dir: str, global_raw: str, global_timeout: int, waves_run: int
+) -> None:
+    print()
+    print("=" * 60)
+    print("IDLE FUZZ REPORT")
+    print("=" * 60)
+    print(f"seed: {args.seed}")
+    print(f"global idle timeout env: {global_raw!r} ({global_timeout}s)")
+    print(f"waves run: {waves_run}")
+    print(f"scenario log: {os.path.join(log_dir, 'scenarios.json')}")
 
 
 async def run(args) -> int:
@@ -1288,76 +1543,34 @@ async def run(args) -> int:
     )
 
     bogus_global, global_raw, global_timeout = draw_global_timeout(rng)
-
-    server_env = {"KLANGKD_IDLE_TIMEOUT_SECONDS": global_raw}
-    # Image default: the ambient KLANGKD_IMAGE_NAME (forwarded by clean_env
-    # for the devenv-built image) or the plain settings default. --image
-    # overrides.
-    if args.image:
-        server_env["KLANGKD_IMAGE_NAME"] = args.image
-
-    waves_run = 0
+    server_env = server_env_for(args, global_raw)
     scenario_log: list[dict] = []
     deadline = time.monotonic() + args.duration * 60
 
-    print("== klangk idle-timeout fuzz ==")
-    print(f"seed={args.seed} duration={args.duration}m log_dir={log_dir}")
-    print(
-        f"global KLANGKD_IDLE_TIMEOUT_SECONDS={global_raw!r} "
-        f"(effective {global_timeout}s)"
-    )
+    print_run_header(args, log_dir, global_raw, global_timeout)
 
     try:
         server.start(**server_env)
         print("klangkd is up")
-
-        while True:
-            if args.waves and waves_run >= args.waves:
-                break
-            ctx = await run_wave(
-                server,
-                anomalies,
-                rng,
-                args,
-                global_timeout,
-                bogus_global,
-                waves_run,
-                deadline,
-                scenario_log,
-            )
-            if ctx is None:
-                break
-            waves_run += 1
-        for hit in server.scan_log_anomalies():
-            anomalies.add("server-log", hit, wave="final")
+        waves_run = await run_waves(
+            server,
+            anomalies,
+            rng,
+            args,
+            global_timeout,
+            bogus_global,
+            deadline,
+            scenario_log,
+        )
     finally:
-        with open(os.path.join(log_dir, "scenarios.json"), "w") as fh:
-            json.dump(
-                {
-                    "seed": args.seed,
-                    "global_idle_env": global_raw,
-                    "waves": scenario_log,
-                },
-                fh,
-                indent=2,
-            )
+        write_scenario_log(log_dir, args.seed, global_raw, scenario_log)
         server.stop()
         shutil.rmtree(data_dir, ignore_errors=True)
         shutil.rmtree(state_dir, ignore_errors=True)
 
-    print()
-    print("=" * 60)
-    print("IDLE FUZZ REPORT")
-    print("=" * 60)
-    print(f"seed: {args.seed}")
-    print(f"global idle timeout env: {global_raw!r} ({global_timeout}s)")
-    print(f"waves run: {waves_run}")
-    print(f"scenario log: {os.path.join(log_dir, 'scenarios.json')}")
+    print_run_report(args, log_dir, global_raw, global_timeout, waves_run)
     print(f"server log:   {server.log_path}")
     return report_anomalies(anomalies)
-    print("RESULT: CLEAN")
-    print("=" * 60)
-    return 0
 
 
 def main() -> None:

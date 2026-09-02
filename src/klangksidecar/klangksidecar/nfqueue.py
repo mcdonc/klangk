@@ -96,25 +96,71 @@ def classify_packet(payload: bytes) -> tuple[str, int, str, int] | None:
     return src_ip, src_port, dst, port
 
 
-def cb(pkt, client: SidecarConsentClient | None) -> None:
-    """Classify + route one queued SYN -- non-blocking (#2324, #2329).
-
-    A retransmit of an already-decided connection reuses the cached verdict
-    inline (fast path). A new connection is retained + handed to
-    :func:`decide_and_verdict` so the verdict wait doesn't block the queue's
-    drain (distinct connections are held concurrently, not serialized behind
-    the first).
-    """
-    # Every queued SYN is outbound egress activity -- bump klangkd's idle timer
-    # (flood-gated inside the client) so an egress-only workload is not reaped
-    # (#2479). First, before any classification: even a SYN we drop (cached
-    # deny / retransmit) is real network activity.
+def _bump_activity(client: SidecarConsentClient | None) -> None:
+    """Every queued SYN is outbound egress activity -- bump klangkd's idle
+    timer (flood-gated inside the client) so an egress-only workload is not
+    reaped (#2479). First, before any classification: even a SYN we drop
+    (cached deny / retransmit) is real network activity."""
     if client is not None:
         client.bump_activity()
+
+
+def _drop_unroutable(pkt, key, client: SidecarConsentClient | None) -> bool:
+    """Unparseable or pure-static (no consent configured): drop the SYN.
+    Returns True when handled."""
+    if key is None or client is None:
+        pkt.drop()
+        return True
+    return False
+
+
+def _cached_verdict_for(flow: tuple, now: float) -> tuple | None:
+    """The still-valid cached verdict for ``flow``, if any."""
+    cached = VERDICT_CACHE.get(flow)
+    if cached is not None and cached[1] > now:
+        return cached
+    return None
+
+
+def _verdict_fast_path(pkt, payload, flow: tuple, port: int, now: float) -> bool:
+    """SYN-retransmit handling before prompting. A retransmit of an
+    already-decided connection reuses the cached verdict inline so the
+    kernel's retransmits (tcp_syn_retries) don't each re-prompt. A SYN that
+    arrives WHILE this connection is still held (no verdict yet) must not
+    spawn a second consent request: the in-flight task resolves it, and a
+    request per retransmit piles up duplicates that linger past the first's
+    resolution (#2345 e2e flake) -- drop it; the kernel sends another
+    retransmit once the verdict lands, and that one hits the cache.
+    Returns True when the SYN was handled."""
+    cached = _cached_verdict_for(flow, now)
+    if cached is not None:
+        apply_cached_verdict(pkt, cached, payload, port)
+        return True
+    if flow in INFLIGHT:
+        pkt.drop()
+        return True
+    return False
+
+
+def _dispatch_verdict(
+    pkt, flow: tuple, dst: str, port: int, host: str, client: SidecarConsentClient
+) -> None:
+    """Retain the SYN + hand the verdict wait to a task so the verdict wait
+    doesn't block the queue's drain (distinct connections are held
+    concurrently, not serialized behind the first)."""
+    pkt.retain()  # keep the payload valid past this callback (deferred verdict)
+    INFLIGHT.add(flow)
+    t = asyncio.create_task(decide_and_verdict(pkt, flow, dst, port, host, client))
+    BG_TASKS.add(t)  # strong ref so the verdict task isn't GC'd
+    t.add_done_callback(BG_TASKS.discard)
+
+
+def cb(pkt, client: SidecarConsentClient | None) -> None:
+    """Classify + route one queued SYN -- non-blocking (#2324, #2329)."""
+    _bump_activity(client)
     payload = pkt.get_payload()
     key = classify_packet(payload)
-    if key is None or client is None:
-        pkt.drop()  # unparseable / pure-static (no consent configured) -> drop
+    if _drop_unroutable(pkt, key, client):
         return
     src_ip, src_port, dst, port = key
     if not client.connected:
@@ -122,28 +168,12 @@ def cb(pkt, client: SidecarConsentClient | None) -> None:
         return
     flow = (src_ip, src_port, dst, port)
     now = time.time()
-    # SYN retransmit of an already-decided connection -> reuse the verdict so
-    # the kernel's retransmits (tcp_syn_retries) don't each re-prompt.
-    cached = VERDICT_CACHE.get(flow)
-    if cached is not None and cached[1] > now:
-        apply_cached_verdict(pkt, cached, payload, port)
-        return
-    # A SYN retransmit that arrives WHILE this connection is still held (no
-    # verdict yet) must not spawn a second consent request: the in-flight task
-    # resolves it, and a request per retransmit piles up duplicates that linger
-    # past the first's resolution (#2345 e2e flake). Drop it -- the kernel sends
-    # another retransmit once the verdict lands, and that one hits the cache.
-    if flow in INFLIGHT:
-        pkt.drop()
+    if _verdict_fast_path(pkt, payload, flow, port, now):
         return
     host = host_for(dst)  # DNS name if resolved here, else the IP
     if _session_gate_holds(pkt, flow, payload, dst, port, host, now):
         return
-    pkt.retain()  # keep the payload valid past this callback (deferred verdict)
-    INFLIGHT.add(flow)
-    t = asyncio.create_task(decide_and_verdict(pkt, flow, dst, port, host, client))
-    BG_TASKS.add(t)  # strong ref so the verdict task isn't GC'd
-    t.add_done_callback(BG_TASKS.discard)
+    _dispatch_verdict(pkt, flow, dst, port, host, client)
 
 
 def _session_gate_holds(
@@ -335,6 +365,68 @@ def remember_session_verdict(
         add_session_deny(host, port, ttl)
 
 
+async def _apply_allow_verdict(pkt, dst: str, ttl: float | None, loop) -> None:
+    """Allow: learn the IP all-ports (reconnects + this connection's SYN
+    retransmits pass without re-prompting) + ``pkt.accept()`` (conntrack
+    ESTABLISHED,RELATED carries the in-flight connection). ``once`` (ttl
+    None) -> no learn, just this connection (reconnect re-prompts)."""
+    if ttl is not None:
+        try:
+            await loop.run_in_executor(None, rules.allow, dst, None, ttl, False)
+        except Exception:
+            pass
+    pkt.accept()
+
+
+def _deny_reject_args(flow: tuple, ttl: float | None) -> tuple[float, int]:
+    """``(reject_ttl, sport)`` for a deny verdict. ``once`` is
+    per-connection: scope the REJECT to THIS connection's source port so a
+    NEW connection (different sport) to the same host:port re-prompts instead
+    of being rejected above NFQUEUE for the fail-close window (#2463). A
+    timed/forever deny stays destination-scoped (sport 0) -- its over-deny is
+    correct (the DB rule + SESSION_HOST_DENIES govern re-prompting). The
+    source port is guarded: a real TCP SYN never has src port 0 (RFC 793),
+    so a truthy flow[1] is the normal case; if it is ever 0 (a
+    non-TCP/unparseable flow), sport 0 falls back to destination-scoped so a
+    future parse change can't silently re-introduce the over-deny."""
+    reject_ttl = ttl if ttl is not None else CONSENT_REJECT_TTL
+    sport = flow[1] if ttl is None else 0
+    return reject_ttl, sport
+
+
+def _forge_deny_rst(pkt, port: int) -> None:
+    """Forge the RST directly so connect() fails fast (ECONNREFUSED) at once,
+    independent of the conntrack/retransmit race that made the REJECT rule
+    flaky (#2345). TCP only (port 0 is non-TCP)."""
+    if not port:
+        return
+    try:
+        packets.send_rst(pkt.get_payload())
+    except Exception:
+        pass
+
+
+async def _apply_deny_verdict(
+    pkt, flow: tuple, dst: str, port: int, ttl: float | None, loop
+) -> None:
+    """Deny: the forged RST plus the REJECT (tcp-reset) backstop for any
+    retransmit the RST missed -- the short fail-close window for ``once``, or
+    the verdict's window for a timed duration -- then drop."""
+    _forge_deny_rst(pkt, port)
+    if port:
+        reject_ttl, sport = _deny_reject_args(flow, ttl)
+        try:
+            if sport:
+                await loop.run_in_executor(
+                    None, rules.reject, dst, port, reject_ttl, sport
+                )
+            else:
+                await loop.run_in_executor(None, rules.reject, dst, port, reject_ttl)
+        except Exception:
+            pass
+    pkt.drop()
+
+
 async def apply_verdict(
     pkt,
     flow,
@@ -349,43 +441,6 @@ async def apply_verdict(
     matches the DNS path's learn_all; the packet is retained, so verdicting
     after the await is safe)."""
     if decision == "allow":
-        # `once` (ttl None) -> no learn, just this connection (reconnect
-        # re-prompts); a timed duration -> learn all-ports for it.
-        if ttl is not None:
-            try:
-                await loop.run_in_executor(None, rules.allow, dst, None, ttl, False)
-            except Exception:
-                pass
-        pkt.accept()
+        await _apply_allow_verdict(pkt, dst, ttl, loop)
         return
-    # Forge a RST directly so connect() fails fast (ECONNREFUSED) at once,
-    # independent of the conntrack/retransmit race that made the REJECT
-    # rule flaky (#2345). The REJECT rule stays as a belt-and-suspenders
-    # backstop for any retransmit the RST missed. `once` -> the short
-    # fail-close reject window; a timed duration -> that long.
-    # ``once`` is per-connection: scope the REJECT to THIS connection's
-    # source port so a NEW connection (different sport) to the same
-    # host:port re-prompts instead of being rejected above NFQUEUE for
-    # the fail-close window (#2463). A timed/forever deny stays
-    # destination-scoped -- its over-deny is correct (the DB rule +
-    # SESSION_HOST_DENIES govern re-prompting). The source port is
-    # guarded: a real TCP SYN never has src port 0 (RFC 793), so a
-    # truthy flow[1] is the normal case; if it is ever 0 (a
-    # non-TCP/unparseable flow), fall back to destination-scoped so a
-    # future parse change can't silently re-introduce the over-deny.
-    if port:
-        try:
-            packets.send_rst(pkt.get_payload())
-        except Exception:
-            pass
-        reject_ttl = ttl if ttl is not None else CONSENT_REJECT_TTL
-        try:
-            if ttl is None and flow[1]:
-                await loop.run_in_executor(
-                    None, rules.reject, dst, port, reject_ttl, flow[1]
-                )
-            else:
-                await loop.run_in_executor(None, rules.reject, dst, port, reject_ttl)
-        except Exception:
-            pass
-    pkt.drop()
+    await _apply_deny_verdict(pkt, flow, dst, port, ttl, loop)
