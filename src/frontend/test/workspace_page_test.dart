@@ -1,13 +1,18 @@
-/// Tests for the container-stopped and disconnected overlays and the
+/// Tests for the container-stopped and disconnected overlays, the
 /// container lifecycle event transition (`containerEventTransition`) that
-/// drives them. These exercise the REAL extracted builders / pure function
-/// from `workspace_overlays.dart` rather than duplicated standalone copies
-/// (the full `WorkspacePage` cannot be mounted in tests — see the note in
-/// `workspace_overlays.dart`), so the actual page logic is covered.
+/// drives them, and the extracted pure permission-gate predicates
+/// (`consentSurfaceAllowed`, `terminalTabAllowed`, `permGranted`). These
+/// exercise the REAL extracted builders / pure functions from
+/// `workspace_overlays.dart` / `*_gate.dart` rather than duplicated
+/// standalone copies (the full `WorkspacePage` cannot be mounted in tests —
+/// see the note in `workspace_overlays.dart`), so the actual page logic is
+/// covered.
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:klangk_frontend/workspace/workspace_overlays.dart';
 import 'package:klangk_frontend/workspace/consent_surface.dart';
+import 'package:klangk_frontend/workspace/permission_gate.dart';
+import 'package:klangk_frontend/workspace/terminal_tab_gate.dart';
 
 void main() {
   Widget wrap(Widget child) => MaterialApp(home: Scaffold(body: child));
@@ -381,6 +386,118 @@ void main() {
           egressMode: 'static',
           permissions: ['egress-consent', '*'],
         ),
+        isFalse,
+      );
+    });
+  });
+
+  /// #3023: the Terminal-tab mount gate. Pure predicate, unit-tested
+  /// directly (the full WorkspacePage cannot be mounted — see the header
+  /// note). Test names state the *predicate* outcome; the UI outcomes pair
+  /// with the IdeLayout tests (ide_layout_test.dart, 'terminal-permission
+  /// gating (#2975)'): gate closed → terminal pane is null → no tab; gate
+  /// open → tab mounts with its inner gates (`code-in-isolation`,
+  /// `spectate-on-shared-terminals`) unchanged.
+  group('terminalTabAllowed (#3023)', () {
+    test('files-only grants (no terminal) leave the gate closed', () {
+      // A custom ACL granting files-only access: join-workspace renders
+      // the page, files-view renders the Files tab, no terminal.
+      expect(
+        terminalTabAllowed(
+          permissions: ['join-workspace', 'files-view'],
+        ),
+        isFalse,
+      );
+    });
+
+    test('terminal grant opens the gate (tab mounts as today)', () {
+      expect(
+        terminalTabAllowed(
+          permissions: [
+            'join-workspace',
+            'files-view',
+            'terminal',
+            'code-in-isolation',
+          ],
+        ),
+        isTrue,
+      );
+    });
+
+    test('spectator-style grant (terminal + spectate) opens the gate', () {
+      expect(
+        terminalTabAllowed(
+          permissions: [
+            'join-workspace',
+            'view',
+            'terminal',
+            'spectate-on-shared-terminals',
+          ],
+        ),
+        isTrue,
+      );
+    });
+
+    test('owner wildcard opens the gate', () {
+      expect(terminalTabAllowed(permissions: ['*']), isTrue);
+    });
+
+    test('no permissions at all leaves the gate closed (fail-closed)', () {
+      expect(terminalTabAllowed(permissions: []), isFalse);
+    });
+
+    test('terminal-like names do not satisfy the gate', () {
+      // Not `terminal`: fail closed on near-miss names.
+      expect(
+        terminalTabAllowed(
+          permissions: [
+            'join-workspace',
+            'share-terminals',
+            'spectate-on-shared-terminals',
+          ],
+        ),
+        isFalse,
+      );
+    });
+  });
+
+  /// The primitive both extracted gates (and the page's `_hasPerm`)
+  /// delegate to — the single definition of the wildcard semantics
+  /// (#3023 review: was a three-way copy that could drift).
+  group('permGranted (#3023)', () {
+    test('literal permission grants', () {
+      expect(
+        permGranted(
+          permissions: ['join-workspace', 'terminal'],
+          permission: 'terminal',
+        ),
+        isTrue,
+      );
+    });
+
+    test('wildcard grants any permission', () {
+      expect(
+        permGranted(
+          permissions: ['*'],
+          permission: 'share-advanced',
+        ),
+        isTrue,
+      );
+    });
+
+    test('other permissions do not grant', () {
+      expect(
+        permGranted(
+          permissions: ['join-workspace', 'share-terminals'],
+          permission: 'terminal',
+        ),
+        isFalse,
+      );
+    });
+
+    test('empty list grants nothing (fail-closed)', () {
+      expect(
+        permGranted(permissions: [], permission: 'terminal'),
         isFalse,
       );
     });
