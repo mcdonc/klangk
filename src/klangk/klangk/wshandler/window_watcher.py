@@ -84,6 +84,15 @@ class WindowEventWatcher:
         # ``start()`` observes it right after its exec await and tears the
         # fresh client down itself instead of orphaning it. A stopped
         # watcher is single-use: a later ``start()`` never spawns.
+        # ``_start_pending`` is True from construction (#3015 review): the
+        # session spawns ``start()`` fire-and-forget, and until that task
+        # first runs the watcher must already read alive — a second
+        # ``add_subscriber`` in that window would otherwise discard the
+        # fresh watcher and waste a control-client exec. ``start()``
+        # clears it synchronously before its guards, so a direct first
+        # call still spawns; only a start whose exec failed (or never
+        # ran) leaves a no-task watcher reading not-alive.
+        self._start_pending = True
         self._starting = False
         self._stopped = False
         # Unique per-watcher session name so a stale client from a prior
@@ -103,20 +112,27 @@ class WindowEventWatcher:
     def alive(self) -> bool:
         """True while the watcher can still deliver events.
 
-        False when stopped (single-use, #2929), when the reader task
-        has exited — the exec died with its container — or when a start
-        never got far enough to spawn one. The session treats a watcher
-        that is not alive as dead and builds a fresh one (#3015).
+        True from construction (a start is pending — the session spawns
+        it fire-and-forget, #3015 review), while the start exec is in
+        flight, and while the reader task runs. False when stopped
+        (single-use, #2929), when the reader task has exited — the exec
+        died with its container — or when a start failed before
+        spawning a reader. The session treats a watcher that is not
+        alive as dead and builds a fresh one (#3015).
         """
         if self._stopped:
             return False
         if self._task is None:
-            return self._starting
+            return self._starting or self._start_pending
         return not self._task.done()
 
     async def start(
         self,
     ) -> None:
+        # Clear the pending marker synchronously before any guard: the
+        # task is running now, so "constructed but never started" no
+        # longer describes it (#3015 review).
+        self._start_pending = False
         if self._task is not None and not self._task.done():
             return
         if self._starting or self._stopped:

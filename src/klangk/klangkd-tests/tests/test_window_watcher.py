@@ -79,17 +79,24 @@ async def test_container_id_reports_bound_container():
 
 
 async def test_alive_tracks_lifecycle():
-    """alive is the session's replacement signal (#3015): False before a
-    start, True while the start exec is in flight, True while the reader
-    task runs, False once the reader exits (the exec died with the
-    container), and always False once stopped."""
+    """alive is the session's replacement signal (#3015): True from
+    construction (a start is pending — the session spawns it
+    fire-and-forget, so a second subscriber in the spawn window must
+    not treat the fresh watcher as dead), True while the start exec is
+    in flight, True while the reader task runs, False once the reader
+    exits (the exec died with the container), False after a failed
+    start (the finally reset), and always False once stopped."""
     watcher = WindowEventWatcher(MagicMock(), "cid", lambda: None)
-    assert watcher.alive is False  # never started
+    assert watcher.alive is True  # constructed: start pending
 
     watcher._starting = True
     assert watcher.alive is True  # start exec in flight
 
+    # start() ran and failed before spawning a reader: not alive.
     watcher._starting = False
+    watcher._start_pending = False
+    assert watcher.alive is False
+
     watcher._task = asyncio.ensure_future(asyncio.sleep(3600))
     assert watcher.alive is True  # reader task running
 

@@ -201,6 +201,29 @@ async def test_start_window_sync_keeps_watcher_mid_start():
     assert sess._window_watcher is starting
 
 
+async def test_rapid_reconnect_keeps_freshly_built_watcher():
+    """#3015 review follow-up: between constructing the replacement
+    watcher and its spawned ``start()`` first running (no await between
+    the two sync calls, so the task is still queued), the watcher must
+    already read alive — a second connect in that window must not
+    discard the fresh watcher and waste another control-client exec.
+
+    Uses the REAL watcher class: the mocked tests above fake ``alive``;
+    this one pins the real construction-time flag the fix added.
+    """
+    sess, _, _ = _session_with_user()
+    with patch("asyncio.create_subprocess_exec", new=AsyncMock()) as spawn:
+        sess.start_window_sync()
+        first = sess._window_watcher
+        sess.start_window_sync()  # start task still queued, not yet run
+        assert sess._window_watcher is first
+
+        await first.stop()  # single-use: the queued start() then no-ops
+        for _ in range(3):
+            await asyncio.sleep(0)  # drain the queued start task
+        spawn.assert_not_called()
+
+
 async def test_reset_cancels_pending_sync_and_stops_watcher():
     sess, _sock, _terminal = _session_with_user()
     with patch("klangk.wshandler.session.WindowEventWatcher") as wc:
