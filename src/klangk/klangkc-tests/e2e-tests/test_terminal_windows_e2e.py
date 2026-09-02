@@ -116,9 +116,14 @@ def _expect_window_capture(ws_name, env, timeout=25):
     as an opaque ``TIMEOUT:ready`` after the full timeout (#3037) — it
     now fails fast with ``READY-NONZERO``, and a ready-stage
     timeout/eof appends a bounded tail of what the pane actually
-    printed, so a wrong-pane ping is identifiable in artifacts.
+    printed, so a wrong-pane ping is identifiable in artifacts. The
+    ping is resent every 2s until the marker executes: on a cold attach
+    the first send can race the client's input wiring and be dropped
+    entirely (observed in CI on #3044 — the typed ping was never even
+    echoed), so a late-wiring attach is polled instead of failed.
     """
     nonce = secrets.token_hex(4)
+    max_tries = max(1, timeout // 2)
     script = f"""
 set timeout {timeout}
 log_user 0
@@ -141,17 +146,28 @@ expect {{
     timeout {{ puts "TIMEOUT:prompt"; exit 1 }}
     eof {{ puts "EOF:prompt"; exit 1 }}
 }}
+set timeout 2
 send "echo KLANGK_READY_{nonce}_\\$?\\r"
-expect {{
-    -re {{KLANGK_READY_{nonce}_([0-9]+)}} {{
-        if {{$expect_out(1,string) != 0}} {{
-            puts "READY-NONZERO:$expect_out(1,string)"
-            exit 1
+set ready 0
+for {{set i 0}} {{$i < {max_tries}}} {{incr i}} {{
+    expect {{
+        -re {{KLANGK_READY_{nonce}_([0-9]+)}} {{
+            if {{$expect_out(1,string) != 0}} {{
+                puts "READY-NONZERO:$expect_out(1,string)"
+                exit 1
+            }}
+            set ready 1
         }}
+        timeout {{ send "echo KLANGK_READY_{nonce}_\\$?\\r" }}
+        eof {{ puts "EOF:ready tail=<<[string range $expect_out(buffer) end-399 end]>>"; exit 1 }}
     }}
-    timeout {{ puts "TIMEOUT:ready tail=<<[ready_tail]>>"; exit 1 }}
-    eof {{ puts "EOF:ready tail=<<[string range $expect_out(buffer) end-399 end]>>"; exit 1 }}
+    if {{$ready}} {{ break }}
 }}
+if {{!$ready}} {{
+    puts "TIMEOUT:ready tail=<<[ready_tail]>>"
+    exit 1
+}}
+set timeout {timeout}
 send "echo W_S; tmux display-message -p '#I:#W'; echo W_E\\r"
 expect {{
     -re {{W_S\\r?\\n(\\d+:\\S+)\\r?\\nW_E}} {{
@@ -206,10 +222,37 @@ def _cli_check_window(ws_name, env, timeout=25):
 def _cli_hold_and_check(ws_name, window_name, hold_seconds, env):
     """Start CLI shell, check window before and after a hold period.
 
-    Raises AssertionError carrying the expect diagnostic (stage tags and,
-    for the ready stage, a bounded pane-output tail, #3037) when either
-    capture stage fails — the tags used to be swallowed here, leaving
-    only an opaque ``CLI moved from None to None``.
+    Retried once (#3012 pattern): under CI load a cold attach can race
+    the expect handshake once (ping dropped before the client's input
+    path is wired, prompt never painted); a single retry absorbs the
+    transient while persistent breakage still fails. Raises
+    AssertionError carrying both attempts' expect diagnostics (stage
+    tags and, for the ready stage, a bounded pane-output tail, #3037) —
+    the tags used to be swallowed here, leaving only an opaque ``CLI
+    moved from None to None`` (a vacuous pass on ``None == None``).
+    """
+    diagnostics = []
+    for attempt in range(2):
+        before, after, failure = _cli_hold_and_check_once(
+            ws_name, window_name, hold_seconds, env
+        )
+        if failure is None:
+            return before, after
+        diagnostics.append(failure)
+        if attempt == 0:
+            time.sleep(3)
+    raise AssertionError(
+        "expect failed on both attempts:\n" + "\n---\n".join(diagnostics)
+    )
+
+
+def _cli_hold_and_check_once(ws_name, window_name, hold_seconds, env):
+    """One attempt of :func:`_cli_hold_and_check`.
+
+    Returns ``(before, after, None)`` on success or ``(None, None,
+    diagnostic)`` on failure. The readiness ping is nonced per attempt
+    and resent every 2s until it executes (see
+    :func:`_expect_window_capture` for the rationale).
     """
     if window_name:
         cmd = f"klangk shell {ws_name} {window_name} --no-consent-popup"
@@ -238,17 +281,28 @@ expect {{
     timeout {{ puts "TIMEOUT:prompt"; exit 1 }}
     eof {{ puts "EOF:prompt"; exit 1 }}
 }}
+set timeout 2
 send "echo KLANGK_READY_{nonce}_\\$?\\r"
-expect {{
-    -re {{KLANGK_READY_{nonce}_([0-9]+)}} {{
-        if {{$expect_out(1,string) != 0}} {{
-            puts "READY-NONZERO:$expect_out(1,string)"
-            exit 1
+set ready 0
+for {{set i 0}} {{$i < 15}} {{incr i}} {{
+    expect {{
+        -re {{KLANGK_READY_{nonce}_([0-9]+)}} {{
+            if {{$expect_out(1,string) != 0}} {{
+                puts "READY-NONZERO:$expect_out(1,string)"
+                exit 1
+            }}
+            set ready 1
         }}
+        timeout {{ send "echo KLANGK_READY_{nonce}_\\$?\\r" }}
+        eof {{ puts "EOF:ready tail=<<[string range $expect_out(buffer) end-399 end]>>"; exit 1 }}
     }}
-    timeout {{ puts "TIMEOUT:ready tail=<<[ready_tail]>>"; exit 1 }}
-    eof {{ puts "EOF:ready tail=<<[string range $expect_out(buffer) end-399 end]>>"; exit 1 }}
+    if {{$ready}} {{ break }}
 }}
+if {{!$ready}} {{
+    puts "TIMEOUT:ready tail=<<[ready_tail]>>"
+    exit 1
+}}
+set timeout 30
 send "echo BS; tmux display-message -p '#I:#W'; echo BE\\r"
 expect {{
     -re {{BS\\r?\\n(\\d+:\\S+)\\r?\\nBE}} {{
@@ -288,8 +342,8 @@ wait
         elif line.startswith("AFTER="):
             after = line.split("=", 1)[1]
     if before is None or after is None:
-        raise AssertionError(f"expect failed:\n{result.stdout}{result.stderr}")
-    return before, after
+        return None, None, f"{result.stdout}{result.stderr}"
+    return before, after, None
 
 
 class _WebSession:
