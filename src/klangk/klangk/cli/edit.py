@@ -456,8 +456,7 @@ def list_flag_body(value, key: str, validate) -> dict:
     """Body for one repeatable list flag; {} when the flag was not given."""
     if not isinstance(value, list):
         return {}
-    if validate:
-        validated_specs_or_exit(value, validate)
+    validated_specs_or_exit(value, validate)
     return {key: value or None}
 
 
