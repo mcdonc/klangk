@@ -204,8 +204,10 @@ all, #2886).
 ### First-class resource permissions
 
 Every governed surface is a first-class top-level resource (#2944);
-each carries **one** flat `manage-*` permission covering all of its
-actions — no per-action splits:
+each carries a flat `manage-*` permission covering its actions. The
+one split: `/volumes` also has a read-side `view-volumes` (#2993) —
+the listing gate of its admin tab, separate from `manage-volumes` so
+a read-only volumes auditor can be delegated:
 
 | Permission               | Where it is checked | Controls                                                                                                                                                              |
 | ------------------------ | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

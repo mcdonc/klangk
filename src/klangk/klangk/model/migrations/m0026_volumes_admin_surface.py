@@ -23,9 +23,13 @@ This migration rewrites a deployed database to the new seed shape:
   admins' grants ahead of operator rows (an operator-staged Deny must
   not shadow what the old Allow-Authenticated row gave admins).
 
-Operator-customized rows (a scoped self-service grant, an explicit
-Deny) survive untouched, below the inserted admin rows. A deploy that
-wants self-service volumes back adds an Allow row via the ACL editor.
+Operator-customized rows that do not match the #2946 shapes (a
+scoped self-service grant, an explicit Deny) survive untouched, below
+the inserted admin rows. An operator row that happens to repeat a
+#2946 shape exactly (e.g. a deliberately re-staged Allow
+manage-volumes for Authenticated) is indistinguishable from the seed
+and goes with it. A deploy that wants self-service volumes back adds
+an Allow row via the ACL editor.
 
 A fresh database (entirely empty ``acl_entries``) is a no-op — the
 boot seeds own it (the m0021 precedent).
@@ -87,7 +91,10 @@ async def apply(db) -> None:
     # Park the surviving rows two slots down so positions 0/1 are free.
     # UNIQUE(resource, position) forbids an in-place +2 shift past a
     # neighbor, so rows first jump far above the occupied range and
-    # then settle back (m0023's two-step offset).
+    # then settle back (m0023's two-step offset). Every parked row is
+    # >= offset, so the settle matches >= offset — a strict > would
+    # strand the row parked at exactly offset (the original position
+    # 0) up there forever.
     offset = 1_000_000
     await db.execute(
         "UPDATE acl_entries SET position = position + ?"
@@ -96,7 +103,7 @@ async def apply(db) -> None:
     )
     await db.execute(
         "UPDATE acl_entries SET position = position - ? + 2"
-        " WHERE resource = '/volumes' AND position > ?",
+        " WHERE resource = '/volumes' AND position >= ?",
         (offset, offset),
     )
     for permission in missing:

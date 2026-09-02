@@ -88,7 +88,7 @@ def temp_data_dir(tmp_path, monkeypatch):
     reset_test_db()
 
 
-async def _seed_2946_self_service(app_state):
+async def _seed_resource_acls(app_state):
     """Seed the #2946/#2993/#2994 resource ACL rows (idempotent).
 
     Mirrors m0023/m0026 + seed_default_acls: Allow view-volumes +
@@ -185,7 +185,7 @@ async def agent_user(app_state):
             (AGENT_USER_ID, "klangk@example.com", "klangk"),
         )
     app_state.state.model.users.clear_agent_cache()
-    await _seed_2946_self_service(app_state)
+    await _seed_resource_acls(app_state)
 
 
 @pytest.fixture
@@ -195,7 +195,7 @@ async def user(app_state):
     result = await app_state.state.model.users.create_user(
         "testuser@example.com", _TEST_PASSWORD_HASH, verified=True
     )
-    await _seed_2946_self_service(app_state)
+    await _seed_resource_acls(app_state)
     return result
 
 
@@ -258,7 +258,7 @@ async def admin_group(app_state):
     )
     # First-class resource seeds (#2944), mirroring seed_default_acls.
     # /users manage-users for admins; the Deny lands at a high position
-    # so _seed_2946_self_service's search-users insert (position 1,
+    # so _seed_resource_acls's search-users insert (position 1,
     # shifting >= 1) keeps Allow-Authenticated before it.
     await acl.add_acl_entry(
         "/users",
@@ -299,7 +299,7 @@ async def admin_group(app_state):
             PRINCIPAL_SYSTEM,
             system_principal=SYSTEM_EVERYONE,
         )
-    await _seed_2946_self_service(app_state)
+    await _seed_resource_acls(app_state)
     # /admin stays as the instance-admin wildcard marker (#2944).
     await acl.add_acl_entry(
         "/admin",

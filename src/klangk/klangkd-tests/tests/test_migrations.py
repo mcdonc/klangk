@@ -2888,7 +2888,58 @@ class TestM0026VolumesAdminSurface:
         a strict > in the settle step stranded the row parked at
         exactly the offset, permanently."""
         from klangk.model import ACTION_ALLOW, PRINCIPAL_GROUP
+<<<<<<< HEAD
         from klangk.model.migrations import m0026_volumes_admin_surface
+=======
+        from klangk.model.migrations import m0025_volumes_admin_surface
+
+        db = await self._db(tmp_path)
+        try:
+            await db.execute(
+                "INSERT INTO acl_entries"
+                " (resource, position, action, principal_type, group_id,"
+                "  permission)"
+                " VALUES ('/volumes', 0, 1, 2, 'g-op', 'manage-volumes'),"
+                "        ('/', 0, 1, 0, NULL, 'view')"
+            )
+            await db.execute(
+                "INSERT INTO groups (id, name) VALUES ('g-a', 'admins')"
+            )
+            await db.commit()
+            await m0025_volumes_admin_surface.migration.apply(db)
+
+            assert await self._rows(db, "/volumes") == [
+                (
+                    0,
+                    ACTION_ALLOW,
+                    PRINCIPAL_GROUP,
+                    "g-a",
+                    None,
+                    "view-volumes",
+                ),
+                (
+                    1,
+                    ACTION_ALLOW,
+                    PRINCIPAL_GROUP,
+                    "g-a",
+                    None,
+                    "manage-volumes",
+                ),
+                (
+                    2,
+                    ACTION_ALLOW,
+                    PRINCIPAL_GROUP,
+                    "g-op",
+                    None,
+                    "manage-volumes",
+                ),
+            ]
+        finally:
+            await db.__aexit__(None, None, None)
+
+    async def test_fresh_db_is_noop(self, tmp_path):
+        from klangk.model.migrations import m0025_volumes_admin_surface
+>>>>>>> 1ed93a9d (Fix m0025 settle-back stranding the position-0 row (#2997 review))
 
         db = await self._db(tmp_path)
         try:
