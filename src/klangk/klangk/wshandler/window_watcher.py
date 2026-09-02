@@ -90,6 +90,30 @@ class WindowEventWatcher:
         # instance (e.g. across a container restart) never collides.
         self._ctrl_session = f"__klangk_ctrl-{uuid.uuid4().hex[:8]}"
 
+    @property
+    def container_id(self) -> str:
+        """The container this watcher's control client is bound to.
+
+        Baked in at construction, so a watcher can never be re-aimed at
+        a recycled container — the session replaces it instead (#3015).
+        """
+        return self._container_id
+
+    @property
+    def alive(self) -> bool:
+        """True while the watcher can still deliver events.
+
+        False when stopped (single-use, #2929), when the reader task
+        has exited — the exec died with its container — or when a start
+        never got far enough to spawn one. The session treats a watcher
+        that is not alive as dead and builds a fresh one (#3015).
+        """
+        if self._stopped:
+            return False
+        if self._task is None:
+            return self._starting
+        return not self._task.done()
+
     async def start(
         self,
     ) -> None:

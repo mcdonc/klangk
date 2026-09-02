@@ -412,11 +412,28 @@ class WorkspaceSession:
 
     def start_window_sync(self) -> None:
         """Start (once) the tmux control-mode window-change watcher so every
-        client's tab strip stays in sync with tmux (#2161 / #2171)."""
-        if self._window_watcher is not None or self.app is None:
+        client's tab strip stays in sync with tmux (#2161 / #2171).
+
+        Container-aware (#3015): the watcher's exec dies with its
+        container and ``_container_id`` is baked in at construction, so
+        a watcher left from a recycled container — one bound to a stale
+        container id, or whose reader task already exited — is torn down
+        and replaced by a fresh one bound to the session's current
+        container. Without the replacement every later
+        ``add_subscriber`` (reconnect or restart) no-opped on the dead
+        watcher and push-based sync stayed dead for the session's
+        remaining life. The old watcher's ``stop()`` is spawned, not
+        awaited — it is safe against a start still in flight (#2929)
+        and its teardown execs must not pin the session lock.
+        """
+        if self.app is None or self.container_id is None:
             return
-        if self.container_id is None:
-            return
+        watcher = self._window_watcher
+        if watcher is not None:
+            if watcher.container_id == self.container_id and watcher.alive:
+                return
+            self._window_watcher = None
+            spawn_session_task(watcher.stop())
         self._window_watcher = WindowEventWatcher(
             self.app.state.podman,
             self.container_id,

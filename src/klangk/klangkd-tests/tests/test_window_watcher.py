@@ -70,6 +70,49 @@ async def test_read_loop_propagates_cancellation():
         await task
 
 
+# --- #3015: container binding + liveness, seen by the session ---------
+
+
+async def test_container_id_reports_bound_container():
+    watcher = WindowEventWatcher(MagicMock(), "cid", lambda: None)
+    assert watcher.container_id == "cid"
+
+
+async def test_alive_tracks_lifecycle():
+    """alive is the session's replacement signal (#3015): False before a
+    start, True while the start exec is in flight, True while the reader
+    task runs, False once the reader exits (the exec died with the
+    container), and always False once stopped."""
+    watcher = WindowEventWatcher(MagicMock(), "cid", lambda: None)
+    assert watcher.alive is False  # never started
+
+    watcher._starting = True
+    assert watcher.alive is True  # start exec in flight
+
+    watcher._starting = False
+    watcher._task = asyncio.ensure_future(asyncio.sleep(3600))
+    assert watcher.alive is True  # reader task running
+
+    task = watcher._task
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    assert watcher.alive is False  # reader exited: died with container
+
+    # Stopped mid-teardown (task fields not yet cleared by stop()):
+    # a watcher that will never deliver again must not read alive.
+    watcher._task = asyncio.ensure_future(asyncio.sleep(3600))
+    watcher._stopped = True
+    assert watcher.alive is False
+    watcher._task.cancel()
+    try:
+        await watcher._task
+    except asyncio.CancelledError:
+        pass
+
+
 # --- No-cover audit tests (#2910, part 3) --------------------------------
 
 

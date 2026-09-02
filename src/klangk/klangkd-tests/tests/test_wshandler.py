@@ -6587,6 +6587,82 @@ class TestHandleRestartContainer:
         sockets.connections.pop(sock2, None)
         sockets.sessions.pop(workspace["id"], None)
 
+    async def test_restart_replaces_dead_window_watcher(self, user, app_state):
+        """#3015: the session's tmux window watcher is bound to one
+        container; a restart that recycles the container (with a sibling
+        still subscribed, so the session survives) must replace the
+        watcher instead of no-oping on the stale field forever."""
+        app_state = _make_app_state()
+        sockets = app_state.state.sockets
+        registry = app_state.state.container_registry
+        sock1 = _mock_sock(headers={"host": "localhost:8997"})
+        sock2 = _mock_sock()
+        workspace = await _create_workspace_with_acl(
+            app_state, user["id"], "restart-watcher"
+        )
+        conn1 = _base_conn(user=user, ws=sock1, app_state=app_state)
+        conn2 = _base_conn(user=user, ws=sock2, app_state=app_state)
+        conn1.workspace_id = workspace["id"]
+        conn1.container_id = "old-cid"
+        conn1.workspace = workspace
+        conn2.workspace_id = workspace["id"]
+        conn2.container_id = "old-cid"
+        session = sockets.get_or_create_session(workspace["id"], app_state)
+        # Seed the watcher the pre-restart session would hold: bound to
+        # the old container (its exec died with it, but the session
+        # cannot know that — it only sees the binding).
+        stale = MagicMock()
+        stale.container_id = "old-cid"
+        stale.alive = True
+        stale.stop = AsyncMock()
+        session._window_watcher = stale
+        await session.add_subscriber(sock1, "old-cid")
+        await session.add_subscriber(sock2, "old-cid")
+        sockets.connections[sock1] = conn1
+        sockets.connections[sock2] = conn2
+
+        async def fake_start(self_arg, wid, ws_obj):
+            self_arg.container_id = "new-cid"
+            self_arg.workspace_id = wid
+            # start_workspace_container re-subscribes the restarting
+            # socket (the real path calls add_subscriber).
+            await session.add_subscriber(sock1, "new-cid")
+
+        with (
+            patch.object(
+                Connection,
+                "start_workspace_container",
+                autospec=True,
+                side_effect=fake_start,
+            ),
+            patch("klangk.wshandler.session.WindowEventWatcher") as wc,
+            patch.object(registry, "record_activity"),
+            patch.object(
+                registry,
+                "get_workspace_ports",
+                return_value=[],
+            ),
+        ):
+            wc.return_value.start = AsyncMock()
+            await conn1.handle_restart_container()
+
+        for _ in range(3):
+            await asyncio.sleep(0)  # drain the spawned stop/start tasks
+
+        # The stale watcher was torn down and a fresh one was built
+        # against the recycled container — while sock2 stayed subscribed
+        # the whole time (the session was never reset).
+        stale.stop.assert_awaited_once()
+        wc.assert_called_once()
+        assert wc.call_args.args[1] == "new-cid"
+        assert session._window_watcher is wc.return_value
+
+        await session.remove_subscriber(sock1)
+        await session.remove_subscriber(sock2)
+        sockets.connections.pop(sock1, None)
+        sockets.connections.pop(sock2, None)
+        sockets.sessions.pop(workspace["id"], None)
+
 
 class TestTerminalWindowHandlers:
     async def test_new_window_no_container(self):
