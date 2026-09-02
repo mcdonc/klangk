@@ -1822,6 +1822,9 @@ filter).
 **Auth:** JWT required. User must have the `manage-volumes` permission
 on `/volumes` (#2993; seeded Allow for the `admins` group).
 
+`{name}` in the path must satisfy the same podman-safe rule as on
+create (#2971); violations return HTTP 422.
+
 No request body.
 
 ```json

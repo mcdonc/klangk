@@ -8,10 +8,13 @@ import json
 import logging
 import posixpath
 
+from typing import Annotated
+
 from fastapi import (
     APIRouter,
     Depends,
     HTTPException,
+    Path,
     UploadFile,
 )
 from fastapi.responses import (
@@ -389,6 +392,10 @@ async def list_volumes(
 # alphanumerics/underscore/dot/hyphen only, and stays within 64 chars
 # ({0,63} after the first character) — a cap picked for UX, well under
 # podman's own generous limit. Pydantic violations surface as 422.
+# Anchored ^...$ under pydantic-core's Rust regex (strict end-of-
+# haystack). Do NOT reuse this constant with Python's `re`: its `$`
+# also matches before a trailing newline, so "abc\n" would slip
+# through a `re.search`-based check.
 VOLUME_NAME_PATTERN = r"^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$"
 
 
@@ -460,7 +467,7 @@ async def create_volume(
 
 @router.delete("/volumes/{name}")
 async def delete_volume(
-    name: str,
+    name: Annotated[str, Path(pattern=VOLUME_NAME_PATTERN)],
     _user: dict = Depends(acl.has_permission("manage-volumes")),
     app=Depends(get_app_dep),
 ):
@@ -469,7 +476,10 @@ async def delete_volume(
     ``manage-volumes`` is the whole gate — the surface is admin-only
     by seed, so the former per-user label check is gone (the admin
     tab lists and deletes any volume this instance manages). The
-    creator label stays on the row as provenance.
+    creator label stays on the row as provenance. The name is
+    pattern-validated (#2971): a raw path param reaches podman argv
+    verbatim, and podman parses a leading-dash name as a flag —
+    `--all` would remove every unused volume on the host.
     """
     info = await app.state.podman.inspect_volume(name)
     if info is None:
