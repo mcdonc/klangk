@@ -6981,6 +6981,72 @@ class TestVolumeRoutes:
         # The creator label stays on created volumes (provenance).
         assert labels["klangk.user-id"] == admin_user["id"]
 
+    async def test_create_volume_rejects_leading_dash(
+        self, client, admin_user
+    ):
+        """#2971: a name starting with "-" would be parsed as a flag by
+        the podman CLI — rejected with 422 before podman is called."""
+        headers = await _admin_login(client)
+        mock_create = AsyncMock()
+        with patch.object(_mock_pod, "create_volume", mock_create):
+            resp = await client.post(
+                "/api/v1/volumes",
+                json={"name": "-flag"},
+                headers=headers,
+            )
+        assert resp.status_code == 422
+        assert mock_create.await_count == 0
+
+    async def test_create_volume_rejects_overlong_name(
+        self, client, admin_user
+    ):
+        """#2971: names past the 64-char cap are rejected with 422 (the
+        64-char boundary itself is still accepted)."""
+        headers = await _admin_login(client)
+        mock_create = AsyncMock(
+            return_value={"Name": "x", "CreatedAt": "2026-01-01"}
+        )
+        with (
+            patch.object(
+                _mock_pod, "inspect_volume", AsyncMock(return_value=None)
+            ),
+            patch.object(_mock_pod, "create_volume", mock_create),
+        ):
+            boundary = await client.post(
+                "/api/v1/volumes",
+                json={"name": "a" * 64},
+                headers=headers,
+            )
+            overlong = await client.post(
+                "/api/v1/volumes",
+                json={"name": "a" * 65},
+                headers=headers,
+            )
+        assert boundary.status_code == 200
+        assert overlong.status_code == 422
+        assert mock_create.await_count == 1
+
+    async def test_create_volume_rejects_bad_charset(self, client, admin_user):
+        """#2971: names outside [a-zA-Z0-9_.-] (after an alphanumeric
+        first char) are rejected with 422."""
+        headers = await _admin_login(client)
+        mock_create = AsyncMock()
+        with patch.object(_mock_pod, "create_volume", mock_create):
+            for name in (
+                "has space",
+                "sla/sh",
+                "ex!am",
+                ".dotstart",
+                "_under",
+            ):
+                resp = await client.post(
+                    "/api/v1/volumes",
+                    json={"name": name},
+                    headers=headers,
+                )
+                assert resp.status_code == 422, name
+        assert mock_create.await_count == 0
+
     async def test_create_volume_requires_manage_volumes(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(

@@ -1361,6 +1361,10 @@ this endpoint serves the CLI's volume commands).
 **Auth:** JWT required. User must have the `manage-volumes` permission
 on `/volumes` (#2993; seeded Allow for the `admins` group).
 
+`name` must be podman-safe (#2971): start with an alphanumeric
+character, continue with `a-zA-Z0-9_.-` only, and be at most 64
+characters; violations return HTTP 422.
+
 ```json
 { "name": "my-volume" }
 ```
