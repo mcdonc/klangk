@@ -725,6 +725,8 @@ class TestNetworkSidecarE2E:
                 "KLANGKNETWORK_EGRESS_ALLOW=allowed.test",
                 "-e",
                 "KLANGKNETWORK_EGRESS_CONSENT_URL=http://fake-klangkd:8995/internal/egress-consent/events",
+                "-e",
+                "KLANGKNETWORK_EGRESS_MODE=interactive",
                 env["image"],
             )
             _wait_ready(nc)
@@ -1068,6 +1070,12 @@ def consent_stack(env):
             f"KLANGKNETWORK_EGRESS_ALLOW=allowed.test,{ver_ip}/32:8995",
             "-e",
             f"KLANGKNETWORK_EGRESS_CONSENT_URL=http://{ver_ip}:8995",
+            # #3041: the mode is explicit now (a consent URL alone no longer
+            # implies interactive). This stack models an interactive workspace:
+            # off-list names must resolve + record so the trigger's SYNs hit
+            # NFQUEUE and surface as egress frames at the verifier.
+            "-e",
+            "KLANGKNETWORK_EGRESS_MODE=interactive",
             env["image"],
         )
         _wait_ready(nc)
