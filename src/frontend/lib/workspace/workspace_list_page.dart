@@ -436,13 +436,16 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
   }
 
   Future<void> _createWorkspace() async {
+    // Refresh the deploy config first so the create dialog reads
+    // current toggle values (#2994: the toggles moved off the images
+    // payload to the /config cache; a SIGHUP-reloaded deploy must be
+    // reflected without a re-login — same rationale as the settings
+    // panel's refreshDeployConfig call).
+    await _auth.refreshDeployConfig();
     final imageData = await _fetchImages();
     final defaultImage = imageData?['default'] as String? ?? 'klangk-pi';
     final allowedImages =
         (imageData?['allowed'] as List?)?.cast<String>() ?? [defaultImage];
-    // #2974: the deploy-level toggles now live on the auth service's
-    // config cache (authenticated-only /config fields), not the images
-    // listing.
     final nixAvailable = _auth.nixAvailable;
     final sudoAvailable = _auth.sudoAvailable;
 

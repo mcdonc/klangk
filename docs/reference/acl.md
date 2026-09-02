@@ -65,9 +65,12 @@ the admin-default convention (#2974): the listing's consumers are the
 workspace create/edit UIs, which non-admins reach with
 `create-workspace`/`edit-workspace`. It is still an operator choice —
 delete the row (default-deny then takes over) or scope it to a group in
-the ACL editor; no trailing Deny Everyone row is seeded because it could
-never fire (the JWT middleware rejects unauthenticated requests before
-any ACL check) and no-match is already default-deny.
+the ACL editor. No trailing Deny Everyone row is seeded: no `/images`
+route checks a permission other than `view-images`, and unauthenticated
+requests are rejected by the JWT middleware before any ACL check.
+(Side effect: without the row, authenticated users' effective
+permissions on `/images` include the `view` inherited from `/` —
+visible in `/my-permissions`; nothing checks it.)
 
 ### Granting workspace creation to non-admin users
 

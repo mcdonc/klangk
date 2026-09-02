@@ -337,6 +337,22 @@ void main() {
       );
     });
 
+    testWidgets('keeps the toggle when the images endpoint fails (#2994)',
+        (tester) async {
+      // The toggles ride the /config cache, not the images payload — a
+      // failed images fetch must only degrade the image dropdown, not
+      // silently hide the nix toggle.
+      testAuthHttpClientOverride =
+          _client(imagesFail: true, nixAvailable: true);
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      expect(
+        find.widgetWithText(CheckboxListTile, 'Mount /nix dir'),
+        findsOneWidget,
+      );
+    });
+
     testWidgets('pre-populates the toggle from settings.nix', (tester) async {
       testAuthHttpClientOverride = _client(
         nixAvailable: true,

@@ -42,8 +42,8 @@ from .. import (
     oidc,
     wshandler,
 )
-from .common import ALL_PERMISSIONS, autostart_allowed, get_app_dep
 from ..settings import parse_bool_setting
+from .common import ALL_PERMISSIONS, autostart_allowed, get_app_dep
 
 # Imported under an alias: the ``from . import auth as _auth_routes`` line
 # below pulls in the api/auth.py *submodule*, and the import machinery writes

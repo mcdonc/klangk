@@ -2649,9 +2649,11 @@ class TestM0024JoinWorkspacePermission:
 
 
 class TestM0025DropDeadImagesDenyRow:
-    """m0025 deletes the unreachable Deny Everyone ``*`` row on /images
-    (#2994) — the JWT middleware rejects unauthenticated requests before
-    any ACL check, and no-match is default-deny."""
+    """m0025 deletes the retired seed-shape Deny Everyone ``*`` row on
+    /images (#2994). The row gates no route (no /images route checks a
+    permission other than view-images; unauthenticated requests die at
+    the JWT middleware) — but it did mask the root / Allow view
+    inheritance in /my-permissions, which dropping it exposes."""
 
     async def _db(self, tmp_path):
         db = aiosqlite.connect(str(tmp_path / "m0025.db"))
@@ -2705,9 +2707,10 @@ class TestM0025DropDeadImagesDenyRow:
             await db.__aexit__(None, None, None)
 
     async def test_custom_deny_shapes_untouched(self, tmp_path):
-        """A Deny row that is not the seed's Everyone ``*`` (e.g. a
-        group-scoped deny, or a ``view-images`` deny) is operator intent
-        and stays."""
+        """A Deny row that is not the seed's Everyone ``*`` at position 1
+        (e.g. a group-scoped deny, a ``view-images`` deny, or the same
+        ``*`` deny moved to another position) is operator intent and
+        stays."""
         from klangk.model import ACTION_DENY
         from klangk.model.migrations import m0025_drop_dead_images_deny_row
 
@@ -2716,15 +2719,17 @@ class TestM0025DropDeadImagesDenyRow:
             await db.execute(
                 "INSERT INTO acl_entries"
                 " (resource, position, action, principal_type, group_id,"
-                "  permission)"
-                " VALUES ('/images', 0, 0, 2, 'g-a', '*'),"
-                "        ('/images', 1, 0, 0, NULL, 'view-images')"
+                "  system_principal, permission)"
+                " VALUES ('/images', 0, 0, 2, 'g-a', NULL, '*'),"
+                "        ('/images', 1, 0, 0, NULL, 0, 'view-images'),"
+                "        ('/images', 2, 0, 0, NULL, 0, '*')"
             )
             await db.commit()
             await m0025_drop_dead_images_deny_row.migration.apply(db)
             assert await self._rows(db, "/images") == [
                 (0, ACTION_DENY, "*", None),
-                (1, ACTION_DENY, "view-images", None),
+                (1, ACTION_DENY, "view-images", 0),
+                (2, ACTION_DENY, "*", 0),
             ]
         finally:
             await db.__aexit__(None, None, None)

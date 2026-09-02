@@ -246,10 +246,12 @@ class Lifecycle:
         #                               scoped per user at runtime)
         #   /images     view-images    — the image listing the
         #                               create/edit UIs read
-        # /images gets no trailing Deny Everyone row (#2994): the row
-        # could never fire (the JWT middleware rejects unauthenticated
-        # requests before any ACL check) and no-match is already
-        # default-deny. Migration 0025 drops the dead row on existing
+        # /images gets no trailing Deny Everyone row (#2994): no
+        # /images route checks a permission other than view-images, and
+        # unauthenticated requests die at the JWT middleware before any
+        # ACL walk. (Dropping the row does surface the root / Allow
+        # `view` inheritance in /my-permissions — informational only.)
+        # Migration 0025 removes the retired seed row on existing
         # deployments.
         # NB: /llm-proxy is NOT here — #2959 gives it its own
         # workspace-token-only gate, independent of the ACL system.

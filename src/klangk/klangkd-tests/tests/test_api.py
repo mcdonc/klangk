@@ -9279,6 +9279,21 @@ class TestACLEndpoints:
         data = resp.json()
         assert "/admin" not in data["permissions"]
 
+    async def test_my_permissions_images_inherits_view(
+        self, client, admin_user, user
+    ):
+        """#2994: with the retired Deny Everyone row gone, an
+        authenticated user's effective /images permissions include the
+        `view` inherited from the root `/` Allow (the old row masked it).
+        Informational only — no /images route checks `view` — but it is
+        user-visible in the permission map, so pin it."""
+        headers = await _auth_headers(client)
+        resp = await client.get("/api/v1/my-permissions", headers=headers)
+        assert resp.status_code == 200
+        perms = resp.json()["permissions"]["/images"]
+        assert "view-images" in perms
+        assert "view" in perms
+
     async def test_my_permissions_for_resource(self, client, ws_admin):
         """Check permissions for a specific resource."""
         headers = await _auth_headers(client)
