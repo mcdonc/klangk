@@ -70,6 +70,18 @@ def _cpu_setting(screen: Screen) -> float | None:
     return cpu
 
 
+def set_if_present(settings: dict, key: str, value) -> None:
+    """Record *value* under *key* when it is not None."""
+    if value is not None:
+        settings[key] = value
+
+
+def text_setting(screen: Screen, input_id: str) -> str | None:
+    """A text input's stripped value (None when empty)."""
+    raw = screen.query_one(f"#{input_id}", Input).value.strip()
+    return raw or None
+
+
 def collect_settings(screen: Screen) -> dict | None:
     """Read the resource-limit inputs and return a settings dict, or None.
 
@@ -86,24 +98,18 @@ def collect_settings(screen: Screen) -> dict | None:
         "idle_timeout",
         "Idle timeout must be a whole number of seconds: {raw!r}",
     )
-    if idle is not None:
-        settings["idle_timeout"] = idle
-    cpu = _cpu_setting(screen)
-    if cpu is not None:
-        settings["cpu_limit"] = cpu
-    raw = screen.query_one("#memory_limit", Input).value.strip()
-    if raw:
-        settings["memory_limit"] = raw
+    set_if_present(settings, "idle_timeout", idle)
+    set_if_present(settings, "cpu_limit", _cpu_setting(screen))
+    set_if_present(
+        settings, "memory_limit", text_setting(screen, "memory_limit")
+    )
     pids = _int_setting(
         screen,
         "pids_limit",
         "PIDs limit must be a whole number: {raw!r}",
     )
-    if pids is not None:
-        settings["pids_limit"] = pids
-    raw = screen.query_one("#tmp_size", Input).value.strip()
-    if raw:
-        settings["tmp_size"] = raw
+    set_if_present(settings, "pids_limit", pids)
+    set_if_present(settings, "tmp_size", text_setting(screen, "tmp_size"))
     return settings or None
 
 
@@ -347,6 +353,37 @@ def render_form_list(
         ol.add_option(Option(Text(fmt(item)), id=f"{id_prefix}{i}"))
 
 
+async def edit_images(state) -> tuple[str, list[str]] | None:
+    """(default, allowed) images for the edit form; None on auth failure."""
+    try:
+        data = await asyncio.to_thread(state.list_images)
+    except AuthError:
+        return None
+    except Exception:
+        return "", []
+    return data.get("default", "") or "", list(data.get("allowed") or [])
+
+
+async def edit_toggles(state) -> tuple[bool, bool] | None:
+    """The deploy nix/sudo toggles; None on auth failure."""
+    try:
+        return await asyncio.to_thread(state.deploy_toggles)
+    except AuthError:
+        return None
+    except Exception:
+        return False, False
+
+
+async def edit_autostart(state) -> bool | None:
+    """The deploy autostart flag; None on auth failure."""
+    try:
+        return await asyncio.to_thread(state.allow_autostart)
+    except AuthError:
+        return None
+    except Exception:
+        return False
+
+
 async def open_edit_screen(screen, state, workspace, on_edited) -> None:
     """Load image/autostart metadata off-thread and open the edit form.
 
@@ -356,33 +393,22 @@ async def open_edit_screen(screen, state, workspace, on_edited) -> None:
     failure leaves them disabled; ``AuthError`` ends the session via
     ``session_expired``.
     """
-    try:
-        data = await asyncio.to_thread(state.list_images)
-        default = data.get("default", "") or ""
-        allowed = list(data.get("allowed") or [])
-    except AuthError:
+    images = await edit_images(state)
+    if images is None:
         screen.app.session_expired()
         return
-    except Exception:
-        default, allowed = "", []
+    default, allowed = images
     # #2974: deploy-level nix/sudo toggles moved from the images
     # payload to the authenticated-only /config fields.
-    try:
-        nix_available, sudo_available = await asyncio.to_thread(
-            state.deploy_toggles
-        )
-    except AuthError:
+    toggles = await edit_toggles(state)
+    if toggles is None:
         screen.app.session_expired()
         return
-    except Exception:
-        nix_available = sudo_available = False
-    try:
-        allow_autostart = await asyncio.to_thread(state.allow_autostart)
-    except AuthError:
+    nix_available, sudo_available = toggles
+    allow_autostart = await edit_autostart(state)
+    if allow_autostart is None:
         screen.app.session_expired()
         return
-    except Exception:
-        allow_autostart = False
     screen.app.push_screen(
         EditWorkspaceScreen(
             workspace=workspace,
@@ -394,6 +420,27 @@ async def open_edit_screen(screen, state, workspace, on_edited) -> None:
         ),
         on_edited,
     )
+
+
+def editing_index(screen, editing_attr) -> int | None:
+    """The in-place-edit index attribute, when set."""
+    return getattr(screen, editing_attr) if editing_attr else None
+
+
+def insert_list_entry(
+    entries: list, v: str, idx, replacing: bool, dedupe: bool
+) -> None:
+    """Replace the entry at *idx* in place, or append (dedupe-guarded)."""
+    if replacing:
+        entries[idx] = v
+    elif not dedupe or v not in entries:
+        entries.append(v)
+
+
+def clear_editing_index(screen, editing_attr, replacing: bool) -> None:
+    """Clear the in-place-edit index after a successful replace."""
+    if replacing and editing_attr:
+        setattr(screen, editing_attr, None)
 
 
 class WorkspaceFormMixin:
@@ -490,14 +537,10 @@ class WorkspaceFormMixin:
         if err:
             self.msg(err, error=True)
             return
-        idx = getattr(self, editing_attr) if editing_attr else None
+        idx = editing_index(self, editing_attr)
         replacing = idx is not None and 0 <= idx < len(entries)
-        if replacing:
-            entries[idx] = v
-        elif not dedupe or v not in entries:
-            entries.append(v)
-        if replacing and editing_attr:
-            setattr(self, editing_attr, None)
+        insert_list_entry(entries, v, idx, replacing, dedupe)
+        clear_editing_index(self, editing_attr, replacing)
         inp.value = ""
         self.msg("")
         render()
@@ -683,6 +726,71 @@ class WorkspaceFormMixin:
         super().on_key(event)
 
 
+def create_picker_options(
+    allowed: list[str], default: str
+) -> tuple[list, object]:
+    """(options, preselected value) for the create form's image picker."""
+    if allowed:
+        # Select tuples are (prompt, value). Prompts are rich Text so an
+        # image name containing brackets can't trigger markup parsing.
+        options = [(Text(img), img) for img in allowed]
+        return options, default if default in allowed else None
+    # Couldn't list images — offer a single inert placeholder so the
+    # user can still create; the server applies its default image.
+    return (
+        [(Text("(server default)"), "(server default)")],
+        "(server default)",
+    )
+
+
+def cleared_text(screen: Screen, input_id: str) -> str | None:
+    """A form text input's stripped value, None when empty."""
+    return screen.query_one(f"#{input_id}", Input).value.strip() or None
+
+
+def normalized_list(items) -> list | None:
+    """A copied list, empty (or None) -> None — the body representation."""
+    return list(items or []) or None
+
+
+def normalized_dict(d) -> dict | None:
+    """A copied dict, empty (or None) -> None — the body representation."""
+    return dict(d or {}) or None
+
+
+def cleared(value):
+    """The value normalized to None when empty."""
+    return value or None
+
+
+def http_error_detail(exc: httpx.HTTPStatusError) -> str:
+    """The server's error detail from an HTTPStatusError response."""
+    try:
+        return exc.response.json().get("detail", exc.response.text)
+    except Exception:
+        return exc.response.text or str(exc)
+
+
+def merged_toggles(settings: dict | None, extra: dict) -> dict:
+    """The settings bag with one toggle merged in."""
+    return {**(settings or {}), **extra}
+
+
+def create_toggles(screen, settings: dict | None) -> dict:
+    """The create payload's settings bag with the shown toggles applied."""
+    if screen._nix_available and screen.query_one("#nix", Checkbox).value:
+        settings = merged_toggles(settings, {"nix": True})
+    # #2017: emit only the lock-down (unchecked) — a checked toggle is
+    # the default (follow the deploy posture), and the server setting
+    # is a ceiling, so an explicit True buys nothing over omitting it.
+    if (
+        screen._sudo_available
+        and not screen.query_one("#allow_sudo", Checkbox).value
+    ):
+        settings = merged_toggles(settings, {"allow_sudo": False})
+    return settings
+
+
 class CreateWorkspaceScreen(WorkspaceFormMixin, TabSkipMixin, StatusScreen):
     """Full-screen workspace create form (parity with Flutter
     ``CreateWorkspaceDialog``).
@@ -780,20 +888,9 @@ class CreateWorkspaceScreen(WorkspaceFormMixin, TabSkipMixin, StatusScreen):
         # and the field omitted, so the server applies its own default —
         # never a silently forced layout (#2737 review).
         self._default_per_handle_home = default_per_handle_home
-        if self._allowed:
-            # Select tuples are (prompt, value). Prompts are rich Text so an
-            # image name containing brackets can't trigger markup parsing.
-            self._select_options = [(Text(img), img) for img in self._allowed]
-            self._select_value = (
-                self._default if self._default in self._allowed else None
-            )
-        else:
-            # Couldn't list images — offer a single inert placeholder so the
-            # user can still create; the server applies its default image.
-            self._select_options = [
-                (Text("(server default)"), "(server default)")
-            ]
-            self._select_value = "(server default)"
+        self._select_options, self._select_value = create_picker_options(
+            self._allowed, self._default
+        )
 
     def compose(self) -> ComposeResult:
         # Header / status dock (StatusBar + Footer) come from StatusScreen
@@ -916,10 +1013,6 @@ class CreateWorkspaceScreen(WorkspaceFormMixin, TabSkipMixin, StatusScreen):
     def _create_payload(self) -> dict:
         """Gather the non-name form fields into create-workspace values
         (empty strings/lists -> None, matching the Flutter dialog)."""
-        command = self.query_one("#command", Input).value.strip() or None
-        health_check = (
-            self.query_one("#health_check", Input).value.strip() or None
-        )
         auto = (
             self._allow_autostart
             and self.query_one("#auto_start", Checkbox).value
@@ -930,23 +1023,21 @@ class CreateWorkspaceScreen(WorkspaceFormMixin, TabSkipMixin, StatusScreen):
         # omitted, and the server applies its own.
         phh_cb = self.query_one("#per_handle_home", Checkbox)
         per_handle_home = phh_cb.value if phh_cb.display else None
-        # #2768: free-text classification marking; empty = inherit the
-        # deploy default (KLANGKD_CLASSIFICATION_BANNER).
-        classification_banner = (
-            self.query_one("#classification_banner", Input).value.strip()
-            or None
-        )
         return {
             "image": self._selected_image(),
-            "command": command,
-            "health_check": health_check,
+            "command": cleared_text(self, "command"),
+            "health_check": cleared_text(self, "health_check"),
             "auto": auto,
             "per_handle_home": per_handle_home,
-            "classification_banner": classification_banner,
-            "mounts": list(self._mounts) or None,
-            "env": dict(self._env) or None,
-            "allowed_domains": list(self._allowed_domains) or None,
-            "rejected_domains": list(self._rejected_domains) or None,
+            # #2768: free-text classification marking; empty = inherit the
+            # deploy default (KLANGKD_CLASSIFICATION_BANNER).
+            "classification_banner": cleared_text(
+                self, "classification_banner"
+            ),
+            "mounts": normalized_list(self._mounts),
+            "env": normalized_dict(self._env),
+            "allowed_domains": normalized_list(self._allowed_domains),
+            "rejected_domains": normalized_list(self._rejected_domains),
             "egress_mode": self.query_one("#egress_mode", Select).value,
         }
 
@@ -961,16 +1052,7 @@ class CreateWorkspaceScreen(WorkspaceFormMixin, TabSkipMixin, StatusScreen):
         except ValueError as exc:
             self.msg(str(exc), error=True)
             return
-        if self._nix_available and self.query_one("#nix", Checkbox).value:
-            settings = {**(settings or {}), "nix": True}
-        # #2017: emit only the lock-down (unchecked) — a checked toggle is
-        # the default (follow the deploy posture), and the server setting
-        # is a ceiling, so an explicit True buys nothing over omitting it.
-        if (
-            self._sudo_available
-            and not self.query_one("#allow_sudo", Checkbox).value
-        ):
-            settings = {**(settings or {}), "allow_sudo": False}
+        settings = create_toggles(self, settings)
         self.run_worker(
             self._do_create_workspace(
                 name,
@@ -1027,11 +1109,7 @@ class CreateWorkspaceScreen(WorkspaceFormMixin, TabSkipMixin, StatusScreen):
             self.app.session_expired()
             return
         except httpx.HTTPStatusError as exc:
-            try:
-                detail = exc.response.json().get("detail", exc.response.text)
-            except (ValueError, KeyError):
-                detail = exc.response.text or str(exc)
-            self.msg(f"Failed to create: {detail}", error=True)
+            self.msg(f"Failed to create: {http_error_detail(exc)}", error=True)
             return
         except Exception as exc:
             self.msg(f"Failed to create: {exc}", error=True)
@@ -1066,6 +1144,18 @@ class CreateWorkspaceScreen(WorkspaceFormMixin, TabSkipMixin, StatusScreen):
         )
 
 
+def current_image(workspace) -> str:
+    """The workspace's image ("" when unset)."""
+    return workspace.image or ""
+
+
+def picker_selection(opts: list, cur: str):
+    """The preselected image: the current one, else the first option."""
+    if cur in opts:
+        return cur
+    return opts[0] if opts else None
+
+
 def _edit_picker_options(
     allowed: list[str], workspace: Workspace
 ) -> tuple[list, str | None]:
@@ -1075,14 +1165,14 @@ def _edit_picker_options(
     server's allowed list, pre-selected (untouched = no change). Prompts
     are rich Text so bracket-laden names can't crash.
     """
-    cur = workspace.image or ""
+    cur = current_image(workspace)
     opts = list(allowed)
     if cur and cur not in opts:
         opts.append(cur)
     if opts:
         return (
             [(Text(i), i) for i in opts],
-            cur if cur in opts else (opts[0] if opts else None),
+            picker_selection(opts, cur),
         )
     return [(Text("(none)"), "(none)")], "(none)"
 
@@ -1102,6 +1192,79 @@ def _seeded_setting_values(settings: dict) -> dict[str, str]:
         else "",
         "tmp_size": str(settings.get("tmp_size", "")),
     }
+
+
+def seeded_lists(workspace) -> dict:
+    """The edit form's list seeds (mounts/env/domains) from the workspace."""
+    return {
+        "mounts": list(workspace.mounts or []),
+        "env": dict(workspace.env or {}),
+        "allowed_domains": list(workspace.allowed_domains or []),
+        "rejected_domains": list(workspace.rejected_domains or []),
+    }
+
+
+def seeded_form_state(workspace) -> dict:
+    """The edit form's list/mode seeds from the workspace."""
+    state = seeded_lists(workspace)
+    state["egress_mode"] = workspace.egress_mode or EGRESS_MODE_DEFAULT
+    return state
+
+
+def save_image_value(image) -> str | None:
+    """The image value for the save body (placeholder/empty -> None)."""
+    return image if (image and image != "(none)") else None
+
+
+def edit_general_seeds(ws) -> dict:
+    """The General-pane seeds for the edit form."""
+    return dict(
+        name=ws.name or "",
+        auto_start=ws.auto_start,
+        nix=bool((ws.settings or {}).get("nix")),
+        allow_sudo=bool((ws.settings or {}).get("allow_sudo", True)),
+    )
+
+
+def edit_advanced_seeds(ws) -> dict:
+    """The Advanced-pane seeds for the edit form."""
+    return dict(
+        classification_banner=ws.classification_banner or "",
+        service_command=ws.service_command or "",
+        health_check=ws.health_check or "",
+    )
+
+
+def scalar_fields_changed(body: dict, ws) -> bool:
+    """Whether image / service_command / egress_mode changed
+    (both sides cleared-normalized, #1778/#1749/#2409)."""
+    return (
+        cleared(body["image"]) != cleared(ws.image)
+        or cleared(body["service_command"]) != cleared(ws.service_command)
+        or body["egress_mode"] != (ws.egress_mode or EGRESS_MODE_DEFAULT)
+    )
+
+
+def list_fields_changed(body: dict, orig: dict) -> bool:
+    """Whether any list field differs from its normalized snapshot."""
+    return (
+        body["mounts"] != orig["mounts"]
+        or body["env"] != orig["env"]
+        or body["allowed_domains"] != orig["allowed_domains"]
+        or body["rejected_domains"] != orig["rejected_domains"]
+    )
+
+
+def nix_changed(available: bool, settings: dict, old: dict) -> bool:
+    """Whether the create-time /nix mount toggle flipped (#2233)."""
+    return available and settings.get("nix", False) != bool(old.get("nix"))
+
+
+def sudo_changed(available: bool, settings: dict, old: dict) -> bool:
+    """Whether the create-time sudo posture flipped (#2017)."""
+    return available and settings.get("allow_sudo", True) != bool(
+        old.get("allow_sudo", True)
+    )
 
 
 class EditWorkspaceScreen(WorkspaceFormMixin, TabSkipMixin, StatusScreen):
@@ -1189,18 +1352,16 @@ class EditWorkspaceScreen(WorkspaceFormMixin, TabSkipMixin, StatusScreen):
         # (absent = True = follow the deploy posture). Hidden unless the
         # deploy allows sudo (the knob can only lock down below that).
         self._sudo_available = bool(sudo_available)
-        self._mounts: list[str] = list(workspace.mounts or [])
-        self._env: dict[str, str] = dict(workspace.env or {})
-        self._allowed_domains: list[str] = list(
-            workspace.allowed_domains or []
-        )
+        self._mounts: list[str]
+        seeds = seeded_form_state(workspace)
+        self._mounts = seeds["mounts"]
+        self._env = seeds["env"]
+        self._allowed_domains = seeds["allowed_domains"]
         # #2386: the static deny-list, seeded from the workspace.
-        self._rejected_domains: list[str] = list(
-            workspace.rejected_domains or []
-        )
+        self._rejected_domains = seeds["rejected_domains"]
         # #2409: the workspace's egress mode, seeded for the Netfilter
         # picker. Falls back to the deploy default when unset.
-        self._egress_mode: str = workspace.egress_mode or EGRESS_MODE_DEFAULT
+        self._egress_mode = seeds["egress_mode"]
         # #2721: home layout, seeded from the workspace. Mutable (#2719):
         # a flip applies from the next connect/start.
         self._per_handle_home: bool = bool(workspace.per_handle_home)
@@ -1223,6 +1384,8 @@ class EditWorkspaceScreen(WorkspaceFormMixin, TabSkipMixin, StatusScreen):
         yield from super().compose()
 
     def compose_body(self) -> ComposeResult:
+        general = edit_general_seeds(self._ws)
+        advanced = edit_advanced_seeds(self._ws)
         with NonFocusableVerticalScroll(id="edit_box"):
             yield Static(
                 Text(f"Edit workspace: {self._ws.name}"), classes="title"
@@ -1231,12 +1394,10 @@ class EditWorkspaceScreen(WorkspaceFormMixin, TabSkipMixin, StatusScreen):
             with TabbedContent(id="form_tabs"):
                 yield from compose_general_pane(
                     self.image_select(),
-                    name=self._ws.name or "",
-                    auto_start=self._ws.auto_start,
-                    nix=bool((self._ws.settings or {}).get("nix")),
-                    allow_sudo=bool(
-                        (self._ws.settings or {}).get("allow_sudo", True)
-                    ),
+                    name=general["name"],
+                    auto_start=general["auto_start"],
+                    nix=general["nix"],
+                    allow_sudo=general["allow_sudo"],
                 )
                 yield from compose_mounts_pane()
                 yield from compose_environment_pane()
@@ -1246,11 +1407,9 @@ class EditWorkspaceScreen(WorkspaceFormMixin, TabSkipMixin, StatusScreen):
                 )
                 yield from compose_advanced_pane(
                     per_handle_home=self._per_handle_home,
-                    classification_banner=(
-                        self._ws.classification_banner or ""
-                    ),
-                    service_command=self._ws.service_command or "",
-                    health_check=self._ws.health_check or "",
+                    classification_banner=advanced["classification_banner"],
+                    service_command=advanced["service_command"],
+                    health_check=advanced["health_check"],
                 )
             yield Horizontal(
                 Button("Cancel", id="cancel"),
@@ -1413,13 +1572,9 @@ class EditWorkspaceScreen(WorkspaceFormMixin, TabSkipMixin, StatusScreen):
         """The scalar widget reads for the PUT body (empties -> None)."""
         image = self.query_one("#image", Select).value
         return {
-            "image": image if (image and image != "(none)") else None,
-            "service_command": self.query_one("#command", Input).value.strip()
-            or None,
-            "health_check": self.query_one(
-                "#health_check", Input
-            ).value.strip()
-            or None,
+            "image": save_image_value(image),
+            "service_command": cleared_text(self, "command"),
+            "health_check": cleared_text(self, "health_check"),
             "auto_start": self._allow_autostart
             and self.query_one("#auto_start", Checkbox).value,
             # #2721: home layout is mutable and applies from the next
@@ -1432,10 +1587,9 @@ class EditWorkspaceScreen(WorkspaceFormMixin, TabSkipMixin, StatusScreen):
             # the other PUT fields): an emptied field clears the override so
             # the workspace inherits the deploy default again. Display-time
             # only — never a restart-needed field.
-            "classification_banner": self.query_one(
-                "#classification_banner", Input
-            ).value.strip()
-            or None,
+            "classification_banner": cleared_text(
+                self, "classification_banner"
+            ),
             "egress_mode": self.query_one("#egress_mode", Select).value,
         }
 
@@ -1478,10 +1632,10 @@ class EditWorkspaceScreen(WorkspaceFormMixin, TabSkipMixin, StatusScreen):
         body = {
             "name": name,
             **self._save_field_values(),
-            "mounts": list(self._mounts) or None,
-            "env": dict(self._env) or None,
-            "allowed_domains": list(self._allowed_domains) or None,
-            "rejected_domains": list(self._rejected_domains) or None,
+            "mounts": normalized_list(self._mounts),
+            "env": normalized_dict(self._env),
+            "allowed_domains": normalized_list(self._allowed_domains),
+            "rejected_domains": normalized_list(self._rejected_domains),
         }
         if merged_settings:
             body["settings"] = merged_settings
@@ -1492,10 +1646,10 @@ class EditWorkspaceScreen(WorkspaceFormMixin, TabSkipMixin, StatusScreen):
         """The workspace's list fields, normalized the way the body
         represents them (empty -> None) so a plain != detects a change."""
         return {
-            "mounts": list(ws.mounts or []) or None,
-            "env": dict(ws.env or {}) or None,
-            "allowed_domains": list(ws.allowed_domains or []) or None,
-            "rejected_domains": list(ws.rejected_domains or []) or None,
+            "mounts": normalized_list(ws.mounts),
+            "env": normalized_dict(ws.env),
+            "allowed_domains": normalized_list(ws.allowed_domains),
+            "rejected_domains": normalized_list(ws.rejected_domains),
         }
 
     def _create_time_fields_changed(self, body: dict, ws) -> bool:
@@ -1504,19 +1658,8 @@ class EditWorkspaceScreen(WorkspaceFormMixin, TabSkipMixin, StatusScreen):
         image / service_command normalize both sides to None-when-empty;
         the list fields compare against their normalized snapshot."""
         orig = self._orig_list_fields(ws)
-        return any(
-            [
-                (body["image"] or None) != (ws.image or None),
-                body["mounts"] != orig["mounts"],
-                body["env"] != orig["env"],
-                (body["service_command"] or None)
-                != (ws.service_command or None),
-                body["allowed_domains"] != orig["allowed_domains"],
-                body["rejected_domains"] != orig["rejected_domains"],
-                # #2409: egress_mode is a container-create-time field (it sets
-                # up --network container:<sidecar>), so a change needs a restart.
-                body["egress_mode"] != (ws.egress_mode or EGRESS_MODE_DEFAULT),
-            ]
+        return scalar_fields_changed(body, ws) or list_fields_changed(
+            body, orig
         )
 
     def _settings_changed_since_create(self, body: dict, ws) -> bool:
@@ -1528,13 +1671,8 @@ class EditWorkspaceScreen(WorkspaceFormMixin, TabSkipMixin, StatusScreen):
         flip needs a restart to take effect."""
         settings = body.get("settings") or {}
         old = ws.settings or {}
-        return (
-            self._nix_available
-            and settings.get("nix", False) != bool(old.get("nix"))
-        ) or (
-            self._sudo_available
-            and settings.get("allow_sudo", True)
-            != bool(old.get("allow_sudo", True))
+        return nix_changed(self._nix_available, settings, old) or sudo_changed(
+            self._sudo_available, settings, old
         )
 
     def _restart_needed_after_save(self, body: dict) -> bool:
@@ -1574,6 +1712,29 @@ class EditWorkspaceScreen(WorkspaceFormMixin, TabSkipMixin, StatusScreen):
         if self in self.app.screen_stack:
             self.dismiss(result)
 
+    def prompt_restart_after_save(self, ws_name, dismiss_name) -> None:
+        """Ask whether to restart the running container to apply the save."""
+
+        def _after(restart: bool) -> None:
+            if restart:
+                self.run_worker(
+                    self._do_restart_after_save(ws_name, dismiss_name),
+                    exit_on_error=False,
+                )
+            else:
+                self._safe_dismiss(dismiss_name)
+
+        self.app.push_screen(
+            ConfirmScreen(
+                "A running container is not affected by this edit. "
+                "Restart now to apply?",
+                yes_label="Restart",
+                yes_variant="warning",
+                no_label="Skip",
+            ),
+            _after,
+        )
+
     async def do_save(self, name, body, ws, restart_needed) -> None:
         try:
             await asyncio.to_thread(
@@ -1583,36 +1744,13 @@ class EditWorkspaceScreen(WorkspaceFormMixin, TabSkipMixin, StatusScreen):
             self.app.session_expired()
             return
         except httpx.HTTPStatusError as exc:
-            try:
-                detail = exc.response.json().get("detail", exc.response.text)
-            except Exception:
-                detail = exc.response.text or str(exc)
-            self.msg(f"Failed to save: {detail}", error=True)
+            self.msg(f"Failed to save: {http_error_detail(exc)}", error=True)
             return
         except Exception as exc:
             self.msg(f"Failed to save: {exc}", error=True)
             return
         if restart_needed:
-
-            def _after(restart: bool) -> None:
-                if restart:
-                    self.run_worker(
-                        self._do_restart_after_save(ws.name, name),
-                        exit_on_error=False,
-                    )
-                else:
-                    self._safe_dismiss(name)
-
-            self.app.push_screen(
-                ConfirmScreen(
-                    "A running container is not affected by this edit. "
-                    "Restart now to apply?",
-                    yes_label="Restart",
-                    yes_variant="warning",
-                    no_label="Skip",
-                ),
-                _after,
-            )
+            self.prompt_restart_after_save(ws.name, name)
         else:
             self._safe_dismiss(name)
 
