@@ -9456,8 +9456,10 @@ class TestACLEndpoints:
         assert resp.status_code == 200
         data = resp.json()
         assert data["email"] == "testadmin@example.com"
-        assert "/admin" in data["permissions"]
-        assert "*" in data["permissions"]["/admin"]
+        # Instance-admin flag derives from admins-group membership
+        # (#2995) — /admin is no longer a resource.
+        assert data["is_admin"] is True
+        assert "/admin" not in data["permissions"]
 
     async def test_my_permissions_non_admin(self, client, admin_user, user):
         """Non-admin user has no admin permissions."""
@@ -9465,6 +9467,7 @@ class TestACLEndpoints:
         resp = await client.get("/api/v1/my-permissions", headers=headers)
         assert resp.status_code == 200
         data = resp.json()
+        assert data["is_admin"] is False
         assert "/admin" not in data["permissions"]
 
     async def test_my_permissions_images_inherits_view(
@@ -9728,26 +9731,6 @@ class TestAdminResourceACL:
             ],
         )
         assert resp.status_code == 200
-
-    async def test_admin_acl_rejects_removing_all_group_access(
-        self, client, app, admin_user
-    ):
-        headers = await self._admin_headers(client)
-        # Try to save /admin ACL with no group Allow
-        resp = await client.put(
-            "/api/v1/acl/resource?resource=/admin",
-            headers=headers,
-            json=[
-                {
-                    "action": model.ACTION_DENY,
-                    "principal_type": model.PRINCIPAL_SYSTEM,
-                    "permission": "*",
-                    "system_principal": model.SYSTEM_EVERYONE,
-                },
-            ],
-        )
-        assert resp.status_code == 400
-        assert "locking out" in resp.json()["detail"]
 
 
 class TestSafePath:
@@ -14442,8 +14425,8 @@ class TestBranchGaps2834:
     false/true outcomes of guards the mainline tests only take one side
     of (a valid custom image, an invalid mount list, a stop with no live
     session, a failed du probe, a corrupt archive after creation, the
-    dev version fallback, a valid /admin ACL, and a non-configured OIDC
-    provider at logout)."""
+    dev version fallback, and a non-configured OIDC provider at
+    logout)."""
 
     async def test_version_endpoint_missing_file_falls_back_to_dev(
         self, client, app
@@ -14454,28 +14437,6 @@ class TestBranchGaps2834:
         resp = await client.get("/api/v1/version")
         assert resp.status_code == 200
         assert resp.json()["version"] == "dev"
-
-    async def test_admin_acl_accepts_group_allow(
-        self, client, admin_user, app
-    ):
-        # The mirror of rejects_removing_all_group_access: a /admin ACL
-        # that keeps an Allow group entry saves fine (the validator's
-        # pass-through path).
-        group = await app.state.model.users.get_group_by_name("admins")
-        headers = await _admin_login(client)
-        resp = await client.put(
-            "/api/v1/acl/resource?resource=/admin",
-            headers=headers,
-            json=[
-                {
-                    "action": model.ACTION_ALLOW,
-                    "principal_type": model.PRINCIPAL_GROUP,
-                    "permission": "*",
-                    "group_id": group["id"],
-                },
-            ],
-        )
-        assert resp.status_code == 200
 
     async def test_logout_nonlocal_user_with_unconfigured_provider(
         self, client, app, user, app_state
@@ -15102,7 +15063,8 @@ class TestAdminTabPermissions:
         self, client, app, admin_user
     ):
         """The seeded per-resource Allow rows satisfy every tab
-        permission for admins (plus the /admin wildcard marker)."""
+        permission for admins (instance-admin status itself is the
+        /my-permissions is_admin flag, #2995)."""
         headers = await self._admin_headers(client)
         for path in (
             "/api/v1/users",
@@ -15295,12 +15257,12 @@ class TestAdminTabPermissions:
         headers = await self._admin_headers(client)
         resp = await client.get("/api/v1/my-permissions", headers=headers)
         perms = resp.json()["permissions"]
-        for name in (
-            "manage-users",
-            "manage-invitations",
-            "manage-server-schedule",
-            "manage-events",
+        for resource, name in (
+            ("/users", "manage-users"),
+            ("/invitations", "manage-invitations"),
+            ("/groups", "manage-groups"),
+            ("/server", "manage-server-schedule"),
+            ("/events", "manage-events"),
+            ("/acl", "manage-acls"),
         ):
-            assert name in perms.get("/admin", [])
-        assert "manage-acls" in perms.get("/acl", [])
-        assert "manage-events" in perms.get("/events", [])
+            assert name in perms.get(resource, []), resource

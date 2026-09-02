@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
@@ -107,6 +108,7 @@ void main() {
     Map<String, List<String>>? permissions,
     List<Map<String, dynamic>>? groups,
     bool netfilterEnabled = false,
+    bool isAdmin = false,
   }) {
     return MockClient((request) async {
       if (request.url.path.contains('/api/v1/config')) {
@@ -124,6 +126,7 @@ void main() {
           jsonEncode({
             'user_id': 'test',
             'email': 'test@example.com',
+            'is_admin': isAdmin,
             'permissions': permissions ??
                 {
                   '/': ['view'],
@@ -162,10 +165,11 @@ void main() {
             .replaceAll('=', '') +
         '.' +
         base64Url
-            .encode(utf8.encode(jsonEncode({
-              'sub': 'test-user',
-              'email': 'test@example.com',
-            })))
+            .encode(
+              utf8.encode(
+                jsonEncode({'sub': 'test-user', 'email': 'test@example.com'}),
+              ),
+            )
             .replaceAll('=', '') +
         '.fakesig';
     SharedPreferences.setMockInitialValues({'klangk_jwt': defaultToken});
@@ -206,8 +210,9 @@ void main() {
       expect(find.text('Workspaces'), findsOneWidget);
     });
 
-    testWidgets('refreshes workspace list on workspacesChanged event',
-        (tester) async {
+    testWidgets('refreshes workspace list on workspacesChanged event', (
+      tester,
+    ) async {
       final ws = _MockWsClient();
       var fetchCount = 0;
       testAuthHttpClientOverride = withPermissions((request) async {
@@ -216,7 +221,7 @@ void main() {
           // Second fetch (after the WS event) surfaces a new workspace.
           final list = fetchCount >= 2
               ? [
-                  {'id': 'ws-1', 'name': 'appeared', 'created_at': ''}
+                  {'id': 'ws-1', 'name': 'appeared', 'created_at': ''},
                 ]
               : [];
           return http.Response(jsonEncode(_envelope(list)), 200);
@@ -268,7 +273,7 @@ void main() {
           return http.Response('Not found', 404);
         },
         permissions: {
-          '/': ['view']
+          '/': ['view'],
         },
       );
       await tester.pumpWidget(buildPage());
@@ -296,20 +301,22 @@ void main() {
       testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/api/v1/workspaces') {
           return http.Response(
-            jsonEncode(_envelope([
-              {
-                'id': 'ws-1',
-                'name': 'Project A',
-                'container_id': null,
-                'created_at': '2026-01-15 14:30:00'
-              },
-              {
-                'id': 'ws-2',
-                'name': 'Project B',
-                'container_id': null,
-                'created_at': '2026-06-02 09:00:00'
-              },
-            ])),
+            jsonEncode(
+              _envelope([
+                {
+                  'id': 'ws-1',
+                  'name': 'Project A',
+                  'container_id': null,
+                  'created_at': '2026-01-15 14:30:00',
+                },
+                {
+                  'id': 'ws-2',
+                  'name': 'Project B',
+                  'container_id': null,
+                  'created_at': '2026-06-02 09:00:00',
+                },
+              ]),
+            ),
             200,
           );
         }
@@ -331,14 +338,16 @@ void main() {
       testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/api/v1/workspaces') {
           return http.Response(
-            jsonEncode(_envelope([
-              {
-                'id': 'ws-1',
-                'name': 'Shared Project',
-                'container_id': null,
-                'created_at': '2026-01-15 14:30:00',
-              },
-            ])),
+            jsonEncode(
+              _envelope([
+                {
+                  'id': 'ws-1',
+                  'name': 'Shared Project',
+                  'container_id': null,
+                  'created_at': '2026-01-15 14:30:00',
+                },
+              ]),
+            ),
             200,
           );
         }
@@ -369,63 +378,71 @@ void main() {
     // netfilter disabled starts unrestricted (fail-open); badge it so the
     // user who set the list sees the gap, not just operator logs.
     group('egress not-enforced badge (#1769)', () {
-      testWidgets('badges a workspace with allowed_domains when netfilter off',
-          (tester) async {
-        testAuthHttpClientOverride = withPermissions((request) async {
-          if (request.url.path == '/api/v1/workspaces') {
-            return http.Response(
-              jsonEncode(_envelope([
-                {
-                  'id': 'ws-1',
-                  'name': 'Filtered',
-                  'container_id': null,
-                  'created_at': '2026-01-15 14:30:00',
-                  'allowed_domains': ['github.com:443'],
-                },
-              ])),
-              200,
-            );
-          }
-          return http.Response('Not found', 404);
-        });
-        await tester.pumpWidget(buildPage());
-        await tester.pumpAndSettle();
-
-        expect(find.byIcon(Icons.warning_amber), findsOneWidget);
-      });
-
-      testWidgets('badges a workspace with rejected_domains only (#2386)',
-          (tester) async {
-        testAuthHttpClientOverride = withPermissions((request) async {
-          if (request.url.path == '/api/v1/workspaces') {
-            return http.Response(
-              jsonEncode(_envelope([
-                {
-                  'id': 'ws-1',
-                  'name': 'Filtered',
-                  'container_id': null,
-                  'created_at': '2026-01-15 14:30:00',
-                  'rejected_domains': ['evil.example.com'],
-                },
-              ])),
-              200,
-            );
-          }
-          return http.Response('Not found', 404);
-        });
-        await tester.pumpWidget(buildPage());
-        await tester.pumpAndSettle();
-
-        expect(find.byIcon(Icons.warning_amber), findsOneWidget);
-      });
-
-      testWidgets('no badge when netfilter is enabled (allow-list enforced)',
-          (tester) async {
-        testAuthHttpClientOverride = withPermissions(
-          (request) async {
+      testWidgets(
+        'badges a workspace with allowed_domains when netfilter off',
+        (tester) async {
+          testAuthHttpClientOverride = withPermissions((request) async {
             if (request.url.path == '/api/v1/workspaces') {
               return http.Response(
-                jsonEncode(_envelope([
+                jsonEncode(
+                  _envelope([
+                    {
+                      'id': 'ws-1',
+                      'name': 'Filtered',
+                      'container_id': null,
+                      'created_at': '2026-01-15 14:30:00',
+                      'allowed_domains': ['github.com:443'],
+                    },
+                  ]),
+                ),
+                200,
+              );
+            }
+            return http.Response('Not found', 404);
+          });
+          await tester.pumpWidget(buildPage());
+          await tester.pumpAndSettle();
+
+          expect(find.byIcon(Icons.warning_amber), findsOneWidget);
+        },
+      );
+
+      testWidgets('badges a workspace with rejected_domains only (#2386)', (
+        tester,
+      ) async {
+        testAuthHttpClientOverride = withPermissions((request) async {
+          if (request.url.path == '/api/v1/workspaces') {
+            return http.Response(
+              jsonEncode(
+                _envelope([
+                  {
+                    'id': 'ws-1',
+                    'name': 'Filtered',
+                    'container_id': null,
+                    'created_at': '2026-01-15 14:30:00',
+                    'rejected_domains': ['evil.example.com'],
+                  },
+                ]),
+              ),
+              200,
+            );
+          }
+          return http.Response('Not found', 404);
+        });
+        await tester.pumpWidget(buildPage());
+        await tester.pumpAndSettle();
+
+        expect(find.byIcon(Icons.warning_amber), findsOneWidget);
+      });
+
+      testWidgets('no badge when netfilter is enabled (allow-list enforced)', (
+        tester,
+      ) async {
+        testAuthHttpClientOverride = withPermissions((request) async {
+          if (request.url.path == '/api/v1/workspaces') {
+            return http.Response(
+              jsonEncode(
+                _envelope([
                   {
                     'id': 'ws-1',
                     'name': 'Filtered',
@@ -433,33 +450,35 @@ void main() {
                     'created_at': '2026-01-15 14:30:00',
                     'allowed_domains': ['github.com:443'],
                   },
-                ])),
-                200,
-              );
-            }
-            return http.Response('Not found', 404);
-          },
-          netfilterEnabled: true,
-        );
+                ]),
+              ),
+              200,
+            );
+          }
+          return http.Response('Not found', 404);
+        }, netfilterEnabled: true);
         await tester.pumpWidget(buildPage());
         await tester.pumpAndSettle();
 
         expect(find.byIcon(Icons.warning_amber), findsNothing);
       });
 
-      testWidgets('no badge when a workspace has no allowed_domains',
-          (tester) async {
+      testWidgets('no badge when a workspace has no allowed_domains', (
+        tester,
+      ) async {
         testAuthHttpClientOverride = withPermissions((request) async {
           if (request.url.path == '/api/v1/workspaces') {
             return http.Response(
-              jsonEncode(_envelope([
-                {
-                  'id': 'ws-1',
-                  'name': 'Plain',
-                  'container_id': null,
-                  'created_at': '2026-01-15 14:30:00',
-                },
-              ])),
+              jsonEncode(
+                _envelope([
+                  {
+                    'id': 'ws-1',
+                    'name': 'Plain',
+                    'container_id': null,
+                    'created_at': '2026-01-15 14:30:00',
+                  },
+                ]),
+              ),
               200,
             );
           }
@@ -476,35 +495,39 @@ void main() {
       testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/api/v1/workspaces') {
           return http.Response(
-            jsonEncode(_envelope([
-              {
-                'id': 'ws-1',
-                'name': 'My Project',
-                'container_id': null,
-                'created_at': '2026-01-15 14:30:00',
-              },
-            ])),
+            jsonEncode(
+              _envelope([
+                {
+                  'id': 'ws-1',
+                  'name': 'My Project',
+                  'container_id': null,
+                  'created_at': '2026-01-15 14:30:00',
+                },
+              ]),
+            ),
             200,
           );
         }
         if (request.url.path == '/api/v1/workspaces/shared') {
           return http.Response(
-            jsonEncode(_envelope([
-              {
-                'id': 'ws-shared-1',
-                'name': 'Team Project',
-                'container_id': null,
-                'created_at': '2026-02-01 10:00:00',
-                'owner_email': 'alice@example.com',
-              },
-              {
-                'id': 'ws-shared-2',
-                'name': 'Other Project',
-                'container_id': null,
-                'created_at': '2026-03-01 10:00:00',
-                'owner_email': 'bob@example.com',
-              },
-            ])),
+            jsonEncode(
+              _envelope([
+                {
+                  'id': 'ws-shared-1',
+                  'name': 'Team Project',
+                  'container_id': null,
+                  'created_at': '2026-02-01 10:00:00',
+                  'owner_email': 'alice@example.com',
+                },
+                {
+                  'id': 'ws-shared-2',
+                  'name': 'Other Project',
+                  'container_id': null,
+                  'created_at': '2026-03-01 10:00:00',
+                  'owner_email': 'bob@example.com',
+                },
+              ]),
+            ),
             200,
           );
         }
@@ -531,8 +554,9 @@ void main() {
       expect(find.byIcon(Icons.terminal), findsNWidgets(2));
     });
 
-    testWidgets('load more appends next page and hides when done',
-        (tester) async {
+    testWidgets('load more appends next page and hides when done', (
+      tester,
+    ) async {
       // Page 1: 1 workspace, signals more. Page 2 (offset=10): 1 more,
       // no more. The mock branches on the offset query param.
       testAuthHttpClientOverride = withPermissions((request) async {
@@ -669,8 +693,9 @@ void main() {
       expect(find.text('Load more shared workspaces'), findsNothing);
     });
 
-    testWidgets('sorting by name requests sort=name and resets to page 1',
-        (tester) async {
+    testWidgets('sorting by name requests sort=name and resets to page 1', (
+      tester,
+    ) async {
       var lastSort = '';
       testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/api/v1/workspaces') {
@@ -682,7 +707,7 @@ void main() {
                   'id': 'ws-1',
                   'name': 'Alpha',
                   'container_id': null,
-                  'created_at': ''
+                  'created_at': '',
                 },
               ],
               'has_more': false,
@@ -727,7 +752,7 @@ void main() {
                   'id': 'ws-1',
                   'name': 'Alpha',
                   'container_id': null,
-                  'created_at': ''
+                  'created_at': '',
                 },
               ],
               'has_more': false,
@@ -778,7 +803,7 @@ void main() {
                   'id': 'ws-1',
                   'name': 'Alpha',
                   'container_id': null,
-                  'created_at': ''
+                  'created_at': '',
                 },
               ],
               'has_more': false,
@@ -797,7 +822,7 @@ void main() {
                   'name': 'Shared',
                   'container_id': null,
                   'created_at': '',
-                  'owner_email': 'o@e.com'
+                  'owner_email': 'o@e.com',
                 },
               ],
               'has_more': false,
@@ -839,13 +864,13 @@ void main() {
                     'id': 'ws-1',
                     'name': 'Alpha',
                     'container_id': null,
-                    'created_at': ''
+                    'created_at': '',
                   },
                   {
                     'id': 'ws-2',
                     'name': 'Beta',
                     'container_id': null,
-                    'created_at': ''
+                    'created_at': '',
                   },
                 ]
               : [
@@ -853,12 +878,15 @@ void main() {
                     'id': 'ws-1',
                     'name': 'Alpha',
                     'container_id': null,
-                    'created_at': ''
+                    'created_at': '',
                   },
                 ];
           return http.Response(
-            jsonEncode(
-                {'items': items, 'has_more': false, 'next_offset': null}),
+            jsonEncode({
+              'items': items,
+              'has_more': false,
+              'next_offset': null,
+            }),
             200,
           );
         }
@@ -887,23 +915,26 @@ void main() {
       expect(find.text('Beta'), findsNothing);
     });
 
-    testWidgets('shows only shared section when no owned workspaces',
-        (tester) async {
+    testWidgets('shows only shared section when no owned workspaces', (
+      tester,
+    ) async {
       testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/api/v1/workspaces') {
           return http.Response(jsonEncode(_envelope([])), 200);
         }
         if (request.url.path == '/api/v1/workspaces/shared') {
           return http.Response(
-            jsonEncode(_envelope([
-              {
-                'id': 'ws-s1',
-                'name': 'Guest Project',
-                'container_id': null,
-                'created_at': '2026-03-01 08:00:00',
-                'owner_email': 'owner@example.com',
-              },
-            ])),
+            jsonEncode(
+              _envelope([
+                {
+                  'id': 'ws-s1',
+                  'name': 'Guest Project',
+                  'container_id': null,
+                  'created_at': '2026-03-01 08:00:00',
+                  'owner_email': 'owner@example.com',
+                },
+              ]),
+            ),
             200,
           );
         }
@@ -923,37 +954,40 @@ void main() {
       expect(find.text('Guest Project'), findsOneWidget);
     });
 
-    testWidgets('handles missing and invalid created_at gracefully',
-        (tester) async {
+    testWidgets('handles missing and invalid created_at gracefully', (
+      tester,
+    ) async {
       testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/api/v1/workspaces') {
           return http.Response(
-            jsonEncode(_envelope([
-              {
-                'id': 'ws-1',
-                'name': 'No Date',
-                'container_id': null,
-                'created_at': null
-              },
-              {
-                'id': 'ws-2',
-                'name': 'Bad Date',
-                'container_id': null,
-                'created_at': 'not-a-date'
-              },
-              {
-                'id': 'ws-3',
-                'name': 'Empty Date',
-                'container_id': null,
-                'created_at': ''
-              },
-              {
-                'id': 'ws-4',
-                'name': 'Midnight',
-                'container_id': null,
-                'created_at': '2026-03-01 00:15:00'
-              },
-            ])),
+            jsonEncode(
+              _envelope([
+                {
+                  'id': 'ws-1',
+                  'name': 'No Date',
+                  'container_id': null,
+                  'created_at': null,
+                },
+                {
+                  'id': 'ws-2',
+                  'name': 'Bad Date',
+                  'container_id': null,
+                  'created_at': 'not-a-date',
+                },
+                {
+                  'id': 'ws-3',
+                  'name': 'Empty Date',
+                  'container_id': null,
+                  'created_at': '',
+                },
+                {
+                  'id': 'ws-4',
+                  'name': 'Midnight',
+                  'container_id': null,
+                  'created_at': '2026-03-01 00:15:00',
+                },
+              ]),
+            ),
             200,
           );
         }
@@ -1017,14 +1051,16 @@ void main() {
             request.method == 'GET') {
           if (importCalled) {
             return http.Response(
-              jsonEncode(_envelope([
-                {
-                  'id': 'ws-imp',
-                  'name': 'Imported WS',
-                  'container_id': null,
-                  'created_at': '2026-06-29',
-                },
-              ])),
+              jsonEncode(
+                _envelope([
+                  {
+                    'id': 'ws-imp',
+                    'name': 'Imported WS',
+                    'container_id': null,
+                    'created_at': '2026-06-29',
+                  },
+                ]),
+              ),
               200,
             );
           }
@@ -1064,14 +1100,16 @@ void main() {
       testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/api/v1/workspaces') {
           return http.Response(
-            jsonEncode(_envelope([
-              {
-                'id': 'ws-1',
-                'name': 'Test WS',
-                'container_id': null,
-                'created_at': '2026-01-01'
-              },
-            ])),
+            jsonEncode(
+              _envelope([
+                {
+                  'id': 'ws-1',
+                  'name': 'Test WS',
+                  'container_id': null,
+                  'created_at': '2026-01-01',
+                },
+              ]),
+            ),
             200,
           );
         }
@@ -1115,14 +1153,16 @@ void main() {
       testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/api/v1/workspaces') {
           return http.Response(
-            jsonEncode(_envelope([
-              {
-                'id': 'ws-1',
-                'name': 'My Project',
-                'container_id': null,
-                'created_at': '2026-03-15'
-              },
-            ])),
+            jsonEncode(
+              _envelope([
+                {
+                  'id': 'ws-1',
+                  'name': 'My Project',
+                  'container_id': null,
+                  'created_at': '2026-03-15',
+                },
+              ]),
+            ),
             200,
           );
         }
@@ -1171,9 +1211,12 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(
-          find.descendant(
-              of: find.byType(AlertDialog), matching: find.byType(TextField)),
-          findsNWidgets(13));
+        find.descendant(
+          of: find.byType(AlertDialog),
+          matching: find.byType(TextField),
+        ),
+        findsNWidgets(13),
+      );
       // Image picker + egress-mode picker (#2409).
       expect(find.byType(DropdownButtonFormField<String>), findsNWidgets(2));
     });
@@ -1203,14 +1246,16 @@ void main() {
       testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/api/v1/workspaces') {
           return http.Response(
-            jsonEncode(_envelope([
-              {
-                'id': 'ws-1',
-                'name': 'To Delete',
-                'container_id': null,
-                'created_at': '2026-01-01'
-              },
-            ])),
+            jsonEncode(
+              _envelope([
+                {
+                  'id': 'ws-1',
+                  'name': 'To Delete',
+                  'container_id': null,
+                  'created_at': '2026-01-01',
+                },
+              ]),
+            ),
             200,
           );
         }
@@ -1233,14 +1278,16 @@ void main() {
       testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/api/v1/workspaces') {
           return http.Response(
-            jsonEncode(_envelope([
-              {
-                'id': 'ws-1',
-                'name': 'Keep Me',
-                'container_id': null,
-                'created_at': '2026-01-01'
-              },
-            ])),
+            jsonEncode(
+              _envelope([
+                {
+                  'id': 'ws-1',
+                  'name': 'Keep Me',
+                  'container_id': null,
+                  'created_at': '2026-01-01',
+                },
+              ]),
+            ),
             200,
           );
         }
@@ -1264,14 +1311,16 @@ void main() {
       testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/api/v1/workspaces') {
           return http.Response(
-            jsonEncode(_envelope([
-              {
-                'id': 'ws-1',
-                'name': 'WS 1',
-                'container_id': null,
-                'created_at': '2026-01-01'
-              },
-            ])),
+            jsonEncode(
+              _envelope([
+                {
+                  'id': 'ws-1',
+                  'name': 'WS 1',
+                  'container_id': null,
+                  'created_at': '2026-01-01',
+                },
+              ]),
+            ),
             200,
           );
         }
@@ -1311,14 +1360,16 @@ void main() {
             request.method == 'GET') {
           if (postCalled) {
             return http.Response(
-              jsonEncode(_envelope([
-                {
-                  'id': 'ws-new',
-                  'name': 'New WS',
-                  'container_id': null,
-                  'created_at': '2026-05-21',
-                },
-              ])),
+              jsonEncode(
+                _envelope([
+                  {
+                    'id': 'ws-new',
+                    'name': 'New WS',
+                    'container_id': null,
+                    'created_at': '2026-05-21',
+                  },
+                ]),
+              ),
               200,
             );
           }
@@ -1394,14 +1445,16 @@ void main() {
             return http.Response(jsonEncode(_envelope([])), 200);
           }
           return http.Response(
-            jsonEncode(_envelope([
-              {
-                'id': 'ws-1',
-                'name': 'Doomed',
-                'container_id': null,
-                'created_at': '2026-01-01',
-              },
-            ])),
+            jsonEncode(
+              _envelope([
+                {
+                  'id': 'ws-1',
+                  'name': 'Doomed',
+                  'container_id': null,
+                  'created_at': '2026-01-01',
+                },
+              ]),
+            ),
             200,
           );
         }
@@ -1431,19 +1484,22 @@ void main() {
       expect(find.textContaining('No workspaces'), findsOneWidget);
     });
 
-    testWidgets('tapping workspace card navigates to workspace URL',
-        (tester) async {
+    testWidgets('tapping workspace card navigates to workspace URL', (
+      tester,
+    ) async {
       testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/api/v1/workspaces') {
           return http.Response(
-            jsonEncode(_envelope([
-              {
-                'id': 'ws-42',
-                'name': 'Nav Test',
-                'container_id': null,
-                'created_at': '2026-01-01',
-              },
-            ])),
+            jsonEncode(
+              _envelope([
+                {
+                  'id': 'ws-42',
+                  'name': 'Nav Test',
+                  'container_id': null,
+                  'created_at': '2026-01-01',
+                },
+              ]),
+            ),
             200,
           );
         }
@@ -1462,9 +1518,7 @@ void main() {
             path: '/workspace/:id',
             builder: (context, state) {
               navigatedTo = state.uri.toString();
-              return const Scaffold(
-                body: Text('workspace detail'),
-              );
+              return const Scaffold(body: Text('workspace detail'));
             },
           ),
         ],
@@ -1487,12 +1541,10 @@ void main() {
       expect(navigatedTo, '/workspace/ws-42');
     });
 
-    testWidgets('admin icon shown when user has admin permission',
-        (tester) async {
-      final token = makeJwt({
-        'sub': 'admin-1',
-        'email': 'admin@example.com',
-      });
+    testWidgets('admin icon shown when user has admin permission', (
+      tester,
+    ) async {
+      final token = makeJwt({'sub': 'admin-1', 'email': 'admin@example.com'});
       SharedPreferences.setMockInitialValues({'klangk_jwt': token});
       testAuthHttpClientOverride = withPermissions(
         (request) async {
@@ -1502,12 +1554,12 @@ void main() {
           return http.Response('Not found', 404);
         },
         permissions: {
-          '/admin': ['*'],
           '/workspaces': ['create-workspace'],
         },
         groups: [
           {'id': 'g1', 'name': 'admins'},
         ],
+        isAdmin: true,
       );
 
       await tester.pumpWidget(buildPage());
@@ -1518,10 +1570,7 @@ void main() {
     });
 
     testWidgets('admin icon not shown for non-admin user', (tester) async {
-      final token = makeJwt({
-        'sub': 'user-1',
-        'email': 'user@example.com',
-      });
+      final token = makeJwt({'sub': 'user-1', 'email': 'user@example.com'});
       SharedPreferences.setMockInitialValues({'klangk_jwt': token});
       testAuthHttpClientOverride = withPermissions(
         (request) async {
@@ -1541,22 +1590,25 @@ void main() {
       expect(find.byIcon(Icons.manage_accounts), findsNothing);
     });
 
-    testWidgets('create dialog submit via text field onSubmitted',
-        (tester) async {
+    testWidgets('create dialog submit via text field onSubmitted', (
+      tester,
+    ) async {
       var postCalled = false;
       testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/api/v1/workspaces' &&
             request.method == 'GET') {
           if (postCalled) {
             return http.Response(
-              jsonEncode(_envelope([
-                {
-                  'id': 'ws-sub',
-                  'name': 'Submitted',
-                  'container_id': null,
-                  'created_at': '2026-05-21',
-                },
-              ])),
+              jsonEncode(
+                _envelope([
+                  {
+                    'id': 'ws-sub',
+                    'name': 'Submitted',
+                    'container_id': null,
+                    'created_at': '2026-05-21',
+                  },
+                ]),
+              ),
               200,
             );
           }
@@ -1656,8 +1708,9 @@ void main() {
       expect(body['image'], 'klangk-custom');
     });
 
-    testWidgets('create dialog sends service_command when provided',
-        (tester) async {
+    testWidgets('create dialog sends service_command when provided', (
+      tester,
+    ) async {
       String? postedBody;
       testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/api/v1/workspaces' &&
@@ -1698,22 +1751,25 @@ void main() {
       expect(body['service_command'], 'klangk-pi');
     });
 
-    testWidgets('create dialog submit via command field onSubmitted',
-        (tester) async {
+    testWidgets('create dialog submit via command field onSubmitted', (
+      tester,
+    ) async {
       var postCalled = false;
       testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/api/v1/workspaces' &&
             request.method == 'GET') {
           if (postCalled) {
             return http.Response(
-              jsonEncode(_envelope([
-                {
-                  'id': 'ws-cmd2',
-                  'name': 'CmdSubmit',
-                  'container_id': null,
-                  'created_at': '2026-05-28',
-                },
-              ])),
+              jsonEncode(
+                _envelope([
+                  {
+                    'id': 'ws-cmd2',
+                    'name': 'CmdSubmit',
+                    'container_id': null,
+                    'created_at': '2026-05-28',
+                  },
+                ]),
+              ),
               200,
             );
           }
@@ -1750,8 +1806,9 @@ void main() {
       expect(postCalled, isTrue);
     });
 
-    testWidgets('create workspace exception shows inline error',
-        (tester) async {
+    testWidgets('create workspace exception shows inline error', (
+      tester,
+    ) async {
       testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/api/v1/workspaces' &&
             request.method == 'GET') {
@@ -1774,26 +1831,26 @@ void main() {
       await tester.tap(find.text('Create'));
       await tester.pumpAndSettle();
 
-      expect(
-        find.textContaining('Could not create workspace'),
-        findsOneWidget,
-      );
+      expect(find.textContaining('Could not create workspace'), findsOneWidget);
     });
 
-    testWidgets('delete workspace exception shows error snackbar',
-        (tester) async {
+    testWidgets('delete workspace exception shows error snackbar', (
+      tester,
+    ) async {
       testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/api/v1/workspaces' &&
             request.method == 'GET') {
           return http.Response(
-            jsonEncode(_envelope([
-              {
-                'id': 'ws-1',
-                'name': 'Doomed',
-                'container_id': null,
-                'created_at': '2026-01-01',
-              },
-            ])),
+            jsonEncode(
+              _envelope([
+                {
+                  'id': 'ws-1',
+                  'name': 'Doomed',
+                  'container_id': null,
+                  'created_at': '2026-01-01',
+                },
+              ]),
+            ),
             200,
           );
         }
@@ -1813,10 +1870,7 @@ void main() {
       await tester.tap(find.text('Delete'));
       await tester.pumpAndSettle();
 
-      expect(
-        find.textContaining('Could not delete workspace'),
-        findsOneWidget,
-      );
+      expect(find.textContaining('Could not delete workspace'), findsOneWidget);
     });
 
     testWidgets('logout button calls logout and navigates', (tester) async {
@@ -1835,10 +1889,7 @@ void main() {
       final router = GoRouter(
         initialLocation: '/',
         routes: [
-          GoRoute(
-            path: '/',
-            builder: (_, __) => const WorkspaceListPage(),
-          ),
+          GoRoute(path: '/', builder: (_, __) => const WorkspaceListPage()),
           GoRoute(
             path: '/login',
             builder: (_, __) => const Scaffold(body: Text('Login')),
@@ -1883,10 +1934,7 @@ void main() {
       final router = GoRouter(
         initialLocation: '/',
         routes: [
-          GoRoute(
-            path: '/',
-            builder: (_, __) => const WorkspaceListPage(),
-          ),
+          GoRoute(path: '/', builder: (_, __) => const WorkspaceListPage()),
           GoRoute(
             path: '/login',
             builder: (_, __) => const Scaffold(body: Text('Login')),
@@ -1921,14 +1969,8 @@ void main() {
       final router = GoRouter(
         initialLocation: '/',
         routes: [
-          GoRoute(
-            path: '/',
-            builder: (_, __) => const WorkspaceListPage(),
-          ),
-          GoRoute(
-            path: '/workspace/:id',
-            builder: (_, __) => const Scaffold(),
-          ),
+          GoRoute(path: '/', builder: (_, __) => const WorkspaceListPage()),
+          GoRoute(path: '/workspace/:id', builder: (_, __) => const Scaffold()),
         ],
       );
 
@@ -1953,10 +1995,7 @@ void main() {
     });
 
     testWidgets('admin button navigates to admin page', (tester) async {
-      final token = makeJwt({
-        'sub': 'user-1',
-        'email': 'admin@example.com',
-      });
+      final token = makeJwt({'sub': 'user-1', 'email': 'admin@example.com'});
       SharedPreferences.setMockInitialValues({'klangk_jwt': token});
       testAuthHttpClientOverride = withPermissions(
         (request) async {
@@ -1966,22 +2005,19 @@ void main() {
           return http.Response('Not found', 404);
         },
         permissions: {
-          '/admin': ['*'],
           '/workspaces': ['create-workspace'],
         },
         groups: [
           {'id': 'g1', 'name': 'admins'},
         ],
+        isAdmin: true,
       );
 
       String? navigatedTo;
       final router = GoRouter(
         initialLocation: '/',
         routes: [
-          GoRoute(
-            path: '/',
-            builder: (_, __) => const WorkspaceListPage(),
-          ),
+          GoRoute(path: '/', builder: (_, __) => const WorkspaceListPage()),
           GoRoute(
             path: '/admin/users',
             builder: (_, __) {
@@ -2339,22 +2375,24 @@ void main() {
       testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/api/v1/workspaces') {
           return http.Response(
-            jsonEncode(_envelope([
-              {
-                'id': 'ws-1',
-                'name': 'Running WS',
-                'container_id': null,
-                'created_at': '2026-01-01',
-                'running': true,
-              },
-              {
-                'id': 'ws-2',
-                'name': 'Stopped WS',
-                'container_id': null,
-                'created_at': '2026-01-01',
-                'running': false,
-              },
-            ])),
+            jsonEncode(
+              _envelope([
+                {
+                  'id': 'ws-1',
+                  'name': 'Running WS',
+                  'container_id': null,
+                  'created_at': '2026-01-01',
+                  'running': true,
+                },
+                {
+                  'id': 'ws-2',
+                  'name': 'Stopped WS',
+                  'container_id': null,
+                  'created_at': '2026-01-01',
+                  'running': false,
+                },
+              ]),
+            ),
             200,
           );
         }
@@ -2381,15 +2419,17 @@ void main() {
       testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/api/v1/workspaces') {
           return http.Response(
-            jsonEncode(_envelope([
-              {
-                'id': 'ws-1',
-                'name': 'My WS',
-                'container_id': null,
-                'created_at': '2026-01-01',
-                'running': false,
-              },
-            ])),
+            jsonEncode(
+              _envelope([
+                {
+                  'id': 'ws-1',
+                  'name': 'My WS',
+                  'container_id': null,
+                  'created_at': '2026-01-01',
+                  'running': false,
+                },
+              ]),
+            ),
             200,
           );
         }
@@ -2407,21 +2447,24 @@ void main() {
       expect(find.text('My WS'), findsOneWidget);
     });
 
-    testWidgets('container stopping clears stale health status',
-        (tester) async {
+    testWidgets('container stopping clears stale health status', (
+      tester,
+    ) async {
       final ws = _MockWsClient();
       testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/api/v1/workspaces') {
           return http.Response(
-            jsonEncode(_envelope([
-              {
-                'id': 'ws-1',
-                'name': 'My WS',
-                'container_id': null,
-                'created_at': '2026-01-01',
-                'running': false,
-              },
-            ])),
+            jsonEncode(
+              _envelope([
+                {
+                  'id': 'ws-1',
+                  'name': 'My WS',
+                  'container_id': null,
+                  'created_at': '2026-01-01',
+                  'running': false,
+                },
+              ]),
+            ),
             200,
           );
         }
@@ -2442,10 +2485,7 @@ void main() {
       await tester.pump();
       await tester.pump();
       final unhealthyTile = tester.widget<ListTile>(
-        find.ancestor(
-          of: find.text('My WS'),
-          matching: find.byType(ListTile),
-        ),
+        find.ancestor(of: find.text('My WS'), matching: find.byType(ListTile)),
       );
       expect((unhealthyTile.leading as Icon).color, Colors.orange);
 
@@ -2453,10 +2493,7 @@ void main() {
       await tester.pump();
       await tester.pump();
       final stoppedTile = tester.widget<ListTile>(
-        find.ancestor(
-          of: find.text('My WS'),
-          matching: find.byType(ListTile),
-        ),
+        find.ancestor(of: find.text('My WS'), matching: find.byType(ListTile)),
       );
       expect((stoppedTile.leading as Icon).color, KColors.textSecondary);
     });
@@ -2466,15 +2503,17 @@ void main() {
       testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/api/v1/workspaces') {
           return http.Response(
-            jsonEncode(_envelope([
-              {
-                'id': 'ws-1',
-                'name': 'My WS',
-                'container_id': null,
-                'created_at': '2026-01-01',
-                'running': false,
-              },
-            ])),
+            jsonEncode(
+              _envelope([
+                {
+                  'id': 'ws-1',
+                  'name': 'My WS',
+                  'container_id': null,
+                  'created_at': '2026-01-01',
+                  'running': false,
+                },
+              ]),
+            ),
             200,
           );
         }
@@ -2497,10 +2536,7 @@ void main() {
       await tester.pump();
       await tester.pump();
       final unhealthyTile = tester.widget<ListTile>(
-        find.ancestor(
-          of: find.text('My WS'),
-          matching: find.byType(ListTile),
-        ),
+        find.ancestor(of: find.text('My WS'), matching: find.byType(ListTile)),
       );
       expect((unhealthyTile.leading as Icon).color, Colors.orange);
 
@@ -2509,10 +2545,7 @@ void main() {
       await tester.pump();
       await tester.pump();
       final healthyTile = tester.widget<ListTile>(
-        find.ancestor(
-          of: find.text('My WS'),
-          matching: find.byType(ListTile),
-        ),
+        find.ancestor(of: find.text('My WS'), matching: find.byType(ListTile)),
       );
       expect((healthyTile.leading as Icon).color, KColors.accentGreen);
     });

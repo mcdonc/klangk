@@ -24,6 +24,12 @@ _DEFAULT_AGENT_EMAIL = "klangk@example.com"
 AGENT_HANDLE = _DEFAULT_AGENT_HANDLE
 AGENT_EMAIL = _DEFAULT_AGENT_EMAIL
 
+# The instance-admin group (#2934, #2995): membership is the source
+# of truth for "is an instance admin" (the /my-permissions is_admin
+# flag). Named ``admins`` since #2934; migration 0020 renames legacy
+# deployments' ``admin`` row. Import this instead of spelling the name.
+ADMIN_GROUP_NAME = "admins"
+
 # Group source markers (#2750): who created a ``groups`` row. Mirrors
 # ``user_groups.source``. 'manual' is the default (human-created via the
 # API, plus the boot-seeded admin/members groups and OIDC-synced groups);

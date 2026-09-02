@@ -52,6 +52,7 @@ from .common import ALL_PERMISSIONS, autostart_allowed, get_app_dep
 # name to the logic module after the submodule imports (see below) so the
 # instance endpoints reference klangk.auth, not the route module.
 from .. import auth as _auth_logic
+from ..model.users import ADMIN_GROUP_NAME
 
 # Route submodules, aliased because their names collide with the logic
 # modules imported above (api/auth.py vs klangk.auth, etc.) and we
@@ -310,8 +311,15 @@ STATIC_RESOURCES = [
     "/acl",
     "/volumes",
     "/images",
-    "/admin",
 ]
+
+
+def _is_instance_admin(groups: list[dict]) -> bool:
+    """Instance-admin status from its source of truth (#2995):
+    membership in the ``admins`` group. Nothing derives from the ACL
+    tree anymore — the old ``/admin`` wildcard-marker rows are retired
+    with the rest of the tree."""
+    return any(g["name"] == ADMIN_GROUP_NAME for g in groups)
 
 
 @router.get("/my-permissions")
@@ -336,6 +344,7 @@ async def my_permissions(
         return {
             "user_id": user["id"],
             "email": user["email"],
+            "is_admin": _is_instance_admin(groups),
             "groups": groups,
             "permissions": {resource: perms} if perms else {},
         }
@@ -347,6 +356,7 @@ async def my_permissions(
     return {
         "user_id": user["id"],
         "email": user["email"],
+        "is_admin": _is_instance_admin(groups),
         "groups": groups,
         "permissions": permissions,
     }

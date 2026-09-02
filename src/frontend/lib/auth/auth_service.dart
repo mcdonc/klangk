@@ -1,9 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
+
 import '../branding.dart';
 import 'password_policy.dart';
 import 'pending_redirect.dart';
@@ -155,11 +157,16 @@ class AuthService extends ChangeNotifier {
   /// Permissions fetched from /api/v1/my-permissions.
   Map<String, List<String>> _permissions = {};
   List<Map<String, dynamic>> _groups = [];
+  bool _isAdmin = false;
 
   Map<String, List<String>> get permissions => _permissions;
   List<Map<String, dynamic>> get groups => _groups;
 
-  bool get isAdmin => hasPermission('/admin', '*');
+  /// Instance-admin status: the explicit `is_admin` flag from
+  /// /my-permissions, derived server-side from `admins`-group
+  /// membership (#2995) — not an ACL permission. The old `/admin`
+  /// wildcard-marker rows are retired with the rest of the tree.
+  bool get isAdmin => _isAdmin;
 
   /// True for wildcard admins and for holders of any delegated /admin
   /// tab permission (#2923, #2940): the principals allowed into the admin
@@ -206,9 +213,7 @@ class AuthService extends ChangeNotifier {
       final client = testAuthHttpClientOverride ?? http.Client();
       final resp = await client.get(
         Uri.parse('$_baseUrl/api/v1/config'),
-        headers: {
-          if (_token != null) 'Authorization': 'Bearer $_token',
-        },
+        headers: {if (_token != null) 'Authorization': 'Bearer $_token'},
       );
       if (resp.statusCode == 200) {
         final data = jsonDecode(resp.body);
@@ -286,6 +291,7 @@ class AuthService extends ChangeNotifier {
         _groups = List<Map<String, dynamic>>.from(
           data['groups'] as List? ?? [],
         );
+        _isAdmin = data['is_admin'] == true;
       } else if (resp.statusCode == 401) {
         await _clearToken();
       }
@@ -314,7 +320,9 @@ class AuthService extends ChangeNotifier {
     if (!_loginBannerEveryVisit) {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(
-          'klangk_banner_accepted', _bannerText.hashCode.toString());
+        'klangk_banner_accepted',
+        _bannerText.hashCode.toString(),
+      );
     }
     _bannerAccepted = true;
     notifyListeners();
@@ -344,6 +352,7 @@ class AuthService extends ChangeNotifier {
     _token = null;
     _permissions = {};
     _groups = [];
+    _isAdmin = false;
     // The pending redirect belongs to the session being cleared; drop it
     // so the next login can never inherit the old session's destination
     // (#2670). If the user was on a protected page, guardAuth re-stashes
@@ -529,10 +538,7 @@ class AuthService extends ChangeNotifier {
     debugPrint(
       '[AuthService] scheduling token refresh in ${refreshInMs ~/ 1000}s',
     );
-    _refreshTimer = Timer(
-      Duration(milliseconds: refreshInMs),
-      _refreshToken,
-    );
+    _refreshTimer = Timer(Duration(milliseconds: refreshInMs), _refreshToken);
   }
 
   /// Call POST /api/v1/auth/refresh to get a new token.

@@ -132,7 +132,7 @@ class TestCheckPermission:
 
     async def test_wildcard_permission(self, user, app_state):
         await app_state.state.model.acl.add_acl_entry(
-            "/admin",
+            "/legacy",
             0,
             ACTION_ALLOW,
             "*",
@@ -142,7 +142,7 @@ class TestCheckPermission:
         principals = await app_state.state.acl.get_principals(user["id"])
         assert (
             await app_state.state.acl.check_permission(
-                "/admin", principals, "anything"
+                "/legacy", principals, "anything"
             )
             is True
         )
@@ -204,7 +204,7 @@ class TestCheckPermissionInMemory:
             system_principal=SYSTEM_EVERYONE,
         )
         await app_state.state.model.acl.add_acl_entry(
-            "/admin",
+            "/legacy",
             0,
             ACTION_ALLOW,
             "*",
@@ -253,7 +253,7 @@ class TestCheckPermissionInMemory:
             system_principal=SYSTEM_AUTHENTICATED,
         )
         await app_state.state.model.acl.add_acl_entry(
-            "/admin",
+            "/legacy",
             0,
             ACTION_ALLOW,
             "terminal",
@@ -292,7 +292,7 @@ class TestGetAclEntriesMap:
             system_principal=SYSTEM_AUTHENTICATED,
         )
         await app_state.state.model.acl.add_acl_entry(
-            "/admin",
+            "/legacy",
             0,
             ACTION_ALLOW,
             "edit",
@@ -300,17 +300,17 @@ class TestGetAclEntriesMap:
             user_id=user["id"],
         )
         result = await app_state.state.model.acl.get_acl_entries_map(
-            ["/workspaces", "/admin", "/nonexistent"]
+            ["/workspaces", "/legacy", "/nonexistent"]
         )
         # Every requested resource is a key; missing ones are empty lists.
         assert set(result.keys()) == {
             "/workspaces",
-            "/admin",
+            "/legacy",
             "/nonexistent",
         }
         assert len(result["/workspaces"]) == 1
         assert result["/workspaces"][0]["permission"] == "view"
-        assert len(result["/admin"]) == 1
+        assert len(result["/legacy"]) == 1
         assert result["/nonexistent"] == []
 
     async def test_empty_resource_list(self, app_state):

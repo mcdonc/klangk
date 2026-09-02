@@ -1,4 +1,5 @@
 import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -10,17 +11,16 @@ import 'package:klangk_frontend/branding.dart';
 import 'package:klangk_frontend/widgets/app_bar_actions.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 
-/// Build a JWT whose body decodes to a permissions shape AuthService
-/// recognises. Only the body matters here (the signature is not verified by
-/// the client). Mirrors the helper in admin_invitations_page_test.dart.
+/// Build a JWT whose body decodes to an admin identity. Only the body
+/// matters here (the signature is not verified by the client). The
+/// admin status itself comes from the /my-permissions is_admin flag
+/// (#2995), mocked per-test below. Mirrors the helper in
+/// admin_invitations_page_test.dart.
 String _adminToken() {
   final header = base64Url.encode(utf8.encode(jsonEncode({'alg': 'none'})));
-  final body = base64Url.encode(utf8.encode(jsonEncode({
-    'email': 'admin@example.com',
-    'permissions': {
-      '/admin': ['*'],
-    },
-  })));
+  final body = base64Url.encode(
+    utf8.encode(jsonEncode({'email': 'admin@example.com'})),
+  );
   return '$header.$body.fakesig';
 }
 
@@ -37,9 +37,7 @@ void main() {
 
   Widget buildWith(Widget child) {
     return MultiProvider(
-      providers: [
-        ChangeNotifierProvider(create: (_) => AuthService()),
-      ],
+      providers: [ChangeNotifierProvider(create: (_) => AuthService())],
       child: MaterialApp(home: Scaffold(body: child)),
     );
   }
@@ -58,8 +56,9 @@ void main() {
             jsonEncode({
               'user_id': 'u1',
               'email': 'admin@example.com',
+              'is_admin': true,
               'permissions': {
-                '/admin': ['*']
+                '/users': ['manage-users'],
               },
               'groups': [],
             }),
@@ -93,8 +92,9 @@ void main() {
             jsonEncode({
               'user_id': 'u1',
               'email': 'admin@example.com',
+              'is_admin': true,
               'permissions': {
-                '/admin': ['*']
+                '/users': ['manage-users'],
               },
               'groups': [],
             }),

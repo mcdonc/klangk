@@ -1,4 +1,5 @@
 import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -12,7 +13,7 @@ import 'package:klangk_frontend/ws/ws_client.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 
 /// A paged events envelope, matching the backend
-/// `GET /admin/container-events` response.
+/// `GET /events` response.
 String _eventsEnvelope(
   List<Map<String, dynamic>> items, {
   int total = 0,
@@ -59,20 +60,22 @@ String get _adminToken {
       .encode(utf8.encode(jsonEncode({'alg': 'HS256', 'typ': 'JWT'})))
       .replaceAll('=', '');
   final body = base64Url
-      .encode(utf8.encode(jsonEncode({
-        'sub': 'admin-user',
-        'email': 'admin@example.com',
-      })))
+      .encode(
+        utf8.encode(
+          jsonEncode({'sub': 'admin-user', 'email': 'admin@example.com'}),
+        ),
+      )
       .replaceAll('=', '');
   return '$header.$body.fakesig';
 }
 
-/// Build a mock client serving config + my-permissions ([permissions])
-/// plus a custom handler for everything else.
+/// Build a mock client serving config + my-permissions ([permissions],
+/// [isAdmin]) plus a custom handler for everything else.
 http.Client _mockClient(
   Map<String, List<String>> permissions,
-  Future<http.Response> Function(http.Request) handler,
-) {
+  Future<http.Response> Function(http.Request) handler, {
+  bool isAdmin = false,
+}) {
   return MockClient((request) async {
     if (request.url.path.contains('/api/v1/config')) {
       return http.Response(
@@ -85,9 +88,10 @@ http.Client _mockClient(
         jsonEncode({
           'user_id': 'admin-user',
           'email': 'admin@example.com',
+          'is_admin': isAdmin,
           'permissions': permissions,
           'groups': [
-            {'id': 'g1', 'name': 'admin'}
+            {'id': 'g1', 'name': 'admin'},
           ],
         }),
         200,
@@ -97,11 +101,10 @@ http.Client _mockClient(
   });
 }
 
-/// The admin permission set as the server reports it: the `/admin` `*`
-/// wildcard expands to every permission on every `/admin/*` resource in
-/// `/my-permissions`, so the Events resource is listed alongside it.
+/// The admin permission set as the server reports it: the is_admin
+/// flag covers instance-admin status (#2995); the tab permissions live
+/// on their first-class resources in `/my-permissions`.
 Map<String, List<String>> get _adminPermissions => {
-      '/admin': ['*'],
       '/users': ['manage-users'],
       '/events': ['view', 'manage-events'],
     };
@@ -165,8 +168,9 @@ void main() {
     ) eventsFor,
   ) {
     final requests = <http.Request>[];
-    testAuthHttpClientOverride =
-        _mockClient(_adminPermissions, (request) async {
+    testAuthHttpClientOverride = _mockClient(_adminPermissions, (
+      request,
+    ) async {
       if (request.url.path == '/api/v1/events') {
         requests.add(request);
         final limit = int.parse(request.url.queryParameters['limit'] ?? '50');
@@ -193,7 +197,7 @@ void main() {
         return http.Response(jsonEncode({'schedules': []}), 200);
       }
       return http.Response('Not found', 404);
-    });
+    }, isAdmin: true);
     return requests;
   }
 
@@ -226,10 +230,7 @@ void main() {
       expect(find.text('events-ws'), findsOneWidget);
       expect(find.text('gone-ws'), findsOneWidget);
       // Actor labels: email when resolved, bare type for system rows.
-      expect(
-        find.text('user admin@example.com'),
-        findsOneWidget,
-      );
+      expect(find.text('user admin@example.com'), findsOneWidget);
       expect(find.text('system'), findsOneWidget);
       expect(find.text('idle_timeout'), findsOneWidget);
       expect(find.text('cid-9'), findsOneWidget);
@@ -333,31 +334,28 @@ void main() {
     });
 
     testWidgets('tab hidden without the permission', (tester) async {
-      // A non-delegated, non-wildcard principal: the other admin tabs
-      // via their own grants, but no `container-events` on
-      // /admin/container-events — so no Events tab.
-      testAuthHttpClientOverride = _mockClient(
-        {
-          '/users': ['manage-users'],
-          '/groups': ['manage-groups'],
-          '/invitations': ['manage-invitations'],
-          '/admin': ['admin'],
-        },
-        (request) async => http.Response('Not found', 404),
-      );
+      // A delegated principal without the Events grant: the other admin
+      // tabs via their own grants, but no `manage-events` on /events —
+      // so no Events tab.
+      testAuthHttpClientOverride = _mockClient({
+        '/users': ['manage-users'],
+        '/groups': ['manage-groups'],
+        '/invitations': ['manage-invitations'],
+      }, (request) async => http.Response('Not found', 404));
 
       await pumpPage(tester, toEvents: false);
       expect(find.text('Events'), findsNothing);
       expect(find.text('Users'), findsOneWidget);
     });
 
-    testWidgets('delegated auditor gets the Events tab as their only tab',
-        (tester) async {
+    testWidgets('delegated auditor gets the Events tab as their only tab', (
+      tester,
+    ) async {
       // #2923 review: a principal whose only admin-sphere grant is
-      // `container-events` on /admin/container-events can enter the
-      // admin section and sees exactly one tab — Events. No Users tab
-      // (no view on /admin/users) and no Access Control browser (it
-      // reads /admin/acl/tree, which needs full admin).
+      // `manage-events` on /events can enter the admin section and
+      // sees exactly one tab — Events. No Users tab (no manage-users)
+      // and no Access Control browser (it reads /acl/tree, which
+      // needs manage-acls).
       testAuthHttpClientOverride = _mockClient(
         {
           '/events': ['manage-events'],
@@ -365,12 +363,9 @@ void main() {
         (request) async {
           if (request.url.path == '/api/v1/events') {
             return http.Response(
-              _eventsEnvelope(
-                [
-                  _event('ws-a', workspaceName: 'audit-ws', actorType: 'system')
-                ],
-                total: 1,
-              ),
+              _eventsEnvelope([
+                _event('ws-a', workspaceName: 'audit-ws', actorType: 'system'),
+              ], total: 1),
               200,
             );
           }

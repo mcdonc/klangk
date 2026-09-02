@@ -24,7 +24,6 @@ from ..model import (
     ACTION_ALLOW,
     AgentPrincipalError,
     GROUP_SOURCES,
-    PRINCIPAL_GROUP,
     PRINCIPAL_SYSTEM,
     SYSTEM_AUTHENTICATED,
 )
@@ -59,24 +58,6 @@ def _validate_root_acl(entries, resource: str) -> None:
             status_code=400,
             detail="Root ACL must include Allow Authenticated view "
             "to prevent locking out all users",
-        )
-
-
-def _validate_admin_acl(entries, resource: str) -> None:
-    """/admin ACL must keep admin group access."""
-    if resource != "/admin":
-        return
-    has_admin_group = any(
-        e.action == ACTION_ALLOW
-        and e.principal_type == PRINCIPAL_GROUP
-        and e.permission == "*"
-        for e in entries
-    )
-    if not has_admin_group:
-        raise HTTPException(
-            status_code=400,
-            detail="Admin ACL must include at least one Allow "
-            "group entry to prevent locking out all admins",
         )
 
 
@@ -719,7 +700,6 @@ async def replace_resource_acl(
     always carries the workspace's own grant.
     """
     _validate_root_acl(entries, resource)
-    _validate_admin_acl(entries, resource)
 
     workspace = workspace_scope(resource)
     if workspace is not None:

@@ -59,7 +59,10 @@ void main() {
   // All HTTP the app issues during this flow: config (login page +
   // AuthService), login, and my-permissions. No token exp claim -> no
   // refresh timer for the test to fight with.
-  String installMocks({Map<String, List<String>> permissions = const {}}) {
+  String installMocks({
+    Map<String, List<String>> permissions = const {},
+    bool isAdmin = false,
+  }) {
     final token = makeJwt({'sub': 'user-1', 'email': 'user@example.com'});
     testConfigHttpClientOverride = MockClient((request) async {
       return http.Response(
@@ -83,6 +86,7 @@ void main() {
           jsonEncode({
             'user_id': 'u1',
             'email': 'user@example.com',
+            'is_admin': isAdmin,
             'permissions': permissions,
             'groups': <Map<String, dynamic>>[],
           }),
@@ -119,10 +123,7 @@ void main() {
         );
       },
       routes: [
-        GoRoute(
-          path: '/login',
-          builder: (context, state) => const LoginPage(),
-        ),
+        GoRoute(path: '/login', builder: (context, state) => const LoginPage()),
         GoRoute(
           path: '/workspaces',
           builder: (context, state) =>
@@ -131,8 +132,9 @@ void main() {
         GoRoute(
           path: '/workspace/:id',
           builder: (context, state) => Scaffold(
-            body:
-                Center(child: Text('workspace-${state.pathParameters['id']}')),
+            body: Center(
+              child: Text('workspace-${state.pathParameters['id']}'),
+            ),
           ),
         ),
         GoRoute(
@@ -145,37 +147,38 @@ void main() {
   }
 
   testWidgets(
-      'deep-link login lands on the stashed workspace, not /workspaces (#2670)',
-      (tester) async {
-    installMocks();
+    'deep-link login lands on the stashed workspace, not /workspaces (#2670)',
+    (tester) async {
+      installMocks();
 
-    final auth = AuthService();
-    final router = buildRouter(auth, '/workspace/test-ws-123');
-    await tester.pumpWidget(
-      ChangeNotifierProvider.value(
-        value: auth,
-        child: MaterialApp.router(routerConfig: router),
-      ),
-    );
-    await tester.pumpAndSettle();
-    expect(find.text('Log In'), findsWidgets);
-    expect(pendingRedirect, '/workspace/test-ws-123');
+      final auth = AuthService();
+      final router = buildRouter(auth, '/workspace/test-ws-123');
+      await tester.pumpWidget(
+        ChangeNotifierProvider.value(
+          value: auth,
+          child: MaterialApp.router(routerConfig: router),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Log In'), findsWidgets);
+      expect(pendingRedirect, '/workspace/test-ws-123');
 
-    // Log in through the real form — this exercises the real login()
-    // double notifyListeners (saveToken + finally), which is exactly what
-    // the E2E deep-link test drives.
-    final fields = find.byType(TextField);
-    await tester.enterText(fields.first, 'user@example.com');
-    await tester.enterText(fields.last, 'password');
-    await tester.tap(find.widgetWithText(FilledButton, 'Log In'));
-    await tester.pumpAndSettle();
+      // Log in through the real form — this exercises the real login()
+      // double notifyListeners (saveToken + finally), which is exactly what
+      // the E2E deep-link test drives.
+      final fields = find.byType(TextField);
+      await tester.enterText(fields.first, 'user@example.com');
+      await tester.enterText(fields.last, 'password');
+      await tester.tap(find.widgetWithText(FilledButton, 'Log In'));
+      await tester.pumpAndSettle();
 
-    expect(
-      router.routerDelegate.currentConfiguration.uri.toString(),
-      '/workspace/test-ws-123',
-    );
-    expect(find.text('workspace-test-ws-123'), findsOneWidget);
-  });
+      expect(
+        router.routerDelegate.currentConfiguration.uri.toString(),
+        '/workspace/test-ws-123',
+      );
+      expect(find.text('workspace-test-ws-123'), findsOneWidget);
+    },
+  );
 
   testWidgets('plain login (no stash) lands on /workspaces', (tester) async {
     installMocks();
@@ -210,11 +213,14 @@ void main() {
   // Mirror that here: let the persisted token restore (permissions fetch
   // included) settle before mounting the router at /admin/users.
   Future<AuthService> restoreSession(
-      WidgetTester tester, Map<String, List<String>> permissions) async {
+    WidgetTester tester,
+    Map<String, List<String>> permissions, {
+    bool isAdmin = false,
+  }) async {
     final token = makeJwt({'sub': 'user-1', 'email': 'user@example.com'});
     // ignore: invalid_use_of_visible_for_testing
     SharedPreferences.setMockInitialValues({'klangk_jwt': token});
-    installMocks(permissions: permissions);
+    installMocks(permissions: permissions, isAdmin: isAdmin);
     final auth = AuthService();
     // A quiet host widget: pump until _loadToken (config + permissions)
     // completes and initialized flips true.
@@ -225,34 +231,40 @@ void main() {
   }
 
   testWidgets(
-      'restored non-admin session at /admin/users lands on /workspaces, '
-      'no redirect loop (#2669)', (tester) async {
-    final auth = await restoreSession(tester, const {});
-    expect(auth.isAdmin, isFalse);
+    'restored non-admin session at /admin/users lands on /workspaces, '
+    'no redirect loop (#2669)',
+    (tester) async {
+      final auth = await restoreSession(tester, const {});
+      expect(auth.isAdmin, isFalse);
 
-    final router = buildRouter(auth, '/admin/users');
-    await tester.pumpWidget(
-      ChangeNotifierProvider.value(
-        value: auth,
-        child: MaterialApp.router(routerConfig: router),
-      ),
-    );
-    await tester.pumpAndSettle();
+      final router = buildRouter(auth, '/admin/users');
+      await tester.pumpWidget(
+        ChangeNotifierProvider.value(
+          value: auth,
+          child: MaterialApp.router(routerConfig: router),
+        ),
+      );
+      await tester.pumpAndSettle();
 
-    // The dead-end admin page must not be showing.
-    expect(find.text('admin-users'), findsNothing);
-    expect(
-      router.routerDelegate.currentConfiguration.uri.toString(),
-      '/workspaces',
-    );
-    expect(find.text('workspaces-list'), findsOneWidget);
-  });
+      // The dead-end admin page must not be showing.
+      expect(find.text('admin-users'), findsNothing);
+      expect(
+        router.routerDelegate.currentConfiguration.uri.toString(),
+        '/workspaces',
+      );
+      expect(find.text('workspaces-list'), findsOneWidget);
+    },
+  );
 
-  testWidgets('restored admin session at /admin/users stays put (#2669)',
-      (tester) async {
-    final auth = await restoreSession(tester, const {
-      '/admin': ['*'],
-    });
+  testWidgets('restored admin session at /admin/users stays put (#2669)', (
+    tester,
+  ) async {
+    final auth = await restoreSession(
+        tester,
+        const {
+          '/users': ['manage-users'],
+        },
+        isAdmin: true);
     expect(auth.isAdmin, isTrue);
 
     final router = buildRouter(auth, '/admin/users');
