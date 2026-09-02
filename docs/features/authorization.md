@@ -22,7 +22,9 @@ friendlier interfaces:
   and global access rules.
 - **UI visibility** — tabs and buttons appear or disappear based on
   your permissions. If you don't have `files-view` permission on a
-  workspace, the Files tab won't show up.
+  workspace, the Files tab won't show up; likewise the Terminal tab
+  needs `terminal` (#2975), while opening the workspace at all needs
+  `join-workspace`.
 
 For advanced use cases, the **Advanced ACL editor** in the Sharing
 tab lets you view and edit the raw ACL entries directly.

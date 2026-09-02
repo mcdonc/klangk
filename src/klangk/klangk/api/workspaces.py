@@ -1450,17 +1450,20 @@ async def add_workspace_member(
         raise HTTPException(
             status_code=400, detail="Cannot share with yourself"
         )
-    # Add ACL entries granting the target user view+monitor+terminal+
-    # files(+dl/ul) on this workspace, packed at the next available
-    # positions. ``monitor`` rides along with ``terminal`` (#2783) so a
-    # shared member keeps receiving health/status frames — it can also
-    # be granted alone for monitoring-only members.
+    # Add ACL entries granting the target user view+monitor+join+
+    # terminal+files(+dl/ul) on this workspace, packed at the next available
+    # positions. ``join-workspace`` is the connect gate (#2975) — it rides
+    # along with ``terminal`` so a shared member keeps the ability to open
+    # the workspace at all; ``monitor`` rides along too (#2783) so the
+    # member keeps receiving health/status frames — either can also be
+    # granted alone for monitoring-only members.
     resource = f"/workspaces/{workspace_id}"
     existing = await app.state.model.acl.get_acl_entries(resource)
     next_pos = max((e["position"] for e in existing), default=-1) + 1
     for perm in (
         "view",
         "monitor-workspace",
+        "join-workspace",
         "terminal",
         "files-view",
         "files-download",
@@ -1738,7 +1741,7 @@ async def add_workspace_group(
     ),
     app=Depends(get_app_dep),
 ):
-    """Share a workspace with a group (view/terminal/files(+dl/ul))."""
+    """Share a workspace with a group (view/join/terminal/files(+dl/ul))."""
     group = await app.state.model.users.get_group_by_id(body.group_id)
     if group is None:
         raise HTTPException(status_code=404, detail="Group not found")
@@ -1748,6 +1751,7 @@ async def add_workspace_group(
     for i, perm in enumerate(
         [
             "view",
+            "join-workspace",
             "terminal",
             "files-view",
             "files-download",

@@ -2072,6 +2072,92 @@ class TestHandleWorkspaceConnect:
         # #2891: machine-readable refusal code for the client.
         assert all(c.get("code") == "forbidden" for c in denied)
 
+    async def test_connect_allowed_without_terminal(
+        self, user, agent_user, app_state
+    ):
+        """#2975: ``join-workspace`` alone opens the gate — a files-only
+        member (no ``terminal``) can connect and render the workspace;
+        the Terminal tab simply won't mount for them."""
+        from klangk import model
+
+        app_state = _make_app_state()
+        registry = app_state.state.container_registry
+        sock = _mock_sock()
+        member = await app_state.state.model.users.create_user(
+            "files-only@example.com", "pw", verified=True
+        )
+        workspace = await _create_workspace_with_acl(
+            app_state, user["id"], "files-only-ws"
+        )
+        resource = f"/workspaces/{workspace['id']}"
+        for pos, perm in enumerate(("join-workspace", "files-view"), 100):
+            await app_state.state.model.acl.add_acl_entry(
+                resource,
+                pos,
+                model.ACTION_ALLOW,
+                perm,
+                model.PRINCIPAL_USER,
+                user_id=member["id"],
+            )
+        conn = _base_conn(
+            user=member,
+            ws=sock,
+            app_state=app_state,
+        )
+
+        async def fake_start(wid, workspace):
+            conn.container_id = "cid"
+
+        with (
+            patch.object(
+                Connection,
+                "start_workspace_container",
+                side_effect=fake_start,
+            ),
+            patch.object(
+                registry,
+                "get_workspace_ports",
+                return_value=[9000],
+            ),
+        ):
+            await conn.handle_workspace_connect(
+                {"workspaceId": workspace["id"]}
+            )
+
+        calls = [c[0][0] for c in sock.send_json.call_args_list]
+        ready = [c for c in calls if c.get("type") == "container_ready"]
+        assert len(ready) == 1
+
+    async def test_connect_denied_terminal_without_join(self, user, app_state):
+        """#2975: an old-style ``terminal``-only grant (pre-migration
+        shape, or a hand-built ACL) no longer passes the connect gate —
+        ``join-workspace`` is the gate, ``terminal`` is tab visibility."""
+        from klangk import model
+
+        sock = _mock_sock()
+        member = await app_state.state.model.users.create_user(
+            "terminal-only@example.com", "pw", verified=True
+        )
+        workspace = await _create_workspace_with_acl(
+            app_state, user["id"], "terminal-only-ws"
+        )
+        await app_state.state.model.acl.add_acl_entry(
+            f"/workspaces/{workspace['id']}",
+            100,
+            model.ACTION_ALLOW,
+            "terminal",
+            model.PRINCIPAL_USER,
+            user_id=member["id"],
+        )
+        conn = _base_conn(
+            user=member,
+            ws=sock,
+        )
+        await conn.handle_workspace_connect({"workspaceId": workspace["id"]})
+        frame = sock.send_json.call_args[0][0]
+        assert "Permission denied" in frame["message"]
+        assert frame["code"] == "forbidden"
+
     async def test_connect_race_deleted(self, user, app_state):
         """ACL passes but workspace deleted before lookup."""
         from klangk import model

@@ -93,6 +93,12 @@ inside the container.
 
 ## Terminal tabs
 
+The Terminal tab itself mounts only for members holding the
+`terminal` permission (#2975) — every seeded role that uses the terminal
+has it, and a custom ACL can omit it (e.g. a files-only member sees no
+Terminal tab at all; opening the workspace at all is gated on
+`join-workspace` instead).
+
 Each user has their own set of terminal tabs. Tabs map 1:1 to tmux
 windows inside the container. All tabs share a single tmux session
 named by your user ID, so switching tabs is instant.
@@ -182,6 +188,7 @@ handles of all current viewers.
 
 | Permission                     | Owners | Coders | Collaborators | Spectators |
 | ------------------------------ | ------ | ------ | ------------- | ---------- |
+| `join-workspace`               | \*     | yes    | yes           | yes        |
 | `terminal`                     | \*     | yes    | yes           | yes        |
 | `code-in-isolation`            | \*     | yes    | yes           |            |
 | `share-terminals`              | \*     |        | yes           |            |

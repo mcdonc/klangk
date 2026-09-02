@@ -358,8 +358,12 @@ class Connection:
             return
 
         principals = await self.app.state.acl.get_principals(self.user["id"])
+        # #2975: ``join-workspace`` is the connect gate — it alone decides
+        # whether the workspace page renders at all. ``terminal`` no longer
+        # gates the handshake; it is the Terminal-tab visibility signal the
+        # frontend reads from my-permissions.
         if not await self.app.state.acl.check_permission(
-            f"/workspaces/{workspace_id}", principals, "terminal"
+            f"/workspaces/{workspace_id}", principals, "join-workspace"
         ):
             # #2891: machine-readable ``forbidden`` so clients can swap
             # the restart/overlay loop for an access-revoked view instead
@@ -470,7 +474,7 @@ class Connection:
             send_error(self.sock, "Not connected to a workspace")
             return
         # Restarting affects everyone in the workspace; require the
-        # #2946 lifecycle permission (terminal is the connect gate only).
+        # #2946 lifecycle permission (join-workspace is the connect gate).
         if not await self.has_perm("restart-workspace"):
             # #2891: same machine-readable refusal as workspace_connect.
             send_error(self.sock, "Permission denied", code="forbidden")

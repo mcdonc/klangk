@@ -84,6 +84,7 @@ class TestRunner:
             (21, "0021_first_class_resource_acls"),
             (22, "0022_workspace_permission_renames"),
             (23, "0023_self_service_resources"),
+            (24, "0024_join_workspace_permission"),
         ]
         async with aiosqlite.connect(str(app_state.state.db.db_path)) as db:
             assert await _recorded(db) == expected
@@ -173,6 +174,7 @@ class TestRunner:
                 (21, "0021_first_class_resource_acls"),
                 (22, "0022_workspace_permission_renames"),
                 (23, "0023_self_service_resources"),
+                (24, "0024_join_workspace_permission"),
             ]
 
     async def test_m0008_agent_identity_and_human_collision(
@@ -2426,5 +2428,219 @@ class TestM0023SelfServiceResources:
             await db.commit()
             await m0023_self_service_resources.migration.apply(db)
             assert await self._rows(db, "/volumes") == [(0, 1, "custom", None)]
+        finally:
+            await db.__aexit__(None, None, None)
+
+
+class TestM0024JoinWorkspacePermission:
+    """m0024 grants ``join-workspace`` alongside every stored ``terminal``
+    row (#2975: the connect gate moves off ``terminal``, which becomes the
+    Terminal-tab visibility signal). The copy must preserve the ACL's
+    first-match-wins answers — Allow AND Deny, on any resource the
+    ancestor walk consults — not just replicate the Allow grants."""
+
+    async def _db(self, tmp_path):
+        db = aiosqlite.connect(str(tmp_path / "m0024.db"))
+        db = await db.__aenter__()
+        await db.execute(
+            "CREATE TABLE acl_entries ("
+            " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            " resource TEXT, position INTEGER, action INTEGER,"
+            " principal_type INTEGER, user_id TEXT, group_id TEXT,"
+            " system_principal INTEGER, permission TEXT,"
+            " UNIQUE(resource, position))"
+        )
+        return db
+
+    async def _rows(self, db, resource, principal_sql=""):
+        cursor = await db.execute(
+            "SELECT permission, action FROM acl_entries"
+            f" WHERE resource = ?{principal_sql} ORDER BY position",
+            (resource,),
+        )
+        return [
+            f"{r[0]}:{'allow' if r[1] == 1 else 'deny'}"
+            for r in await cursor.fetchall()
+        ]
+
+    async def test_copies_terminal_aces_in_place(self, tmp_path):
+        """User and group principals holding Allow ``terminal`` each gain
+        a ``join-workspace`` sibling directly AFTER the source row (later
+        rows shift up); the terminal rows stay (copy, not rename)."""
+        from klangk.model.migrations import m0024_join_workspace_permission
+
+        db = await self._db(tmp_path)
+        try:
+            await db.execute(
+                "INSERT INTO acl_entries"
+                " (resource, position, action, principal_type, user_id,"
+                "  permission)"
+                " VALUES ('/workspaces/ws-1', 0, 1, 1, 'u-1', 'view'),"
+                "        ('/workspaces/ws-1', 1, 1, 1, 'u-1', 'terminal'),"
+                "        ('/workspaces/ws-1', 3, 1, 1, 'u-9', 'other')"
+            )
+            await db.execute(
+                "INSERT INTO acl_entries"
+                " (resource, position, action, principal_type, group_id,"
+                "  permission)"
+                " VALUES ('/workspaces/ws-1', 2, 1, 2, 'g-spec', 'terminal')"
+            )
+            await db.commit()
+            await m0024_join_workspace_permission.migration.apply(db)
+
+            # Sibling lands right after its source; rows above shift up
+            # (the 'other' row moved from 3 to 4 for the u-1 sibling,
+            # then to 5 for the g-spec sibling).
+            assert await self._rows(
+                db, "/workspaces/ws-1", " AND user_id = 'u-1'"
+            ) == ["view:allow", "terminal:allow", "join-workspace:allow"]
+            assert await self._rows(
+                db, "/workspaces/ws-1", " AND user_id = 'u-9'"
+            ) == ["other:allow"]
+            assert await self._rows(
+                db, "/workspaces/ws-1", " AND group_id = 'g-spec'"
+            ) == ["terminal:allow", "join-workspace:allow"]
+            cursor = await db.execute(
+                "SELECT position FROM acl_entries"
+                " WHERE resource = '/workspaces/ws-1' AND user_id = 'u-9'"
+            )
+            assert (await cursor.fetchone())[0] == 5
+            # Idempotent: a re-run inserts nothing.
+            await m0024_join_workspace_permission.migration.apply(db)
+            assert await self._rows(
+                db, "/workspaces/ws-1", " AND user_id = 'u-1'"
+            ) == ["view:allow", "terminal:allow", "join-workspace:allow"]
+        finally:
+            await db.__aexit__(None, None, None)
+
+    async def test_deny_rows_copied_answer_preserved(self, tmp_path):
+        """A Deny ``terminal`` above an Allow used to block the connect
+        gate (first-match-wins); the copied Deny sibling must sit before
+        the copied Allow sibling so the join-workspace query answers the
+        same way the terminal query did (#2891-class review finding)."""
+        from klangk.acl import check_permission_inmemory
+        from klangk.model.migrations import m0024_join_workspace_permission
+
+        db = await self._db(tmp_path)
+        try:
+            await db.execute(
+                "INSERT INTO acl_entries"
+                " (resource, position, action, principal_type, user_id,"
+                "  permission)"
+                " VALUES ('/workspaces/ws-2', 0, 0, 1, 'u-x', 'terminal'),"
+                "        ('/workspaces/ws-2', 1, 1, 1, 'u-x', 'terminal')"
+            )
+            await db.commit()
+
+            async def entries_by_resource():
+                cur = await db.execute(
+                    "SELECT resource, position, action, principal_type,"
+                    " user_id, group_id, system_principal, permission"
+                    " FROM acl_entries ORDER BY resource, position"
+                )
+                out = {}
+                for row in await cur.fetchall():
+                    out.setdefault(row[0], []).append(
+                        {
+                            "position": row[1],
+                            "action": row[2],
+                            "principal_type": row[3],
+                            "user_id": row[4],
+                            "group_id": row[5],
+                            "system_principal": row[6],
+                            "permission": row[7],
+                        }
+                    )
+                return out
+
+            principals = {
+                "user_id": "u-x",
+                "group_ids": [],
+                "authenticated": True,
+            }
+            entries = await entries_by_resource()
+            assert not check_permission_inmemory(
+                "/workspaces/ws-2", principals, "terminal", entries
+            )
+            await m0024_join_workspace_permission.migration.apply(db)
+            entries = await entries_by_resource()
+            assert not check_permission_inmemory(
+                "/workspaces/ws-2", principals, "join-workspace", entries
+            ), "Deny-above-Allow order must be preserved by the copy"
+            # Row order: deny-term, deny-join, allow-term, allow-join.
+            assert await self._rows(
+                db, "/workspaces/ws-2", " AND user_id = 'u-x'"
+            ) == [
+                "terminal:deny",
+                "join-workspace:deny",
+                "terminal:allow",
+                "join-workspace:allow",
+            ]
+        finally:
+            await db.__aexit__(None, None, None)
+
+    async def test_ancestor_resource_terminal_gets_sibling(self, tmp_path):
+        """An Allow ``terminal`` on the collection ``/workspaces``
+        answered the old gate through the ancestor walk; the copy must
+        not be scoped to the per-workspace GLOB or those deployments
+        lock out on upgrade."""
+        from klangk.model.migrations import m0024_join_workspace_permission
+
+        db = await self._db(tmp_path)
+        try:
+            await db.execute(
+                "INSERT INTO acl_entries"
+                " (resource, position, action, principal_type,"
+                "  system_principal, permission)"
+                " VALUES ('/workspaces', 0, 1, 0, 1, 'terminal'),"
+                "        ('/', 1, 1, 0, 1, 'terminal')"
+            )
+            await db.commit()
+            await m0024_join_workspace_permission.migration.apply(db)
+            assert await self._rows(db, "/workspaces") == [
+                "terminal:allow",
+                "join-workspace:allow",
+            ]
+            assert await self._rows(db, "/") == [
+                "terminal:allow",
+                "join-workspace:allow",
+            ]
+        finally:
+            await db.__aexit__(None, None, None)
+
+    async def test_existing_join_rows_left_alone(self, tmp_path):
+        """A principal who already holds ``join-workspace`` on the
+        resource (a pre-migrated or hand-built shape) gets no second
+        sibling, and their row order is otherwise untouched."""
+        from klangk.model.migrations import m0024_join_workspace_permission
+
+        db = await self._db(tmp_path)
+        try:
+            await db.execute(
+                "INSERT INTO acl_entries"
+                " (resource, position, action, principal_type, user_id,"
+                "  permission)"
+                " VALUES ('/workspaces/ws-3', 0, 1, 1, 'u-done',"
+                "         'join-workspace'),"
+                "        ('/workspaces/ws-3', 1, 1, 1, 'u-done', 'terminal')"
+            )
+            await db.commit()
+            await m0024_join_workspace_permission.migration.apply(db)
+            assert await self._rows(
+                db, "/workspaces/ws-3", " AND user_id = 'u-done'"
+            ) == ["join-workspace:allow", "terminal:allow"]
+        finally:
+            await db.__aexit__(None, None, None)
+
+    async def test_fresh_db_is_noop(self, tmp_path):
+        """An empty acl_entries table belongs to the boot seeds, which
+        already grant join-workspace alongside terminal."""
+        from klangk.model.migrations import m0024_join_workspace_permission
+
+        db = await self._db(tmp_path)
+        try:
+            await m0024_join_workspace_permission.migration.apply(db)
+            cursor = await db.execute("SELECT COUNT(*) FROM acl_entries")
+            assert (await cursor.fetchone())[0] == 0
         finally:
             await db.__aexit__(None, None, None)
