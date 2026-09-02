@@ -1042,9 +1042,12 @@ class TerminalController:
         if not self._conn.container_id or not self._conn._user_home:
             return
         # #3022: own-window frames exec into the container targeting the
-        # caller's tmux session. For a spectator holding a grouped joiner
-        # session that session EXISTS, and tmux groups share windows — an
-        # ungated new_window would inject a window into the shared group.
+        # caller's tmux session by its bare name (``user_id``). A
+        # spectator's joiner session is named ``user_id-<hex>`` and tmux
+        # ``-t`` PREFIX-matches, so the bare name resolves into the
+        # joiner's GROUPED session — whose window list is the group's,
+        # i.e. the owner's. An ungated new_window injects a window into
+        # the owner's session.
         if await refused_without_perm(self._conn, "code-in-isolation"):
             return
 
@@ -1104,9 +1107,10 @@ class TerminalController:
     async def close_window(self, msg: dict) -> None:
         if not self._conn.container_id or not self._conn._user_home:
             return
-        # #3022: closing a window of a grouped (shared) joiner session
-        # closes it for the whole group — spectators must not be able to
-        # kill the owner's windows.
+        # #3022: closing a window of a spectator's grouped joiner session
+        # (reached via tmux's prefix-matching ``-t``) closes it for the
+        # whole group — spectators must not be able to kill the owner's
+        # windows.
         if await refused_without_perm(self._conn, "code-in-isolation"):
             return
 
@@ -1139,7 +1143,8 @@ class TerminalController:
     async def rename_window(self, msg: dict) -> None:
         if not self._conn.container_id or not self._conn._user_home:
             return
-        # #3022: renaming rewrites the group's window list for everyone.
+        # #3022: renaming rewrites the group's shared window list for
+        # everyone (tmux ``-t`` prefix-matches into the joiner session).
         if await refused_without_perm(self._conn, "code-in-isolation"):
             return
 

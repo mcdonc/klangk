@@ -7191,7 +7191,10 @@ class TestJoinOnlyMemberFrameGates:
         assert len(refusals) == 5
         for frame in refusals:
             assert frame["message"] == "Permission denied"
-            assert frame["code"] == "forbidden"
+            # Deliberately code-less: a stamped `forbidden` would make
+            # the frontend swap the whole page for the access-revoked
+            # view (#2891 reserves that code for connect-level refusals).
+            assert "code" not in frame
 
     async def test_ssh_agent_start_refused(self):
         """No own-terminal/exec permission → no relay spawned in the
@@ -7206,7 +7209,7 @@ class TestJoinOnlyMemberFrameGates:
         spawn.assert_not_called()
         frame = sock.send_json.call_args[0][0]
         assert frame["message"] == "Permission denied"
-        assert frame["code"] == "forbidden"
+        assert "code" not in frame
         assert conn.ssh_agent.proc is None
 
     async def test_ssh_agent_start_allowed_for_exec_only_member(self):
@@ -7237,6 +7240,44 @@ class TestJoinOnlyMemberFrameGates:
             await conn.ssh_agent.task
         msg = sock.send_json.call_args[0][0]
         assert msg["type"] == "ssh_agent_started"
+
+    async def test_join_only_member_refused_via_real_acl(
+        self, user, app_state
+    ):
+        """The gate walks the REAL ACL, not the has_perm override — pins
+        the permission string against a typo (a misspelled name would
+        silently deny seeded roles instead). Mirrors the #2975
+        connect-gate tests: stored ACEs, no overrides."""
+        from klangk import model
+
+        sock = _mock_sock()
+        member = await app_state.state.model.users.create_user(
+            "join-only@example.com", "pw", verified=True
+        )
+        workspace = await _create_workspace_with_acl(
+            app_state, user["id"], "join-only-real-acl"
+        )
+        # Stored grants: exactly the connect gate, nothing else.
+        await app_state.state.model.acl.add_acl_entry(
+            f"/workspaces/{workspace['id']}",
+            100,
+            model.ACTION_ALLOW,
+            "join-workspace",
+            model.PRINCIPAL_USER,
+            user_id=member["id"],
+        )
+        conn = _base_conn(user=member, ws=sock, app_state=app_state)
+        conn.workspace_id = workspace["id"]
+        conn.container_id = "cid"
+        conn._user_home = "/home/joinonly"
+
+        with patch.object(_mock_term, "new_window", new=AsyncMock()) as mock:
+            await conn.handle_terminal_new_window({})
+        mock.assert_not_called()
+        frame = sock.send_json.call_args[0][0]
+        assert frame["type"] == "error"
+        assert frame["message"] == "Permission denied"
+        assert "code" not in frame
 
 
 class TestTerminalController:

@@ -252,13 +252,15 @@ operators or integrators to act when upgrading.
   `rename_window`/`list_windows`) ran tmux against the caller's
   session — which, for a spectator viewing a shared terminal, is a
   grouped session whose windows belong to the whole group (they could
-  inject or close the owner's windows). All six frames now refuse with
-  machine-readable `forbidden` unless the caller holds
-  `code-in-isolation` (window frames) or either `code-in-isolation`
-  or `exec-and-sync` (the agent relay, which both session kinds
-  consume). Seeded roles are unaffected: every role that could use
-  these frames already holds the permissions, and the web UI already
-  hid them.
+  inject or close the owner's windows). All six frames now refuse
+  with a plain `Permission denied` error frame (deliberately not the
+  `forbidden` code, which #2891 reserves for connect-level refusals —
+  a stamped sub-action denial would dead-end the whole workspace
+  page) unless the caller holds `code-in-isolation` (window frames)
+  or either `code-in-isolation` or `exec-and-sync` (the agent relay,
+  which both session kinds consume). Seeded roles are unaffected:
+  every role whose clients send these frames already holds the
+  permissions, and the web UI already hid them.
 
 - **Workspace-mount volume-source validation (#3018).** A mount
   source with no `/` that doesn't start with `.` is a named volume,

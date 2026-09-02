@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING
 from ..container import workspace_container_name, workspace_name_slug
 
 if TYPE_CHECKING:
+    from .connection import Connection
     from .safe_websocket import SafeWebSocket
     from .session import WebSocketState, WorkspaceSession
 
@@ -208,7 +209,7 @@ def send_error(
     sock.send_json(msg)
 
 
-async def refused_without_perm(conn, *perms: str) -> bool:
+async def refused_without_perm(conn: "Connection", *perms: str) -> bool:
     """Refuse a frame unless the connection holds one of *perms*.
 
     The per-frame defense-in-depth gate for commands whose only historic
@@ -216,14 +217,21 @@ async def refused_without_perm(conn, *perms: str) -> bool:
     ``terminal`` (#3022): with ``join-workspace`` as the connect gate, a
     join-only member (or a spectator whose grouped joiner session exists
     after ``join_shared_terminal``) can reach the socket, so frames that
-    exec into the container must carry their own check. Sends the
-    machine-readable ``forbidden`` refusal (#2891) and returns True when
-    the connection lacks every listed permission; returns False (and
-    sends nothing) when any one is held, so callers write
+    exec into the container must carry their own check. Sends a plain
+    code-less ``Permission denied`` and returns True when the connection
+    lacks every listed permission; returns False (and sends nothing) when
+    any one is held, so callers write
     ``if await refused_without_perm(...): return``.
+
+    Deliberately NOT stamped with the machine-readable ``forbidden``
+    code: that code is reserved for connect-level refusals
+    (``workspace_connect`` / ``restart_container``) because the frontend
+    classifies any ``forbidden`` frame as an irrevocable dead-end and
+    swaps the whole page for the access-revoked view (#2891) — a
+    sub-action denial must leave the rest of the page working.
     """
     for perm in perms:
         if await conn.has_perm(perm):
             return False
-    send_error(conn.sock, "Permission denied", code="forbidden")
+    send_error(conn.sock, "Permission denied")
     return True
