@@ -216,22 +216,7 @@ class _ServerSchedulePanelState extends State<ServerSchedulePanel> {
         tooltip: 'Schedule server action',
         child: const Icon(Icons.add_alarm),
       ),
-      body: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-            child: Text(
-              'A stop exits the server process (the service manager decides '
-              'what happens next); a recycle rebuilds it in place. Every '
-              'connected client sees a countdown while a schedule is pending.',
-              style:
-                  const TextStyle(color: KColors.textSecondary, fontSize: 12),
-            ),
-          ),
-          Expanded(child: _buildList(sorted, hasLive: live != null)),
-        ],
-      ),
+      body: _buildList(sorted, hasLive: live != null),
     );
   }
 
