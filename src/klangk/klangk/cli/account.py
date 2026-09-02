@@ -26,6 +26,39 @@ EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _DEFAULT_MIN_PASSWORD = 8
 
 
+# Ordered (fails, error) checks — the same order as the server's
+# ``validate_handle`` so the error message for any input matches.
+HANDLE_CHECKS = [
+    (
+        lambda h: not h,
+        lambda h: "Handle cannot be empty",
+    ),
+    (
+        lambda h: len(h) > MAX_HANDLE_LEN,
+        lambda h: f"Handle must be {MAX_HANDLE_LEN} characters or fewer",
+    ),
+    (
+        lambda h: h.startswith("."),
+        lambda h: "Handle cannot start with a dot",
+    ),
+    (
+        lambda h: h in RESERVED_HANDLES,
+        lambda h: f"'{h}' is reserved",
+    ),
+    (
+        lambda h: h != h.lower(),
+        lambda h: "Handle must be lowercase",
+    ),
+    (
+        lambda h: not HANDLE_RE.match(h),
+        lambda h: (
+            "Handle may only contain lowercase letters, digits,"
+            " dots, dashes, and underscores"
+        ),
+    ),
+]
+
+
 def validate_handle(handle: str) -> str | None:
     """Return an error message if *handle* is invalid, else ``None``.
 
@@ -36,21 +69,9 @@ def validate_handle(handle: str) -> str | None:
     given input matches.
     """
     handle = (handle or "").strip()
-    if not handle:
-        return "Handle cannot be empty"
-    if len(handle) > MAX_HANDLE_LEN:
-        return f"Handle must be {MAX_HANDLE_LEN} characters or fewer"
-    if handle.startswith("."):
-        return "Handle cannot start with a dot"
-    if handle in RESERVED_HANDLES:
-        return f"'{handle}' is reserved"
-    if handle != handle.lower():
-        return "Handle must be lowercase"
-    if not HANDLE_RE.match(handle):
-        return (
-            "Handle may only contain lowercase letters, digits,"
-            " dots, dashes, and underscores"
-        )
+    for fails, error in HANDLE_CHECKS:
+        if fails(handle):
+            return error(handle)
     return None
 
 
@@ -81,22 +102,32 @@ class PasswordPolicy(NamedTuple):
         server and the web UI.
         """
         counts = _class_requirements_met(password, self.requirements)
-        unmet = [
-            f"at least {need} {name}{'s' if need != 1 else ''}"
-            for name, (have, need) in counts.items()
-            if need > 0 and have < need
-        ]
+        unmet = unmet_class_messages(counts)
         if unmet:
             return f"Password must contain {', '.join(unmet)}"
         return None
 
 
+def unmet_class_messages(counts: dict) -> list[str]:
+    """Human-readable messages for each unmet character-class requirement."""
+    return [
+        f"at least {need} {name}{'s' if need != 1 else ''}"
+        for name, (have, need) in counts.items()
+        if need > 0 and have < need
+    ]
+
+
+def class_count(password: str, low: str, high: str) -> int:
+    """How many characters fall in the ``[low, high]`` ASCII range."""
+    return sum(1 for c in password if low <= c <= high)
+
+
 def _class_requirements_met(password: str, requirements: dict) -> dict:
     """name -> (have, need) for each ASCII character class (A-Z, a-z, 0-9,
     everything else special) — matching the server's classes."""
-    upper = sum(1 for c in password if "A" <= c <= "Z")
-    lower = sum(1 for c in password if "a" <= c <= "z")
-    digit = sum(1 for c in password if "0" <= c <= "9")
+    upper = class_count(password, "A", "Z")
+    lower = class_count(password, "a", "z")
+    digit = class_count(password, "0", "9")
     special = len(password) - upper - lower - digit
     return {
         "uppercase letter": (upper, requirements.get("upper", 0)),
@@ -104,6 +135,36 @@ def _class_requirements_met(password: str, requirements: dict) -> dict:
         "digit": (digit, requirements.get("digit", 0)),
         "special character": (special, requirements.get("special", 0)),
     }
+
+
+_DEFAULT_REQUIREMENTS = {"upper": 0, "lower": 0, "digit": 0, "special": 0}
+
+
+def default_policy() -> PasswordPolicy:
+    """The permissive fallback policy (length 8, no class requirements)."""
+    return PasswordPolicy(_DEFAULT_MIN_PASSWORD, dict(_DEFAULT_REQUIREMENTS))
+
+
+def parsed_min_length(config: dict) -> int:
+    """The advertised min password length, or the default when unparseable."""
+    try:
+        return int(config.get("min_password_length") or _DEFAULT_MIN_PASSWORD)
+    except (TypeError, ValueError):
+        return _DEFAULT_MIN_PASSWORD
+
+
+def parsed_requirements(config: dict) -> dict:
+    """The advertised class requirements (0s when absent or unparseable)."""
+    requirements = dict(_DEFAULT_REQUIREMENTS)
+    reqs = config.get("password_requirements")
+    if not isinstance(reqs, dict):
+        return requirements
+    for key in requirements:
+        try:
+            requirements[key] = int(reqs.get(key) or 0)
+        except (TypeError, ValueError):
+            pass
+    return requirements
 
 
 def password_policy(server_url: str) -> PasswordPolicy:
@@ -115,20 +176,8 @@ def password_policy(server_url: str) -> PasswordPolicy:
     server enforces its own policy authoritatively either way.
     """
     config = fetch_config(server_url)
-    min_length = _DEFAULT_MIN_PASSWORD
-    requirements = {"upper": 0, "lower": 0, "digit": 0, "special": 0}
-    if isinstance(config, dict):
-        try:
-            min_length = int(
-                config.get("min_password_length") or _DEFAULT_MIN_PASSWORD
-            )
-        except (TypeError, ValueError):
-            pass
-        reqs = config.get("password_requirements")
-        if isinstance(reqs, dict):
-            for key in requirements:
-                try:
-                    requirements[key] = int(reqs.get(key) or 0)
-                except (TypeError, ValueError):
-                    pass
-    return PasswordPolicy(min_length, requirements)
+    if not isinstance(config, dict):
+        return default_policy()
+    return PasswordPolicy(
+        parsed_min_length(config), parsed_requirements(config)
+    )

@@ -81,6 +81,55 @@ def short_id(ws_id: str) -> str:
     return f"{ws_id[:3]}…{ws_id[-3:]}"
 
 
+def fetch_shared_workspaces(
+    client, shared: bool, limit, all_pages, sort, order, q
+):
+    """Shared-with-me workspaces when requested, else empty."""
+    if not shared:
+        return []
+    return client.list_shared_workspaces(
+        limit=limit, all_pages=all_pages, sort=sort, order=order, q=q
+    )
+
+
+def workspace_row(ws, shared: bool) -> list[str]:
+    """One rich-table row for an owned workspace."""
+    _, markup = workspace_status(ws)
+    row = [ws.name, short_id(ws.id), markup, ws.created_at[:10]]
+    if shared:
+        row.append("")
+    return row
+
+
+def shared_workspace_row(ws) -> list[str]:
+    """One rich-table row for a shared-with-me workspace (with owner)."""
+    _, markup = workspace_status(ws)
+    return [
+        ws.name,
+        short_id(ws.id),
+        markup,
+        ws.created_at[:10],
+        ws.owner_email or "",
+    ]
+
+
+def print_workspace_table(workspaces, shared_workspaces, shared: bool) -> None:
+    """The rich-table listing (owned workspaces, then shared-with-me)."""
+    console = Console()
+    table = Table(box=None, pad_edge=False)
+    table.add_column("Name", style="bold")
+    table.add_column("ID")
+    table.add_column("Status")
+    table.add_column("Created")
+    if shared:
+        table.add_column("Owner")
+    for ws in workspaces:
+        table.add_row(*workspace_row(ws, shared))
+    for ws in shared_workspaces:
+        table.add_row(*shared_workspace_row(ws))
+    console.print(table)
+
+
 @context.app.command("ls")
 def list_workspaces(
     plain: bool = typer.Option(False, "--plain", help="Plain text output"),
@@ -124,16 +173,8 @@ def list_workspaces(
         order=order,
         q=filter,
     )
-    shared_workspaces = (
-        client.list_shared_workspaces(
-            limit=limit,
-            all_pages=all_workspaces,
-            sort=sort,
-            order=order,
-            q=filter,
-        )
-        if shared
-        else []
+    shared_workspaces = fetch_shared_workspaces(
+        client, shared, limit, all_workspaces, sort, order, filter
     )
     if not workspaces and not shared_workspaces:
         typer.echo("No workspaces found.")
@@ -141,31 +182,7 @@ def list_workspaces(
     if plain:
         _print_plain_listing(workspaces, shared_workspaces)
         return
-    console = Console()
-    table = Table(box=None, pad_edge=False)
-    table.add_column("Name", style="bold")
-    table.add_column("ID")
-    table.add_column("Status")
-    table.add_column("Created")
-    if shared:
-        table.add_column("Owner")
-    for ws in workspaces:
-        _, markup = workspace_status(ws)
-        row = [ws.name, short_id(ws.id), markup, ws.created_at[:10]]
-        if shared:
-            row.append("")
-        table.add_row(*row)
-    for ws in shared_workspaces:
-        _, markup = workspace_status(ws)
-        row = [
-            ws.name,
-            short_id(ws.id),
-            markup,
-            ws.created_at[:10],
-            ws.owner_email or "",
-        ]
-        table.add_row(*row)
-    console.print(table)
+    print_workspace_table(workspaces, shared_workspaces, shared)
 
 
 def _print_plain_listing(workspaces, shared_workspaces) -> None:
@@ -186,28 +203,66 @@ def _print_plain_listing(workspaces, shared_workspaces) -> None:
             )
 
 
+def validated_or_exit(specs: list[str], validate) -> None:
+    """Exit 1 on the first invalid spec in a repeatable-flag list."""
+    for spec in specs:
+        err = validate(spec)
+        if err:
+            context.err.print(f"[red]{err}[/red]")
+            raise typer.Exit(code=1)
+
+
 def validate_create_specs(mount, allow, reject) -> None:
     """Validate repeatable create options up front; exits 1 on the first
     invalid spec."""
     if isinstance(mount, list):
-        for m in mount:
-            err = validate_mount_spec(m)
-            if err:
-                context.err.print(f"[red]{err}[/red]")
-                raise typer.Exit(code=1)
+        validated_or_exit(mount, validate_mount_spec)
     if isinstance(allow, list):
-        for spec in allow:
-            err = validate_allowed_domain_spec(spec)
-            if err:
-                context.err.print(f"[red]{err}[/red]")
-                raise typer.Exit(code=1)
+        validated_or_exit(allow, validate_allowed_domain_spec)
     if isinstance(reject, list):
-        for spec in reject:
-            # CIDR is meaningless for a name-level NXDOMAIN deny-list (#2367).
-            err = validate_allowed_domain_spec(spec, allow_cidr=False)
-            if err:
-                context.err.print(f"[red]{err}[/red]")
-                raise typer.Exit(code=1)
+        # CIDR is meaningless for a name-level NXDOMAIN deny-list (#2367).
+        validated_or_exit(
+            reject,
+            lambda spec: validate_allowed_domain_spec(spec, allow_cidr=False),
+        )
+
+
+def create_workspace_or_exit(
+    client,
+    name,
+    *,
+    image,
+    command,
+    auto_start,
+    mount,
+    env_dict,
+    health_check,
+    allow,
+    reject,
+    settings,
+    per_handle_home,
+    classification_banner,
+):
+    """Create the workspace, exiting 1 with the server's detail on failure."""
+    try:
+        return client.create_workspace(
+            name,
+            image=image,
+            service_command=command,
+            auto_start=auto_start,
+            mounts=mount or None,
+            env=env_dict,
+            health_check=health_check,
+            allowed_domains=allow or None,
+            rejected_domains=reject or None,
+            settings=settings,
+            per_handle_home=per_handle_home,
+            classification_banner=classification_banner,
+        )
+    except httpx.HTTPStatusError as exc:
+        detail = exc.response.json().get("detail", exc.response.text)
+        context.err.print(f"[red]Failed to create workspace:[/red] {detail}")
+        raise typer.Exit(code=1) from None
 
 
 @context.app.command()
@@ -279,25 +334,21 @@ def create(
     settings = build_settings(
         idle_timeout, cpu_limit, memory_limit, pids_limit, allow_sudo
     )
-    try:
-        ws = context.client().create_workspace(
-            name,
-            image=image,
-            service_command=command,
-            auto_start=auto_start,
-            mounts=mount or None,
-            env=env_dict,
-            health_check=health_check,
-            allowed_domains=allow or None,
-            rejected_domains=reject or None,
-            settings=settings,
-            per_handle_home=per_handle_home,
-            classification_banner=classification_banner,
-        )
-    except httpx.HTTPStatusError as exc:
-        detail = exc.response.json().get("detail", exc.response.text)
-        context.err.print(f"[red]Failed to create workspace:[/red] {detail}")
-        raise typer.Exit(code=1) from None
+    ws = create_workspace_or_exit(
+        context.client(),
+        name,
+        image=image,
+        command=command,
+        auto_start=auto_start,
+        mount=mount,
+        env_dict=env_dict,
+        health_check=health_check,
+        allow=allow,
+        reject=reject,
+        settings=settings,
+        per_handle_home=per_handle_home,
+        classification_banner=classification_banner,
+    )
     _out = Console()
     _out.print(f"Created workspace [bold]{name}[/bold] ({ws.id[:12]})")
 
@@ -404,6 +455,31 @@ def start(
     run_workspace_action(name, "start_workspace", "Started")
 
 
+def unique_export_path(name: str, output: Path | None) -> Path:
+    """The export output path; a default name avoids overwriting a file."""
+    out_path = output or Path(f"{name}.tar.gz")
+    if out_path.exists() and output is None:
+        # Don't overwrite — find a unique name
+        stem = name
+        n = 1
+        while out_path.exists():
+            out_path = Path(f"{stem}-{n}.tar.gz")
+            n += 1
+    return out_path
+
+
+def export_error(e: httpx.HTTPStatusError) -> None:
+    """Print the export failure (403 gets the permission hint) and exit."""
+    if e.response.status_code == 403:
+        context.err.print(
+            "[red]Export failed:[/red] permission denied — you need"
+            " the export permission on this workspace"
+        )
+    else:
+        context.err.print(f"[red]Export failed:[/red] {e.response.text}")
+    raise typer.Exit(code=1) from None
+
+
 @context.app.command("export")
 def export_workspace(
     name: str = typer.Argument(..., help="Workspace name"),
@@ -415,14 +491,7 @@ def export_workspace(
     context.require_auth()
     client = context.client()
     ws = context.resolve_or_exit(client, name)
-    out_path = output or Path(f"{name}.tar.gz")
-    if out_path.exists() and output is None:
-        # Don't overwrite — find a unique name
-        stem = name
-        n = 1
-        while out_path.exists():
-            out_path = Path(f"{stem}-{n}.tar.gz")
-            n += 1
+    out_path = unique_export_path(name, output)
     try:
 
         class _EstDownloadColumn(DownloadColumn):
@@ -466,14 +535,7 @@ def export_workspace(
                 final = progress.tasks[task_id].completed
                 progress.update(task_id, total=final, completed=final)
     except httpx.HTTPStatusError as e:
-        if e.response.status_code == 403:
-            context.err.print(
-                "[red]Export failed:[/red] permission denied — you need"
-                " the export permission on this workspace"
-            )
-        else:
-            context.err.print(f"[red]Export failed:[/red] {e.response.text}")
-        raise typer.Exit(code=1) from None
+        export_error(e)
     _out = Console()
     _out.print(f"Exported [bold]{name}[/bold] → {out_path}")
 
@@ -538,21 +600,20 @@ def build_settings(
     allow_sudo: bool | None = None,
 ) -> dict | None:
     """Build a workspace settings dict from CLI flags, or None if all unset."""
-    settings: dict = {}
-    if idle_timeout is not None:
-        settings["idle_timeout"] = idle_timeout
-    if cpu_limit is not None:
-        settings["cpu_limit"] = cpu_limit
-    if memory_limit is not None:
-        settings["memory_limit"] = memory_limit
-    if pids_limit is not None:
-        settings["pids_limit"] = pids_limit
-    # #2017: None (flag omitted) leaves the bag untouched — the workspace
-    # follows the deploy posture. False locks the workspace down; True is
-    # the explicit "follow the server" (the server setting is a ceiling,
-    # so True can never raise sudo above the deploy default).
-    if allow_sudo is not None:
-        settings["allow_sudo"] = allow_sudo
+    values = {
+        "idle_timeout": idle_timeout,
+        "cpu_limit": cpu_limit,
+        "memory_limit": memory_limit,
+        "pids_limit": pids_limit,
+        # #2017: None (flag omitted) leaves the bag untouched — the workspace
+        # follows the deploy posture. False locks the workspace down; True is
+        # the explicit "follow the server" (the server setting is a ceiling,
+        # so True can never raise sudo above the deploy default).
+        "allow_sudo": allow_sudo,
+    }
+    settings = {
+        key: value for key, value in values.items() if value is not None
+    }
     return settings or None
 
 
