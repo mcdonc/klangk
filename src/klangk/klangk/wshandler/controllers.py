@@ -292,20 +292,24 @@ class SshAgentForwarder:
         if proc is None or proc.stdout is None:
             return
         try:
-            while True:
-                data = await proc.stdout.read(65536)
-                if not data:
-                    break
-                self._conn.sock.send_json(
-                    {
-                        "type": "ssh_agent_response",
-                        "data": base64.b64encode(data).decode("ascii"),
-                    }
-                )
+            await self._relay_stream(proc.stdout)
         except asyncio.CancelledError:
             logger.debug("SSH agent output relay cancelled")
         except OSError as e:
             logger.warning("SSH agent output relay error: %s", e)
+
+    async def _relay_stream(self, stdout) -> None:
+        """Relay socat stdout frames to the client, base64-encoded."""
+        while True:
+            data = await stdout.read(65536)
+            if not data:
+                break
+            self._conn.sock.send_json(
+                {
+                    "type": "ssh_agent_response",
+                    "data": base64.b64encode(data).decode("ascii"),
+                }
+            )
 
     async def data(self, msg: dict) -> None:
         """Write data from the CLI's local agent into socat stdin."""
@@ -325,20 +329,8 @@ class SshAgentForwarder:
 
     async def stop(self) -> None:
         """Clean up the SSH agent relay process."""
-        if self.task is not None:
-            self.task.cancel()
-            try:
-                await self.task
-            except asyncio.CancelledError:
-                pass
-            self.task = None
-        if self.proc is not None:
-            try:
-                self.proc.kill()
-                await self.proc.wait()
-            except ProcessLookupError:
-                logger.debug("SSH agent process already exited")
-            self.proc = None
+        await self._cancel_task()
+        await self._kill_proc()
         container_id = self._conn.container_id
         # Reap the in-container socat directly. ``proc.kill()`` above sends
         # SIGKILL to the local ``podman exec`` handle, which does NOT reliably
@@ -349,29 +341,56 @@ class SshAgentForwarder:
         # (same ``pkill -f`` ``start()`` uses) guarantees the container-side
         # process is gone before we remove the socket (#2001).
         if self.socket and container_id:
-            # Best-effort teardown: a failure here (container already gone,
-            # podman subprocess can't launch) must not break disconnect.
-            # ``exec_container`` runs ``check=False`` so non-zero exits don't
-            # raise; this catches the remaining launch/IO failures.
-            try:
-                await self._conn.app.state.podman.exec_container(
-                    container_id,
-                    ["pkill", "-f", f"UNIX-LISTEN:{self.socket}"],
-                )
-            except Exception as e:  # best-effort reap
-                logger.debug("Failed to reap SSH agent socat: %s", e)
-            try:
-                await self._conn.app.state.podman.exec_container(
-                    container_id,
-                    ["rm", "-f", self.socket],
-                )
-            except Exception as e:
-                logger.warning(
-                    "Failed to remove SSH agent socket %s: %s",
-                    self.socket,
-                    e,
-                )
+            await self._reap_container_socat(container_id)
         self.socket = None
+
+    async def _cancel_task(self) -> None:
+        """Cancel and await the output-forwarding task."""
+        if self.task is None:
+            return
+        self.task.cancel()
+        try:
+            await self.task
+        except asyncio.CancelledError:
+            pass
+        self.task = None
+
+    async def _kill_proc(self) -> None:
+        """Kill the local podman-exec handle (already-exited is fine)."""
+        if self.proc is None:
+            return
+        try:
+            self.proc.kill()
+            await self.proc.wait()
+        except ProcessLookupError:
+            logger.debug("SSH agent process already exited")
+        self.proc = None
+
+    async def _reap_container_socat(self, container_id: str) -> None:
+        """Kill the in-container socat listener and remove the socket.
+
+        Best-effort teardown: a failure here (container already gone,
+        podman subprocess can't launch) must not break disconnect.
+        ``exec_container`` runs ``check=False`` so non-zero exits don't
+        raise; this catches the remaining launch/IO failures."""
+        try:
+            await self._conn.app.state.podman.exec_container(
+                container_id,
+                ["pkill", "-f", f"UNIX-LISTEN:{self.socket}"],
+            )
+        except Exception as e:  # best-effort reap
+            logger.debug("Failed to reap SSH agent socat: %s", e)
+        try:
+            await self._conn.app.state.podman.exec_container(
+                container_id,
+                ["rm", "-f", self.socket],
+            )
+        except Exception as e:
+            logger.warning(
+                "Failed to remove SSH agent socket %s: %s",
+                self.socket,
+                e,
+            )
 
 
 class ExecController:
@@ -502,10 +521,7 @@ class ExecController:
                         "data": base64.b64encode(data).decode("ascii"),
                     }
                 )
-                if self._conn.container_id:
-                    self._conn.app.state.container_registry.record_activity(
-                        self._conn.container_id
-                    )
+                self._record_activity()
             # Process exited — send exit code
             self._conn.sock.send_json(
                 {
@@ -521,6 +537,13 @@ class ExecController:
             logger.error("Exec output forwarding error: %s", e)
         finally:
             await self.claim_and_stop()
+
+    def _record_activity(self) -> None:
+        """Record container activity when a container is attached."""
+        if self._conn.container_id:
+            self._conn.app.state.container_registry.record_activity(
+                self._conn.container_id
+            )
 
 
 class TerminalController:
@@ -718,17 +741,8 @@ class TerminalController:
         if not self._conn.container_id:
             logger.info("handle_terminal_start: no container_id, skipping")
             return
-        # Debounce: if the last terminal start was very recent, skip.
-        # This prevents rapid retry loops when the PTY exits immediately.
-        now = time.monotonic()
-        if hasattr(self._conn, "_last_terminal_start"):
-            if now - self._conn._last_terminal_start < 2.0:
-                logger.warning(
-                    "Ignoring rapid terminal_start (%.1fs since last)",
-                    now - self._conn._last_terminal_start,
-                )
-                return
-        self._conn._last_terminal_start = now
+        if self._recently_started():
+            return
         if self._conn._user_home is None:
             send_error(self._conn.sock, "Handle not set")
             return
@@ -758,26 +772,7 @@ class TerminalController:
         # interactive shell now; the service command is fired separately
         # in ``_start_terminal`` (after the shell session is up) so a
         # post-setup ``terminal_start`` still triggers it (#1033).
-        ws = self._conn.workspace
-        # Wire SSH_AUTH_SOCK to the deterministic per-user agent-socket path
-        # on EVERY terminal, whether or not a relay is active yet (#2001).
-        # The var is inert until a relay binds this path (which only happens
-        # when the client opts into forwarding), so pre-pointing it here means
-        # a base session created before the relay starts — the TUI path opens
-        # the tmux session, then spawns `klangk shell -A` which starts the
-        # relay — already has it set, and goes live the moment the relay binds.
-        # A reconnect to an existing session inherits it from that first
-        # creation. No per-creation-path special-casing.
-        session = TerminalSession(
-            self._conn.container_id,
-            session_name=self._conn.user["id"],
-            user_home=self._conn._user_home,
-            user_id=self._conn.user["id"],
-            user_handle=self._conn.user.get("handle"),
-            ssh_agent_socket=ssh_agent_socket_path(self._conn.user["id"]),
-            terminal=self._conn.app.state.terminal,
-            workspace_name=ws.get("name") if ws else None,
-        )
+        session = self._new_session()
 
         browser_id = msg.get("browser_id")
         self._register_browser(browser_id)
@@ -868,6 +863,45 @@ class TerminalController:
 
         self.task = asyncio.create_task(_start_terminal())
 
+    def _recently_started(self) -> bool:
+        """True when the last terminal start was very recent — skip, to
+        prevent rapid retry loops when the PTY exits immediately."""
+        now = time.monotonic()
+        if hasattr(self._conn, "_last_terminal_start"):
+            if now - self._conn._last_terminal_start < 2.0:
+                logger.warning(
+                    "Ignoring rapid terminal_start (%.1fs since last)",
+                    now - self._conn._last_terminal_start,
+                )
+                return True
+        self._conn._last_terminal_start = now
+        return False
+
+    def _new_session(self) -> TerminalSession:
+        """A TerminalSession for this connection's interactive shell.
+
+        Wires SSH_AUTH_SOCK to the deterministic per-user agent-socket
+        path on EVERY terminal, whether or not a relay is active yet
+        (#2001): the var is inert until a relay binds this path (which
+        only happens when the client opts into forwarding), so
+        pre-pointing it here means a base session created before the
+        relay starts — the TUI path opens the tmux session, then spawns
+        `klangk shell -A` which starts the relay — already has it set,
+        and goes live the moment the relay binds. A reconnect to an
+        existing session inherits it from that first creation. No
+        per-creation-path special-casing."""
+        ws = self._conn.workspace
+        return TerminalSession(
+            self._conn.container_id,
+            session_name=self._conn.user["id"],
+            user_home=self._conn._user_home,
+            user_id=self._conn.user["id"],
+            user_handle=self._conn.user.get("handle"),
+            ssh_agent_socket=ssh_agent_socket_path(self._conn.user["id"]),
+            terminal=self._conn.app.state.terminal,
+            workspace_name=ws.get("name") if ws else None,
+        )
+
     async def browser_reattach(self, msg: dict) -> None:
         """Re-register the browser ID and update the container's tmux env.
 
@@ -907,30 +941,39 @@ class TerminalController:
 
     async def input(self, msg: dict) -> None:
         t0 = time.monotonic()
-        session = self.session
-        if session is None or not session.is_alive:
-            logger.warning("terminal_input: no session or not alive")
-            return
         data = msg.get("data", "")
-        if len(data) > MAX_INPUT_SIZE:
-            logger.warning(
-                "terminal_input too large (%d bytes), dropping", len(data)
-            )
-            return
-        if session.read_only and not is_allowed_read_only_input(data):
-            # Read-only spectators may only send the terminal-protocol
-            # responses tmux needs to complete initialization (DA,
-            # color, cursor-position, XTVERSION, XTGETTCAP reports).
-            # User typing and arbitrary escape sequences — notably OSC
-            # 52 clipboard read/write — are dropped (#1716).
+        if self._session_rejects_input(self.session, data):
             return
         self._conn.app.state.container_registry.record_activity(
             self._conn.container_id
         )
-        await session.write(data)
+        await self.session.write(data)
         elapsed = time.monotonic() - t0
         if elapsed > 0.1:
             logger.warning("terminal_input SLOW: %.3fs", elapsed)
+
+    def _session_rejects_input(self, session, data: str) -> bool:
+        """True when an input frame must not reach the session (no live
+        session, oversize, or read-only content, #1716)."""
+        if session is None or not session.is_alive:
+            logger.warning("terminal_input: no session or not alive")
+            return True
+        return self._content_rejected(session, data)
+
+    def _content_rejected(self, session, data: str) -> bool:
+        """Oversize frames, and read-only spectators' non-protocol input,
+        are dropped."""
+        if len(data) > MAX_INPUT_SIZE:
+            logger.warning(
+                "terminal_input too large (%d bytes), dropping", len(data)
+            )
+            return True
+        # Read-only spectators may only send the terminal-protocol
+        # responses tmux needs to complete initialization (DA,
+        # color, cursor-position, XTVERSION, XTGETTCAP reports).
+        # User typing and arbitrary escape sequences — notably OSC
+        # 52 clipboard read/write — are dropped (#1716).
+        return session.read_only and not is_allowed_read_only_input(data)
 
     async def resize(self, msg: dict) -> None:
         self.cols = msg.get("cols", 80)
@@ -1039,16 +1082,7 @@ class TerminalController:
 
     async def new_window(self, msg: dict) -> None:
         t0 = time.monotonic()
-        if not self._conn.container_id or not self._conn._user_home:
-            return
-        # #3022: own-window frames exec into the container targeting the
-        # caller's tmux session by its bare name (``user_id``). A
-        # spectator's joiner session is named ``user_id-<hex>`` and tmux
-        # ``-t`` PREFIX-matches, so the bare name resolves into the
-        # joiner's GROUPED session — whose window list is the group's,
-        # i.e. the owner's. An ungated new_window injects a window into
-        # the owner's session.
-        if await refused_without_perm(self._conn, "code-in-isolation"):
+        if not await self._own_windows_allowed():
             return
 
         session_name = self.tmux_session_name()
@@ -1072,23 +1106,14 @@ class TerminalController:
 
     async def select_window(self, msg: dict) -> None:
         t0 = time.monotonic()
-        if not self._conn.container_id or not self._conn._user_home:
-            return
-        # #3022: own-window management needs the own-terminal permission
-        # (the frontend's own-tab strip is the same gate).
-        if await refused_without_perm(self._conn, "code-in-isolation"):
+        if not await self._own_windows_allowed():
             return
 
         # Use this connection's grouped session so select-window only
         # affects this client, not other connections to the same workspace.
-        session = self.session
-        session_name = (
-            session.tmux_session_name
-            if session and session.tmux_session_name
-            else self.tmux_session_name()
-        )
+        session_name = self._grouped_session_name()
         # Prefer @N window_id (stable); fall back to index for compat.
-        target: int | str = msg.get("window_id") or msg.get("index", 0)
+        target: int | str = self._window_target(msg)
         try:
             await self._conn.app.state.terminal.select_window(
                 self._conn.container_id,
@@ -1105,18 +1130,12 @@ class TerminalController:
             send_error(self._conn.sock, "Failed to select window")
 
     async def close_window(self, msg: dict) -> None:
-        if not self._conn.container_id or not self._conn._user_home:
-            return
-        # #3022: closing a window of a spectator's grouped joiner session
-        # (reached via tmux's prefix-matching ``-t``) closes it for the
-        # whole group — spectators must not be able to kill the owner's
-        # windows.
-        if await refused_without_perm(self._conn, "code-in-isolation"):
+        if not await self._own_windows_allowed():
             return
 
         session_name = self.tmux_session_name()
         # Prefer @N window_id (stable); fall back to index for compat (#1965).
-        target: int | str = msg.get("window_id") or msg.get("index", 0)
+        target: int | str = self._window_target(msg)
         try:
             terminal = self._conn.app.state.terminal
             windows = await terminal.list_windows(
@@ -1141,11 +1160,7 @@ class TerminalController:
             send_error(self._conn.sock, "Failed to close window")
 
     async def rename_window(self, msg: dict) -> None:
-        if not self._conn.container_id or not self._conn._user_home:
-            return
-        # #3022: renaming rewrites the group's shared window list for
-        # everyone (tmux ``-t`` prefix-matches into the joiner session).
-        if await refused_without_perm(self._conn, "code-in-isolation"):
+        if not await self._own_windows_allowed():
             return
 
         session_name = self.tmux_session_name()
@@ -1173,22 +1188,12 @@ class TerminalController:
             send_error(self._conn.sock, "Failed to rename window")
 
     async def list_windows(self) -> None:
-        if not self._conn.container_id or not self._conn._user_home:
-            return
-        # #3022: enumerating the caller's own windows is own-terminal
-        # territory; the shared-terminal list rides its own gated frame
-        # (list_shared_terminals).
-        if await refused_without_perm(self._conn, "code-in-isolation"):
+        if not await self._own_windows_allowed():
             return
 
         # Use this connection's grouped session so the active flag
         # reflects this client's view, not the base session's.
-        session = self.session
-        session_name = (
-            session.tmux_session_name
-            if session and session.tmux_session_name
-            else self.tmux_session_name()
-        )
+        session_name = self._grouped_session_name()
         try:
             windows = await self._conn.app.state.terminal.list_windows(
                 self._conn.container_id,
@@ -1255,15 +1260,7 @@ class TerminalController:
         # tearing the terminal down cancels the start task even after
         # output forwarding took over ``self.output_task`` -- otherwise
         # the start task could be orphaned mid-transaction (#1250).
-        for attr in ("task", "output_task"):
-            task = getattr(self, attr)
-            if task:
-                task.cancel()
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
-                setattr(self, attr, None)
+        await self._cancel_terminal_tasks()
         await self.claim_and_stop()
         # Broadcast viewer change so other users see updated viewer list
         if was_viewing and self._conn.workspace_id:
@@ -1274,6 +1271,44 @@ class TerminalController:
                 self._conn.broadcast_shared_terminals(ws_session)
         # Reset debounce so the next explicit start isn't blocked.
         self._conn._last_terminal_start = 0
+
+    async def _cancel_terminal_tasks(self) -> None:
+        """Cancel and clear the start and output-forwarding tasks."""
+        for attr in ("task", "output_task"):
+            task = getattr(self, attr)
+            if task:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+                setattr(self, attr, None)
+
+    async def _own_windows_allowed(self) -> bool:
+        """Gate own-window operations (#3022): an attached container, a
+        resolved handle, and the own-terminal permission. Own-window
+        frames exec into the container targeting the caller's tmux
+        session by its bare name (``user_id``); a spectator's joiner
+        session is named ``user_id-<hex>`` and tmux ``-t`` PREFIX-matches,
+        so the bare name resolves into the joiner's GROUPED session —
+        whose window list is the group's, i.e. the owner's. An ungated
+        own-window frame mutates the owner's session."""
+        if not self._conn.container_id or not self._conn._user_home:
+            return False
+        return not await refused_without_perm(self._conn, "code-in-isolation")
+
+    def _grouped_session_name(self) -> str:
+        """This connection's grouped session name, so an operation only
+        affects this client, not other connections to the same workspace."""
+        session = self.session
+        if session and session.tmux_session_name:
+            return session.tmux_session_name
+        return self.tmux_session_name()
+
+    @staticmethod
+    def _window_target(msg: dict) -> int | str:
+        """Prefer @N window_id (stable); fall back to index for compat."""
+        return msg.get("window_id") or msg.get("index", 0)
 
     async def forward_output(self, session: TerminalSession) -> None:
         """Forward terminal output to the frontend via WebSocket."""
@@ -1287,10 +1322,7 @@ class TerminalController:
                 self._conn.sock.send_json(
                     {"type": "terminal_output", "data": data}
                 )
-                if self._conn.container_id:
-                    self._conn.app.state.container_registry.record_activity(
-                        self._conn.container_id
-                    )
+                self._record_activity()
             # Stream ended — the tmux session exited (not necessarily the
             # container). Don't send container_stopped; the idle timeout
             # or shutdown button handles actual container death.
@@ -1308,6 +1340,13 @@ class TerminalController:
                 pass
         finally:
             await self.claim_and_stop()
+
+    def _record_activity(self) -> None:
+        """Record container activity when a container is attached."""
+        if self._conn.container_id:
+            self._conn.app.state.container_registry.record_activity(
+                self._conn.container_id
+            )
 
 
 class SharedTerminalController:
@@ -1351,11 +1390,7 @@ class SharedTerminalController:
         """
         windows = ws_session.terminal_windows.get(user_id, [])
         match = next(
-            (
-                w
-                for w in windows
-                if w.get("id") == window_id and (not shared or w.get("shared"))
-            ),
+            (w for w in windows if self._window_matches(w, window_id, shared)),
             None,
         )
         if match is None:
@@ -1363,27 +1398,25 @@ class SharedTerminalController:
             return None
         return match
 
+    @staticmethod
+    def _window_matches(w: dict, window_id: str, shared: bool) -> bool:
+        """A candidate window matches by id, and — when joining — only
+        when already shared."""
+        if w.get("id") != window_id:
+            return False
+        return not shared or w.get("shared")
+
     async def share_window(self, msg: dict) -> None:
         """Mark one of the user's own windows as shared."""
 
-        if not self._conn.container_id or not self._conn._user_home:
+        if not self._attached():
             return
-        if not await self._conn.has_perm("share-terminals"):
-            send_error(self._conn.sock, "Permission denied")
+        if not await self._perm_or_deny("share-terminals"):
             return
-        window_id = msg.get("window_id", "")
-        if not window_id:
-            send_error(self._conn.sock, "Window ID required")
+        resolved = self._find_own_window(msg, self._conn.user["id"])
+        if resolved is None:
             return
-        user_id = self._conn.user["id"]
-        ws_session = self._conn.app.state.sockets.get_session(
-            self._conn.workspace_id
-        )
-        if not ws_session:
-            return
-        match = self.find_window(ws_session, user_id, window_id)
-        if match is None:
-            return
+        match, ws_session = resolved
         match["shared"] = True
         self.broadcast_shared_terminals(ws_session)
 
@@ -1396,23 +1429,13 @@ class SharedTerminalController:
         member whose permission was revoked after sharing (#2875).
         """
 
-        if not self._conn.container_id or not self._conn._user_home:
+        if not self._attached():
             return
 
-        window_id = msg.get("window_id", "")
-        if not window_id:
-            send_error(self._conn.sock, "Window ID required")
+        resolved = self._find_own_window(msg, self._conn.user["id"])
+        if resolved is None:
             return
-        user_id = self._conn.user["id"]
-        session_name = self._conn.tmux_session_name()
-        ws_session = self._conn.app.state.sockets.get_session(
-            self._conn.workspace_id
-        )
-        if not ws_session:
-            return
-        match = self.find_window(ws_session, user_id, window_id)
-        if match is None:
-            return
+        match, ws_session = resolved
         if not match.get("shared"):
             # Already unshared — a no-op (idempotent, and cheap if a
             # zero-permission client spams the command: no joiner
@@ -1420,6 +1443,50 @@ class SharedTerminalController:
             return
         match["shared"] = False
         # Kick spectators/collaborators
+        await self._kick_joiners(self._conn.tmux_session_name())
+        ws_session.broadcast(
+            {
+                "type": "shared_terminal_deleted",
+                "user_id": self._conn.user["id"],
+                "window_name": match["name"],
+                "window_id": msg.get("window_id", ""),
+            }
+        )
+        self.broadcast_shared_terminals(ws_session)
+
+    def _attached(self) -> bool:
+        """True when a container is attached and the user's handle is
+        resolved."""
+        return bool(self._conn.container_id and self._conn._user_home)
+
+    async def _perm_or_deny(self, perm: str) -> bool:
+        """True when the connection holds *perm* (sends "Permission
+        denied" when not)."""
+        if not await self._conn.has_perm(perm):
+            send_error(self._conn.sock, "Permission denied")
+            return False
+        return True
+
+    def _find_own_window(self, msg: dict, user_id: str):
+        """(match, ws_session) for the frame's window among the user's own
+        windows, or None when the workspace session/window is absent (an
+        error frame is sent for a missing window id or window)."""
+        window_id = msg.get("window_id", "")
+        if not window_id:
+            send_error(self._conn.sock, "Window ID required")
+            return None
+        ws_session = self._conn.app.state.sockets.get_session(
+            self._conn.workspace_id
+        )
+        if not ws_session:
+            return None
+        match = self.find_window(ws_session, user_id, window_id)
+        if match is None:
+            return None
+        return match, ws_session
+
+    async def _kick_joiners(self, session_name: str) -> None:
+        """Kill the window's joiner sessions (best-effort)."""
         try:
             await self._conn.app.state.terminal.kill_joiner_sessions(
                 self._conn.container_id,
@@ -1427,15 +1494,6 @@ class SharedTerminalController:
             )
         except Exception:
             logger.debug("Failed to kill joiner sessions", exc_info=True)
-        ws_session.broadcast(
-            {
-                "type": "shared_terminal_deleted",
-                "user_id": user_id,
-                "window_name": match["name"],
-                "window_id": window_id,
-            }
-        )
-        self.broadcast_shared_terminals(ws_session)
 
     @staticmethod
     async def _select_shared_window(
@@ -1480,38 +1538,19 @@ class SharedTerminalController:
             self._conn.user.get("email"),
             msg,
         )
-        if not self._conn.container_id or not self._conn._user_home:
+        if not self._attached():
             return
-        if not await self._conn.has_perm("spectate-on-shared-terminals"):
-            send_error(self._conn.sock, "Permission denied")
+        if not await self._perm_or_deny("spectate-on-shared-terminals"):
             return
-
-        owner_user_id = msg.get("user_id", "").strip()
-        window_id = msg.get("window_id", "").strip()
-        if not owner_user_id or not window_id:
-            send_error(self._conn.sock, "user_id and window_id required")
-            return
-
-        ws_session = self._conn.app.state.sockets.get_session(
-            self._conn.workspace_id
+        resolved = self._lookup_window(
+            msg, shared=True, error_msg="Shared terminal not found"
         )
-        if not ws_session:
+        if resolved is None:
             return
-        match = self.find_window(
-            ws_session,
-            owner_user_id,
-            window_id,
-            shared=True,
-            error_msg="Shared terminal not found",
-        )
-        if match is None:
-            return
+        owner_user_id, window_id, match, ws_session = resolved
         window_name = match["name"]
 
-        read_only = not (
-            await self._conn.has_perm("code-in-shared-terminals")
-            or await self._conn.has_perm("share-terminals")
-        )
+        read_only = await self._join_is_read_only()
 
         await self._conn.stop_terminal()
         self.viewing_shared = {
@@ -1520,28 +1559,9 @@ class SharedTerminalController:
         }
         # The service window (service-cmd) lives in the standalone
         # ``service`` tmux session (#1158), not a session named after the
-        # agent's user_id. Route agent-owned joins to that session so the
-        # grouped attach actually finds a target. Other windows keep joining
-        # the owner's user-named session as before (#1159).
-        join_target = (
-            SERVICE_SESSION
-            if owner_user_id == model.AGENT_USER_ID
-            else owner_user_id
-        )
-        session = TerminalSession(
-            self._conn.container_id,
-            session_name=self._conn.user["id"],
-            user_home=self._conn._user_home,
-            join_session=join_target,
-            read_only=read_only,
-            user_id=self._conn.user["id"],
-            user_handle=self._conn.user.get("handle"),
-            # Same deterministic path as the owner's interactive terminal
-            # (#2001): the joiner's shell gets its own per-user agent
-            # socket pre-wired, live the moment it forwards an agent.
-            ssh_agent_socket=ssh_agent_socket_path(self._conn.user["id"]),
-            terminal=self._conn.app.state.terminal,
-        )
+        # agent's user_id — see _join_target_for.
+        join_target = self._join_target_for(owner_user_id)
+        session = self._join_session(join_target, read_only)
         self._conn.terminal_session = session
         conn = self._conn
 
@@ -1583,6 +1603,98 @@ class SharedTerminalController:
                 )
 
         self._conn.terminal_task = asyncio.create_task(_start_shared())
+
+    def _shared_window_ids(self, msg: dict) -> tuple[str, str] | None:
+        """(owner_user_id, window_id) from the frame, or None after
+        sending the "required" refusal."""
+        owner_user_id = msg.get("user_id", "").strip()
+        window_id = msg.get("window_id", "").strip()
+        if not owner_user_id or not window_id:
+            send_error(self._conn.sock, "user_id and window_id required")
+            return None
+        return owner_user_id, window_id
+
+    def _lookup_window(self, msg: dict, *, shared: bool, error_msg: str):
+        """(owner_user_id, window_id, match, ws_session) for the frame's
+        window, or None after the refusal. *shared* restricts the match
+        to already-shared windows (joining another user's terminal)."""
+        ids = self._shared_window_ids(msg)
+        if ids is None:
+            return None
+        owner_user_id, window_id = ids
+        found = self._ws_window(
+            owner_user_id,
+            window_id,
+            shared=shared,
+            error_msg=error_msg,
+        )
+        if found is None:
+            return None
+        match, ws_session = found
+        return owner_user_id, window_id, match, ws_session
+
+    def _ws_window(
+        self,
+        owner_user_id: str,
+        window_id: str,
+        *,
+        shared: bool,
+        error_msg: str,
+    ):
+        """(match, ws_session) for the window in the workspace session, or
+        None when the session is absent or the window is missing (error
+        frame sent for the latter)."""
+        ws_session = self._conn.app.state.sockets.get_session(
+            self._conn.workspace_id
+        )
+        if not ws_session:
+            return None
+        match = self.find_window(
+            ws_session,
+            owner_user_id,
+            window_id,
+            shared=shared,
+            error_msg=error_msg,
+        )
+        if match is None:
+            return None
+        return match, ws_session
+
+    async def _join_is_read_only(self) -> bool:
+        """Joiners without write permissions get a read-only session."""
+        return not (
+            await self._conn.has_perm("code-in-shared-terminals")
+            or await self._conn.has_perm("share-terminals")
+        )
+
+    @staticmethod
+    def _join_target_for(owner_user_id: str) -> str:
+        """The tmux session a join attaches to: the standalone ``service``
+        session for agent-owned windows (the service window lives there,
+        #1158, not a session named after the agent's user_id), the
+        owner's user-named session otherwise (#1159)."""
+        if owner_user_id == model.AGENT_USER_ID:
+            return SERVICE_SESSION
+        return owner_user_id
+
+    def _join_session(
+        self, join_target: str, read_only: bool
+    ) -> TerminalSession:
+        """The joiner's TerminalSession for a shared window. Same
+        deterministic agent-socket path as the owner's interactive
+        terminal (#2001): the joiner's shell gets its own per-user
+        agent socket pre-wired, live the moment it forwards an agent."""
+        return TerminalSession(
+            self._conn.container_id,
+            session_name=self._conn.user["id"],
+            user_home=self._conn._user_home,
+            join_session=join_target,
+            read_only=read_only,
+            user_id=self._conn.user["id"],
+            user_handle=self._conn.user.get("handle"),
+            ssh_agent_socket=ssh_agent_socket_path(self._conn.user["id"]),
+            terminal=self._conn.app.state.terminal,
+        )
 
     async def list_shared_terminals(self) -> None:
 
@@ -1636,14 +1748,20 @@ class SharedTerminalController:
         # The newly created window is the active one. Identify it by its
         # window id (@N), not its name — names are display-only and may
         # duplicate, so a name match could hit the wrong window (#2192).
-        new_id = next(
-            (w["id"] for w in windows if w.get("active") and "id" in w),
-            None,
-        )
+        new_id = self._active_window_id(windows)
         # Sync with tmux to get proper window_id, then mark the new
         # window as shared.
         self._conn.sync_terminal_windows(windows)
         self._mark_window_shared(new_id)
+
+    @staticmethod
+    def _active_window_id(windows: list[dict]):
+        """The active window's id — names are display-only and may
+        duplicate, so a name match could hit the wrong window (#2192)."""
+        return next(
+            (w["id"] for w in windows if w.get("active") and "id" in w),
+            None,
+        )
 
     async def _resolve_shared_terminal(self, msg: dict) -> tuple | None:
         """Validate the delete-shared-terminal request and resolve it to
@@ -1652,33 +1770,31 @@ class SharedTerminalController:
         owner — may delete it: the owner_user_id comes from the client and
         must not be trusted blindly, otherwise any collaborator with the
         share-terminals permission could close other users' windows."""
-        if not self._conn.container_id:
+        if not await self._delete_request_allowed():
             return None
-        if not await self._conn.has_perm("share-terminals"):
-            send_error(self._conn.sock, "Permission denied")
+        ids = self._shared_window_ids(msg)
+        if ids is None:
             return None
-
-        owner_user_id = msg.get("user_id", "").strip()
-        window_id = msg.get("window_id", "").strip()
-        if not owner_user_id or not window_id:
-            send_error(self._conn.sock, "user_id and window_id required")
-            return None
+        owner_user_id, window_id = ids
         if not await self._may_delete_shared_terminal(owner_user_id):
             return None
-        ws_session = self._conn.app.state.sockets.get_session(
-            self._conn.workspace_id
-        )
-        if not ws_session:
-            return None
-        match = self.find_window(
-            ws_session,
+        found = self._ws_window(
             owner_user_id,
             window_id,
+            shared=False,
             error_msg="Terminal not found",
         )
-        if match is None:
+        if found is None:
             return None
+        match, ws_session = found
         return ws_session, owner_user_id, window_id, match["name"]
+
+    async def _delete_request_allowed(self) -> bool:
+        """Gate a delete-shared-terminal request: a container attached
+        and the share-terminals permission."""
+        if not self._conn.container_id:
+            return False
+        return await self._perm_or_deny("share-terminals")
 
     async def _close_shared_window(
         self, owner_user_id: str, window_id: str
