@@ -157,6 +157,26 @@ def _make_app(**kw):
     return app
 
 
+async def wait_until(predicate, timeout=5.0, interval=0.005):
+    """Poll ``predicate()`` until truthy; return its final value.
+
+    Progress-based wait for the ws-loop tests (#3010): under full-suite
+    load (``-n auto``) the event loop can be starved between attempts for
+    longer than any fixed sleep budget, so a sleep-then-count assertion
+    fails even though the code under test behaves correctly. Waiting for
+    the observed condition decouples the test from machine load; the
+    generous timeout still bounds a genuinely-stalled loop (callers
+    assert on the returned value with a diagnostic message).
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while True:
+        value = predicate()
+        if value or loop.time() >= deadline:
+            return value
+        await asyncio.sleep(interval)
+
+
 @pytest.fixture(autouse=True)
 def _stub_ws_worker(monkeypatch):
     """Replace the on-mount WS worker with a no-op for view tests."""
@@ -1304,14 +1324,20 @@ class TestWsLoop:
         monkeypatch.setattr(tui_consent, "ws_connect", fake_connect)
         app = _make_app(reconnect_delays=(0.0,))
         task = asyncio.create_task(_real_ws_loop(app))
-        await asyncio.sleep(0.1)
-        app._stop = True
-        await asyncio.sleep(0.1)
-        task.cancel()
         try:
-            await task
-        except asyncio.CancelledError:
-            pass
+            # Wait for observed progress (the reconnect itself), not a
+            # fixed wall-clock budget (#3010).
+            assert await wait_until(lambda: calls["n"] >= 2), (
+                f"no reconnect observed ({calls['n']} attempts)"
+            )
+            app._stop = True
+            await asyncio.wait_for(task, timeout=5.0)
+        finally:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
         assert calls["n"] >= 2  # failed once, then reconnected
 
     async def test_refused_403_slows_retry_and_heals(
@@ -1348,18 +1374,23 @@ class TestWsLoop:
         monkeypatch.setattr(app, "refresh_token", fake_refresh)
         with caplog.at_level(logging.WARNING, logger="klangk.cli.tui.consent"):
             task = asyncio.create_task(_real_ws_loop(app))
-            for _ in range(100):  # wait for the healing connect
-                if calls["n"] >= 3:
-                    break
-                await asyncio.sleep(0.02)
-            await asyncio.sleep(0.05)
-            app._stop = True
-            await asyncio.sleep(0.05)
-            task.cancel()
             try:
-                await task
-            except asyncio.CancelledError:
-                pass
+                # Wait for observed progress: the healing 3rd connect
+                # lands and clears the refused flag (#3010).
+                assert await wait_until(
+                    lambda: calls["n"] >= 3 and app._refused is False
+                ), (
+                    f"healing never arrived "
+                    f"({calls['n']} attempts, refused={app._refused})"
+                )
+                app._stop = True
+                await asyncio.wait_for(task, timeout=5.0)
+            finally:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
         assert "registration refused (403) repeatedly" in caplog.text
         assert app.token == "refreshed-token"
         assert app._refused is False  # healed by the successful connect
@@ -1385,14 +1416,27 @@ class TestWsLoop:
         app = _make_app(reconnect_delays=(0.0,))
         monkeypatch.setattr(app, "refresh_token", fake_refresh)
         task = asyncio.create_task(_real_ws_loop(app))
-        await asyncio.sleep(0.2)
-        task.cancel()
         try:
-            await task
-        except asyncio.CancelledError:
-            pass
+            # Wait for observed progress: past the 2nd refusal, i.e.
+            # inside the slow-retry regime, with the flag set (#3010).
+            assert await wait_until(
+                lambda: calls["n"] >= 3 and app._refused is True
+            ), f"stalled after {calls['n']} attempts (refused={app._refused})"
+            # "Never stops on its own" via task liveness, not throughput:
+            # attempts keep accruing with no external push, and only a
+            # cancel ends the loop.
+            seen = calls["n"]
+            assert await wait_until(lambda: calls["n"] > seen), (
+                "no further attempts after entering the slow-retry regime"
+            )
+            assert not task.done()
+        finally:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
         assert app._refused is True
-        assert calls["n"] > 5  # still attempting, well past the 2nd refusal
 
     async def test_handshake_503_keeps_retrying(self, monkeypatch):
         # A non-403 handshake failure (gateway 503) is transient: the loop
@@ -1408,33 +1452,50 @@ class TestWsLoop:
         monkeypatch.setattr(tui_consent, "ws_connect", refuse_503)
         app = _make_app(reconnect_delays=(0.0,))
         task = asyncio.create_task(_real_ws_loop(app))
-        await asyncio.sleep(0.1)
-        app._stop = True
-        await asyncio.sleep(0.1)
-        task.cancel()
         try:
-            await task
-        except asyncio.CancelledError:
-            pass
+            # One failure proves nothing; wait for the observed retry
+            # (#3010).
+            assert await wait_until(lambda: calls["n"] >= 2), (
+                f"no retry observed ({calls['n']} attempts)"
+            )
+            assert app._refused is False
+            app._stop = True
+            await asyncio.wait_for(task, timeout=5.0)
+        finally:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
         assert calls["n"] >= 2  # still retrying
         assert app._refused is False
 
     async def test_connect_exception_logs_and_retries(self, monkeypatch):
         # ws_connect always raises: the loop keeps retrying (never crashes).
+        calls = {"n": 0}
+
         def always_fail(*a, **kw):
+            calls["n"] += 1
             raise OSError("refused")
 
         monkeypatch.setattr(tui_consent, "ws_connect", always_fail)
         app = _make_app(reconnect_delays=(0.0,))
         task = asyncio.create_task(_real_ws_loop(app))
-        await asyncio.sleep(0.1)
-        app._stop = True
-        await asyncio.sleep(0.1)
-        task.cancel()
         try:
-            await task
-        except asyncio.CancelledError:
-            pass
+            # Wait for observed retrying, then a clean stop-side exit; a
+            # crash in the loop would surface from the awaited task
+            # (#3010).
+            assert await wait_until(lambda: calls["n"] >= 2), (
+                f"loop did not retry ({calls['n']} attempts)"
+            )
+            app._stop = True
+            await asyncio.wait_for(task, timeout=5.0)
+        finally:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
         assert app._connected is False
 
     async def test_refreshes_token_on_auth_close(self, monkeypatch):
@@ -1456,14 +1517,20 @@ class TestWsLoop:
 
         monkeypatch.setattr(app, "refresh_token", fake_refresh)
         task = asyncio.create_task(_real_ws_loop(app))
-        await asyncio.sleep(0.1)
-        app._stop = True
-        await asyncio.sleep(0.1)
-        task.cancel()
         try:
-            await task
-        except asyncio.CancelledError:
-            pass
+            # Wait for the observed refresh (first auth close), not a
+            # fixed budget (#3010).
+            assert await wait_until(lambda: app.token == "new-token"), (
+                f"token not refreshed (token={app.token!r})"
+            )
+            app._stop = True
+            await asyncio.wait_for(task, timeout=5.0)
+        finally:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
         assert app.token == "new-token"
 
     async def test_refresh_token_success(self, monkeypatch):
