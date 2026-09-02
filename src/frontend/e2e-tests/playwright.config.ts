@@ -83,6 +83,7 @@ export default defineConfig({
         "klangk.spec.ts",
         "pending-redirect.spec.ts",
         "terminal-keymap.spec.ts",
+        "terminal-tab-gate.spec.ts",
         "per-user-home.spec.ts",
         "terminal-tabs.spec.ts",
         "shared-terminals.spec.ts",
