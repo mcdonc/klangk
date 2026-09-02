@@ -84,6 +84,25 @@ class Podman:
 
     def __init__(self, app):
         self.app = app
+        # Per-user locks serializing volume quota probe+create (#2972) —
+        # the dict-of-locks pattern registry.py uses for service sessions.
+        # Single event loop: no await between get and set, so no race.
+        self._volume_locks: dict[str, asyncio.Lock] = {}
+
+    def volume_create_lock(self, user_id: str) -> asyncio.Lock:
+        """The lock serializing *user_id*'s quota count + volume create.
+
+        Count-then-create must be atomic per user or N concurrent
+        creates each count the same pre-create total and all pass a cap
+        they jointly exceed (#2972). Both volume-create doors — the
+        ``POST /volumes`` route and workspace-start auto-create of
+        mounted named volumes — take this lock, so an API create and a
+        workspace start cannot race each other either.
+        """
+        lock = self._volume_locks.get(user_id)
+        if lock is None:
+            lock = self._volume_locks[user_id] = asyncio.Lock()
+        return lock
 
     def reconfigure(self, app) -> None:
         self.app = app
@@ -670,6 +689,24 @@ class Podman:
         """List volumes matching ``label`` (``key=value``)."""
         return await self._list_json(
             ["volume", "ls", "--filter", f"label={label}", "--format", "json"]
+        )
+
+    async def count_user_volumes(self, instance: str, user_id: str) -> int:
+        """Count *user_id*'s instance-managed volumes (#2972 quota).
+
+        The same label rule ``GET /volumes`` uses to build the user's
+        list: instance-label-filtered ``volume ls`` (podman filters),
+        then the ``klangk.user-id`` label match in Python. The instance
+        label is re-checked defensively — a stray out-of-band volume
+        must not consume quota — so the count can only ever be a
+        subset of what GET returns, never more.
+        """
+        volumes = await self.list_volumes(f"klangk.instance={instance}")
+        return sum(
+            1
+            for v in volumes
+            if (v.get("Labels") or {}).get("klangk.instance") == instance
+            and (v.get("Labels") or {}).get("klangk.user-id") == user_id
         )
 
     async def remove_volume(self, name: str) -> None:

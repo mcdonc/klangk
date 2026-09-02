@@ -4757,6 +4757,48 @@ class TestVolumes:
         result = runner.invoke(main.app, ["volumes", "create", "dup-vol"])
         assert result.exit_code == 1
 
+    def test_volumes_create_quota_refused(self, logged_in_cfg, monkeypatch):
+        """#2972: a 429 quota refusal prints the server's actionable
+        detail ("delete a volume first…"), not httpx's bare status."""
+        from klangk.cli import main
+
+        client = MagicMock()
+        resp = MagicMock(status_code=429)
+        resp.json.return_value = {
+            "detail": "volume quota reached: 2 of this user's volumes "
+            "already exist (KLANGKD_VOLUME_QUOTA_PER_USER)"
+        }
+        client.post.return_value = resp
+        monkeypatch.setattr(context_mod, "client", lambda: client)
+
+        from typer.testing import CliRunner
+
+        runner = CliRunner()
+        result = runner.invoke(main.app, ["volumes", "create", "v3"])
+        assert result.exit_code == 1
+        assert "Volume quota exceeded" in result.output
+        assert "KLANGKD_VOLUME_QUOTA_PER_USER" in result.output
+
+    def test_volumes_create_quota_refused_no_body(
+        self, logged_in_cfg, monkeypatch
+    ):
+        """A 429 with an unparseable body still exits 1 cleanly (the
+        detail extraction fails open to the volume name)."""
+        from klangk.cli import main
+
+        client = MagicMock()
+        resp = MagicMock(status_code=429)
+        resp.json.side_effect = ValueError("no json")
+        client.post.return_value = resp
+        monkeypatch.setattr(context_mod, "client", lambda: client)
+
+        from typer.testing import CliRunner
+
+        runner = CliRunner()
+        result = runner.invoke(main.app, ["volumes", "create", "v3"])
+        assert result.exit_code == 1
+        assert "Volume quota exceeded" in result.output
+
     def test_volumes_rm(self, logged_in_cfg, monkeypatch):
         from klangk.cli import main
 

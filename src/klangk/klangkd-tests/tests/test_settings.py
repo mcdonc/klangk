@@ -517,6 +517,22 @@ class TestConfigFile:
         with pytest.raises(Exception):
             make_settings({"KLANGKD_MAX_RUNNING_WORKSPACES_PER_USER": "-1"})
 
+    def test_volume_quota_per_user_from_env(self):
+        s = make_settings({"KLANGKD_VOLUME_QUOTA_PER_USER": "5"})
+        assert s.volume_quota_per_user == 5
+
+    def test_volume_quota_per_user_zero_is_unlimited(self):
+        s = make_settings({"KLANGKD_VOLUME_QUOTA_PER_USER": "0"})
+        assert s.volume_quota_per_user == 0
+
+    def test_volume_quota_per_user_malformed_aborts(self):
+        with pytest.raises(Exception):
+            make_settings({"KLANGKD_VOLUME_QUOTA_PER_USER": "many"})
+
+    def test_volume_quota_per_user_negative_aborts(self):
+        with pytest.raises(Exception):
+            make_settings({"KLANGKD_VOLUME_QUOTA_PER_USER": "-1"})
+
     def test_container_pids_limit_from_env(self):
         s = make_settings({"KLANGKD_CONTAINER_PIDS_LIMIT": "512"})
         assert s.container_pids_limit == 512

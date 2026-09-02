@@ -132,6 +132,8 @@ container_tmp_size: 2g
 # admission_memory_margin: 1g      # reserve kept for the server itself
 # max_running_workspaces_per_user: 0  # per-user cap on concurrently
 #                                     # RUNNING workspaces (0 = unlimited)
+# volume_quota_per_user: 0           # per-user cap on instance-managed
+#                                     # named volumes (0 = unlimited)
 #
 # Full settings reference:
 #   https://mcdonc.github.io/klangk/reference/klangkd-config/

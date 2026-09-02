@@ -934,6 +934,64 @@ class TestListVolumes:
             assert await _p.list_volumes("k=v") == []
 
 
+class TestCountUserVolumes:
+    """The #2972 quota count: own instance-managed volumes only."""
+
+    async def test_counts_only_own_instance_volumes(self):
+        payload = json.dumps(
+            [
+                {
+                    "Name": "mine",
+                    "Labels": {
+                        "klangk.instance": "inst",
+                        "klangk.user-id": "u1",
+                    },
+                },
+                # Another user's volume — same instance.
+                {
+                    "Name": "theirs",
+                    "Labels": {
+                        "klangk.instance": "inst",
+                        "klangk.user-id": "u2",
+                    },
+                },
+                # Stray out-of-band volume carrying our user-id but a
+                # foreign instance label — must not consume quota.
+                {
+                    "Name": "foreign",
+                    "Labels": {
+                        "klangk.instance": "other",
+                        "klangk.user-id": "u1",
+                    },
+                },
+                # Unlabeled volumes (podman emits "Labels": null).
+                {"Name": "null-labels", "Labels": None},
+                {"Name": "no-labels-key"},
+            ]
+        )
+        with patch(EXEC, _exec((payload, "", 0))) as m:
+            assert await _p.count_user_volumes("inst", "u1") == 1
+        # The podman-side filter is the instance label.
+        assert _args(m, 0) == [
+            "volume",
+            "ls",
+            "--filter",
+            "label=klangk.instance=inst",
+            "--format",
+            "json",
+        ]
+
+
+class TestVolumeCreateLock:
+    """Per-user count+create serialization lock (#2972)."""
+
+    def test_same_user_reuses_lock(self):
+        first = _p.volume_create_lock("u1")
+        assert _p.volume_create_lock("u1") is first
+        assert _p.volume_create_lock("u2") is not first
+        assert isinstance(first, asyncio.Lock)
+
+
 class TestRemoveVolume:
     async def test_success(self):
         with patch(EXEC, _exec(("", "", 0))) as m:

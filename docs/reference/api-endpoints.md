@@ -1361,6 +1361,14 @@ this endpoint serves the CLI's volume commands).
 **Auth:** JWT required. User must have the `manage-volumes` permission
 on `/volumes` (#2993; seeded Allow for the `admins` group).
 
+**Quota (#2972):** when `KLANGKD_VOLUME_QUOTA_PER_USER` is set
+(nonzero), a create that would take the caller past the cap is refused
+with `429` and a "delete a volume first" message naming the setting;
+the count is the caller's instance-managed volumes (`GET
+/api/v1/volumes`), and a per-user lock makes the cap exact under
+concurrent creates. The same cap also gates the workspace-start
+auto-create of mounted named volumes. `0` (the default) = unlimited.
+
 ```json
 { "name": "my-volume" }
 ```
