@@ -19,6 +19,9 @@ live off ``app.state`` (the app-ownership rule, #1608).
 import logging
 import os
 from dataclasses import dataclass
+from typing import Annotated
+
+from pydantic import StringConstraints, TypeAdapter, ValidationError
 
 from .. import workspace_settings as ws_settings
 from ..podman import (
@@ -75,6 +78,42 @@ def split_csv(raw: str | None) -> list[str]:
 def is_named_volume(source: str) -> bool:
     """A mount source with no '/' that doesn't start with '.' is a volume."""
     return "/" not in source and not source.startswith(".")
+
+
+# Podman-safe volume name (#2971, single home since #3018): starts with
+# an alphanumeric (so a leading "-" can never be parsed as a flag by
+# the podman CLI, whose argv we build by appending the name verbatim),
+# continues with alphanumerics/underscore/dot/hyphen only, and stays
+# within 64 chars ({0,63} after the first character) — a cap picked for
+# UX, well under podman's own generous limit. Consumers: the api
+# layer's pydantic validation (``POST/DELETE /volumes`` → 422, and —
+# via ``valid_volume_name`` — the workspace mount validator → 400,
+# #3018). Anchored ^...$ under pydantic-core's Rust regex (strict
+# end-of-haystack). Do NOT reuse this constant with Python's `re`:
+# its `$` also matches before a trailing newline, so "abc\n" would
+# slip through a `re.search`-based check — use ``valid_volume_name``.
+VOLUME_NAME_PATTERN = r"^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$"
+
+# Same pattern, validated by pydantic-core itself (the exact engine
+# behind ``Field(pattern=...)``) so the mount validator and the api
+# endpoints can never drift in semantics.
+_volume_name_validator = TypeAdapter(
+    Annotated[str, StringConstraints(pattern=VOLUME_NAME_PATTERN)]
+)
+
+
+def valid_volume_name(name: str) -> bool:
+    """Whether ``name`` is a podman-safe volume name (#2971, #3018).
+
+    Checked with the pydantic-core adapter for ``VOLUME_NAME_PATTERN``
+    (not Python ``re``) so the Rust-regex anchors — strict `$`, no
+    before-trailing-newline allowance — are the ones enforced.
+    """
+    try:
+        _volume_name_validator.validate_python(name)
+    except ValidationError:
+        return False
+    return True
 
 
 @dataclass(slots=True)
@@ -409,6 +448,17 @@ async def ensure_volumes(
     for mount_spec in extra_mounts:
         source = mount_spec.split(":")[0]
         if is_named_volume(source):
+            # Defense in depth (#3018): validate_mount_spec already
+            # rejects unsafe names at the API boundary, but a row
+            # created before that gate (or written by another path)
+            # must never reach podman argv either — _ensure_named_volume
+            # appends the name verbatim to the command line.
+            if not valid_volume_name(source):
+                raise ValueError(
+                    f"Volume name {source!r} is not podman-safe "
+                    "(must start alphanumeric, contain only "
+                    "[a-zA-Z0-9_.-], and be at most 64 chars)"
+                )
             await _ensure_named_volume(app, user_id, podman, source)
         elif not os.path.exists(source):
             raise ValueError(f"Bind mount source does not exist: {source}")

@@ -1410,6 +1410,13 @@ gives each member a private `/home/<handle>`, `false` (the server
 default, `KLANGKD_PER_HANDLE_HOME`) shares one `/home/klangk`. Omit it
 to inherit the server default.
 
+A `mounts` source with no `/` that doesn't start with `.` is a named
+volume and must be podman-safe (#3018): start with an alphanumeric
+character, continue with `a-zA-Z0-9_.-` only, and be at most 64
+characters — the same rule as the volumes API (#2971). Violations
+return HTTP 400; bind-mount sources (absolute paths, `.`-prefixed)
+keep the protected-path / allowed-root checks.
+
 `settings` is a bag of per-workspace behavioral overrides (#864). Known
 keys (unknown keys are rejected with `400`):
 
@@ -1758,6 +1765,9 @@ command, volume mounts, environment variables). All fields optional.
 `per_handle_home` may be flipped here too; the new layout applies from
 the workspace's next connect/start (open terminals keep their layout
 until they end).
+
+`mounts` named-volume sources are subject to the same podman-safe
+rule as on create (#3018); violations return HTTP 400.
 
 `settings` is a **full replace** of the
 [settings bag](#post-apiv1workspaces) — keys absent from the request are

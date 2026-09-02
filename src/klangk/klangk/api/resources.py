@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field
 from .. import (
     acl,
 )
+from ..container.spec import VOLUME_NAME_PATTERN
 from ..podman import PodmanError as PodmanError
 from ..util import (
     sanitize_disposition_name,
@@ -386,17 +387,15 @@ async def list_volumes(
     }
 
 
-# Podman-safe volume name (#2971): starts with an alphanumeric (so a
-# leading "-" can never be parsed as a flag by the podman CLI, whose
-# argv we build by appending the name verbatim), continues with
-# alphanumerics/underscore/dot/hyphen only, and stays within 64 chars
-# ({0,63} after the first character) — a cap picked for UX, well under
-# podman's own generous limit. Pydantic violations surface as 422.
-# Anchored ^...$ under pydantic-core's Rust regex (strict end-of-
-# haystack). Do NOT reuse this constant with Python's `re`: its `$`
-# also matches before a trailing newline, so "abc\n" would slip
-# through a `re.search`-based check.
-VOLUME_NAME_PATTERN = r"^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$"
+# The podman-safe volume-name rule lives next to its sibling
+# ``is_named_volume`` in ``container.spec`` (moved there in #3018 so the
+# workspace mount validator shares the single home): starts with an
+# alphanumeric (so a leading "-" can never be parsed as a flag by the
+# podman CLI, whose argv we build by appending the name verbatim),
+# continues with alphanumerics/underscore/dot/hyphen only, and stays
+# within 64 chars. Pydantic violations surface as 422 here; the same
+# pattern gates workspace mount sources via
+# ``container.spec.valid_volume_name`` (#3018).
 
 
 class CreateVolumeRequest(BaseModel):
