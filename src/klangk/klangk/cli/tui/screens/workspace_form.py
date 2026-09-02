@@ -1614,7 +1614,7 @@ class EditWorkspaceScreen(WorkspaceFormMixin, TabSkipMixin, StatusScreen):
         if self._nix_available:
             merged["nix"] = bool(self.query_one("#nix", Checkbox).value)
         # #2017: same for the sudo posture — an explicit value whenever
-        # the toggle is shown, so an uncheck-to-revert actually clears a
+        # the toggle is shown, so a check-to-revert actually clears a
         # stored lock-down. True follows the deploy posture (the server
         # setting stays the ceiling).
         if self._sudo_available:

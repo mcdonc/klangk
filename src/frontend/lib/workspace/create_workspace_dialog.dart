@@ -394,9 +394,9 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
                             ),
                           ),
                         ],
-                        // #2017: per-workspace sudo lock-down (only when the
-                        // deploy allows sudo — it's a ceiling, so the toggle
-                        // can only opt this workspace out).
+                        // #2017/#3046: per-workspace sudo posture (only
+                        // when the deploy allows sudo — it's a ceiling,
+                        // so the toggle can only opt in below it).
                         if (widget.sudoAvailable) ...[
                           const SizedBox(height: 16),
                           Material(

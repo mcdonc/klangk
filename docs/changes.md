@@ -1572,10 +1572,10 @@ stop)`) and a `server: stop at 23:00 (in 1h 12m)` status line in the
 - **`Allow sudo` toggle defaults to off (#3046).** The per-workspace
   sudo toggle in the Flutter create dialog, the Flutter settings panel,
   and the TUI workspace form now starts unchecked (locked down); users
-  opt in to passwordless sudo. Workspaces created through the API with
-  no `allow_sudo` key still follow the deploy-wide default
-  (`KLANGKD_ALLOW_SUDO`). The CLI `--sudo/--no-sudo` flags are
-  unchanged.
+  opt in to passwordless sudo. Workspaces created through the API or
+  the `klangk` CLI with no `allow_sudo` key still follow the
+  deploy-wide default (`KLANGKD_ALLOW_SUDO`). The CLI
+  `--sudo/--no-sudo` flags are unchanged.
 
 - **Server admin schedule list (#3002).** The explanatory paragraph
   ("A stop exits the server process…") no longer renders above the

@@ -535,10 +535,11 @@ void main() {
   });
 
   group('sudo toggle', () {
-    // #2017: the per-workspace sudo lock-down toggle. The deploy-wide
+    // #2017/#3046: the per-workspace sudo toggle. The deploy-wide
     // allow_sudo is a ceiling, so the toggle is shown only when the
     // deploy allows sudo; it is pre-populated from settings.allow_sudo
-    // (absent = true = follow the deploy posture), always emits an
+    // (absent = false = locked-down in the UI, #3046 — the server still
+    // resolves absent as follow-deploy until saved), always emits an
     // explicit value (full-replace bag), and prompts a restart on a
     // running workspace (the sudoers rule is written at create time).
     testWidgets('hides the toggle when the deploy forbids sudo',

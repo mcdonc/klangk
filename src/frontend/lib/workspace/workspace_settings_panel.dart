@@ -610,7 +610,7 @@ class _SettingsFormState extends State<_SettingsForm> {
     // (omitting the key leaves the stale bag untouched).
     if (widget.nixAvailable) settings['nix'] = _nixEnabled;
     // #2017: same for the sudo posture — an explicit value whenever the
-    // toggle is shown, so an uncheck-to-revert actually clears a stored
+    // toggle is shown, so a check-to-revert actually clears a stored
     // lock-down. True follows the deploy posture (the server setting
     // remains the ceiling).
     if (widget.sudoAvailable) settings['allow_sudo'] = _sudoEnabled;

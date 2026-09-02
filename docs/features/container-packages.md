@@ -77,7 +77,10 @@ so common development tasks work out of the box.
 ## Installing Additional Packages
 
 By default the `klangk` user has passwordless `sudo` (the deploy-wide
-`KLANGKD_ALLOW_SUDO` defaults to on).
+`KLANGKD_ALLOW_SUDO` defaults to on) for workspaces created through the
+API or the `klangk` CLI without a `--no-sudo` flag. Workspaces created
+through the Flutter or TUI forms are locked down by default — the Allow
+sudo toggle starts unchecked (#3046).
 
 ### With sudo enabled
 
@@ -92,10 +95,10 @@ A workspace can also be locked down individually below the deploy
 default (sudo-disabled) even on a sudo-enabled server — the owner (or a
 member with edit permission on the workspace) sets `allow_sudo: false` in
 the workspace settings (`klangk edit --no-sudo`, or the _Allow sudo_
-toggle in the workspace settings UI — which defaults to unchecked, so a
-workspace created without touching the toggle is locked down; the
-deploy-wide default still applies to workspaces created via the API with
-no `allow_sudo` key, #3046). The lock-down applies at the next
+toggle in the workspace settings UI, which defaults to unchecked, #3046).
+An absent `allow_sudo` key still follows the deploy default when the
+workspace is created through the API or CLI; the UI toggle locks the
+workspace down on save. The lock-down applies at the next
 container start.
 
 ### Without sudo
