@@ -56,6 +56,7 @@ from .spec import (
     SHARED_HOME,
     is_named_volume,
     split_csv,
+    valid_volume_name,
     build_create_kwargs,
     build_env,
     build_mounts,
@@ -350,8 +351,23 @@ class ContainerRegistry(NetworkSidecarMixin):
                 if opt and opt not in _VALID_MOUNT_OPTIONS:
                     return f"Invalid mount {spec!r}: unknown option {opt!r}"
         if is_named_volume(source):
-            return None
+            return self._validate_named_volume_source(spec, source)
         return self._validate_bind_source(spec, source)
+
+    def _validate_named_volume_source(
+        self, spec: str, source: str
+    ) -> str | None:
+        """A named-volume source must be podman-safe (#3018): it is
+        appended verbatim to the podman argv at container start, so a
+        leading dash would be parsed as a flag — the same rule as the
+        volumes API (``VOLUME_NAME_PATTERN``, #2971)."""
+        if valid_volume_name(source):
+            return None
+        return (
+            f"Invalid mount {spec!r}: named-volume source {source!r} "
+            "is not podman-safe (must start alphanumeric, contain only "
+            "[a-zA-Z0-9_.-], and be at most 64 chars)"
+        )
 
     def _validate_bind_source(self, spec: str, source: str) -> str | None:
         """A non-named-volume source must not be a protected host path and

@@ -243,6 +243,17 @@ operators or integrators to act when upgrading.
 
 ### Security
 
+- **Workspace-mount volume-source validation (#3018).** A mount
+  source with no `/` that doesn't start with `.` is a named volume,
+  and must now be podman-safe to pass workspace create/update mount
+  validation (alphanumeric first character, `a-zA-Z0-9_.-` only, at
+  most 64 characters — the same rule as the volumes API, #2971),
+  returning HTTP 400 on violation. Previously such a source reached
+  `podman volume create/inspect` argv verbatim at container start, so
+  a leading-dash source was parsed as a podman flag; the check also
+  runs at start as defense in depth for workspaces created before the
+  gate.
+
 - **Volume name validation (#2971).** `POST /api/v1/volumes` and
   `DELETE /api/v1/volumes/{name}` now reject names that are not
   podman-safe — they must start with an alphanumeric character,
