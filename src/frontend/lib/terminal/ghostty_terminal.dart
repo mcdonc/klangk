@@ -11,9 +11,8 @@ import '../ws/ws_client.dart';
 import '../utils/web_helpers_stub.dart'
     if (dart.library.js_interop) '../utils/web_helpers_web.dart';
 
-/// libghostty-backed terminal, a drop-in alternative to [ContainerTerminal]
-/// (the `xterm` widget). Same public surface — `{key, wsClient}` plus a
-/// [requestFocus] on the state — so the call site can swap between them.
+/// libghostty-backed terminal widget. The public surface is `{key, wsClient}`
+/// plus a [requestFocus] on the state.
 ///
 /// The VT engine is libghostty (WASM on web, FFI on native) via `flterm`;
 /// rendering is still a Flutter [TerminalView]. The websocket wire is unchanged
@@ -472,8 +471,8 @@ Map<ShortcutActivator, Intent> zoomShortcutsFor(TargetPlatform platform) {
   };
 }
 
-/// klangk's terminal theme at the given [fontSize] (palette matches the xterm
-/// `ContainerTerminal` theme). Built per-render so native font zoom can vary
+/// klangk's terminal theme at the given [fontSize]. Built per-render so
+/// native font zoom can vary
 /// the size; flterm re-measures cell metrics when `theme.fontSize` changes.
 TerminalTheme _buildTheme(double fontSize) => TerminalTheme(
       fontSize: fontSize,

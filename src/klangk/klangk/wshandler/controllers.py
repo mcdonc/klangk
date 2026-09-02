@@ -55,10 +55,10 @@ SSH_AGENT_READY_POLL = 0.1
 # through, so a spectator could inject OSC 52 and exfiltrate the
 # owner's clipboard.
 #
-# The whitelist mirrors what the terminal emulators on the read-only
-# path (xterm.js via container_terminal.dart and flterm via
-# ghostty_terminal.dart) actually reply with during tmux's attach
-# handshake: device attributes (DA1/DA2/DA3), cursor-position report,
+# The whitelist mirrors what the terminal emulator on the read-only
+# path (flterm via ghostty_terminal.dart) actually replies with during
+# tmux's attach handshake: device attributes (DA1/DA2/DA3),
+# cursor-position report,
 # color reports (OSC 10/11/12 default fg/bg/cursor + OSC 4 palette),
 # XTVERSION, and XTGETTCAP.  Each of these reply types is matched with
 # a tight, bounded pattern; OSC 52 (clipboard) and every other OSC/
