@@ -107,11 +107,26 @@ def _expect_window_capture(ws_name, env, timeout=25):
     with no diagnostic (#3012). The pre-command fixed ``sleep 2`` is
     replaced by an executed-marker round-trip — the shell must actually
     run a command before the tmux query is sent — so a slow attach is
-    polled instead of guessed at.
+    polled instead of guessed at. The marker matches any exit status:
+    a nonzero ``$?`` used to present as an opaque ``TIMEOUT:ready`` after
+    the full timeout (#3037) — it now fails fast with ``READY-NONZERO``,
+    and a ready-stage timeout/eof appends a bounded tail of what the pane
+    actually printed, so a wrong-pane ping is identifiable in artifacts.
     """
     script = f"""
 set timeout {timeout}
 log_user 0
+proc ready_tail {{}} {{
+    global expect_out timeout
+    catch {{unset expect_out(buffer)}}
+    set timeout 1
+    expect {{
+        -re {{(?s).*}} {{}}
+        timeout {{}}
+    }}
+    if {{![info exists expect_out(buffer)]}} {{ return "" }}
+    return [string range $expect_out(buffer) end-399 end]
+}}
 spawn klangk shell {ws_name} --no-consent-popup
 expect {{
     -re {{\\$ }} {{}}
@@ -120,9 +135,14 @@ expect {{
 }}
 send "echo KLANGK_READY_\\$?\\r"
 expect {{
-    -re {{KLANGK_READY_0}} {{}}
-    timeout {{ puts "TIMEOUT:ready"; exit 1 }}
-    eof {{ puts "EOF:ready"; exit 1 }}
+    -re {{KLANGK_READY_([0-9]+)}} {{
+        if {{$expect_out(1,string) != 0}} {{
+            puts "READY-NONZERO:$expect_out(1,string)"
+            exit 1
+        }}
+    }}
+    timeout {{ puts "TIMEOUT:ready tail=<<[ready_tail]>>"; exit 1 }}
+    eof {{ puts "EOF:ready tail=<<[string range $expect_out(buffer) end-399 end]>>"; exit 1 }}
 }}
 send "echo W_S; tmux display-message -p '#I:#W'; echo W_E\\r"
 expect {{
@@ -171,7 +191,13 @@ def _cli_check_window(ws_name, env, timeout=25):
 
 
 def _cli_hold_and_check(ws_name, window_name, hold_seconds, env):
-    """Start CLI shell, check window before and after a hold period."""
+    """Start CLI shell, check window before and after a hold period.
+
+    Raises AssertionError carrying the expect diagnostic (stage tags and,
+    for the ready stage, a bounded pane-output tail, #3037) when either
+    capture stage fails — the tags used to be swallowed here, leaving
+    only an opaque ``CLI moved from None to None``.
+    """
     if window_name:
         cmd = f"klangk shell {ws_name} {window_name} --no-consent-popup"
     else:
@@ -179,6 +205,17 @@ def _cli_hold_and_check(ws_name, window_name, hold_seconds, env):
     script = f"""
 set timeout 30
 log_user 0
+proc ready_tail {{}} {{
+    global expect_out timeout
+    catch {{unset expect_out(buffer)}}
+    set timeout 1
+    expect {{
+        -re {{(?s).*}} {{}}
+        timeout {{}}
+    }}
+    if {{![info exists expect_out(buffer)]}} {{ return "" }}
+    return [string range $expect_out(buffer) end-399 end]
+}}
 spawn {cmd}
 expect {{
     -re {{\\$ }} {{}}
@@ -187,9 +224,14 @@ expect {{
 }}
 send "echo KLANGK_READY_\\$?\\r"
 expect {{
-    -re {{KLANGK_READY_0}} {{}}
-    timeout {{ puts "TIMEOUT:ready"; exit 1 }}
-    eof {{ puts "EOF:ready"; exit 1 }}
+    -re {{KLANGK_READY_([0-9]+)}} {{
+        if {{$expect_out(1,string) != 0}} {{
+            puts "READY-NONZERO:$expect_out(1,string)"
+            exit 1
+        }}
+    }}
+    timeout {{ puts "TIMEOUT:ready tail=<<[ready_tail]>>"; exit 1 }}
+    eof {{ puts "EOF:ready tail=<<[string range $expect_out(buffer) end-399 end]>>"; exit 1 }}
 }}
 send "echo BS; tmux display-message -p '#I:#W'; echo BE\\r"
 expect {{
@@ -229,6 +271,8 @@ wait
             before = line.split("=", 1)[1]
         elif line.startswith("AFTER="):
             after = line.split("=", 1)[1]
+    if before is None or after is None:
+        raise AssertionError(f"expect failed:\n{result.stdout}{result.stderr}")
     return before, after
 
 
