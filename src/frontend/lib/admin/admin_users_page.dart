@@ -1651,12 +1651,16 @@ class _VolumesTabState extends State<_VolumesTab> {
                   owner.isEmpty
                       ? 'Created $created'
                       : 'Created $created · by $owner',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(color: KColors.textSecondary),
                 ),
                 Text(
                   workspaces.isEmpty
                       ? 'Unused'
                       : 'Used by ${workspaces.join(', ')}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(color: KColors.textSecondary),
                 ),
               ],

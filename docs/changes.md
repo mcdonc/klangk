@@ -41,15 +41,13 @@ operators or integrators to act when upgrading.
   rows that don't match the seeded shapes survive below the new admin
   rows — re-grant via the ACL editor if a deploy wants self-service
   volumes back). The tab lists and deletes volumes (delete needs
-  `manage-volumes`); there is no create surface. The listing returns
-  the deployment's whole instance-managed inventory — the creator
-  label is provenance (`user_id` plus the creator's handle
-  `created_by`), and each row lists the workspace names mounting it
-  (`workspaces`); `manage-volumes` holders may delete any instance
-  volume. The listing is server-side searchable (volume name, creator
-  handle, or using-workspace name) and paginated, returning the
-  `{volumes, page, page_size, total}` envelope — `klangk volumes ls`
-  ships with it; external API consumers must read the envelope.
+  `manage-volumes`); there is no create surface, and
+  `manage-volumes` holders may delete any instance volume. The
+  listing now returns the whole inventory — creator provenance,
+  using-workspace names, search, and paging — in a
+  `{volumes, page, page_size, total}` envelope documented in
+  `docs/reference/api-endpoints.md`; `klangk volumes ls` ships with
+  it, but external API consumers must read the envelope.
 
 - **Deploy-wide consent decider removed (#2976).** The
   `/ws/consent-decider` handshake without a `?workspace=` param is now

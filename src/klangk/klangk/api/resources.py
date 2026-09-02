@@ -310,11 +310,17 @@ def _volume_matches(item: dict, needle: str) -> bool:
 
 def _sort_volume_items(items: list[dict], sort: str, order: str) -> None:
     """Sort listing rows in place by the whitelisted key (``name`` or
-    ``created``; unknown → created), name as the deterministic
-    tiebreaker — the list_users/list_workspaces posture."""
+    ``created``; unknown → created) with the name tiebreaker always
+    ascending — the list_users/list_workspaces posture (``ORDER BY col
+    DESC, id``). Two stable sorts: name first, then the primary key.
+    ``created`` is podman's RFC3339Nano string; lexicographic order is
+    exact within one UTC offset (the stored-format reality of this
+    field) and approximate across a DST boundary.
+    """
     primary = "name" if sort == "name" else "created"
+    items.sort(key=lambda it: it["name"])
     items.sort(
-        key=lambda it: ((it[primary] or ""), it["name"]),
+        key=lambda it: it[primary] or "",
         reverse=order.lower() == "desc",
     )
 
