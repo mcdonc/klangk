@@ -90,7 +90,7 @@ async def test_no_op_when_not_configured(monkeypatch):
 
 def test_available_is_switch_and_backend():
     """available = nix_enabled AND nix_seed.path — the resolved armed status
-    reported by /api/v1/images nix_available."""
+    reported by the /config nix_available field (#2974)."""
     assert Nix(_app(SEED)).available is True
     assert Nix(_app(SEED, enabled=False)).available is False
     assert Nix(_app(None, enabled=False)).available is False

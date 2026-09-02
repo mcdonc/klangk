@@ -355,6 +355,20 @@ class TuiState:
     def list_images(self) -> dict:
         return self.client().list_images()
 
+    def deploy_toggles(self) -> tuple[bool, bool]:
+        """Deploy-level nix/sudo availability (#2974).
+
+        Moved off the ``/images`` payload to the authenticated-only
+        ``/config`` fields — deployment config, not image data. Strict
+        bool checks (``allow_autostart`` precedent). Raises on failure;
+        callers fall back to ``(False, False)`` so the form still opens.
+        """
+        cfg = self.client().config()
+        return (
+            cfg.get("nix_available") is True,
+            cfg.get("sudo_available") is True,
+        )
+
     def default_allowed_domains(self) -> list[str]:
         """Deploy-wide netfilter allow-list (``KLANGKD_NETFILTER_DEFAULT_DOMAINS``)
         used to seed the create form's Netfilter tab (#1931).

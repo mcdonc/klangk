@@ -43,6 +43,7 @@ from .. import (
     wshandler,
 )
 from .common import ALL_PERMISSIONS, autostart_allowed, get_app_dep
+from ..settings import parse_bool_setting
 
 # Imported under an alias: the ``from . import auth as _auth_routes`` line
 # below pulls in the api/auth.py *submodule*, and the import machinery writes
@@ -274,6 +275,16 @@ async def get_config(
             app.state.netfilter.default_domains()
         )
         config["netfilter_enabled"] = app.state.netfilter.enabled()
+        # #2974: the deploy-level nix/sudo toggles the workspace
+        # create/edit UIs render moved here from GET /images — they are
+        # deployment config, not image data. Same authenticated-only
+        # posture as the netfilter fields (nix_available: #2202/#2560 —
+        # whether the per-workspace nix flag can trigger the per-
+        # workspace /nix mount; sudo_available: #2017 — whether the
+        # deploy allows sudo at all, the ceiling the per-workspace
+        # lock-down toggle opts out below).
+        config["nix_available"] = app.state.nix.available
+        config["sudo_available"] = parse_bool_setting(s.allow_sudo)
     config.update(app.state.features.frontend_config())
     # KLANGKD_FEATURES_ENABLE: the deploy's chosen active-feature list,
     # forwarded verbatim so the frontend can resolve the active set against

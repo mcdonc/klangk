@@ -85,6 +85,7 @@ class TestRunner:
             (22, "0022_workspace_permission_renames"),
             (23, "0023_self_service_resources"),
             (24, "0024_join_workspace_permission"),
+            (25, "0025_drop_dead_images_deny_row"),
         ]
         async with aiosqlite.connect(str(app_state.state.db.db_path)) as db:
             assert await _recorded(db) == expected
@@ -175,6 +176,7 @@ class TestRunner:
                 (22, "0022_workspace_permission_renames"),
                 (23, "0023_self_service_resources"),
                 (24, "0024_join_workspace_permission"),
+                (25, "0025_drop_dead_images_deny_row"),
             ]
 
     async def test_m0008_agent_identity_and_human_collision(
@@ -2640,6 +2642,100 @@ class TestM0024JoinWorkspacePermission:
         db = await self._db(tmp_path)
         try:
             await m0024_join_workspace_permission.migration.apply(db)
+            cursor = await db.execute("SELECT COUNT(*) FROM acl_entries")
+            assert (await cursor.fetchone())[0] == 0
+        finally:
+            await db.__aexit__(None, None, None)
+
+
+class TestM0025DropDeadImagesDenyRow:
+    """m0025 deletes the unreachable Deny Everyone ``*`` row on /images
+    (#2994) — the JWT middleware rejects unauthenticated requests before
+    any ACL check, and no-match is default-deny."""
+
+    async def _db(self, tmp_path):
+        db = aiosqlite.connect(str(tmp_path / "m0025.db"))
+        db = await db.__aenter__()
+        await db.execute(
+            "CREATE TABLE acl_entries ("
+            " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            " resource TEXT, position INTEGER, action INTEGER,"
+            " principal_type INTEGER, user_id TEXT, group_id TEXT,"
+            " system_principal INTEGER, permission TEXT,"
+            " UNIQUE(resource, position))"
+        )
+        return db
+
+    async def _rows(self, db, resource) -> list:
+        cursor = await db.execute(
+            "SELECT position, action, permission, system_principal"
+            " FROM acl_entries WHERE resource = ? ORDER BY position",
+            (resource,),
+        )
+        return list(await cursor.fetchall())
+
+    async def test_drops_only_the_dead_deny(self, tmp_path):
+        from klangk.model import ACTION_ALLOW
+        from klangk.model.migrations import m0025_drop_dead_images_deny_row
+
+        db = await self._db(tmp_path)
+        try:
+            # The #2946 seed shape + an operator row at position 2.
+            await db.execute(
+                "INSERT INTO acl_entries"
+                " (resource, position, action, principal_type,"
+                "  system_principal, permission)"
+                " VALUES ('/images', 0, 1, 0, 1, 'view-images'),"
+                "        ('/images', 1, 0, 0, 0, '*'),"
+                "        ('/images', 2, 1, 2, NULL, 'custom')"
+            )
+            await db.commit()
+            await m0025_drop_dead_images_deny_row.migration.apply(db)
+            assert await self._rows(db, "/images") == [
+                (0, ACTION_ALLOW, "view-images", 1),
+                (2, ACTION_ALLOW, "custom", None),
+            ]
+            # Idempotent: re-run changes nothing.
+            await m0025_drop_dead_images_deny_row.migration.apply(db)
+            assert await self._rows(db, "/images") == [
+                (0, ACTION_ALLOW, "view-images", 1),
+                (2, ACTION_ALLOW, "custom", None),
+            ]
+        finally:
+            await db.__aexit__(None, None, None)
+
+    async def test_custom_deny_shapes_untouched(self, tmp_path):
+        """A Deny row that is not the seed's Everyone ``*`` (e.g. a
+        group-scoped deny, or a ``view-images`` deny) is operator intent
+        and stays."""
+        from klangk.model import ACTION_DENY
+        from klangk.model.migrations import m0025_drop_dead_images_deny_row
+
+        db = await self._db(tmp_path)
+        try:
+            await db.execute(
+                "INSERT INTO acl_entries"
+                " (resource, position, action, principal_type, group_id,"
+                "  permission)"
+                " VALUES ('/images', 0, 0, 2, 'g-a', '*'),"
+                "        ('/images', 1, 0, 0, NULL, 'view-images')"
+            )
+            await db.commit()
+            await m0025_drop_dead_images_deny_row.migration.apply(db)
+            assert await self._rows(db, "/images") == [
+                (0, ACTION_DENY, "*", None),
+                (1, ACTION_DENY, "view-images", None),
+            ]
+        finally:
+            await db.__aexit__(None, None, None)
+
+    async def test_fresh_db_is_noop(self, tmp_path):
+        """An empty acl_entries table belongs to the boot seeds."""
+        from klangk.model.migrations import m0025_drop_dead_images_deny_row
+
+        db = await self._db(tmp_path)
+        try:
+            await m0025_drop_dead_images_deny_row.migration.apply(db)
             cursor = await db.execute("SELECT COUNT(*) FROM acl_entries")
             assert (await cursor.fetchone())[0] == 0
         finally:

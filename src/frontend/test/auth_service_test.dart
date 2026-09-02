@@ -96,6 +96,8 @@ void main() {
       bool? defaultPerHandleHome,
       String? defaultClassificationBanner,
       bool? browserDelegateEnabled,
+      bool? nixAvailable,
+      bool? sudoAvailable,
     }) {
       return MockClient((request) async {
         if (request.url.path.contains('/api/v1/config')) {
@@ -121,6 +123,8 @@ void main() {
                 'default_classification_banner': defaultClassificationBanner,
               if (browserDelegateEnabled != null)
                 'browser_delegate_enabled': browserDelegateEnabled,
+              if (nixAvailable != null) 'nix_available': nixAvailable,
+              if (sudoAvailable != null) 'sudo_available': sudoAvailable,
             }),
             200,
           );
@@ -165,6 +169,24 @@ void main() {
       final service2 = AuthService();
       await Future.delayed(Duration.zero);
       expect(service2.allowAutostart, isTrue);
+    });
+
+    test('loads deploy capability toggles from /api/config (#2994)', () async {
+      // Defaults to false when the fields are absent (pre-auth payload
+      // or an old server that doesn't send them).
+      testAuthHttpClientOverride = _bannerClient();
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+      expect(service.nixAvailable, isFalse);
+      expect(service.sudoAvailable, isFalse);
+
+      // Set when the authenticated payload advertises them.
+      testAuthHttpClientOverride =
+          _bannerClient(nixAvailable: true, sudoAvailable: true);
+      final service2 = AuthService();
+      await Future.delayed(Duration.zero);
+      expect(service2.nixAvailable, isTrue);
+      expect(service2.sudoAvailable, isTrue);
     });
 
     test('loads default_classification_banner from /api/config (#2768)',

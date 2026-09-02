@@ -53,6 +53,13 @@ class AuthService extends ChangeNotifier {
   // overrides, not unions) and gate the editor on netfilter_enabled.
   List<String> _netfilterDefaultDomains = const [];
   bool _netfilterEnabled = false;
+
+  /// #2974: deploy-level capability toggles (from the authenticated-only
+  /// /config fields — moved off the /images listing). The workspace
+  /// create/edit UIs read these to decide whether the nix and sudo
+  /// toggles render.
+  bool _nixAvailable = false;
+  bool _sudoAvailable = false;
   Timer? _permissionTimer;
   Timer? _refreshTimer;
 
@@ -112,6 +119,15 @@ class AuthService extends ChangeNotifier {
   /// The UI shows the allowed-domains editor only when the deploy can
   /// actually enforce it.
   bool get netfilterEnabled => _netfilterEnabled;
+
+  /// #2202: whether the per-workspace nix flag can trigger the
+  /// per-workspace /nix mount — only when the backend is configured AND
+  /// nix_enabled on; inert otherwise.
+  bool get nixAvailable => _nixAvailable;
+
+  /// #2017: whether the deploy allows sudo at all — the ceiling the
+  /// per-workspace lock-down toggle opts out below.
+  bool get sudoAvailable => _sudoAvailable;
 
   /// Decode the JWT payload.
   Map<String, dynamic>? get _payload {
@@ -211,6 +227,8 @@ class AuthService extends ChangeNotifier {
             (data['netfilter_default_domains'] as List?)?.cast<String>() ??
                 const [];
         _netfilterEnabled = (data['netfilter_enabled'] as bool?) ?? false;
+        _nixAvailable = (data['nix_available'] as bool?) ?? false;
+        _sudoAvailable = (data['sudo_available'] as bool?) ?? false;
         _passwordPolicy = PasswordPolicy.fromConfig(data);
         // White-label values — mirrored into the Branding helper so widgets
         // that don't have an AuthService context (e.g. the app-bar logo,

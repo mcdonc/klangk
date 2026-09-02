@@ -244,30 +244,39 @@ class Lifecycle:
         # or scopes these rows in the ACL editor):
         #   /volumes    manage-volumes — user-owned volumes (label-
         #                               scoped per user at runtime)
-        #   /images     view-images    — the image/nix/sudo capability
-        #                               listing (create/edit UIs)
+        #   /images     view-images    — the image listing the
+        #                               create/edit UIs read
+        # /images gets no trailing Deny Everyone row (#2994): the row
+        # could never fire (the JWT middleware rejects unauthenticated
+        # requests before any ACL check) and no-match is already
+        # default-deny. Migration 0025 drops the dead row on existing
+        # deployments.
         # NB: /llm-proxy is NOT here — #2959 gives it its own
         # workspace-token-only gate, independent of the ACL system.
-        for resource, permission in (
-            ("/volumes", "manage-volumes"),
-            ("/images", "view-images"),
-        ):
-            await self.app.state.model.acl.add_acl_entry(
-                resource,
-                0,
-                ACTION_ALLOW,
-                permission,
-                PRINCIPAL_SYSTEM,
-                system_principal=SYSTEM_AUTHENTICATED,
-            )
-            await self.app.state.model.acl.add_acl_entry(
-                resource,
-                1,
-                ACTION_DENY,
-                "*",
-                PRINCIPAL_SYSTEM,
-                system_principal=SYSTEM_EVERYONE,
-            )
+        await self.app.state.model.acl.add_acl_entry(
+            "/volumes",
+            0,
+            ACTION_ALLOW,
+            "manage-volumes",
+            PRINCIPAL_SYSTEM,
+            system_principal=SYSTEM_AUTHENTICATED,
+        )
+        await self.app.state.model.acl.add_acl_entry(
+            "/volumes",
+            1,
+            ACTION_DENY,
+            "*",
+            PRINCIPAL_SYSTEM,
+            system_principal=SYSTEM_EVERYONE,
+        )
+        await self.app.state.model.acl.add_acl_entry(
+            "/images",
+            0,
+            ACTION_ALLOW,
+            "view-images",
+            PRINCIPAL_SYSTEM,
+            system_principal=SYSTEM_AUTHENTICATED,
+        )
         # /admin: kept as the instance-administrator marker — Allow *
         # for admins, deny everyone. No route checks a permission here
         # anymore (#2944); the wildcard marks "is an instance admin"

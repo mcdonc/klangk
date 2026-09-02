@@ -440,14 +440,11 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
     final defaultImage = imageData?['default'] as String? ?? 'klangk-pi';
     final allowedImages =
         (imageData?['allowed'] as List?)?.cast<String>() ?? [defaultImage];
-    // #2202: the per-workspace nix toggle is only meaningful when the server
-    // has a zfs seed dataset configured (nix_available); otherwise nix is
-    // image-only and the toggle would do nothing.
-    final nixAvailable = imageData?['nix_available'] == true;
-    // #2017: the sudo lock-down toggle is only meaningful when the deploy
-    // allows sudo at all — the per-workspace knob may only opt a workspace
-    // out below that ceiling.
-    final sudoAvailable = imageData?['sudo_available'] == true;
+    // #2974: the deploy-level toggles now live on the auth service's
+    // config cache (authenticated-only /config fields), not the images
+    // listing.
+    final nixAvailable = _auth.nixAvailable;
+    final sudoAvailable = _auth.sudoAvailable;
 
     if (!mounted) return;
 

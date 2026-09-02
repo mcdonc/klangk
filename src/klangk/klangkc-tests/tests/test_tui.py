@@ -74,6 +74,7 @@ from klangk.cli.tui.screens import (
 )
 from klangk.cli.tui.state import LoginError, TuiState
 from klangk.cli.tui.screens.main import listen_for_status
+from klangk.cli.tui.screens import workspace_form as scr_form
 
 
 # ---------------------------------------------------------------------------
@@ -149,6 +150,9 @@ def _st(**methods):
         "list_shared_workspaces": lambda: [],
         # #2768: the detail screen's deploy-default marking fetch.
         "default_classification_banner": lambda: "",
+        # #2974: deploy-level nix/sudo toggles (moved off list_images to
+        # the /config fields) — off by default; tests override to arm.
+        "deploy_toggles": lambda: (False, False),
     }
     for k, v in {**defaults, **methods}.items():
         setattr(st, k, v)
@@ -3416,7 +3420,7 @@ async def test_main_screen_action_edit_load_fallbacks(monkeypatch):
 
 async def test_main_and_detail_edit_pass_sudo_available(monkeypatch):
     """#2017 review: both real edit entry points (list 'e' and the detail
-    screen) must forward sudo_available from /api/v1/images — the screen
+    screen) must forward sudo_available from the deploy toggles (/config, #2974) — the screen
     constructor default (False) otherwise hides the toggle as dead wiring."""
 
     async def noop(*a, **k):
@@ -3426,17 +3430,14 @@ async def test_main_and_detail_edit_pass_sudo_available(monkeypatch):
     a = _wsobj("alpha", image="base")
 
     def images():
-        return {
-            "default": "base",
-            "allowed": ["base", "py:3"],
-            "sudo_available": True,
-        }
+        return {"default": "base", "allowed": ["base", "py:3"]}
 
     # List-screen entry.
     st = _ws(
         owned=[a],
         list_images=images,
         allow_autostart=lambda: True,
+        deploy_toggles=lambda: (False, True),
     )
     st.find_workspace = lambda n: a
     app = KlangkApp(st)
@@ -3454,6 +3455,7 @@ async def test_main_and_detail_edit_pass_sudo_available(monkeypatch):
         owned=[a],
         list_images=images,
         allow_autostart=lambda: True,
+        deploy_toggles=lambda: (False, True),
     )
     st2.find_workspace = lambda n: a
     app2 = KlangkApp(st2)
@@ -9103,6 +9105,7 @@ async def test_create_screen_images_unavailable(monkeypatch):
             create=create,
             list_images=boom,
             allow_autostart=boom,
+            deploy_toggles=boom,
             default_allowed_domains=boom,
             default_per_handle_home=boom,
         )
@@ -9420,7 +9423,7 @@ async def test_create_screen_nix_hidden_when_not_available(monkeypatch):
         return None
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
-    app = KlangkApp(_create_state())  # list_images omits nix_available
+    app = KlangkApp(_create_state())  # deploy_toggles default (False, False)
     async with app.run_test(size=(140, 40)) as pilot:
         app.screen.action_create()
         await app.workers.wait_for_complete()
@@ -9447,11 +9450,7 @@ async def test_create_screen_nix_shown_and_sent_when_checked(monkeypatch):
     app = KlangkApp(
         _create_state(
             create=create,
-            list_images=lambda: {
-                "default": "base",
-                "allowed": ["base", "py:3"],
-                "nix_available": True,
-            },
+            deploy_toggles=lambda: (True, False),
         )
     )
     async with app.run_test(size=(140, 40)) as pilot:
@@ -9470,13 +9469,13 @@ async def test_create_screen_nix_shown_and_sent_when_checked(monkeypatch):
 
 async def test_create_screen_sudo_hidden_when_not_available(monkeypatch):
     """#2017: the Allow sudo toggle is hidden unless the deploy allows
-    sudo (sudo_available on /api/v1/images)."""
+    sudo (deploy_toggles reports sudo on, #2974)."""
 
     async def noop(*a, **k):
         return None
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
-    app = KlangkApp(_create_state())  # list_images omits sudo_available
+    app = KlangkApp(_create_state())  # deploy_toggles default (False, False)
     async with app.run_test(size=(140, 40)) as pilot:
         app.screen.action_create()
         await app.workers.wait_for_complete()
@@ -9503,11 +9502,7 @@ async def test_create_screen_sudo_unchecked_sends_lockdown(monkeypatch):
     app = KlangkApp(
         _create_state(
             create=create,
-            list_images=lambda: {
-                "default": "base",
-                "allowed": ["base", "py:3"],
-                "sudo_available": True,
-            },
+            deploy_toggles=lambda: (False, True),
         )
     )
     async with app.run_test(size=(140, 40)) as pilot:
@@ -15062,3 +15057,99 @@ async def test_token_refresh_body_actually_runs_2834(monkeypatch):
         await _real_token_refresh_loop(app.screen)
         assert expired == [1]  # the expired result surfaces the overlay
     assert ran
+
+
+def test_deploy_toggles(monkeypatch, redirect_xdg):
+    # #2974: the toggles are auth-gated /config fields, read via the
+    # authed client (not fetch_config). Strict bools — a string
+    # "false" must not coerce.
+    from unittest.mock import MagicMock
+
+    t = TuiState("https://x.example")
+    fake = MagicMock()
+    monkeypatch.setattr(t, "client", lambda: fake)
+    fake.config.return_value = {"nix_available": True, "sudo_available": True}
+    assert t.deploy_toggles() == (True, True)
+    fake.config.return_value = {}
+    assert t.deploy_toggles() == (False, False)
+    fake.config.return_value = {"nix_available": "false", "sudo_available": 1}
+    assert t.deploy_toggles() == (False, False)
+
+
+async def test_create_screen_deploy_toggles_failure(monkeypatch):
+    """#2974: a deploy-toggles fetch failure must not block the create
+    form — the toggles degrade to off."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+
+    def boom():
+        raise OSError("config endpoint down")
+
+    app = KlangkApp(
+        _create_state(
+            list_images=boom,
+            deploy_toggles=boom,
+        )
+    )
+    async with app.run_test(size=(140, 40)) as pilot:
+        app.screen.action_create()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert isinstance(app.screen, CreateWorkspaceScreen)
+        assert app.screen._nix_available is False
+        assert app.screen._sudo_available is False
+
+
+async def test_create_screen_deploy_toggles_auth_error(monkeypatch):
+    """#2974: an auth failure on the toggles fetch ends the session."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+
+    def expired():
+        raise AuthError("expired")
+
+    app = KlangkApp(_create_state(deploy_toggles=expired))
+    async with app.run_test(size=(140, 40)) as pilot:
+        app.screen.action_create()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert isinstance(app.screen, SessionExpiredScreen)
+
+
+async def test_edit_screen_deploy_toggles_failure(monkeypatch):
+    """#2974: the edit form also degrades to toggles-off when the fetch
+    fails, and an auth failure ends the session."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+
+    def boom():
+        raise OSError("config endpoint down")
+
+    ws = _wsobj("alpha")
+    app = KlangkApp(_edit_state(ws, deploy_toggles=boom))
+    async with app.run_test() as pilot:
+        await scr_form.open_edit_screen(app.screen, app.tui_state, ws, None)
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert isinstance(app.screen, EditWorkspaceScreen)
+        assert app.screen._nix_available is False
+        assert app.screen._sudo_available is False
+
+    def expired():
+        raise AuthError("expired")
+
+    app2 = KlangkApp(_edit_state(ws, deploy_toggles=expired))
+    async with app2.run_test() as pilot:
+        await scr_form.open_edit_screen(app2.screen, app2.tui_state, ws, None)
+        await app2.workers.wait_for_complete()
+        await pilot.pause()
+        assert isinstance(app2.screen, SessionExpiredScreen)
