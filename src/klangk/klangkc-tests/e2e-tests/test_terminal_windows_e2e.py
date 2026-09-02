@@ -17,6 +17,7 @@ import json
 import logging
 import os
 import re
+import secrets
 import subprocess
 import time
 
@@ -107,18 +108,25 @@ def _expect_window_capture(ws_name, env, timeout=25):
     with no diagnostic (#3012). The pre-command fixed ``sleep 2`` is
     replaced by an executed-marker round-trip — the shell must actually
     run a command before the tmux query is sent — so a slow attach is
-    polled instead of guessed at. The marker matches any exit status:
-    a nonzero ``$?`` used to present as an opaque ``TIMEOUT:ready`` after
-    the full timeout (#3037) — it now fails fast with ``READY-NONZERO``,
-    and a ready-stage timeout/eof appends a bounded tail of what the pane
-    actually printed, so a wrong-pane ping is identifiable in artifacts.
+    polled instead of guessed at. The marker is nonced per invocation
+    (#3037): on a re-attach the tmux client redraws the pane, so a
+    previous invocation's marker line is in the stream — matching it
+    would misattribute a stale exit status and defeat the round-trip.
+    The marker matches any exit status: a nonzero ``$?`` used to present
+    as an opaque ``TIMEOUT:ready`` after the full timeout (#3037) — it
+    now fails fast with ``READY-NONZERO``, and a ready-stage
+    timeout/eof appends a bounded tail of what the pane actually
+    printed, so a wrong-pane ping is identifiable in artifacts.
     """
+    nonce = secrets.token_hex(4)
     script = f"""
 set timeout {timeout}
 log_user 0
 proc ready_tail {{}} {{
     global expect_out timeout
     catch {{unset expect_out(buffer)}}
+    # Shrinks the global timeout: every caller exits right after, so no
+    # later stage can inherit the 1s timeout.
     set timeout 1
     expect {{
         -re {{(?s).*}} {{}}
@@ -133,9 +141,9 @@ expect {{
     timeout {{ puts "TIMEOUT:prompt"; exit 1 }}
     eof {{ puts "EOF:prompt"; exit 1 }}
 }}
-send "echo KLANGK_READY_\\$?\\r"
+send "echo KLANGK_READY_{nonce}_\\$?\\r"
 expect {{
-    -re {{KLANGK_READY_([0-9]+)}} {{
+    -re {{KLANGK_READY_{nonce}_([0-9]+)}} {{
         if {{$expect_out(1,string) != 0}} {{
             puts "READY-NONZERO:$expect_out(1,string)"
             exit 1
@@ -168,7 +176,12 @@ wait
         )
     except subprocess.TimeoutExpired:
         return "EXPECT-TIMEOUT"
-    return result.stdout.strip()
+    out = result.stdout.strip()
+    if result.returncode != 0 and result.stderr.strip():
+        # A Tcl-level runtime error aborts the tag ``puts`` — without
+        # this the diagnostic would come back empty (#3037).
+        out = f"{out}\nstderr: {result.stderr.strip()}"
+    return out
 
 
 def _cli_check_window(ws_name, env, timeout=25):
@@ -202,12 +215,15 @@ def _cli_hold_and_check(ws_name, window_name, hold_seconds, env):
         cmd = f"klangk shell {ws_name} {window_name} --no-consent-popup"
     else:
         cmd = f"klangk shell {ws_name} --no-consent-popup"
+    nonce = secrets.token_hex(4)
     script = f"""
 set timeout 30
 log_user 0
 proc ready_tail {{}} {{
     global expect_out timeout
     catch {{unset expect_out(buffer)}}
+    # Shrinks the global timeout: every caller exits right after, so no
+    # later stage can inherit the 1s timeout.
     set timeout 1
     expect {{
         -re {{(?s).*}} {{}}
@@ -222,9 +238,9 @@ expect {{
     timeout {{ puts "TIMEOUT:prompt"; exit 1 }}
     eof {{ puts "EOF:prompt"; exit 1 }}
 }}
-send "echo KLANGK_READY_\\$?\\r"
+send "echo KLANGK_READY_{nonce}_\\$?\\r"
 expect {{
-    -re {{KLANGK_READY_([0-9]+)}} {{
+    -re {{KLANGK_READY_{nonce}_([0-9]+)}} {{
         if {{$expect_out(1,string) != 0}} {{
             puts "READY-NONZERO:$expect_out(1,string)"
             exit 1
@@ -664,8 +680,10 @@ puts "AFTER=$a1"
     def test_cli_reconnect_to_named_window(self):
         """CLI disconnect/reconnect to same named window works."""
         w1 = _cli_check_window(WS_NAME + " persist", self._env)
+        assert re.fullmatch(r"\d+:\S+", w1), f"First connect: {w1}"
         assert "persist" in w1, f"First connect: {w1}"
         w2 = _cli_check_window(WS_NAME + " persist", self._env)
+        assert re.fullmatch(r"\d+:\S+", w2), f"Second connect: {w2}"
         assert "persist" in w2, f"Second connect: {w2}"
         # Both should report the same window name
         name1 = w1.split(":", 1)[1] if ":" in w1 else w1
