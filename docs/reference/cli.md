@@ -298,7 +298,8 @@ klangk admin invitations send user@example.com     # send an invitation email (a
 klangk admin invitations ls                       # list all invitations (admin only)
 klangk images                       # list available container images
 klangk volumes ls                   # list your podman volumes
-klangk volumes create nix-store     # create a named volume (owned by you)
+klangk volumes create nix-store     # create a named volume (owned by you;
+                                     # may 429 past KLANGKD_VOLUME_QUOTA_PER_USER)
 klangk volumes rm nix-store         # delete a volume (must be yours)
 ```
 

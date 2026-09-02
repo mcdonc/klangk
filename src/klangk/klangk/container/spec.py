@@ -361,6 +361,30 @@ async def _ensure_named_volume(app, user_id, podman, source: str) -> None:
         }
         if user_id:
             labels["klangk.user-id"] = user_id
+            # Per-user volume quota (#2972): this start-path auto-create
+            # is the second door that mints user-owned volumes (the
+            # POST /volumes route is the first) — a user at quota must
+            # not bypass the cap by adding mounts to a workspace. Same
+            # per-user lock as the route, so a concurrent API create
+            # and this start cannot each pass a cap they jointly exceed.
+            # The ValueError surfaces as a clear start error
+            # (registry.start_container maps it).
+            quota = app.state.settings.volume_quota_per_user
+            if quota > 0:
+                async with podman.volume_create_lock(user_id):
+                    count = await podman.count_user_volumes(
+                        app.state.util.instance_id(), user_id
+                    )
+                    if count >= quota:
+                        raise ValueError(
+                            f"volume quota reached: {count} of this "
+                            "user's volumes already exist and the server "
+                            f"caps it at {quota} "
+                            "(KLANGKD_VOLUME_QUOTA_PER_USER); remove a "
+                            "volume mount or delete a volume first"
+                        )
+                    await podman.create_volume(source, labels)
+                return
         await podman.create_volume(source, labels)
         return
     vol_labels = info.get("Labels") or {}

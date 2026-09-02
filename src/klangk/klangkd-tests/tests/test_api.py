@@ -1,5 +1,6 @@
 """Tests for api.py: HTTP route handlers via FastAPI TestClient."""
 
+import asyncio
 import io
 import os
 import shutil
@@ -7061,6 +7062,182 @@ class TestVolumeRoutes:
                 json={"name": "err-vol"},
                 headers=headers,
             )
+
+    # --- Per-user volume quota (#2972) ---
+
+    # The endpoint delegates counting to podman.count_user_volumes
+    # (label filtering is unit-tested in test_podman.py); tests here
+    # stub the count and assert the route's quota decision, its call
+    # args, and that the refusal never reaches podman.create_volume.
+
+    async def test_create_volume_under_quota(self, app, client, admin_user):
+        headers = await _admin_login(client)
+        mock_create = AsyncMock(
+            return_value={"Name": "new-vol", "CreatedAt": "2026-01-01"}
+        )
+        mock_count = AsyncMock(return_value=1)
+        with (
+            patch.object(app.state.settings, "volume_quota_per_user", 2),
+            patch.object(
+                _mock_pod, "inspect_volume", AsyncMock(return_value=None)
+            ),
+            patch.object(_mock_pod, "count_user_volumes", mock_count),
+            patch.object(_mock_pod, "create_volume", mock_create),
+        ):
+            resp = await client.post(
+                "/api/v1/volumes",
+                json={"name": "new-vol"},
+                headers=headers,
+            )
+        assert resp.status_code == 200
+        assert mock_create.await_count == 1
+        # The count is scoped to this instance and the caller's id.
+        assert mock_count.await_args.args[1] == admin_user["id"]
+
+    async def test_create_volume_at_quota_refused_429(
+        self, app, client, admin_user
+    ):
+        headers = await _admin_login(client)
+        mock_create = AsyncMock(
+            return_value={"Name": "nope", "CreatedAt": "2026-01-01"}
+        )
+        with (
+            patch.object(app.state.settings, "volume_quota_per_user", 2),
+            patch.object(
+                _mock_pod, "inspect_volume", AsyncMock(return_value=None)
+            ),
+            patch.object(
+                _mock_pod, "count_user_volumes", AsyncMock(return_value=2)
+            ),
+            patch.object(_mock_pod, "create_volume", mock_create),
+        ):
+            resp = await client.post(
+                "/api/v1/volumes",
+                json={"name": "v3"},
+                headers=headers,
+            )
+        assert resp.status_code == 429
+        detail = resp.json()["detail"]
+        assert "2" in detail
+        assert "KLANGKD_VOLUME_QUOTA_PER_USER" in detail
+        assert "Delete a volume first" in detail
+        mock_create.assert_not_awaited()
+
+    async def test_create_volume_duplicate_at_quota_reports_409(
+        self, app, client, admin_user
+    ):
+        """The in-instance duplicate conflict probe deliberately wins over
+        the quota check — a duplicate name reports 409 even at quota,
+        and the count never runs (the name is enumerable by the caller
+        either way)."""
+        headers = await _admin_login(client)
+        mock_count = AsyncMock(return_value=99)
+        with (
+            patch.object(app.state.settings, "volume_quota_per_user", 1),
+            patch.object(
+                _mock_pod,
+                "inspect_volume",
+                AsyncMock(return_value=_managed_volume(admin_user["id"])),
+            ),
+            patch.object(_mock_pod, "count_user_volumes", mock_count),
+        ):
+            resp = await client.post(
+                "/api/v1/volumes",
+                json={"name": "dup-vol"},
+                headers=headers,
+            )
+        assert resp.status_code == 409
+        mock_count.assert_not_awaited()
+
+    async def test_concurrent_creates_respect_quota(
+        self, app, client, admin_user
+    ):
+        """The per-user lock spans count+create: two overlapping creates
+        cannot each count the same pre-create total and both pass a cap
+        they jointly exceed (#2972 TOCTOU).
+
+        Direct route invocation, not the HTTP client: the app fixture's
+        dependency/DB layer serializes the two requests' critical
+        sections, so the race is only observable at the route-function
+        level. The fake store is stateful — count reflects what has
+        actually been created — so with the lock removed both calls
+        count 0 < 1 and both creates succeed (verified by mutation:
+        deleting the lock flips this test to failing).
+        """
+        from fastapi import HTTPException
+
+        from klangk.api import resources
+        from klangk.api.resources import CreateVolumeRequest
+
+        created: list[str] = []
+
+        async def fake_count(instance, uid):
+            await asyncio.sleep(0)
+            return len(created)
+
+        async def fake_create(name, labels):
+            await asyncio.sleep(0)
+            created.append(name)
+            return {"Name": name, "CreatedAt": "2026-01-01"}
+
+        real_lock = asyncio.Lock()
+        with (
+            patch.object(app.state.settings, "volume_quota_per_user", 1),
+            patch.object(
+                _mock_pod, "inspect_volume", AsyncMock(return_value=None)
+            ),
+            patch.object(
+                _mock_pod, "volume_create_lock", lambda uid: real_lock
+            ),
+            patch.object(_mock_pod, "count_user_volumes", fake_count),
+            patch.object(_mock_pod, "create_volume", fake_create),
+        ):
+            results = await asyncio.gather(
+                resources.create_volume(
+                    CreateVolumeRequest(name="v-a"), admin_user, app
+                ),
+                resources.create_volume(
+                    CreateVolumeRequest(name="v-b"), admin_user, app
+                ),
+                return_exceptions=True,
+            )
+        # Exactly one create happened; the loser counted the winner's
+        # volume and was refused with 429 — never both 200.
+        assert len(created) == 1
+        errors = [r for r in results if isinstance(r, HTTPException)]
+        successes = [r for r in results if not isinstance(r, Exception)]
+        assert len(errors) == 1
+        assert errors[0].status_code == 429
+        assert "KLANGKD_VOLUME_QUOTA_PER_USER" in errors[0].detail
+        assert len(successes) == 1
+        assert successes[0]["name"] == created[0]
+
+    async def test_create_volume_quota_disabled_by_default(
+        self, app, client, admin_user
+    ):
+        """quota 0 (the shipped default) keeps the pre-#2972 create path:
+        no volume enumeration, no refusal regardless of count."""
+        headers = await _admin_login(client)
+        mock_count = AsyncMock(return_value=0)
+        mock_create = AsyncMock(
+            return_value={"Name": "new-vol", "CreatedAt": "2026-01-01"}
+        )
+        with (
+            patch.object(app.state.settings, "volume_quota_per_user", 0),
+            patch.object(
+                _mock_pod, "inspect_volume", AsyncMock(return_value=None)
+            ),
+            patch.object(_mock_pod, "count_user_volumes", mock_count),
+            patch.object(_mock_pod, "create_volume", mock_create),
+        ):
+            resp = await client.post(
+                "/api/v1/volumes",
+                json={"name": "new-vol"},
+                headers=headers,
+            )
+        assert resp.status_code == 200
+        mock_count.assert_not_awaited()
+        assert mock_create.await_count == 1
 
     async def test_delete_volume(self, client, admin_user):
         headers = await _admin_login(client)

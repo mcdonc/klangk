@@ -446,6 +446,14 @@ sync` report a clear permission-denied error.
   `admins` group can no longer be renamed or deleted (HTTP 400), and
   the name cannot be claimed by another group. See
   [ACL reference](reference/acl.md).
+- **`KLANGKD_VOLUME_QUOTA_PER_USER` (#2972).** Per-user cap on
+  instance-managed named volumes, enforced at both creation paths:
+  the volumes API (a create past the cap returns 429 naming the
+  setting) and the workspace-start auto-create of mounted named
+  volumes (a clear start error). A per-user lock makes the cap exact
+  under concurrent creates. `0` (the default) = unlimited — the
+  create path is unchanged when no quota is set. Reloadable on
+  SIGHUP.
 
 - **`workspace` filter on `GET /api/v1/events` (#3006).** The Admin →
   Events filter now accepts a workspace name as well as a workspace id:

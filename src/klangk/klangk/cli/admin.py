@@ -262,6 +262,18 @@ def volumes_create(
     if resp.status_code == 409:
         context.err.print(f"[red]Volume already exists:[/red] {name}")
         raise typer.Exit(code=1)
+    if resp.status_code == 429:
+        # Quota refusal (#2972): surface the server's actionable detail
+        # ("delete a volume first…") instead of httpx's bare status line.
+        detail = ""
+        try:
+            detail = resp.json().get("detail", "")
+        except Exception:
+            pass
+        context.err.print(
+            f"[red]Volume quota exceeded:[/red] {detail or name}"
+        )
+        raise typer.Exit(code=1)
     resp.raise_for_status()
     typer.echo(f"Created volume {name}")
 

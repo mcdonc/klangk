@@ -339,6 +339,7 @@ override it per-workspace (`settings.idle_timeout` — see
 | `admission_memory_enabled`          | `false`                         | `KLANGKD_ADMISSION_MEMORY_ENABLED`          |
 | `admission_memory_margin`           | `1g`                            | `KLANGKD_ADMISSION_MEMORY_MARGIN`           |
 | `max_running_workspaces_per_user`   | `0`                             | `KLANGKD_MAX_RUNNING_WORKSPACES_PER_USER`   |
+| `volume_quota_per_user`             | `0`                             | `KLANGKD_VOLUME_QUOTA_PER_USER`             |
 | `memory_eviction_enabled`           | `true`                          | `KLANGKD_MEMORY_EVICTION_ENABLED`           |
 | `memory_eviction_threshold_percent` | `10`                            | `KLANGKD_MEMORY_EVICTION_THRESHOLD_PERCENT` |
 | `memory_eviction_recovery_percent`  | `15`                            | `KLANGKD_MEMORY_EVICTION_RECOVERY_PERCENT`  |

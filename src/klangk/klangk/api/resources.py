@@ -400,21 +400,52 @@ async def create_volume(
             raise HTTPException(
                 status_code=409, detail=f"Volume {body.name!r} already exists"
             )
-    # A non-managed name (another instance's or the operator's volume)
-    # falls through to create_volume: podman's own create failure raises
-    # PodmanError, which reaches the client as a bare 500 with no probed
-    # name in the body. 500-vs-200 still hints at existence, but no
-    # longer with a 409 + echoed detail (#2973). In-instance cross-user
-    # names still 409 (issue scope: instance-managed volumes only; the
-    # admin-surface rework, #2993, narrows who can call this at all).
-    info = await app.state.podman.create_volume(
-        body.name,
-        {
-            "klangk.managed": "true",
-            "klangk.instance": app.state.util.instance_id(),
-            "klangk.user-id": user["id"],
-        },
-    )
+    # Per-user volume quota (#2972): a create past the cap is refused
+    # with 429 (not 403 — the refusal is capacity, not authorization;
+    # not 503 either — the workspace-admission 503s are auto-retried by
+    # the CLI's request_with_retry, and a quota refusal must not be).
+    # Checked after the conflict probe so an in-instance duplicate
+    # still reports 409 (the route's caller can list the instance
+    # inventory either way). Only runs when a quota is configured —
+    # the default 0 keeps the create path exactly as before, with no
+    # extra podman call. The per-user lock spans count+create: without
+    # it, N concurrent creates each count the same pre-create total
+    # and all pass a cap they jointly exceed. The workspace-start
+    # auto-create door (container/spec.py ensure_volumes) shares the
+    # same lock and quota gate.
+    labels = {
+        "klangk.managed": "true",
+        "klangk.instance": app.state.util.instance_id(),
+        "klangk.user-id": user["id"],
+    }
+    quota = app.state.settings.volume_quota_per_user
+    if quota > 0:
+        async with app.state.podman.volume_create_lock(user["id"]):
+            count = await app.state.podman.count_user_volumes(
+                app.state.util.instance_id(), user["id"]
+            )
+            if count >= quota:
+                raise HTTPException(
+                    status_code=429,
+                    detail=(
+                        f"volume quota reached: {count} of this user's "
+                        f"volumes already exist and the server caps it at "
+                        f"{quota} (KLANGKD_VOLUME_QUOTA_PER_USER). Delete "
+                        "a volume first, or ask the operator to raise the "
+                        "cap."
+                    ),
+                )
+            info = await app.state.podman.create_volume(body.name, labels)
+    else:
+        # A non-managed name (another instance's or the operator's volume)
+        # falls through to create_volume: podman's own create failure
+        # raises PodmanError, which reaches the client as a bare 500 with
+        # no probed name in the body. 500-vs-200 still hints at
+        # existence, but no longer with a 409 + echoed detail (#2973).
+        # In-instance cross-user names still 409 (issue scope:
+        # instance-managed volumes only; the admin-surface rework,
+        # #2993, narrows who can call this at all).
+        info = await app.state.podman.create_volume(body.name, labels)
     return {"name": info["Name"], "created": info.get("CreatedAt", "")}
 
 

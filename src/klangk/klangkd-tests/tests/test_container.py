@@ -4272,6 +4272,50 @@ class TestExtraMountsVolumeCreation:
                     )
                 )
 
+    async def test_auto_create_refused_at_quota(self, workspace, app_state):
+        """#2972: the start-path auto-create door honors the per-user
+        volume quota — a user at quota cannot mint volumes by adding
+        mounts to a workspace."""
+        self.registry.app.state.settings.volume_quota_per_user = 1
+        try:
+            with patch_podman(
+                self.registry,
+                count_user_volumes=AsyncMock(return_value=1),
+            ) as p:
+                with pytest.raises(ValueError, match="volume quota reached"):
+                    await self.registry.start_container(
+                        container.ContainerStartSpec(
+                            workspace["id"],
+                            "/tmp/home",
+                            extra_mounts=["v1:/data"],
+                            user_id="user-123",
+                        )
+                    )
+            p.create_volume.assert_not_awaited()
+        finally:
+            self.registry.app.state.settings.volume_quota_per_user = 0
+
+    async def test_auto_create_under_quota(self, workspace, app_state):
+        """A start-path create below the cap proceeds."""
+        self.registry.app.state.settings.volume_quota_per_user = 2
+        try:
+            with patch_podman(
+                self.registry,
+                count_user_volumes=AsyncMock(return_value=1),
+            ) as p:
+                await self.registry.start_container(
+                    container.ContainerStartSpec(
+                        workspace["id"],
+                        "/tmp/home",
+                        extra_mounts=["v1:/data"],
+                        user_id="user-123",
+                    )
+                )
+            p.create_volume.assert_awaited_once()
+            assert p.count_user_volumes.await_args.args[1] == "user-123"
+        finally:
+            self.registry.app.state.settings.volume_quota_per_user = 0
+
     async def test_volume_without_user_label_allowed(
         self, workspace, app_state
     ):
