@@ -240,8 +240,10 @@ def volumes_list(
     table = Table(box=None, pad_edge=False)
     table.add_column("Name", style="bold")
     table.add_column("Created")
+    table.add_column("Owner", style="dim")
     for v in volumes:
-        table.add_row(v["name"], v.get("created", "")[:19])
+        owner = v.get("owner") or "—"
+        table.add_row(v["name"], v.get("created", "")[:19], owner[:8])
     console.print(table)
 
 

@@ -92,11 +92,14 @@ async def _seed_2946_self_service(app_state):
     """Seed the #2946 self-service ACL rows (idempotent).
 
     Mirrors m0023 / seed_default_acls: Allow <perm> for Authenticated
-    plus Deny Everyone on /volumes, /images, /llm-proxy, and the
+    plus Deny Everyone on /images, /llm-proxy, and the
     Allow search-users Authenticated row on /users (inserted at
-    position 1, shifting later rows down — m0023's logic). Called by
-    the seed fixtures (user / agent_user / admin_group) so any test
-    reaching the DB gets the production-shaped world.
+    position 1, shifting later rows down — m0023's logic).
+    /volumes is no longer here — #2974 moved it to the admins group
+    (view-volumes + manage-volumes, seeded by the admin_group
+    fixture like the other admin surfaces). Called by the seed
+    fixtures (user / agent_user / admin_group) so any test reaching
+    the DB gets the production-shaped world.
     """
     from klangk.model.acl import (
         ACTION_ALLOW,
@@ -107,10 +110,7 @@ async def _seed_2946_self_service(app_state):
     )
 
     acl = app_state.state.model.acl
-    for resource, permission in (
-        ("/volumes", "manage-volumes"),
-        ("/images", "view-images"),
-    ):
+    for resource, permission in (("/images", "view-images"),):
         existing = await acl.get_acl_entries(resource)
         if existing:
             continue
@@ -279,6 +279,17 @@ async def admin_group(app_state):
             "*",
             PRINCIPAL_SYSTEM,
             system_principal=SYSTEM_EVERYONE,
+        )
+    # /volumes admin surface (#2974): view + manage to admins —
+    # mirrors the updated seed_default_acls / m0024.
+    for position, permission in enumerate(("view-volumes", "manage-volumes")):
+        await acl.add_acl_entry(
+            "/volumes",
+            position,
+            ACTION_ALLOW,
+            permission,
+            PRINCIPAL_GROUP,
+            group_id=group["id"],
         )
     await _seed_2946_self_service(app_state)
     # /admin stays as the instance-admin wildcard marker (#2944).

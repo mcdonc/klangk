@@ -6748,8 +6748,20 @@ def _managed_volume(user_id="test-user"):
 
 
 class TestVolumeRoutes:
-    async def test_list_volumes(self, client, user):
-        headers = await _auth_headers(client)
+    async def _admin_headers(self, client):
+        resp = await client.post(
+            "/api/v1/auth/login",
+            json={
+                "identifier": "testadmin@example.com",
+                "password": "testpass",
+            },
+        )
+        return {"Authorization": f"Bearer {resp.json()['access_token']}"}
+
+    async def test_list_volumes(self, client, admin_user, user):
+        """#2974: the listing is the admin-surface view — every managed
+        volume on the instance, with the creating user as owner."""
+        headers = await self._admin_headers(client)
         with patch.object(
             _mock_pod,
             "list_volumes",
@@ -6777,11 +6789,54 @@ class TestVolumeRoutes:
             resp = await client.get("/api/v1/volumes", headers=headers)
         assert resp.status_code == 200
         data = resp.json()
-        assert len(data) == 1
-        assert data[0]["name"] == "my-vol"
+        assert [v["name"] for v in data] == ["my-vol", "other-vol"]
+        assert data[0]["owner"] == user["id"]
+        assert data[1]["owner"] == "someone-else"
 
-    async def test_create_volume(self, client, user):
+    async def test_list_volumes_requires_view_permission(self, client, user):
+        """#2974: a non-admin (no view-volumes grant) cannot list."""
         headers = await _auth_headers(client)
+        resp = await client.get("/api/v1/volumes", headers=headers)
+        assert resp.status_code == 403
+
+    async def test_delegated_viewer_lists_but_cannot_mutate(
+        self, client, user, app_state
+    ):
+        """#2974: view-volumes alone is a read-only delegation — the
+        listing works, create/delete stay denied."""
+        from klangk.model import ACTION_ALLOW, PRINCIPAL_USER
+
+        await app_state.state.model.acl.add_acl_entry(
+            "/volumes",
+            0,
+            ACTION_ALLOW,
+            "view-volumes",
+            PRINCIPAL_USER,
+            user_id=user["id"],
+        )
+        headers = await _auth_headers(client)
+        with patch.object(
+            _mock_pod,
+            "list_volumes",
+            AsyncMock(return_value=[]),
+        ):
+            resp = await client.get("/api/v1/volumes", headers=headers)
+        assert resp.status_code == 200
+        assert resp.json() == []
+
+        resp = await client.post(
+            "/api/v1/volumes",
+            json={"name": "nope"},
+            headers=headers,
+        )
+        assert resp.status_code == 403
+        resp = await client.delete("/api/v1/volumes/nope", headers=headers)
+        assert resp.status_code == 403
+
+    async def test_create_volume(self, client, admin_user):
+        """#2974: create is manage-gated; the volume is stamped with the
+        creating admin's user-id (provenance)."""
+        headers = await self._admin_headers(client)
         mock_create = AsyncMock(
             return_value={"Name": "new-vol", "CreatedAt": "2026-01-01"}
         )
@@ -6799,10 +6854,10 @@ class TestVolumeRoutes:
         assert resp.status_code == 200
         assert resp.json()["name"] == "new-vol"
         _, labels = mock_create.call_args.args
-        assert labels["klangk.user-id"] == user["id"]
+        assert labels["klangk.user-id"] == admin_user["id"]
 
-    async def test_create_duplicate_volume(self, client, user):
-        headers = await _auth_headers(client)
+    async def test_create_duplicate_volume(self, client, admin_user, user):
+        headers = await self._admin_headers(client)
         with patch.object(
             _mock_pod,
             "inspect_volume",
@@ -6815,8 +6870,10 @@ class TestVolumeRoutes:
             )
         assert resp.status_code == 409
 
-    async def test_create_volume_error_propagates(self, client, user):
-        headers = await _auth_headers(client)
+    async def test_create_volume_error_propagates(
+        self, client, admin_user, user
+    ):
+        headers = await self._admin_headers(client)
         with (
             patch.object(
                 _mock_pod, "inspect_volume", AsyncMock(return_value=None)
@@ -6834,8 +6891,8 @@ class TestVolumeRoutes:
                 headers=headers,
             )
 
-    async def test_delete_volume(self, client, user):
-        headers = await _auth_headers(client)
+    async def test_delete_volume(self, client, admin_user, user):
+        headers = await self._admin_headers(client)
         with (
             patch.object(
                 _mock_pod,
@@ -6849,16 +6906,18 @@ class TestVolumeRoutes:
             )
         assert resp.status_code == 200
 
-    async def test_delete_volume_not_found(self, client, user):
-        headers = await _auth_headers(client)
+    async def test_delete_volume_not_found(self, client, admin_user, user):
+        headers = await self._admin_headers(client)
         with patch.object(
             _mock_pod, "inspect_volume", AsyncMock(return_value=None)
         ):
             resp = await client.delete("/api/v1/volumes/nope", headers=headers)
         assert resp.status_code == 404
 
-    async def test_delete_volume_wrong_instance(self, client, user):
-        headers = await _auth_headers(client)
+    async def test_delete_volume_wrong_instance(
+        self, client, admin_user, user
+    ):
+        headers = await self._admin_headers(client)
         with patch.object(
             _mock_pod,
             "inspect_volume",
@@ -6869,21 +6928,28 @@ class TestVolumeRoutes:
             )
         assert resp.status_code == 404
 
-    async def test_delete_volume_wrong_user(self, client, user):
-        headers = await _auth_headers(client)
-        with patch.object(
-            _mock_pod,
-            "inspect_volume",
-            AsyncMock(return_value=_managed_volume("someone-else")),
+    async def test_delete_volume_other_owner(self, client, admin_user, user):
+        """#2974: manage-volumes holders administer every managed volume —
+        the old per-user ownership 403 is gone (label is provenance)."""
+        headers = await self._admin_headers(client)
+        with (
+            patch.object(
+                _mock_pod,
+                "inspect_volume",
+                AsyncMock(return_value=_managed_volume("someone-else")),
+            ),
+            patch.object(_mock_pod, "remove_volume", AsyncMock()),
         ):
             resp = await client.delete(
                 "/api/v1/volumes/other", headers=headers
             )
-        assert resp.status_code == 403
+        assert resp.status_code == 200
 
-    async def test_delete_volume_remove_not_found(self, client, user):
+    async def test_delete_volume_remove_not_found(
+        self, client, admin_user, user
+    ):
         """Volume vanishes between inspect and remove -> 404."""
-        headers = await _auth_headers(client)
+        headers = await self._admin_headers(client)
         with (
             patch.object(
                 _mock_pod,
@@ -6899,8 +6965,8 @@ class TestVolumeRoutes:
             resp = await client.delete("/api/v1/volumes/gone", headers=headers)
         assert resp.status_code == 404
 
-    async def test_delete_volume_other_error(self, client, user):
-        headers = await _auth_headers(client)
+    async def test_delete_volume_other_error(self, client, admin_user, user):
+        headers = await self._admin_headers(client)
         with (
             patch.object(
                 _mock_pod,
@@ -6916,8 +6982,8 @@ class TestVolumeRoutes:
         ):
             await client.delete("/api/v1/volumes/err-vol", headers=headers)
 
-    async def test_delete_volume_in_use(self, client, user):
-        headers = await _auth_headers(client)
+    async def test_delete_volume_in_use(self, client, admin_user, user):
+        headers = await self._admin_headers(client)
         with (
             patch.object(
                 _mock_pod,

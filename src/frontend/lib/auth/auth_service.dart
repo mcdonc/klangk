@@ -157,7 +157,8 @@ class AuthService extends ChangeNotifier {
       hasPermission('/groups', 'manage-groups') ||
       hasPermission('/server', 'manage-server-schedule') ||
       hasPermission('/events', 'manage-events') ||
-      hasPermission('/acl', 'manage-acls');
+      hasPermission('/acl', 'manage-acls') ||
+      hasPermission('/volumes', 'view-volumes');
 
   /// Check if the user has a specific permission on a resource.
   bool hasPermission(String resource, String permission) {

@@ -68,6 +68,21 @@ resource targeting the group of your choice via the ACL editor — the
 same recipe as
 [workspace creation](#granting-workspace-creation-to-non-admin-users).
 
+## Volumes
+
+The Volumes tab in the Admin panel shows the deployment's klangk-managed
+podman volumes — every volume on the instance, with its creating user as
+provenance and a delete action. There is no create surface in the tab:
+workspace extra-mount volumes are provisioned automatically at container
+assembly.
+
+The tab is gated by `view-volumes` on `/volumes`; the delete action
+additionally requires `manage-volumes` (both seeded to the `admins`
+group, #2974). This makes read-only delegation possible: grant only
+`view-volumes` to a group and its members see the inventory but cannot
+delete — the same recipe as
+group-management delegation above.
+
 ## Default access rules
 
 On first startup, Klangk seeds these defaults:
