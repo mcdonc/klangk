@@ -33,18 +33,20 @@ operators or integrators to act when upgrading.
 ### Breaking
 
 - **Volumes are an admin surface (#2993).** `GET /volumes` now checks
-  the new `view-volumes` permission (the admin Volumes tab's gate;
-  view + delete only, no create), while `POST /volumes` and
-  `DELETE /volumes/{name}` keep `manage-volumes` — both seeded Allow
-  for the `admins` group only, so non-admin users lose volume
-  list/create/delete access on upgrade (migration m0025 replaces the
-  old rows; custom operator rows that don't match the seeded shapes
-  survive below the new admin rows — re-grant via the ACL editor if a
-  deploy wants self-service volumes back). The listing returns the
-  deployment's whole instance-managed inventory — the creator label
-  is provenance (`user_id` plus the creator's handle `created_by`),
-  and each row lists the workspace names mounting it (`workspaces`);
-  `manage-volumes` holders may delete any instance volume.
+  the new `view-volumes` permission (the admin Volumes tab's listing
+  gate), while `POST /volumes` and `DELETE /volumes/{name}` keep
+  `manage-volumes` — both seeded Allow for the `admins` group only,
+  so non-admin users lose volume list/create/delete access on
+  upgrade (migration m0025 replaces the old rows; custom operator
+  rows that don't match the seeded shapes survive below the new admin
+  rows — re-grant via the ACL editor if a deploy wants self-service
+  volumes back). The tab lists and deletes volumes (delete needs
+  `manage-volumes`); there is no create surface. The listing returns
+  the deployment's whole instance-managed inventory — the creator
+  label is provenance (`user_id` plus the creator's handle
+  `created_by`), and each row lists the workspace names mounting it
+  (`workspaces`); `manage-volumes` holders may delete any instance
+  volume.
 
 - **Deploy-wide consent decider removed (#2976).** The
   `/ws/consent-decider` handshake without a `?workspace=` param is now

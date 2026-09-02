@@ -1661,11 +1661,11 @@ class TestVolumeUserIsolation:
             assert result.returncode == 0
             assert "vol-a" in result.stdout
         finally:
-            result = run(["klangk", "volumes", "rm", "vol-a"], env=env_a)
-            assert result.returncode == 0
-            result = run(["klangk", "volumes", "ls", "--plain"], env=env_a)
-            assert result.returncode == 0
-            assert "vol-a" not in result.stdout
+            run(["klangk", "volumes", "rm", "vol-a"], env=env_a)
+
+        result = run(["klangk", "volumes", "ls", "--plain"], env=env_a)
+        assert result.returncode == 0
+        assert "vol-a" not in result.stdout
 
 
 class TestTerminalSharing:
