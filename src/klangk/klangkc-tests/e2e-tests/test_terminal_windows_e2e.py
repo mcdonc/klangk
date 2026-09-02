@@ -16,7 +16,9 @@ import asyncio
 import json
 import logging
 import os
+import re
 import subprocess
+import time
 
 import httpx
 import pytest
@@ -97,23 +99,38 @@ def _get_token(base_url):
     return r.json()["access_token"]
 
 
-def _cli_check_window(ws_name, env, timeout=25):
-    """Use expect to connect CLI to workspace, check tmux window, disconnect."""
+def _expect_window_capture(ws_name, env, timeout=25):
+    """One expect-driven CLI connect; returns the raw capture.
+
+    Every expect block handles eof explicitly: a PTY that dies before the
+    prompt used to fall through with no output, leaving an empty capture
+    with no diagnostic (#3012). The pre-command fixed ``sleep 2`` is
+    replaced by an executed-marker round-trip — the shell must actually
+    run a command before the tmux query is sent — so a slow attach is
+    polled instead of guessed at.
+    """
     script = f"""
 set timeout {timeout}
 log_user 0
 spawn klangk shell {ws_name} --no-consent-popup
 expect {{
     -re {{\\$ }} {{}}
-    timeout {{ puts "TIMEOUT"; exit 1 }}
+    timeout {{ puts "TIMEOUT:prompt"; exit 1 }}
+    eof {{ puts "EOF:prompt"; exit 1 }}
 }}
-sleep 2
+send "echo KLANGK_READY_\\$?\\r"
+expect {{
+    -re {{KLANGK_READY_0}} {{}}
+    timeout {{ puts "TIMEOUT:ready"; exit 1 }}
+    eof {{ puts "EOF:ready"; exit 1 }}
+}}
 send "echo W_S; tmux display-message -p '#I:#W'; echo W_E\\r"
 expect {{
     -re {{W_S\\r?\\n(\\d+:\\S+)\\r?\\nW_E}} {{
         puts $expect_out(1,string)
     }}
-    timeout {{ puts "TIMEOUT"; exit 1 }}
+    timeout {{ puts "TIMEOUT:capture"; exit 1 }}
+    eof {{ puts "EOF:capture"; exit 1 }}
 }}
 send "\\r"
 sleep 0.5
@@ -121,14 +138,36 @@ send "~."
 expect {{ eof {{}} timeout {{ close }} }}
 wait
 """
-    result = subprocess.run(
-        ["expect", "-c", script],
-        capture_output=True,
-        text=True,
-        timeout=timeout + 10,
-        env=env,
-    )
+    try:
+        result = subprocess.run(
+            ["expect", "-c", script],
+            capture_output=True,
+            text=True,
+            timeout=timeout + 10,
+            env=env,
+        )
+    except subprocess.TimeoutExpired:
+        return "EXPECT-TIMEOUT"
     return result.stdout.strip()
+
+
+def _cli_check_window(ws_name, env, timeout=25):
+    """Connect CLI to workspace, return its tmux window as ``N:name``.
+
+    Retried once (#3012): under CI load a cold attach can race the expect
+    handshake once (empty capture / prompt never matched); a single retry
+    absorbs the transient while persistent breakage still fails — both
+    attempts are joined into the returned diagnostic.
+    """
+    attempts = []
+    for attempt in range(2):
+        out = _expect_window_capture(ws_name, env, timeout)
+        attempts.append(out)
+        if re.fullmatch(r"\d+:\S+", out):
+            return out
+        if attempt == 0:
+            time.sleep(3)
+    return " | ".join(attempts)
 
 
 def _cli_hold_and_check(ws_name, window_name, hold_seconds, env):
@@ -144,14 +183,21 @@ spawn {cmd}
 expect {{
     -re {{\\$ }} {{}}
     timeout {{ puts "TIMEOUT:prompt"; exit 1 }}
+    eof {{ puts "EOF:prompt"; exit 1 }}
 }}
-sleep 2
+send "echo KLANGK_READY_\\$?\\r"
+expect {{
+    -re {{KLANGK_READY_0}} {{}}
+    timeout {{ puts "TIMEOUT:ready"; exit 1 }}
+    eof {{ puts "EOF:ready"; exit 1 }}
+}}
 send "echo BS; tmux display-message -p '#I:#W'; echo BE\\r"
 expect {{
     -re {{BS\\r?\\n(\\d+:\\S+)\\r?\\nBE}} {{
         set before $expect_out(1,string)
     }}
     timeout {{ puts "TIMEOUT:before"; exit 1 }}
+    eof {{ puts "EOF:before"; exit 1 }}
 }}
 puts "BEFORE=$before"
 sleep {hold_seconds}
@@ -161,6 +207,7 @@ expect {{
         set after $expect_out(1,string)
     }}
     timeout {{ puts "TIMEOUT:after"; exit 1 }}
+    eof {{ puts "EOF:after"; exit 1 }}
 }}
 puts "AFTER=$after"
 send "\\r"
