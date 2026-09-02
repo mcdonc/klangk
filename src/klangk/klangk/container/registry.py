@@ -152,18 +152,27 @@ async def safe_remove(podman_inst, container_id: str, *, what: str) -> bool:
         return False
 
 
+def _parse_host_port(entry) -> int | None:
+    """Host port from one PortBindings entry, or None when unreadable."""
+    try:
+        return int(entry["HostPort"])
+    except (KeyError, ValueError, TypeError):
+        return None
+
+
+def _host_port_entries(bindings: dict):
+    """Flatten PortBindings' {port: [entries]} into the entries."""
+    for ports_list in bindings.values():
+        for entry in ports_list or []:
+            yield entry
+
+
 def host_bound_ports(info: dict) -> set[int]:
     """Host ports published by an inspected container (from HostConfig
     PortBindings)."""
     bindings = info.get("HostConfig", {}).get("PortBindings") or {}
-    bound = set()
-    for ports_list in bindings.values():
-        for entry in ports_list or []:
-            try:
-                bound.add(int(entry["HostPort"]))
-            except (KeyError, ValueError, TypeError):
-                pass
-    return bound
+    ports = map(_parse_host_port, _host_port_entries(bindings))
+    return {port for port in ports if port is not None}
 
 
 async def remove_stale_container(
@@ -183,6 +192,47 @@ async def remove_stale_container(
             stale_id[:12],
             del_exc,
         )
+
+
+def _resolved_under_root(resolved: str, roots) -> bool:
+    """True when a resolved path equals or lives under an allowed root."""
+    return any(
+        resolved == root or resolved.startswith(root + "/") for root in roots
+    )
+
+
+def _labeled_workspace_ident(c: dict) -> str | None:
+    """Ident of a listed container when it is a workspace container
+    (the network sidecar shares the workspace label)."""
+    labels = c.get("Labels") or {}
+    if labels.get("klangk.role") != "workspace":
+        return None
+    return container_ident(c) or None
+
+
+def _owner_pid_label(c: dict) -> int | None:
+    """Parsed ``klangk.pid`` label, or None when absent/unparseable."""
+    label = (c.get("Labels") or {}).get("klangk.pid")
+    if not label:
+        return None
+    try:
+        return int(label)
+    except (TypeError, ValueError):
+        return None
+
+
+def _dead_owner_pid(c: dict) -> int | None:
+    """Owner pid when the container's ``klangk.pid`` label names a dead
+    process, else None (liveness undecidable or owner alive: leave it)."""
+    owner_pid = _owner_pid_label(c)
+    if owner_pid is None or owner_pid <= 0 or pid_alive(owner_pid):
+        return None
+    return owner_pid
+
+
+def _wanted_host_ports(publish: list[tuple[int, int]]) -> set[int]:
+    """Host ports from a publish list of (host, container) pairs."""
+    return {host_port for host_port, _container_port in publish}
 
 
 class ContainerRegistry(NetworkSidecarMixin):
@@ -335,21 +385,40 @@ class ContainerRegistry(NetworkSidecarMixin):
                 return True
         return False
 
+    def _validate_mount_shape(self, spec: str, parts: list[str]) -> str | None:
+        """Structural checks: 2-3 parts, non-empty source, absolute dest."""
+        if len(parts) < 2 or len(parts) > 3:
+            return (
+                f"Invalid mount {spec!r}: expected source:dest or "
+                "source:dest:options"
+            )
+        if not parts[0]:
+            return f"Invalid mount {spec!r}: source is empty"
+        if not parts[1].startswith("/"):
+            return (
+                f"Invalid mount {spec!r}: container path must be absolute "
+                "(start with /)"
+            )
+        return None
+
+    def _validate_mount_options(self, spec: str, options: str) -> str | None:
+        """The 3rd field must be a comma list of known options."""
+        for opt in options.split(","):
+            if opt and opt not in _VALID_MOUNT_OPTIONS:
+                return f"Invalid mount {spec!r}: unknown option {opt!r}"
+        return None
+
     def validate_mount_spec(self, spec: str) -> str | None:
         """Validate a container mount spec string."""
         parts = spec.split(":")
-        if len(parts) < 2 or len(parts) > 3:
-            return f"Invalid mount {spec!r}: expected source:dest or source:dest:options"
-        source, dest = parts[0], parts[1]
-        if not source:
-            return f"Invalid mount {spec!r}: source is empty"
-        if not dest.startswith("/"):
-            return f"Invalid mount {spec!r}: container path must be absolute (start with /)"
+        error = self._validate_mount_shape(spec, parts)
+        if error:
+            return error
         if len(parts) == 3:
-            options = parts[2]
-            for opt in options.split(","):
-                if opt and opt not in _VALID_MOUNT_OPTIONS:
-                    return f"Invalid mount {spec!r}: unknown option {opt!r}"
+            error = self._validate_mount_options(spec, parts[2])
+            if error:
+                return error
+        source = parts[0]
         if is_named_volume(source):
             return self._validate_named_volume_source(spec, source)
         return self._validate_bind_source(spec, source)
@@ -377,10 +446,7 @@ class ContainerRegistry(NetworkSidecarMixin):
         if not self.allowed_mount_roots:
             return None
         resolved = os.path.realpath(source)
-        if any(
-            resolved == root or resolved.startswith(root + "/")
-            for root in self.allowed_mount_roots
-        ):
+        if _resolved_under_root(resolved, self.allowed_mount_roots):
             return None
         allowed = ", ".join(self.allowed_mount_roots)
         return (
@@ -572,8 +638,27 @@ class ContainerRegistry(NetworkSidecarMixin):
             state.container_id = container_id
         self._cid_to_wsid[container_id] = workspace_id
         state.record_activity()
-        # Health-monitoring metadata (#1015).  Always refresh so a
-        # config change (or a recreated container) is picked up.
+        self._apply_track_metadata(
+            state,
+            health_check=health_check,
+            owner_id=owner_id,
+            setup_state=setup_state,
+            per_handle_home=per_handle_home,
+        )
+        if was_new:
+            self._notify_status_changed(workspace_id, True)
+
+    def _apply_track_metadata(
+        self,
+        state: ContainerState,
+        *,
+        health_check: str | None,
+        owner_id: str | None,
+        setup_state: str | None,
+        per_handle_home: bool | None,
+    ) -> None:
+        """Refresh health-monitoring metadata (#1015). Always refreshed
+        so a config change (or a recreated container) is picked up."""
         state.health_check = health_check
         if owner_id is not None:
             state.owner_id = owner_id
@@ -581,8 +666,6 @@ class ContainerRegistry(NetworkSidecarMixin):
             state.setup_state = setup_state
         if per_handle_home is not None:
             state.per_handle_home = per_handle_home
-        if was_new:
-            self._notify_status_changed(workspace_id, True)
 
     def record_activity(self, container_id: str) -> None:
         ws_id = self._cid_to_wsid.get(container_id)
@@ -1062,47 +1145,72 @@ class ContainerRegistry(NetworkSidecarMixin):
             # that may legitimately create a fresh container.
             return None
         for c in containers:
-            labels = c.get("Labels") or {}
-            if labels.get("klangk.role") != "workspace":
-                continue  # the network sidecar shares the workspace label
-            ident = container_ident(c)
-            if not ident:
+            ident = _labeled_workspace_ident(c)
+            if ident is None:
                 continue
-            running = str(c.get("State", "")).lower() == "running"
-            if not running:
-                await self.app.state.podman.remove_container(ident)
-                logger.info(
-                    "workspace-open: removed stopped labeled container %s "
-                    "for workspace %s, will recreate",
-                    ident[:12],
-                    workspace_id[:8],
-                )
+            if str(c.get("State", "")).lower() != "running":
+                await self._remove_stopped_labeled(workspace_id, ident)
                 continue
-            # Adopt the running container — this is exactly what a fresh
-            # connect does with a current id, and why a reconnect after a
-            # failed restart self-heals today (#2676).
-            if self.app.state.settings.fips_mode:
-                await self._fips_gate(workspace_id, ident)
-            await self.app.state.model.workspaces.update_workspace_container(
-                workspace_id, ident
-            )
-            self.track_activity(
-                ident,
+            return await self._adopt_running_labeled(
                 workspace_id,
+                t_start,
+                ident,
                 health_check=health_check,
                 owner_id=owner_id,
                 setup_state=setup_state,
                 per_handle_home=per_handle_home,
             )
-            logger.info(
-                "workspace-open: DONE — adopted running labeled container "
-                "%s for stale-id workspace %s: %.3fs",
-                ident[:12],
-                workspace_id[:8],
-                time.monotonic() - t_start,
-            )
-            return ident, "connected"
         return None
+
+    async def _remove_stopped_labeled(
+        self, workspace_id: str, ident: str
+    ) -> None:
+        """Remove a stopped labeled workspace container so the create
+        path's sidecar pre-remove can't be refused for a still-attached
+        dependent."""
+        await self.app.state.podman.remove_container(ident)
+        logger.info(
+            "workspace-open: removed stopped labeled container %s "
+            "for workspace %s, will recreate",
+            ident[:12],
+            workspace_id[:8],
+        )
+
+    async def _adopt_running_labeled(
+        self,
+        workspace_id: str,
+        t_start: float,
+        ident: str,
+        *,
+        health_check: str | None,
+        owner_id: str | None,
+        setup_state: str | None,
+        per_handle_home: bool,
+    ) -> tuple[str, str]:
+        """Adopt the running labeled container — exactly what a fresh
+        connect does with a current id, and why a reconnect after a
+        failed restart self-heals today (#2676)."""
+        if self.app.state.settings.fips_mode:
+            await self._fips_gate(workspace_id, ident)
+        await self.app.state.model.workspaces.update_workspace_container(
+            workspace_id, ident
+        )
+        self.track_activity(
+            ident,
+            workspace_id,
+            health_check=health_check,
+            owner_id=owner_id,
+            setup_state=setup_state,
+            per_handle_home=per_handle_home,
+        )
+        logger.info(
+            "workspace-open: DONE — adopted running labeled container "
+            "%s for stale-id workspace %s: %.3fs",
+            ident[:12],
+            workspace_id[:8],
+            time.monotonic() - t_start,
+        )
+        return ident, "connected"
 
     async def _reconcile_ports(
         self, workspace_id: str, num_ports: int
@@ -1317,7 +1425,7 @@ class ContainerRegistry(NetworkSidecarMixin):
             "Port conflict starting %s, cleaning stale containers",
             container_name,
         )
-        wanted_ports = {hp for hp, _cp in publish}
+        wanted_ports = _wanted_host_ports(publish)
         stale = await podman.list_containers(
             f"klangk.instance={self.app.state.util.instance_id()}"
         )
@@ -1365,23 +1473,29 @@ class ContainerRegistry(NetworkSidecarMixin):
             await self._resolve_port_conflict(
                 cid, container_name, publish, self.app.state.podman
             )
-            # Retry with back-off; ports may linger in TIME_WAIT after the
-            # previous container's pasta process exits.
-            last_exc = exc
-            for delay in (0.5, 1.5):
-                await asyncio.sleep(delay)
-                try:
-                    await self.app.state.podman.start_container(
-                        cid, hooks_dir=hooks_dir
-                    )
-                    last_exc = None
-                    break
-                except podman.PodmanError as retry_exc:
-                    if not self._is_port_conflict(retry_exc):
-                        raise
-                    last_exc = retry_exc
-            if last_exc is not None:
-                raise last_exc
+            # Retry with back-off; ports may linger in TIME_WAIT after
+            # the previous container's pasta process exits.
+            await self._retry_start_after_conflict(
+                cid, hooks_dir=hooks_dir, last_exc=exc
+            )
+
+    async def _retry_start_after_conflict(
+        self, cid: str, *, hooks_dir: list[str] | None, last_exc: Exception
+    ) -> None:
+        """Retry a port-conflicted start with back-off, re-raising the
+        conflict when every retry fails (fails closed)."""
+        for delay in (0.5, 1.5):
+            await asyncio.sleep(delay)
+            try:
+                await self.app.state.podman.start_container(
+                    cid, hooks_dir=hooks_dir
+                )
+                return
+            except podman.PodmanError as retry_exc:
+                if not self._is_port_conflict(retry_exc):
+                    raise
+                last_exc = retry_exc
+        raise last_exc
 
     def _sidecar_requirements(
         self,
@@ -1411,13 +1525,29 @@ class ContainerRegistry(NetworkSidecarMixin):
         sidecar_required = egress_mode == EGRESS_MODE_INTERACTIVE or bool(
             allowed_domains or rejected_domains
         )
-        sidecar_optional = (
+        sidecar_optional = self._sidecar_optional_egress(
+            egress_mode, sidecar_required
+        )
+        return sidecar_required, sidecar_required or sidecar_optional
+
+    def _sidecar_optional_egress(
+        self, egress_mode: str, sidecar_required: bool
+    ) -> bool:
+        """Whether allow-mode egress wants the sidecar when one is
+        configured (#2406): ``allow`` requests permissiveness, not
+        filtering — it runs the sidecar when one is set up (off-list
+        egress logged via the consent pipeline, ``rejected_domains``
+        enforced at the sidecar DNS layer) but degrades to unrestricted
+        when filtering isn't configured. Fail-closing an allow-mode
+        workspace would be wrong (it never asked to be locked down), so
+        allow is best-effort, not mandatory — unlike interactive /
+        list-declaring workspaces, which fail-closed."""
+        return (
             egress_mode == EGRESS_MODE_ALLOW
             and not sidecar_required
             and self.network_sidecar_enabled()
             and bool(self.app.state.settings.userns)
         )
-        return sidecar_required, sidecar_required or sidecar_optional
 
     async def _build_start_config(
         self, spec: ContainerStartSpec, host_ports: list[int]
@@ -1657,50 +1787,26 @@ class ContainerRegistry(NetworkSidecarMixin):
         are unpacked.
         """
         workspace_id = spec.workspace_id
-        existing_container_id = spec.existing_container_id
         num_ports = spec.num_ports
         image = spec.image
-        user_id = spec.user_id
-        health_check = spec.health_check
         setup_state = spec.setup_state
         service_command = spec.service_command
         allowed_domains = spec.allowed_domains
         rejected_domains = spec.rejected_domains
         egress_mode = spec.egress_mode
         t_start = time.monotonic()
-        resolved_image = image or self.image_name
-        if resolved_image not in self.allowed_images:
-            raise ValueError(
-                f"Image {resolved_image!r} is not in the allowed "
-                f"list: {sorted(self.allowed_images)}"
-            )
+        resolved_image = self._resolved_start_image(image)
 
         sidecar_required, needs_sidecar = self._sidecar_requirements(
             egress_mode, allowed_domains, rejected_domains
         )
 
         # Reuse a running container or remove a stopped one.
-        if existing_container_id:
-            result = await self.handle_existing_container(
-                existing_container_id,
-                workspace_id,
-                t_start,
-                health_check=health_check,
-                owner_id=user_id,
-                setup_state=setup_state,
-                per_handle_home=spec.per_handle_home,
-            )
-            if result is not None:
-                # Re-track a sidecar'd workspace's network sidecar on reconnect.
-                # _ws_with_network_sidecar is in-memory and lost on a process
-                # restart; without this, a reconnect-then-stop would skip
-                # stop_network_sidecar (only the create path added it before)
-                # and leak the sidecar until the next start's force-remove or
-                # the instance reaper. A sidecar'd workspace always has a live
-                # sidecar (fail-closed), so needs_sidecar => re-track.
-                if needs_sidecar:
-                    self._ws_with_network_sidecar.add(workspace_id)
-                return result
+        result = await self._reuse_existing_container(
+            spec, workspace_id, t_start, needs_sidecar
+        )
+        if result is not None:
+            return result
 
         # Start-refusal gate (#2527): while a graceful restart's drain
         # flag is set, every *new* container creation through this single
@@ -1814,6 +1920,50 @@ class ContainerRegistry(NetworkSidecarMixin):
         )
         return container_id, "created"
 
+    def _resolved_start_image(self, image: str | None) -> str:
+        """The image to start, validated against the allowed list."""
+        resolved = image or self.image_name
+        if resolved not in self.allowed_images:
+            raise ValueError(
+                f"Image {resolved!r} is not in the allowed "
+                f"list: {sorted(self.allowed_images)}"
+            )
+        return resolved
+
+    async def _reuse_existing_container(
+        self,
+        spec: ContainerStartSpec,
+        workspace_id: str,
+        t_start: float,
+        needs_sidecar: bool,
+    ) -> tuple[str, str] | None:
+        """Reuse a running container (or remove a stopped one); None
+        means no existing container / not reusable — continue with a
+        fresh create."""
+        if not spec.existing_container_id:
+            return None
+        result = await self.handle_existing_container(
+            spec.existing_container_id,
+            workspace_id,
+            t_start,
+            health_check=spec.health_check,
+            owner_id=spec.user_id,
+            setup_state=spec.setup_state,
+            per_handle_home=spec.per_handle_home,
+        )
+        if result is None:
+            return None
+        # Re-track a sidecar'd workspace's network sidecar on reconnect.
+        # _ws_with_network_sidecar is in-memory and lost on a process
+        # restart; without this, a reconnect-then-stop would skip
+        # stop_network_sidecar (only the create path added it before)
+        # and leak the sidecar until the next start's force-remove or
+        # the instance reaper. A sidecar'd workspace always has a live
+        # sidecar (fail-closed), so needs_sidecar => re-track.
+        if needs_sidecar:
+            self._ws_with_network_sidecar.add(workspace_id)
+        return result
+
     async def stop_and_remove_container(
         self,
         container_id: str,
@@ -1874,63 +2024,19 @@ class ContainerRegistry(NetworkSidecarMixin):
         # Netns owner captured before teardown pops it (#2915).
         netns = self._ws_netns_owner.get(ws_id)
         if ws_id:
-            self.stopping.add(ws_id)
-            # Bumped synchronously at stop ENTRY, before any await: the
-            # crash monitor snapshots the epoch around its awaits and
-            # re-checks it before scheduling a restart, so a stop that
-            # begins at any point during death detection/handling
-            # invalidates the restart — even if the stop fully completes
-            # before the scheduler re-checks (#2524 review).
-            self.stop_epoch[ws_id] = self.stop_epoch.get(ws_id, 0) + 1
-            self.crash.on_expected_stop(ws_id)
+            self._begin_expected_stop(ws_id)
         stopped = False
         torn_down = False
         try:
-            try:
-                await self.app.state.podman.remove_container(container_id)
-                logger.info("Stopped container %s", container_id)
-                stopped = True
-            except podman.PodmanError as e:
-                logger.warning(
-                    "Failed to stop container %s: %s",
-                    container_id,
-                    e,
-                )
+            stopped = await self._try_remove_container(container_id)
             # The caller (/stop, /delete) knows the workspace_id even when
             # this container isn't tracked in the in-memory registry
             # (started by autostart or a prior klangkd session, stopped
             # without a connect in this process).
             if ws_id:
-                async with self._get_workspace_lock(ws_id):
-                    # Re-verify under the lock: a racing start_container
-                    # may have re-bound this workspace to a new container
-                    # while we waited. Only tear down state we still own.
-                    # The check uses the live registry state (not the
-                    # reverse cid map) so it can tell a re-bound workspace
-                    # (state's container_id differs -- leave the fresh
-                    # sidecar generation alone, #2265) from an untracked
-                    # one (no state -- no racing start possible, so its
-                    # sidecar is safe to remove by label even though it
-                    # isn't in the in-memory set).
-                    current = self.states.get(ws_id)
-                    if current is None or current.container_id == container_id:
-                        # Remove the network sidecar (label-based, idempotent
-                        # -- a no-op for non-filtered workspaces or when
-                        # egress is disabled). Done for every non-rebound
-                        # stop so a sidecar started by autostart / a prior
-                        # session is cleaned up even if it isn't tracked in
-                        # _ws_with_network_sidecar (#2286).
-                        self._ws_with_network_sidecar.discard(ws_id)
-                        self._ws_netns_owner.pop(ws_id, None)
-                        await self.stop_network_sidecar(ws_id)
-                        self._cid_to_wsid.pop(container_id, None)
-                        self.revoke_workspace_browsers(ws_id)
-                        self.states.pop(ws_id, None)
-                        torn_down = True
-                    else:
-                        # Re-bound to a fresh container by a racing start:
-                        # the fresh container is not ours to stop.
-                        torn_down = False
+                torn_down = await self._teardown_registry_state(
+                    ws_id, container_id
+                )
             # Drop the per-container service-firing lock (#1188), then sweep
             # any other entries orphaned by container churn (e.g. a racing
             # re-bind that popped this container's mapping before teardown)
@@ -1940,7 +2046,7 @@ class ContainerRegistry(NetworkSidecarMixin):
             self.prune_service_session_locks(set(self._cid_to_wsid))
             # Gone via this call AND (untracked, or our registry state torn
             # down — i.e. not left alone by the rebind guard).
-            result = stopped if ws_id is None else (stopped and torn_down)
+            result = self._stop_outcome(ws_id, stopped, torn_down)
             await self.audit_stop(
                 ws_id,
                 container_id,
@@ -1958,6 +2064,87 @@ class ContainerRegistry(NetworkSidecarMixin):
                 # removes are slow and interleave) must still cancel it.
                 # Expected deaths never restart, no matter the ordering.
                 self.crash.on_expected_stop(ws_id)
+
+    def _begin_expected_stop(self, ws_id: str) -> None:
+        """Mark the workspace as stopping for the duration of the
+        removal below, so the crash monitor's sweep cannot misread the
+        in-flight removal as an unexpected death."""
+        self.stopping.add(ws_id)
+        # Bumped synchronously at stop ENTRY, before any await: the
+        # crash monitor snapshots the epoch around its awaits and
+        # re-checks it before scheduling a restart, so a stop that
+        # begins at any point during death detection/handling
+        # invalidates the restart — even if the stop fully completes
+        # before the scheduler re-checks (#2524 review).
+        self.stop_epoch[ws_id] = self.stop_epoch.get(ws_id, 0) + 1
+        self.crash.on_expected_stop(ws_id)
+
+    async def _try_remove_container(self, container_id: str) -> bool:
+        """Remove the container (stop + rm). A podman failure is logged
+        as a warning, not raised — the registry teardown still runs."""
+        try:
+            await self.app.state.podman.remove_container(container_id)
+            logger.info("Stopped container %s", container_id)
+            return True
+        except podman.PodmanError as e:
+            logger.warning(
+                "Failed to stop container %s: %s",
+                container_id,
+                e,
+            )
+            return False
+
+    async def _teardown_registry_state(
+        self, ws_id: str, container_id: str
+    ) -> bool:
+        """Under the per-workspace lock, tear down the registry state we
+        still own.
+
+        Re-check (via the live registry state) that this is still the
+        workspace's container: a racing ``start_container`` may already
+        have re-bound the workspace to a fresh container, in which case
+        we must not tear down the new state (or revoke its browsers, or
+        remove its sidecar). The check uses the live registry state (not
+        the reverse cid map) so it can tell a re-bound workspace
+        (state's container_id differs — leave the fresh sidecar
+        generation alone, #2265) from an untracked one (no state — no
+        racing start possible, so its sidecar is safe to remove by label
+        even though it isn't in the in-memory set).
+
+        Returns True when the registry state was torn down; False when a
+        racing start re-bound the workspace and the fresh container was
+        left alone.
+        """
+        async with self._get_workspace_lock(ws_id):
+            current = self.states.get(ws_id)
+            if current is None or current.container_id == container_id:
+                # Remove the network sidecar (label-based, idempotent --
+                # a no-op for non-filtered workspaces or when egress is
+                # disabled). Done for every non-rebound stop so a sidecar
+                # started by autostart / a prior session is cleaned up
+                # even if it isn't tracked in _ws_with_network_sidecar
+                # (#2286).
+                self._ws_with_network_sidecar.discard(ws_id)
+                self._ws_netns_owner.pop(ws_id, None)
+                await self.stop_network_sidecar(ws_id)
+                self._cid_to_wsid.pop(container_id, None)
+                self.revoke_workspace_browsers(ws_id)
+                self.states.pop(ws_id, None)
+                return True
+            # Re-bound to a fresh container by a racing start: the fresh
+            # container is not ours to stop.
+            return False
+
+    @staticmethod
+    def _stop_outcome(
+        ws_id: str | None, stopped: bool, torn_down: bool
+    ) -> bool:
+        """True when the container ended up gone via this call (see the
+        ``stop_and_remove_container`` docstring for why a re-bind counts
+        as not-gone)."""
+        if ws_id is None:
+            return stopped
+        return stopped and torn_down
 
     async def audit_stop(
         self,
@@ -2014,11 +2201,7 @@ class ContainerRegistry(NetworkSidecarMixin):
         /stop, drain, logout) always have it at hand.
         """
         state = self.states.get(workspace_id)
-        if (
-            container_id is not None
-            and state is not None
-            and state.container_id != container_id
-        ):
+        if self._killed_container_rebound(state, container_id):
             # Re-bound to a fresh container by a racing start: the
             # workspace is live; a death teardown would corrupt it.
             logger.info(
@@ -2030,12 +2213,35 @@ class ContainerRegistry(NetworkSidecarMixin):
             )
             return
         self._notify_status_changed(workspace_id, False)
-        # Close the container-death hole (#1175 item 2): emit a terminal
-        # ``running=False`` frame so consumers watching only service_health
-        # learn the service is down.  Only health-checked workspaces ever
-        # appeared on the stream, so only those get a terminal frame.
+        await self._broadcast_service_death(state, cause)
+        await self._fire_workspace_killed(workspace_id, container_id)
+
+    def _killed_container_rebound(
+        self, state: ContainerState | None, container_id: str | None
+    ) -> bool:
+        """True when the workspace is now tracked under a DIFFERENT
+        container (a racing user-driven start removed the dead one and
+        re-bound the workspace): this death is not ours to act on."""
+        return (
+            container_id is not None
+            and state is not None
+            and state.container_id != container_id
+        )
+
+    async def _broadcast_service_death(
+        self, state: ContainerState | None, cause: str | None
+    ) -> None:
+        """Emit a terminal ``running=False`` frame so consumers watching
+        only service_health learn the service is down (#1175 item 2).
+        Only health-checked workspaces ever appeared on the stream, so
+        only those get a terminal frame."""
         if state is not None and state.health_check is not None:
             await self.health.broadcast_death(state, message=cause)
+
+    async def _fire_workspace_killed(
+        self, workspace_id: str, container_id: str | None
+    ) -> None:
+        """Call the on_workspace_killed callback, logging any errors."""
         if self.on_workspace_killed:
             try:
                 await self.on_workspace_killed(workspace_id, container_id)
@@ -2369,45 +2575,33 @@ class ContainerRegistry(NetworkSidecarMixin):
             cid = container_ident(c)
             if not cid:
                 continue
-            labels = c.get("Labels") or {}
-            pid_label = labels.get("klangk.pid")
-            if not pid_label:
-                # Tolerant: no pid label → can't decide liveness → leave it.
-                continue
-            try:
-                owner_pid = int(pid_label)
-            except (TypeError, ValueError):
-                continue  # unparseable pid → treat as no label → leave it
-            if owner_pid <= 0 or pid_alive(owner_pid):
-                continue  # owner still running → leave it (#1556)
-            logger.info(
-                "Reaping dead-owner container %s "
-                "(owner pid %d no longer running)",
-                cid[:12],
-                owner_pid,
-            )
-            if await safe_remove(
-                self.app.state.podman, cid, what="dead-owner container"
-            ):
-                await self.record_reap(c)
+            owner_pid = _dead_owner_pid(c)
+            if owner_pid is None:
+                continue  # undecidable or owner alive → leave it
+            await self._reap_dead_owner_container(c, cid, owner_pid)
+
+    async def _reap_dead_owner_container(
+        self, c: dict, cid: str, owner_pid: int
+    ) -> None:
+        """Gracefully remove one dead-owner container, recording its
+        audit row on success (#2915 review)."""
+        logger.info(
+            "Reaping dead-owner container %s (owner pid %d no longer running)",
+            cid[:12],
+            owner_pid,
+        )
+        if await safe_remove(
+            self.app.state.podman, cid, what="dead-owner container"
+        ):
+            await self.record_reap(c)
 
     # --- Shutdown ---
 
     async def shutdown(self) -> None:
-        if self.cleanup_task:
-            self.cleanup_task.cancel()
-            try:
-                await self.cleanup_task
-            except asyncio.CancelledError:
-                pass
-            self.cleanup_task = None
-        if self.health_task:
-            self.health_task.cancel()
-            try:
-                await self.health_task
-            except asyncio.CancelledError:
-                pass
-            self.health.health_task = None
+        await self._cancel_and_await(self.cleanup_task)
+        self.cleanup_task = None
+        await self._cancel_and_await(self.health_task)
+        self.health.health_task = None
         # Crash monitor (#2524): stop the sweep and cancel any pending
         # delayed restarts — a shutdown-time restart would race the
         # container teardown below.
@@ -2417,6 +2611,26 @@ class ContainerRegistry(NetworkSidecarMixin):
             self.stop_and_remove_container(cid, cause=CAUSE_SHUTDOWN)
             for cid in tracked_ids
         ]
+        tasks += await self._shutdown_orphan_tasks(tracked_ids)
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    @staticmethod
+    async def _cancel_and_await(task) -> None:
+        """Cancel a background task and await its termination."""
+        if task is None:
+            return
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    async def _shutdown_orphan_tasks(self, tracked_ids: set[str]) -> list:
+        """Stop tasks for labeled containers beyond the tracked set:
+        a prior-session workspace or its sidecar stopped at shutdown
+        must not vanish from the audit trail (#2915 review)."""
+        tasks = []
         try:
             containers = await self.app.state.podman.list_containers(
                 f"klangk.instance={self.app.state.util.instance_id()}"
@@ -2428,10 +2642,6 @@ class ContainerRegistry(NetworkSidecarMixin):
                         "Removing orphaned klangk container %s",
                         cid,
                     )
-                    # Labeled containers keep their stop row
-                    # (#2915 review) — a prior-session workspace or its
-                    # sidecar stopped at shutdown must not vanish from the
-                    # audit trail.
                     tasks.append(
                         self.sweep_stop_audited(c, cause=CAUSE_SHUTDOWN)
                     )
@@ -2440,5 +2650,4 @@ class ContainerRegistry(NetworkSidecarMixin):
             OSError,
         ) as e:
             logger.warning("Error listing orphaned containers: %s", e)
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
+        return tasks
