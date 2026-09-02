@@ -6,6 +6,10 @@ Standalone, human-run, not in CI (no ``test_`` prefix). Invoke under devenv:
     devenv --quiet shell -- \\
         python src/klangk/klangkd-tests/e2e-tests/smoketest_egress.py [--count N]
 
+Add ``--as-member`` (#2976) to run the consent flow as a plain workspace
+member (coders role, no instance-admin grants) instead of the seeded
+admin; the admin only bootstraps (member user, workspaces, role shares).
+
 Brings up a real klangkd, creates a workspace with an allow-list + interactive
 egress, attaches the real ConsentDeciderApp decider, then for N fuzzed
 destinations: ``podman exec`` a curl, wait for the consent request if one is
@@ -88,6 +92,12 @@ EXPECT_NOT0 = "not0"  # no-response (timeout) -> exit != 0
 # deterministically and a denied one reaches exit 7 (forged RST). example.com is
 # seeded onto the allow-list; the rest are off-list. Raw IPs are exploratory.
 _ALLOW_LIST = ["example.com"]
+
+# The --as-member acting identity (#2976): a plain user with no instance
+# grants. The seeded admin creates + shares workspaces to this user's
+# coders role; every consent operation then runs on this token.
+MEMBER_EMAIL = "smoke-member@example.com"
+MEMBER_PASSWORD = "smokepass"
 # A workspace-level deny-list baked into the main workspace (#2367). A rejected
 # host is pre-emptively denied at the sidecar -- no consent request is ever
 # surfaced, even in interactive mode. kernel.org is fresh (not in the fuzz pool
@@ -902,6 +912,10 @@ class SmokeTest:
         self._owned_server: dict | None = None
         self.server: dict | None = None
         self.auth: dict | None = None
+        # The bootstrap identity (seeded admin): workspace create/delete,
+        # member provisioning, and the no-workspace decider probe. Equals
+        # self.auth unless --as-member splits them.
+        self.admin_auth: dict | None = None
         self.ws_id: str | None = None
         self.ws_conn = None
         self._drain_task: asyncio.Task | None = None
@@ -1200,15 +1214,16 @@ class SmokeTest:
             raise SystemExit(2)
 
     @staticmethod
-    def _login(url: str) -> dict:
+    def _login(
+        url: str,
+        identifier: str = "smoke@example.com",
+        password: str = "smokepass",
+    ) -> dict:
         client = httpx.Client(base_url=url, timeout=30)
         try:
             r = client.post(
                 "/api/v1/auth/login",
-                json={
-                    "identifier": "smoke@example.com",
-                    "password": "smokepass",
-                },
+                json={"identifier": identifier, "password": password},
             )
             if r.status_code != 200:
                 raise RuntimeError(f"login failed: {r.status_code} {r.text}")
@@ -1219,6 +1234,78 @@ class SmokeTest:
             "token": token,
             "headers": {"Authorization": f"Bearer {token}"},
         }
+
+    @staticmethod
+    def _ensure_member(server: dict, admin: dict) -> None:
+        """Create the plain member user for --as-member (idempotent).
+
+        The member is deliberately NOT added to any instance group: no
+        admins membership, no manage-* grants -- consent authority must
+        come from the workspace ACL alone (#2976). A 400 "already
+        registered" (a rerun against the same server) is tolerated.
+        """
+        client = httpx.Client(
+            base_url=server["url"], headers=admin["headers"], timeout=30
+        )
+        try:
+            r = client.post(
+                "/api/v1/users",
+                json={"email": MEMBER_EMAIL, "password": MEMBER_PASSWORD},
+            )
+            if r.status_code not in (
+                200,
+                201,
+            ) and "already registered" not in (r.text or ""):
+                raise RuntimeError(
+                    f"member create failed: {r.status_code} {r.text}"
+                )
+        finally:
+            client.close()
+
+    @staticmethod
+    def _share_coder(server: dict, admin: dict, ws_id: str) -> None:
+        """Add the member to the workspace's coders role group.
+
+        Coders hold exactly the member consent profile (#2883): terminal,
+        egress-consent, restart, files -- and NOT the owner `*`. Every
+        workspace the member acts on must be shared this way (workspace
+        creation is admin-only, #2569).
+        """
+        client = httpx.Client(
+            base_url=server["url"], headers=admin["headers"], timeout=30
+        )
+        try:
+            r = client.post(
+                f"/api/v1/workspaces/{ws_id}/roles/coders",
+                json={"email": MEMBER_EMAIL},
+            )
+            if r.status_code != 200:
+                raise RuntimeError(
+                    f"member share failed: {r.status_code} {r.text}"
+                )
+        finally:
+            client.close()
+
+    async def _new_workspace(self, *args, **kwargs) -> str:
+        """Create a workspace the acting identity can use.
+
+        Creation always runs as the bootstrap (admin) identity --
+        `create-workspace` is admin-gated (#2569) -- and under --as-member
+        the workspace is then shared to the member's coders role so the
+        member's decider/terminal connections on it are authorized.
+        """
+        ws_id = await asyncio.to_thread(
+            self._create_workspace,
+            self.server,
+            self.admin_auth,
+            *args,
+            **kwargs,
+        )
+        if self.args.as_member:
+            await asyncio.to_thread(
+                self._share_coder, self.server, self.admin_auth, ws_id
+            )
+        return ws_id
 
     @staticmethod
     def _create_workspace(
@@ -1401,10 +1488,28 @@ class SmokeTest:
             self._owned_server = self._start_server()
             self.server = self._owned_server
             print(f"started klangkd: {self.server['url']}")
-        self.auth = await asyncio.to_thread(self._login, self.server["url"])
-        self.ws_id = await asyncio.to_thread(
-            self._create_workspace, self.server, self.auth
+        self.admin_auth = await asyncio.to_thread(
+            self._login, self.server["url"]
         )
+        self.auth = self.admin_auth
+        if self.args.as_member:
+            # #2976 posture: run the whole consent flow as a plain member.
+            # The admin only bootstraps (member user + workspace + coders
+            # share); the member's authority is the workspace ACL alone.
+            await asyncio.to_thread(
+                self._ensure_member, self.server, self.admin_auth
+            )
+            self.auth = await asyncio.to_thread(
+                self._login,
+                self.server["url"],
+                MEMBER_EMAIL,
+                MEMBER_PASSWORD,
+            )
+            print(
+                f"acting as member {MEMBER_EMAIL} "
+                f"(coders role; no instance-admin grants)"
+            )
+        self.ws_id = await self._new_workspace()
         print(f"workspace {self.ws_id}  allow-list={_ALLOW_LIST}  interactive")
         await self._wait_container_ready()
         self.container = _container_for_workspace(self.ws_id)
@@ -2665,10 +2770,7 @@ class SmokeTest:
         cont: str | None = None
         conn = None
         try:
-            ws_id = await asyncio.to_thread(
-                self._create_workspace,
-                self.server,
-                self.auth,
+            ws_id = await self._new_workspace(
                 allow,
                 [],
                 f"smoke-hostscope-{int(time.time() * 1000) % 100000}",
@@ -2814,10 +2916,7 @@ class SmokeTest:
         cont: str | None = None
         conn = None
         try:
-            ws_id = await asyncio.to_thread(
-                self._create_workspace,
-                self.server,
-                self.auth,
+            ws_id = await self._new_workspace(
                 allow,
                 [],
                 f"smoke-portscope-{int(time.time() * 1000) % 100000}",
@@ -2991,10 +3090,7 @@ class SmokeTest:
         cont: str | None = None
         conn = None
         try:
-            ws_id = await asyncio.to_thread(
-                self._create_workspace,
-                self.server,
-                self.auth,
+            ws_id = await self._new_workspace(
                 allow,
                 [],
                 f"smoke-coresident-{int(time.time() * 1000) % 100000}",
@@ -3188,7 +3284,7 @@ class SmokeTest:
             "-",
         )
         static_ws = await asyncio.to_thread(
-            self._create_static_workspace, self.server, self.auth
+            self._create_static_workspace, self.server, self.admin_auth
         )
         try:
             url = (
@@ -3247,7 +3343,7 @@ class SmokeTest:
                     pass
         finally:
             await asyncio.to_thread(
-                self._delete_workspace, self.server, self.auth, static_ws
+                self._delete_workspace, self.server, self.admin_auth, static_ws
             )
 
     async def run_rejected_phase(self, pilot) -> None:
@@ -3532,9 +3628,7 @@ class SmokeTest:
             step_tag = "no-workspace handshake"
             await self._probe_no_workspace_decider_refused()
 
-            ws_b = await asyncio.to_thread(
-                self._create_workspace, self.server, self.auth
-            )
+            ws_b = await self._new_workspace()
             self._extra_ws_ids.append(ws_b)
             print(f"workspace B {ws_b}  (interactive, for scope isolation)")
             # Keep B's container up + confirm readiness. A second workspace's
@@ -3631,14 +3725,17 @@ class SmokeTest:
 
         NB: a 403 here is also what an invalid/expired token yields -- the
         token is proven live by the app's own decider connect earlier in
-        the run, so a 403 at this point is the workspace-param refusal."""
+        the run, so a 403 at this point is the workspace-param refusal.
+        Deliberately probed with the ADMIN token (#2976): the admin is the
+        strongest principal -- if even it cannot register without a
+        workspace, no lesser identity can either."""
         step = _Step(
             self.summary.total, "(no-workspace)", "n/a", False, "scope-nw", "-"
         )
         try:
             ws_nw = await ws_connect(
                 self.server,
-                f"/ws/consent-decider?token={self.auth['token']}",
+                f"/ws/consent-decider?token={self.admin_auth['token']}",
                 open_timeout=15,
             )
         except websockets.InvalidStatus as e:
@@ -3887,10 +3984,7 @@ class SmokeTest:
         conn = None
         drain = None
         try:
-            ws_id = await asyncio.to_thread(
-                self._create_workspace,
-                self.server,
-                self.auth,
+            ws_id = await self._new_workspace(
                 [],  # no allow-list: allow mode permits all non-rejected hosts
                 ["evil.example.com"],  # rejected -> sidecar NXDOMAIN
                 f"smoke-allow-{int(time.time() * 1000) % 100000}",
@@ -4097,10 +4191,7 @@ class SmokeTest:
         conn = None
         d: RawDecider | None = None
         try:
-            rws = await asyncio.to_thread(
-                self._create_workspace,
-                self.server,
-                self.auth,
+            rws = await self._new_workspace(
                 [],  # no allow-list: every probe host prompts
                 [],  # no rejected-list
                 f"smoke-restart-{int(time.time() * 1000) % 100000}",
@@ -4399,10 +4490,7 @@ class SmokeTest:
         conn = None
         d: RawDecider | None = None
         try:
-            pws = await asyncio.to_thread(
-                self._create_workspace,
-                self.server,
-                self.auth,
+            pws = await self._new_workspace(
                 [host_allow],  # allow-list: DNS-layer allow, pause-independent
                 [host_rej],  # rejected: DNS-layer NXDOMAIN, pause-independent
                 f"smoke-pause-{int(time.time() * 1000) % 100000}",
@@ -4950,7 +5038,10 @@ class SmokeTest:
             for wid in self._extra_ws_ids:
                 try:
                     await asyncio.to_thread(
-                        self._delete_workspace, self.server, self.auth, wid
+                        self._delete_workspace,
+                        self.server,
+                        self.admin_auth,
+                        wid,
                     )
                 except Exception:
                     pass
@@ -4976,7 +5067,10 @@ class SmokeTest:
         ):
             try:
                 await asyncio.to_thread(
-                    self._delete_workspace, self.server, self.auth, self.ws_id
+                    self._delete_workspace,
+                    self.server,
+                    self.admin_auth,
+                    self.ws_id,
                 )
             except Exception:
                 pass
@@ -5231,6 +5325,20 @@ def main() -> int:
         action="store_false",
         help="skip the co-resident-hosts phase (canary for per-IP allow/revoke "
         "sharing, #2352/#2440)",
+    )
+    p.add_argument(
+        "--as-member",
+        dest="as_member",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="run the consent flow as a plain workspace member instead of "
+        "the seeded admin (#2976): the admin only bootstraps (create the "
+        "member, the workspaces, and share them to its coders role), then "
+        "every decider connection, verdict, and terminal WS runs on the "
+        "member's token -- consent authority flows from the workspace ACL "
+        "alone, with no instance-admin grants anywhere in the run. The "
+        "no-workspace decider probe still uses the admin token (the "
+        "strongest principal).",
     )
     p.add_argument(
         "--cleanup",
