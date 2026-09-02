@@ -197,6 +197,30 @@ void main() {
     expect(find.text('share-terminals'), findsOneWidget);
     expect(find.text('view'), findsNothing);
 
+    // Permission names and the collapsed 'All permissions' label share
+    // one quiet tag style: outlined pill, no background fill (#2987).
+    BoxDecoration tagDecoration(String label) => tester
+        .widget<Container>(
+          find
+              .ancestor(
+                of: find.text(label),
+                matching: find.byType(Container),
+              )
+              .first,
+        )
+        .decoration! as BoxDecoration;
+    final permDeco = tagDecoration('egress-consent');
+    final allDeco = tagDecoration('All permissions');
+    for (final deco in [permDeco, allDeco]) {
+      expect(deco.color, isNull);
+      expect(deco.border, isNotNull);
+      expect(deco.borderRadius, isNotNull);
+    }
+    expect(
+      (allDeco.borderRadius as BorderRadius).bottomLeft,
+      (permDeco.borderRadius as BorderRadius).bottomLeft,
+    );
+
     // Without change-acls (#2764) the role-write affordances are hidden:
     // no add-user buttons, chips carry no delete icons.
     expect(find.byTooltip('Add user'), findsNothing);

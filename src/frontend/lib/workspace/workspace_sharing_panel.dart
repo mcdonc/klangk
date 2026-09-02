@@ -281,6 +281,21 @@ class WorkspaceSharingPanelState extends State<WorkspaceSharingPanel> {
     );
   }
 
+  /// A quiet outlined pill for one granted permission (or the collapsed
+  /// "All permissions" label): no fill, muted border and text — it must
+  /// not compete with the member chips beside it.
+  Widget _permissionTag(String label) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: KColors.borderMuted),
+        ),
+        child: Text(
+          label,
+          style: const TextStyle(color: KColors.textSecondary, fontSize: 10),
+        ),
+      );
+
   Widget _buildRoleBucket(Map<String, dynamic> role) {
     final roleName = role['role'] as String;
     final members = role['members'] as List? ?? [];
@@ -329,37 +344,13 @@ class WorkspaceSharingPanelState extends State<WorkspaceSharingPanel> {
             if (permissions.isNotEmpty) ...[
               const SizedBox(height: 4),
               if (permissions.contains('*'))
-                const Text(
-                  'All permissions',
-                  style: TextStyle(
-                    color: KColors.textSecondary,
-                    fontSize: 11,
-                  ),
-                )
+                _permissionTag('All permissions')
               else
                 Wrap(
                   spacing: 6,
                   runSpacing: 4,
                   children: [
-                    for (final p in permissions)
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 6,
-                          vertical: 2,
-                        ),
-                        decoration: BoxDecoration(
-                          color: KColors.bgInset,
-                          borderRadius: BorderRadius.circular(4),
-                          border: Border.all(color: KColors.borderMuted),
-                        ),
-                        child: Text(
-                          p,
-                          style: const TextStyle(
-                            color: KColors.textSecondary,
-                            fontSize: 10,
-                          ),
-                        ),
-                      ),
+                    for (final p in permissions) _permissionTag(p),
                   ],
                 ),
             ],
