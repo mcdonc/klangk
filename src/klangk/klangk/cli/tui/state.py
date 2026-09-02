@@ -65,6 +65,69 @@ class ServerInfo:
     url: str
 
 
+def me_profile_payload(url: str, token: str) -> dict | None:
+    """Fetch ``/auth/me``; None on any failure or malformed payload."""
+    try:
+        resp = http_request(
+            url,
+            "GET",
+            "/api/v1/auth/me",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=5.0,
+        )
+    except httpx.HTTPError:
+        return None
+    if resp.status_code != 200:
+        return None
+    data = resp.json()
+    if isinstance(data, dict) and isinstance(data.get("id"), str):
+        return data
+    return None
+
+
+def token_status(url: str, token: str) -> str:
+    """ "auth_required" (401), "unreachable", or "ok" for a stored token."""
+    try:
+        resp = http_request(
+            url,
+            "GET",
+            "/api/v1/auth/me",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=5.0,
+        )
+    except httpx.HTTPError:
+        return "unreachable"
+    if resp.status_code == 401:
+        return "auth_required"
+    return "ok"
+
+
+def login_failure_error(resp) -> LoginError:
+    """A LoginError carrying the server's detail from a non-200 response."""
+    detail = f"HTTP {resp.status_code}"
+    try:
+        detail = resp.json().get("detail", detail)
+    except Exception:
+        pass
+    return LoginError(detail)
+
+
+def aliases_for_url(cfg, url: str) -> list[str]:
+    """The config aliases whose entry points at *url*."""
+    return [a for a, e in cfg.servers.items() if e.url == url]
+
+
+def remove_aliases(aliases: list[str]) -> None:
+    """Remove each alias from klangk.yaml."""
+    for a in aliases:
+        remove_server_from_config(a)
+
+
+def me_cache_valid(cached, cached_url, url) -> bool:
+    """True when the cached /auth/me profile matches *url*."""
+    return cached is not None and cached_url == url
+
+
 class TuiState:
     """Live bridge to CLIConfig / CLIState / KlangkClient.
 
@@ -212,29 +275,16 @@ class TuiState:
         url = self.current_url()
         if url is None:
             return None
-        if self._me is not None and self._me_url == url:
+        if me_cache_valid(self._me, self._me_url, url):
             return self._me
         token = self.token()
         if token is None:
             return None
-        try:
-            resp = http_request(
-                url,
-                "GET",
-                "/api/v1/auth/me",
-                headers={"Authorization": f"Bearer {token}"},
-                timeout=5.0,
-            )
-        except httpx.HTTPError:
-            return None
-        if resp.status_code != 200:
-            return None
-        data = resp.json()
-        if isinstance(data, dict) and isinstance(data.get("id"), str):
+        data = me_profile_payload(url, token)
+        if data is not None:
             self._me = data
             self._me_url = url
-            return data
-        return None
+        return data
 
     def current_user_id(self) -> str | None:
         """The authenticated user's id for the active server (cached)."""
@@ -500,12 +550,7 @@ class TuiState:
         except httpx.HTTPError as exc:
             raise LoginError(f"could not reach server: {exc}") from None
         if resp.status_code != 200:
-            detail = f"HTTP {resp.status_code}"
-            try:
-                detail = resp.json().get("detail", detail)
-            except Exception:
-                pass
-            raise LoginError(detail)
+            raise login_failure_error(resp)
         token = resp.json().get("access_token")
         if not token:
             raise LoginError("server returned no access token")
@@ -567,8 +612,7 @@ class TuiState:
         Returns ``"ok"``, ``"unreachable"``, or ``"auth_required"``.
         """
         config = fetch_config(url)
-        if config == UNREACHABLE:
-            return "unreachable"
+        # UNREACHABLE (a string) fails the isinstance check too.
         if not isinstance(config, dict):
             return "unreachable"
         auth_mode = config.get("auth_modes", "password")
@@ -577,19 +621,7 @@ class TuiState:
         token = self.state().get_token(url)
         if token is None:
             return "auth_required"
-        try:
-            resp = http_request(
-                url,
-                "GET",
-                "/api/v1/auth/me",
-                headers={"Authorization": f"Bearer {token}"},
-                timeout=5.0,
-            )
-            if resp.status_code == 401:
-                return "auth_required"
-        except httpx.HTTPError:
-            return "unreachable"
-        return "ok"
+        return token_status(url, token)
 
     def switch_server(self, url: str) -> None:
         with self._state_lock:
@@ -638,11 +670,10 @@ class TuiState:
         default UDS or None) rather than left dangling.
         """
         cfg = self.cfg()
-        aliases = [a for a, e in cfg.servers.items() if e.url == url]
+        aliases = aliases_for_url(cfg, url)
         if not aliases:
             return False
-        for a in aliases:
-            remove_server_from_config(a)
+        remove_aliases(aliases)
         with self._state_lock:
             state = self.state()
             if state.active_server == url:
