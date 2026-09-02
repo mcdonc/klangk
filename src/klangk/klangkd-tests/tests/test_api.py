@@ -4818,6 +4818,7 @@ class TestWorkspaceSharingRoutes:
             "files-download",
             "files-view",
             "files-write",
+            "join-workspace",
             "monitor-workspace",
             "terminal",
             "view",
@@ -6128,6 +6129,7 @@ class TestWorkspaceGroupSharing:
             "files-download",
             "files-view",
             "files-write",
+            "join-workspace",
             "terminal",
             "view",
         ]

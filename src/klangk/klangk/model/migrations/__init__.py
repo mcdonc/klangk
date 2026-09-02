@@ -71,6 +71,7 @@ from klangk.model.migrations import m0020_rename_admin_group
 from klangk.model.migrations import m0021_first_class_resource_acls
 from klangk.model.migrations import m0022_workspace_permission_renames
 from klangk.model.migrations import m0023_self_service_resources
+from klangk.model.migrations import m0024_join_workspace_permission
 from klangk.model.migrations.base import Migration
 
 __all__ = ["MIGRATIONS", "Migration", "run_migrations"]
@@ -102,6 +103,7 @@ MIGRATIONS: list[Migration] = [
     m0021_first_class_resource_acls.migration,
     m0022_workspace_permission_renames.migration,
     m0023_self_service_resources.migration,
+    m0024_join_workspace_permission.migration,
 ]
 
 

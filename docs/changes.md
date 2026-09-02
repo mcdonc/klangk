@@ -388,6 +388,17 @@ sync` report a clear permission-denied error.
   reflected on reload. A `*` grant shows as "All permissions". The
   buckets span about three quarters of the screen width.
 
+- **`join-workspace` permission (#2975).** The `workspace_connect`
+  gate — opening a workspace at all — now checks `join-workspace`
+  instead of `terminal`. `terminal` keeps its name and becomes the
+  Terminal-tab visibility signal: a member without it gets no Terminal
+  tab, so a custom ACL can grant, e.g., files-only access
+  (`join-workspace` + `files-view`). Migration m0024 copies every
+  stored workspace `terminal` Allow ACE to a sibling `join-workspace`
+  row (nothing is renamed — existing `terminal` grants keep working),
+  and fresh seeds and both share flows (member, group) grant
+  `join-workspace` alongside `terminal`.
+
 - **README release badge (#2981).** The README now carries a release
   badge showing the latest `v*` tag, driven by GitHub Releases —
   no manual updates needed.

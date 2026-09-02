@@ -40,6 +40,7 @@ class AclEditorState extends State<AclEditor> {
   static const List<String> workspacePermissions = [
     'view',
     'monitor-workspace',
+    'join-workspace',
     'terminal',
     'egress-consent',
     'code-in-isolation',

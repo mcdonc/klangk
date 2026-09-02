@@ -41,6 +41,44 @@ class _FilesHarnessState extends State<_FilesHarness> {
   }
 }
 
+/// A stateful harness that rebuilds IdeLayout with/without the Terminal
+/// pane — the shape the #2975 gate produces (a live ACL edit revoking
+/// `terminal`, or a late permissions fetch granting it).
+class _TerminalHarness extends StatefulWidget {
+  const _TerminalHarness({super.key, required this.showTerminal});
+  final bool showTerminal;
+  @override
+  State<_TerminalHarness> createState() => _TerminalHarnessState();
+}
+
+class _TerminalHarnessState extends State<_TerminalHarness> {
+  late bool _showTerminal;
+  @override
+  void initState() {
+    super.initState();
+    _showTerminal = widget.showTerminal;
+  }
+
+  void setShowTerminal(bool v) => setState(() => _showTerminal = v);
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      home: Scaffold(
+        body: SizedBox(
+          width: 1280,
+          height: 720,
+          child: IdeLayout(
+            fileViewer: const Text('FILES_CONTENT'),
+            terminal: _showTerminal ? const Text('TERMINAL_CONTENT') : null,
+            sharing: const Text('SHARING_CONTENT'),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 void main() {
   group('SkeuoTab', () {
     testWidgets('renders badge when provided', (tester) async {
@@ -478,6 +516,111 @@ void main() {
       await tester.tap(terminalTab.first);
       await tester.pumpAndSettle();
       expect(find.byType(IdeLayout), findsOneWidget);
+    });
+
+    group('terminal-permission gating (#2975)', () {
+      testWidgets('no Terminal tab or pane when terminal is null',
+          (tester) async {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: SizedBox(
+                width: 1280,
+                height: 720,
+                child: IdeLayout(
+                  fileViewer: const Text('FILES_CONTENT'),
+                  terminal: null,
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        expect(find.text('Terminal'), findsNothing);
+        expect(find.text('TERMINAL_CONTENT'), findsNothing);
+        // Files is the first (and landing) tab: a join-workspace +
+        // files-view member sees exactly the Files tab.
+        expect(find.text('FILES_CONTENT'), findsOneWidget);
+      });
+
+      testWidgets('revoking the pane mid-session falls back to Files',
+          (tester) async {
+        final harnessKey = GlobalKey<_TerminalHarnessState>();
+        await tester
+            .pumpWidget(_TerminalHarness(key: harnessKey, showTerminal: true));
+        await tester.pumpAndSettle();
+        expect(find.text('TERMINAL_CONTENT'), findsOneWidget);
+
+        // A live ACL edit: no `terminal` → no Terminal tab.
+        harnessKey.currentState!.setShowTerminal(false);
+        await tester.pumpAndSettle();
+
+        expect(find.text('Terminal'), findsNothing);
+        expect(find.text('TERMINAL_CONTENT'), findsNothing);
+        // The selection fell back to the first mounted tab.
+        expect(find.text('FILES_CONTENT'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      });
+
+      testWidgets(
+          'revoking the pane while a later tab is selected keeps it selected',
+          (tester) async {
+        final harnessKey = GlobalKey<_TerminalHarnessState>();
+        await tester
+            .pumpWidget(_TerminalHarness(key: harnessKey, showTerminal: true));
+        await tester.pumpAndSettle();
+
+        await tester.tap(find.text('Sharing'));
+        await tester.pumpAndSettle();
+        expect(find.text('SHARING_CONTENT'), findsOneWidget);
+
+        harnessKey.currentState!.setShowTerminal(false);
+        await tester.pumpAndSettle();
+
+        // Keys, not indices: Sharing stays selected through the removal.
+        expect(find.text('SHARING_CONTENT'), findsOneWidget);
+        expect(find.text('Terminal'), findsNothing);
+      });
+
+      testWidgets('granting the pane mid-session keeps Files selected',
+          (tester) async {
+        final harnessKey = GlobalKey<_TerminalHarnessState>();
+        await tester
+            .pumpWidget(_TerminalHarness(key: harnessKey, showTerminal: false));
+        await tester.pumpAndSettle();
+        expect(find.text('FILES_CONTENT'), findsOneWidget);
+
+        harnessKey.currentState!.setShowTerminal(true);
+        await tester.pumpAndSettle();
+
+        expect(find.text('Terminal'), findsOneWidget);
+        // Files stays selected; Terminal is merely mountable now.
+        expect(find.text('FILES_CONTENT'), findsOneWidget);
+      });
+
+      testWidgets('no tabs at all renders an empty body, not a crash',
+          (tester) async {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: SizedBox(
+                width: 1280,
+                height: 720,
+                child: const IdeLayout(
+                  fileViewer: null,
+                  terminal: null,
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        expect(find.text('Terminal'), findsNothing);
+        expect(find.text('Files'), findsNothing);
+        expect(tester.takeException(), isNull);
+      });
     });
   });
 }

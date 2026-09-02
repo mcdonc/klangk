@@ -46,13 +46,17 @@ UPDATABLE_WORKSPACE_FIELDS = frozenset(
 # Seeded atomically with the row in :meth:`WorkspacesModel.create_workspace_with_acl`
 # so a failure mid-seed can never leave orphaned ACEs/groups (#128).
 # #2946: specific names throughout. Lifecycle control (start/stop/
-# restart-workspace) is separate from `terminal` (the WS connect gate)
-# and is granted to the operating roles (coders, collaborators) — not
-# spectators, who watch.
+# restart-workspace) is separate from `terminal` and is granted to the
+# operating roles (coders, collaborators) — not spectators, who watch.
+# #2975: `join-workspace` is the WS connect gate (the workspace page
+# renders at all); `terminal` gates visibility of the Terminal tab —
+# every role that should see the tab keeps it, spectators included
+# (their tab hosts the shared terminals they watch).
 _ROLE_GROUP_PERMISSIONS: dict[str, list[str]] = {
     "owners": ["*"],
     "coders": [
         "monitor-workspace",
+        "join-workspace",
         "terminal",
         "start-workspace",
         "stop-workspace",
@@ -67,6 +71,7 @@ _ROLE_GROUP_PERMISSIONS: dict[str, list[str]] = {
     ],
     "collaborators": [
         "monitor-workspace",
+        "join-workspace",
         "terminal",
         "start-workspace",
         "stop-workspace",
@@ -83,9 +88,10 @@ _ROLE_GROUP_PERMISSIONS: dict[str, list[str]] = {
     ],
     "spectators": [
         "monitor-workspace",
-        # terminal = the WS connect gate only (#2946 lifecycle split):
-        # spectators connect to watch shared terminals; own-terminal UI
-        # stays gated on code-in-isolation, which they lack.
+        "join-workspace",
+        # The Terminal tab hosts the shared terminals spectators watch;
+        # own-terminal UI inside it stays gated on code-in-isolation,
+        # which they lack (#2975).
         "terminal",
         "spectate-on-shared-terminals",
     ],

@@ -434,11 +434,13 @@ The fixture (seeded by `fmtk-up`, or standalone via
   tab.
 
 Each fixture opens the workspace page: fmtk-admin via its owner wildcard,
-the role members because every role group carries `terminal` — the WS
-`workspace_connect` gate requires it, so a member whose only grants omit
-`terminal` cannot open the workspace page at all ("Error: Permission
-denied" before any tab renders) — keep that in mind when inventing
-synthetic permission sets.
+the role members because every role group carries `join-workspace` — the
+WS `workspace_connect` gate requires it (#2975), so a member whose only
+grants omit `join-workspace` cannot open the workspace page at all
+("Error: Permission denied" before any tab renders) — keep that in mind
+when inventing synthetic permission sets. The Terminal tab itself mounts
+only for `terminal` holders (spectators included — their tab hosts the
+shared terminals they watch).
 
 With the harness up (from another shell, repo root):
 

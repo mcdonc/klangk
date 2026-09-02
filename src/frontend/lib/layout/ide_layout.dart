@@ -4,15 +4,38 @@ import '../terminal/ghostty_terminal.dart';
 import '../file_viewer/file_viewer_panel.dart';
 import '../widgets/skeuo_tab.dart';
 
-/// IDE layout: tabs (Terminal + optional Files + feature-contributed tabs)
-/// with optional debug pane at the bottom separated by a draggable divider.
+/// Logical identity of a built-in workspace tab. Selection is tracked by
+/// key, not strip index, so a pane mounting/unmounting mid-session (the
+/// async permissions fetch, or a live ACL revocation) never has to shift
+/// the selection to keep pointing at the same logical tab — the index is
+/// recomputed on every build (#2886 for Files, #2975 for Terminal).
+class _TabKey {
+  final String id;
+  const _TabKey(this.id);
+
+  static const terminal = _TabKey('terminal');
+  static const files = _TabKey('files');
+  static const consent = _TabKey('consent');
+  static const sharing = _TabKey('sharing');
+  static const settings = _TabKey('settings');
+}
+
+/// IDE layout: tabs (optional Terminal + optional Files +
+/// feature-contributed tabs) with optional debug pane at the bottom
+/// separated by a draggable divider.
 class IdeLayout extends StatefulWidget {
+  /// Terminal pane. Null mounts no Terminal tab at all — the caller
+  /// passes null for principals without the `terminal` permission
+  /// (#2975), the same mount/no-mount pattern the Files pane uses for
+  /// `files-view` (#2886). A member can hold `join-workspace` (render
+  /// the workspace) without `terminal` (see the Terminal tab).
+  final Widget? terminal;
+
   /// Files pane. Null mounts no Files tab at all — the caller passes null
   /// for principals without the `files` permission (#2886), so the panel
   /// never fetches a listing it has no grant for. Deep-links and terminal
   /// path taps that target the viewer no-op in that case.
   final Widget? fileViewer;
-  final Widget terminal;
   final Widget? settings;
   final Widget? sharing;
   final Widget? debug;
@@ -29,8 +52,9 @@ class IdeLayout extends StatefulWidget {
   final GlobalKey<GhosttyTerminalState>? terminalKey;
   final GlobalKey<FileViewerPanelState>? fileViewerKey;
 
-  /// Deep-linked workspace-relative file to open in the Files tab on load (and
-  /// whenever it changes). Null/empty (with no [initialDir]) shows Terminal.
+  /// Deep-linked workspace-relative file to open in the Files tab on load
+  /// (and whenever it changes). Null/empty (with no [initialDir]) shows
+  /// the first mounted tab.
   final String? initialFile;
 
   /// Deep-linked workspace-relative directory to browse in the Files tab on
@@ -57,7 +81,11 @@ class IdeLayout extends StatefulWidget {
 }
 
 class IdeLayoutState extends State<IdeLayout> {
-  int _selectedIndex = 0;
+  // The selected tab's logical key: a [_TabKey] for built-in tabs, or the
+  // [WorkspaceTabPlugin] instance for a feature tab (identity-stable from
+  // the registry). Key-based selection is what makes mid-session pane
+  // mount/unmount index-free (#2886, #2975).
+  Object _selected = _TabKey.terminal;
   double _debugHeight = 0; // collapsed by default
 
   // #2886: whether the CURRENT initialFile/initialDir deep-link has been
@@ -72,10 +100,6 @@ class IdeLayoutState extends State<IdeLayout> {
   // the strip on change. Map key is the tab (identity-stable from the
   // registry); value is the listener we add/remove.
   final Map<WorkspaceTabPlugin, VoidCallback> _badgeListeners = {};
-  // Index of the first feature-contributed tab in the strip, set during
-  // _buildTabsAndContent so _selectTab can map a selected index back to a
-  // feature tab for setVisible.
-  int _featureTabStart = -1;
 
   static const _dividerHeight = 6.0;
   static const _minDebugHeight = 0.0;
@@ -85,9 +109,12 @@ class IdeLayoutState extends State<IdeLayout> {
   void initState() {
     super.initState();
     _subscribeFeatureBadges();
-    // Focus the pane shown first (Terminal by default) so the user can type
-    // immediately on workspace open, without an extra click into it.
-    _focusPane(_selectedIndex);
+    // The Terminal tab is the preferred landing tab; without one (no
+    // `terminal` permission, #2975) land on the first mounted tab.
+    _reconcileSelection();
+    // Focus the pane shown first (Terminal when present) so the user can
+    // type immediately on workspace open, without an extra click into it.
+    _focusPane(_selected);
     _maybeOpenInitial();
   }
 
@@ -109,32 +136,67 @@ class IdeLayoutState extends State<IdeLayout> {
     if (!identical(widget.featureTabs, oldWidget.featureTabs)) {
       _subscribeFeatureBadges();
     }
-    // #2886: the Files pane mounts only with the `files` permission, which
-    // can arrive after the first build (async permissions fetch) or be
-    // revoked mid-session (ACL edited live). The Files tab occupies index
-    // 1, so its appearance/disappearance shifts every later tab's index —
-    // nudge the selection so it keeps pointing at the same logical tab
-    // (and stays in range for the IndexedStack). Only a null-ness change
-    // counts: the caller rebuilds the pane widget on every parent rebuild,
-    // so instance identity would fire every frame.
+    // #2886/#2975: panes mount only with their permission, which can
+    // arrive after the first build (async permissions fetch) or be revoked
+    // mid-session (ACL edited live). A still-mounted selected tab keeps
+    // its selection (keys, not indices); one whose pane vanished falls
+    // back below.
+    _reconcileSelection();
+    // A pending deep-link that no-op'd while the Files pane was absent
+    // (the permissions fetch raced the first build) now has its target.
     if (oldWidget.fileViewer == null && widget.fileViewer != null) {
-      if (_selectedIndex >= 1) setState(() => _selectedIndex += 1);
-      // A pending deep-link that no-op'd while the pane was absent (the
-      // permissions fetch raced the first build) now has its target.
       _maybeOpenInitial();
-    } else if (oldWidget.fileViewer != null && widget.fileViewer == null) {
-      final wasOnFiles = _selectedIndex == 1;
-      // Terminal (index 0) is unaffected — do NOT subtract into -1 and
-      // hand IndexedStack an out-of-range index. Index > 1 shifts down to
-      // keep pointing at the same later tab; index 1 (the removed Files
-      // tab) falls back to Terminal.
-      setState(
-        () => _selectedIndex = _selectedIndex > 1 ? _selectedIndex - 1 : 0,
-      );
-      // Landing on Terminal from the removed tab focuses its input, the
-      // same as selecting the tab would.
-      if (wasOnFiles) _focusPane(0);
     }
+  }
+
+  /// Keeps [_selected] pointing at a mounted tab: if the selected pane
+  /// vanished (permission revoked mid-session, feature deactivated), fall
+  /// back to Terminal when mounted, else the first mounted tab — the same
+  /// preference order the strip renders in. With no tabs at all the
+  /// dangling key is harmless (the build renders an empty body).
+  void _reconcileSelection() {
+    if (_keyExists(_selected)) return;
+    final fallback =
+        _keyExists(_TabKey.terminal) ? _TabKey.terminal : _firstMountedKey();
+    if (fallback == null) return;
+    setState(() => _selected = fallback);
+    // Landing on Terminal from the removed tab focuses its input, the
+    // same as selecting the tab would.
+    _focusPane(fallback);
+  }
+
+  /// Whether the tab identified by [key] is currently mounted.
+  bool _keyExists(Object key) {
+    if (key is WorkspaceTabPlugin) return widget.featureTabs.contains(key);
+    if (key is! _TabKey) return false;
+    return switch (key) {
+      _TabKey.terminal => widget.terminal != null,
+      _TabKey.files => widget.fileViewer != null,
+      _TabKey.consent => widget.consentRules != null,
+      _TabKey.sharing => widget.sharing != null,
+      _TabKey.settings => widget.settings != null,
+      _ => false,
+    };
+  }
+
+  /// The first mounted tab's key, in strip order — the landing tab when
+  /// Terminal is absent. Null when no tab is mounted at all.
+  Object? _firstMountedKey() {
+    for (final key in const [
+      _TabKey.terminal,
+      _TabKey.files,
+    ]) {
+      if (_keyExists(key)) return key;
+    }
+    if (widget.featureTabs.isNotEmpty) return widget.featureTabs.first;
+    for (final key in const [
+      _TabKey.consent,
+      _TabKey.sharing,
+      _TabKey.settings,
+    ]) {
+      if (_keyExists(key)) return key;
+    }
+    return null;
   }
 
   @override
@@ -177,18 +239,9 @@ class IdeLayoutState extends State<IdeLayout> {
   /// Notify feature tabs of visibility on select/deselect (#1976): the tab
   /// being left gets setVisible(false), the tab being shown gets
   /// setVisible(true).
-  void _notifyFeatureTabVisibility(int oldIndex, int newIndex) {
-    final start = _featureTabStart;
-    if (start < 0) return;
-    final tabs = widget.featureTabs;
-    if (tabs.isEmpty) return;
-    final end = start + tabs.length;
-    if (oldIndex >= start && oldIndex < end) {
-      tabs[oldIndex - start].setVisible(false);
-    }
-    if (newIndex >= start && newIndex < end) {
-      tabs[newIndex - start].setVisible(true);
-    }
+  void _notifyFeatureTabVisibility(Object oldKey, Object newKey) {
+    if (oldKey is WorkspaceTabPlugin) oldKey.setVisible(false);
+    if (newKey is WorkspaceTabPlugin) newKey.setVisible(true);
   }
 
   /// Opens the deep-linked [IdeLayout.initialFile] (preferred) or
@@ -219,7 +272,7 @@ class IdeLayoutState extends State<IdeLayout> {
   /// No-op without a Files pane (no `files` permission, #2886).
   void openFile(String path) {
     if (widget.fileViewer == null) return;
-    _selectTab(1);
+    _selectTab(_TabKey.files);
     widget.fileViewerKey?.currentState?.openFile(path);
   }
 
@@ -227,64 +280,78 @@ class IdeLayoutState extends State<IdeLayout> {
   /// No-op without a Files pane (no `files` permission, #2886).
   void openDirectory(String path) {
     if (widget.fileViewer == null) return;
-    _selectTab(1);
+    _selectTab(_TabKey.files);
     widget.fileViewerKey?.currentState?.openDir(path);
   }
 
-  void _selectTab(int index) {
-    final oldIndex = _selectedIndex;
-    final changed = index != oldIndex;
+  void _selectTab(Object key) {
+    final oldKey = _selected;
+    final changed = key != oldKey;
     if (changed) {
-      setState(() => _selectedIndex = index);
-      if (index == 1 && widget.fileViewer != null) {
+      setState(() => _selected = key);
+      if (key == _TabKey.files && widget.fileViewer != null) {
         widget.fileViewerKey?.currentState?.refresh();
       }
       // Feature-tab visibility (#1976).
-      _notifyFeatureTabVisibility(oldIndex, index);
+      _notifyFeatureTabVisibility(oldKey, key);
     }
     // Always (re)focus the tab's input — even when re-clicking the already
     // active tab — so clicking a tab returns focus to its input.
-    _focusPane(index);
+    _focusPane(key);
   }
 
   /// Focuses the Terminal input. Feature tabs focus themselves via
   /// [WorkspaceTabPlugin.setVisible] when selected (#1976).
-  void _focusPane(int index) {
-    if (index != 0) return;
+  void _focusPane(Object key) {
+    if (key != _TabKey.terminal) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       widget.terminalKey?.currentState?.requestFocus();
     });
   }
 
-  /// Build the dynamic tab bar and content pane lists.
-  ({List<Widget> tabs, List<Widget> content}) _buildTabsAndContent() {
-    final tabs = <Widget>[
-      SkeuoTab(
-        label: 'Terminal',
-        icon: Icons.terminal,
-        isSelected: _selectedIndex == 0,
-        onTap: () => _selectTab(0),
-      ),
-    ];
-    final content = <Widget>[
-      Container(
-        color: KColors.bgCanvas,
-        padding: const EdgeInsets.only(left: 6, top: 4),
-        child: widget.terminal,
-      ),
-    ];
+  /// Build the dynamic tab bar, content pane, and selected-index lists.
+  ({List<Widget> tabs, List<Widget> content, int selectedIndex})
+      _buildTabsAndContent() {
+    final tabs = <Widget>[];
+    final content = <Widget>[];
+    // The selected tab's strip position, computed while building: the
+    // strip order is known here, so the key→index mapping never drifts
+    // from what is actually mounted (#2886/#2975).
+    var selectedIndex = 0;
+    // Terminal tab: mounted only when the caller passes a pane — without
+    // the `terminal` permission there is no tab to click and no PTY UI
+    // (#2975). Tab/content order below is the strip order; keys, not
+    // indices, carry the selection.
+    if (widget.terminal != null) {
+      if (_selected == _TabKey.terminal) selectedIndex = tabs.length;
+      tabs.add(
+        SkeuoTab(
+          label: 'Terminal',
+          icon: Icons.terminal,
+          isSelected: _selected == _TabKey.terminal,
+          onTap: () => _selectTab(_TabKey.terminal),
+        ),
+      );
+      content.add(
+        Container(
+          color: KColors.bgCanvas,
+          padding: const EdgeInsets.only(left: 6, top: 4),
+          child: widget.terminal,
+        ),
+      );
+    }
     // Files tab: mounted only when the caller passes a pane — without the
     // `files` permission there is no tab to click and no listing fetch
-    // (#2886). Tab/content indices below shift down accordingly (the
-    // feature-tab start index is computed from tabs.length, not assumed).
+    // (#2886).
     if (widget.fileViewer != null) {
+      if (_selected == _TabKey.files) selectedIndex = tabs.length;
       tabs.add(
         SkeuoTab(
           label: 'Files',
           icon: Icons.folder_outlined,
-          isSelected: _selectedIndex == 1,
-          onTap: () => _selectTab(1),
+          isSelected: _selected == _TabKey.files,
+          onTap: () => _selectTab(_TabKey.files),
         ),
       );
       content.add(
@@ -293,21 +360,22 @@ class IdeLayoutState extends State<IdeLayout> {
     }
 
     void addTab(
+      Object key,
       String label,
       IconData icon,
       Widget child, {
       int? badge,
       bool badgeHighlight = false,
     }) {
-      final index = tabs.length;
+      if (_selected == key) selectedIndex = tabs.length;
       tabs.add(
         SkeuoTab(
           label: label,
           icon: icon,
-          isSelected: _selectedIndex == index,
+          isSelected: _selected == key,
           badge: badge,
           badgeHighlight: badgeHighlight,
-          onTap: () => _selectTab(index),
+          onTap: () => _selectTab(key),
         ),
       );
       content.add(Container(color: KColors.bgCanvas, child: child));
@@ -317,10 +385,10 @@ class IdeLayoutState extends State<IdeLayout> {
     // content tabs (Terminal/Files) and before config tabs
     // (Sharing/Settings). Each tab's feature is already active-filtered
     // before it reaches here. A tab may expose a live badge (#1976).
-    _featureTabStart = tabs.length;
     for (final tab in widget.featureTabs) {
       final badgeValue = tab.badge?.value;
       addTab(
+        tab,
         tab.title,
         tab.icon,
         tab.build(context),
@@ -334,16 +402,21 @@ class IdeLayoutState extends State<IdeLayout> {
     // (the caller passes null otherwise), mounted with the other management
     // tabs before Sharing/Settings.
     if (widget.consentRules != null) {
-      addTab('Network', Icons.shield_outlined, widget.consentRules!);
+      addTab(
+        _TabKey.consent,
+        'Network',
+        Icons.shield_outlined,
+        widget.consentRules!,
+      );
     }
     if (widget.sharing != null) {
-      addTab('Sharing', Icons.people_outline, widget.sharing!);
+      addTab(_TabKey.sharing, 'Sharing', Icons.people_outline, widget.sharing!);
     }
     if (widget.settings != null) {
-      addTab('Settings', Icons.settings, widget.settings!);
+      addTab(_TabKey.settings, 'Settings', Icons.settings, widget.settings!);
     }
 
-    return (tabs: tabs, content: content);
+    return (tabs: tabs, content: content, selectedIndex: selectedIndex);
   }
 
   List<Widget> _buildDebugPane() {
@@ -387,7 +460,7 @@ class IdeLayoutState extends State<IdeLayout> {
 
   @override
   Widget build(BuildContext context) {
-    final (:tabs, :content) = _buildTabsAndContent();
+    final (:tabs, :content, :selectedIndex) = _buildTabsAndContent();
 
     return Column(
       children: [
@@ -401,7 +474,12 @@ class IdeLayoutState extends State<IdeLayout> {
         ),
         Expanded(
           child: ClipRect(
-            child: IndexedStack(index: _selectedIndex, children: content),
+            // No mounted tab at all (a join-workspace-only member with no
+            // grants beyond the connect gate): an empty body, not an
+            // IndexedStack with no children (#2975).
+            child: content.isEmpty
+                ? const SizedBox.expand()
+                : IndexedStack(index: selectedIndex, children: content),
           ),
         ),
         ..._buildDebugPane(),

@@ -84,6 +84,7 @@ class TestRunner:
             (21, "0021_first_class_resource_acls"),
             (22, "0022_workspace_permission_renames"),
             (23, "0023_self_service_resources"),
+            (24, "0024_join_workspace_permission"),
         ]
         async with aiosqlite.connect(str(app_state.state.db.db_path)) as db:
             assert await _recorded(db) == expected
@@ -173,6 +174,7 @@ class TestRunner:
                 (21, "0021_first_class_resource_acls"),
                 (22, "0022_workspace_permission_renames"),
                 (23, "0023_self_service_resources"),
+                (24, "0024_join_workspace_permission"),
             ]
 
     async def test_m0008_agent_identity_and_human_collision(
@@ -2426,5 +2428,134 @@ class TestM0023SelfServiceResources:
             await db.commit()
             await m0023_self_service_resources.migration.apply(db)
             assert await self._rows(db, "/volumes") == [(0, 1, "custom", None)]
+        finally:
+            await db.__aexit__(None, None, None)
+
+
+class TestM0024JoinWorkspacePermission:
+    """m0024 grants ``join-workspace`` to every stored ``terminal`` holder
+    (#2975: the connect gate moves off ``terminal``, which becomes the
+    Terminal-tab visibility signal). Without the sibling rows every
+    existing member falls short of the new gate on boot."""
+
+    async def _db(self, tmp_path):
+        db = aiosqlite.connect(str(tmp_path / "m0024.db"))
+        db = await db.__aenter__()
+        await db.execute(
+            "CREATE TABLE acl_entries ("
+            " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            " resource TEXT, position INTEGER, action INTEGER,"
+            " principal_type INTEGER, user_id TEXT, group_id TEXT,"
+            " system_principal INTEGER, permission TEXT,"
+            " UNIQUE(resource, position))"
+        )
+        return db
+
+    async def _rows(self, db, resource, principal_sql=""):
+        cursor = await db.execute(
+            "SELECT permission FROM acl_entries"
+            f" WHERE resource = ?{principal_sql} ORDER BY position",
+            (resource,),
+        )
+        return [r[0] for r in await cursor.fetchall()]
+
+    async def test_copies_terminal_aces_to_join_workspace(self, tmp_path):
+        """User and group principals holding Allow ``terminal`` on a
+        workspace each gain a ``join-workspace`` sibling; the terminal
+        rows stay (copy, not rename)."""
+        from klangk.model.migrations import m0024_join_workspace_permission
+
+        db = await self._db(tmp_path)
+        try:
+            await db.execute(
+                "INSERT INTO acl_entries"
+                " (resource, position, action, principal_type, user_id,"
+                "  permission)"
+                " VALUES ('/workspaces/ws-1', 0, 1, 1, 'u-1', 'view'),"
+                "        ('/workspaces/ws-1', 1, 1, 1, 'u-1', 'terminal')"
+            )
+            await db.execute(
+                "INSERT INTO acl_entries"
+                " (resource, position, action, principal_type, group_id,"
+                "  permission)"
+                " VALUES ('/workspaces/ws-1', 2, 1, 2, 'g-spec', 'terminal')"
+            )
+            await db.commit()
+            await m0024_join_workspace_permission.migration.apply(db)
+
+            assert await self._rows(
+                db, "/workspaces/ws-1", " AND user_id = 'u-1'"
+            ) == ["view", "terminal", "join-workspace"]
+            assert await self._rows(
+                db, "/workspaces/ws-1", " AND group_id = 'g-spec'"
+            ) == ["terminal", "join-workspace"]
+            # Idempotent: a re-run inserts nothing.
+            await m0024_join_workspace_permission.migration.apply(db)
+            assert await self._rows(
+                db, "/workspaces/ws-1", " AND user_id = 'u-1'"
+            ) == ["view", "terminal", "join-workspace"]
+        finally:
+            await db.__aexit__(None, None, None)
+
+    async def test_wildcard_and_existing_join_skipped(self, tmp_path):
+        """Principals already covered by ``*`` or ``join-workspace`` on
+        the resource get no sibling (owners need nothing; a re-run
+        against a pre-migrated shape inserts nothing)."""
+        from klangk.model.migrations import m0024_join_workspace_permission
+
+        db = await self._db(tmp_path)
+        try:
+            await db.execute(
+                "INSERT INTO acl_entries"
+                " (resource, position, action, principal_type, user_id,"
+                "  permission)"
+                " VALUES ('/workspaces/ws-2', 0, 1, 1, 'u-owner', '*'),"
+                "        ('/workspaces/ws-2', 1, 1, 1, 'u-owner',"
+                "         'terminal'),"
+                "        ('/workspaces/ws-2', 2, 1, 1, 'u-done',"
+                "         'join-workspace'),"
+                "        ('/workspaces/ws-2', 3, 1, 1, 'u-done',"
+                "         'terminal')"
+            )
+            await db.commit()
+            await m0024_join_workspace_permission.migration.apply(db)
+            assert await self._rows(
+                db, "/workspaces/ws-2", " AND user_id = 'u-owner'"
+            ) == ["*", "terminal"]
+            assert await self._rows(
+                db, "/workspaces/ws-2", " AND user_id = 'u-done'"
+            ) == ["join-workspace", "terminal"]
+        finally:
+            await db.__aexit__(None, None, None)
+
+    async def test_non_workspace_terminal_untouched(self, tmp_path):
+        """A ``terminal`` row outside the workspace GLOB (none exist in
+        practice, but the scope rule says GLOB) gets no sibling."""
+        from klangk.model.migrations import m0024_join_workspace_permission
+
+        db = await self._db(tmp_path)
+        try:
+            await db.execute(
+                "INSERT INTO acl_entries"
+                " (resource, position, action, principal_type, user_id,"
+                "  permission)"
+                " VALUES ('/other', 0, 1, 1, 'u-1', 'terminal')"
+            )
+            await db.commit()
+            await m0024_join_workspace_permission.migration.apply(db)
+            assert await self._rows(db, "/other") == ["terminal"]
+        finally:
+            await db.__aexit__(None, None, None)
+
+    async def test_fresh_db_is_noop(self, tmp_path):
+        """An empty acl_entries table belongs to the boot seeds, which
+        already grant join-workspace alongside terminal."""
+        from klangk.model.migrations import m0024_join_workspace_permission
+
+        db = await self._db(tmp_path)
+        try:
+            await m0024_join_workspace_permission.migration.apply(db)
+            cursor = await db.execute("SELECT COUNT(*) FROM acl_entries")
+            assert (await cursor.fetchone())[0] == 0
         finally:
             await db.__aexit__(None, None, None)

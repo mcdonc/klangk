@@ -34,6 +34,7 @@ ALL_PERMISSIONS = [
     "stop-workspace",
     "restart-workspace",
     "transfer-workspace",
+    "join-workspace",
     "terminal",
     "egress-consent",
     "code-in-isolation",

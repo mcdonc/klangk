@@ -718,16 +718,21 @@ class _WorkspacePageState extends State<WorkspacePage> {
             )
           : null,
       featureTabs: _featureTabs,
-      terminal: TerminalTabsView(
-        wsClient: wsClient,
-        terminalKey: _terminalKey,
-        onPathTap: _handleTerminalPathTap,
-        selectedOwnWindowId: _selectedOwnWindowId,
-        activeSharedTerminal: _activeSharedTerminal,
-        hasPerm: _hasPerm,
-        onSwitchToIsolated: _switchToIsolated,
-        onJoinShared: _joinShared,
-      ),
+      // #2975: no `terminal` permission → no Terminal tab at all (the
+      // #2886 files-view mount pattern) — `join-workspace` alone renders
+      // the workspace, so a files-only member sees exactly the Files tab.
+      terminal: _hasPerm('terminal')
+          ? TerminalTabsView(
+              wsClient: wsClient,
+              terminalKey: _terminalKey,
+              onPathTap: _handleTerminalPathTap,
+              selectedOwnWindowId: _selectedOwnWindowId,
+              activeSharedTerminal: _activeSharedTerminal,
+              hasPerm: _hasPerm,
+              onSwitchToIsolated: _switchToIsolated,
+              onJoinShared: _joinShared,
+            )
+          : null,
       settings: _hasPerm('edit-workspace')
           ? WorkspaceSettingsPanel(
               workspaceId: widget.workspaceId,
