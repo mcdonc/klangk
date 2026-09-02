@@ -579,16 +579,23 @@ No request body.
 
 ### GET `/api/v1/volumes`
 
-List podman volumes owned by the current user.
+List every podman volume this klangk instance manages.
 
-**Auth:** JWT required. User must have the `manage-volumes` permission
-on `/volumes` (#2946; seeded Allow for Authenticated; volumes stay
-label-scoped to the caller at runtime).
+**Auth:** JWT required. User must have the `view-volumes` permission
+on `/volumes` (#2993; seeded Allow for the `admins` group — the admin
+Volumes tab's listing gate). The creator label is surfaced as
+provenance, not used as an access filter.
 
 No request body.
 
 ```json
-[{ "name": "my-volume", "created": "2025-01-01T12:00:00Z" }]
+[
+  {
+    "name": "my-volume",
+    "created": "2025-01-01T12:00:00Z",
+    "user_id": "<creator user id>"
+  }
+]
 ```
 
 ---
@@ -1324,10 +1331,12 @@ Returns `StreamingResponse` (`application/x-ndjson`).
 
 ### POST `/api/v1/volumes`
 
-Create a new podman volume labeled with the current user's ID.
+Create a new podman volume labeled with the current user's ID (the
+label is provenance; the admin Volumes tab offers no create surface —
+this endpoint serves the CLI's volume commands).
 
 **Auth:** JWT required. User must have the `manage-volumes` permission
-on `/volumes` (#2946).
+on `/volumes` (#2993; seeded Allow for the `admins` group).
 
 ```json
 { "name": "my-volume" }
@@ -1770,10 +1779,13 @@ Replace all ACL entries for a workspace.
 
 ### DELETE `/api/v1/volumes/{name}`
 
-Delete a podman volume. Only the owning user can delete their volumes.
+Delete an instance-managed podman volume. Any holder of the
+permission may delete any instance volume (#2993 — the surface is
+admin-only by seed; the creator label is provenance, not an access
+filter).
 
 **Auth:** JWT required. User must have the `manage-volumes` permission
-on `/volumes` (#2946). Checks user ownership.
+on `/volumes` (#2993; seeded Allow for the `admins` group).
 
 No request body.
 

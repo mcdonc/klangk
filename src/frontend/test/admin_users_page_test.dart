@@ -9,6 +9,7 @@ import 'package:klangk_frontend/admin/admin_users_page.dart';
 import 'package:klangk_frontend/admin/server_schedule_panel.dart';
 import 'package:klangk_frontend/auth/auth_service.dart';
 import 'package:klangk_frontend/utils/system_agent.dart';
+import 'package:klangk_frontend/widgets/skeuo_tab.dart';
 import 'package:klangk_frontend/ws/ws_client.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 
@@ -1524,6 +1525,162 @@ void main() {
         find.textContaining('manage-acls — root-equivalent'),
         findsOneWidget,
       );
+    });
+  });
+
+  group('AdminUsersPage volumes tab', () {
+    /// A volume row as `GET /api/v1/volumes` serves it (#2993): name,
+    /// created, and the creator label as provenance.
+    Map<String, dynamic> _volume(
+      String name,
+      String userId, [
+      String created = '2026-01-02T03:04:05Z',
+    ]) =>
+        {'name': name, 'created': created, 'user_id': userId};
+
+    /// Serve the volume inventory via [volumes] and capture DELETE
+    /// calls into [deletes]; a successful DELETE removes the volume
+    /// from the served list so the reload sees it gone. view-volumes
+    /// keys the tab; manage-volumes the delete action.
+    void serveVolumes(
+      List<Map<String, dynamic>> volumes,
+      List<String> deletes, {
+      bool canManage = true,
+    }) {
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path.contains('/api/v1/config')) {
+          return http.Response(
+            jsonEncode({'login_banner_title': '', 'login_banner': ''}),
+            200,
+          );
+        }
+        if (request.url.path.contains('/api/v1/my-permissions')) {
+          return http.Response(
+            jsonEncode({
+              'user_id': 'admin-user',
+              'email': 'admin@example.com',
+              'permissions': {
+                '/users': ['manage-users'],
+                '/volumes': [
+                  'view-volumes',
+                  if (canManage) 'manage-volumes',
+                ],
+              },
+              'groups': [],
+            }),
+            200,
+          );
+        }
+        if (request.url.path == '/api/v1/volumes' && request.method == 'GET') {
+          return http.Response(jsonEncode(volumes), 200);
+        }
+        if (request.url.path.startsWith('/api/v1/volumes/') &&
+            request.method == 'DELETE') {
+          deletes.add(request.url.path);
+          volumes.removeWhere(
+            (v) => '/api/v1/volumes/${v['name']}' == request.url.path,
+          );
+          return http.Response('{}', 200);
+        }
+        if (request.url.path == '/api/v1/users') {
+          return http.Response(_usersEnvelope([]), 200);
+        }
+        return http.Response('Not found', 404);
+      });
+    }
+
+    /// The Volumes tab in the tab strip (the ACL browser sidebar also
+    /// labels a 'Volumes' node, so scope to the SkeuoTab row).
+    Finder volumesTab() => find.ancestor(
+          of: find.text('Volumes'),
+          matching: find.byType(SkeuoTab),
+        );
+
+    testWidgets('lists the inventory with creator provenance', (tester) async {
+      final deletes = <String>[];
+      serveVolumes([
+        _volume('ws-cache', 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'),
+        _volume('extra-mount', '11111111-2222-3333-4444-555555555555'),
+      ], deletes);
+
+      await pumpPage(tester);
+
+      expect(volumesTab(), findsOneWidget);
+      await tester.tap(volumesTab());
+      await tester.pumpAndSettle();
+
+      expect(find.text('ws-cache'), findsOneWidget);
+      expect(find.text('extra-mount'), findsOneWidget);
+      // The creator label shows as provenance (leading id chars).
+      expect(find.textContaining('by aaaaaaaa…'), findsOneWidget);
+      expect(find.byTooltip('Delete volume'), findsNWidgets(2));
+      expect(deletes, isEmpty);
+    });
+
+    testWidgets('deletes after a confirmation', (tester) async {
+      final deletes = <String>[];
+      serveVolumes([_volume('ws-cache', 'aaaaaaaa')], deletes);
+
+      await pumpPage(tester);
+      await tester.tap(volumesTab());
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('Delete volume'));
+      await tester.pumpAndSettle();
+      expect(find.text('Delete Volume'), findsOneWidget);
+      await tester.tap(find.widgetWithText(FilledButton, 'Delete'));
+      await tester.pumpAndSettle();
+
+      expect(deletes, ['/api/v1/volumes/ws-cache']);
+      expect(find.text('No volumes'), findsOneWidget);
+    });
+
+    testWidgets('view-only holder lists but gets no delete action',
+        (tester) async {
+      final deletes = <String>[];
+      serveVolumes([_volume('ws-cache', 'aaaaaaaa')], deletes,
+          canManage: false);
+
+      await pumpPage(tester);
+      await tester.tap(volumesTab());
+      await tester.pumpAndSettle();
+
+      expect(find.text('ws-cache'), findsOneWidget);
+      expect(find.byTooltip('Delete volume'), findsNothing);
+      expect(deletes, isEmpty);
+    });
+
+    testWidgets('hides the Volumes tab without view-volumes', (tester) async {
+      // manage-users only — no /volumes grant, so no Volumes tab.
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path.contains('/api/v1/config')) {
+          return http.Response(
+            jsonEncode({'login_banner_title': '', 'login_banner': ''}),
+            200,
+          );
+        }
+        if (request.url.path.contains('/api/v1/my-permissions')) {
+          return http.Response(
+            jsonEncode({
+              'user_id': 'admin-user',
+              'email': 'admin@example.com',
+              'permissions': {
+                '/users': ['manage-users'],
+              },
+              'groups': [],
+            }),
+            200,
+          );
+        }
+        if (request.url.path == '/api/v1/users') {
+          return http.Response(_usersEnvelope([]), 200);
+        }
+        return http.Response('Not found', 404);
+      });
+
+      await pumpPage(tester);
+
+      expect(volumesTab(), findsNothing);
     });
   });
 }

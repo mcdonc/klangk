@@ -277,15 +277,17 @@ class TestSeedDefaultAcls:
         ]
         assert users[1]["system_principal"] == model.SYSTEM_AUTHENTICATED
         assert users[2]["action"] == model.ACTION_DENY
-        # ...and /volumes keeps its #2946 self-service pair (Allow
-        # Authenticated + Deny Everyone).
-        entries = await app_state.state.model.acl.get_acl_entries("/volumes")
-        assert len(entries) == 2
-        allow, deny = entries
-        assert allow["permission"] == "manage-volumes"
-        assert allow["system_principal"] == model.SYSTEM_AUTHENTICATED
-        assert deny["permission"] == "*"
-        assert deny["system_principal"] == model.SYSTEM_EVERYONE
+        # #2993: /volumes seeds the admin pair — Allow view-volumes +
+        # Allow manage-volumes for the admins group, no Authenticated
+        # row and no dead Deny Everyone row.
+        volumes = await app_state.state.model.acl.get_acl_entries("/volumes")
+        assert [
+            (e["position"], e["permission"], e["group_id"]) for e in volumes
+        ] == [
+            (0, "view-volumes", admin_group_id),
+            (1, "manage-volumes", admin_group_id),
+        ]
+        assert all(e["system_principal"] is None for e in volumes)
         # ...and /images seeds the #2946 self-service row — Allow
         # Authenticated only (#2994 dropped the dead Deny Everyone row:
         # it can never fire, and no-match is default-deny).

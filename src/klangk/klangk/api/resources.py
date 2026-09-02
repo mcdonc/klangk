@@ -255,20 +255,27 @@ async def list_images(
 
 @router.get("/volumes")
 async def list_volumes(
-    user: dict = Depends(acl.has_permission("manage-volumes")),
+    _user: dict = Depends(acl.has_permission("view-volumes")),
     app=Depends(get_app_dep),
 ):
+    """The whole instance-managed volume inventory (#2993).
+
+    The admin tab's listing gate is ``view-volumes`` (the tab's
+    visibility keys on it); ``manage-volumes`` covers create/delete.
+    The ``klangk.user-id`` label is surfaced as provenance, not used
+    as an access filter — an admin operating the tab sees every
+    volume this instance manages.
+    """
     volumes = await app.state.podman.list_volumes(
         f"klangk.instance={app.state.util.instance_id()}"
     )
-    uid = user["id"]
     return [
         {
             "name": v["Name"],
             "created": v.get("CreatedAt", ""),
+            "user_id": (v.get("Labels") or {}).get("klangk.user-id"),
         }
         for v in volumes
-        if (v.get("Labels") or {}).get("klangk.user-id") == uid
     ]
 
 
@@ -295,7 +302,7 @@ async def create_volume(
     # name in the body. 500-vs-200 still hints at existence, but no
     # longer with a 409 + echoed detail (#2973). In-instance cross-user
     # names still 409 (issue scope: instance-managed volumes only; the
-    # admin-surface rework, #2989, narrows who can call this at all).
+    # admin-surface rework, #2993, narrows who can call this at all).
     info = await app.state.podman.create_volume(
         body.name,
         {
@@ -310,9 +317,16 @@ async def create_volume(
 @router.delete("/volumes/{name}")
 async def delete_volume(
     name: str,
-    user: dict = Depends(acl.has_permission("manage-volumes")),
+    _user: dict = Depends(acl.has_permission("manage-volumes")),
     app=Depends(get_app_dep),
 ):
+    """Delete an instance-managed volume (#2993).
+
+    ``manage-volumes`` is the whole gate — the surface is admin-only
+    by seed, so the former per-user label check is gone (the admin
+    tab lists and deletes any volume this instance manages). The
+    creator label stays on the row as provenance.
+    """
     info = await app.state.podman.inspect_volume(name)
     if info is None:
         raise HTTPException(status_code=404, detail="Volume not found")
@@ -321,11 +335,6 @@ async def delete_volume(
         raise HTTPException(
             status_code=404,
             detail="Volume not managed by this Klangk instance",
-        )
-    if labels.get("klangk.user-id") != user["id"]:
-        raise HTTPException(
-            status_code=403,
-            detail="Volume belongs to another user",
         )
     try:
         await app.state.podman.remove_volume(name)

@@ -55,6 +55,7 @@ ALL_PERMISSIONS = [
     "manage-acls",
     "manage-events",
     "manage-volumes",
+    "view-volumes",
     "view-images",
     "search-users",
     "*",

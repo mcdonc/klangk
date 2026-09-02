@@ -86,6 +86,7 @@ class TestRunner:
             (23, "0023_self_service_resources"),
             (24, "0024_join_workspace_permission"),
             (25, "0025_drop_dead_images_deny_row"),
+            (26, "0026_volumes_admin_surface"),
         ]
         async with aiosqlite.connect(str(app_state.state.db.db_path)) as db:
             assert await _recorded(db) == expected
@@ -177,6 +178,7 @@ class TestRunner:
                 (23, "0023_self_service_resources"),
                 (24, "0024_join_workspace_permission"),
                 (25, "0025_drop_dead_images_deny_row"),
+                (26, "0026_volumes_admin_surface"),
             ]
 
     async def test_m0008_agent_identity_and_human_collision(
@@ -2743,5 +2745,216 @@ class TestM0025DropDeadImagesDenyRow:
             await m0025_drop_dead_images_deny_row.migration.apply(db)
             cursor = await db.execute("SELECT COUNT(*) FROM acl_entries")
             assert (await cursor.fetchone())[0] == 0
+        finally:
+            await db.__aexit__(None, None, None)
+
+
+class TestM0026VolumesAdminSurface:
+    """m0026 rewrites /volumes from the #2946 self-service pair (Allow
+    manage-volumes Authenticated + Deny * Everyone) to the #2993 admin
+    pair (Allow view-volumes + Allow manage-volumes for the admins
+    group at positions 0/1)."""
+
+    async def _db(self, tmp_path):
+        db = aiosqlite.connect(str(tmp_path / "m0026.db"))
+        db = await db.__aenter__()
+        await db.execute(
+            "CREATE TABLE acl_entries ("
+            " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            " resource TEXT, position INTEGER, action INTEGER,"
+            " principal_type INTEGER, user_id TEXT, group_id TEXT,"
+            " system_principal INTEGER, permission TEXT,"
+            " UNIQUE(resource, position))"
+        )
+        await db.execute(
+            "CREATE TABLE groups ("
+            " id TEXT PRIMARY KEY, name TEXT UNIQUE,"
+            " description TEXT, source TEXT, created_at TEXT)"
+        )
+        return db
+
+    async def _seed_old_pair(self, db) -> None:
+        """The #2946 rows a deployed database holds on /volumes."""
+        await db.execute(
+            "INSERT INTO acl_entries"
+            " (resource, position, action, principal_type,"
+            "  system_principal, permission)"
+            " VALUES ('/volumes', 0, 1, 0, 1, 'manage-volumes'),"
+            "        ('/volumes', 1, 0, 0, 0, '*'),"
+            "        ('/', 0, 1, 0, 1, 'view')"
+        )
+
+    async def _rows(self, db, resource) -> list:
+        cursor = await db.execute(
+            "SELECT position, action, principal_type, group_id,"
+            " system_principal, permission"
+            " FROM acl_entries WHERE resource = ? ORDER BY position",
+            (resource,),
+        )
+        return list(await cursor.fetchall())
+
+    async def test_upgraded_db_gets_the_admin_pair(self, tmp_path):
+        from klangk.model import ACTION_ALLOW, PRINCIPAL_GROUP
+        from klangk.model.migrations import m0026_volumes_admin_surface
+
+        db = await self._db(tmp_path)
+        try:
+            await self._seed_old_pair(db)
+            await db.execute(
+                "INSERT INTO groups (id, name) VALUES ('g-a', 'admins')"
+            )
+            await db.commit()
+            await m0026_volumes_admin_surface.migration.apply(db)
+
+            assert await self._rows(db, "/volumes") == [
+                (
+                    0,
+                    ACTION_ALLOW,
+                    PRINCIPAL_GROUP,
+                    "g-a",
+                    None,
+                    "view-volumes",
+                ),
+                (
+                    1,
+                    ACTION_ALLOW,
+                    PRINCIPAL_GROUP,
+                    "g-a",
+                    None,
+                    "manage-volumes",
+                ),
+            ]
+            # Idempotent: re-run changes nothing.
+            await m0026_volumes_admin_surface.migration.apply(db)
+            assert len(await self._rows(db, "/volumes")) == 2
+        finally:
+            await db.__aexit__(None, None, None)
+
+    async def test_operator_rows_survive_below_the_admin_rows(self, tmp_path):
+        """A scoped self-service grant an operator staged on top of the
+        #2946 pair survives, shifted below the inserted admin rows (the
+        old Allow-Authenticated row gave admins access; the rewrite
+        must not let a later Deny shadow their replacement rows)."""
+        from klangk.model import ACTION_ALLOW, PRINCIPAL_GROUP
+        from klangk.model.migrations import m0026_volumes_admin_surface
+
+        db = await self._db(tmp_path)
+        try:
+            await self._seed_old_pair(db)
+            await db.execute(
+                "INSERT INTO acl_entries"
+                " (resource, position, action, principal_type, group_id,"
+                "  permission)"
+                " VALUES ('/volumes', 2, 1, 2, 'g-team', 'manage-volumes')"
+            )
+            await db.execute(
+                "INSERT INTO groups (id, name) VALUES ('g-a', 'admins')"
+            )
+            await db.commit()
+            await m0026_volumes_admin_surface.migration.apply(db)
+
+            assert await self._rows(db, "/volumes") == [
+                (
+                    0,
+                    ACTION_ALLOW,
+                    PRINCIPAL_GROUP,
+                    "g-a",
+                    None,
+                    "view-volumes",
+                ),
+                (
+                    1,
+                    ACTION_ALLOW,
+                    PRINCIPAL_GROUP,
+                    "g-a",
+                    None,
+                    "manage-volumes",
+                ),
+                (
+                    4,
+                    ACTION_ALLOW,
+                    PRINCIPAL_GROUP,
+                    "g-team",
+                    None,
+                    "manage-volumes",
+                ),
+            ]
+        finally:
+            await db.__aexit__(None, None, None)
+
+    async def test_operator_row_at_position_zero_settles_below(self, tmp_path):
+        """Regression (review B1): an operator who replaced the seed with
+        their own row at position 0 must see it settle to position 2 —
+        a strict > in the settle step stranded the row parked at
+        exactly the offset, permanently."""
+        from klangk.model import ACTION_ALLOW, PRINCIPAL_GROUP
+        from klangk.model.migrations import m0026_volumes_admin_surface
+
+        db = await self._db(tmp_path)
+        try:
+            await db.execute(
+                "INSERT INTO acl_entries"
+                " (resource, position, action, principal_type, group_id,"
+                "  permission)"
+                " VALUES ('/volumes', 0, 1, 2, 'g-op', 'manage-volumes'),"
+                "        ('/', 0, 1, 0, NULL, 'view')"
+            )
+            await db.execute(
+                "INSERT INTO groups (id, name) VALUES ('g-a', 'admins')"
+            )
+            await db.commit()
+            await m0026_volumes_admin_surface.migration.apply(db)
+
+            assert await self._rows(db, "/volumes") == [
+                (
+                    0,
+                    ACTION_ALLOW,
+                    PRINCIPAL_GROUP,
+                    "g-a",
+                    None,
+                    "view-volumes",
+                ),
+                (
+                    1,
+                    ACTION_ALLOW,
+                    PRINCIPAL_GROUP,
+                    "g-a",
+                    None,
+                    "manage-volumes",
+                ),
+                (
+                    2,
+                    ACTION_ALLOW,
+                    PRINCIPAL_GROUP,
+                    "g-op",
+                    None,
+                    "manage-volumes",
+                ),
+            ]
+        finally:
+            await db.__aexit__(None, None, None)
+
+    async def test_fresh_db_is_noop(self, tmp_path):
+        from klangk.model.migrations import m0026_volumes_admin_surface
+
+        db = await self._db(tmp_path)
+        try:
+            await m0026_volumes_admin_surface.migration.apply(db)
+            cursor = await db.execute("SELECT COUNT(*) FROM acl_entries")
+            assert (await cursor.fetchone())[0] == 0
+        finally:
+            await db.__aexit__(None, None, None)
+
+    async def test_no_admins_group_still_drops_the_old_rows(self, tmp_path):
+        """Without an admins group there is no grantee — the #2946 rows
+        still go (the m0021 posture), and nothing is inserted."""
+        from klangk.model.migrations import m0026_volumes_admin_surface
+
+        db = await self._db(tmp_path)
+        try:
+            await self._seed_old_pair(db)
+            await db.commit()
+            await m0026_volumes_admin_surface.migration.apply(db)
+            assert await self._rows(db, "/volumes") == []
         finally:
             await db.__aexit__(None, None, None)

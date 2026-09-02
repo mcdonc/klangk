@@ -32,6 +32,21 @@ operators or integrators to act when upgrading.
 
 ### Breaking
 
+- **Volumes are an admin surface (#2993).** `GET /volumes` now checks
+  the new `view-volumes` permission (the admin Volumes tab's gate;
+  view + delete only, no create), while `POST /volumes` and
+  `DELETE /volumes/{name}` keep `manage-volumes` — both seeded Allow
+  for the `admins` group only. Non-admin users lose volume
+  list/create/delete access on upgrade (migration m0025 replaces the
+  old Allow-Authenticated row; operator-staged grants survive below
+  the new admin rows). A deploy that wants self-service volumes back
+  adds an Allow `manage-volumes` (and/or `view-volumes`) row for
+  `Authenticated` or a group via the ACL editor. The listing now
+  returns the deployment's whole instance-managed inventory — the
+  per-user creator label is provenance in the new `user_id` field,
+  no longer a filter — and `manage-volumes` holders may delete any
+  instance volume, not only their own.
+
 - **Deploy-wide consent decider removed (#2976).** The
   `/ws/consent-decider` handshake without a `?workspace=` param is now
   refused (HTTP 403): consent authority is strictly per-workspace
