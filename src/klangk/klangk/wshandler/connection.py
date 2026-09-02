@@ -385,26 +385,7 @@ class Connection:
         await self.handle_workspace_disconnect()
 
         t_container = time.monotonic()
-        try:
-            await self.start_workspace_container(workspace_id, workspace)
-        except ValueError as exc:
-            send_error(self.sock, str(exc))
-            return
-        except NodeDrainingError as exc:
-            # Draining node (#2527): a graceful restart is in progress
-            # and new starts are disabled; existing workspaces keep
-            # running. Error frame, not a drop.
-            send_error(self.sock, str(exc))
-            return
-        except WorkspaceCapacityError as exc:
-            # Capacity refusal (#2525): the host cannot fit the
-            # workspace's memory limit or the user hit the running
-            # quota. Error frame with the actionable message ("stop a
-            # workspace first / free host memory") and a machine-
-            # readable ``code`` so the UI can render it as a capacity
-            # refusal rather than a generic failure — not a drop; the
-            # client stays connected and can retry once capacity frees.
-            send_error(self.sock, str(exc), code="capacity")
+        if not await self._start_workspace_or_refuse(workspace_id, workspace):
             return
         logger.info(
             "workspace-open: start or reuse container "
@@ -417,12 +398,7 @@ class Connection:
             workspace_id
         )
         status = getattr(self, "container_status", "created")
-        container_name, ports_str = format_container_info(
-            workspace_id,
-            ports,
-            self.app.state.util.instance_id(),
-            (self.workspace or {}).get("name") or "",
-        )
+        container_name, ports_str = self._container_label(workspace_id, ports)
         status_msg = {
             "connected": f"Connected to running container "
             f"{container_name}{ports_str}",
@@ -469,6 +445,45 @@ class Connection:
         self.workspace_id = None
         self.container_id = None
 
+    async def _start_workspace_or_refuse(
+        self, workspace_id: str, workspace: dict
+    ) -> bool:
+        """Start (or reuse) the workspace's container, mapping each
+        refusal to an error frame; True to proceed."""
+        try:
+            await self.start_workspace_container(workspace_id, workspace)
+            return True
+        except ValueError as exc:
+            send_error(self.sock, str(exc))
+            return False
+        except NodeDrainingError as exc:
+            # Draining node (#2527): a graceful restart is in progress
+            # and new starts are disabled; existing workspaces keep
+            # running. Error frame, not a drop.
+            send_error(self.sock, str(exc))
+            return False
+        except WorkspaceCapacityError as exc:
+            # Capacity refusal (#2525): the host cannot fit the
+            # workspace's memory limit or the user hit the running
+            # quota. Error frame with the actionable message ("stop a
+            # workspace first / free host memory") and a machine-
+            # readable ``code`` so the UI can render it as a capacity
+            # refusal rather than a generic failure — not a drop; the
+            # client stays connected and can retry once capacity frees.
+            send_error(self.sock, str(exc), code="capacity")
+            return False
+
+    def _container_label(
+        self, workspace_id: str, ports: list
+    ) -> tuple[str, str]:
+        """(container_name, ports_str) for status messages."""
+        return format_container_info(
+            workspace_id,
+            ports,
+            self.app.state.util.instance_id(),
+            (self.workspace or {}).get("name") or "",
+        )
+
     async def handle_restart_container(self) -> None:
         """Restart a stopped container (e.g., after idle timeout)."""
         if not self.workspace_id:
@@ -495,10 +510,7 @@ class Connection:
             session, self.sock, "container_restart", "Restarting container..."
         )
 
-        try:
-            await self.cleanup()
-        except WS_ERRORS as e:
-            logger.warning("Cleanup error during restart: %s", e)
+        await self._cleanup_logging_errors()
 
         # Always read the workspace fresh from the DB (#2676): the cached
         # self.workspace dict can carry a stale container_id (an unclean
@@ -514,48 +526,56 @@ class Connection:
             send_error(self.sock, "Workspace not found", code="not_found")
             return
 
+        if not await self._restart_workspace_or_refuse(
+            workspace_id, workspace
+        ):
+            return
+        await self._announce_restarted_container(workspace_id)
+
+    async def _cleanup_logging_errors(self) -> None:
+        """Cleanup, warning (not raising) on a WS error mid-restart."""
+        try:
+            await self.cleanup()
+        except WS_ERRORS as e:
+            logger.warning("Cleanup error during restart: %s", e)
+
+    async def _restart_workspace_or_refuse(
+        self, workspace_id: str, workspace: dict
+    ) -> bool:
+        """Start the restarted container, mapping each refusal to an
+        error frame; True to proceed with the announcement."""
         try:
             await self.start_workspace_container(workspace_id, workspace)
+            return True
         except NodeDrainingError as exc:
             # Draining node (#2527) — same clear refusal on the WS restart
             # path as the API's 503.
             send_error(self.sock, str(exc))
-            return
+            return False
         except WorkspaceCapacityError as exc:
             # Capacity refusal (#2525) — same clear refusal on the WS
             # restart path as the API's 503, with the machine-readable
             # capacity code.
             send_error(self.sock, str(exc), code="capacity")
-            return
+            return False
         except (PodmanError, ValueError) as exc:
             # A failed (re)start must not drop the whole WebSocket with a
             # traceback (#2676) — the user's session survives and can retry;
             # the error frame surfaces the actionable podman message.
             send_error(self.sock, f"Container restart failed: {exc}")
-            return
-        await self._announce_restarted_container(workspace_id)
+            return False
 
     async def _announce_restarted_container(self, workspace_id) -> None:
         """Record activity, re-bind sibling connections to the new
         container, and broadcast the container_ready frame (#3008)."""
         self.app.state.container_registry.record_activity(self.container_id)
 
-        # Update container_id on ALL connections to this workspace
-        # so they don't try to exec into the old (removed) container.
-        new_cid = self.container_id
-        for sock, conn in list(self.app.state.sockets.connections.items()):
-            if conn.workspace_id == workspace_id and conn is not self:
-                conn.container_id = new_cid
+        self._rebind_sibling_connections(workspace_id, self.container_id)
 
         ports = await self.app.state.container_registry.get_workspace_ports(
             workspace_id
         )
-        container_name, ports_str = format_container_info(
-            workspace_id,
-            ports,
-            self.app.state.util.instance_id(),
-            (self.workspace or {}).get("name") or "",
-        )
+        container_name, ports_str = self._container_label(workspace_id, ports)
         status_msg = f"Container restarted {container_name}{ports_str}"
 
         timeout_mins = (
@@ -576,6 +596,13 @@ class Connection:
             "Container restarted via restart_container command for workspace %s",
             workspace_id,
         )
+
+    def _rebind_sibling_connections(self, workspace_id: str, new_cid) -> None:
+        """Update container_id on ALL other connections to this workspace
+        so they don't try to exec into the old (removed) container."""
+        for sock, conn in list(self.app.state.sockets.connections.items()):
+            if conn.workspace_id == workspace_id and conn is not self:
+                conn.container_id = new_cid
 
     async def has_perm(self, perm: str) -> bool:
         """Check if the connected user has a workspace permission."""
@@ -673,26 +700,7 @@ class Connection:
             await self.app.state.model.users.set_user_handle(
                 self.user["id"], handle
             )
-            # Update the per-workspace symlink (per-handle layout only;
-            # the shared layout has no per-user symlink and its home is
-            # the constant SHARED_HOME — nothing to refresh, #2720).
-            workspace = self.workspace
-            if workspace and workspace.get("per_handle_home", True):
-                workspace_home = self.app.state.workspaces.home_path(
-                    self.workspace_id
-                )
-                (
-                    container_home,
-                    created,
-                ) = await self.app.state.workspaces.ensure_home_symlink(
-                    workspace_home, handle, self.user["id"]
-                )
-                if created and self.container_id:
-                    await self.app.state.workspaces.populate_home_skel(
-                        self.container_id,
-                        self.user["id"],
-                    )
-                self._user_home = container_home
+            await self._refresh_handle_home(handle)
             self.sock.send_json(
                 {
                     "type": "handle_set",
@@ -708,15 +716,32 @@ class Connection:
                 }
             )
 
+    async def _refresh_handle_home(self, handle: str) -> None:
+        """Update the per-workspace symlink and home reference for a new
+        handle (per-handle layout only; the shared layout has no per-user
+        symlink and its home is the constant SHARED_HOME — nothing to
+        refresh, #2720)."""
+        workspace = self.workspace
+        if not (workspace and workspace.get("per_handle_home", True)):
+            return
+        workspace_home = self.app.state.workspaces.home_path(self.workspace_id)
+        (
+            container_home,
+            created,
+        ) = await self.app.state.workspaces.ensure_home_symlink(
+            workspace_home, handle, self.user["id"]
+        )
+        if created and self.container_id:
+            await self.app.state.workspaces.populate_home_skel(
+                self.container_id,
+                self.user["id"],
+            )
+        self._user_home = container_home
+
     async def cleanup(self) -> None:
         # Remove idle callback
         workspace_id = self.workspace_id
-        idle_cb = self._idle_cb
-        if workspace_id and idle_cb:
-            self.app.state.container_registry.remove_idle_callback(
-                workspace_id, idle_cb
-            )
-            self._idle_cb = None
+        self._remove_idle_callback(workspace_id)
 
         # Revoke per-connection browser registrations
         self.app.state.container_registry.revoke_browser(self.sock)
@@ -740,3 +765,12 @@ class Connection:
                 # Lock is released by remove_subscriber, so use the
                 # lock-acquiring version.
                 await self.app.state.sockets.remove_session(workspace_id)
+
+    def _remove_idle_callback(self, workspace_id) -> None:
+        """Drop this connection's idle callback, if armed."""
+        idle_cb = self._idle_cb
+        if workspace_id and idle_cb:
+            self.app.state.container_registry.remove_idle_callback(
+                workspace_id, idle_cb
+            )
+            self._idle_cb = None

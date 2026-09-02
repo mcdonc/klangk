@@ -17,6 +17,12 @@ logger = logging.getLogger(__name__)
 HEALTH_MESSAGE_MAX_BYTES = 512
 
 
+def _trimmed_body(err: str, out: str) -> str:
+    """The failure reason text: stderr first (where shells/diagnostics
+    write their failures), then stdout, both stripped."""
+    return (err or "").strip() or (out or "").strip()
+
+
 def unhealthy_message(rc: int, out: str, err: str) -> str:
     """Build a bounded failure reason from a check's exit code/output.
 
@@ -26,8 +32,8 @@ def unhealthy_message(rc: int, out: str, err: str) -> str:
     verbose check can't grow memory unbounded across workspaces --
     the goal is "why did it fail", not a full transcript (#1088).
     """
-    body = (err or "").strip() or (out or "").strip()
-    if body and len(body) > HEALTH_MESSAGE_MAX_BYTES:
+    body = _trimmed_body(err, out)
+    if len(body) > HEALTH_MESSAGE_MAX_BYTES:
         body = "..." + body[-HEALTH_MESSAGE_MAX_BYTES:]
     return f"exited {rc}: {body}" if body else f"exited {rc}"
 
@@ -121,26 +127,9 @@ class HealthMonitor:
         ``docs/features/health-check.md``).  Errors and timeouts count
         as ``"unhealthy"``.
         """
-        owner_id = state.owner_id
-        if owner_id is None:
-            return "unhealthy", "no owner recorded for workspace"
-        if state.per_handle_home:
-            handle = await self.app.state.model.users.get_user_handle(owner_id)
-            if not handle:
-                return "unhealthy", f"owner {owner_id} has no handle"
-            # Resolve the owner's container home the same way
-            # start_workspace does, so the check runs in the right
-            # HOME rather than as root in /.
-            ws = self.app.state.workspaces
-            ws_home = ws.home_path(state.workspace_id)
-            user_home, _created = await ws.ensure_home_symlink(
-                ws_home, handle, owner_id
-            )
-        else:
-            # Shared layout (#2169 chunk 2, #2720): one home for every
-            # connection — the check probes the workspace's shared
-            # /home/klangk; no per-owner symlink to resolve.
-            user_home = SHARED_HOME
+        user_home, failure = await self._resolve_check_home(state)
+        if failure:
+            return "unhealthy", failure
         cid_short = state.container_id[:12]
         logger.debug(
             "Health check: container %s (workspace %s) running %r",
@@ -168,6 +157,33 @@ class HealthMonitor:
             return "healthy", ""
         return "unhealthy", unhealthy_message(rc, out, err)
 
+    async def _resolve_check_home(
+        self, state: ContainerState
+    ) -> tuple[str | None, str]:
+        """(HOME for the probe, failure message). HOME is None only
+        when the failure message is set (no owner, or an owner without
+        a handle)."""
+        owner_id = state.owner_id
+        if owner_id is None:
+            return None, "no owner recorded for workspace"
+        if state.per_handle_home:
+            handle = await self.app.state.model.users.get_user_handle(owner_id)
+            if not handle:
+                return None, f"owner {owner_id} has no handle"
+            # Resolve the owner's container home the same way
+            # start_workspace does, so the check runs in the right
+            # HOME rather than as root in /.
+            ws = self.app.state.workspaces
+            ws_home = ws.home_path(state.workspace_id)
+            user_home, _created = await ws.ensure_home_symlink(
+                ws_home, handle, owner_id
+            )
+            return user_home, ""
+        # Shared layout (#2169 chunk 2, #2720): one home for every
+        # connection — the check probes the workspace's shared
+        # /home/klangk; no per-owner symlink to resolve.
+        return SHARED_HOME, ""
+
     async def _check_workspace(self, state: ContainerState) -> None:
         """Poll one workspace, record the reason, and broadcast on change."""
         new_status, message = await self._run_one(state)
@@ -177,7 +193,7 @@ class HealthMonitor:
         # failure (mirrors Docker HEALTHCHECK --start-period).  A
         # healthy result is still recorded below so a fast-booting
         # service is marked up the moment it actually responds.
-        if new_status == "unhealthy" and self._in_startup_grace(state):
+        if self._within_startup_grace(state, new_status):
             logger.debug(
                 "Health check for workspace %s (container %s) failing "
                 "but within startup grace (%.0fs elapsed); not flagging "
@@ -194,18 +210,30 @@ class HealthMonitor:
         state.health_message = message if new_status == "unhealthy" else None
         state.health_checked_at = time.time()
         if new_status == "unhealthy":
-            # Log the reason at info on a fresh transition (so it's
-            # visible without debug logs), debug on steady-state polls
-            # so a persistently-broken check doesn't spam at info (#1088).
-            log = logger.info if old_status != "unhealthy" else logger.debug
-            log(
-                "Health check for workspace %s (container %s) unhealthy: %s",
-                state.workspace_id,
-                state.container_id[:12],
-                message,
-            )
+            self._log_health_failure(state, old_status, message)
         if new_status != old_status:
             await self._broadcast(state, new_status, state.health_message)
+
+    def _within_startup_grace(
+        self, state: ContainerState, new_status: str
+    ) -> bool:
+        """True when an unhealthy result lands inside the startup grace
+        window — an expected boot failure, not an outage."""
+        return new_status == "unhealthy" and self._in_startup_grace(state)
+
+    def _log_health_failure(
+        self, state: ContainerState, old_status: str, message: str
+    ) -> None:
+        """Log the reason at info on a fresh unhealthy transition (so
+        it's visible without debug logs), debug on steady-state polls
+        so a persistently-broken check doesn't spam at info (#1088)."""
+        log = logger.info if old_status != "unhealthy" else logger.debug
+        log(
+            "Health check for workspace %s (container %s) unhealthy: %s",
+            state.workspace_id,
+            state.container_id[:12],
+            message,
+        )
 
     async def _emit(
         self,
@@ -303,9 +331,7 @@ class HealthMonitor:
             registry = self.app.state.container_registry
             await asyncio.sleep(registry.health_check_interval)
             for state in list(registry.states.values()):
-                if not state.health_check:
-                    continue
-                if not self._setup_complete(state):
+                if not self._eligible_for_check(state):
                     continue
                 try:
                     await self._check_workspace(state)
@@ -316,6 +342,13 @@ class HealthMonitor:
                         e,
                     )
             self._send_heartbeats()
+
+    def _eligible_for_check(self, state: ContainerState) -> bool:
+        """True when a workspace has a check configured and setup has
+        finished (running during setup would report false negatives —
+        the service isn't running yet because setup.sh hasn't installed
+        it)."""
+        return bool(state.health_check) and self._setup_complete(state)
 
     def _send_heartbeats(self) -> None:
         """Fan health heartbeats to opt-in connections."""
