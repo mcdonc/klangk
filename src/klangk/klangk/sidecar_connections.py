@@ -50,22 +50,35 @@ class SidecarConnections:
             "sidecar connection registered: ws=%s", str(workspace_id)[:8]
         )
 
-    def deregister(self, workspace_id: str) -> None:
-        """Drop a sidecar socket (disconnect) + fail its pending drop-acks.
-
-        Failing the acks (rather than leaving them to time out) lets an
-        in-flight ``revoke`` learn at once that the sidecar is gone.
-        """
-        self._conns.pop(workspace_id, None)
-        stale = [
+    def _stale_ack_ids(self, workspace_id: str) -> list[str]:
+        """Ids of the pending drop-acks waiting on this sidecar."""
+        return [
             aid
             for aid, entry in self._pending.items()
             if entry["ws"] == workspace_id
         ]
+
+    @staticmethod
+    def _fail_ack(entry) -> None:
+        """Resolve one pending drop-ack to False (sidecar gone)."""
+        if entry is not None and not entry["future"].done():
+            entry["future"].set_result(False)
+
+    def _fail_pending_acks(self, workspace_id: str) -> list[str]:
+        """Fail the sidecar's pending drop-acks and return their ids.
+
+        Failing the acks (rather than leaving them to time out) lets an
+        in-flight ``revoke`` learn at once that the sidecar is gone.
+        """
+        stale = self._stale_ack_ids(workspace_id)
         for aid in stale:
-            entry = self._pending.pop(aid, None)
-            if entry is not None and not entry["future"].done():
-                entry["future"].set_result(False)
+            self._fail_ack(self._pending.pop(aid, None))
+        return stale
+
+    def deregister(self, workspace_id: str) -> None:
+        """Drop a sidecar socket (disconnect) + fail its pending drop-acks."""
+        self._conns.pop(workspace_id, None)
+        stale = self._fail_pending_acks(workspace_id)
         if stale or workspace_id in self._conns:
             logger.info(
                 "sidecar connection deregistered: ws=%s", str(workspace_id)[:8]

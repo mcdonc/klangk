@@ -178,6 +178,16 @@ class EmailService:
         """Root customization directory (defaults to ``<state_dir>/custom``)."""
         return self.app.state.settings.customize_dir
 
+    def _user_templates_dir(self) -> str | None:
+        """The deployer templates dir: ``KLANGKD_EMAIL_TEMPLATES_DIR``
+        when set, else ``<customize_dir>/email-templates`` when it
+        exists, else ``None``."""
+        user_dir = self.app.state.settings.email_templates_dir
+        if not user_dir:
+            candidate = Path(self._customize_dir()) / "email-templates"
+            user_dir = str(candidate) if candidate.is_dir() else ""
+        return user_dir or None
+
     def _template_env(self) -> Environment:
         """Build (and cache) the Jinja environment.
 
@@ -189,16 +199,10 @@ class EmailService:
         """
         if self._env is None:
             loaders = []
-            user_dir = self.app.state.settings.email_templates_dir
-            if not user_dir:
-                candidate = Path(self._customize_dir()) / "email-templates"
-                if candidate.is_dir():
-                    user_dir = str(candidate)
-            if user_dir:
-                path = Path(user_dir)
-                if path.is_dir():
-                    logger.info("Email templates loaded from %s", path)
-                    loaders.append(FileSystemLoader(str(path)))
+            user_dir = self._user_templates_dir()
+            if user_dir and Path(user_dir).is_dir():
+                logger.info("Email templates loaded from %s", user_dir)
+                loaders.append(FileSystemLoader(user_dir))
             loaders.append(PackageLoader("klangk", "email_templates"))
             self._env = Environment(
                 loader=ChoiceLoader(loaders),

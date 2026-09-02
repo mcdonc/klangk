@@ -158,28 +158,40 @@ class Nix:
 
     # --- subprocess helper ---------------------------------------------------
 
-    async def run(
-        self, args: list[str], *, check: bool = True, timeout: float = 30.0
-    ) -> tuple[int, str, str]:
+    async def _spawn(self, args: list[str]):
+        """Spawn a backend tool with captured output. A missing binary
+        (fuse-overlayfs / fusermount3 / btrfs / stat) surfaces as a
+        clear NixError, not a raw FileNotFoundError out of container
+        start."""
         try:
-            proc = await asyncio.create_subprocess_exec(
+            return await asyncio.create_subprocess_exec(
                 *args,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
         except FileNotFoundError as exc:
-            # Missing fuse-overlayfs / fusermount3 / btrfs / stat — surface a
-            # clear NixError, not a raw FileNotFoundError out of container start.
             raise NixError(
                 f"{args[0]} not found on PATH — install the nix backend "
                 f"tooling and re-run `klangkd doctor`"
             ) from exc
+
+    async def _communicate(
+        self, proc, args: list[str], timeout: float
+    ) -> tuple[bytes, bytes]:
+        """``communicate()`` bounded by *timeout*; a hang is killed and
+        raises a clear NixError."""
         try:
-            out, err = await asyncio.wait_for(proc.communicate(), timeout)
+            return await asyncio.wait_for(proc.communicate(), timeout)
         except asyncio.TimeoutError:
             proc.kill()
             await proc.wait()
             raise NixError(f"{' '.join(args)} timed out after {timeout}s")
+
+    async def run(
+        self, args: list[str], *, check: bool = True, timeout: float = 30.0
+    ) -> tuple[int, str, str]:
+        proc = await self._spawn(args)
+        out, err = await self._communicate(proc, args, timeout)
         rc = proc.returncode if proc.returncode is not None else 1
         out_s, err_s = out.decode(), err.decode()
         if check and rc != 0:

@@ -74,6 +74,34 @@ def _is_loopback(addr: str) -> bool:
     return any(ip in net for net in _LOOPBACK_NETS)
 
 
+def _split_sources(raw: str) -> list[str]:
+    """The stripped, non-empty entries of a comma-separated setting."""
+    return [s.strip() for s in raw.split(",") if s.strip()]
+
+
+def _non_loopback(entries: list[str]) -> list[str]:
+    """The non-loopback subset (loopback keeps full browser UI/API access)."""
+    return [s for s in entries if not _is_loopback(s)]
+
+
+def _warned_non_loopback(entries: list[str]) -> list[str]:
+    """The non-loopback subset, warning when it is empty (the catch-all
+    location then denies nothing — deny-by-default inactive)."""
+    deny_entries = _non_loopback(entries)
+    if not deny_entries:
+        logger.warning(
+            "container source set has no non-loopback entries — "
+            "catch-all location / denies nothing (deny-by-default inactive)"
+        )
+    return deny_entries
+
+
+def _explicit_source_entries(raw: str) -> tuple[list[str], list[str]]:
+    """(acl, deny) from the explicit KLANGKD_CONTAINER_SUBNETS setting."""
+    entries = _split_sources(raw)
+    return entries, _warned_non_loopback(entries)
+
+
 def detect_host_ipv4s() -> list[str]:
     """Auto-detect this host's IPv4 addresses (the pasta-NAT container source set).
 
@@ -147,11 +175,7 @@ def classify_caddy_line(line: str) -> tuple[int, str]:
     if caddy_logger:
         msg = f"[{caddy_logger}] {msg}"
 
-    if (
-        caddy_level == "error"
-        or caddy_level == "fatal"
-        or caddy_level == "panic"
-    ):
+    if caddy_level in ("error", "fatal", "panic"):
         return logging.ERROR, msg
 
     return logging.DEBUG, msg
@@ -278,19 +302,10 @@ class CaddyRenderer:
         """
         explicit = self.app.state.settings.container_subnets
         if explicit:
-            entries = [
-                s.strip() for s in str(explicit).split(",") if s.strip()
-            ]
-            deny_entries = [s for s in entries if not _is_loopback(s)]
-            if not deny_entries:
-                logger.warning(
-                    "container source set has no non-loopback entries — "
-                    "catch-all location / denies nothing (deny-by-default inactive)"
-                )
-            return entries, deny_entries
+            return _explicit_source_entries(str(explicit))
         addrs = detect_host_ipv4s()
         if addrs:
-            return addrs, [a for a in addrs if not _is_loopback(a)]
+            return addrs, _non_loopback(addrs)
         logger.warning(
             "container subnet detection failed, using fallback RFC1918 ranges"
         )
@@ -915,6 +930,14 @@ class CaddyWatchdog:
                 await asyncio.sleep(0.2)
         return False
 
+    def _relay_line(self, line: str) -> None:  # pragma: no cover  – e2e
+        """Log one Caddy stderr line; a bind failure marks the supervision
+        loop fatal."""
+        level, msg = classify_caddy_line(line)
+        logger.log(level, "caddy: %s", msg)
+        if level >= logging.ERROR and is_bind_error(line):
+            self._bind_fatal = True
+
     async def _relay_stderr(
         self,
         stream: asyncio.StreamReader,
@@ -934,12 +957,8 @@ class CaddyWatchdog:
             if not raw:
                 break
             line = raw.decode("utf-8", errors="replace").rstrip()
-            if not line:
-                continue
-            level, msg = classify_caddy_line(line)
-            logger.log(level, "caddy: %s", msg)
-            if level >= logging.ERROR and is_bind_error(line):
-                self._bind_fatal = True
+            if line:
+                self._relay_line(line)
 
     def _log_listeners(self) -> None:
         """Log which addresses Caddy is serving after a successful config load."""
@@ -1038,6 +1057,16 @@ class CaddyWatchdog:
         self._proc = None
         return rc
 
+    def _terminate_live(self) -> None:  # pragma: no cover – e2e
+        """SIGTERM Caddy when it is still up (no-op otherwise), so the
+        backoff loop retries."""
+        proc = self._proc
+        if proc is not None and proc.returncode is None:
+            try:
+                proc.terminate()
+            except ProcessLookupError:
+                pass
+
     async def _load_or_kill(self) -> None:  # pragma: no cover – e2e
         """Push the real config over the admin API once the admin UDS is up;
         when that fails (or the UDS never came up), kill Caddy so the backoff
@@ -1060,11 +1089,8 @@ class CaddyWatchdog:
             logger.error(
                 "caddy admin UDS never came up at %s", self.admin_socket
             )
-        if not load_ok and self._proc and self._proc.returncode is None:
-            try:
-                self._proc.terminate()
-            except ProcessLookupError:
-                pass
+        if not load_ok:
+            self._terminate_live()
 
     async def start(self) -> None:
         """Bootstrap Caddy (admin on a UDS, no config) and start the watchdog.
@@ -1085,27 +1111,31 @@ class CaddyWatchdog:
         self._stopping = False
         self._task = asyncio.create_task(self._watch(bin_path))
 
-    async def stop(self) -> None:
-        """Stop Caddy and cancel the watchdog (cooperative: waits for exit).
-
-        Kills the entire process group so no orphaned Caddy lingers after
-        shutdown (#1533).
-        """
-        self._stopping = True
-        proc = self._proc
-        if proc is not None and proc.returncode is None:
-            try:
-                os.killpg(proc.pid, signal.SIGTERM)
-            except (ProcessLookupError, PermissionError):
+    def _signal_group(self, proc, sig: int) -> None:
+        """Signal Caddy's whole process group, falling back to the process
+        alone when the group is gone or not ours."""
+        try:
+            os.killpg(proc.pid, sig)
+        except (ProcessLookupError, PermissionError):
+            if sig == signal.SIGTERM:
                 proc.terminate()
-            try:
-                await asyncio.wait_for(proc.wait(), timeout=5)
-            except asyncio.TimeoutError:
-                try:
-                    os.killpg(proc.pid, signal.SIGKILL)
-                except (ProcessLookupError, PermissionError):
-                    proc.kill()
-        self._proc = None
+            else:
+                proc.kill()
+
+    async def _stop_proxy_proc(self) -> None:
+        """Terminate Caddy's whole process group — TERM, 5s wait, KILL — so
+        no orphaned Caddy lingers after shutdown (#1533)."""
+        proc = self._proc
+        if proc is None or proc.returncode is not None:
+            return
+        self._signal_group(proc, signal.SIGTERM)
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=5)
+        except asyncio.TimeoutError:
+            self._signal_group(proc, signal.SIGKILL)
+
+    async def _cancel_watch_task(self) -> None:
+        """Cancel (and await) the watchdog task."""
         task = self._task
         if task is not None:
             task.cancel()
@@ -1114,3 +1144,14 @@ class CaddyWatchdog:
             except asyncio.CancelledError:
                 pass
         self._task = None
+
+    async def stop(self) -> None:
+        """Stop Caddy and cancel the watchdog (cooperative: waits for exit).
+
+        Kills the entire process group so no orphaned Caddy lingers after
+        shutdown (#1533).
+        """
+        self._stopping = True
+        await self._stop_proxy_proc()
+        self._proc = None
+        await self._cancel_watch_task()

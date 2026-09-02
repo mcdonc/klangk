@@ -97,12 +97,23 @@ def _coerce_acl_int(value: Any, field: str) -> int:
         ) from exc
 
 
+def _enum_error(changed: dict, field: str, allowed) -> str | None:
+    """A changed enum field must carry one of *allowed* (else the
+    client-safe rejection message)."""
+    if field not in changed:
+        return None
+    if changed[field] not in allowed:
+        return f"invalid {field}: {changed[field]!r}"
+    return None
+
+
 def _validate_hook_enums(changed: dict) -> str | None:
     """Enum / bool fields: a bad value is rejected, not coerced."""
-    if "setup_state" in changed and changed["setup_state"] not in SETUP_STATES:
-        return f"invalid setup_state: {changed['setup_state']!r}"
-    if "egress_mode" in changed and changed["egress_mode"] not in EGRESS_MODES:
-        return f"invalid egress_mode: {changed['egress_mode']!r}"
+    enum_error = _enum_error(
+        changed, "setup_state", SETUP_STATES
+    ) or _enum_error(changed, "egress_mode", EGRESS_MODES)
+    if enum_error:
+        return enum_error
     if "per_handle_home" in changed and not isinstance(
         changed["per_handle_home"], bool
     ):
@@ -110,30 +121,55 @@ def _validate_hook_enums(changed: dict) -> str | None:
     return None
 
 
+def _validate_hook_banner(changed: dict) -> str | None:
+    """classification_banner: normalized in place, rejected when the
+    normalizer refuses it."""
+    if (
+        "classification_banner" not in changed
+        or changed["classification_banner"] is None
+    ):
+        return None
+    try:
+        changed["classification_banner"] = normalize_classification_banner(
+            changed["classification_banner"]
+        )
+    except ValueError as exc:
+        return f"invalid classification_banner: {exc}"
+    return None
+
+
+def _validate_hook_image(app, changed: dict) -> str | None:
+    """image: must be in the container registry's allowlist."""
+    image = changed.get("image")
+    if image is None:
+        return None
+    registry: ContainerRegistry = app.state.container_registry
+    if image not in registry.allowed_images:
+        return (
+            f"image {image!r} is not in the allowed image"
+            f" list: {sorted(registry.allowed_images)}"
+        )
+    return None
+
+
+def _validate_hook_mounts(app, changed: dict) -> str | None:
+    """mounts: the container registry's mount-spec policy."""
+    mounts = changed.get("mounts")
+    if mounts is None:
+        return None
+    error = app.state.container_registry.validate_mounts(mounts)
+    if error:
+        return f"invalid mounts: {error}"
+    return None
+
+
 def _validate_hook_strings(app, changed: dict) -> str | None:
     """Banner / image / mounts: normalization and registry policy."""
-    if (
-        "classification_banner" in changed
-        and changed["classification_banner"] is not None
-    ):
-        try:
-            changed["classification_banner"] = normalize_classification_banner(
-                changed["classification_banner"]
-            )
-        except ValueError as exc:
-            return f"invalid classification_banner: {exc}"
-    if "image" in changed and changed["image"] is not None:
-        registry: ContainerRegistry = app.state.container_registry
-        if changed["image"] not in registry.allowed_images:
-            return (
-                f"image {changed['image']!r} is not in the allowed image"
-                f" list: {sorted(registry.allowed_images)}"
-            )
-    if "mounts" in changed and changed["mounts"] is not None:
-        error = app.state.container_registry.validate_mounts(changed["mounts"])
-        if error:
-            return f"invalid mounts: {error}"
-    return None
+    return (
+        _validate_hook_banner(changed)
+        or _validate_hook_image(app, changed)
+        or _validate_hook_mounts(app, changed)
+    )
 
 
 def hook_field_changes(handle, workspace: dict) -> dict:
@@ -150,33 +186,55 @@ def hook_field_changes(handle, workspace: dict) -> dict:
     return changed
 
 
+def _validate_hook_settings(app, changed: dict) -> str | None:
+    """The settings bag: parsed/normalized in place, the nix opt-in
+    gated (#2560)."""
+    if "settings" not in changed or changed["settings"] is None:
+        return None
+    try:
+        changed["settings"] = validate_settings(changed["settings"])
+        # #2560: the hook fires at create (a fresh bag, no previous) —
+        # mirror POST /workspaces and reject a nix=true opt-in while
+        # the feature is off.
+        validate_nix_optin(
+            changed["settings"],
+            nix_available=app.state.nix.available,
+        )
+    except ValueError as exc:
+        return f"invalid settings: {exc}"
+    return None
+
+
+def _validate_hook_allowed_domains(changed: dict) -> str | None:
+    """allowed_domains: parsed/normalized in place."""
+    if "allowed_domains" not in changed or changed["allowed_domains"] is None:
+        return None
+    try:
+        changed["allowed_domains"] = parse_allowed_domains(
+            changed["allowed_domains"]
+        )
+    except ValueError as exc:
+        return f"invalid allowed_domains: {exc}"
+    return None
+
+
+def _validate_hook_rejected_if_changed(changed: dict) -> str | None:
+    """rejected_domains: validated only when the hook changed them."""
+    if (
+        "rejected_domains" not in changed
+        or changed["rejected_domains"] is None
+    ):
+        return None
+    return _validate_hook_rejected_domains(changed)
+
+
 def _validate_hook_lists(app, changed: dict) -> str | None:
     """Settings bag and domain lists: parsed/normalized in place."""
-    if "settings" in changed and changed["settings"] is not None:
-        try:
-            changed["settings"] = validate_settings(changed["settings"])
-            # #2560: the hook fires at create (a fresh bag, no previous) —
-            # mirror POST /workspaces and reject a nix=true opt-in while
-            # the feature is off.
-            validate_nix_optin(
-                changed["settings"],
-                nix_available=app.state.nix.available,
-            )
-        except ValueError as exc:
-            return f"invalid settings: {exc}"
-    if "allowed_domains" in changed and changed["allowed_domains"] is not None:
-        try:
-            changed["allowed_domains"] = parse_allowed_domains(
-                changed["allowed_domains"]
-            )
-        except ValueError as exc:
-            return f"invalid allowed_domains: {exc}"
-    if (
-        "rejected_domains" in changed
-        and changed["rejected_domains"] is not None
-    ):
-        return _validate_hook_rejected_domains(changed)
-    return None
+    return (
+        _validate_hook_settings(app, changed)
+        or _validate_hook_allowed_domains(changed)
+        or _validate_hook_rejected_if_changed(changed)
+    )
 
 
 def _validate_hook_rejected_domains(changed: dict) -> str | None:
@@ -220,6 +278,36 @@ def _validate_hook_changes(app, changed: dict) -> str | None:
         or _validate_hook_strings(app, changed)
         or _validate_hook_lists(app, changed)
     )
+
+
+def _load_hook_module(path: str):
+    """Execute the hook file as a module (importlib, no PYTHONPATH
+    needed)."""
+    spec = importlib.util.spec_from_file_location(
+        "_klangk_workspace_created_hook", path
+    )
+    if spec is None or spec.loader is None:
+        raise ConfigurationError(
+            f"KLANGKD_WORKSPACE_CREATED_HOOK: could not load: {path!r}"
+        )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _resolve_hook_callable(path: str, func_name: str) -> Callable:
+    """The hook function from its file."""
+    if not os.path.isfile(path):
+        raise ConfigurationError(
+            f"KLANGKD_WORKSPACE_CREATED_HOOK: file not found: {path!r}"
+        )
+    hook = getattr(_load_hook_module(path), func_name, None)
+    if hook is None or not callable(hook):
+        raise ConfigurationError(
+            f"KLANGKD_WORKSPACE_CREATED_HOOK: {func_name!r} not found"
+            f" or not callable in {path!r}"
+        )
+    return hook
 
 
 class WorkspaceHookHandle(dict):
@@ -368,32 +456,51 @@ class Hooks:
             self.workspace_created_hook_is_async = False
             self.workspace_created_hook_source = None
             return
-        path, func_name = parse_hook_value(raw)
-        if not os.path.isfile(path):
-            raise ConfigurationError(
-                f"KLANGKD_WORKSPACE_CREATED_HOOK: file not found: {path!r}"
-            )
-        spec = importlib.util.spec_from_file_location(
-            "_klangk_workspace_created_hook", path
-        )
-        if spec is None or spec.loader is None:
-            raise ConfigurationError(
-                f"KLANGKD_WORKSPACE_CREATED_HOOK: could not load: {path!r}"
-            )
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-        hook = getattr(mod, func_name, None)
-        if hook is None or not callable(hook):
-            raise ConfigurationError(
-                f"KLANGKD_WORKSPACE_CREATED_HOOK: {func_name!r} not found"
-                f" or not callable in {path!r}"
-            )
+        hook = _resolve_hook_callable(*parse_hook_value(raw))
         self.workspace_created_hook = hook
         self.workspace_created_hook_is_async = inspect.iscoroutinefunction(
             hook
         )
         self.workspace_created_hook_source = raw
         logger.info("Workspace-created hook loaded: %s", raw)
+
+    async def _invoke_hook(self, hook, handle, actor) -> None:
+        """Dispatch the hook — sync or async —; a raising hook
+        propagates to the caller's log-and-continue."""
+        if self.workspace_created_hook_is_async:
+            await hook(handle, actor)
+        else:
+            hook(handle, actor)
+
+    async def _persist_hook_changes(
+        self, workspace: dict, changed: dict
+    ) -> dict:
+        """Persist the validated changes and return the row to hand
+        back: the re-read row on success, else the input row
+        (log-and-continue)."""
+        try:
+            await self.app.state.model.workspaces.update_workspace(
+                workspace["id"], workspace["user_id"], **changed
+            )
+            refreshed = await self.app.state.model.workspaces.get_workspace(
+                workspace["id"]
+            )
+        except Exception:
+            logger.warning(
+                "workspace-created hook %s: persisting attribute changes "
+                "for workspace %s failed; the row is unchanged",
+                self.workspace_created_hook_source,
+                workspace.get("id"),
+                exc_info=True,
+            )
+            return workspace
+        if refreshed is None:
+            return workspace  # pragma: no cover — row vanished mid-fire
+        # get_workspace omits created_at; carry it from the input so
+        # the create response's shape is hook-invariant.
+        if "created_at" not in refreshed and "created_at" in workspace:
+            refreshed["created_at"] = workspace["created_at"]
+        return refreshed
 
     async def fire_workspace_created(
         self, workspace: dict, actor: dict
@@ -428,10 +535,7 @@ class Hooks:
             allow_await=self.workspace_created_hook_is_async,
         )
         try:
-            if self.workspace_created_hook_is_async:
-                await hook(handle, actor)
-            else:
-                hook(handle, actor)
+            await self._invoke_hook(hook, handle, actor)
         except Exception:
             logger.warning(
                 "workspace-created hook %s failed for workspace %s; "
@@ -454,26 +558,4 @@ class Hooks:
                 invalid,
             )
             return workspace
-        try:
-            await self.app.state.model.workspaces.update_workspace(
-                workspace["id"], workspace["user_id"], **changed
-            )
-            refreshed = await self.app.state.model.workspaces.get_workspace(
-                workspace["id"]
-            )
-        except Exception:
-            logger.warning(
-                "workspace-created hook %s: persisting attribute changes "
-                "for workspace %s failed; the row is unchanged",
-                source,
-                ws_id,
-                exc_info=True,
-            )
-            return workspace
-        if refreshed is not None:
-            # get_workspace omits created_at; carry it from the input so
-            # the create response's shape is hook-invariant.
-            if "created_at" not in refreshed and "created_at" in workspace:
-                refreshed["created_at"] = workspace["created_at"]
-            return refreshed
-        return workspace  # pragma: no cover — row vanished mid-fire
+        return await self._persist_hook_changes(workspace, changed)

@@ -86,27 +86,35 @@ def run_cmd_value(value: str) -> tuple[str | None, str | None]:
     return proc.stdout.strip(), None
 
 
+def _resolved_or_empty(
+    contents: str | None, err: OSError | str | None, log_msg: str
+) -> str:
+    """Empty string on a failed file:/cmd: resolution (the error is
+    logged by the caller's message); otherwise the resolved contents."""
+    if err is not None:
+        logger.error(log_msg, err)
+        return ""
+    assert contents is not None
+    return contents
+
+
 def resolve_file_value(value: str) -> str:
     """Resolve a value that may have a 'file:' or 'cmd:' prefix.
 
     If the value starts with 'file:', reads the file and returns its
     stripped contents. If it starts with 'cmd:', runs the command and
     returns its stripped stdout. Otherwise returns the value as-is.
+    A failed resolution logs and yields "" rather than surfacing
+    the raw prefixed value.
     """
     if value.startswith("file:"):
         contents, err = read_file_value(value)
-        if err is not None:
-            logger.error("Cannot read secret file: %s", err)
-            return ""
-        assert contents is not None
-        return contents
+        return _resolved_or_empty(contents, err, "Cannot read secret file: %s")
     if value.startswith("cmd:"):
         contents, err = run_cmd_value(value)
-        if err is not None:
-            logger.error("Cannot resolve secret via cmd: %s", err)
-            return ""
-        assert contents is not None
-        return contents
+        return _resolved_or_empty(
+            contents, err, "Cannot resolve secret via cmd: %s"
+        )
     return value
 
 
@@ -216,6 +224,32 @@ def authority_has_port(authority: str) -> bool:
     return bool(sep) and port.isdigit()
 
 
+def _unbracketed_host(candidate: str) -> str | None:
+    """Strip IPv6 brackets from a colon-bearing candidate.
+
+    ``None`` for a bare (unbracketed) colon-bearing form — every bare
+    IPv6 literal, including v4-mapped loopback like ``::ffff:127.0.0.1``
+    — which cannot take a bare :port append and is left alone by the
+    caller.
+    """
+    if ":" not in candidate:
+        return candidate
+    if candidate.startswith("[") and candidate.endswith("]"):
+        return candidate[1:-1]
+    return None
+
+
+def _is_loopback_literal(candidate: str) -> bool:
+    """``localhost`` or any parseable loopback IP literal (covers
+    127.0.0.0/8 dotted-quads and ``::1``)."""
+    if candidate == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(candidate).is_loopback
+    except ValueError:
+        return False
+
+
 def is_portless_loopback_host(authority: str) -> bool:
     """True if *authority* is a port-less loopback hostname (#2732).
 
@@ -235,19 +269,33 @@ def is_portless_loopback_host(authority: str) -> bool:
     """
     if not authority or authority_has_port(authority):
         return False
-    candidate = authority.lower()
-    if ":" in candidate:
-        # Bracketed form only; a bare IPv6 literal (``::1``, ``::ffff:..``)
-        # cannot take a bare :port append.
-        if not (candidate.startswith("[") and candidate.endswith("]")):
-            return False
-        candidate = candidate[1:-1]
-    if candidate == "localhost":
-        return True
+    candidate = _unbracketed_host(authority.lower())
+    return candidate is not None and _is_loopback_literal(candidate)
+
+
+def _parse_trusted_entry(token: str) -> ipaddress._BaseAddress | None:
+    """One trusted-proxy token: a bare IP address, else a CIDR network
+    (non-strict, so a bare host address widens to its network), else
+    ``None`` for an invalid entry."""
     try:
-        return ipaddress.ip_address(candidate).is_loopback
+        return ipaddress.ip_address(token)
     except ValueError:
-        return False
+        pass
+    try:
+        return ipaddress.ip_network(token, strict=False)
+    except ValueError:
+        return None
+
+
+def _canonical_ip_or_raw(candidate: str | None) -> str | None:
+    """The canonical (``str()``-normalized) form of a parseable IP
+    address; the raw string (or ``None``) when it does not parse."""
+    if candidate is None:
+        return None
+    try:
+        return str(ipaddress.ip_address(candidate))
+    except ValueError:
+        return candidate
 
 
 # Loopback addresses used by ``Util.client_is_loopback`` (the none-mode
@@ -261,6 +309,13 @@ _LOOPBACK_ADDRS = {
 }
 
 
+def _first_forwarded_hop(headers) -> str:
+    """The first hop of X-Forwarded-For (the client as the trusted
+    proxy saw it), or "" when the header is absent."""
+    xff = headers.get("x-forwarded-for") or ""
+    return xff.split(",")[0].strip() if xff else ""
+
+
 def trusted_forwarded_ip(headers) -> str | None:
     """The parsed IP from trusted proxy headers (X-Real-IP, then the first
     hop of X-Forwarded-For), or None when absent or unparseable (garbage or
@@ -268,8 +323,7 @@ def trusted_forwarded_ip(headers) -> str | None:
     instead of trusting an unvalidated string)."""
     real_ip = headers.get("x-real-ip") or ""
     if not real_ip:
-        xff = headers.get("x-forwarded-for") or ""
-        real_ip = xff.split(",")[0].strip() if xff else ""
+        real_ip = _first_forwarded_hop(headers)
     if not real_ip:
         return None
     try:
@@ -482,25 +536,27 @@ class Util:
         """
         raw = self.app.state.settings.trusted_proxy_cidrs
         trusted: set[ipaddress._BaseAddress] = set()
-        for token in (raw or "").split(","):
-            token = token.strip()
-            if not token:
-                continue
-            try:
-                trusted.add(ipaddress.ip_address(token))
-            except ValueError:
-                try:
-                    net = ipaddress.ip_network(token, strict=False)
-                    trusted.add(net)
-                except ValueError:
-                    # Log without interpolating the value (CodeQL treats
-                    # env-var-derived data as potentially sensitive).
-                    logger.warning(
-                        "Ignoring an invalid KLANGKD_TRUSTED_PROXY_CIDRS entry"
-                    )
+        for token in filter(None, map(str.strip, (raw or "").split(","))):
+            self._add_trusted_entry(trusted, token)
         if not trusted:
             trusted.add(ipaddress.ip_address("127.0.0.1"))
         return trusted
+
+    @staticmethod
+    def _add_trusted_entry(
+        trusted: set[ipaddress._BaseAddress], token: str
+    ) -> None:
+        """Add one KLANGKD_TRUSTED_PROXY_CIDRS token: a bare IP, a CIDR
+        network, or (logged and skipped) an invalid entry."""
+        entry = _parse_trusted_entry(token)
+        if entry is None:
+            # Log without interpolating the value (CodeQL treats
+            # env-var-derived data as potentially sensitive).
+            logger.warning(
+                "Ignoring an invalid KLANGKD_TRUSTED_PROXY_CIDRS entry"
+            )
+            return
+        trusted.add(entry)
 
     def peer_trusted(self, client_host: str | None) -> bool:
         """True if the immediate peer is in the trusted proxy set."""
@@ -510,13 +566,20 @@ class Util:
             ip = ipaddress.ip_address(client_host)
         except ValueError:
             return False
-        for entry in self.trusted_proxy_cidrs():
-            if isinstance(entry, ipaddress._BaseNetwork):
-                if ip in entry:
-                    return True
-            elif entry == ip:
-                return True
-        return False
+        return any(
+            self._entry_matches(entry, ip)
+            for entry in self.trusted_proxy_cidrs()
+        )
+
+    @staticmethod
+    def _entry_matches(
+        entry: ipaddress._BaseAddress, ip: ipaddress._BaseAddress
+    ) -> bool:
+        """True when *ip* is covered by a trusted entry — containment
+        for a network entry, equality for a bare address."""
+        if isinstance(entry, ipaddress._BaseNetwork):
+            return ip in entry
+        return entry == ip
 
     def connection_peer_is_trusted(self, client_host: str | None) -> bool:
         """True if the immediate connection peer is the trusted reverse proxy.
@@ -547,22 +610,24 @@ class Util:
         (``str()``-normalized) address, or ``None`` when there is no
         client at all.
         """
-        candidate = client_host
-        trust = (
+        if self._forwarded_headers_trusted(headers, client_host):
+            forwarded = trusted_forwarded_ip(headers)
+            if forwarded is not None:
+                return forwarded
+        return _canonical_ip_or_raw(client_host)
+
+    def _forwarded_headers_trusted(
+        self, headers, client_host: str | None
+    ) -> bool:
+        """The shared forwarded-header trust gate: honored only when the
+        immediate peer is the trusted proxy and the hard-off override is
+        unset. ``headers is not None`` keeps request-less callers on the
+        env-var path (:meth:`derive_hosting_info})."""
+        return (
             (not self.reject_proxy_headers())
             and self.connection_peer_is_trusted(client_host)
             and headers is not None
         )
-        if trust:
-            forwarded = trusted_forwarded_ip(headers)
-            if forwarded is not None:
-                return forwarded
-        if candidate is None:
-            return None
-        try:
-            return str(ipaddress.ip_address(candidate))
-        except ValueError:
-            return candidate
 
     def client_is_loopback(
         self, headers=None, client_host: str | None = None
@@ -618,11 +683,7 @@ class Util:
         hostname = self.app.state.settings.hosting_hostname
         proto = self.app.state.settings.hosting_proto
         base_path = self.app.state.settings.hosting_base_path
-        trust = (
-            (not self.reject_proxy_headers())
-            and self.connection_peer_is_trusted(client_host)
-            and headers is not None
-        )
+        trust = self._forwarded_headers_trusted(headers, client_host)
         hostname = self._hosting_hostname(headers, hostname, trust)
         if not proto:
             proto = self._hosting_proto(headers, trust)
@@ -637,22 +698,32 @@ class Util:
         X-Forwarded-Host, else the Host header, else ``localhost``. A
         synthetic (non-pinned, non-forwarded) loopback hostname is pointed
         at the browser listener (#2732)."""
-        hostname = env_hostname
-        pinned = bool(hostname)
-        forwarded = False
-        if not hostname and headers is not None:
-            if trust:
-                forwarded_host = headers.get("x-forwarded-host")
-                if forwarded_host:
-                    hostname = forwarded_host
-                    forwarded = True
-            if not hostname:
-                hostname = headers.get("host") or "localhost"
-        if not hostname:
-            hostname = "localhost"
+        pinned = bool(env_hostname)
+        hostname, forwarded = self._hostname_source(
+            headers, env_hostname, trust
+        )
         if not pinned and not forwarded:
             hostname = self.browser_listener_hostname(hostname)
         return hostname
+
+    def _hostname_source(
+        self, headers, env_hostname: str, trust: bool
+    ) -> tuple[str, bool]:
+        """(hostname, came-from-a-trusted-forwarded-header)."""
+        if env_hostname:
+            return env_hostname, False
+        if headers is None:
+            return "localhost", False
+        return self._hostname_from_headers(headers, trust)
+
+    def _hostname_from_headers(self, headers, trust: bool) -> tuple[str, bool]:
+        """Trusted X-Forwarded-Host when present (flagged True), else the
+        raw Host header, else ``localhost``."""
+        if trust:
+            forwarded_host = headers.get("x-forwarded-host")
+            if forwarded_host:
+                return forwarded_host, True
+        return headers.get("host") or "localhost", False
 
     @staticmethod
     def _hosting_proto(headers, trust: bool) -> str:

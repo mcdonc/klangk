@@ -33,6 +33,21 @@ _FIND_ERROR_PATH_RE = re.compile(r"^find: '(.*)': ")
 NAME_MAX = 255
 
 
+def _single_leading_slash(normalized: str) -> str:
+    """Force one leading slash: ``normpath("//foo")`` keeps the double
+    slash on POSIX (implementation-defined)."""
+    if normalized.startswith("//") and not normalized.startswith("///"):
+        return normalized[1:]
+    return normalized
+
+
+def _reject_oversized_parts(normalized: str) -> None:
+    """Reject any path component over the NAME_MAX byte limit."""
+    for part in normalized.split("/"):
+        if len(part.encode("utf-8")) > NAME_MAX:
+            raise ValueError(f"Filename exceeds {NAME_MAX}-byte limit")
+
+
 def validate_path(path: str) -> str:
     """Validate and normalize an absolute container path.
 
@@ -48,24 +63,14 @@ def validate_path(path: str) -> str:
         raise ValueError("Null byte in path")
     if not path.startswith("/"):
         raise ValueError("Path must be absolute")
-    normalized = posixpath.normpath(path)
-    # normpath("//foo") → "//foo" on POSIX (implementation-defined);
-    # force a single leading slash.
-    if normalized.startswith("//") and not normalized.startswith("///"):
-        normalized = normalized[1:]
-    for part in normalized.split("/"):
-        if len(part.encode("utf-8")) > NAME_MAX:
-            raise ValueError(f"Filename exceeds {NAME_MAX}-byte limit")
+    normalized = _single_leading_slash(posixpath.normpath(path))
+    _reject_oversized_parts(normalized)
     return normalized
 
 
-def classify_find_errors(
-    container_id: str, path: str, err: str, rc: int
-) -> None:
-    """Act on find's stderr diagnostics: start-point failures raise (or
-    list empty for ENOENT), child-entry failures only warn (the readable
-    entries survive), and a total lack of diagnostics surfaces as a
-    generic OSError."""
+def _split_find_errors(err: str, path: str) -> tuple[list[str], list[str]]:
+    """Partition find's stderr lines into (start-point, child-entry)
+    diagnostics for *path*."""
     start_errors = []
     child_errors = []
     for line in err.splitlines():
@@ -76,6 +81,13 @@ def classify_find_errors(
             start_errors.append(line)
         else:
             child_errors.append(line)
+    return start_errors, child_errors
+
+
+def _warn_child_errors(
+    container_id: str, path: str, child_errors: list[str]
+) -> None:
+    """Child-entry failures only warn (the readable entries survive)."""
     if child_errors:
         logger.warning(
             "list_files: skipped unreadable entries under %s in "
@@ -84,6 +96,27 @@ def classify_find_errors(
             container_id,
             " | ".join(child_errors),
         )
+
+
+def _raise_for_start_error(message: str) -> None:
+    """A surfaced start-point failure: permission-denied raises
+    PermissionError (a denied volume root must not render as a
+    mysterious "Empty directory", #2766); anything else a generic
+    OSError."""
+    if "Permission denied" in message:
+        raise PermissionError(message)
+    raise OSError(message)
+
+
+def classify_find_errors(
+    container_id: str, path: str, err: str, rc: int
+) -> None:
+    """Act on find's stderr diagnostics: start-point failures raise (or
+    list empty for ENOENT), child-entry failures only warn (the readable
+    entries survive), and a total lack of diagnostics surfaces as a
+    generic OSError."""
+    start_errors, child_errors = _split_find_errors(err, path)
+    _warn_child_errors(container_id, path, child_errors)
     if start_errors:
         message = " ".join(" ".join(start_errors).split())
         if "No such file or directory" in message:
@@ -96,16 +129,19 @@ def classify_find_errors(
             container_id,
             message,
         )
-        if "Permission denied" in message:
-            # A permission-denied volume root rendered as a
-            # mysterious "Empty directory" (#2766) — surfaced,
-            # not swallowed.
-            raise PermissionError(message)
-        raise OSError(message)
+        _raise_for_start_error(message)
     if not child_errors:
         # rc != 0 with no diagnostics at all: cannot classify —
         # surface it rather than guess.
         raise OSError(f"find exited with status {rc}")
+
+
+def _float_or(text: str, fallback: float) -> float:
+    """A ``find -printf`` timestamp, or *fallback* when malformed."""
+    try:
+        return float(text)
+    except ValueError:
+        return fallback
 
 
 def _parse_find_line(line: str, path: str) -> dict | None:
@@ -121,21 +157,13 @@ def _parse_find_line(line: str, path: str) -> dict | None:
         size = int(size_str) if not is_dir else None
     except ValueError:
         size = None
-    try:
-        mtime = float(mtime_str)
-    except ValueError:
-        mtime = 0.0
-    try:
-        ctime = float(ctime_str)
-    except ValueError:
-        ctime = 0.0
     return {
         "name": name,
         "path": entry_path,
         "is_dir": is_dir,
         "size": size,
-        "mtime": mtime,
-        "ctime": ctime,
+        "mtime": _float_or(mtime_str, 0.0),
+        "ctime": _float_or(ctime_str, 0.0),
     }
 
 

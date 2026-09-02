@@ -108,27 +108,34 @@ class ServerScheduler(IntervalWorker):
             # owns cleanup on disconnect.
             pass
 
-    async def sweep(self) -> None:
-        schedules = await self.snapshot()
-        now = datetime.now(timezone.utc)
-        # 7: a malformed fire_at row (manual DB edit) must not kill the
-        # whole tick — skip and log it, keep the healthy rows working.
+    def _split_due(
+        self, schedules: list[dict], now: datetime
+    ) -> tuple[list[dict], list[dict]]:
+        """Partition the pending rows into (due, pending)."""
         due = []
         pending = []
         for s in schedules:
             try:
                 is_due = parse_fire_at(s["fire_at"]) <= now
             except (TypeError, ValueError):
+                # 7: a malformed fire_at row (manual DB edit) must not
+                # kill the whole tick — skip and log it, keep the healthy
+                # rows working (still broadcast it; never fire it).
                 logger.exception(
                     "Server scheduler: skipping schedule %s — malformed "
                     "fire_at %r",
                     s.get("id"),
                     s.get("fire_at"),
                 )
-                pending.append(s)  # keep broadcasting it; never fire it
+                pending.append(s)
                 continue
             (due if is_due else pending).append(s)
-        # Refresh clients when the set changed or on the periodic cadence.
+        return due, pending
+
+    def _broadcast_stale(self, pending: list[dict], now: datetime) -> None:
+        """Refresh clients when the pending set changed or on the
+        periodic cadence (a client that missed a change-driven
+        broadcast is caught by the timer)."""
         changed = pending != (self._last_snapshot or [])
         periodic = (
             self._last_broadcast is None
@@ -137,6 +144,12 @@ class ServerScheduler(IntervalWorker):
         )
         if changed or periodic:
             self.notify_pending_sync(pending)
+
+    async def sweep(self) -> None:
+        schedules = await self.snapshot()
+        now = datetime.now(timezone.utc)
+        due, pending = self._split_due(schedules, now)
+        self._broadcast_stale(pending, now)
         for schedule in due:
             await self._fire(schedule)
 
@@ -206,12 +219,50 @@ class ServerScheduler(IntervalWorker):
             lifecycle.request_recycle(source="scheduled recycle")
 
 
-def parse_fire_at(value: str) -> datetime:
-    """Parse a stored fire_at ISO string as timezone-aware UTC."""
-    parsed = datetime.fromisoformat(value)
+def _as_utc(parsed: datetime) -> datetime:
+    """A naive datetime reads as UTC; convert to timezone-aware UTC."""
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
+
+
+def parse_fire_at(value: str) -> datetime:
+    """Parse a stored fire_at ISO string as timezone-aware UTC."""
+    return _as_utc(datetime.fromisoformat(value))
+
+
+def _resolve_at(at) -> datetime:
+    """The absolute ``{"at": ISO-8601}`` form; naive values read as UTC."""
+    try:
+        return _as_utc(datetime.fromisoformat(str(at)))
+    except ValueError as e:
+        raise ValueError(f"invalid 'at' timestamp: {at!r}") from e
+
+
+def _finite_seconds(value) -> float:
+    """``in_seconds`` as a float; NaN and infinities rejected."""
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError) as e:
+        raise ValueError("'in_seconds' must be a number") from e
+    if seconds != seconds or seconds in (float("inf"), float("-inf")):
+        raise ValueError("'in_seconds' must be a finite number")
+    return seconds
+
+
+def _require_positive(seconds: float) -> None:
+    """Reject non-positive and absurdly large relative delays."""
+    if seconds <= 0:
+        raise ValueError("'in_seconds' must be positive")
+    if seconds > _MAX_IN_SECONDS:
+        raise ValueError(f"'in_seconds' must be at most {_MAX_IN_SECONDS:g}")
+
+
+def _finite_positive_seconds(value) -> float:
+    """Validate ``in_seconds``: a finite, positive, bounded number."""
+    seconds = _finite_seconds(value)
+    _require_positive(seconds)
+    return seconds
 
 
 def resolve_fire_at(payload: dict) -> datetime:
@@ -223,26 +274,9 @@ def resolve_fire_at(payload: dict) -> datetime:
     """
     at = payload.get("at")
     if at:
-        try:
-            parsed = datetime.fromisoformat(str(at))
-        except ValueError as e:
-            raise ValueError(f"invalid 'at' timestamp: {at!r}") from e
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=timezone.utc)
-        return parsed.astimezone(timezone.utc)
+        return _resolve_at(at)
     in_seconds = payload.get("in_seconds")
     if in_seconds is not None:
-        try:
-            seconds = float(in_seconds)
-        except (TypeError, ValueError) as e:
-            raise ValueError("'in_seconds' must be a number") from e
-        if seconds != seconds or seconds in (float("inf"), float("-inf")):
-            raise ValueError("'in_seconds' must be a finite number")
-        if seconds <= 0:
-            raise ValueError("'in_seconds' must be positive")
-        if seconds > _MAX_IN_SECONDS:
-            raise ValueError(
-                f"'in_seconds' must be at most {_MAX_IN_SECONDS:g}"
-            )
+        seconds = _finite_positive_seconds(in_seconds)
         return datetime.now(timezone.utc) + timedelta(seconds=seconds)
     raise ValueError("provide either 'at' or 'in_seconds'")

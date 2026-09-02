@@ -128,6 +128,31 @@ def _unlink_stale_handle_symlink(workspace_home, target: str) -> None:
             break
 
 
+def _adopt_children(old_target: Path, user_dir: Path) -> None:
+    """Move files from the old user dir into the new one."""
+    for child in old_target.iterdir():
+        dest = user_dir / child.name
+        if not dest.exists():
+            child.rename(dest)
+
+
+def _replace_stale_symlink(symlink: Path, user_dir: Path) -> bool:
+    """Handle a pre-existing handle path: when it is a symlink to a
+    different user's directory (e.g. from a workspace import), adopt the
+    old user's files into the new user directory so the importer gets
+    the exported content, then drop it. Returns True when content was
+    adopted (no skel needed)."""
+    if not symlink.is_symlink():
+        return False
+    old_target = symlink.resolve()
+    adopted = False
+    if old_target.is_dir() and old_target != user_dir:
+        _adopt_children(old_target, user_dir)
+        adopted = True
+    symlink.unlink()
+    return adopted
+
+
 def _ensure_home_symlink_sync(
     workspace_home: Path,
     handle: str,
@@ -166,17 +191,8 @@ def _ensure_home_symlink_sync(
     # different user's directory from a workspace import.  Adopt the old
     # user's files into the new user directory so the importer gets the
     # exported content, then replace the symlink.
-    if symlink.is_symlink():
-        old_target = symlink.resolve()
-        if old_target.is_dir() and old_target != user_dir:
-            # Move files from the old user dir into the new one.
-            for child in old_target.iterdir():
-                dest = user_dir / child.name
-                if not dest.exists():
-                    child.rename(dest)
-            created = False  # content adopted, no skel needed
-        symlink.unlink()
-
+    if _replace_stale_symlink(symlink, user_dir):
+        created = False  # content adopted, no skel needed
     symlink.symlink_to(target)
     return f"/home/{handle}", created
 
@@ -335,6 +351,17 @@ class Workspaces:
 
     # --- archive ---
 
+    def _path_within_root(self, label: str, p: Path) -> bool:
+        """True when *p* (or its nearest existing ancestor) stays under
+        the workspace root."""
+        if not (p.exists() or p.parent.exists()):
+            return True
+        resolved = (p if p.exists() else p.parent).resolve()
+        if not resolved.is_relative_to(self.root.resolve()):
+            logger.error("Path validation failed for %s: %s", label, p)
+            return False
+        return True
+
     async def build_workspace_archive(
         self, metadata: dict, home_dir: Path, archive_path: Path
     ) -> bool:
@@ -350,11 +377,8 @@ class Workspaces:
             ("home_dir", home_dir),
             ("archive_path", archive_path),
         ]:
-            if p.exists() or p.parent.exists():
-                resolved = (p if p.exists() else p.parent).resolve()
-                if not resolved.is_relative_to(self.root.resolve()):
-                    logger.error("Path validation failed for %s: %s", label, p)
-                    return False
+            if not self._path_within_root(label, p):
+                return False
 
         tmpdir = tempfile.mkdtemp()
         try:
@@ -388,6 +412,56 @@ class Workspaces:
         finally:
             await async_rmtree(tmpdir, "build_workspace_archive tmpdir")
 
+    def _user_archive_path(
+        self, ws: dict, user_id: str, safe_email: str
+    ) -> Path | None:
+        """The safe archive path for one workspace (``None`` when path
+        traversal is blocked)."""
+        ws_name = sanitize_filename(ws["name"])
+        archive_name = f"{user_id}-{safe_email}-{ws_name}.tar.gz"
+        try:
+            return self.safe_path(archive_name)  # lgtm[py/path-injection]
+        except ValueError:
+            logger.error(
+                "Archive path traversal blocked for workspace %s",
+                ws["name"],
+            )
+            return None
+
+    async def _archive_page(
+        self, user_id: str, safe_email: str, user_workspaces: list[dict]
+    ) -> tuple[list[Path], list[str]]:
+        """Archive one page of workspaces: (archive paths, archived ids)."""
+        archives: list[Path] = []
+        archived_ids: list[str] = []
+        for ws in user_workspaces:
+            archive_path = self._user_archive_path(ws, user_id, safe_email)
+            if archive_path is None:
+                continue
+            home_dir = self.home_path(ws["id"])
+            metadata = self.workspace_metadata(ws)
+            if await self.build_workspace_archive(
+                metadata, home_dir, archive_path
+            ):
+                # lgtm[py/clear-text-logging-sensitive-data]
+                logger.info(
+                    "Archived workspace %s to %s", ws["name"], archive_path
+                )
+                archives.append(archive_path)
+                archived_ids.append(ws["id"])
+        return archives, archived_ids
+
+    async def _remove_archived_dirs(self, archived_ws_ids: list[str]) -> None:
+        """Remove each archived workspace's data directory + per-workspace
+        nix snapshot (#2201 — no-op when nix isn't configured or the snapshot
+        is absent; matches delete_workspace, so account deletion doesn't
+        orphan snapshots outside the workspace data dir)."""
+        for ws_id in archived_ws_ids:
+            await self.app.state.nix.destroy_workspace_nix(ws_id)
+            ws_dir = self.safe_path(ws_id)
+            if ws_dir.exists():
+                await async_rmtree(ws_dir, f"workspace data {ws_id}")
+
     async def archive_user_data(self, user_id: str, email: str) -> list[Path]:
         """Archive each workspace to a .tar.gz in the export/import format.
 
@@ -408,49 +482,37 @@ class Workspaces:
             page = await self.app.state.model.workspaces.list_workspaces(
                 user_id, offset=offset
             )
-            user_workspaces = page["items"]
-            if not user_workspaces:
+            if not page["items"]:
                 break
-            for ws in user_workspaces:
-                ws_name = sanitize_filename(ws["name"])
-                archive_name = f"{user_id}-{safe_email}-{ws_name}.tar.gz"
-                try:
-                    archive_path = self.safe_path(
-                        archive_name
-                    )  # lgtm[py/path-injection]
-                except ValueError:
-                    logger.error(
-                        "Archive path traversal blocked for workspace %s",
-                        ws["name"],
-                    )
-                    continue
-                home_dir = self.home_path(ws["id"])
-                metadata = self.workspace_metadata(ws)
-                if await self.build_workspace_archive(
-                    metadata, home_dir, archive_path
-                ):
-                    # lgtm[py/clear-text-logging-sensitive-data]
-                    logger.info(
-                        "Archived workspace %s to %s", ws["name"], archive_path
-                    )
-                    archives.append(archive_path)
-                    archived_ws_ids.append(ws["id"])
+            page_archives, page_ids = await self._archive_page(
+                user_id, safe_email, page["items"]
+            )
+            archives.extend(page_archives)
+            archived_ws_ids.extend(page_ids)
             if not page["has_more"]:
                 break
             offset = page["next_offset"]
 
-        # Remove each archived workspace's data directory + per-workspace
-        # nix snapshot (#2201 — no-op when nix isn't configured or the snapshot
-        # is absent; matches delete_workspace, so account deletion doesn't
-        # orphan snapshots outside the workspace data dir).
-        for ws_id in archived_ws_ids:
-            await self.app.state.nix.destroy_workspace_nix(ws_id)
-            ws_dir = self.safe_path(ws_id)
-            if ws_dir.exists():
-                await async_rmtree(ws_dir, f"workspace data {ws_id}")
+        await self._remove_archived_dirs(archived_ws_ids)
         return archives
 
     # --- CRUD ---
+
+    async def _fire_created_hook(self, workspace: dict, user_id: str) -> dict:
+        """#2762: fire the deployment's workspace-created hook
+        (KLANGKD_WORKSPACE_CREATED_HOOK) on every creation path — create,
+        import, and duplicate all land here. Runs after the row + owner
+        ACE + role groups are committed and the workspace is fully
+        provisioned; failures are logged and never fail the create
+        (Hooks.fire_workspace_created). Guarded: minimal test apps wire
+        Workspaces without the full build_app state."""
+        hooks_state = getattr(self.app.state, "hooks", None)
+        if hooks_state is None or hooks_state.workspace_created_hook is None:
+            return workspace
+        actor = await self.app.state.model.users.get_user_by_id(user_id)
+        return await hooks_state.fire_workspace_created(
+            workspace, actor or {"id": user_id}
+        )
 
     async def create_workspace(
         self,
@@ -507,23 +569,7 @@ class Workspaces:
             )
             await async_rmtree(home, f"workspace {workspace['id']} rollback")
             raise
-        # #2762: fire the deployment's workspace-created hook
-        # (KLANGKD_WORKSPACE_CREATED_HOOK) on every creation path —
-        # create, import, and duplicate all land here. Runs after the
-        # row + owner ACE + role groups are committed and the workspace
-        # is fully provisioned; failures are logged and never fail the
-        # create (Hooks.fire_workspace_created). Guarded: minimal test
-        # apps wire Workspaces without the full build_app state.
-        hooks_state = getattr(self.app.state, "hooks", None)
-        if (
-            hooks_state is not None
-            and hooks_state.workspace_created_hook is not None
-        ):
-            actor = await self.app.state.model.users.get_user_by_id(user_id)
-            workspace = await hooks_state.fire_workspace_created(
-                workspace, actor or {"id": user_id}
-            )
-        return workspace
+        return await self._fire_created_hook(workspace, user_id)
 
     async def list_workspaces(
         self,
@@ -736,6 +782,39 @@ class Workspaces:
         )
         return cid, status
 
+    async def _auto_start_one(self, ws: dict, first: bool) -> bool:
+        """Start one auto-start workspace (True when it started). The
+        stagger sleep runs between workspaces so a fleet doesn't
+        stampede podman."""
+        if not first:
+            await asyncio.sleep(random.uniform(0.5, 2.0))
+        try:
+            cid, status = await self.start_workspace(
+                ws, cause=CAUSE_AUTO_START
+            )
+            # Auto-started containers are boot services: pin them alive
+            # so they do not idle out between user connections. Only the
+            # boot path does this -- create/restart use the default idle
+            # timeout (#1244).
+            state = self.app.state.container_registry.states.get(ws["id"])
+            if state:
+                state.idle_timeout = 0
+            logger.info(
+                "Auto-started workspace %s (%s): %s",
+                ws["name"],
+                cid[:12],
+                status,
+            )
+            return True
+        except Exception:
+            logger.warning(
+                "Failed to auto-start workspace %s (%s)",
+                ws["name"],
+                ws["id"],
+                exc_info=True,
+            )
+            return False
+
     async def auto_start_workspaces(self) -> int:
         """Start containers for all workspaces with auto_start enabled.
 
@@ -768,31 +847,6 @@ class Workspaces:
         )
         started = 0
         for i, ws in enumerate(ws_list):
-            if i > 0:
-                await asyncio.sleep(random.uniform(0.5, 2.0))
-            try:
-                cid, status = await self.start_workspace(
-                    ws, cause=CAUSE_AUTO_START
-                )
-                # Auto-started containers are boot services: pin them alive
-                # so they do not idle out between user connections. Only the
-                # boot path does this -- create/restart use the default idle
-                # timeout (#1244).
-                state = self.app.state.container_registry.states.get(ws["id"])
-                if state:
-                    state.idle_timeout = 0
-                logger.info(
-                    "Auto-started workspace %s (%s): %s",
-                    ws["name"],
-                    cid[:12],
-                    status,
-                )
+            if await self._auto_start_one(ws, first=(i == 0)):
                 started += 1
-            except Exception:
-                logger.warning(
-                    "Failed to auto-start workspace %s (%s)",
-                    ws["name"],
-                    ws["id"],
-                    exc_info=True,
-                )
         return started

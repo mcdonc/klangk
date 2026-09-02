@@ -299,6 +299,41 @@ def _window_target(
     return f"{session_name}:{target}"
 
 
+def _session_env_args(
+    user_home: str | None,
+    ssh_agent_socket: str | None,
+    user_id: str | None,
+    user_handle: str | None,
+) -> list[str]:
+    """tmux ``-e`` flags carrying HOME, SSH_AUTH_SOCK, and the user
+    identity vars into the session's window-0 shell (#2259)."""
+    env = {
+        "HOME": user_home,
+        "SSH_AUTH_SOCK": ssh_agent_socket,
+        "KLANGKWS_USER_ID": user_id,
+        "KLANGKWS_USER_HANDLE": user_handle,
+    }
+    args: list[str] = []
+    for key, value in env.items():
+        if value is not None:
+            args += ["-e", f"{key}={value}"]
+    return args
+
+
+def _container_gone(stderr: str) -> bool:
+    """True when an exec failed because the container is gone.
+
+    Podman's 404 (the container recycled between terminal start and this
+    call, #2178) and its *stopped*-container wording (an idle-reap racing
+    this exec — "state improper" / "can only create exec sessions on
+    running containers", #2514) are the same recoverable recycle race,
+    not a tmux/server failure."""
+    if classify(stderr) == 404:
+        return True
+    low = stderr.lower()
+    return "state improper" in low or "running containers" in low
+
+
 class Terminal:
     """Groups the ~25 tmux-session management functions that share a
     :class:`~klangk.podman.Podman` dependency.
@@ -414,15 +449,9 @@ class Terminal:
         """
         if await self.has_tmux_session(container_id, session_name):
             return False
-        env_args: list[str] = []
-        if user_home is not None:
-            env_args += ["-e", f"HOME={user_home}"]
-        if ssh_agent_socket is not None:
-            env_args += ["-e", f"SSH_AUTH_SOCK={ssh_agent_socket}"]
-        if user_id is not None:
-            env_args += ["-e", f"KLANGKWS_USER_ID={user_id}"]
-        if user_handle is not None:
-            env_args += ["-e", f"KLANGKWS_USER_HANDLE={user_handle}"]
+        env_args = _session_env_args(
+            user_home, ssh_agent_socket, user_id, user_handle
+        )
         try:
             await self.podman.exec_container(
                 container_id,
@@ -660,6 +689,53 @@ class Terminal:
                 container_id,
             )
 
+    async def _create_service_cmd_window(self, container_id: str) -> bool:
+        """The ``tmux new-window`` step of a service fire. ``False`` on
+        any failure — an exec killed client-side is indistinguishable
+        from a real failure."""
+        try:
+            rc, _, _ = await self.podman.exec_container(
+                container_id,
+                [
+                    "tmux",
+                    "new-window",
+                    "-d",
+                    "-t",
+                    SERVICE_SESSION,
+                    "-n",
+                    SERVICE_CMD_WINDOW,
+                ],
+                user=CONTAINER_USER,
+                timeout=SERVICE_EXEC_TIMEOUT,
+            )
+        except Exception:
+            rc = -1
+        if rc != 0:
+            logger.warning(
+                "Failed to create %s window in %s",
+                SERVICE_CMD_WINDOW,
+                SERVICE_SESSION,
+            )
+            return False
+        return True
+
+    async def _abort_service_fire(
+        self, container_id: str, *, note: str
+    ) -> None:
+        """Mark the fire pending, then clean up the half-fired window; a
+        failed cleanup leaves the pending flag so the next fire retries
+        the whole sequence (#2740, #1186)."""
+        self.registry.mark_service_fire_pending(container_id)
+        if await self.kill_service_cmd_window(container_id):
+            self.registry.clear_service_fire_pending(container_id)
+            return
+        logger.warning(
+            "Failed to clean up %s window in %s%s",
+            SERVICE_CMD_WINDOW,
+            SERVICE_SESSION,
+            note,
+        )
+
     async def fire_service_command(
         self, container_id: str, service_command: str
     ) -> None:
@@ -670,42 +746,12 @@ class Terminal:
         # other way) is moot once this sequence runs.
         self.registry.clear_service_fire_pending(container_id)
         try:
-            try:
-                rc, _, _ = await self.podman.exec_container(
-                    container_id,
-                    [
-                        "tmux",
-                        "new-window",
-                        "-d",
-                        "-t",
-                        SERVICE_SESSION,
-                        "-n",
-                        SERVICE_CMD_WINDOW,
-                    ],
-                    user=CONTAINER_USER,
-                    timeout=SERVICE_EXEC_TIMEOUT,
-                )
-            except Exception:
-                rc = -1
-            if rc != 0:
-                logger.warning(
-                    "Failed to create %s window in %s",
-                    SERVICE_CMD_WINDOW,
-                    SERVICE_SESSION,
-                )
+            if not await self._create_service_cmd_window(container_id):
                 # The exec may have been killed client-side while the
                 # container side created the window -- clean it up so
                 # the next fire re-runs the whole sequence instead of
                 # suppressing on a command-less window (#2740).
-                self.registry.mark_service_fire_pending(container_id)
-                if await self.kill_service_cmd_window(container_id):
-                    self.registry.clear_service_fire_pending(container_id)
-                else:
-                    logger.warning(
-                        "Failed to clean up %s window in %s",
-                        SERVICE_CMD_WINDOW,
-                        SERVICE_SESSION,
-                    )
+                await self._abort_service_fire(container_id, note="")
                 return
             # The new window's shell needs a moment to source
             # .profile / .bashrc before it can resolve PATH-dependent
@@ -730,15 +776,9 @@ class Terminal:
             # half-created window (#1186). If the cleanup itself
             # fails, leave the fire pending so the next call retries
             # the send into the surviving window (#2740).
-            self.registry.mark_service_fire_pending(container_id)
-            if await self.kill_service_cmd_window(container_id):
-                self.registry.clear_service_fire_pending(container_id)
-            else:
-                logger.warning(
-                    "Failed to clean up %s window in %s; fire marked pending",
-                    SERVICE_CMD_WINDOW,
-                    SERVICE_SESSION,
-                )
+            await self._abort_service_fire(
+                container_id, note="; fire marked pending"
+            )
         except asyncio.CancelledError:
             # The caller (e.g. the _start_terminal task on a client WS
             # drop) went away mid-sequence. The synchronous pending
@@ -810,6 +850,19 @@ class Terminal:
         "no such session",
     )
 
+    def _cold_start_retry(
+        self, stderr: str, attempt: int, attempts: int
+    ) -> bool:
+        """A cold-start failure with retry budget left (#2623): the tmux
+        socket missing while the server boots in a fresh container, or
+        the target session missing while a just-spawned attach is still
+        creating it."""
+        low = stderr.lower()
+        return (
+            any(s in low for s in self._COLD_START_STDERR)
+            and attempt < attempts - 1
+        )
+
     async def tmux_command(
         self, container_id: str, session_name: str, args: list[str]
     ) -> str:
@@ -833,25 +886,10 @@ class Terminal:
             )
             if rc == 0:
                 return stdout
-            low = stderr.lower()
-            if (
-                any(s in low for s in self._COLD_START_STDERR)
-                and attempt < attempts - 1
-            ):
+            if self._cold_start_retry(stderr, attempt, attempts):
                 await asyncio.sleep(0.5)
                 continue
-            # "container gone" is a recoverable condition (the container
-            # was recycled between terminal start and this call), not a
-            # tmux/server failure — surface it distinctly so callers can
-            # avoid tracebacking an expected race (#2178). Podman reports
-            # a *stopped* container (an idle-reap racing this exec) as
-            # "state improper" / "can only create exec sessions on running
-            # containers" — same recycle race, found by the idle fuzz
-            # harness (#2514), so it maps to the same exception.
-            if classify(stderr) == 404 or (
-                "state improper" in stderr.lower()
-                or "running containers" in stderr.lower()
-            ):
+            if _container_gone(stderr):
                 raise ContainerGoneError(
                     f"container {container_id!r} is gone: {stderr.strip()}"
                 )
@@ -1086,6 +1124,21 @@ class ShellProcess:
         if self._proc is not None:
             os.kill(self._proc.pid, signal.SIGWINCH)
 
+    def _close_master_fd(self) -> None:
+        """Tear down the PTY master fd: drop the loop reader, unblock any
+        pending read, close the fd."""
+        try:
+            asyncio.get_running_loop().remove_reader(self._master_fd)
+        except (ValueError, RuntimeError):
+            pass  # loop already closed or fd not registered
+        if self._read_event is not None:
+            self._read_event.set()  # unblock any pending read
+        try:
+            os.close(self._master_fd)
+        except OSError:
+            pass
+        self._master_fd = None
+
     def close(self) -> None:
         if self._proc is not None and self._proc.returncode is None:
             try:
@@ -1093,17 +1146,7 @@ class ShellProcess:
             except ProcessLookupError:
                 pass
         if self._master_fd is not None:
-            try:
-                asyncio.get_running_loop().remove_reader(self._master_fd)
-            except (ValueError, RuntimeError):
-                pass  # loop already closed or fd not registered
-            if self._read_event is not None:
-                self._read_event.set()  # unblock any pending read
-            try:
-                os.close(self._master_fd)
-            except OSError:
-                pass
-            self._master_fd = None
+            self._close_master_fd()
 
 
 def _set_winsize(fd: int, rows: int, cols: int) -> None:
@@ -1268,6 +1311,36 @@ class TerminalSession:
         except Exception:
             pass
 
+    async def _pump_chunk(self, decoder, data: bytes) -> None:
+        """Decode one PTY chunk and queue it; output is dropped on
+        back-pressure (never block the PTY read)."""
+        text = decoder.decode(data)
+        if not text:
+            return
+        try:
+            self._output_queue.put_nowait(text)
+        except asyncio.QueueFull:
+            pass  # drop output; don't block the PTY read
+
+    async def _flush_decoder_tail(self, decoder) -> None:
+        """Flush any trailing partial sequence (a stream that ends
+        mid-character yields a single replacement char rather than
+        dropping bytes)."""
+        tail = decoder.decode(b"", final=True)
+        if tail:
+            await self._output_queue.put(tail)
+
+    async def _read_chunks(self, decoder) -> None:
+        """The read loop proper: PTY chunks until EOF/stop."""
+        while self._running and self._shell is not None:
+            data = await self._shell.read()
+            if not data:
+                logger.info("Terminal read loop: EOF from PTY")
+                await self._log_exec_exit_code()
+                break
+            await self._pump_chunk(decoder, data)
+        await self._flush_decoder_tail(decoder)
+
     async def read_loop(self) -> None:
         """Read PTY output and queue it as text.
 
@@ -1279,24 +1352,7 @@ class TerminalSession:
         """
         decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
         try:
-            while self._running and self._shell is not None:
-                data = await self._shell.read()
-                if not data:
-                    logger.info("Terminal read loop: EOF from PTY")
-                    await self._log_exec_exit_code()
-                    break
-                text = decoder.decode(data)
-                if text:
-                    try:
-                        self._output_queue.put_nowait(text)
-                    except asyncio.QueueFull:
-                        pass  # drop output; don't block the PTY read
-            # Flush any trailing partial sequence (a stream that ends
-            # mid-character yields a single replacement char rather than
-            # dropping bytes).
-            tail = decoder.decode(b"", final=True)
-            if tail:
-                await self._output_queue.put(tail)
+            await self._read_chunks(decoder)
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -1336,6 +1392,11 @@ class TerminalSession:
             except OSError:
                 logger.debug("Terminal resize failed", exc_info=True)
 
+    def _read_task_done(self) -> bool:
+        """True when the PTY read task has finished (nothing more can
+        arrive)."""
+        return self._read_task is not None and self._read_task.done()
+
     async def output(self) -> AsyncGenerator[str, None]:
         """Yield terminal output as it arrives."""
         while self._running:
@@ -1344,63 +1405,71 @@ class TerminalSession:
                     self._output_queue.get(), timeout=1.0
                 )
             except asyncio.TimeoutError:
-                if self._read_task is not None and self._read_task.done():
+                if self._read_task_done():
                     break
                 continue
             if data is None:
                 break
             yield data
 
+    async def _cancel_read_task(self) -> None:
+        """Cancel (and await) the PTY read task."""
+        if self._read_task is None:
+            return
+        self._read_task.cancel()
+        try:
+            await self._read_task
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            logger.exception("Error awaiting terminal read task")
+        self._read_task = None
+
+    async def _close_shell(self) -> None:
+        """Close the host-side PTY shell."""
+        if self._shell is None:
+            return
+        try:
+            self._shell.close()
+        except OSError:
+            logger.debug("Error closing terminal shell", exc_info=True)
+        self._shell = None
+
+    async def _kill_grouped_tmux_session(self) -> None:
+        """Kill the tmux session inside the container so the client
+        doesn't stay attached after the host-side process is gone.
+        All grouped sessions (own, join, shared) are killed — the
+        base session persists independently. tmux_session_name is a
+        unique grouped name for all connection types."""
+        if not self.tmux_session_name:
+            return
+        try:
+            socket_args = ["-S", self.socket_path] if self.socket_path else []
+            await self.podman.exec_container(
+                self.container_id,
+                [
+                    "tmux",
+                    *socket_args,
+                    "kill-session",
+                    "-t",
+                    self.tmux_session_name,
+                ],
+                user=CONTAINER_USER,
+                timeout=5,
+            )
+        except Exception:
+            logger.debug(
+                "Failed to kill tmux session %s",
+                self.tmux_session_name,
+                exc_info=True,
+            )
+
     async def stop(self) -> None:
         """Stop the terminal session and clean up."""
         self._running = False
-
-        if self._read_task is not None:
-            self._read_task.cancel()
-            try:
-                await self._read_task
-            except asyncio.CancelledError:
-                pass
-            except Exception:
-                logger.exception("Error awaiting terminal read task")
-            self._read_task = None
-
-        if self._shell is not None:
-            try:
-                self._shell.close()
-            except OSError:
-                logger.debug("Error closing terminal shell", exc_info=True)
-            self._shell = None
-
-        # Kill the tmux session inside the container so the client
-        # doesn't stay attached after the host-side process is gone.
-        # All grouped sessions (own, join, shared) are killed — the
-        # base session persists independently.  tmux_session_name is
-        # a unique grouped name for all connection types.
-        if self.tmux_session_name:
-            try:
-                socket_args = (
-                    ["-S", self.socket_path] if self.socket_path else []
-                )
-                await self.podman.exec_container(
-                    self.container_id,
-                    [
-                        "tmux",
-                        *socket_args,
-                        "kill-session",
-                        "-t",
-                        self.tmux_session_name,
-                    ],
-                    user=CONTAINER_USER,
-                    timeout=5,
-                )
-            except Exception:
-                logger.debug(
-                    "Failed to kill tmux session %s",
-                    self.tmux_session_name,
-                    exc_info=True,
-                )
-
+        await self._cancel_read_task()
+        await self._close_shell()
+        await self._kill_grouped_tmux_session()
         logger.info(
             "Terminal session stopped for container %s", self.container_id
         )
