@@ -19,10 +19,11 @@ String get _adminToken {
       .encode(utf8.encode(jsonEncode({'alg': 'HS256', 'typ': 'JWT'})))
       .replaceAll('=', '');
   final body = base64Url
-      .encode(utf8.encode(jsonEncode({
-        'sub': 'admin-user',
-        'email': 'admin@example.com',
-      })))
+      .encode(
+        utf8.encode(
+          jsonEncode({'sub': 'admin-user', 'email': 'admin@example.com'}),
+        ),
+      )
       .replaceAll('=', '');
   return '$header.$body.fakesig';
 }
@@ -58,9 +59,7 @@ class _FakeSink extends Fake implements WebSocketSink {
   Future close([int? code, String? reason]) async {}
 }
 
-http.Client _mockClient(
-  Future<http.Response> Function(http.Request) handler,
-) {
+http.Client _mockClient(Future<http.Response> Function(http.Request) handler) {
   return MockClient((request) async {
     if (request.url.path.contains('/api/v1/config')) {
       return http.Response(
@@ -73,11 +72,12 @@ http.Client _mockClient(
         jsonEncode({
           'user_id': 'admin-user',
           'email': 'admin@example.com',
+          'is_admin': true,
           'permissions': {
-            '/admin': ['*'],
+            '/server': ['manage-server-schedule'],
           },
           'groups': [
-            {'id': 'g1', 'name': 'admins'}
+            {'id': 'g1', 'name': 'admins'},
           ],
         }),
         200,
@@ -87,12 +87,7 @@ http.Client _mockClient(
   });
 }
 
-Map<String, dynamic> _schedule(
-  String id,
-  String action,
-  Duration fromNow,
-) =>
-    {
+Map<String, dynamic> _schedule(String id, String action, Duration fromNow) => {
       'id': id,
       'action': action,
       'fire_at': DateTime.now().toUtc().add(fromNow).toIso8601String(),
@@ -183,7 +178,9 @@ void main() {
       expect(parseServerDelay('2h 30m'), const Duration(hours: 2, minutes: 30));
       expect(parseServerDelay('2h30m'), const Duration(hours: 2, minutes: 30));
       expect(
-          parseServerDelay('1m30s'), const Duration(minutes: 1, seconds: 30));
+        parseServerDelay('1m30s'),
+        const Duration(minutes: 1, seconds: 30),
+      );
     });
 
     test('a bare number means minutes', () {
@@ -225,15 +222,19 @@ void main() {
   });
 
   group('ServerSchedulePanel', () {
-    testWidgets('renders pending schedules soonest first with countdowns',
-        (tester) async {
+    testWidgets('renders pending schedules soonest first with countdowns', (
+      tester,
+    ) async {
       testAuthHttpClientOverride = _mockClient((request) async {
         if (request.url.path == '/api/v1/server/schedule') {
           return http.Response(
             _schedulesEnvelope([
               _schedule('s2', 'recycle', const Duration(hours: 5, seconds: 30)),
-              _schedule('s1', 'stop',
-                  const Duration(hours: 1, minutes: 5, seconds: 30)),
+              _schedule(
+                's1',
+                'stop',
+                const Duration(hours: 1, minutes: 5, seconds: 30),
+              ),
             ]),
             200,
           );
@@ -259,8 +260,9 @@ void main() {
       );
     });
 
-    testWidgets('shows the empty state when nothing is scheduled',
-        (tester) async {
+    testWidgets('shows the empty state when nothing is scheduled', (
+      tester,
+    ) async {
       testAuthHttpClientOverride = _mockClient((request) async {
         if (request.url.path == '/api/v1/server/schedule') {
           return http.Response(_schedulesEnvelope([]), 200);
@@ -273,8 +275,9 @@ void main() {
       expect(find.text('No scheduled server actions'), findsOneWidget);
     });
 
-    testWidgets('shows an error with retry when the load fails',
-        (tester) async {
+    testWidgets('shows an error with retry when the load fails', (
+      tester,
+    ) async {
       var calls = 0;
       testAuthHttpClientOverride = _mockClient((request) async {
         if (request.url.path == '/api/v1/server/schedule') {
@@ -286,23 +289,27 @@ void main() {
 
       await pump(tester, panelApp());
 
-      expect(find.textContaining('Failed to load schedules (500)'),
-          findsOneWidget);
+      expect(
+        find.textContaining('Failed to load schedules (500)'),
+        findsOneWidget,
+      );
 
       await tester.tap(find.text('Retry'));
       await tester.pumpAndSettle();
       expect(calls, 2);
     });
 
-    testWidgets('the WS snapshot updates the list without a REST refetch',
-        (tester) async {
+    testWidgets('the WS snapshot updates the list without a REST refetch', (
+      tester,
+    ) async {
       var gets = 0;
       testAuthHttpClientOverride = _mockClient((request) async {
         if (request.url.path == '/api/v1/server/schedule') {
           gets++;
           return http.Response(
-            _schedulesEnvelope(
-                [_schedule('s1', 'stop', const Duration(hours: 1))]),
+            _schedulesEnvelope([
+              _schedule('s1', 'stop', const Duration(hours: 1)),
+            ]),
             200,
           );
         }
@@ -325,8 +332,9 @@ void main() {
       expect(gets, 1);
     });
 
-    testWidgets('cancel confirms, deletes, and refreshes the list',
-        (tester) async {
+    testWidgets('cancel confirms, deletes, and refreshes the list', (
+      tester,
+    ) async {
       var deleted = <String>[];
       var pending = [_schedule('s1', 'stop', const Duration(hours: 1))];
       testAuthHttpClientOverride = _mockClient((request) async {
@@ -350,8 +358,10 @@ void main() {
 
       // Confirm step: nothing deleted yet.
       expect(deleted, isEmpty);
-      expect(find.textContaining('Cancel the scheduled server stop'),
-          findsOneWidget);
+      expect(
+        find.textContaining('Cancel the scheduled server stop'),
+        findsOneWidget,
+      );
 
       await tester.tap(find.text('Cancel Schedule'));
       await tester.pumpAndSettle();
@@ -366,8 +376,9 @@ void main() {
         final path = request.url.path;
         if (path == '/api/v1/server/schedule' && request.method == 'GET') {
           return http.Response(
-            _schedulesEnvelope(
-                [_schedule('s1', 'recycle', const Duration(hours: 2))]),
+            _schedulesEnvelope([
+              _schedule('s1', 'recycle', const Duration(hours: 2)),
+            ]),
             200,
           );
         }
@@ -395,15 +406,18 @@ void main() {
         final path = request.url.path;
         if (path == '/api/v1/server/schedule' && request.method == 'GET') {
           return http.Response(
-            _schedulesEnvelope(
-                [_schedule('s1', 'stop', const Duration(hours: 1))]),
+            _schedulesEnvelope([
+              _schedule('s1', 'stop', const Duration(hours: 1)),
+            ]),
             200,
           );
         }
         if (path == '/api/v1/server/schedule/s1' &&
             request.method == 'DELETE') {
           return http.Response(
-              jsonEncode({'detail': 'Schedule not found'}), 404);
+            jsonEncode({'detail': 'Schedule not found'}),
+            404,
+          );
         }
         return http.Response('Not found', 404);
       });
@@ -423,8 +437,9 @@ void main() {
       testAuthHttpClientOverride = _mockClient((request) async {
         if (request.url.path == '/api/v1/server/schedule') {
           return http.Response(
-            _schedulesEnvelope(
-                [_schedule('s1', 'stop', const Duration(seconds: -10))]),
+            _schedulesEnvelope([
+              _schedule('s1', 'stop', const Duration(seconds: -10)),
+            ]),
             200,
           );
         }
@@ -464,8 +479,9 @@ void main() {
       expect(find.text('fires soon'), findsOneWidget);
     });
 
-    testWidgets('a REST refresh does not flash the spinner over live data',
-        (tester) async {
+    testWidgets('a REST refresh does not flash the spinner over live data', (
+      tester,
+    ) async {
       // WS snapshot is live; the post-cancel REST refresh hangs. The
       // list must keep rendering the snapshot — no spinner, no error.
       var gets = 0;
@@ -476,8 +492,9 @@ void main() {
           gets++;
           if (gets == 1) {
             return http.Response(
-              _schedulesEnvelope(
-                  [_schedule('s1', 'stop', const Duration(hours: 1))]),
+              _schedulesEnvelope([
+                _schedule('s1', 'stop', const Duration(hours: 1)),
+              ]),
               200,
             );
           }
@@ -516,8 +533,9 @@ void main() {
       expect(find.textContaining('Stop at'), findsOneWidget);
     });
 
-    testWidgets('after the socket drops, the REST refresh is the source',
-        (tester) async {
+    testWidgets('after the socket drops, the REST refresh is the source', (
+      tester,
+    ) async {
       // The reviewer's scenario: socket silently drops, admin cancels —
       // DELETE succeeds over HTTP, the broadcast reaches nobody. The
       // cleared snapshot must let the REST refresh show through.
@@ -563,40 +581,33 @@ void main() {
   });
 
   group('ScheduleServerActionDialog', () {
-    testWidgets('Schedule stays disabled until the delay parses',
-        (tester) async {
+    testWidgets('Schedule stays disabled until the delay parses', (
+      tester,
+    ) async {
       testAuthHttpClientOverride = _mockClient(
         (request) async => http.Response('Not found', 404),
       );
 
       await openDialog(tester);
 
-      expect(
-        tester.widget<FilledButton>(scheduleButton).onPressed,
-        isNull,
-      );
+      expect(tester.widget<FilledButton>(scheduleButton).onPressed, isNull);
 
       await tester.enterText(find.byType(TextField), 'not-a-delay');
       await tester.pump();
-      expect(
-        tester.widget<FilledButton>(scheduleButton).onPressed,
-        isNull,
-      );
+      expect(tester.widget<FilledButton>(scheduleButton).onPressed, isNull);
       expect(find.textContaining('Enter a delay'), findsOneWidget);
 
       await tester.enterText(find.byType(TextField), '2h');
       await tester.pump();
-      expect(
-        tester.widget<FilledButton>(scheduleButton).onPressed,
-        isNotNull,
-      );
+      expect(tester.widget<FilledButton>(scheduleButton).onPressed, isNotNull);
       // The computed fire preview appears.
       expect(find.textContaining('Fires'), findsOneWidget);
       expect(find.textContaining('(in 2h 0m)'), findsOneWidget);
     });
 
-    testWidgets('submits a relative schedule and closes on success',
-        (tester) async {
+    testWidgets('submits a relative schedule and closes on success', (
+      tester,
+    ) async {
       Map<String, dynamic>? posted;
       testAuthHttpClientOverride = _mockClient((request) async {
         if (request.url.path == '/api/v1/server/schedule' &&
@@ -628,8 +639,9 @@ void main() {
       expect(find.byType(ScheduleServerActionDialog), findsNothing);
     });
 
-    testWidgets('shows the API 422 detail inline and stays open',
-        (tester) async {
+    testWidgets('shows the API 422 detail inline and stays open', (
+      tester,
+    ) async {
       testAuthHttpClientOverride = _mockClient((request) async {
         if (request.url.path == '/api/v1/server/schedule' &&
             request.method == 'POST') {
@@ -649,12 +661,15 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(
-          find.textContaining("'in_seconds' must be positive"), findsOneWidget);
+        find.textContaining("'in_seconds' must be positive"),
+        findsOneWidget,
+      );
       expect(find.byType(ScheduleServerActionDialog), findsOneWidget);
     });
 
-    testWidgets('at-a-time mode: pickers populate the field and submit `at`',
-        (tester) async {
+    testWidgets('at-a-time mode: pickers populate the field and submit `at`', (
+      tester,
+    ) async {
       Map<String, dynamic>? posted;
       testAuthHttpClientOverride = _mockClient((request) async {
         if (request.url.path == '/api/v1/server/schedule' &&
@@ -673,10 +688,7 @@ void main() {
       // Switch to absolute time.
       await tester.tap(find.text('At a time'));
       await tester.pumpAndSettle();
-      expect(
-        tester.widget<FilledButton>(scheduleButton).onPressed,
-        isNull,
-      );
+      expect(tester.widget<FilledButton>(scheduleButton).onPressed, isNull);
 
       // Date picker: the default selection (initialDate = +1h) is fine.
       await tester.tap(find.text('Pick date and time'));
@@ -689,10 +701,7 @@ void main() {
 
       // The label now shows a date instead of the hint, and submit enables.
       expect(find.text('Pick date and time'), findsNothing);
-      expect(
-        tester.widget<FilledButton>(scheduleButton).onPressed,
-        isNotNull,
-      );
+      expect(tester.widget<FilledButton>(scheduleButton).onPressed, isNotNull);
 
       await tester.tap(scheduleButton);
       await tester.pumpAndSettle();

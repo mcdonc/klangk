@@ -436,6 +436,16 @@ sync` report a clear permission-denied error.
   and backup/restore procedures for both the packaged and Docker
   deployments, including the instance-id and volume-label constraints
   that make a restore succeed.
+- **`is_admin` flag on `/my-permissions` (#2995).** The response now
+  carries an explicit instance-admin flag derived from `admins`-group
+  membership (the CLI's `status` and the web app's admin gating read
+  it). The `/admin` ACL tree is retired with it: no rows are seeded,
+  `/admin` no longer appears in the permission map or the ACL browser,
+  and migration m0027 deletes any stored `/admin` rows (they answered
+  no check). Because the group's name is now load-bearing, the
+  `admins` group can no longer be renamed or deleted (HTTP 400), and
+  the name cannot be claimed by another group. See
+  [ACL reference](reference/acl.md).
 
 - **`workspace` filter on `GET /api/v1/events` (#3006).** The Admin →
   Events filter now accepts a workspace name as well as a workspace id:

@@ -758,7 +758,8 @@ test.describe("API", () => {
       ),
     ).toBeTruthy();
 
-    // Read /admin resource ACL
+    // Read /admin resource ACL: retired (#2995) — /admin is no
+    // longer a resource, so it reads as an empty entry list.
     resp = await request.get(
       `${API_BASE}/api/v1/acl/resource?resource=/admin`,
       {
@@ -766,22 +767,17 @@ test.describe("API", () => {
       },
     );
     expect(resp.ok()).toBeTruthy();
-    const adminAces = await resp.json();
-    expect(
-      adminAces.some(
-        (a: any) => a.principal === "admins" && a.permission === "*",
-      ),
-    ).toBeTruthy();
+    expect(await resp.json()).toEqual([]);
 
-    // Modify /admin/groups ACL: add a view entry, then restore
+    // Modify /server resource ACL: add a view entry, then restore
     resp = await request.get(
-      `${API_BASE}/api/v1/acl/resource?resource=/admin/groups`,
+      `${API_BASE}/api/v1/acl/resource?resource=/server`,
       { headers: adminHeaders },
     );
-    const originalGroupsAces = await resp.json();
+    const originalServerAces = await resp.json();
 
     const newEntries = [
-      ...originalGroupsAces.map((a: any) => ({
+      ...originalServerAces.map((a: any) => ({
         action: a.action,
         principal_type: a.principal_type,
         permission: a.permission,
@@ -800,14 +796,14 @@ test.describe("API", () => {
     ];
 
     resp = await request.put(
-      `${API_BASE}/api/v1/acl/resource?resource=/admin/groups`,
+      `${API_BASE}/api/v1/acl/resource?resource=/server`,
       { headers: adminHeaders, data: newEntries },
     );
     expect(resp.ok()).toBeTruthy();
-    expect((await resp.json()).length).toBe(originalGroupsAces.length + 1);
+    expect((await resp.json()).length).toBe(originalServerAces.length + 1);
 
     // Restore original
-    const restore = originalGroupsAces.map((a: any) => ({
+    const restore = originalServerAces.map((a: any) => ({
       action: a.action,
       principal_type: a.principal_type,
       permission: a.permission,
@@ -816,7 +812,7 @@ test.describe("API", () => {
       system_principal: a.system_principal ?? null,
     }));
     resp = await request.put(
-      `${API_BASE}/api/v1/acl/resource?resource=/admin/groups`,
+      `${API_BASE}/api/v1/acl/resource?resource=/server`,
       { headers: adminHeaders, data: restore },
     );
     expect(resp.ok()).toBeTruthy();
@@ -841,7 +837,6 @@ test.describe("API", () => {
       "/server",
       "/events",
       "/acl",
-      "/admin", // instance-admin wildcard marker (#2944)
     ];
 
     for (const resource of resources) {

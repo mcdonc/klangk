@@ -395,7 +395,8 @@ class TestACLIntrospection:
         tree = resp.json()
         resources = [t["resource"] for t in tree]
         assert "/" in resources
-        assert "/admin" in resources
+        # /admin is retired (#2995): not seeded, not in the tree.
+        assert "/admin" not in resources
 
     def test_acl_by_group(self, api, admin_headers):
         # Get admin group ID
@@ -411,8 +412,10 @@ class TestACLIntrospection:
         assert resp.status_code == 200
         entries = resp.json()
         assert len(entries) > 0
-        # Admin group should have an ACE on /admin
-        assert any(e["resource"] == "/admin" for e in entries)
+        # Admin group holds the seeded manage-* ACEs on the first-class
+        # resources — never /admin, which is retired (#2995).
+        assert any(e["resource"] == "/users" for e in entries)
+        assert not any(e["resource"] == "/admin" for e in entries)
 
     def test_acl_by_user(self, api, admin_headers, user_a):
         # Create a workspace as user A so they have an ACE
@@ -443,8 +446,10 @@ class TestACLIntrospection:
         assert resp.status_code == 200
         data = resp.json()
         assert data["email"] == "admin@example.com"
-        assert "/admin" in data["permissions"]
-        assert "*" in data["permissions"]["/admin"]
+        # Instance-admin flag derives from admins-group membership
+        # (#2995) — /admin is no longer a resource in the map.
+        assert data["is_admin"] is True
+        assert "/admin" not in data["permissions"]
         assert len(data["groups"]) > 0
         assert any(g["name"] == "admins" for g in data["groups"])
 
@@ -455,7 +460,9 @@ class TestACLIntrospection:
         assert resp.status_code == 200
         data = resp.json()
         assert data["email"] == nonadmin_user["email"]
-        # Regular user should NOT have admin permissions
+        # Regular user is not an instance admin (#2995) and has no
+        # admin permissions.
+        assert data["is_admin"] is False
         assert "/admin" not in data["permissions"]
         # But should have view on /
         assert "/" in data["permissions"]

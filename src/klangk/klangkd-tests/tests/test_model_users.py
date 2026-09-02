@@ -553,6 +553,38 @@ async def test_update_group_rejects_workspace_role_rename(
     assert await users.update_group(manual["id"], name="renamed") is True
 
 
+async def test_admins_group_identity_is_protected(
+    users, app_state, admin_group
+):
+    """#2995: ``is_admin`` derives from a group *named* ``admins`` —
+    renames onto/off the name and deletes are refused at the model
+    choke points (a delegated group manager must not be able to strip
+    every admin's status or mint a fake admins group)."""
+    from klangk.model import AdminGroupProtectionError
+
+    admin_group = await users.get_group_by_name("admins")
+    assert admin_group is not None
+    with pytest.raises(AdminGroupProtectionError, match="cannot be renamed"):
+        await users.update_group(admin_group["id"], name="super")
+    with pytest.raises(AdminGroupProtectionError, match="reserved"):
+        await users.update_group(
+            (await users.create_group("impostors"))["id"],
+            name="admins",
+        )
+    with pytest.raises(AdminGroupProtectionError, match="cannot be deleted"):
+        await users.delete_group(admin_group["id"])
+    # Same-name no-op, description edits, and unknown ids pass through
+    # the guard untouched.
+    assert (
+        await users.update_group(
+            admin_group["id"], name="admins", description="operators"
+        )
+        is True
+    )
+    assert await users.update_group("no-such-id", name="x") is False
+    assert await users.delete_group("no-such-id") is False
+
+
 class TestUsersBranchGaps2834:
     async def test_backfill_no_handleless_rows_commits_nothing(
         self, user, app_state

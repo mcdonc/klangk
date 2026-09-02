@@ -52,14 +52,14 @@ Klangk uses an Access Control List (ACL) system to manage permissions. Instead o
 | `/volumes`     | Allow  | group:admins  | `manage-volumes`         |
 | `/images`      | Allow  | Authenticated | `view-images`            |
 | `/images`      | Deny   | Everyone      | `*`                      |
-| `/admin`       | Allow  | group:admins  | `*` (admin marker only)  |
-| `/admin`       | Deny   | Everyone      | `*`                      |
 
 These defaults mean: any logged-in user can view pages; only members of
 the `admins` group can create workspaces or hold a `manage-*`
-permission; unauthenticated users are denied everything. `/admin`
-checks nothing anymore (#2944) — its `*` row only marks "instance
-administrator" for permission-map consumers.
+permission; unauthenticated users are denied everything. There is no
+`/admin` resource (#2995) — it is neither seeded nor checked by any
+endpoint; instance-admin status derives from `admins`-group membership,
+surfaced as the `is_admin` flag on `/api/v1/my-permissions`. The
+`admins` group itself cannot be renamed or deleted.
 
 The `/images` Allow Authenticated row is the deliberate exception to
 the admin-default convention (#2974): the listing's consumers are the
@@ -302,7 +302,7 @@ permissions via the workspace's `my-permissions` set.
 
 **Web UI**: the UI automatically shows/hides elements based on your permissions (admin button, workspace tabs, create button, etc.).
 
-**API**: `GET /api/v1/my-permissions` returns your effective permissions on all static resources. Add `?resource=/workspaces/{id}` to check a specific resource.
+**API**: `GET /api/v1/my-permissions` returns your effective permissions on all static resources, plus an `is_admin` flag (true for members of the `admins` group). Add `?resource=/workspaces/{id}` to check a specific resource.
 
 **CLI**: `klangk ls --shared` shows workspaces shared with you.
 

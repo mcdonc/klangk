@@ -40,7 +40,7 @@ from .model import (
     SYSTEM_EVERYONE,
 )
 from .model import AGENT_USER_ID
-from .model.users import AGENT_EMAIL, AGENT_HANDLE
+from .model.users import ADMIN_GROUP_NAME, AGENT_EMAIL, AGENT_HANDLE
 
 logger = logging.getLogger(__name__)
 
@@ -278,26 +278,10 @@ class Lifecycle:
             PRINCIPAL_SYSTEM,
             system_principal=SYSTEM_AUTHENTICATED,
         )
-        # /admin: kept as the instance-administrator marker — Allow *
-        # for admins, deny everyone. No route checks a permission here
-        # anymore (#2944); the wildcard marks "is an instance admin"
-        # for /my-permissions consumers (the frontend's isAdmin).
-        await self.app.state.model.acl.add_acl_entry(
-            "/admin",
-            0,
-            ACTION_ALLOW,
-            "*",
-            PRINCIPAL_GROUP,
-            group_id=admin_group_id,
-        )
-        await self.app.state.model.acl.add_acl_entry(
-            "/admin",
-            1,
-            ACTION_DENY,
-            "*",
-            PRINCIPAL_SYSTEM,
-            system_principal=SYSTEM_EVERYONE,
-        )
+        # No /admin tree: instance-admin status derives from admins-
+        # group membership, not the ACL (#2995) — the marker rows are
+        # gone from the seed, STATIC_RESOURCES, and (via migration
+        # 0027) existing databases.
         logger.info("Seeded default ACL entries")
 
     async def ensure_admin_group(self) -> str:
@@ -306,10 +290,12 @@ class Lifecycle:
         Named ``admins`` since #2934 (migration 0020 renames legacy
         deployments' ``admin`` row); everything else keys on the id.
         """
-        group = await self.app.state.model.users.get_group_by_name("admins")
+        group = await self.app.state.model.users.get_group_by_name(
+            ADMIN_GROUP_NAME
+        )
         if group is None:
             group = await self.app.state.model.users.create_group(
-                "admins", description="Administrators"
+                ADMIN_GROUP_NAME, description="Administrators"
             )
             logger.info("Created admin group: %s", group["id"])
         return group["id"]

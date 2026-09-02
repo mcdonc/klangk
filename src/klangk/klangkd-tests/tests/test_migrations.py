@@ -87,6 +87,7 @@ class TestRunner:
             (24, "0024_join_workspace_permission"),
             (25, "0025_drop_dead_images_deny_row"),
             (26, "0026_volumes_admin_surface"),
+            (27, "0027_retire_admin_marker"),
         ]
         async with aiosqlite.connect(str(app_state.state.db.db_path)) as db:
             assert await _recorded(db) == expected
@@ -179,6 +180,7 @@ class TestRunner:
                 (24, "0024_join_workspace_permission"),
                 (25, "0025_drop_dead_images_deny_row"),
                 (26, "0026_volumes_admin_surface"),
+                (27, "0027_retire_admin_marker"),
             ]
 
     async def test_m0008_agent_identity_and_human_collision(
@@ -2956,5 +2958,73 @@ class TestM0026VolumesAdminSurface:
             await db.commit()
             await m0026_volumes_admin_surface.migration.apply(db)
             assert await self._rows(db, "/volumes") == []
+        finally:
+            await db.__aexit__(None, None, None)
+
+
+class TestM0027RetireAdminMarker:
+    """m0027 deletes every stored ``/admin`` row (#2995): instance-admin
+    status derives from admins-group membership, and no check consults
+    the marker tree, so the rows are inert."""
+
+    async def _db(self, tmp_path):
+        db = aiosqlite.connect(str(tmp_path / "m0027.db"))
+        db = await db.__aenter__()
+        await db.execute(
+            "CREATE TABLE acl_entries ("
+            " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            " resource TEXT, position INTEGER, action INTEGER,"
+            " principal_type INTEGER, user_id TEXT, group_id TEXT,"
+            " system_principal INTEGER, permission TEXT,"
+            " UNIQUE(resource, position))"
+        )
+        return db
+
+    async def _count(self, db, resource):
+        cursor = await db.execute(
+            "SELECT COUNT(*) FROM acl_entries WHERE resource = ?",
+            (resource,),
+        )
+        return (await cursor.fetchone())[0]
+
+    async def test_deletes_admin_subtree_keeps_others(self, tmp_path):
+        """The seeded marker pair, the pre-#2944 ``/admin/*`` delegation
+        rows, and any operator-staged /admin rows all go; every other
+        resource's rows are untouched."""
+        from klangk.model.migrations import m0027_retire_admin_marker
+
+        db = await self._db(tmp_path)
+        try:
+            await db.execute(
+                "INSERT INTO acl_entries"
+                " (resource, position, action, principal_type, group_id,"
+                "  permission)"
+                " VALUES ('/admin', 0, 1, 2, 'g-admin', '*'),"
+                "        ('/admin', 1, 0, 0, NULL, '*'),"
+                "        ('/admin/users', 0, 1, 2, 'g-admin', '*'),"
+                "        ('/users', 0, 1, 2, 'g-admin', 'manage-users')"
+            )
+            await db.commit()
+            await m0027_retire_admin_marker.migration.apply(db)
+
+            assert await self._count(db, "/admin") == 0
+            assert await self._count(db, "/admin/users") == 0
+            assert await self._count(db, "/users") == 1
+            # Idempotent: a re-run deletes nothing new and raises not.
+            await m0027_retire_admin_marker.migration.apply(db)
+            assert await self._count(db, "/users") == 1
+        finally:
+            await db.__aexit__(None, None, None)
+
+    async def test_fresh_db_is_noop(self, tmp_path):
+        """An empty acl_entries table (fresh install) is untouched — the
+        boot seed owns it and no longer plants /admin rows."""
+        from klangk.model.migrations import m0027_retire_admin_marker
+
+        db = await self._db(tmp_path)
+        try:
+            await m0027_retire_admin_marker.migration.apply(db)
+            cursor = await db.execute("SELECT COUNT(*) FROM acl_entries")
+            assert (await cursor.fetchone())[0] == 0
         finally:
             await db.__aexit__(None, None, None)

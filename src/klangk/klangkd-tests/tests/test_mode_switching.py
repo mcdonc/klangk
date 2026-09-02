@@ -165,7 +165,7 @@ class TestNoneToPasswordUpgrade:
         me_perms = (
             await client.get("/api/v1/my-permissions", headers=h)
         ).json()
-        assert "*" in me_perms["permissions"].get("/admin", [])
+        assert me_perms["is_admin"] is True
 
         # admin set-password equivalent.
         resp = await client.patch(
@@ -455,4 +455,4 @@ class TestRestartIdempotency:
                 headers={"Authorization": f"Bearer {token}"},
             )
         ).json()
-        assert perms and "*" in perms["permissions"].get("/admin", [])
+        assert perms and perms["is_admin"] is True

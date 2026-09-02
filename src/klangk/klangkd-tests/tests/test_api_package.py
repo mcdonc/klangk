@@ -335,3 +335,6 @@ def test_static_resources_single_source():
     # #2923's events resource must be reported so the frontend can gate
     # the Events tab on the dedicated permission.
     assert "/events" in api.STATIC_RESOURCES
+    # #2995: /admin is not a resource — instance-admin status is the
+    # is_admin flag, so the permission map must not carry a /admin key.
+    assert "/admin" not in api.STATIC_RESOURCES

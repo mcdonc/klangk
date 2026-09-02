@@ -1,4 +1,5 @@
 import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -60,8 +61,11 @@ Map<String, dynamic> _agentUser() => {
       'created_at': '2026-01-01T00:00:00',
     };
 
-Map<String, dynamic> _group(String name,
-        {String id = '', String description = ''}) =>
+Map<String, dynamic> _group(
+  String name, {
+  String id = '',
+  String description = '',
+}) =>
     {
       'id': id.isEmpty ? name : id,
       'name': name,
@@ -75,19 +79,18 @@ String get _adminToken {
       .encode(utf8.encode(jsonEncode({'alg': 'HS256', 'typ': 'JWT'})))
       .replaceAll('=', '');
   final body = base64Url
-      .encode(utf8.encode(jsonEncode({
-        'sub': 'admin-user',
-        'email': 'admin@example.com',
-      })))
+      .encode(
+        utf8.encode(
+          jsonEncode({'sub': 'admin-user', 'email': 'admin@example.com'}),
+        ),
+      )
       .replaceAll('=', '');
   return '$header.$body.fakesig';
 }
 
 /// Build a mock client that serves config + admin permissions + a custom
 /// handler for everything else.
-http.Client _mockClient(
-  Future<http.Response> Function(http.Request) handler,
-) {
+http.Client _mockClient(Future<http.Response> Function(http.Request) handler) {
   return MockClient((request) async {
     if (request.url.path.contains('/api/v1/config')) {
       return http.Response(
@@ -100,8 +103,8 @@ http.Client _mockClient(
         jsonEncode({
           'user_id': 'admin-user',
           'email': 'admin@example.com',
+          'is_admin': true,
           'permissions': {
-            '/admin': ['*'],
             '/users': ['manage-users'],
             '/groups': ['manage-groups'],
             '/invitations': ['manage-invitations'],
@@ -109,7 +112,7 @@ http.Client _mockClient(
             '/acl': ['manage-acls'],
           },
           'groups': [
-            {'id': 'g1', 'name': 'admins'}
+            {'id': 'g1', 'name': 'admins'},
           ],
         }),
         200,
@@ -190,21 +193,30 @@ void main() {
   /// invitations/groups so the page loads.
   void serveUsers(
     List<Map<String, dynamic>> Function(
-            int page, int pageSize, String sort, String order, String? q)
-        usersFor, {
+      int page,
+      int pageSize,
+      String sort,
+      String order,
+      String? q,
+    ) usersFor, {
     int total = 25,
   }) {
     testAuthHttpClientOverride = _mockClient((request) async {
       if (request.url.path == '/api/v1/users') {
         final page = int.parse(request.url.queryParameters['page'] ?? '1');
-        final pageSize =
-            int.parse(request.url.queryParameters['page_size'] ?? '10');
+        final pageSize = int.parse(
+          request.url.queryParameters['page_size'] ?? '10',
+        );
         final sort = request.url.queryParameters['sort'] ?? 'created';
         final order = request.url.queryParameters['order'] ?? 'desc';
         final q = request.url.queryParameters['q'];
         return http.Response(
-          _usersEnvelope(usersFor(page, pageSize, sort, order, q),
-              page: page, pageSize: pageSize, total: total),
+          _usersEnvelope(
+            usersFor(page, pageSize, sort, order, q),
+            page: page,
+            pageSize: pageSize,
+            total: total,
+          ),
           200,
         );
       }
@@ -222,8 +234,12 @@ void main() {
   /// users/invitations so the page loads.
   void serveGroups(
     List<Map<String, dynamic>> Function(
-            int page, int pageSize, String sort, String order, String? q)
-        groupsFor, {
+      int page,
+      int pageSize,
+      String sort,
+      String order,
+      String? q,
+    ) groupsFor, {
     int total = 25,
   }) {
     testAuthHttpClientOverride = _mockClient((request) async {
@@ -235,14 +251,19 @@ void main() {
       }
       if (request.url.path == '/api/v1/groups') {
         final page = int.parse(request.url.queryParameters['page'] ?? '1');
-        final pageSize =
-            int.parse(request.url.queryParameters['page_size'] ?? '10');
+        final pageSize = int.parse(
+          request.url.queryParameters['page_size'] ?? '10',
+        );
         final sort = request.url.queryParameters['sort'] ?? 'name';
         final order = request.url.queryParameters['order'] ?? 'asc';
         final q = request.url.queryParameters['q'];
         return http.Response(
-          _groupsEnvelope(groupsFor(page, pageSize, sort, order, q),
-              page: page, pageSize: pageSize, total: total),
+          _groupsEnvelope(
+            groupsFor(page, pageSize, sort, order, q),
+            page: page,
+            pageSize: pageSize,
+            total: total,
+          ),
           200,
         );
       }
@@ -263,14 +284,17 @@ void main() {
       await pumpPage(tester);
 
       expect(
-          find.text('alice@example.com', skipOffstage: false), findsOneWidget);
+        find.text('alice@example.com', skipOffstage: false),
+        findsOneWidget,
+      );
       expect(find.text('bob@example.com', skipOffstage: false), findsOneWidget);
       // No per-card groups subtitle anymore.
       expect(find.textContaining('Groups:'), findsNothing);
     });
 
-    testWidgets('shows pagination controls when more than one page',
-        (tester) async {
+    testWidgets('shows pagination controls when more than one page', (
+      tester,
+    ) async {
       // 25 users with page_size 10 => 3 pages.
       serveUsers((page, pageSize, sort, order, q) {
         final start = (page - 1) * pageSize;
@@ -284,11 +308,15 @@ void main() {
 
       expect(find.text('1 / 3', skipOffstage: false), findsOneWidget);
       // Prev disabled on page 1.
-      expect(tester.widget<IconButton>(iconButton('Previous page')).onPressed,
-          isNull);
+      expect(
+        tester.widget<IconButton>(iconButton('Previous page')).onPressed,
+        isNull,
+      );
       // Next enabled.
-      expect(tester.widget<IconButton>(iconButton('Next page')).onPressed,
-          isNotNull);
+      expect(
+        tester.widget<IconButton>(iconButton('Next page')).onPressed,
+        isNotNull,
+      );
     });
 
     testWidgets('navigates to next and previous pages', (tester) async {
@@ -312,8 +340,10 @@ void main() {
 
       expect(lastPageRequested, 2);
       expect(find.text('2 / 2', skipOffstage: false), findsOneWidget);
-      expect(tester.widget<IconButton>(iconButton('Previous page')).onPressed,
-          isNotNull);
+      expect(
+        tester.widget<IconButton>(iconButton('Previous page')).onPressed,
+        isNotNull,
+      );
 
       await tester.tap(iconButton('Previous page'));
       await tester.pumpAndSettle();
@@ -395,10 +425,7 @@ void main() {
       // The filter re-queries as the user types, debounced — settle past
       // the debounce timer. Scope to the users toolbar so we type into the
       // users filter, not the offstage invitations one.
-      await tester.enterText(
-        inUsersToolbar(find.byType(TextField)),
-        'needle',
-      );
+      await tester.enterText(inUsersToolbar(find.byType(TextField)), 'needle');
       await tester.pumpAndSettle();
 
       expect(capturedQ, 'needle');
@@ -417,8 +444,9 @@ void main() {
   });
 
   group('AdminUsersPage server tab', () {
-    testWidgets('shows the Server tab for an admin and renders the panel',
-        (tester) async {
+    testWidgets('shows the Server tab for an admin and renders the panel', (
+      tester,
+    ) async {
       serveUsers((page, pageSize, sort, order, q) => []);
 
       await pumpPage(tester);
@@ -431,8 +459,9 @@ void main() {
       expect(find.text('No scheduled server actions'), findsOneWidget);
     });
 
-    testWidgets('hides the Server tab without the admin permission',
-        (tester) async {
+    testWidgets('hides the Server tab without the admin permission', (
+      tester,
+    ) async {
       // Only /admin/users view — no /admin grant, so no Server tab.
       testAuthHttpClientOverride = MockClient((request) async {
         if (request.url.path.contains('/api/v1/config')) {
@@ -489,8 +518,9 @@ void main() {
       expect(find.text('editors', skipOffstage: false), findsOneWidget);
     });
 
-    testWidgets('shows pagination controls when more than one page',
-        (tester) async {
+    testWidgets('shows pagination controls when more than one page', (
+      tester,
+    ) async {
       // 25 groups with page_size 10 => 3 pages.
       serveGroups((page, pageSize, sort, order, q) {
         final start = (page - 1) * pageSize;
@@ -505,16 +535,18 @@ void main() {
       expect(inGroupsToolbar(find.text('1 / 3')), findsOneWidget);
       // Prev disabled on page 1.
       expect(
-          tester
-              .widget<IconButton>(inGroupsToolbar(iconButton('Previous page')))
-              .onPressed,
-          isNull);
+        tester
+            .widget<IconButton>(inGroupsToolbar(iconButton('Previous page')))
+            .onPressed,
+        isNull,
+      );
       // Next enabled.
       expect(
-          tester
-              .widget<IconButton>(inGroupsToolbar(iconButton('Next page')))
-              .onPressed,
-          isNotNull);
+        tester
+            .widget<IconButton>(inGroupsToolbar(iconButton('Next page')))
+            .onPressed,
+        isNotNull,
+      );
     });
 
     testWidgets('navigates to next and previous pages', (tester) async {
@@ -539,10 +571,11 @@ void main() {
       expect(lastPageRequested, 2);
       expect(inGroupsToolbar(find.text('2 / 2')), findsOneWidget);
       expect(
-          tester
-              .widget<IconButton>(inGroupsToolbar(iconButton('Previous page')))
-              .onPressed,
-          isNotNull);
+        tester
+            .widget<IconButton>(inGroupsToolbar(iconButton('Previous page')))
+            .onPressed,
+        isNotNull,
+      );
 
       await tester.tap(inGroupsToolbar(iconButton('Previous page')));
       await tester.pumpAndSettle();
@@ -564,10 +597,7 @@ void main() {
         if (request.url.path == '/api/v1/groups') {
           capturedSort = request.url.queryParameters['sort'];
           capturedOrder = request.url.queryParameters['order'];
-          return http.Response(
-            _groupsEnvelope([_group('g')], total: 1),
-            200,
-          );
+          return http.Response(_groupsEnvelope([_group('g')], total: 1), 200);
         }
         return http.Response('Not found', 404);
       });
@@ -626,11 +656,14 @@ void main() {
       );
       expect(chip.selected, isFalse);
       expect(
-          inGroupsToolbar(find.text('Workspace role groups')), findsOneWidget);
+        inGroupsToolbar(find.text('Workspace role groups')),
+        findsOneWidget,
+      );
     });
 
-    testWidgets('workspace-role chip includes the seeded role groups',
-        (tester) async {
+    testWidgets('workspace-role chip includes the seeded role groups', (
+      tester,
+    ) async {
       final capturedSources = <String?>[];
       testAuthHttpClientOverride = _mockClient((request) async {
         if (request.url.path == '/api/v1/users') {
@@ -702,10 +735,7 @@ void main() {
       // The filter re-queries as the user types, debounced — settle past
       // the debounce timer. Scope to the groups toolbar so we type into the
       // groups filter, not the offstage users/invitations ones.
-      await tester.enterText(
-        inGroupsToolbar(find.byType(TextField)),
-        'needle',
-      );
+      await tester.enterText(inGroupsToolbar(find.byType(TextField)), 'needle');
       await tester.pumpAndSettle();
 
       expect(capturedQ, 'needle');
@@ -738,8 +768,12 @@ void main() {
     void serveUsersCaptureWrite(
       List<Map<String, dynamic>> writes,
       List<Map<String, dynamic>> Function(
-              int page, int pageSize, String sort, String order, String? q)
-          usersFor, {
+        int page,
+        int pageSize,
+        String sort,
+        String order,
+        String? q,
+      ) usersFor, {
       int total = 0,
     }) {
       testAuthHttpClientOverride = _mockClient((request) async {
@@ -756,14 +790,19 @@ void main() {
             );
           }
           final page = int.parse(request.url.queryParameters['page'] ?? '1');
-          final pageSize =
-              int.parse(request.url.queryParameters['page_size'] ?? '10');
+          final pageSize = int.parse(
+            request.url.queryParameters['page_size'] ?? '10',
+          );
           final sort = request.url.queryParameters['sort'] ?? 'created';
           final order = request.url.queryParameters['order'] ?? 'desc';
           final q = request.url.queryParameters['q'];
           return http.Response(
-            _usersEnvelope(usersFor(page, pageSize, sort, order, q),
-                page: page, pageSize: pageSize, total: total),
+            _usersEnvelope(
+              usersFor(page, pageSize, sort, order, q),
+              page: page,
+              pageSize: pageSize,
+              total: total,
+            ),
             200,
           );
         }
@@ -784,8 +823,9 @@ void main() {
       });
     }
 
-    testWidgets('Add: too-short password shows inline error and disables Add',
-        (tester) async {
+    testWidgets('Add: too-short password shows inline error and disables Add', (
+      tester,
+    ) async {
       final writes = <Map<String, dynamic>>[];
       serveUsersCaptureWrite(writes, (_p, _ps, _s, _o, _q) => [], total: 0);
       await pumpPage(tester);
@@ -810,8 +850,9 @@ void main() {
       expect(writes, isEmpty);
     });
 
-    testWidgets('Add: mismatched confirm shows inline error and disables Add',
-        (tester) async {
+    testWidgets('Add: mismatched confirm shows inline error and disables Add', (
+      tester,
+    ) async {
       final writes = <Map<String, dynamic>>[];
       serveUsersCaptureWrite(writes, (_p, _ps, _s, _o, _q) => [], total: 0);
       await pumpPage(tester);
@@ -836,8 +877,9 @@ void main() {
       expect(writes, isEmpty);
     });
 
-    testWidgets('Add: Add stays disabled while confirm is blank',
-        (tester) async {
+    testWidgets('Add: Add stays disabled while confirm is blank', (
+      tester,
+    ) async {
       serveUsersCaptureWrite([], (_p, _ps, _s, _o, _q) => [], total: 0);
       await pumpPage(tester);
 
@@ -853,8 +895,9 @@ void main() {
       expect(isPrimaryEnabled(tester, 'Add'), isFalse);
     });
 
-    testWidgets('Add: invalid email shows inline error and disables Add',
-        (tester) async {
+    testWidgets('Add: invalid email shows inline error and disables Add', (
+      tester,
+    ) async {
       final writes = <Map<String, dynamic>>[];
       serveUsersCaptureWrite(writes, (_p, _ps, _s, _o, _q) => [], total: 0);
       await pumpPage(tester);
@@ -888,8 +931,9 @@ void main() {
       expect(isPrimaryEnabled(tester, 'Add'), isTrue);
     });
 
-    testWidgets('Add: verification-email path also requires a valid email',
-        (tester) async {
+    testWidgets('Add: verification-email path also requires a valid email', (
+      tester,
+    ) async {
       final writes = <Map<String, dynamic>>[];
       serveUsersCaptureWrite(writes, (_p, _ps, _s, _o, _q) => [], total: 0);
       await pumpPage(tester);
@@ -931,33 +975,34 @@ void main() {
     });
 
     testWidgets(
-        'Add: verification-email path hides password fields and sends flag',
-        (tester) async {
-      final writes = <Map<String, dynamic>>[];
-      serveUsersCaptureWrite(writes, (_p, _ps, _s, _o, _q) => [], total: 0);
-      await pumpPage(tester);
+      'Add: verification-email path hides password fields and sends flag',
+      (tester) async {
+        final writes = <Map<String, dynamic>>[];
+        serveUsersCaptureWrite(writes, (_p, _ps, _s, _o, _q) => [], total: 0);
+        await pumpPage(tester);
 
-      await tester.tap(find.byTooltip('Add user'));
-      await tester.pumpAndSettle();
+        await tester.tap(find.byTooltip('Add user'));
+        await tester.pumpAndSettle();
 
-      // Checking "send verification email" removes the password fields.
-      await tester.tap(find.text('Send verification email'));
-      await tester.pumpAndSettle();
-      expect(fieldLabeled('Password'), findsNothing);
-      expect(fieldLabeled('Confirm Password'), findsNothing);
+        // Checking "send verification email" removes the password fields.
+        await tester.tap(find.text('Send verification email'));
+        await tester.pumpAndSettle();
+        expect(fieldLabeled('Password'), findsNothing);
+        expect(fieldLabeled('Confirm Password'), findsNothing);
 
-      await tester.enterText(fieldLabeled('Email'), 'new@example.com');
-      await tester.pumpAndSettle();
+        await tester.enterText(fieldLabeled('Email'), 'new@example.com');
+        await tester.pumpAndSettle();
 
-      expect(isPrimaryEnabled(tester, 'Add'), isTrue);
-      await tester.tap(find.widgetWithText(FilledButton, 'Add'));
-      await tester.pumpAndSettle();
+        expect(isPrimaryEnabled(tester, 'Add'), isTrue);
+        await tester.tap(find.widgetWithText(FilledButton, 'Add'));
+        await tester.pumpAndSettle();
 
-      expect(writes.single['_method'], 'POST');
-      expect(writes.single['email'], 'new@example.com');
-      expect(writes.single['send_verification_email'], true);
-      expect(writes.single.containsKey('password'), isFalse);
-    });
+        expect(writes.single['_method'], 'POST');
+        expect(writes.single['email'], 'new@example.com');
+        expect(writes.single['send_verification_email'], true);
+        expect(writes.single.containsKey('password'), isFalse);
+      },
+    );
 
     testWidgets('Add: password fields can toggle visibility', (tester) async {
       serveUsersCaptureWrite([], (_p, _ps, _s, _o, _q) => [], total: 0);
@@ -986,8 +1031,9 @@ void main() {
       await tester.pumpAndSettle();
     });
 
-    testWidgets('Add: cancel closes the dialog without creating',
-        (tester) async {
+    testWidgets('Add: cancel closes the dialog without creating', (
+      tester,
+    ) async {
       final writes = <Map<String, dynamic>>[];
       serveUsersCaptureWrite(writes, (_p, _ps, _s, _o, _q) => [], total: 0);
       await pumpPage(tester);
@@ -1001,8 +1047,9 @@ void main() {
       expect(writes, isEmpty);
     });
 
-    testWidgets('Edit: invalid email shows inline error and disables Save',
-        (tester) async {
+    testWidgets('Edit: invalid email shows inline error and disables Save', (
+      tester,
+    ) async {
       final writes = <Map<String, dynamic>>[];
       serveUsersCaptureWrite(
         writes,
@@ -1036,76 +1083,82 @@ void main() {
       expect(isPrimaryEnabled(tester, 'Save'), isTrue);
     });
 
-    testWidgets('Edit: blank password keeps Save enabled and sends email only',
-        (tester) async {
-      final writes = <Map<String, dynamic>>[];
-      serveUsersCaptureWrite(
-        writes,
-        (_p, _ps, _s, _o, _q) => [_user('alice@example.com', id: 'u1')],
-        total: 1,
-      );
-      await pumpPage(tester);
-      await tester.tap(find.text('alice@example.com'));
-      await tester.pumpAndSettle();
+    testWidgets(
+      'Edit: blank password keeps Save enabled and sends email only',
+      (tester) async {
+        final writes = <Map<String, dynamic>>[];
+        serveUsersCaptureWrite(
+          writes,
+          (_p, _ps, _s, _o, _q) => [_user('alice@example.com', id: 'u1')],
+          total: 1,
+        );
+        await pumpPage(tester);
+        await tester.tap(find.text('alice@example.com'));
+        await tester.pumpAndSettle();
 
-      // No new password typed → confirm field absent, Save enabled.
-      expect(fieldLabeled('Confirm New Password'), findsNothing);
-      expect(isPrimaryEnabled(tester, 'Save'), isTrue);
+        // No new password typed → confirm field absent, Save enabled.
+        expect(fieldLabeled('Confirm New Password'), findsNothing);
+        expect(isPrimaryEnabled(tester, 'Save'), isTrue);
 
-      await tester.tap(find.widgetWithText(FilledButton, 'Save'));
-      await tester.pumpAndSettle();
+        await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+        await tester.pumpAndSettle();
 
-      expect(writes.single['_method'], 'PATCH');
-      expect(writes.single['email'], 'alice@example.com');
-      expect(writes.single.containsKey('password'), isFalse);
-      expect(writes.single.containsKey('handle'), isFalse); // unchanged
-    });
+        expect(writes.single['_method'], 'PATCH');
+        expect(writes.single['email'], 'alice@example.com');
+        expect(writes.single.containsKey('password'), isFalse);
+        expect(writes.single.containsKey('handle'), isFalse); // unchanged
+      },
+    );
 
     testWidgets(
-        'Edit: new password requires min length, confirm match, and includes handle when changed',
-        (tester) async {
-      final writes = <Map<String, dynamic>>[];
-      serveUsersCaptureWrite(
-        writes,
-        (_p, _ps, _s, _o, _q) => [_user('alice@example.com', id: 'u1')],
-        total: 1,
-      );
-      await pumpPage(tester);
-      await tester.tap(find.text('alice@example.com'));
-      await tester.pumpAndSettle();
+      'Edit: new password requires min length, confirm match, and includes handle when changed',
+      (tester) async {
+        final writes = <Map<String, dynamic>>[];
+        serveUsersCaptureWrite(
+          writes,
+          (_p, _ps, _s, _o, _q) => [_user('alice@example.com', id: 'u1')],
+          total: 1,
+        );
+        await pumpPage(tester);
+        await tester.tap(find.text('alice@example.com'));
+        await tester.pumpAndSettle();
 
-      // A too-short new password surfaces an inline error + disables Save.
-      await tester.enterText(fieldLabeled('New Password'), 'short');
-      await tester.pumpAndSettle();
-      expect(
-        tester
-            .widget<TextField>(fieldLabeled('New Password'))
-            .decoration
-            ?.errorText,
-        'Min 8 characters',
-      );
-      expect(fieldLabeled('Confirm New Password'), findsOneWidget);
-      expect(isPrimaryEnabled(tester, 'Save'), isFalse);
+        // A too-short new password surfaces an inline error + disables Save.
+        await tester.enterText(fieldLabeled('New Password'), 'short');
+        await tester.pumpAndSettle();
+        expect(
+          tester
+              .widget<TextField>(fieldLabeled('New Password'))
+              .decoration
+              ?.errorText,
+          'Min 8 characters',
+        );
+        expect(fieldLabeled('Confirm New Password'), findsOneWidget);
+        expect(isPrimaryEnabled(tester, 'Save'), isFalse);
 
-      // Replace with a valid password that matches its confirmation, and set a
-      // new handle so the handle-changed branch is exercised too.
-      await tester.enterText(fieldLabeled('New Password'), 'longenough');
-      await tester.enterText(
-          fieldLabeled('Confirm New Password'), 'longenough');
-      await tester.enterText(fieldLabeled('Handle'), 'alice42');
-      await tester.pumpAndSettle();
+        // Replace with a valid password that matches its confirmation, and set a
+        // new handle so the handle-changed branch is exercised too.
+        await tester.enterText(fieldLabeled('New Password'), 'longenough');
+        await tester.enterText(
+          fieldLabeled('Confirm New Password'),
+          'longenough',
+        );
+        await tester.enterText(fieldLabeled('Handle'), 'alice42');
+        await tester.pumpAndSettle();
 
-      expect(isPrimaryEnabled(tester, 'Save'), isTrue);
-      await tester.tap(find.widgetWithText(FilledButton, 'Save'));
-      await tester.pumpAndSettle();
+        expect(isPrimaryEnabled(tester, 'Save'), isTrue);
+        await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+        await tester.pumpAndSettle();
 
-      expect(writes.single['_method'], 'PATCH');
-      expect(writes.single['password'], 'longenough');
-      expect(writes.single['handle'], 'alice42');
-    });
+        expect(writes.single['_method'], 'PATCH');
+        expect(writes.single['password'], 'longenough');
+        expect(writes.single['handle'], 'alice42');
+      },
+    );
 
-    testWidgets('Edit: mismatched confirm shows error and disables Save',
-        (tester) async {
+    testWidgets('Edit: mismatched confirm shows error and disables Save', (
+      tester,
+    ) async {
       final writes = <Map<String, dynamic>>[];
       serveUsersCaptureWrite(
         writes,
@@ -1160,8 +1213,9 @@ void main() {
       await tester.pumpAndSettle();
     });
 
-    testWidgets('Edit: cancel closes the dialog without updating',
-        (tester) async {
+    testWidgets('Edit: cancel closes the dialog without updating', (
+      tester,
+    ) async {
       final writes = <Map<String, dynamic>>[];
       serveUsersCaptureWrite(
         writes,
@@ -1224,10 +1278,11 @@ void main() {
 
     testWidgets('lists owned workspaces and their count', (tester) async {
       final deleted = <String>[];
-      serveDeleteUser(
-        [_ws('my-app'), _ws('staging-env'), _ws('scratch')],
-        deletedIds: deleted,
-      );
+      serveDeleteUser([
+        _ws('my-app'),
+        _ws('staging-env'),
+        _ws('scratch'),
+      ], deletedIds: deleted);
       await pumpPage(tester);
 
       await tester.tap(find.byTooltip('Delete user'));
@@ -1245,8 +1300,9 @@ void main() {
       expect(deleted, ['u1']);
     });
 
-    testWidgets('singular "workspace" for a single owned workspace',
-        (tester) async {
+    testWidgets('singular "workspace" for a single owned workspace', (
+      tester,
+    ) async {
       serveDeleteUser([_ws('lonely')]);
       await pumpPage(tester);
 
@@ -1257,8 +1313,9 @@ void main() {
       expect(find.text('lonely'), findsOneWidget);
     });
 
-    testWidgets('zero workspaces does not imply workspace data loss',
-        (tester) async {
+    testWidgets('zero workspaces does not imply workspace data loss', (
+      tester,
+    ) async {
       serveDeleteUser([]);
       await pumpPage(tester);
 
@@ -1270,12 +1327,12 @@ void main() {
       expect(find.text('•'), findsNothing);
     });
 
-    testWidgets('100+ workspaces handled gracefully when has_more',
-        (tester) async {
-      serveDeleteUser(
-        [for (var i = 0; i < 100; i++) _ws('ws$i')],
-        hasMore: true,
-      );
+    testWidgets('100+ workspaces handled gracefully when has_more', (
+      tester,
+    ) async {
+      serveDeleteUser([
+        for (var i = 0; i < 100; i++) _ws('ws$i'),
+      ], hasMore: true);
       await pumpPage(tester);
 
       await tester.tap(find.byTooltip('Delete user'));
@@ -1301,8 +1358,9 @@ void main() {
   });
 
   group('AdminUsersPage system agent row (#2892)', () {
-    testWidgets('marks the agent row and omits its edit/delete affordances',
-        (tester) async {
+    testWidgets('marks the agent row and omits its edit/delete affordances', (
+      tester,
+    ) async {
       serveUsers(
         (page, pageSize, sort, order, q) => [
           _agentUser(),
@@ -1336,19 +1394,18 @@ void main() {
       expect(find.byType(AlertDialog), findsNothing);
     });
 
-    testWidgets('agent-only list shows no delete action at all',
-        (tester) async {
-      serveUsers(
-        (page, pageSize, sort, order, q) => [_agentUser()],
-        total: 1,
-      );
+    testWidgets('agent-only list shows no delete action at all', (
+      tester,
+    ) async {
+      serveUsers((page, pageSize, sort, order, q) => [_agentUser()], total: 1);
       await pumpPage(tester);
 
       expect(find.byTooltip('Delete user'), findsNothing);
     });
 
-    testWidgets('member picker searches /users/search and omits the agent',
-        (tester) async {
+    testWidgets('member picker searches /users/search and omits the agent', (
+      tester,
+    ) async {
       testAuthHttpClientOverride = _mockClient((request) async {
         final path = request.url.path;
         if (path == '/api/v1/users/search') {
@@ -1401,8 +1458,9 @@ void main() {
       expect(find.text('klangk@example.com'), findsNothing);
     });
 
-    testWidgets('manage-groups-only delegate sees members and can search',
-        (tester) async {
+    testWidgets('manage-groups-only delegate sees members and can search', (
+      tester,
+    ) async {
       // #2943 review: a groups-only delegate gets 403 on /admin/users —
       // the members dialog must still work (picker rides the
       // authenticated /users/search surface).
@@ -1463,13 +1521,12 @@ void main() {
   });
 
   group('ACL browser permission hints (#2940)', () {
-    Finder sidebarNode(String label) => find.descendant(
-          of: find.byType(ListView),
-          matching: find.text(label),
-        );
+    Finder sidebarNode(String label) =>
+        find.descendant(of: find.byType(ListView), matching: find.text(label));
 
-    testWidgets('lists only top-level resources and hints the permissions',
-        (tester) async {
+    testWidgets('lists only top-level resources and hints the permissions', (
+      tester,
+    ) async {
       serveUsers((page, pageSize, sort, order, q) => []);
 
       await pumpPage(tester);
@@ -1500,15 +1557,15 @@ void main() {
       }
       // The full noun tree — nothing else (no /admin node).
       expect(
-          find.descendant(
-              of: find.byType(ListView), matching: find.text('Admin')),
-          findsNothing);
+        find.descendant(
+          of: find.byType(ListView),
+          matching: find.text('Admin'),
+        ),
+        findsNothing,
+      );
 
       // Root is selected first: its hint names the seeded permission.
-      expect(
-        find.textContaining('Checked permission: view —'),
-        findsOneWidget,
-      );
+      expect(find.textContaining('Checked permission: view —'), findsOneWidget);
 
       // The Users node's hint names its tab permission; /admin no
       // longer appears at all (#2944 — instance-admin marker only).

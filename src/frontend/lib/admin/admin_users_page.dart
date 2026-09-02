@@ -97,8 +97,9 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     final auth = context.read<AuthService>();
     // One permission per tab on its first-class resource (#2944): a
     // `manage-<thing>` grant covers the whole tab; admins hold every
-    // name via the seeded per-resource rows (plus the /admin wildcard
-    // marker), a delegated user gets exactly what their ACE grants.
+    // name via the seeded per-resource rows (instance-admin status
+    // itself is the /my-permissions is_admin flag, #2995), a delegated
+    // user gets exactly what their ACE grants.
     _canUsers = auth.hasPermission('/users', 'manage-users');
     _canGroups = auth.hasPermission('/groups', 'manage-groups');
     _canInvitations = auth.hasPermission('/invitations', 'manage-invitations');
@@ -131,9 +132,7 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
       };
       final q = _usersQuery.trim();
       if (q.isNotEmpty) query['q'] = q;
-      final resp = await auth.authGet(
-        '/api/v1/users?${_encodeQuery(query)}',
-      );
+      final resp = await auth.authGet('/api/v1/users?${_encodeQuery(query)}');
       if (resp.statusCode == 200) {
         final data = jsonDecode(resp.body) as Map<String, dynamic>;
         setState(() {
@@ -164,10 +163,7 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     );
     if (result == null) return;
 
-    final resp = await auth.authPost(
-      '/api/v1/users',
-      body: jsonEncode(result),
-    );
+    final resp = await auth.authPost('/api/v1/users', body: jsonEncode(result));
     if (resp.statusCode == 200) {
       _loadUsers();
       if (mounted) {
@@ -721,9 +717,7 @@ class _GroupsTabState extends State<_GroupsTab> {
       if (q.isNotEmpty) query['q'] = q;
       final source = _groupsSource;
       if (source != null) query['source'] = source;
-      final resp = await auth.authGet(
-        '/api/v1/groups?${_encodeQuery(query)}',
-      );
+      final resp = await auth.authGet('/api/v1/groups?${_encodeQuery(query)}');
       if (resp.statusCode == 200) {
         final data = jsonDecode(resp.body) as Map<String, dynamic>;
         if (mounted) {
@@ -1006,9 +1000,7 @@ class _ManageMembersDialogState extends State<_ManageMembersDialog> {
 
   Future<void> _loadMembers() async {
     final auth = context.read<AuthService>();
-    final resp = await auth.authGet(
-      '/api/v1/groups/$_groupId/members',
-    );
+    final resp = await auth.authGet('/api/v1/groups/$_groupId/members');
     if (!mounted) return;
     setState(() {
       if (resp.statusCode == 200) {
@@ -1287,9 +1279,7 @@ class _InvitationsTabState extends State<_InvitationsTab> {
     if (confirm != true) return;
 
     final auth = context.read<AuthService>();
-    final resp = await auth.authDelete(
-      '/api/v1/invitations/$invitationId',
-    );
+    final resp = await auth.authDelete('/api/v1/invitations/$invitationId');
     if (resp.statusCode == 200) {
       _loadInvitations(page: _invitationsPage);
     } else {
@@ -2132,11 +2122,7 @@ class _UserAvatar extends StatelessWidget {
             backgroundColor:
                 isAgent ? KColors.accentAmber : KColors.colorForString(email),
             child: isAgent
-                ? const Icon(
-                    Icons.smart_toy,
-                    color: Colors.white,
-                    size: 20,
-                  )
+                ? const Icon(Icons.smart_toy, color: Colors.white, size: 20)
                 : Text(
                     initial,
                     style: const TextStyle(
@@ -2192,9 +2178,8 @@ class _AclBrowserTabState extends State<_AclBrowserTab> {
   /// Only top-level resources are listed (#2940): the admin tabs are
   /// permission *checks*, not ACL-granting destinations — a tab is
   /// delegated by adding its `manage-*` permission (or `*`) ACE on the
-  /// `/admin` node, which every tab route inherits via walk-up. Listing
-  /// the sub-resources here blurred the endpoint-permission mapping
-  /// into the ACE tree.
+  /// tab's first-class resource. Listing the sub-resources here blurred
+  /// the endpoint-permission mapping into the ACE tree.
   static const _resources = [
     ('/', 'Root', Icons.home),
     ('/workspaces', 'Workspaces', Icons.folder),
@@ -2211,8 +2196,9 @@ class _AclBrowserTabState extends State<_AclBrowserTab> {
   /// The permission(s) that matter on each node (#2944): the endpoint
   /// checks key on these names, so the browser shows the mapping next
   /// to the ACE list instead of leaving the operator to guess which
-  /// name the server actually asks for on this resource. /admin no
-  /// longer appears — it is only the instance-admin wildcard marker.
+  /// name the server actually asks for on this resource. /admin never
+  /// appears — it is not a resource at all (#2995): instance-admin
+  /// status derives from admins-group membership.
   static const _resourceHints = {
     '/': 'view — held by every authenticated user via the seed',
     '/workspaces':

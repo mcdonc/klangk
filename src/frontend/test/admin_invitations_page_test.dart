@@ -1,4 +1,5 @@
 import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -50,19 +51,18 @@ String get _adminToken {
       .encode(utf8.encode(jsonEncode({'alg': 'HS256', 'typ': 'JWT'})))
       .replaceAll('=', '');
   final body = base64Url
-      .encode(utf8.encode(jsonEncode({
-        'sub': 'admin-user',
-        'email': 'admin@example.com',
-      })))
+      .encode(
+        utf8.encode(
+          jsonEncode({'sub': 'admin-user', 'email': 'admin@example.com'}),
+        ),
+      )
       .replaceAll('=', '');
   return '$header.$body.fakesig';
 }
 
 /// Build a mock client that serves config + admin permissions + a custom
 /// handler for everything else.
-http.Client _mockClient(
-  Future<http.Response> Function(http.Request) handler,
-) {
+http.Client _mockClient(Future<http.Response> Function(http.Request) handler) {
   return MockClient((request) async {
     if (request.url.path.contains('/api/v1/config')) {
       return http.Response(
@@ -75,8 +75,8 @@ http.Client _mockClient(
         jsonEncode({
           'user_id': 'admin-user',
           'email': 'admin@example.com',
+          'is_admin': true,
           'permissions': {
-            '/admin': ['*'],
             '/users': ['manage-users'],
             '/groups': ['manage-groups'],
             '/invitations': ['manage-invitations'],
@@ -84,7 +84,7 @@ http.Client _mockClient(
             '/acl': ['manage-acls'],
           },
           'groups': [
-            {'id': 'g1', 'name': 'admin'}
+            {'id': 'g1', 'name': 'admin'},
           ],
         }),
         200,
@@ -124,8 +124,10 @@ void main() {
   /// Pump the page on a wide surface (the admin tab row overflows on the
   /// default 800px test surface) and settle. Optionally navigates to the
   /// Invitations tab before settling.
-  Future<void> pumpPage(WidgetTester tester,
-      {bool toInvitations = true}) async {
+  Future<void> pumpPage(
+    WidgetTester tester, {
+    bool toInvitations = true,
+  }) async {
     await tester.binding.setSurfaceSize(const Size(1280, 900));
     await tester.pumpWidget(buildPage());
     await tester.pumpAndSettle();
@@ -159,16 +161,21 @@ void main() {
   /// the page count > 1 for those controls to be present.
   void serveInvitations(
     List<Map<String, dynamic>> Function(
-            int page, int pageSize, String sort, String order, String? q)
-        invitationsFor, {
+      int page,
+      int pageSize,
+      String sort,
+      String order,
+      String? q,
+    ) invitationsFor, {
     int total = 25,
     int pendingCount = 0,
   }) {
     testAuthHttpClientOverride = _mockClient((request) async {
       if (request.url.path == '/api/v1/invitations') {
         final page = int.parse(request.url.queryParameters['page'] ?? '1');
-        final pageSize =
-            int.parse(request.url.queryParameters['page_size'] ?? '10');
+        final pageSize = int.parse(
+          request.url.queryParameters['page_size'] ?? '10',
+        );
         final sort = request.url.queryParameters['sort'] ?? 'created';
         final order = request.url.queryParameters['order'] ?? 'desc';
         final q = request.url.queryParameters['q'];
@@ -216,12 +223,15 @@ void main() {
       await pumpPage(tester);
 
       expect(
-          find.text('alice@example.com', skipOffstage: false), findsOneWidget);
+        find.text('alice@example.com', skipOffstage: false),
+        findsOneWidget,
+      );
       expect(find.text('bob@example.com', skipOffstage: false), findsOneWidget);
     });
 
-    testWidgets('shows pagination controls when more than one page',
-        (tester) async {
+    testWidgets('shows pagination controls when more than one page', (
+      tester,
+    ) async {
       // 25 invitations with page_size 10 => 3 pages.
       serveInvitations((page, pageSize, sort, order, q) {
         final start = (page - 1) * pageSize;
@@ -235,11 +245,15 @@ void main() {
 
       expect(find.text('1 / 3', skipOffstage: false), findsOneWidget);
       // Prev disabled on page 1.
-      expect(tester.widget<IconButton>(iconButton('Previous page')).onPressed,
-          isNull);
+      expect(
+        tester.widget<IconButton>(iconButton('Previous page')).onPressed,
+        isNull,
+      );
       // Next enabled.
-      expect(tester.widget<IconButton>(iconButton('Next page')).onPressed,
-          isNotNull);
+      expect(
+        tester.widget<IconButton>(iconButton('Next page')).onPressed,
+        isNotNull,
+      );
     });
 
     testWidgets('navigates to next and previous pages', (tester) async {
@@ -263,8 +277,10 @@ void main() {
 
       expect(lastPageRequested, 2);
       expect(find.text('2 / 2', skipOffstage: false), findsOneWidget);
-      expect(tester.widget<IconButton>(iconButton('Previous page')).onPressed,
-          isNotNull);
+      expect(
+        tester.widget<IconButton>(iconButton('Previous page')).onPressed,
+        isNotNull,
+      );
 
       await tester.tap(iconButton('Previous page'));
       await tester.pumpAndSettle();
@@ -424,46 +440,47 @@ void main() {
     }
 
     testWidgets(
-        'invalid email shows inline error and keeps Send Invitation disabled',
-        (tester) async {
-      final posts = <Map<String, dynamic>>[];
-      serveInvitationsCapturePosts(posts);
-      await pumpPage(tester);
+      'invalid email shows inline error and keeps Send Invitation disabled',
+      (tester) async {
+        final posts = <Map<String, dynamic>>[];
+        serveInvitationsCapturePosts(posts);
+        await pumpPage(tester);
 
-      await tester.tap(find.byTooltip('Invite user'));
-      await tester.pumpAndSettle();
+        await tester.tap(find.byTooltip('Invite user'));
+        await tester.pumpAndSettle();
 
-      await tester.enterText(fieldLabeled('Email'), 'notanemail');
-      await tester.pumpAndSettle();
+        await tester.enterText(fieldLabeled('Email'), 'notanemail');
+        await tester.pumpAndSettle();
 
-      expect(
-        tester.widget<TextField>(fieldLabeled('Email')).decoration?.errorText,
-        'Enter a valid email',
-      );
-      expect(
-        tester
-            .widget<FilledButton>(
-              find.widgetWithText(FilledButton, 'Send Invitation'),
-            )
-            .onPressed,
-        isNull,
-      );
-      expect(posts, isEmpty);
+        expect(
+          tester.widget<TextField>(fieldLabeled('Email')).decoration?.errorText,
+          'Enter a valid email',
+        );
+        expect(
+          tester
+              .widget<FilledButton>(
+                find.widgetWithText(FilledButton, 'Send Invitation'),
+              )
+              .onPressed,
+          isNull,
+        );
+        expect(posts, isEmpty);
 
-      // Correcting the address clears the error, enables the button, and
-      // submits (#2668).
-      await tester.enterText(fieldLabeled('Email'), 'new@example.com');
-      await tester.pumpAndSettle();
+        // Correcting the address clears the error, enables the button, and
+        // submits (#2668).
+        await tester.enterText(fieldLabeled('Email'), 'new@example.com');
+        await tester.pumpAndSettle();
 
-      expect(
-        tester.widget<TextField>(fieldLabeled('Email')).decoration?.errorText,
-        isNull,
-      );
-      await tester.tap(find.widgetWithText(FilledButton, 'Send Invitation'));
-      await tester.pumpAndSettle();
+        expect(
+          tester.widget<TextField>(fieldLabeled('Email')).decoration?.errorText,
+          isNull,
+        );
+        await tester.tap(find.widgetWithText(FilledButton, 'Send Invitation'));
+        await tester.pumpAndSettle();
 
-      expect(posts.single['email'], 'new@example.com');
-      expect(find.text('Invitation sent to new@example.com'), findsOneWidget);
-    });
+        expect(posts.single['email'], 'new@example.com');
+        expect(find.text('Invitation sent to new@example.com'), findsOneWidget);
+      },
+    );
   });
 }

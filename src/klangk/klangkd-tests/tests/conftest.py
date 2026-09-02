@@ -300,23 +300,9 @@ async def admin_group(app_state):
             system_principal=SYSTEM_EVERYONE,
         )
     await _seed_resource_acls(app_state)
-    # /admin stays as the instance-admin wildcard marker (#2944).
-    await acl.add_acl_entry(
-        "/admin",
-        0,
-        ACTION_ALLOW,
-        "*",
-        PRINCIPAL_GROUP,
-        group_id=group["id"],
-    )
-    await acl.add_acl_entry(
-        "/admin",
-        1,
-        ACTION_DENY,
-        "*",
-        PRINCIPAL_SYSTEM,
-        system_principal=SYSTEM_EVERYONE,
-    )
+    # No /admin marker rows (#2995): instance-admin status is the
+    # /my-permissions is_admin flag derived from this group.
+
     # #2569: seed the members group (mirrors main.py ensure_members_group).
     members = await app_state.state.model.users.create_group(
         "members", description="All regular users"

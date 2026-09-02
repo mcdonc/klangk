@@ -1,4 +1,5 @@
 import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -27,14 +28,12 @@ void main() {
   http.Client _emptyConfigClient({
     Map<String, List<String>>? permissions,
     List<Map<String, dynamic>>? groups,
+    bool isAdmin = false,
   }) {
     return MockClient((request) async {
       if (request.url.path.contains('/api/v1/config')) {
         return http.Response(
-          jsonEncode({
-            'login_banner_title': '',
-            'login_banner': '',
-          }),
+          jsonEncode({'login_banner_title': '', 'login_banner': ''}),
           200,
         );
       }
@@ -43,6 +42,7 @@ void main() {
           jsonEncode({
             'user_id': 'test',
             'email': 'test@example.com',
+            'is_admin': isAdmin,
             'permissions': permissions ?? {},
             'groups': groups ?? [],
           }),
@@ -198,31 +198,38 @@ void main() {
       await Future.delayed(Duration.zero);
       expect(service.defaultClassificationBanner, '');
 
-      testAuthHttpClientOverride =
-          _bannerClient(defaultClassificationBanner: 'CUI');
-      final service2 = AuthService();
-      await Future.delayed(Duration.zero);
-      expect(service2.defaultClassificationBanner, 'CUI');
-    });
 
-    test('refreshDeployConfig re-resolves the deploy default (#2768)',
-        () async {
-      // A SIGHUP settings reload can change
-      // KLANGKD_CLASSIFICATION_BANNER under a live session; the marking
-      // surface calls refreshDeployConfig (on mount + on every
-      // workspaces-changed push) instead of trusting the login-time
-      // snapshot.
-      testAuthHttpClientOverride =
-          _bannerClient(defaultClassificationBanner: 'CUI');
-      final service = AuthService();
-      await Future.delayed(Duration.zero);
-      expect(service.defaultClassificationBanner, 'CUI');
+        testAuthHttpClientOverride = _bannerClient(
+          defaultClassificationBanner: 'CUI',
+        );
+        final service2 = AuthService();
+        await Future.delayed(Duration.zero);
+        expect(service2.defaultClassificationBanner, 'CUI');
+      },
+    );
 
-      testAuthHttpClientOverride =
-          _bannerClient(defaultClassificationBanner: 'SECRET');
-      await service.refreshDeployConfig();
-      expect(service.defaultClassificationBanner, 'SECRET');
-    });
+    test(
+      'refreshDeployConfig re-resolves the deploy default (#2768)',
+      () async {
+        // A SIGHUP settings reload can change
+        // KLANGKD_CLASSIFICATION_BANNER under a live session; the marking
+        // surface calls refreshDeployConfig (on mount + on every
+        // workspaces-changed push) instead of trusting the login-time
+        // snapshot.
+        testAuthHttpClientOverride = _bannerClient(
+          defaultClassificationBanner: 'CUI',
+        );
+        final service = AuthService();
+        await Future.delayed(Duration.zero);
+        expect(service.defaultClassificationBanner, 'CUI');
+
+        testAuthHttpClientOverride = _bannerClient(
+          defaultClassificationBanner: 'SECRET',
+        );
+        await service.refreshDeployConfig();
+        expect(service.defaultClassificationBanner, 'SECRET');
+      },
+    );
 
     test('loads default_per_handle_home from /api/config', () async {
       // #2721 / #2737 review: null (unknown) when the field is absent or
@@ -259,25 +266,30 @@ void main() {
       expect(service2.browserDelegateEnabled, isFalse);
     });
 
-    test('loads netfilter default domains + enabled from /api/config',
-        () async {
-      // #1365: defaults (absent fields) → empty / disabled.
-      testAuthHttpClientOverride = _bannerClient();
-      final service = AuthService();
-      await Future.delayed(Duration.zero);
-      expect(service.netfilterDefaultDomains, isEmpty);
-      expect(service.netfilterEnabled, isFalse);
+    test(
+      'loads netfilter default domains + enabled from /api/config',
+      () async {
+        // #1365: defaults (absent fields) → empty / disabled.
+        testAuthHttpClientOverride = _bannerClient();
+        final service = AuthService();
+        await Future.delayed(Duration.zero);
+        expect(service.netfilterDefaultDomains, isEmpty);
+        expect(service.netfilterEnabled, isFalse);
 
-      // Advertised values are surfaced verbatim.
-      testAuthHttpClientOverride = _bannerClient(
-        netfilterDefaultDomains: ['github.com:443', 'pypi.org'],
-        netfilterEnabled: true,
-      );
-      final service2 = AuthService();
-      await Future.delayed(Duration.zero);
-      expect(service2.netfilterDefaultDomains, ['github.com:443', 'pypi.org']);
-      expect(service2.netfilterEnabled, isTrue);
-    });
+        // Advertised values are surfaced verbatim.
+        testAuthHttpClientOverride = _bannerClient(
+          netfilterDefaultDomains: ['github.com:443', 'pypi.org'],
+          netfilterEnabled: true,
+        );
+        final service2 = AuthService();
+        await Future.delayed(Duration.zero);
+        expect(service2.netfilterDefaultDomains, [
+          'github.com:443',
+          'pypi.org',
+        ]);
+        expect(service2.netfilterEnabled, isTrue);
+      },
+    );
 
     test('loads min_password_length from /api/config', () async {
       testAuthHttpClientOverride = _bannerClient(minPasswordLength: 12);
@@ -317,17 +329,19 @@ void main() {
       expect(service.passwordPolicy.requireSpecial, 0);
     });
 
-    test('password_requirements defaults to no requirements when absent',
-        () async {
-      testAuthHttpClientOverride = _bannerClient();
+    test(
+      'password_requirements defaults to no requirements when absent',
+      () async {
+        testAuthHttpClientOverride = _bannerClient();
 
-      final service = AuthService();
-      await Future.delayed(Duration.zero);
+        final service = AuthService();
+        await Future.delayed(Duration.zero);
 
-      expect(service.passwordPolicy.requireUpper, 0);
-      expect(service.passwordPolicy.requireSpecial, 0);
-      expect(service.passwordPolicy.validate('aaaaaaaa'), isNull);
-    });
+        expect(service.passwordPolicy.requireUpper, 0);
+        expect(service.passwordPolicy.requireSpecial, 0);
+        expect(service.passwordPolicy.validate('aaaaaaaa'), isNull);
+      },
+    );
 
     test('product_name is applied to Branding from /api/config', () async {
       testAuthHttpClientOverride = _bannerClient(productName: 'Acme Labs');
@@ -459,10 +473,7 @@ void main() {
 
       // Nothing persisted — the banner will re-prompt on the next app load.
       final prefs = await SharedPreferences.getInstance();
-      expect(
-        prefs.getString('klangk_banner_accepted'),
-        isNull,
-      );
+      expect(prefs.getString('klangk_banner_accepted'), isNull);
     });
 
     test('config fetch failure is silent', () async {
@@ -484,10 +495,7 @@ void main() {
     test('successful login saves token and returns null', () async {
       testAuthHttpClientOverride = MockClient((request) async {
         expect(request.url.path, '/api/v1/auth/login');
-        return http.Response(
-          jsonEncode({'access_token': 'new-token'}),
-          200,
-        );
+        return http.Response(jsonEncode({'access_token': 'new-token'}), 200);
       });
 
       final service = AuthService();
@@ -533,10 +541,7 @@ void main() {
     test('sets loading during request', () async {
       bool wasLoading = false;
       testAuthHttpClientOverride = MockClient((request) async {
-        return http.Response(
-          jsonEncode({'access_token': 'token'}),
-          200,
-        );
+        return http.Response(jsonEncode({'access_token': 'token'}), 200);
       });
 
       final service = AuthService();
@@ -607,10 +612,7 @@ void main() {
     test('successful register saves token', () async {
       testAuthHttpClientOverride = MockClient((request) async {
         expect(request.url.path, '/api/v1/auth/register');
-        return http.Response(
-          jsonEncode({'access_token': 'reg-token'}),
-          200,
-        );
+        return http.Response(jsonEncode({'access_token': 'reg-token'}), 200);
       });
 
       final service = AuthService();
@@ -624,10 +626,7 @@ void main() {
 
     test('pending verification returns message', () async {
       testAuthHttpClientOverride = MockClient((request) async {
-        return http.Response(
-          jsonEncode({'status': 'pending'}),
-          200,
-        );
+        return http.Response(jsonEncode({'status': 'pending'}), 200);
       });
 
       final service = AuthService();
@@ -747,24 +746,26 @@ void main() {
       expect(pendingRedirect, isNull);
     });
 
-    test('clears pendingRedirect when a 401 clears the token (#2670)',
-        () async {
-      testAuthHttpClientOverride = MockClient((request) async {
-        if (request.url.path.contains('/api/v1/auth/logout')) {
-          return http.Response('', 200);
-        }
-        return http.Response('Unauthorized', 401);
-      });
+    test(
+      'clears pendingRedirect when a 401 clears the token (#2670)',
+      () async {
+        testAuthHttpClientOverride = MockClient((request) async {
+          if (request.url.path.contains('/api/v1/auth/logout')) {
+            return http.Response('', 200);
+          }
+          return http.Response('Unauthorized', 401);
+        });
 
-      SharedPreferences.setMockInitialValues({'klangk_jwt': 'my-token'});
-      final service = AuthService();
-      await Future.delayed(Duration.zero);
+        SharedPreferences.setMockInitialValues({'klangk_jwt': 'my-token'});
+        final service = AuthService();
+        await Future.delayed(Duration.zero);
 
-      pendingRedirect = '/admin/users';
-      await service.authGet('/api/v1/workspaces');
-      expect(service.isLoggedIn, isFalse);
-      expect(pendingRedirect, isNull);
-    });
+        pendingRedirect = '/admin/users';
+        await service.authGet('/api/v1/workspaces');
+        expect(service.isLoggedIn, isFalse);
+        expect(pendingRedirect, isNull);
+      },
+    );
   });
 
   group('AuthService.resendVerification', () {
@@ -780,24 +781,25 @@ void main() {
       final service = AuthService();
       await Future.delayed(Duration.zero);
 
-      final error =
-          await service.resendVerification('user@example.com', 'pass');
+      final error = await service.resendVerification(
+        'user@example.com',
+        'pass',
+      );
       expect(error, isNull);
     });
 
     test('failed resend returns error detail', () async {
       testAuthHttpClientOverride = MockClient((request) async {
-        return http.Response(
-          jsonEncode({'detail': 'User not found'}),
-          404,
-        );
+        return http.Response(jsonEncode({'detail': 'User not found'}), 404);
       });
 
       final service = AuthService();
       await Future.delayed(Duration.zero);
 
-      final error =
-          await service.resendVerification('missing@example.com', 'pass');
+      final error = await service.resendVerification(
+        'missing@example.com',
+        'pass',
+      );
       expect(error, 'User not found');
     });
 
@@ -809,8 +811,10 @@ void main() {
       final service = AuthService();
       await Future.delayed(Duration.zero);
 
-      final error =
-          await service.resendVerification('user@example.com', 'pass');
+      final error = await service.resendVerification(
+        'user@example.com',
+        'pass',
+      );
       expect(error, 'Failed to resend');
     });
 
@@ -822,8 +826,10 @@ void main() {
       final service = AuthService();
       await Future.delayed(Duration.zero);
 
-      final error =
-          await service.resendVerification('user@example.com', 'pass');
+      final error = await service.resendVerification(
+        'user@example.com',
+        'pass',
+      );
       expect(error, contains('Connection error'));
     });
   });
@@ -867,7 +873,7 @@ void main() {
     test('email returns null when not in payload', () async {
       final token = makeJwt({
         'sub': 'user-1',
-        'roles': ['user']
+        'roles': ['user'],
       });
       SharedPreferences.setMockInitialValues({'klangk_jwt': token});
       final service = AuthService();
@@ -892,11 +898,9 @@ void main() {
       expect(service.userId, 'user-42');
     });
 
-    test('isAdmin returns true when admin permission present', () async {
+    test('isAdmin returns true when the is_admin flag is set', () async {
       testAuthHttpClientOverride = _emptyConfigClient(
-        permissions: {
-          '/admin': ['*'],
-        },
+        isAdmin: true,
         groups: [
           {'id': 'g1', 'name': 'admins'},
         ],
@@ -906,10 +910,9 @@ void main() {
       final service = AuthService();
       await Future.delayed(Duration.zero);
       expect(service.isAdmin, isTrue);
-      expect(service.hasPermission('/admin', 'manage_users'), isTrue);
     });
 
-    test('isAdmin returns false when no admin permission', () async {
+    test('isAdmin returns false when flag absent', () async {
       testAuthHttpClientOverride = _emptyConfigClient(
         permissions: {
           '/': ['view'],
@@ -939,11 +942,7 @@ void main() {
     });
 
     test('permissions cleared on logout', () async {
-      testAuthHttpClientOverride = _emptyConfigClient(
-        permissions: {
-          '/admin': ['*'],
-        },
-      );
+      testAuthHttpClientOverride = _emptyConfigClient(isAdmin: true);
       final token = makeJwt({'sub': 'user-1'});
       SharedPreferences.setMockInitialValues({'klangk_jwt': token});
       final service = AuthService();
@@ -958,7 +957,7 @@ void main() {
     test('groups populated from my-permissions', () async {
       testAuthHttpClientOverride = _emptyConfigClient(
         permissions: {
-          '/': ['view']
+          '/': ['view'],
         },
         groups: [
           {'id': 'g1', 'name': 'editors', 'description': 'Edit stuff'},
@@ -988,12 +987,13 @@ void main() {
             jsonEncode({
               'user_id': 'u',
               'email': 'u',
+              'is_admin': isAdmin,
               'permissions': isAdmin
                   ? {
-                      '/admin': ['*']
+                      '/users': ['manage-users'],
                     }
                   : {
-                      '/': ['view']
+                      '/': ['view'],
                     },
               'groups': [],
             }),
@@ -1019,12 +1019,16 @@ void main() {
           .encode(utf8.encode(jsonEncode({'alg': 'HS256', 'typ': 'JWT'})))
           .replaceAll('=', '');
       final body = base64Url
-          .encode(utf8.encode(jsonEncode({
-            'sub': 'user-1',
-            'email': 'user@example.com',
-            'jti': 'test-jti',
-            'exp': exp,
-          })))
+          .encode(
+            utf8.encode(
+              jsonEncode({
+                'sub': 'user-1',
+                'email': 'user@example.com',
+                'jti': 'test-jti',
+                'exp': exp,
+              }),
+            ),
+          )
           .replaceAll('=', '');
       return '$header.$body.fakesig';
     }
@@ -1051,10 +1055,7 @@ void main() {
           );
         }
         if (request.url.path.contains('/api/v1/auth/login')) {
-          return http.Response(
-            jsonEncode({'access_token': token}),
-            200,
-          );
+          return http.Response(jsonEncode({'access_token': token}), 200);
         }
         return http.Response('Not found', 404);
       });
@@ -1126,10 +1127,7 @@ void main() {
         if (request.url.path.contains('/api/v1/auth/refresh')) {
           refreshCalled = true;
           expect(request.headers['Authorization'], 'Bearer $oldToken');
-          return http.Response(
-            jsonEncode({'access_token': newToken}),
-            200,
-          );
+          return http.Response(jsonEncode({'access_token': newToken}), 200);
         }
         return http.Response('Not found', 404);
       });
@@ -1306,8 +1304,10 @@ void main() {
       final service = AuthService();
       await Future.delayed(Duration.zero);
 
-      final response =
-          await service.authPatch('/api/v1/users/1', body: '{"name":"new"}');
+      final response = await service.authPatch(
+        '/api/v1/users/1',
+        body: '{"name":"new"}',
+      );
       expect(service.isLoggedIn, isTrue);
       expect(response.statusCode, 200);
       expect(method, 'PATCH');

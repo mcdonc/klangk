@@ -6096,12 +6096,12 @@ class TestMonitorCommand:
 class TestStatusAdminFlag:
     """`status` derives admin from /my-permissions and degrades gracefully."""
 
-    def _perms_client(self, perms, monkeypatch):
+    def _perms_client(self, is_admin, monkeypatch):
 
         client = MagicMock()
         resp = MagicMock(
             status_code=200,
-            json=lambda: {"permissions": perms},
+            json=lambda: {"is_admin": is_admin},
         )
         resp.headers = {"content-type": "application/json"}
         client.get.return_value = resp
@@ -6111,7 +6111,7 @@ class TestStatusAdminFlag:
     def test_plain_shows_admin_yes(self, logged_in_cfg, capsys, monkeypatch):
         from klangk.cli import main
 
-        self._perms_client({"/admin": ["*"]}, monkeypatch)
+        self._perms_client(True, monkeypatch)
         main.status(plain=True)
         out = capsys.readouterr().out
         assert "admin=yes" in out
@@ -6119,7 +6119,7 @@ class TestStatusAdminFlag:
     def test_plain_shows_admin_no(self, logged_in_cfg, capsys, monkeypatch):
         from klangk.cli import main
 
-        self._perms_client({"/admin": []}, monkeypatch)
+        self._perms_client(False, monkeypatch)
         main.status(plain=True)
         out = capsys.readouterr().out
         assert "admin=no" in out
@@ -6131,7 +6131,7 @@ class TestStatusAdminFlag:
 
         from klangk.cli import main
 
-        self._perms_client({"/admin": ["*"]}, monkeypatch)
+        self._perms_client(True, monkeypatch)
         buf = StringIO()
         with patch.object(
             klangk.cli.authcmds,
@@ -6148,7 +6148,7 @@ class TestStatusAdminFlag:
 
         from klangk.cli import main
 
-        self._perms_client({"/admin": []}, monkeypatch)
+        self._perms_client(False, monkeypatch)
         buf = StringIO()
         with patch.object(
             klangk.cli.authcmds,
