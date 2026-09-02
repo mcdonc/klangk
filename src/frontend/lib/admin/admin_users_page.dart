@@ -1461,25 +1461,93 @@ class _VolumesTabState extends State<_VolumesTab> {
   bool _loading = true;
   String? _error;
 
+  // Server-side pagination / sort / filter state (#2993), mirroring
+  // the sibling admin tabs (q matches volume name, creator handle,
+  // or a using workspace's name).
+  int _page = 1;
+  final int _pageSize = 10;
+  int _total = 0;
+  String _sort = 'created';
+  String _order = 'desc';
+  String _query = '';
+  final TextEditingController _searchController = TextEditingController();
+  Timer? _queryDebounce;
+
+  /// URL-encode a query param map (sorted for stable, cacheable URLs).
+  static String _encodeQuery(Map<String, String> params) {
+    final pairs = <String>[];
+    for (final key in params.keys.toList()..sort()) {
+      pairs.add(
+        '${Uri.encodeQueryComponent(key)}='
+        '${Uri.encodeQueryComponent(params[key]!)}',
+      );
+    }
+    return pairs.join('&');
+  }
+
   @override
   void initState() {
     super.initState();
+    _searchController.addListener(() {
+      final value = _searchController.text;
+      if (value == _query) return;
+      _query = value;
+      _queryDebounce?.cancel();
+      _queryDebounce = Timer(
+        const Duration(milliseconds: 300),
+        () => _loadVolumes(page: 1),
+      );
+    });
     _loadVolumes();
   }
 
-  Future<void> _loadVolumes() async {
+  @override
+  void dispose() {
+    _queryDebounce?.cancel();
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  /// Select a sort column, or toggle direction if already selected —
+  /// mirrors the sibling tabs (name reads naturally ascending; created
+  /// descending).
+  Future<void> _changeSort(String sortKey) async {
+    if (_sort == sortKey) {
+      setState(() => _order = _order == 'asc' ? 'desc' : 'asc');
+    } else {
+      setState(() {
+        _sort = sortKey;
+        _order = sortKey == 'created' ? 'desc' : 'asc';
+      });
+    }
+    await _loadVolumes(page: 1);
+  }
+
+  Future<void> _loadVolumes({int page = 1}) async {
     setState(() {
+      _page = page;
       _loading = true;
       _error = null;
     });
     try {
       final auth = context.read<AuthService>();
-      final resp = await auth.authGet('/api/v1/volumes');
+      final query = <String, String>{
+        'page': '$_page',
+        'page_size': '$_pageSize',
+        'sort': _sort,
+        'order': _order,
+      };
+      final q = _query.trim();
+      if (q.isNotEmpty) query['q'] = q;
+      final resp = await auth.authGet(
+        '/api/v1/volumes?${_encodeQuery(query)}',
+      );
       if (!mounted) return;
       if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body) as Map<String, dynamic>;
         setState(() {
-          _volumes =
-              (jsonDecode(resp.body) as List).cast<Map<String, dynamic>>();
+          _volumes = (data['volumes'] as List).cast<Map<String, dynamic>>();
+          _total = (data['total'] as num).toInt();
           _loading = false;
         });
       } else {
@@ -1612,7 +1680,26 @@ class _VolumesTabState extends State<_VolumesTab> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(body: _buildVolumesList());
+    return Scaffold(
+      body: Column(
+        children: [
+          _AdminListToolbar(
+            key: const ValueKey('admin-volumes-toolbar'),
+            columns: const [('Name', 'name'), ('Created', 'created')],
+            sort: _sort,
+            order: _order,
+            onChangeSort: _changeSort,
+            searchController: _searchController,
+            searchHint: 'Filter by name, creator, or workspace…',
+            page: _page,
+            pageSize: _pageSize,
+            total: _total,
+            onPage: (p) => _loadVolumes(page: p),
+          ),
+          Expanded(child: _buildVolumesList()),
+        ],
+      ),
+    );
   }
 }
 

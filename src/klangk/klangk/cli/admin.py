@@ -228,7 +228,8 @@ def volumes_list(
     resp = client.get("/api/v1/volumes")
     client.check_auth(resp)
     resp.raise_for_status()
-    volumes = resp.json()
+    # Paged envelope (#2993): {volumes, page, page_size, total}.
+    volumes = resp.json()["volumes"]
     if not volumes:
         typer.echo("No volumes.")
         return

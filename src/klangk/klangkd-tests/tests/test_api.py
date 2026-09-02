@@ -6766,11 +6766,33 @@ class TestVolumeRoutes:
         """An admin sees every instance volume with creator provenance
         (no longer an access filter), the creator's handle, and the
         workspaces mounting each volume (#2993)."""
+        await self._seed_volume_world(app_state, user, admin_user)
+        headers = await _admin_login(client)
+        with patch.object(
+            _mock_pod,
+            "list_volumes",
+            AsyncMock(return_value=self._world_volumes(user)),
+        ):
+            resp = await client.get("/api/v1/volumes", headers=headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total"] == 4
+        assert [
+            (v["name"], v["user_id"], v["created_by"], v["workspaces"])
+            for v in data["volumes"]
+        ] == [
+            ("system-vol", None, None, []),
+            ("orphan-vol", "ghost-user", None, []),
+            ("my-vol", user["id"], user["handle"], ["aaa-ws", "ws-uses-vol"]),
+            ("my-vol-2", user["id"], user["handle"], []),
+        ]
+
+    async def _seed_volume_world(self, app_state, user, admin_user):
+        """The shared listing world: two workspaces mounting my-vol,
+        one workspace without mounts."""
         await app_state.state.model.workspaces.create_workspace(
             user["id"],
             "ws-uses-vol",
-            # A path mount must not count as volume usage; the named
-            # one must.
             mounts=["my-vol:/data", "/host/path:/ro"],
         )
         await app_state.state.model.workspaces.create_workspace(
@@ -6781,60 +6803,123 @@ class TestVolumeRoutes:
         await app_state.state.model.workspaces.create_workspace(
             user["id"], "no-mounts-ws"
         )
+
+    def _world_volumes(self, user):
+        """The podman listing behind the shared world (four volumes)."""
+        return [
+            {
+                "Name": "my-vol",
+                "CreatedAt": "2026-01-01T00:00:00Z",
+                "Labels": {
+                    "klangk.instance": _instance_id(),
+                    "klangk.user-id": user["id"],
+                },
+            },
+            # No CreatedAt: the sort key's empty-date branch.
+            {
+                "Name": "my-vol-2",
+                "Labels": {
+                    "klangk.instance": _instance_id(),
+                    "klangk.user-id": user["id"],
+                },
+            },
+            {
+                "Name": "orphan-vol",
+                "CreatedAt": "2026-01-02T00:00:00Z",
+                "Labels": {
+                    "klangk.instance": _instance_id(),
+                    "klangk.user-id": "ghost-user",
+                },
+            },
+            {
+                "Name": "system-vol",
+                "CreatedAt": "2026-01-03T00:00:00Z",
+                "Labels": {"klangk.instance": _instance_id()},
+            },
+        ]
+
+    async def test_list_volumes_search_and_paging(
+        self, client, admin_user, user, app_state
+    ):
+        """q matches volume name, creator handle, and workspace name
+        (case-insensitive); the envelope paginates and sorts (#2993)."""
+        await self._seed_volume_world(app_state, user, admin_user)
         headers = await _admin_login(client)
         with patch.object(
             _mock_pod,
             "list_volumes",
-            AsyncMock(
-                return_value=[
-                    {
-                        "Name": "my-vol",
-                        "CreatedAt": "2026-01-01T00:00:00Z",
-                        "Labels": {
-                            "klangk.instance": _instance_id(),
-                            "klangk.user-id": user["id"],
-                        },
-                    },
-                    # Same creator again: the handle lookup dedups.
-                    {
-                        "Name": "my-vol-2",
-                        "CreatedAt": "2026-01-01T00:00:00Z",
-                        "Labels": {
-                            "klangk.instance": _instance_id(),
-                            "klangk.user-id": user["id"],
-                        },
-                    },
-                    # Deleted creator: the label stays provenance, the
-                    # handle resolves to None.
-                    {
-                        "Name": "orphan-vol",
-                        "CreatedAt": "2026-01-02T00:00:00Z",
-                        "Labels": {
-                            "klangk.instance": _instance_id(),
-                            "klangk.user-id": "ghost-user",
-                        },
-                    },
-                    # Runtime-created volume with no creator label.
-                    {
-                        "Name": "system-vol",
-                        "CreatedAt": "2026-01-03T00:00:00Z",
-                        "Labels": {"klangk.instance": _instance_id()},
-                    },
-                ]
-            ),
+            AsyncMock(return_value=self._world_volumes(user)),
         ):
-            resp = await client.get("/api/v1/volumes", headers=headers)
-        assert resp.status_code == 200
-        data = resp.json()
-        assert [
-            (v["name"], v["user_id"], v["created_by"], v["workspaces"])
-            for v in data
-        ] == [
-            ("my-vol", user["id"], user["handle"], ["aaa-ws", "ws-uses-vol"]),
-            ("my-vol-2", user["id"], user["handle"], []),
-            ("orphan-vol", "ghost-user", None, []),
-            ("system-vol", None, None, []),
-        ]
+
+            async def listing(**params):
+                resp = await client.get(
+                    "/api/v1/volumes",
+                    headers=headers,
+                    params=params,
+                )
+                assert resp.status_code == 200
+                return resp.json()
+
+            # By name (case-insensitive; matches both my-vol*).
+            data = await listing(q="MY-VOL")
+            assert [v["name"] for v in data["volumes"]] == [
+                "my-vol",
+                "my-vol-2",
+            ]
+            assert data["total"] == 2
+            # By creator handle.
+            data = await listing(q=user["handle"])
+            assert [v["name"] for v in data["volumes"]] == [
+                "my-vol",
+                "my-vol-2",
+            ]
+            # By workspace name using the volume.
+            data = await listing(q="uses")
+            assert [v["name"] for v in data["volumes"]] == ["my-vol"]
+            # No match anywhere.
+            data = await listing(q="nope")
+            assert data["volumes"] == []
+            assert data["total"] == 0
+
+            # Sort: created desc (default) vs name asc.
+            data = await listing()
+            assert [v["name"] for v in data["volumes"]] == [
+                "system-vol",
+                "orphan-vol",
+                "my-vol",
+                "my-vol-2",
+            ]
+            data = await listing(sort="name", order="asc")
+            assert [v["name"] for v in data["volumes"]] == [
+                "my-vol",
+                "my-vol-2",
+                "orphan-vol",
+                "system-vol",
+            ]
+            # Unknown sort falls back to created.
+            data = await listing(sort="bogus")
+            assert data["volumes"][0]["name"] == "system-vol"
+
+            # Paging: page/page_size over the unfiltered four.
+            data = await listing(page=2, page_size=2, sort="name", order="asc")
+            assert [v["name"] for v in data["volumes"]] == [
+                "orphan-vol",
+                "system-vol",
+            ]
+            assert (data["page"], data["page_size"], data["total"]) == (
+                2,
+                2,
+                4,
+            )
+            # Past the end: empty page, total intact; page 0 clamps to 1.
+            data = await listing(page=9, page_size=2)
+            assert data["volumes"] == []
+            assert data["total"] == 4
+            data = await listing(page=0, page_size=2, sort="name", order="asc")
+            assert [v["name"] for v in data["volumes"]] == [
+                "my-vol",
+                "my-vol-2",
+            ]
 
     async def test_list_volumes_requires_view_volumes(self, client, user):
         """A plain authenticated user holds nothing on /volumes by seed

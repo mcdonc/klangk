@@ -298,8 +298,34 @@ async def _creator_handles(app, volumes) -> dict[str, str | None]:
     return handles
 
 
+def _volume_matches(item: dict, needle: str) -> bool:
+    """Whether a listing row matches the search needle — volume name,
+    creator handle, or a using workspace's name (case-insensitive)."""
+    return (
+        needle in item["name"].lower()
+        or needle in (item["created_by"] or "").lower()
+        or any(needle in w.lower() for w in item["workspaces"])
+    )
+
+
+def _sort_volume_items(items: list[dict], sort: str, order: str) -> None:
+    """Sort listing rows in place by the whitelisted key (``name`` or
+    ``created``; unknown → created), name as the deterministic
+    tiebreaker — the list_users/list_workspaces posture."""
+    primary = "name" if sort == "name" else "created"
+    items.sort(
+        key=lambda it: ((it[primary] or ""), it["name"]),
+        reverse=order.lower() == "desc",
+    )
+
+
 @router.get("/volumes")
 async def list_volumes(
+    page: int = 1,
+    page_size: int = 10,
+    sort: str = "created",
+    order: str = "desc",
+    q: str | None = None,
     _user: dict = Depends(acl.has_permission("view-volumes")),
     app=Depends(get_app_dep),
 ):
@@ -311,6 +337,11 @@ async def list_volumes(
     as an access filter — an admin operating the tab sees every
     volume this instance manages, who created it (``created_by``, the
     creator's handle), and which workspaces mount it (``workspaces``).
+
+    Server-side paginated/sorted/filtered like the other admin tabs:
+    ``q`` matches volume name, creator handle, or a using workspace
+    name (case-insensitive substring); ``sort`` is ``name`` | ``created``;
+    returns the paged envelope ``{volumes, page, page_size, total}``.
     """
     volumes = await app.state.podman.list_volumes(
         f"klangk.instance={app.state.util.instance_id()}"
@@ -319,7 +350,7 @@ async def list_volumes(
         await app.state.model.workspaces.workspace_mount_rows()
     )
     handles = await _creator_handles(app, volumes)
-    return [
+    items = [
         {
             "name": v["Name"],
             "created": v.get("CreatedAt", ""),
@@ -331,6 +362,19 @@ async def list_volumes(
         }
         for v in volumes
     ]
+    if q:
+        needle = q.lower()
+        items = [it for it in items if _volume_matches(it, needle)]
+    _sort_volume_items(items, sort, order)
+    page = max(1, page)
+    page_size = max(1, min(page_size, 200))
+    start = (page - 1) * page_size
+    return {
+        "volumes": items[start : start + page_size],
+        "page": page,
+        "page_size": page_size,
+        "total": len(items),
+    }
 
 
 class CreateVolumeRequest(BaseModel):

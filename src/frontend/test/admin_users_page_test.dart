@@ -1580,7 +1580,32 @@ void main() {
           );
         }
         if (request.url.path == '/api/v1/volumes' && request.method == 'GET') {
-          return http.Response(jsonEncode(volumes), 200);
+          // The paged envelope (#2993), honoring q/page/page_size the
+          // way the backend does (q matches name, handle, workspace).
+          final q = (request.url.queryParameters['q'] ?? '').toLowerCase();
+          final page = int.parse(request.url.queryParameters['page'] ?? '1');
+          final pageSize =
+              int.parse(request.url.queryParameters['page_size'] ?? '10');
+          bool matches(Map<String, dynamic> v) {
+            final handle = (v['created_by'] as String?) ?? '';
+            final workspaces = (v['workspaces'] as List).cast<String>();
+            return (v['name'] as String).toLowerCase().contains(q) ||
+                handle.toLowerCase().contains(q) ||
+                workspaces.any((w) => w.toLowerCase().contains(q));
+          }
+
+          final filtered =
+              q.isEmpty ? volumes : volumes.where(matches).toList();
+          final start = (page - 1) * pageSize;
+          return http.Response(
+            jsonEncode({
+              'volumes': filtered.skip(start).take(pageSize).toList(),
+              'page': page,
+              'page_size': pageSize,
+              'total': filtered.length,
+            }),
+            200,
+          );
         }
         if (request.url.path.startsWith('/api/v1/volumes/') &&
             request.method == 'DELETE') {
@@ -1604,6 +1629,13 @@ void main() {
           matching: find.byType(SkeuoTab),
         );
 
+    /// The Volumes tab's toolbar (the sibling tabs' toolbars are also
+    /// built inside the IndexedStack — scope to this one's key).
+    Finder inVolumesToolbar(Finder inner) => find.descendant(
+          of: find.byKey(const ValueKey('admin-volumes-toolbar')),
+          matching: inner,
+        );
+
     testWidgets('lists the inventory with creator and usage', (tester) async {
       final deletes = <String>[];
       serveVolumes([
@@ -1622,6 +1654,12 @@ void main() {
       await tester.tap(volumesTab());
       await tester.pumpAndSettle();
 
+      // The toolbar is there with its search field.
+      expect(
+        find.byKey(const ValueKey('admin-volumes-toolbar')),
+        findsOneWidget,
+      );
+      expect(inVolumesToolbar(find.byType(TextField)), findsOneWidget);
       expect(find.text('ws-cache'), findsOneWidget);
       expect(find.text('extra-mount'), findsOneWidget);
       // The creator's handle shows (@alice); a volume with no resolvable
@@ -1632,6 +1670,34 @@ void main() {
       expect(find.text('Used by ws-one, ws-two'), findsOneWidget);
       expect(find.text('Unused'), findsOneWidget);
       expect(find.byTooltip('Delete volume'), findsNWidgets(2));
+      expect(deletes, isEmpty);
+    });
+
+    testWidgets('search filters the listing server-side', (tester) async {
+      final deletes = <String>[];
+      serveVolumes([
+        _volume('ws-cache', 'aaaaaaaa', createdBy: 'alice'),
+        _volume('extra-mount', '11111111', createdBy: 'bob'),
+      ], deletes);
+
+      await pumpPage(tester);
+      await tester.tap(volumesTab());
+      await tester.pumpAndSettle();
+
+      await tester.enterText(
+        inVolumesToolbar(find.byType(TextField)),
+        'ws-cache',
+      );
+      // The 300ms debounce fires, the fetch runs, the list narrows.
+      await tester.pump(const Duration(milliseconds: 350));
+      await tester.pumpAndSettle();
+
+      // Scoped to the list: the search field itself holds the text.
+      expect(
+        find.descendant(of: find.byType(Card), matching: find.text('ws-cache')),
+        findsOneWidget,
+      );
+      expect(find.text('extra-mount'), findsNothing);
       expect(deletes, isEmpty);
     });
 

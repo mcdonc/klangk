@@ -591,16 +591,34 @@ names whose extra mounts reference the volume.
 
 No request body.
 
+**Query params (optional, server-side paging/sort/filter):**
+
+| Param       | Type   | Default   | Constraints                          |
+| ----------- | ------ | --------- | ------------------------------------ |
+| `page`      | int    | `1`       | `>= 1` (clamped)                     |
+| `page_size` | int    | `10`      | `1`–`200` (clamped)                  |
+| `sort`      | string | `created` | `name` \| `created` (else `created`) |
+| `order`     | string | `desc`    | `asc` \| `desc`                      |
+| `q`         | string | (none)    | substring match, case-insensitive    |
+
+`q` matches the volume name, the creator's handle, or any workspace
+name using the volume.
+
 ```json
-[
-  {
-    "name": "my-volume",
-    "created": "2025-01-01T12:00:00Z",
-    "user_id": "<creator user id>",
-    "created_by": "alice",
-    "workspaces": ["my-workspace"]
-  }
-]
+{
+  "volumes": [
+    {
+      "name": "my-volume",
+      "created": "2025-01-01T12:00:00Z",
+      "user_id": "<creator user id>",
+      "created_by": "alice",
+      "workspaces": ["my-workspace"]
+    }
+  ],
+  "page": 1,
+  "page_size": 10,
+  "total": 1
+}
 ```
 
 ---

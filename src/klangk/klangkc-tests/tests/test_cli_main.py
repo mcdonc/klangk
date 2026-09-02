@@ -4652,9 +4652,14 @@ class TestVolumes:
         client.get.return_value = MagicMock(
             status_code=200,
             json=MagicMock(
-                return_value=[
-                    {"name": "vol-1", "created": "2026-01-01T00:00:00Z"},
-                ]
+                return_value={
+                    "volumes": [
+                        {"name": "vol-1", "created": "2026-01-01T00:00:00Z"},
+                    ],
+                    "page": 1,
+                    "page_size": 10,
+                    "total": 1,
+                }
             ),
         )
         monkeypatch.setattr(context_mod, "client", lambda: client)
@@ -4672,7 +4677,7 @@ class TestVolumes:
         client = MagicMock()
         client.get.return_value = MagicMock(
             status_code=200,
-            json=MagicMock(return_value=[]),
+            json=MagicMock(return_value={"volumes": [], "total": 0}),
         )
         monkeypatch.setattr(context_mod, "client", lambda: client)
 
@@ -4690,7 +4695,10 @@ class TestVolumes:
         client.get.return_value = MagicMock(
             status_code=200,
             json=MagicMock(
-                return_value=[{"name": "vol-1", "created": "2026-01-01"}]
+                return_value={
+                    "volumes": [{"name": "vol-1", "created": "2026-01-01"}],
+                    "total": 1,
+                }
             ),
         )
         monkeypatch.setattr(context_mod, "client", lambda: client)

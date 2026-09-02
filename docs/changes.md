@@ -46,7 +46,10 @@ operators or integrators to act when upgrading.
   label is provenance (`user_id` plus the creator's handle
   `created_by`), and each row lists the workspace names mounting it
   (`workspaces`); `manage-volumes` holders may delete any instance
-  volume.
+  volume. The listing is server-side searchable (volume name, creator
+  handle, or using-workspace name) and paginated, returning the
+  `{volumes, page, page_size, total}` envelope — `klangk volumes ls`
+  ships with it; external API consumers must read the envelope.
 
 - **Deploy-wide consent decider removed (#2976).** The
   `/ws/consent-decider` handshake without a `?workspace=` param is now
