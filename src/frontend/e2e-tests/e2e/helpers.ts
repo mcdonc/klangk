@@ -91,12 +91,17 @@ async function makeUserAdmin(
  *  By default the user is added to the admin group so they can create
  *  workspaces (#2569).  Pass `admin: false` for tests that need a genuine
  *  non-admin user (#2643).
- *  Returns { token, headers }. */
+ *  Returns { token, headers, userId } — userId feeds principal-scoped
+ *  ACL grants (the Advanced ACL editor's user ACEs, #3026). */
 export async function registerUser(
   request: APIRequestContext,
   email: string,
   { admin = true }: { admin?: boolean } = {},
-): Promise<{ token: string; headers: Record<string, string> }> {
+): Promise<{
+  token: string;
+  headers: Record<string, string>;
+  userId: string | undefined;
+}> {
   const data = await postJsonWithRetry(
     request,
     `${API_BASE}/api/v1/auth/register`,
@@ -109,7 +114,7 @@ export async function registerUser(
   if (admin && data.user_id) {
     await makeUserAdmin(request, data.user_id);
   }
-  return { token, headers };
+  return { token, headers, userId: data.user_id };
 }
 
 /** Type email + password into the Flutter login form and click Login.
