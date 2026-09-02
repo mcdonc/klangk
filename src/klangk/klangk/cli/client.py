@@ -1817,17 +1817,19 @@ class TerminalSession(_ShellSession):
             disposition, payload = await self._handle_byte(data, st, fd)
             if disposition == "exit":
                 return False
-            if disposition == "send":
-                await self.ws.send(
-                    json.dumps(
-                        {
-                            "cmd": "terminal_input",
-                            "data": payload.decode("utf-8", errors="replace"),
-                        }
-                    )
-                )
         except (OSError, io.UnsupportedOperation):
             return False
+        # The send sits outside the except scope, as in the original loop:
+        # a send failure must propagate and tear down the other pumps.
+        if disposition == "send":
+            await self.ws.send(
+                json.dumps(
+                    {
+                        "cmd": "terminal_input",
+                        "data": payload.decode("utf-8", errors="replace"),
+                    }
+                )
+            )
         return True
 
     async def stdin_loop(self) -> None:
