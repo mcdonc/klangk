@@ -206,3 +206,24 @@ def send_error(
         msg["code"] = code
     log_ws_msg("SEND", msg)
     sock.send_json(msg)
+
+
+async def refused_without_perm(conn, *perms: str) -> bool:
+    """Refuse a frame unless the connection holds one of *perms*.
+
+    The per-frame defense-in-depth gate for commands whose only historic
+    protection was the ``workspace_connect`` handshake checking
+    ``terminal`` (#3022): with ``join-workspace`` as the connect gate, a
+    join-only member (or a spectator whose grouped joiner session exists
+    after ``join_shared_terminal``) can reach the socket, so frames that
+    exec into the container must carry their own check. Sends the
+    machine-readable ``forbidden`` refusal (#2891) and returns True when
+    the connection lacks every listed permission; returns False (and
+    sends nothing) when any one is held, so callers write
+    ``if await refused_without_perm(...): return``.
+    """
+    for perm in perms:
+        if await conn.has_perm(perm):
+            return False
+    send_error(conn.sock, "Permission denied", code="forbidden")
+    return True

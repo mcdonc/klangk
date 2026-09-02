@@ -22,7 +22,12 @@ from ..terminal import (
 )
 from .safe_websocket import SlowClientError, WS_ERRORS
 from .session import get_shared_terminals
-from .support import MAX_INPUT_SIZE, send_error, send_event
+from .support import (
+    MAX_INPUT_SIZE,
+    refused_without_perm,
+    send_error,
+    send_event,
+)
 
 if TYPE_CHECKING:
     from .connection import Connection
@@ -164,6 +169,15 @@ class SshAgentForwarder:
             send_error(
                 self._conn.sock, "No container for SSH agent forwarding"
             )
+            return
+        # #3022: the relay is agent plumbing for own terminal/exec
+        # sessions — both wire SSH_AUTH_SOCK to this socket (#2001) — so
+        # a member who can run neither must not spawn it. Holding either
+        # session permission is enough; `terminal` is deliberately not
+        # checked (UI-visibility only, #2975 decision).
+        if await refused_without_perm(
+            self._conn, "code-in-isolation", "exec-and-sync"
+        ):
             return
         # Clean up any existing agent relay.
         await self.stop()
@@ -1027,6 +1041,12 @@ class TerminalController:
         t0 = time.monotonic()
         if not self._conn.container_id or not self._conn._user_home:
             return
+        # #3022: own-window frames exec into the container targeting the
+        # caller's tmux session. For a spectator holding a grouped joiner
+        # session that session EXISTS, and tmux groups share windows — an
+        # ungated new_window would inject a window into the shared group.
+        if await refused_without_perm(self._conn, "code-in-isolation"):
+            return
 
         session_name = self.tmux_session_name()
         name = msg.get("name")
@@ -1050,6 +1070,10 @@ class TerminalController:
     async def select_window(self, msg: dict) -> None:
         t0 = time.monotonic()
         if not self._conn.container_id or not self._conn._user_home:
+            return
+        # #3022: own-window management needs the own-terminal permission
+        # (the frontend's own-tab strip is the same gate).
+        if await refused_without_perm(self._conn, "code-in-isolation"):
             return
 
         # Use this connection's grouped session so select-window only
@@ -1079,6 +1103,11 @@ class TerminalController:
 
     async def close_window(self, msg: dict) -> None:
         if not self._conn.container_id or not self._conn._user_home:
+            return
+        # #3022: closing a window of a grouped (shared) joiner session
+        # closes it for the whole group — spectators must not be able to
+        # kill the owner's windows.
+        if await refused_without_perm(self._conn, "code-in-isolation"):
             return
 
         session_name = self.tmux_session_name()
@@ -1110,6 +1139,9 @@ class TerminalController:
     async def rename_window(self, msg: dict) -> None:
         if not self._conn.container_id or not self._conn._user_home:
             return
+        # #3022: renaming rewrites the group's window list for everyone.
+        if await refused_without_perm(self._conn, "code-in-isolation"):
+            return
 
         session_name = self.tmux_session_name()
         index = msg.get("index", 0)
@@ -1137,6 +1169,11 @@ class TerminalController:
 
     async def list_windows(self) -> None:
         if not self._conn.container_id or not self._conn._user_home:
+            return
+        # #3022: enumerating the caller's own windows is own-terminal
+        # territory; the shared-terminal list rides its own gated frame
+        # (list_shared_terminals).
+        if await refused_without_perm(self._conn, "code-in-isolation"):
             return
 
         # Use this connection's grouped session so the active flag

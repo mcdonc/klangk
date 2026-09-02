@@ -85,6 +85,7 @@ provenance, not an access filter). Deploys that want self-service
 volumes back grant `manage-volumes` to `Authenticated` or a group via
 the ACL editor. No trailing Deny Everyone row is seeded on `/volumes` either,
 for the same reason.
+
 ### Granting workspace creation to non-admin users
 
 By default only administrators can create workspaces (#2569). To allow
@@ -220,7 +221,8 @@ a read-only volumes auditor can be delegated:
 | `manage-acls`            | `/acl`              | The Access Control browser: read and rewrite ACL entries on **any** resource via `GET/PUT /acl/*` — root-equivalent, see below                                        |
 | `view-volumes`           | `/volumes`          | The volume inventory listing (`GET /volumes`) — the admin Volumes tab's gate; Allow group:admins by default (#2993)                                                   |
 | `manage-volumes`         | `/volumes`          | Create/delete instance-managed volumes (`POST /volumes`, `DELETE /volumes/{name}`) — Allow group:admins by default (#2993); the CLI's volume commands use it too      |
-| `view-images`            | `/images`           | The image listing the create/edit UIs read (#2946; Allow Authenticated by default — the deliberate, ACL-editor-modifiable exception, #2974)                           || `search-users`           | `/users`            | The member-picker type-ahead (`GET /users/search`) — Allow Authenticated by default (#2946)                                                                           |
+| `view-images`            | `/images`           | The image listing the create/edit UIs read (#2946; Allow Authenticated by default — the deliberate, ACL-editor-modifiable exception, #2974)                           |
+| `search-users`           | `/users`            | The member-picker type-ahead (`GET /users/search`) — Allow Authenticated by default (#2946)                                                                           |
 | `admin`                  | `/admin`            | The instance-administrator **marker** only (`*` row); nothing checks it anywhere anymore (#2944, #2946 — the transfer gate now checks `transfer-workspace`)           |
 
 `PUT /acl/resource` additionally requires `share-advanced` on the target
@@ -259,19 +261,21 @@ trigger, the permission it checks, the resource, who holds it by
 default (the seeded role groups; owners hold `*`), and when it is
 re-checked:
 
-| WS trigger                                                    | Permission                                          | Resource           | Default holders (besides owner)   | Re-checked                                                                                          |
-| ------------------------------------------------------------- | --------------------------------------------------- | ------------------ | --------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `workspace_connect` handshake (open workspace)                | `join-workspace`                                    | `/workspaces/{id}` | coders, collaborators, spectators | once per connect; revocation answers the next connect with machine-readable `forbidden` (#2891)     |
-| `restart_container` message                                   | `restart-workspace`                                 | `/workspaces/{id}` | coders, collaborators             | live, per message                                                                                   |
-| exec channel (`klangk exec` / sync)                           | `exec-and-sync`                                     | `/workspaces/{id}` | coders, collaborators             | live per `exec_start`; input into an in-flight session is not re-checked (one-shot channel)         |
-| own terminal creation                                         | `code-in-isolation`                                 | `/workspaces/{id}` | coders, collaborators             | live, per message                                                                                   |
-| `share_window` (share an own terminal)                        | `share-terminals`                                   | `/workspaces/{id}` | collaborators                     | live, per message; unsharing needs no permission (#2875)                                            |
-| `join_shared_terminal` / `list_shared_terminals`              | `spectate-on-shared-terminals`                      | `/workspaces/{id}` | coders, collaborators, spectators | live, per message                                                                                   |
-| typing into a shared terminal                                 | `code-in-shared-terminals` **or** `share-terminals` | `/workspaces/{id}` | collaborators                     | once at join — frozen into the session's read-only flag, enforced per keystroke until detach/rejoin |
-| creating/targeting/closing shared terminals (incl. one's own) | `share-terminals`                                   | `/workspaces/{id}` | collaborators                     | live, per message                                                                                   |
-| service-health fan-out (per transition)                       | `monitor-workspace`                                 | `/workspaces/{id}` | coders, collaborators, spectators | per fan-out (revocation stops delivery on the next frame)                                           |
-| service-health snapshot at registration                       | `monitor-workspace`                                 | `/workspaces/{id}` | coders, collaborators, spectators | per snapshot                                                                                        |
-| consent-decider WS, workspace-scoped                          | `egress-consent`                                    | `/workspaces/{id}` | coders, collaborators             | once at registration (handshake)                                                                    |
+| WS trigger                                                              | Permission                                          | Resource           | Default holders (besides owner)   | Re-checked                                                                                          |
+| ----------------------------------------------------------------------- | --------------------------------------------------- | ------------------ | --------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `workspace_connect` handshake (open workspace)                          | `join-workspace`                                    | `/workspaces/{id}` | coders, collaborators, spectators | once per connect; revocation answers the next connect with machine-readable `forbidden` (#2891)     |
+| `restart_container` message                                             | `restart-workspace`                                 | `/workspaces/{id}` | coders, collaborators             | live, per message                                                                                   |
+| exec channel (`klangk exec` / sync)                                     | `exec-and-sync`                                     | `/workspaces/{id}` | coders, collaborators             | live per `exec_start`; input into an in-flight session is not re-checked (one-shot channel)         |
+| own terminal creation                                                   | `code-in-isolation`                                 | `/workspaces/{id}` | coders, collaborators             | live, per message                                                                                   |
+| own-window management (`terminal_new/select/close/rename/list_windows`) | `code-in-isolation`                                 | `/workspaces/{id}` | coders, collaborators             | live, per message (#3022); refused with `forbidden` for join-only members and spectators            |
+| ssh-agent relay (`ssh_agent_start`)                                     | `code-in-isolation` **or** `exec-and-sync`          | `/workspaces/{id}` | coders, collaborators             | live, per message (#3022); both session kinds wire `SSH_AUTH_SOCK` to the relay socket (#2001)      |
+| `share_window` (share an own terminal)                                  | `share-terminals`                                   | `/workspaces/{id}` | collaborators                     | live, per message; unsharing needs no permission (#2875)                                            |
+| `join_shared_terminal` / `list_shared_terminals`                        | `spectate-on-shared-terminals`                      | `/workspaces/{id}` | coders, collaborators, spectators | live, per message                                                                                   |
+| typing into a shared terminal                                           | `code-in-shared-terminals` **or** `share-terminals` | `/workspaces/{id}` | collaborators                     | once at join — frozen into the session's read-only flag, enforced per keystroke until detach/rejoin |
+| creating/targeting/closing shared terminals (incl. one's own)           | `share-terminals`                                   | `/workspaces/{id}` | collaborators                     | live, per message                                                                                   |
+| service-health fan-out (per transition)                                 | `monitor-workspace`                                 | `/workspaces/{id}` | coders, collaborators, spectators | per fan-out (revocation stops delivery on the next frame)                                           |
+| service-health snapshot at registration                                 | `monitor-workspace`                                 | `/workspaces/{id}` | coders, collaborators, spectators | per snapshot                                                                                        |
+| consent-decider WS, workspace-scoped                                    | `egress-consent`                                    | `/workspaces/{id}` | coders, collaborators             | once at registration (handshake)                                                                    |
 
 There is no deploy-wide consent-decider handshake (#2976, decision A):
 consent authority is strictly per-workspace (`egress-consent` on

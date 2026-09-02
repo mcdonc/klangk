@@ -243,6 +243,23 @@ operators or integrators to act when upgrading.
 
 ### Security
 
+- **Per-frame gates on the own-terminal and ssh-agent WS commands
+  (#3022).** With `join-workspace` as the connect gate (#2975), a
+  join-only member could reach frames whose only protection was the
+  old terminal-checked handshake: `ssh_agent_start` spawned a socat
+  relay in the container, and the own-window frames
+  (`terminal_new_window`/`select_window`/`close_window`/
+  `rename_window`/`list_windows`) ran tmux against the caller's
+  session — which, for a spectator viewing a shared terminal, is a
+  grouped session whose windows belong to the whole group (they could
+  inject or close the owner's windows). All six frames now refuse with
+  machine-readable `forbidden` unless the caller holds
+  `code-in-isolation` (window frames) or either `code-in-isolation`
+  or `exec-and-sync` (the agent relay, which both session kinds
+  consume). Seeded roles are unaffected: every role that could use
+  these frames already holds the permissions, and the web UI already
+  hid them.
+
 - **Workspace-mount volume-source validation (#3018).** A mount
   source with no `/` that doesn't start with `.` is a named volume,
   and must now be podman-safe to pass workspace create/update mount
