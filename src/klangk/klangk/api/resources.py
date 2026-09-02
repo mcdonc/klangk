@@ -17,7 +17,7 @@ from fastapi import (
 from fastapi.responses import (
     StreamingResponse,
 )
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .. import (
     acl,
@@ -383,8 +383,17 @@ async def list_volumes(
     }
 
 
+# Podman-safe volume name (#2971): starts with an alphanumeric (so a
+# leading "-" can never be parsed as a flag by the podman CLI, whose
+# argv we build by appending the name verbatim), continues with
+# alphanumerics/underscore/dot/hyphen only, and stays within 64 chars
+# ({0,63} after the first character) — a cap picked for UX, well under
+# podman's own generous limit. Pydantic violations surface as 422.
+VOLUME_NAME_PATTERN = r"^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$"
+
+
 class CreateVolumeRequest(BaseModel):
-    name: str
+    name: str = Field(pattern=VOLUME_NAME_PATTERN)
 
 
 @router.post("/volumes")

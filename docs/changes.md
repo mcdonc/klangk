@@ -429,6 +429,12 @@ sync` report a clear permission-denied error.
 
 ### Added
 
+- **Volume name validation (#2971).** `POST /api/v1/volumes` now
+  rejects names that are not podman-safe — they must start with an
+  alphanumeric character, continue with `a-zA-Z0-9_.-` only, and be at
+  most 64 characters — with HTTP 422. Previously any string was
+  appended verbatim to the podman command line, so a leading-dash
+  name could be parsed as a podman flag.
 - **Backup and restore docs (#2999).** New "Backup and Restore" reference
   chapter covering the full-site backup set (data dir, labeled podman
   volumes with their labels, env + config file + `file:` secrets,
