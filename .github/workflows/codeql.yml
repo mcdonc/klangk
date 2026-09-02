@@ -5,9 +5,15 @@ on:
     branches: [main]
   pull_request:
     paths-ignore:
-      # Root-only docs/meta files can never affect what this workflow
-      # tests — a PR changing only these starts no run at all (#2957).
+      # Docs/meta files can never affect what this workflow tests — a
+      # PR changing only these starts no run at all (#2957). GitHub
+      # filter patterns are root-anchored, so nested docs/ .md needs
+      # its own entry (#3051). Never widen the .md ignore into
+      # src/containers/: agent-context.md is COPYed into the workspace
+      # image, so a change there is a build-path change.
       - "*.md"
+      - "docs/*.md"
+      - "docs/**/*.md"
       - "zensical.toml"
       - "bootstrap"
 
