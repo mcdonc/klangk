@@ -1908,6 +1908,13 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Tab-strip sync survives a container restart (#3015).** The
+  server's tmux window watcher was built once per workspace session
+  and never replaced when the container was recycled while members
+  stayed connected, so idle clients' terminal tab strips and the
+  shared-terminal list went stale until each user took a terminal
+  action or reloaded. A stale or dead watcher is now detected on every
+  (re)connect and rebuilt against the current container.
 - **Workspace restart now notifies every connected member (#3008).**
   When one member restarted a workspace container, only that member's
   client was told — other members' terminals went dead with no recovery

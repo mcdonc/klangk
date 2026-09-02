@@ -104,6 +104,8 @@ async def test_start_window_sync_creates_watcher_once():
     sess, _sock, _terminal = _session_with_user()
     with patch("klangk.wshandler.session.WindowEventWatcher") as wc:
         wc.return_value.start = AsyncMock()
+        wc.return_value.container_id = "cid"
+        wc.return_value.alive = True
         sess.start_window_sync()
         assert wc.call_count == 1
         sess.start_window_sync()  # idempotent — no second watcher
@@ -116,6 +118,110 @@ def test_start_window_sync_noop_without_container():
     sess.container_id = None
     sess.start_window_sync()
     assert sess._window_watcher is None
+
+
+# --- #3015: a watcher that died with its container is replaced ---
+
+
+async def test_start_window_sync_replaces_watcher_bound_to_old_container():
+    """After a container recycle the watcher is bound to a dead id.
+
+    The recycling connection's ``add_subscriber`` updates the session's
+    container id, so ``start_window_sync`` must tear the stale watcher
+    down and start a fresh one against the new container — not no-op on
+    the non-None field and leave push-based sync dead (#3015).
+    """
+    sess, _, _ = _session_with_user()
+    sess.container_id = "new-cid"
+    stale = MagicMock()
+    stale.container_id = "old-cid"
+    stale.alive = True  # even a still-live watcher aims at the wrong pod
+    stale.stop = AsyncMock()
+    sess._window_watcher = stale
+    with (
+        patch("klangk.wshandler.session.WindowEventWatcher") as wc,
+        patch(
+            "klangk.wshandler.session.spawn_session_task",
+            side_effect=lambda coro: coro.close(),
+        ) as spawn,
+    ):
+        sess.start_window_sync()
+    # Old watcher torn down (scheduled, not awaited inline) and a fresh
+    # one built against the new container id.
+    assert spawn.call_count == 2  # stale stop + fresh start
+    stale.stop.assert_not_awaited()
+    assert wc.call_args.args[1] == "new-cid"
+    assert sess._window_watcher is wc.return_value
+
+
+async def test_start_window_sync_replaces_dead_watcher_same_container():
+    """A same-id restart (podman restart keeps the id) kills the exec.
+
+    The container id matches, so only the reader-task liveness check
+    catches the dead watcher — the exact "died with the container,
+    never stopped" case #3015 describes.
+    """
+    sess, _, _ = _session_with_user()  # container_id "cid"
+    dead = MagicMock()
+    dead.container_id = "cid"
+    dead.alive = False
+    dead.stop = AsyncMock()
+    sess._window_watcher = dead
+    with (
+        patch("klangk.wshandler.session.WindowEventWatcher") as wc,
+        patch(
+            "klangk.wshandler.session.spawn_session_task",
+            side_effect=lambda coro: coro.close(),
+        ) as spawn,
+    ):
+        sess.start_window_sync()
+    assert spawn.call_count == 2  # dead watcher stop + fresh start
+    assert wc.call_args.args[1] == "cid"
+    assert sess._window_watcher is wc.return_value
+
+
+async def test_start_window_sync_keeps_watcher_mid_start():
+    """A watcher whose start exec is still in flight is alive (#2929): a
+    concurrent add_subscriber must not tear it down and double-spawn."""
+    sess, _, _ = _session_with_user()
+    starting = MagicMock()
+    starting.container_id = "cid"
+    starting.alive = True
+    starting.stop = AsyncMock()
+    sess._window_watcher = starting
+    with (
+        patch("klangk.wshandler.session.WindowEventWatcher") as wc,
+        patch(
+            "klangk.wshandler.session.spawn_session_task",
+            side_effect=lambda coro: coro.close(),
+        ),
+    ):
+        sess.start_window_sync()
+    wc.assert_not_called()
+    assert sess._window_watcher is starting
+
+
+async def test_rapid_reconnect_keeps_freshly_built_watcher():
+    """#3015 review follow-up: between constructing the replacement
+    watcher and its spawned ``start()`` first running (no await between
+    the two sync calls, so the task is still queued), the watcher must
+    already read alive — a second connect in that window must not
+    discard the fresh watcher and waste another control-client exec.
+
+    Uses the REAL watcher class: the mocked tests above fake ``alive``;
+    this one pins the real construction-time flag the fix added.
+    """
+    sess, _, _ = _session_with_user()
+    with patch("asyncio.create_subprocess_exec", new=AsyncMock()) as spawn:
+        sess.start_window_sync()
+        first = sess._window_watcher
+        sess.start_window_sync()  # start task still queued, not yet run
+        assert sess._window_watcher is first
+
+        await first.stop()  # single-use: the queued start() then no-ops
+        for _ in range(3):
+            await asyncio.sleep(0)  # drain the queued start task
+        spawn.assert_not_called()
 
 
 async def test_reset_cancels_pending_sync_and_stops_watcher():
