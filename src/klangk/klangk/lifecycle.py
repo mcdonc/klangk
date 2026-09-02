@@ -98,6 +98,45 @@ _NON_RELOADABLE_SETTINGS: tuple[tuple[str, str], ...] = (
 )
 
 
+def _password_policy_errors(settings, password: str) -> list[str]:
+    """The password-policy violations of *password* (empty when it is
+    compliant)."""
+    errors = []
+    min_len = int(settings.min_password_length or "8")
+    if len(password) < min_len:
+        errors.append(f"is shorter than KLANGKD_MIN_PASSWORD_LENGTH={min_len}")
+    counts = password_class_counts(password)
+    for key, name in PASSWORD_CLASSES:
+        _password_class_error(errors, settings, counts, key, name)
+    return errors
+
+
+def _password_class_error(
+    errors: list[str], settings, counts: dict, key: str, name: str
+) -> None:
+    """Append the violation when *password* misses a required class."""
+    need = getattr(settings, f"password_require_{key}")
+    if need > 0 and counts[key] < need:
+        errors.append(
+            f"lacks the {need} required {name}"
+            f"{'s' if need != 1 else ''} "
+            f"(KLANGKD_PASSWORD_REQUIRE_{key.upper()}={need})"
+        )
+
+
+def _policy_error_message(errors: list[str]) -> str:
+    """The refusal message naming the first violation (and a count of
+    the rest)."""
+    more = f" (and {len(errors) - 1} more issue(s))" if len(errors) > 1 else ""
+    return (
+        "KLANGKD_DEFAULT_PASSWORD violates the configured "
+        f"password policy: it {errors[0]}"
+        + more
+        + ". Fix the password or loosen the policy; refusing to "
+        "boot with a seeded admin that already violates it."
+    )
+
+
 class Lifecycle:
     """App-level bringup/shutdown and DB seeding (#1571).
 
@@ -409,33 +448,24 @@ class Lifecycle:
         seeding a non-compliant password and letting it fail at first
         change would strand deployments whose policy was tightened
         after the seed ran."""
-        _policy_errors = []
-        min_len = int(settings.min_password_length or "8")
-        if len(password) < min_len:
-            _policy_errors.append(
-                f"is shorter than KLANGKD_MIN_PASSWORD_LENGTH={min_len}"
+        errors = _password_policy_errors(settings, password)
+        if errors:
+            raise ConfigurationError(_policy_error_message(errors))
+
+    async def _any_admin_with_password(self, admin_members) -> bool:
+        """True when at least one admin member carries a password hash.
+
+        get_group_members doesn't carry password_hash; fetch per member.
+        The admin group is small (typically 1-3 members) so the N queries
+        are cheap; a single JOIN would require a new model method for this
+        one call site, which isn't worth it."""
+        for member in admin_members:
+            user = await self.app.state.model.users.get_user_by_email(
+                member["email"]
             )
-        _counts = password_class_counts(password)
-        for _key, _name in PASSWORD_CLASSES:
-            _need = getattr(settings, f"password_require_{_key}")
-            if _need > 0 and _counts[_key] < _need:
-                _policy_errors.append(
-                    f"lacks the {_need} required {_name}"
-                    f"{'s' if _need != 1 else ''} "
-                    f"(KLANGKD_PASSWORD_REQUIRE_{_key.upper()}={_need})"
-                )
-        if _policy_errors:
-            raise ConfigurationError(
-                "KLANGKD_DEFAULT_PASSWORD violates the configured "
-                f"password policy: it {_policy_errors[0]}"
-                + (
-                    f" (and {len(_policy_errors) - 1} more issue(s))"
-                    if len(_policy_errors) > 1
-                    else ""
-                )
-                + ". Fix the password or loosen the policy; refusing to "
-                "boot with a seeded admin that already violates it."
-            )
+            if user and user.get("password_hash"):
+                return True
+        return False
 
     async def _enforce_password_mode_has_hashed_admin(
         self, admin_members: list[dict]
@@ -463,16 +493,8 @@ class Lifecycle:
         auth_modes = self.app.state.settings.auth_modes or "none"
         if auth_modes not in ("password", "both"):
             return
-        # get_group_members doesn't carry password_hash; fetch per member.
-        # The admin group is small (typically 1-3 members) so the N queries
-        # are cheap; a single JOIN would require a new model method for this
-        # one call site, which isn't worth it.
-        for member in admin_members:
-            user = await self.app.state.model.users.get_user_by_email(
-                member["email"]
-            )
-            if user and user.get("password_hash"):
-                return  # At least one admin can log in — fine.
+        if await self._any_admin_with_password(admin_members):
+            return  # At least one admin can log in — fine.
         # #2738 audit: ConfigurationError (not bare RuntimeError) so the
         # launcher maps this permanent misconfiguration to EX_CONFIG (#2666)
         # instead of a generic crash a supervisor would restart-loop.
@@ -596,6 +618,90 @@ class Lifecycle:
         state.util.remove_pid_file()
         await state.db.dispose_engine()
 
+    def _recycle_settings(self) -> KlangkSettings | None:
+        """Phase 1 (validate) of the recycle: re-resolve settings. A
+        shutdown already in progress or an invalid config denies the
+        restart — ``None`` — leaving the runtime on its last-known-good
+        config."""
+        logger.info("SIGHUP: restart beginning (phase: validate)")
+        # #2527 review: a shutdown arriving before the restart begins
+        # wins outright (on_sighup also drops later signals, but this
+        # closes the checked-to-started race window).
+        if self.shutting_down:
+            logger.info("SIGHUP: restart aborted; shutdown in progress")
+            return None
+        new_settings, error = self.reload_settings()
+        if error is not None:
+            logger.error(
+                "SIGHUP: denying restart — invalid configuration: %s",
+                error,
+            )
+            logger.info(
+                "SIGHUP: restart denied; runtime left running on "
+                "existing configuration"
+            )
+            return None
+        return new_settings
+
+    async def _quiesce_and_drain(
+        self, state, registry, new_settings: KlangkSettings
+    ) -> None:
+        """Phases 3–4 of the recycle: quiesce in-flight HTTP requests,
+        then drain every workspace through the graceful path."""
+        # #2527 review: read the timeout from the NEW settings so
+        # a reload takes effect on THIS restart, not the next.
+        timeout = new_settings.quiesce_timeout
+        logger.info(
+            "SIGHUP: phase: quiesce (waiting up to %.1fs for "
+            "in-flight requests)",
+            timeout,
+        )
+        inflight = state.inflight_requests
+        idle = await inflight.wait_for_idle(timeout)
+        if not idle:
+            logger.warning(
+                "SIGHUP: %d request(s) still in flight after "
+                "%.1fs; proceeding with the restart",
+                inflight.count,
+                timeout,
+            )
+        logger.info("SIGHUP: phase: drain (stopping workspaces)")
+        stopped = await registry.drain_all_containers(reason="server recycle")
+        logger.info("SIGHUP: drained %d workspace(s)", stopped)
+
+    def _shutdown_won_mid_recycle(self) -> bool:
+        """True when a shutdown raced the recycle mid-drain.
+
+        #2527 review: a TERM/INT landing mid-restart starts the shutdown
+        drain concurrently; from here on the restart must not resurrect
+        what the shutdown is tearing down (no settings apply, no runtime
+        recycle, no auto-start), and its error recovery must not run
+        either — the process is exiting. The done-callback sees the task
+        complete normally (CancelledError would also be fine)."""
+        if self.shutting_down:
+            logger.info(
+                "SIGHUP: restart aborted mid-drain; shutdown in progress"
+            )
+            return True
+        return False
+
+    async def _apply_and_recycle(self, state, new_settings) -> None:
+        """Phases 5–7 of the recycle: apply the reloaded config, recycle
+        the runtime, and resume. The drain flag deliberately stays set
+        through ``startup()``'s podman pre-warm and container reaps (so a
+        client that reconnects and starts a workspace in that window is
+        refused — 503, with the reason — instead of having its fresh
+        container destroyed by the reap); ``startup()`` clears it."""
+        logger.info("SIGHUP: phase: apply (applying reloaded config)")
+        await self.apply_reloaded_settings(new_settings)
+        state.sockets.notify_server_recycle("recycling")
+        logger.info(
+            "SIGHUP: phase: restart (recycling runtime; "
+            "HTTP listener stays up)"
+        )
+        await self.runtime_shutdown()
+        await self.startup()
+
     async def recycle_runtime(self) -> None:
         """Graceful runtime recycle: quiesce, drain, re-read config, recycle.
 
@@ -647,74 +753,17 @@ class Lifecycle:
         async with self._recycle_lock:
             state = self.app.state
             registry = state.container_registry
-            logger.info("SIGHUP: restart beginning (phase: validate)")
-            # #2527 review: a shutdown arriving before the restart begins
-            # wins outright (on_sighup also drops later signals, but this
-            # closes the checked-to-started race window).
-            if self.shutting_down:
-                logger.info("SIGHUP: restart aborted; shutdown in progress")
-                return
-            new_settings, error = self.reload_settings()
-            if error is not None:
-                logger.error(
-                    "SIGHUP: denying restart — invalid configuration: %s",
-                    error,
-                )
-                logger.info(
-                    "SIGHUP: restart denied; runtime left running on "
-                    "existing configuration"
-                )
+            new_settings = self._recycle_settings()
+            if new_settings is None:
                 return
             logger.info("SIGHUP: phase: draining (refusing new starts)")
             state.sockets.notify_server_recycle("draining")
             registry.draining = True
             try:
-                # #2527 review: read the timeout from the NEW settings so
-                # a reload takes effect on THIS restart, not the next.
-                timeout = new_settings.quiesce_timeout
-                logger.info(
-                    "SIGHUP: phase: quiesce (waiting up to %.1fs for "
-                    "in-flight requests)",
-                    timeout,
-                )
-                inflight = state.inflight_requests
-                idle = await inflight.wait_for_idle(timeout)
-                if not idle:
-                    logger.warning(
-                        "SIGHUP: %d request(s) still in flight after "
-                        "%.1fs; proceeding with the restart",
-                        inflight.count,
-                        timeout,
-                    )
-                logger.info("SIGHUP: phase: drain (stopping workspaces)")
-                stopped = await registry.drain_all_containers(
-                    reason="server recycle"
-                )
-                logger.info("SIGHUP: drained %d workspace(s)", stopped)
-                # #2527 review: a TERM/INT landing mid-restart starts the
-                # shutdown drain concurrently; from here on the restart
-                # must not resurrect what the shutdown is tearing down
-                # (no settings apply, no runtime recycle, no auto-start),
-                # and its error recovery must not run either — the
-                # process is exiting. The done-callback sees the task
-                # complete normally (CancelledError would also be fine).
-                if self.shutting_down:
-                    logger.info(
-                        "SIGHUP: restart aborted mid-drain; shutdown in "
-                        "progress"
-                    )
+                await self._quiesce_and_drain(state, registry, new_settings)
+                if self._shutdown_won_mid_recycle():
                     return
-                logger.info("SIGHUP: phase: apply (applying reloaded config)")
-                await self.apply_reloaded_settings(new_settings)
-                state.sockets.notify_server_recycle("recycling")
-                logger.info(
-                    "SIGHUP: phase: restart (recycling runtime; "
-                    "HTTP listener stays up)"
-                )
-                await self.runtime_shutdown()
-                # draining deliberately stays True here: startup() clears
-                # it after its container reaps (see startup()).
-                await self.startup()
+                await self._apply_and_recycle(state, new_settings)
             finally:
                 # A failed restart must never leave the node refusing
                 # starts: the in-memory flag has no DB persistence an
@@ -742,6 +791,72 @@ class Lifecycle:
             return None, str(exc)
         return new, None
 
+    _RECONFIGURE_SUBSYSTEMS = [
+        "ssl_trust",
+        "netfilter",
+        "auth",
+        "podman",
+        "sockets",
+        "container_registry",
+        "consent_sweeper",
+        "inactivity_sweeper",
+        "memory_evictor",
+        "consent_coordinator",
+        "consent_deciders",
+        "sidecar_connections",
+        "proxy_watchdog",
+        "llm_router",
+        "terminal",
+        "oidc",
+        "hooks",
+        "features",
+        "workspaces",
+        "files",
+        "db",
+        "model",
+        "agents",
+        "acl",
+        "email",
+        "util",
+        "lifecycle",
+        "server_scheduler",
+    ]
+
+    async def _reconfigure_subsystems(self, app) -> None:
+        """Call ``reconfigure(app_state)`` on every subsystem. Each call
+        is best-effort: a failure is logged at warning level and skipped
+        so one bad step can't leave the runtime half-reconfigured."""
+        for name in self._RECONFIGURE_SUBSYSTEMS:
+            try:
+                getattr(app.state, name).reconfigure(app)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "SIGHUP: %s reconfigure failed (skipped): %s", name, exc
+                )
+
+    async def _reapply_async_reconfigures(self, app) -> None:
+        """The async follow-ups a sync ``reconfigure()`` can only flag."""
+        # Lifecycle.reconfigure flags an agent re-seed; apply it now
+        # (async, so it can't run inside the sync reconfigure loop).
+        try:
+            await app.state.lifecycle.apply_pending_reseed()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "SIGHUP: agent user re-seed failed (skipped): %s", exc
+            )
+        # CaddyWatchdog.reconfigure flags an admin-API POST /load of the
+        # re-rendered Caddyfile; apply it now (async). No-op for the nginx
+        # engine (its watchdog has no apply_pending_reload) and when the
+        # proxy is disabled. #1559: a settings change is a fresh /load.
+        caddy_wd = getattr(app.state, "proxy_watchdog", None)
+        if caddy_wd is not None and hasattr(caddy_wd, "apply_pending_reload"):
+            try:
+                await caddy_wd.apply_pending_reload()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "SIGHUP: caddy config reload failed (skipped): %s", exc
+                )
+
     async def apply_reloaded_settings(self, new: KlangkSettings) -> None:
         """Swap settings and call ``reconfigure(app_state)`` on every subsystem.
 
@@ -763,65 +878,8 @@ class Lifecycle:
         # module state, reconfigured at this explicit seam (not an
         # app.state.* subsystem).
         configure_logging(new)
-
-        # Every app.state subsystem that implements reconfigure().
-        subsystems = [
-            "ssl_trust",
-            "netfilter",
-            "auth",
-            "podman",
-            "sockets",
-            "container_registry",
-            "consent_sweeper",
-            "inactivity_sweeper",
-            "memory_evictor",
-            "consent_coordinator",
-            "consent_deciders",
-            "sidecar_connections",
-            "proxy_watchdog",
-            "llm_router",
-            "terminal",
-            "oidc",
-            "hooks",
-            "features",
-            "workspaces",
-            "files",
-            "db",
-            "model",
-            "agents",
-            "acl",
-            "email",
-            "util",
-            "lifecycle",
-            "server_scheduler",
-        ]
-        for name in subsystems:
-            try:
-                getattr(app.state, name).reconfigure(app)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "SIGHUP: %s reconfigure failed (skipped): %s", name, exc
-                )
-        # Lifecycle.reconfigure flags an agent re-seed; apply it now
-        # (async, so it can't run inside the sync reconfigure loop).
-        try:
-            await app.state.lifecycle.apply_pending_reseed()
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "SIGHUP: agent user re-seed failed (skipped): %s", exc
-            )
-        # CaddyWatchdog.reconfigure flags an admin-API POST /load of the
-        # re-rendered Caddyfile; apply it now (async). No-op for the nginx
-        # engine (its watchdog has no apply_pending_reload) and when the
-        # proxy is disabled. #1559: a settings change is a fresh /load.
-        caddy_wd = getattr(app.state, "proxy_watchdog", None)
-        if caddy_wd is not None and hasattr(caddy_wd, "apply_pending_reload"):
-            try:
-                await caddy_wd.apply_pending_reload()
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "SIGHUP: caddy config reload failed (skipped): %s", exc
-                )
+        await self._reconfigure_subsystems(app)
+        await self._reapply_async_reconfigures(app)
         # #1610: remount frontend_dir if it changed.
         if old.frontend_dir != new.frontend_dir:
             self.remount_frontend(app, new)
@@ -1074,6 +1132,90 @@ def setup_logfire(app: FastAPI) -> bool:
 # devenv / supervisord remain only the outer restart layer for uvicorn (klangkd).
 
 
+async def validate_and_seed(app: FastAPI) -> None:
+    """Deterministic config validation + seeding at startup.
+
+    A :class:`ConfigurationError` from this stretch is a config problem
+    a restart cannot fix; the lifespan flags it on ``app.state`` so the
+    launcher can exit EX_CONFIG (78) instead of uvicorn's generic
+    startup-failure status — without that, a supervisor restart-loops a
+    bad password/secret/bind forever (#2666).
+    """
+    app.state.auth.require_secure_jwt_secret()
+    # #2570: with KLANGKD_FIPS_MODE on, audit klangkd's own OpenSSL (its
+    # password hashing + JWT signing) once at startup — verified, or a
+    # prominent warning (klangkd may legitimately run on a non-FIPS
+    # control host; workspace containers are the fail-closed gate).
+    fips_mod.verify_process_fips(app.state.settings)
+    # Features reads the build-emitted features.json at construction
+    # (Features(app) in build_app); no separate load() step (#1655).
+    app.state.oidc.init_providers()
+    enforce_no_auth_bind_safety(app)
+    app.state.oidc.load_login_hook()
+    # #2762: customize-dir lifecycle hooks, loaded beside the login
+    # hook with the same failure semantics (ConfigurationError →
+    # startup_config_error → EX_CONFIG). Guarded: some minimal test
+    # apps wire the lifespan without build_app's full state.
+    hooks_state = getattr(app.state, "hooks", None)
+    if hooks_state is not None:
+        hooks_state.load_workspace_created_hook()
+    await app.state.lifecycle.seed_default_user()
+    await app.state.lifecycle.seed_agent_user()
+
+
+def wire_registry_callbacks(app: FastAPI) -> None:
+    """Wire the container-registry callbacks: a killed workspace resets
+    the WS state; a status change broadcasts to subscribers."""
+
+    async def _on_workspace_killed(ws_id, container_id=None):
+        await wshandler.reset_workspace_state(
+            app.state.sockets, ws_id, expected_container_id=container_id
+        )
+
+    registry = app.state.container_registry
+    registry.set_on_workspace_killed(_on_workspace_killed)
+    registry.set_on_container_status_changed(
+        lambda ws_id, running, started_at=None: broadcast_container_status(
+            app, ws_id, running, started_at
+        )
+    )
+
+
+def start_background_workers(app: FastAPI) -> None:
+    """Start every interval worker (sweepers, evictor, scheduler)."""
+    app.state.consent_sweeper.start()
+    app.state.inactivity_sweeper.start()
+    app.state.consent_coordinator.start()
+    app.state.consent_deciders.start()
+    app.state.sidecar_connections.start()
+    # #2526: host memory-pressure eviction loop (k8s node-pressure-eviction
+    # analogue) — stops idle workspaces before the kernel OOM killer picks a
+    # random victim (possibly klangkd itself).
+    app.state.memory_evictor.start()
+    # #2661: scheduled server stop/recycle loop — fires persisted
+    # schedules (surviving this daemon's restarts) and keeps every
+    # client informed with the pending-schedule snapshot. Guarded: some
+    # minimal test apps wire the lifespan without build_app's full state.
+    server_scheduler = getattr(app.state, "server_scheduler", None)
+    if server_scheduler is not None:
+        server_scheduler.start()
+
+
+async def stop_background_workers(app: FastAPI) -> None:
+    """Stop every interval worker (reverse of
+    :func:`start_background_workers`)."""
+    await app.state.consent_sweeper.stop()
+    server_scheduler = getattr(app.state, "server_scheduler", None)
+    if server_scheduler is not None:
+        await server_scheduler.stop()
+    await app.state.inactivity_sweeper.stop()
+    await app.state.memory_evictor.stop()
+    await app.state.consent_coordinator.stop()
+    await app.state.consent_deciders.stop()
+    await app.state.sidecar_connections.stop()
+    await app.state.proxy_watchdog.stop()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Schema bootstrap: reach the DB through the single owned
@@ -1108,48 +1250,12 @@ async def lifespan(app: FastAPI):
     # and therefore before trust is applied.
     setup_logfire(app)
 
-    # Deterministic config validation + seeding. A ConfigurationError from
-    # this stretch is a config problem a restart cannot fix; flag it on
-    # app.state so the launcher can exit EX_CONFIG (78) instead of uvicorn's
-    # generic startup-failure status — without that, a supervisor
-    # restart-loops a bad password/secret/bind forever (#2666).
     try:
-        app.state.auth.require_secure_jwt_secret()
-        # #2570: with KLANGKD_FIPS_MODE on, audit klangkd's own OpenSSL (its
-        # password hashing + JWT signing) once at startup — verified, or a
-        # prominent warning (klangkd may legitimately run on a non-FIPS
-        # control host; workspace containers are the fail-closed gate).
-        fips_mod.verify_process_fips(app.state.settings)
-        # Features reads the build-emitted features.json at construction
-        # (Features(app) in build_app); no separate load() step (#1655).
-        app.state.oidc.init_providers()
-        enforce_no_auth_bind_safety(app)
-        app.state.oidc.load_login_hook()
-        # #2762: customize-dir lifecycle hooks, loaded beside the login
-        # hook with the same failure semantics (ConfigurationError →
-        # startup_config_error → EX_CONFIG). Guarded: some minimal test
-        # apps wire the lifespan without build_app's full state.
-        hooks_state = getattr(app.state, "hooks", None)
-        if hooks_state is not None:
-            hooks_state.load_workspace_created_hook()
-        await app.state.lifecycle.seed_default_user()
-        await app.state.lifecycle.seed_agent_user()
+        await validate_and_seed(app)
     except ConfigurationError as exc:
         app.state.startup_config_error = str(exc)
         raise
-    registry = app.state.container_registry
-
-    async def _on_workspace_killed(ws_id, container_id=None):
-        await wshandler.reset_workspace_state(
-            app.state.sockets, ws_id, expected_container_id=container_id
-        )
-
-    registry.set_on_workspace_killed(_on_workspace_killed)
-    registry.set_on_container_status_changed(
-        lambda ws_id, running, started_at=None: broadcast_container_status(
-            app, ws_id, running, started_at
-        )
-    )
+    wire_registry_callbacks(app)
     await app.state.lifecycle.startup()
     # Reap orphaned pending consent rows from a prior run: the in-memory
     # holds are gone on restart, so without this the decider snapshot would
@@ -1159,22 +1265,7 @@ async def lifespan(app: FastAPI):
         "expired %d orphaned pending egress-consent request(s) on startup",
         reaped,
     )
-    app.state.consent_sweeper.start()
-    app.state.inactivity_sweeper.start()
-    app.state.consent_coordinator.start()
-    app.state.consent_deciders.start()
-    app.state.sidecar_connections.start()
-    # #2526: host memory-pressure eviction loop (k8s node-pressure-eviction
-    # analogue) — stops idle workspaces before the kernel OOM killer picks a
-    # random victim (possibly klangkd itself).
-    app.state.memory_evictor.start()
-    # #2661: scheduled server stop/recycle loop — fires persisted
-    # schedules (surviving this daemon's restarts) and keeps every
-    # client informed with the pending-schedule snapshot. Guarded: some
-    # minimal test apps wire the lifespan without build_app's full state.
-    server_scheduler = getattr(app.state, "server_scheduler", None)
-    if server_scheduler is not None:
-        server_scheduler.start()
+    start_background_workers(app)
     # Start the proxy (only when bound to a UDS — klangkd; no-op for TCP tests).
     # Rendered + owned by Python (#1396); replaces scripts/nginx.sh.
     await app.state.proxy_watchdog.start()
@@ -1193,16 +1284,7 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         loop.remove_signal_handler(signal.SIGHUP)
-        await app.state.consent_sweeper.stop()
-        server_scheduler = getattr(app.state, "server_scheduler", None)
-        if server_scheduler is not None:
-            await server_scheduler.stop()
-        await app.state.inactivity_sweeper.stop()
-        await app.state.memory_evictor.stop()
-        await app.state.consent_coordinator.stop()
-        await app.state.consent_deciders.stop()
-        await app.state.sidecar_connections.stop()
-        await app.state.proxy_watchdog.stop()
+        await stop_background_workers(app)
         await app.state.lifecycle.runtime_shutdown()
         await app.state.lifecycle.process_shutdown()
         logger.info("Klangk backend stopped")

@@ -81,6 +81,31 @@ def sig_policy_args() -> list[str]:
 # --- subprocess helper -----------------------------------------------------
 
 
+async def _spawn_seed_proc(binary: str, args: list[str]):
+    """Spawn a seed tool with captured output; a missing binary surfaces
+    as :class:`SeedError`, not a raw ``FileNotFoundError``."""
+    try:
+        return await asyncio.create_subprocess_exec(
+            binary,
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=subprocess_env(),
+        )
+    except FileNotFoundError as exc:
+        raise SeedError(f"{binary} not found on PATH") from exc
+
+
+def _check_seed_run(
+    binary: str, args: list[str], check: bool, rc: int, err_s: str
+) -> None:
+    """Raise :class:`SeedError` on a checked nonzero exit."""
+    if check and rc != 0:
+        raise SeedError(
+            f"{binary} {' '.join(args[:2])} failed (rc={rc}): {err_s.strip()}"
+        )
+
+
 async def run(
     binary: str,
     args: list[str],
@@ -96,16 +121,7 @@ async def run(
     devenv. A missing binary surfaces as ``SeedError`` (not a raw
     ``FileNotFoundError``), and a wedged call times out + is killed.
     """
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            binary,
-            *args,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=subprocess_env(),
-        )
-    except FileNotFoundError as exc:
-        raise SeedError(f"{binary} not found on PATH") from exc
+    proc = await _spawn_seed_proc(binary, args)
     try:
         out, err = await asyncio.wait_for(proc.communicate(), timeout)
     except asyncio.TimeoutError:
@@ -116,10 +132,7 @@ async def run(
     rc = proc.returncode or 0
     out_s = out.decode("utf-8", "replace")
     err_s = err.decode("utf-8", "replace")
-    if check and rc != 0:
-        raise SeedError(
-            f"{binary} {' '.join(args[:2])} failed (rc={rc}): {err_s.strip()}"
-        )
+    _check_seed_run(binary, args, check, rc, err_s)
     return rc, out_s, err_s
 
 
@@ -151,18 +164,35 @@ async def build_image(
         await run(podman_bin, args, timeout=2400.0)
 
 
+def _seed_member_name(member) -> str:
+    """The member path with a leading ``./`` stripped."""
+    name = member.name
+    return name[2:] if name.startswith("./") else name
+
+
+def _is_seed_member(name: str) -> bool:
+    """True for the whitelisted seed members: ``nix`` + ``etc/nix/nix.conf``."""
+    return (
+        name == "nix" or name.startswith("nix/") or name == "etc/nix/nix.conf"
+    )
+
+
 def _extract_seed_members(tar, out: str) -> None:
     """Extract only ``nix`` + ``etc/nix/nix.conf`` members (every member is
     a whitelisted relative path; ``filter="fully_trusted"`` preserves the
     seed's uid-1000 ownership — the workspace klangk user)."""
     for member in tar:
-        name = member.name[2:] if member.name.startswith("./") else member.name
-        if (
-            name == "nix"
-            or name.startswith("nix/")
-            or name == "etc/nix/nix.conf"
-        ):
+        if _is_seed_member(_seed_member_name(member)):
             tar.extract(member, out, filter="fully_trusted")
+
+
+def _export_error(proc) -> str:
+    """``podman export``'s stderr (empty when it closed the stream)."""
+    return (
+        proc.stderr.read().decode("utf-8", "replace").strip()
+        if proc.stderr
+        else ""
+    )
 
 
 def export_to_dir_sync(podman_bin: str, cid: str, out: str) -> None:
@@ -194,17 +224,30 @@ def export_to_dir_sync(podman_bin: str, cid: str, out: str) -> None:
         assert proc.stdout is not None
         proc.stdout.close()
         proc.wait()
-    err = (
-        proc.stderr.read().decode("utf-8", "replace").strip()
-        if proc.stderr
-        else ""
-    )
+    err = _export_error(proc)
     if proc.returncode != 0:
         raise SeedError(f"podman export failed (rc={proc.returncode}): {err}")
     if not extracted:
         raise SeedError(
             f"podman export produced no readable tar stream: {err}"
         )
+
+
+def _flatten_nix_conf(out: Path) -> None:
+    """tar wrote ``etc/nix/nix.conf``; flatten it to ``<out>/nix.conf``
+    and drop the emptied ``etc/`` tree."""
+    conf = out / "etc" / "nix" / "nix.conf"
+    if not conf.is_file():
+        raise SeedError("/etc/nix/nix.conf missing from the seed image")
+    target = out / "nix.conf"
+    if target.exists():
+        target.unlink()
+    conf.rename(target)
+    for d in (conf.parent, conf.parent.parent):
+        try:
+            d.rmdir()
+        except OSError:
+            pass
 
 
 async def export_and_extract(podman_bin: str, image: str, out: Path) -> None:
@@ -221,20 +264,7 @@ async def export_and_extract(podman_bin: str, image: str, out: Path) -> None:
         await asyncio.to_thread(export_to_dir_sync, podman_bin, cid, str(out))
     finally:
         await run(podman_bin, ["rm", cid], check=False)
-
-    # tar wrote etc/nix/nix.conf; flatten it to <out>/nix.conf + drop etc/.
-    conf = out / "etc" / "nix" / "nix.conf"
-    if not conf.is_file():
-        raise SeedError("/etc/nix/nix.conf missing from the seed image")
-    target = out / "nix.conf"
-    if target.exists():
-        target.unlink()
-    conf.rename(target)
-    for d in (conf.parent, conf.parent.parent):
-        try:
-            d.rmdir()
-        except OSError:
-            pass
+    _flatten_nix_conf(out)
 
 
 async def verify(podman_bin: str, image: str, out: Path) -> None:
@@ -293,21 +323,26 @@ def cp_a(src: Path, dst: Path) -> None:
         shutil.copy2(src, dst)
 
 
+def _clear_seed_entry(p: Path) -> None:
+    """Remove one seed entry; a dir is chmod'd writable first so the
+    read-only store files can be removed."""
+    if p.is_dir():
+        chmod_w(p)
+        shutil.rmtree(p, ignore_errors=True)
+        return
+    try:
+        p.unlink()
+    except OSError:
+        pass
+
+
 def clear_seed_dir(out: Path) -> None:
     """Remove an existing ``nix/`` + ``nix.conf`` + ``etc/`` (chmod read-only
     store files first so rmdir/unlink can proceed)."""
     for name in ("nix", "nix.conf", "etc"):
         p = out / name
-        if not p.exists() and not p.is_symlink():
-            continue
-        if p.is_dir():
-            chmod_w(p)
-            shutil.rmtree(p, ignore_errors=True)
-        else:
-            try:
-                p.unlink()
-            except OSError:
-                pass
+        if p.exists() or p.is_symlink():
+            _clear_seed_entry(p)
 
 
 # --- orchestration ---------------------------------------------------------

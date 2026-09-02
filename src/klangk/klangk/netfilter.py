@@ -50,8 +50,18 @@ _DOMAIN_RE = re.compile(
 )
 
 
+def _has_no_whitespace(spec: str) -> bool:
+    """True when the spec carries no whitespace."""
+    return not any(ch.isspace() for ch in spec)
+
+
+def _valid_host_port(host: str) -> bool:
+    """A ``host[:port]`` spec against the host grammar + port range."""
+    return bool(_DOMAIN_RE.match(host)) and _valid_spec_port(host)
+
+
 def _valid_domain_spec(spec: str) -> bool:
-    if not spec or any(ch.isspace() for ch in spec):
+    if not spec or not _has_no_whitespace(spec):
         return False
     # A "/" denotes an IPv4 CIDR range (e.g. ``10.0.0.0/8``, optionally
     # scoped to a port as ``10.0.0.0/8:443``). The slash cleanly
@@ -63,12 +73,10 @@ def _valid_domain_spec(spec: str) -> bool:
     # leading ``.`` is INCLUSIVE (apex + subdomains); ``*.`` is SUBDOMAINS only.
     # Strip the sigil and validate the remaining ``host[:port]`` grammar; a bare
     # ``*``, ``*.``, or ``.`` has no matchable base (#2256).
-    spec = _strip_host_sigil(spec)
-    if not spec:
+    host = _strip_host_sigil(spec)
+    if not host:
         return False
-    if not _DOMAIN_RE.match(spec):
-        return False
-    return _valid_spec_port(spec)
+    return _valid_host_port(host)
 
 
 def _strip_host_sigil(spec: str) -> str:
@@ -94,6 +102,18 @@ def _valid_spec_port(spec: str) -> bool:
     return True
 
 
+def _valid_cidr_port_suffix(spec: str) -> tuple[str, str | None] | None:
+    """(cidr, port) with the port split off; ``None`` when the port suffix
+    is malformed (the grammar matches the host spec: 1–65535, digits
+    only)."""
+    if ":" not in spec:
+        return spec, None
+    cidr, port = spec.rsplit(":", 1)
+    if not port or not port.isdigit() or int(port) > 65535:
+        return None
+    return cidr, port
+
+
 def valid_cidr_spec(spec: str) -> bool:
     """Validate an IPv4 CIDR spec, optionally scoped to a TCP port.
 
@@ -108,19 +128,31 @@ def valid_cidr_spec(spec: str) -> bool:
     missing prefixes (``10.0.0.0/``), and non-numeric prefixes are rejected
     via the ``IPv4Network`` ``ValueError`` (#1935).
     """
-    # Split off an optional :port suffix first; the port grammar matches
-    # the host spec (1–65535, digits only).
-    cidr = spec
-    port: str | None = None
-    if ":" in spec:
-        cidr, port = spec.rsplit(":", 1)
-        if not port or not port.isdigit() or int(port) > 65535:
-            return False
+    split = _valid_cidr_port_suffix(spec)
+    if split is None:
+        return False
+    cidr, _port = split
     try:
         ipaddress.IPv4Network(cidr, strict=False)
     except ValueError:
         return False
     return True
+
+
+def _add_valid_spec(
+    out: list[str], seen: set[str], invalid: list[str], raw: str
+) -> None:
+    """Validate one raw entry: strip it, validate it, de-duplicate it, or
+    record it as invalid."""
+    spec = raw.strip()
+    if not spec:
+        return
+    if not _valid_domain_spec(spec):
+        invalid.append(raw)
+        return
+    if spec not in seen:
+        seen.add(spec)
+        out.append(spec)
 
 
 def parse_allowed_domains(
@@ -141,15 +173,7 @@ def parse_allowed_domains(
     seen: set[str] = set()
     invalid: list[str] = []
     for raw in values:
-        spec = raw.strip()
-        if not spec:
-            continue
-        if not _valid_domain_spec(spec):
-            invalid.append(raw)
-            continue
-        if spec not in seen:
-            seen.add(spec)
-            out.append(spec)
+        _add_valid_spec(out, seen, invalid, raw)
     if invalid:
         raise ValueError(
             f"Invalid {label} entry/entries: "
@@ -199,22 +223,41 @@ def is_ipv4(s: str) -> bool:
         return False
 
 
+def _nameserver_line_ip(line: str) -> str | None:
+    """The IPv4 nameserver of a resolv.conf line, or ``None``."""
+    parts = line.split()
+    if len(parts) >= 2 and parts[0] == "nameserver" and is_ipv4(parts[1]):
+        return parts[1]
+    return None
+
+
 def nameservers(path: str) -> list[str]:
     """IPv4 ``nameserver`` IPs from a resolv.conf file (best-effort)."""
     out: list[str] = []
     try:
         with open(path) as f:
             for line in f:
-                parts = line.split()
-                if (
-                    len(parts) >= 2
-                    and parts[0] == "nameserver"
-                    and is_ipv4(parts[1])
-                ):
-                    out.append(parts[1])
+                ip = _nameserver_line_ip(line)
+                if ip is not None:
+                    out.append(ip)
     except OSError:
         pass
     return out
+
+
+def _resolved_stub_upstream(primary: list[str]) -> list[str]:
+    """The real upstream resolvers behind the ``127.0.0.53`` systemd
+    stub, or ``[]`` when the stub isn't in use."""
+    if not any(ns == "127.0.0.53" for ns in primary):
+        return []
+    return nameservers("/run/systemd/resolve/resolv.conf")
+
+
+def _non_loopback_resolvers(primary: list[str]) -> list[str]:
+    """The primary resolvers minus loopback stubs, de-duplicated in order."""
+    return list(
+        dict.fromkeys(ns for ns in primary if not ns.startswith("127."))
+    )
 
 
 def detect_host_resolvers() -> list[str]:
@@ -228,13 +271,10 @@ def detect_host_resolvers() -> list[str]:
     to one of these (picking one that differs from the REDIRECT target for
     loop-avoidance)."""
     primary = nameservers("/etc/resolv.conf")
-    if any(ns == "127.0.0.53" for ns in primary):
-        upstream = nameservers("/run/systemd/resolve/resolv.conf")
-        if upstream:
-            return list(dict.fromkeys(upstream))
-    return list(
-        dict.fromkeys(ns for ns in primary if not ns.startswith("127."))
-    )
+    upstream = _resolved_stub_upstream(primary)
+    if upstream:
+        return list(dict.fromkeys(upstream))
+    return _non_loopback_resolvers(primary)
 
 
 class NetFilter:
