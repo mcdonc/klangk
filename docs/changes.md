@@ -1960,8 +1960,11 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 - **`klangk sandbox` copy/setup paths are now shell-quoted (#3093).** A
   `.klangk-sandbox.yaml` `copy:` destination containing spaces (or a
   `mount-at`/`setup:` path containing spaces or single quotes) no longer
-  misdirects the copy or breaks the generated setup command — both
-  round-trip into the `sh -c` strings intact.
+  misdirects the copy or breaks the generated setup command. The setup
+  script now runs as `bash <quoted path>` instead of `bash -c '<path>'`;
+  the `-c` layer re-parsed the quoted path as a command line and
+  word-split it. `setup:` was never documented to accept shell syntax,
+  so a script path is all it passes now.
 
 - **Cancellation during a consent verdict no longer hangs the egress
   relay** (#3089). A decider disconnect or backend shutdown landing while

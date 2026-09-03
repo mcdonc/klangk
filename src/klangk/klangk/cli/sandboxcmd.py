@@ -104,11 +104,16 @@ async def sandbox_setup(ws, config, sandbox_root, handle):
         # Setup runs non-interactively (no TTY), so SSH cannot prompt the
         # user for host-key confirmation; without this, git-over-SSH hangs
         # indefinitely waiting for input that will never arrive.
+        # #3093: quote the paths — and run the script as
+        # ``bash <quoted path>``, NOT ``bash -c '<path>'``: a ``-c``
+        # layer would re-parse its argument as a command line and
+        # word-split the quoted path. ``setup`` is a script path per
+        # the sandbox config docs, not a command string.
         shell_cmd = (
             "export GIT_SSH_COMMAND="
             "'ssh -o StrictHostKeyChecking=accept-new'"
             f" && cd {shlex.quote(mount_at)}"
-            f" && bash -c {shlex.quote(setup_cmd)}"
+            f" && bash {shlex.quote(setup_cmd)}"
         )
         timeout = config.setup_timeout or None
         exit_code = await exec_on_ws(

@@ -6072,42 +6072,58 @@ class TestSandboxSetupOnly:
 
     async def test_copy_quotes_paths_with_spaces(self, tmp_path):
         """#3093: a copy destination with spaces must survive the
-        sh -c interpolation as a single redirect target."""
+        sh -c interpolation — proven by executing the generated
+        command under a real sh and checking where the file lands."""
+        import subprocess
+
         from klangk.cli.main import sandbox_setup
         from klangk.cli.sandbox import SandboxConfig
 
         (tmp_path / "notes.txt").write_text("data")
+        dest = tmp_path / "home" / "my notes.txt"
 
         config = SandboxConfig(
-            copy=["notes.txt:~/my notes.txt"],
+            copy=[f"notes.txt:{dest}"],
         )
 
         ws = AsyncMock()
         exec_calls = []
 
         async def fake_exec(ws, cmd, stdin=None, stdout=None, timeout=None):
-            exec_calls.append(cmd)
+            exec_calls.append((cmd, stdin))
             return 0
 
         with patch("klangk.cli.sandboxcmd.exec_on_ws", fake_exec):
             await sandbox_setup(ws, config, tmp_path, "admin")
 
-        assert exec_calls == [
-            [
-                "sh",
-                "-c",
-                "mkdir -p /home/admin && cat > '/home/admin/my notes.txt'",
-            ]
-        ]
+        ((cmd, stdin),) = exec_calls
+        assert cmd[:2] == ["sh", "-c"]
+        proc = subprocess.run(
+            cmd,
+            input=stdin.getvalue(),
+            capture_output=True,
+            timeout=30,
+        )
+        assert proc.returncode == 0, proc.stderr
+        assert dest.read_bytes() == b"data"
 
     async def test_setup_quotes_mount_and_script(self, tmp_path):
         """#3093: mount-at and setup paths containing spaces or single
-        quotes must round-trip through the sh -c string."""
+        quotes must round-trip — proven by executing the generated
+        command under a real sh. The script runs as
+        ``bash <quoted path>`` (not ``bash -c``), whose re-parse would
+        word-split the quoted path."""
+        import subprocess
+
         from klangk.cli.main import sandbox_setup
         from klangk.cli.sandbox import SandboxConfig
 
+        mount = tmp_path / "my work"
+        mount.mkdir()
+        (mount / "bob's setup.sh").write_text("echo SETUP-RAN\n")
+
         config = SandboxConfig(
-            mount_at="~/my work",
+            mount_at=str(mount),
             setup="bob's setup.sh",
         )
 
@@ -6121,12 +6137,13 @@ class TestSandboxSetupOnly:
         with patch("klangk.cli.sandboxcmd.exec_on_ws", fake_exec):
             await sandbox_setup(ws, config, tmp_path, "admin")
 
-        assert exec_calls[0][2] == (
-            "export GIT_SSH_COMMAND="
-            "'ssh -o StrictHostKeyChecking=accept-new'"
-            " && cd '/home/admin/my work'"
-            " && bash -c '/home/admin/my work/bob'\"'\"'s setup.sh'"
+        proc = subprocess.run(
+            exec_calls[0],
+            capture_output=True,
+            timeout=30,
         )
+        assert proc.returncode == 0, proc.stderr
+        assert "SETUP-RAN" in proc.stdout.decode()
 
     async def test_setup_passes_timeout(self, tmp_path):
         from klangk.cli.main import sandbox_setup
