@@ -88,7 +88,7 @@ async def _refuse(
 
 
 async def _refuse_invalid_handshake(
-    websocket: WebSocket, app, workspace: str, user: dict
+    websocket: WebSocket, app, workspace: str, user: dict, *, hs_mark
 ) -> bool:
     """Authorization + static-mode gate for a consent decider.
 
@@ -117,10 +117,12 @@ async def _refuse_invalid_handshake(
     allowed = await app.state.acl.check_permission(
         f"/workspaces/{workspace}", principals, "egress-consent"
     )
+    hs_mark("authz")
     if not allowed:
         await _refuse(websocket, 4003, "Forbidden", user.get("email"))
         return True
     ws = await app.state.model.workspaces.get_workspace(workspace)
+    hs_mark("workspace")
     if ws is None:
         # Vanished between the authz check and now (a delete race) -- the
         # workspace authz just passed against can no longer be registered.
@@ -339,10 +341,10 @@ async def handle_consent_decider(websocket: WebSocket, app) -> None:
         )
         return
 
-    if await _refuse_invalid_handshake(websocket, app, workspace, user):
+    if await _refuse_invalid_handshake(
+        websocket, app, workspace, user, hs_mark=_hs_mark
+    ):
         return
-    _hs_mark("authz")
-    _hs_mark("workspace")
     await websocket.accept()
     _hs_mark("accept")
     _log_handshake_timing(_hs_t0, _hs_marks)

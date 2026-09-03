@@ -41,7 +41,7 @@ class TestSidecarConnections:
         sock = _Sock()
         reg.register("ws-1", sock)
         assert reg.get("ws-1") is sock
-        reg.deregister("ws-1")
+        reg.deregister("ws-1", sock)
         assert reg.get("ws-1") is None
 
     async def test_send_drop_no_connection_returns_none(self):
@@ -90,9 +90,10 @@ class TestSidecarConnections:
 
     async def test_deregister_fails_pending_ack(self):
         reg = SidecarConnections(_app())
-        reg.register("ws-1", _Sock())
+        sock = _Sock()
+        reg.register("ws-1", sock)
         fut = reg.send_drop("ws-1", "h", "denied")
-        reg.deregister("ws-1")  # sidecar gone -> its ack fails
+        reg.deregister("ws-1", sock)  # sidecar gone -> its ack fails
         assert fut.result() is False
 
     async def test_stop_clears_and_fails_pending(self):
@@ -126,7 +127,7 @@ class TestSidecarConnectionsBranchGaps2834:
         reg.register("ws-1", sock)
         fut = reg.send_drop("ws-1", "h", "allowed")
         fut.set_result(True)  # raced ack
-        reg.deregister("ws-1")  # must not raise / re-resolve
+        reg.deregister("ws-1", sock)  # must not raise / re-resolve
         assert fut.result() is True
         assert reg._pending == {}
 
@@ -145,3 +146,42 @@ class TestSidecarConnectionsBranchGaps2834:
         await reg.stop()
         assert f2.result() is False  # the open one was fail-closed
         assert reg._pending == {} and reg._conns == {}
+
+
+class TestSidecarConnectionsIdentityGuard3069:
+    """#3069: a stale socket's teardown must not drop a replacement's
+    registration (sidecar reconnect race)."""
+
+    async def test_stale_socket_deregister_keeps_replacement(self):
+        reg = SidecarConnections(_app())
+        old, new = _Sock(), _Sock()
+        reg.register("ws-1", old)
+        reg.register("ws-1", new)  # reconnect repoints the entry
+        reg.deregister("ws-1", old)  # stale socket's handler finally runs
+        assert reg.get("ws-1") is new  # replacement still registered
+
+    async def test_replacement_deregister_still_works(self):
+        reg = SidecarConnections(_app())
+        old, new = _Sock(), _Sock()
+        reg.register("ws-1", old)
+        reg.register("ws-1", new)
+        reg.deregister("ws-1", old)
+        reg.deregister("ws-1", new)  # the live one may drop it
+        assert reg.get("ws-1") is None
+
+    async def test_stale_deregister_leaves_pending_acks(self):
+        # A drop sent over the replacement's socket must not be failed by
+        # the stale socket's teardown either.
+        reg = SidecarConnections(_app())
+        old, new = _Sock(), _Sock()
+        reg.register("ws-1", old)
+        reg.register("ws-1", new)
+        fut = reg.send_drop("ws-1", "h", "allowed")
+        reg.deregister("ws-1", old)
+        assert not fut.done()  # ack still awaited on the live socket
+        reg.resolve_ack(next(iter(reg._pending)), True)
+        assert fut.result() is True
+
+    async def test_unknown_workspace_deregister_is_noop(self):
+        reg = SidecarConnections(_app())
+        reg.deregister("ws-x", _Sock())  # nothing registered -> no error

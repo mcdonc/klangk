@@ -1992,6 +1992,14 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   lock on attach: a popped-but-unsuperseded session reclaims its slot,
   and one that a newer session replaced routes the subscriber to the
   replacement.
+- **SSH-agent relay and sidecar reconnect robustness (#3069).** The
+  SSH-agent output relay no longer kills the whole WebSocket when the
+  client falls behind (its `SlowClientError` is now swallowed like other
+  socket errors, and a failed relay task can no longer leak its exception
+  through disconnect cleanup, which also skipped removing the connection
+  from the registry). A reconnecting egress sidecar's registration is now
+  identity-guarded, so the stale socket's teardown can no longer drop the
+  replacement's registration and leave egress revocations unenforced.
 - **Terminal share/unshare/close no longer hang clients on refusal paths
   (#3057).** The WebSocket handlers for `share_window`, `unshare_window`,
   `join_shared_terminal`, and the own-window commands (`terminal_new_window`,

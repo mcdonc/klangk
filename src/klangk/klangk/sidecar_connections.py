@@ -43,7 +43,10 @@ class SidecarConnections:
     def register(self, workspace_id: str, sock) -> None:
         """Record a sidecar's live socket (on /ws/egress-sidecar connect).
 
-        Re-registers if the sidecar reconnects (drops the stale socket).
+        Re-registers if the sidecar reconnects: the workspace's entry is
+        repointed at the fresh socket, and the stale socket's later
+        ``deregister`` is identity-guarded (see below) so it cannot drop
+        the replacement's registration (#3069).
         """
         self._conns[workspace_id] = sock
         logger.info(
@@ -75,11 +78,24 @@ class SidecarConnections:
             self._fail_ack(self._pending.pop(aid, None))
         return stale
 
-    def deregister(self, workspace_id: str) -> None:
-        """Drop a sidecar socket (disconnect) + fail its pending drop-acks."""
-        self._conns.pop(workspace_id, None)
+    def deregister(self, workspace_id: str, sock) -> None:
+        """Drop a sidecar socket (disconnect) + fail its pending drop-acks.
+
+        Identity-guarded (#3069): only the socket that currently owns the
+        workspace's registration may drop it. A reconnect registers a fresh
+        socket under the same workspace id; the stale socket's teardown must
+        leave the replacement's registration alone — otherwise every later
+        ``send_drop`` finds "no sidecar" and revocations proceed unenforced
+        while a live sidecar is connected. A pending drop-ack enqueued over
+        the stale socket is no longer failed here either; the revoke
+        caller's timeout (see ``send_drop``) is the fail-closed backstop.
+        """
+        registered = self._conns.get(workspace_id)
+        if registered is not None and registered is not sock:
+            return  # a newer socket owns the registration now
+        dropped = self._conns.pop(workspace_id, None) is not None
         stale = self._fail_pending_acks(workspace_id)
-        if stale or workspace_id in self._conns:
+        if dropped or stale:
             logger.info(
                 "sidecar connection deregistered: ws=%s", str(workspace_id)[:8]
             )

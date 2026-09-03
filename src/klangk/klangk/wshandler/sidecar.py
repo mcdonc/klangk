@@ -84,7 +84,9 @@ async def handle_egress_sidecar(websocket: WebSocket, app) -> None:
     finally:
         # Sidecar gone (disconnect/restart/crash): drop its registration (any
         # in-flight revoke ack fails at once) + cancel in-flight relays.
-        app.state.sidecar_connections.deregister(workspace_id)
+        # Identity-guarded (#3069): a stale socket's teardown must not drop
+        # a replacement socket's registration.
+        app.state.sidecar_connections.deregister(workspace_id, safe)
         for task in list(relay_tasks):
             task.cancel()
         await safe.stop_sender()
