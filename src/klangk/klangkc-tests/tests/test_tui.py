@@ -10631,6 +10631,59 @@ async def test_edit_screen_restart_declined(monkeypatch):
         assert not isinstance(app.screen, EditWorkspaceScreen)
 
 
+async def test_edit_screen_rename_restart_uses_new_name(monkeypatch):
+    # The PUT applies the rename, so the post-save restart prompt must
+    # target the NEW name, not the workspace object's stale one (#3096).
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    restarted = []
+    ws = _wsobj("oldname", image="base", running=True)
+    app = KlangkApp(
+        _edit_state(ws, restart=lambda *a, **k: restarted.append(a))
+    )
+    async with app.run_test() as pilot:
+        _edit_screen(app, ws)
+        await pilot.pause()
+        es = app.screen
+        es.query_one("#name", Input).value = "newname"
+        es.query_one("#image", Select).value = "py:3"  # create-time change
+        es.save()
+        await app.workers.wait_for_complete()
+        assert isinstance(app.screen, ConfirmScreen)  # restart offered
+        app.screen.dismiss(True)
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        assert restarted == [("newname",)]
+
+
+async def test_edit_screen_enter_in_tmp_size_submits(monkeypatch):
+    # Enter in the /tmp size input submits the edit form (the edit form's
+    # submit_ids omitted tmp_size) (#3096).
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    updated = []
+    ws = _wsobj("alpha", image="base")
+    app = KlangkApp(_edit_state(ws, update=lambda *a, **k: updated.append(k)))
+    async with app.run_test(size=(140, 40)) as pilot:
+        _edit_screen(app, ws)
+        await pilot.pause()
+        es = app.screen
+        tmp = es.query_one("#tmp_size", Input)
+        tmp.value = "2"
+        es.set_focus(tmp)
+        await pilot.pause()
+        await pilot.press("enter")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        # The form submitted: update_workspace ran and the screen dismissed.
+        assert updated and updated[0].get("name") == "alpha"
+        assert not isinstance(app.screen, EditWorkspaceScreen)
+
+
 async def test_edit_screen_restart_failure(monkeypatch):
     async def noop(*a, **k):
         return None

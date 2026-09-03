@@ -967,6 +967,28 @@ class TestAppActions:
             # The modal is gone after submit.
             assert not isinstance(app.screen, tui_consent.DurationPickerScreen)
 
+    async def test_picker_enter_disconnected_flashes_and_dismisses(self):
+        # Disconnected + a duration picked from the picker must flash on
+        # the queue screen's status bar (not query the picker for #status)
+        # and still dismiss the modal (#3096).
+        app = _make_app()
+        async with app.run_test() as pilot:
+            ws = FakeWS([])
+            app._ws = ws
+            app.controller.apply_frame(_req_frame("r1", host="a.com"))
+            app._refresh()
+            await pilot.pause()
+            await pilot.press("A")
+            await pilot.pause()
+            assert isinstance(app.screen, tui_consent.DurationPickerScreen)
+            app._ws = None  # the socket dropped while the picker was open
+            await pilot.press("enter")
+            await pilot.pause()
+            # The modal dismissed despite the flash on the disconnected path.
+            assert not isinstance(app.screen, tui_consent.DurationPickerScreen)
+            status = app.query_one("#status", Static)
+            assert "reconnecting" in str(status.content)
+
     async def test_D_opens_picker_enter_sends_picked_duration(self):
         app = _make_app()
         async with app.run_test() as pilot:

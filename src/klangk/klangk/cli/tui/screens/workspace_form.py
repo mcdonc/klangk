@@ -1760,7 +1760,9 @@ class EditWorkspaceScreen(WorkspaceFormMixin, TabSkipMixin, StatusScreen):
             self.msg(f"Failed to save: {exc}", error=True)
             return
         if restart_needed:
-            self.prompt_restart_after_save(ws.name, name)
+            # The PUT above already applied the rename, so the restart must
+            # target the post-save name (#3096).
+            self.prompt_restart_after_save(name, name)
         else:
             self._safe_dismiss(name)
 
@@ -1796,6 +1798,7 @@ class EditWorkspaceScreen(WorkspaceFormMixin, TabSkipMixin, StatusScreen):
                 "cpu_limit",
                 "memory_limit",
                 "pids_limit",
+                "tmp_size",
             ),
             submit=self.save,
         )
