@@ -82,7 +82,6 @@ _mock_term.new_window = AsyncMock(return_value=[])
 _mock_term.select_window = AsyncMock()
 _mock_term.close_window = AsyncMock(return_value=[])
 _mock_term.rename_window = AsyncMock()
-_mock_term.kill_joiner_sessions = AsyncMock()
 _mock_term.has_tmux_session = AsyncMock(return_value=False)
 _mock_term.service_cmd_window_exists = AsyncMock(return_value=False)
 
@@ -8878,6 +8877,8 @@ class TestShareWindowHandlers:
     async def test_unshare_window_kicks_joiners(
         self, user, temp_data_dir, app_state
     ):
+        """Unsharing disconnects only the viewers of THAT window — the
+        viewer of another still-shared window keeps their session (#3072)."""
         app_state = _make_app_state()
         sockets = app_state.state.sockets
         sock = _mock_sock()
@@ -8888,8 +8889,22 @@ class TestShareWindowHandlers:
         session = sockets.get_or_create_session("ws-1", app_state)
         session.terminal_windows[user["id"]] = [
             {"name": "1", "index": 0, "id": "@0", "shared": True},
+            {"name": "2", "index": 1, "id": "@1", "shared": True},
         ]
+        viewer = _base_conn(app_state=app_state)
+        viewer.workspace_id = "ws-1"
+        viewer.viewing_shared = {"user_id": user["id"], "window_id": "@0"}
+        other = _base_conn(app_state=app_state)
+        other.workspace_id = "ws-1"
+        other.viewing_shared = {"user_id": user["id"], "window_id": "@1"}
         await session.add_subscriber(sock, "cid")
+        with patch.object(
+            WorkspaceSession, "start_window_sync", lambda s: None
+        ):
+            await session.add_subscriber(viewer.sock, "cid")
+            await session.add_subscriber(other.sock, "cid")
+        sockets.connections[viewer.sock] = viewer
+        sockets.connections[other.sock] = other
         try:
             with (
                 patch.object(
@@ -8897,11 +8912,17 @@ class TestShareWindowHandlers:
                     "check_permission",
                     new=AsyncMock(return_value=True),
                 ),
-                patch.object(_mock_term, "kill_joiner_sessions") as mock_kill,
+                patch.object(
+                    viewer, "stop_terminal", new=AsyncMock()
+                ) as stop_viewer,
+                patch.object(
+                    other, "stop_terminal", new=AsyncMock()
+                ) as stop_other,
             ):
                 await conn.handle_unshare_window({"window_id": "@0"})
             assert session.terminal_windows[user["id"]][0]["shared"] is False
-            mock_kill.assert_awaited_once()
+            stop_viewer.assert_awaited_once()
+            stop_other.assert_not_awaited()
             calls = [c[0][0] for c in sock.send_json.call_args_list]
             deleted = [
                 c for c in calls if c.get("type") == "shared_terminal_deleted"
@@ -8975,9 +8996,7 @@ class TestShareWindowHandlers:
         ]
         await session.add_subscriber(sock, "cid")
         try:
-            with patch.object(_mock_term, "kill_joiner_sessions") as mock_kill:
-                await conn.handle_unshare_window({"window_id": "@0"})
-            mock_kill.assert_not_awaited()
+            await conn.handle_unshare_window({"window_id": "@0"})
             calls = [c[0][0] for c in sock.send_json.call_args_list]
             assert any(c.get("type") == "shared_terminals" for c in calls)
             assert not any(
@@ -9313,6 +9332,8 @@ class TestShareWindowHandlers:
             await conn.handle_unshare_window({"window_id": "@0"})
 
     async def test_unshare_kill_error_handled(self, user, app_state):
+        """A viewer whose teardown raises still gets past the kick: the
+        unshare completes and broadcasts for the others (#3072)."""
         app_state = _make_app_state()
         sockets = app_state.state.sockets
         sock = _mock_sock()
@@ -9324,7 +9345,17 @@ class TestShareWindowHandlers:
         session.terminal_windows[user["id"]] = [
             {"name": "1", "index": 0, "id": "@0", "shared": True}
         ]
+        viewer = _base_conn(app_state=app_state)
+        viewer.workspace_id = "ws-1"
+        viewer.viewing_shared = {"user_id": user["id"], "window_id": "@0"}
         await session.add_subscriber(sock, "cid")
+        # add_subscriber spawns the tmux window watcher against the mock
+        # podman; suppress it (not what this test exercises).
+        with patch.object(
+            WorkspaceSession, "start_window_sync", lambda s: None
+        ):
+            await session.add_subscriber(viewer.sock, "cid")
+        sockets.connections[viewer.sock] = viewer
         try:
             with (
                 patch.object(
@@ -9333,9 +9364,9 @@ class TestShareWindowHandlers:
                     new=AsyncMock(return_value=True),
                 ),
                 patch.object(
-                    _mock_term,
-                    "kill_joiner_sessions",
-                    side_effect=TerminalError("no sessions"),
+                    viewer,
+                    "stop_terminal",
+                    new=AsyncMock(side_effect=OSError("boom")),
                 ),
             ):
                 await conn.handle_unshare_window({"window_id": "@0"})
@@ -9833,7 +9864,6 @@ class TestShareWindowHandlers:
                     "check_permission",
                     new=AsyncMock(return_value=True),
                 ),
-                patch.object(_mock_term, "kill_joiner_sessions"),
                 patch.object(_mock_term, "close_window", return_value=[]),
             ):
                 await conn.handle_delete_shared_terminal(
@@ -9966,7 +9996,6 @@ class TestShareWindowHandlers:
                     "check_permission",
                     new=AsyncMock(return_value=True),
                 ),
-                patch.object(_mock_term, "kill_joiner_sessions"),
                 patch.object(_mock_term, "close_window", return_value=[]),
             ):
                 await conn.handle_delete_shared_terminal(
@@ -9994,7 +10023,7 @@ class TestShareWindowHandlers:
                 ),
                 patch.object(
                     _mock_term,
-                    "kill_joiner_sessions",
+                    "close_window",
                     side_effect=RuntimeError("boom"),
                 ),
             ):
@@ -10211,6 +10240,27 @@ class TestSharedTerminalController:
             app_state = _make_app_state()
         return app_state.state.sockets.get_or_create_session(ws_id, app_state)
 
+    async def _viewer(
+        self, app_state, ws, *, owner_user_id, window_id, stop=None
+    ):
+        """Register a viewer connection for (owner, window) as a session
+        subscriber; returns (sock, stop mock)."""
+        sock = _mock_sock()
+        stop = AsyncMock() if stop is None else stop
+        conn = SimpleNamespace(
+            viewing_shared={"user_id": owner_user_id, "window_id": window_id},
+            stop_terminal=stop,
+            user={"id": "viewer", "email": "viewer@example.com"},
+        )
+        # add_subscriber spawns the tmux window watcher against the mock
+        # podman; suppress it (not what these tests exercise).
+        with patch.object(
+            WorkspaceSession, "start_window_sync", lambda s: None
+        ):
+            await ws.add_subscriber(sock, "cid")
+        app_state.state.sockets.connections[sock] = conn
+        return sock, stop
+
     # --- find_window ---
 
     async def test_find_window_returns_match(self, user, app_state):
@@ -10327,11 +10377,13 @@ class TestSharedTerminalController:
         ws.terminal_windows[user["id"]] = [
             {"id": "@0", "name": "a", "shared": True}
         ]
+        _, stop = await self._viewer(
+            app_state, ws, owner_user_id=user["id"], window_id="@0"
+        )
         try:
-            with patch.object(_mock_term, "kill_joiner_sessions") as kill:
-                await ctrl.unshare_window({"window_id": "@0"})
+            await ctrl.unshare_window({"window_id": "@0"})
             assert ws.terminal_windows[user["id"]][0]["shared"] is False
-            kill.assert_awaited_once_with("cid", "uid")
+            stop.assert_awaited_once()
             sent = [c[0][0] for c in sock.send_json.call_args_list]
             assert not any("Permission" in c.get("message", "") for c in sent)
         finally:
@@ -10340,18 +10392,54 @@ class TestSharedTerminalController:
     async def test_unshare_window_marks_unshared_and_kicks(
         self, user, temp_data_dir, app_state
     ):
+        """Only the viewers of the unshared window are kicked: a viewer
+        of the owner's other still-shared window keeps their session, and
+        a subscriber with no registered connection is skipped (#3072)."""
         app_state = _make_app_state()
         sockets = app_state.state.sockets
         ctrl, _, conn = self._controller(user=user, app_state=app_state)
         ws = self._ws_session(app_state=app_state)
         ws.terminal_windows[user["id"]] = [
+            {"id": "@0", "name": "a", "shared": True},
+            {"id": "@1", "name": "b", "shared": True},
+        ]
+        _, stop_viewing = await self._viewer(
+            app_state, ws, owner_user_id=user["id"], window_id="@0"
+        )
+        _, stop_other = await self._viewer(
+            app_state, ws, owner_user_id=user["id"], window_id="@1"
+        )
+        orphan = _mock_sock()  # subscriber without a registered connection
+        with patch.object(
+            WorkspaceSession, "start_window_sync", lambda s: None
+        ):
+            await ws.add_subscriber(orphan, "cid")
+        try:
+            await ctrl.unshare_window({"window_id": "@0"})
+            assert ws.terminal_windows[user["id"]][0]["shared"] is False
+            stop_viewing.assert_awaited_once()
+            stop_other.assert_not_awaited()
+        finally:
+            sockets.sessions.pop("ws-1", None)
+
+    async def test_unshare_window_other_owners_viewer_not_kicked(
+        self, user, temp_data_dir, app_state
+    ):
+        """A viewer of another owner's window (same window id) is not
+        kicked by this owner's unshare."""
+        app_state = _make_app_state()
+        sockets = app_state.state.sockets
+        ctrl, _, _ = self._controller(user=user, app_state=app_state)
+        ws = self._ws_session(app_state=app_state)
+        ws.terminal_windows[user["id"]] = [
             {"id": "@0", "name": "a", "shared": True}
         ]
+        _, stop = await self._viewer(
+            app_state, ws, owner_user_id="someone-else", window_id="@0"
+        )
         try:
-            with patch.object(_mock_term, "kill_joiner_sessions") as kill:
-                await ctrl.unshare_window({"window_id": "@0"})
-            assert ws.terminal_windows[user["id"]][0]["shared"] is False
-            kill.assert_awaited_once_with("cid", "uid")
+            await ctrl.unshare_window({"window_id": "@0"})
+            stop.assert_not_awaited()
         finally:
             sockets.sessions.pop("ws-1", None)
 
@@ -10368,22 +10456,24 @@ class TestSharedTerminalController:
         ws.terminal_windows["other-user"] = [
             {"id": "@5", "name": "theirs", "shared": True}
         ]
+        _, stop = await self._viewer(
+            app_state, ws, owner_user_id="other-user", window_id="@5"
+        )
         try:
-            with patch.object(_mock_term, "kill_joiner_sessions") as kill:
-                await ctrl.unshare_window({"window_id": "@5"})
+            await ctrl.unshare_window({"window_id": "@5"})
             assert sock.send_json.call_args[0][0]["message"] == (
                 "Window not found"
             )
             assert ws.terminal_windows["other-user"][0]["shared"] is True
-            kill.assert_not_awaited()
+            stop.assert_not_awaited()
         finally:
             sockets.sessions.pop("ws-1", None)
 
     async def test_unshare_window_already_unshared_is_noop(
         self, user, temp_data_dir, app_state
     ):
-        """Unsharing a not-shared window is a cheap no-op — no joiner
-        kills, no shared_terminal_deleted broadcast."""
+        """Unsharing a not-shared window is a cheap no-op — no viewer
+        kicks, no shared_terminal_deleted broadcast."""
         app_state = _make_app_state()
         sockets = app_state.state.sockets
         ctrl, sock, _ = self._controller(user=user, app_state=app_state)
@@ -10391,10 +10481,12 @@ class TestSharedTerminalController:
         ws.terminal_windows[user["id"]] = [
             {"id": "@0", "name": "a", "shared": False}
         ]
+        _, stop = await self._viewer(
+            app_state, ws, owner_user_id=user["id"], window_id="@0"
+        )
         try:
-            with patch.object(_mock_term, "kill_joiner_sessions") as kill:
-                await ctrl.unshare_window({"window_id": "@0"})
-            kill.assert_not_awaited()
+            await ctrl.unshare_window({"window_id": "@0"})
+            stop.assert_not_awaited()
             sent = [c[0][0] for c in sock.send_json.call_args_list]
             assert not any(
                 s.get("type") == "shared_terminal_deleted" for s in sent
@@ -10409,18 +10501,23 @@ class TestSharedTerminalController:
         sockets = app_state.state.sockets
         ctrl, sock, _ = self._controller(user=user, app_state=app_state)
         ws = self._ws_session(app_state=app_state)
-        await ws.add_subscriber(sock, "cid")
+        with patch.object(
+            WorkspaceSession, "start_window_sync", lambda s: None
+        ):
+            await ws.add_subscriber(sock, "cid")
         ws.terminal_windows[user["id"]] = [
             {"id": "@0", "name": "a", "shared": True}
         ]
+        await self._viewer(
+            app_state,
+            ws,
+            owner_user_id=user["id"],
+            window_id="@0",
+            stop=AsyncMock(side_effect=OSError("boom")),
+        )
         try:
-            with patch.object(
-                _mock_term,
-                "kill_joiner_sessions",
-                side_effect=OSError("boom"),
-            ):
-                # Should not raise.
-                await ctrl.unshare_window({"window_id": "@0"})
+            # Should not raise.
+            await ctrl.unshare_window({"window_id": "@0"})
             # Still broadcast the deletion.
             sent = [c[0][0] for c in sock.send_json.call_args_list]
             assert any(
@@ -10602,7 +10699,10 @@ class TestSharedTerminalController:
         sockets = app_state.state.sockets
         ctrl, sock, _ = self._controller(user=user, app_state=app_state)
         ws = self._ws_session(app_state=app_state)
-        await ws.add_subscriber(sock, "cid")
+        with patch.object(
+            WorkspaceSession, "start_window_sync", lambda s: None
+        ):
+            await ws.add_subscriber(sock, "cid")
         ws.terminal_windows["owner-1"] = [
             {"id": "@0", "index": 0, "name": "build", "shared": True},
             {"id": "@1", "index": 1, "name": "other", "shared": False},
@@ -10611,19 +10711,21 @@ class TestSharedTerminalController:
             # owner_user_id != user["id"], so the delete handler calls
             # app_state.state.model.workspaces.get_workspace_by_id to authorize; return a workspace
             # owned by the current user so the delete is permitted.
+            _, stop = await self._viewer(
+                app_state, ws, owner_user_id="owner-1", window_id="@0"
+            )
             with (
                 patch.object(
                     app_state.state.model.workspaces,
                     "get_workspace_by_id",
                     new=AsyncMock(return_value={"user_id": user["id"]}),
                 ),
-                patch.object(_mock_term, "kill_joiner_sessions") as kill,
                 patch.object(_mock_term, "close_window") as close,
             ):
                 await ctrl.delete_shared_terminal(
                     {"user_id": "owner-1", "window_id": "@0"}
                 )
-            kill.assert_awaited_once_with("cid", "owner-1")
+            stop.assert_awaited_once()
             close.assert_awaited_once_with("cid", "owner-1", "@0")
             remaining = ws.terminal_windows["owner-1"]
             assert [w["id"] for w in remaining] == ["@1"]
@@ -10648,7 +10750,7 @@ class TestSharedTerminalController:
         try:
             with patch.object(
                 _mock_term,
-                "kill_joiner_sessions",
+                "close_window",
                 side_effect=OSError("boom"),
             ):
                 await ctrl.delete_shared_terminal(

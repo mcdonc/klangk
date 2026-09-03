@@ -1525,8 +1525,11 @@ class SharedTerminalController:
             self.broadcast_shared_terminals(ws_session)
             return
         match["shared"] = False
-        # Kick spectators/collaborators
-        await self._kick_joiners(self._conn.tmux_session_name())
+        # Kick the viewers of this window only — not every joiner of
+        # the owner's session group (#3072).
+        await self._kick_joiners(
+            ws_session, self._conn.user["id"], msg.get("window_id", "")
+        )
         ws_session.broadcast(
             {
                 "type": "shared_terminal_deleted",
@@ -1581,15 +1584,48 @@ class SharedTerminalController:
             return None
         return match, ws_session
 
-    async def _kick_joiners(self, session_name: str) -> None:
-        """Kill the window's joiner sessions (best-effort)."""
-        try:
-            await self._conn.app.state.terminal.kill_joiner_sessions(
-                self._conn.container_id,
-                session_name,
-            )
-        except Exception:
-            logger.debug("Failed to kill joiner sessions", exc_info=True)
+    @staticmethod
+    def _views_window(
+        viewing: dict | None, owner_user_id: str, window_id: str
+    ) -> bool:
+        """True when a ``viewing_shared`` marker points at this owner's
+        window."""
+        if not viewing:
+            return False
+        return (
+            viewing.get("user_id") == owner_user_id
+            and viewing.get("window_id") == window_id
+        )
+
+    async def _kick_joiners(
+        self, ws_session, owner_user_id: str, window_id: str
+    ) -> None:
+        """Disconnect the connections viewing this shared window (#3072).
+
+        Stopping each viewer's terminal session also kills their grouped
+        tmux session — the same teardown a viewer gets on disconnect.  A
+        group-wide tmux kill is deliberately NOT used: the container's
+        single tmux server also hosts other members' sessions, the
+        agent's ``service`` session, and the window watcher, and even
+        scoped to the owner's session group it would take out viewers
+        of the owner's other still-shared windows.  Best-effort per
+        viewer: one failing stop never blocks the rest or the unshare.
+        """
+        sockets = self._conn.app.state.sockets
+        for sock in list(ws_session.subscribers):
+            conn = sockets.connections.get(sock)
+            if not self._views_window(
+                getattr(conn, "viewing_shared", None),
+                owner_user_id,
+                window_id,
+            ):
+                continue
+            try:
+                await conn.stop_terminal()
+            except Exception:
+                logger.debug(
+                    "Failed to kick shared-terminal viewer", exc_info=True
+                )
 
     @staticmethod
     async def _select_shared_window(
@@ -1893,15 +1929,12 @@ class SharedTerminalController:
         return await self._perm_or_deny("share-terminals")
 
     async def _close_shared_window(
-        self, owner_user_id: str, window_id: str
+        self, ws_session, owner_user_id: str, window_id: str
     ) -> bool:
-        """Close the window (and its joiner sessions); False (after sending
-        the error frame) on failure."""
+        """Disconnect the window's viewers and close it; False (after
+        sending the error frame) on failure."""
         try:
-            await self._conn.app.state.terminal.kill_joiner_sessions(
-                self._conn.container_id,
-                owner_user_id,
-            )
+            await self._kick_joiners(ws_session, owner_user_id, window_id)
             await self._conn.app.state.terminal.close_window(
                 self._conn.container_id,
                 owner_user_id,
@@ -1969,7 +2002,9 @@ class SharedTerminalController:
         if resolved is None:
             return
         ws_session, owner_user_id, window_id, window_name = resolved
-        if not await self._close_shared_window(owner_user_id, window_id):
+        if not await self._close_shared_window(
+            ws_session, owner_user_id, window_id
+        ):
             return
         owner_windows = ws_session.terminal_windows.get(owner_user_id, [])
         owner_windows[:] = [

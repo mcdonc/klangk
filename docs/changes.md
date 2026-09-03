@@ -2000,6 +2000,15 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   from the registry). A reconnecting egress sidecar's registration is now
   identity-guarded, so the stale socket's teardown can no longer drop the
   replacement's registration and leave egress revocations unenforced.
+- **Unsharing or deleting a shared terminal no longer kills every
+  non-owner tmux session in the container (#3072).** One
+  `unshare_window`/`delete_shared_terminal` frame used to run a
+  group-unscoped `tmux kill-session` sweep that terminated other
+  members' live terminals, the workspace service command, and the
+  window watcher (leaving tab-strip sync dead until reconnect). Kicks
+  are now per viewer: only the connections actually viewing the
+  affected window are disconnected, and viewers of the owner's other
+  shared windows keep their sessions.
 - **Terminal share/unshare/close no longer hang clients on refusal paths
   (#3057).** The WebSocket handlers for `share_window`, `unshare_window`,
   `join_shared_terminal`, and the own-window commands (`terminal_new_window`,
