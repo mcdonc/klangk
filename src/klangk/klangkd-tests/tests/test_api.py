@@ -1496,7 +1496,7 @@ class TestForgotPassword:
         )
 
     async def test_forgot_sends_email(self, client, db, app_state):
-        await self._create_user(app_state)
+        user = await self._create_user(app_state)
         with patch.object(
             emailsvc_mod.EmailService,
             "send_password_reset_email",
@@ -1509,6 +1509,15 @@ class TestForgotPassword:
         assert resp.status_code == 200
         assert resp.json()["status"] == "sent"
         mock_send.assert_awaited_once()
+        # The URL build lives in schedule_reset_delivery (#3114), so pin
+        # it here: the delivered reset URL must carry a token that
+        # decodes to the account the request named.
+        email_arg, reset_url = mock_send.await_args.args
+        assert email_arg == "forgot@example.com"
+        assert "/#/reset-password?token=" in reset_url
+        token = reset_url.split("token=")[1]
+        decoded = app_state.state.auth.decode_password_reset_token(token)
+        assert decoded == user["id"]
         api.reset_timestamps.pop("forgot@example.com", None)
 
     async def test_forgot_unknown_email_still_returns_sent(self, client, db):
@@ -1596,6 +1605,12 @@ class TestForgotPassword:
         assert unknown.status_code == 200
         assert disabled.status_code == 200
         assert mint.call_count == 2
+        # Unknown mints against a discarded dummy subject; disabled
+        # against the real (unused) id — the design intent.
+        dummy_subject, real_subject = (c.args[0] for c in mint.call_args_list)
+        assert real_subject == u["id"]
+        assert dummy_subject != u["id"]
+        api.reset_timestamps.pop("nobody@example.com", None)
         api.reset_timestamps.pop("forgot@example.com", None)
 
     async def test_forgot_rate_limited(self, client, db, app_state):
