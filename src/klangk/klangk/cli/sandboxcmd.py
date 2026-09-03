@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+import shlex
 import sys
 from pathlib import Path
 
@@ -52,10 +53,17 @@ async def copy_sandbox_files(ws, config, sandbox_root, handle) -> None:
             continue
         context.err.print(f"  [dim]copy:[/dim] {host_path} → {container_dest}")
         parent = str(Path(container_dest).parent)
+        # #3093: quote the paths — a copy destination containing
+        # spaces must round-trip into the sh -c string intact.
         stdout_buf = io.BytesIO()
         exit_code = await exec_on_ws(
             ws,
-            ["sh", "-c", f"mkdir -p {parent} && cat > {container_dest}"],
+            [
+                "sh",
+                "-c",
+                f"mkdir -p {shlex.quote(parent)}"
+                f" && cat > {shlex.quote(container_dest)}",
+            ],
             stdin=io.BytesIO(src.read_bytes()),
             stdout=stdout_buf,
         )
@@ -99,7 +107,8 @@ async def sandbox_setup(ws, config, sandbox_root, handle):
         shell_cmd = (
             "export GIT_SSH_COMMAND="
             "'ssh -o StrictHostKeyChecking=accept-new'"
-            f" && cd {mount_at} && bash -c '{setup_cmd}'"
+            f" && cd {shlex.quote(mount_at)}"
+            f" && bash -c {shlex.quote(setup_cmd)}"
         )
         timeout = config.setup_timeout or None
         exit_code = await exec_on_ws(

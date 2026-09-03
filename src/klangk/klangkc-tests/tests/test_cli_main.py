@@ -6070,6 +6070,64 @@ class TestSandboxSetupOnly:
         assert "GIT_SSH_COMMAND=" in shell_cmd
         assert "StrictHostKeyChecking=accept-new" in shell_cmd
 
+    async def test_copy_quotes_paths_with_spaces(self, tmp_path):
+        """#3093: a copy destination with spaces must survive the
+        sh -c interpolation as a single redirect target."""
+        from klangk.cli.main import sandbox_setup
+        from klangk.cli.sandbox import SandboxConfig
+
+        (tmp_path / "notes.txt").write_text("data")
+
+        config = SandboxConfig(
+            copy=["notes.txt:~/my notes.txt"],
+        )
+
+        ws = AsyncMock()
+        exec_calls = []
+
+        async def fake_exec(ws, cmd, stdin=None, stdout=None, timeout=None):
+            exec_calls.append(cmd)
+            return 0
+
+        with patch("klangk.cli.sandboxcmd.exec_on_ws", fake_exec):
+            await sandbox_setup(ws, config, tmp_path, "admin")
+
+        assert exec_calls == [
+            [
+                "sh",
+                "-c",
+                "mkdir -p /home/admin && cat > '/home/admin/my notes.txt'",
+            ]
+        ]
+
+    async def test_setup_quotes_mount_and_script(self, tmp_path):
+        """#3093: mount-at and setup paths containing spaces or single
+        quotes must round-trip through the sh -c string."""
+        from klangk.cli.main import sandbox_setup
+        from klangk.cli.sandbox import SandboxConfig
+
+        config = SandboxConfig(
+            mount_at="~/my work",
+            setup="bob's setup.sh",
+        )
+
+        ws = AsyncMock()
+        exec_calls = []
+
+        async def fake_exec(ws, cmd, stdin=None, stdout=None, timeout=None):
+            exec_calls.append(cmd)
+            return 0
+
+        with patch("klangk.cli.sandboxcmd.exec_on_ws", fake_exec):
+            await sandbox_setup(ws, config, tmp_path, "admin")
+
+        assert exec_calls[0][2] == (
+            "export GIT_SSH_COMMAND="
+            "'ssh -o StrictHostKeyChecking=accept-new'"
+            " && cd '/home/admin/my work'"
+            " && bash -c '/home/admin/my work/bob'\"'\"'s setup.sh'"
+        )
+
     async def test_setup_passes_timeout(self, tmp_path):
         from klangk.cli.main import sandbox_setup
         from klangk.cli.sandbox import SandboxConfig
