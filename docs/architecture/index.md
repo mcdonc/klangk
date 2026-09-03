@@ -27,7 +27,7 @@ $KLANGKD_DATA_DIR/workspaces/<user-id>/home/<workspace-id>/
 
 ## Components
 
-- **Package** (`src/klangk/`): one Python distribution shipping two top-level packages — the `klangkd` server (FastAPI, single-port: API, WebSocket, frontend static files) and the `klangk` client (`klangk` command, typer-based, talks to the server over HTTP + WebSocket for terminal access to containers). One `pip install klangk` yields both binaries (#1606).
+- **Package** (`src/klangk/`): one Python distribution shipping two top-level packages — the `klangkd` server (FastAPI, single-port: API, WebSocket, frontend static files) and the `klangk` client (`klangk` command, typer-based, talks to the server over HTTP + WebSocket for terminal access to containers). One `pip install klangk` yields both binaries.
 - **Frontend** (`src/frontend/`): Flutter Web — file viewer, debug panel
 - **Containers** (`src/containers/`): Custom Dockerfile for Pi agent containers with Python3, Node.js, build-essential, SQLite, vim, emacs, network tools, Pi extensions (built and run via podman)
 

@@ -54,7 +54,7 @@ so common development tasks work out of the box.
 - `openssh-client`
 - `net-tools`, `iproute2`
 - `iputils-ping` (installed for diagnostics, but `ping` cannot work: the
-  workspace container never holds `CAP_NET_RAW` — #2347)
+  workspace container never holds `CAP_NET_RAW`)
 - `telnet`
 - `lsof`
 - `strace`, `ltrace`
@@ -76,7 +76,7 @@ so common development tasks work out of the box.
 
 ## Installing Additional Packages
 
-Sudo is **off by default** for every workspace (#3046/#3047): the
+Sudo is **off by default** for every workspace: the
 stored per-workspace `allow_sudo` setting is the sole posture source,
 and an absent key means locked down. The deploy-wide
 `KLANGKD_ALLOW_SUDO` flag is only a ceiling — it permits the _Allow

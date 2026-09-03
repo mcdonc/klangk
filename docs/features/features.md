@@ -17,8 +17,7 @@ or git/system configuration.
 
 ## Compiled-in vs. activated
 
-There are two lists, and they are allowed to differ
-([#1655](https://github.com/mcdonc/klangk/issues/1655)):
+There are two lists, and they are allowed to differ:
 
 - **Compiled-in** — what a build bakes into the image. The source of truth is
   the checked-in [`features.yaml`](../../features.yaml) at the repo root; the
@@ -47,7 +46,7 @@ build-time change (declare it in `features.yaml` and rebuild).
 
 ## Turning features on (`KLANGKD_FEATURES_ENABLE`)
 
-Canonical semantics ([#1655](https://github.com/mcdonc/klangk/issues/1655)):
+Canonical semantics:
 
 - **Unset** → the manifest's `defaults` list (the stock known-good set). This
   is backwards-compatible — a bare install gets the default features.
@@ -91,16 +90,16 @@ These ship compiled into the image but are **not** in the default-on set, so a
 bare install does not surface them. Opt in by adding them to
 `KLANGKD_FEATURES_ENABLE` (composed with the stock set, as above).
 
-| Feature      | What it does                                                                                                    | Activate                                      |
-| ------------ | --------------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
-| `word-count` | File-stats tool for Pi (lines, words, characters, size) ([#1700](https://github.com/mcdonc/klangk/issues/1700)) | add `word-count` to `KLANGKD_FEATURES_ENABLE` |
-| `soliplex`   | Soliplex knowledge-base tools (list/query/reply, multi-turn RAG)                                                | add `soliplex` to `KLANGKD_FEATURES_ENABLE`   |
+| Feature      | What it does                                                     | Activate                                      |
+| ------------ | ---------------------------------------------------------------- | --------------------------------------------- |
+| `word-count` | File-stats tool for Pi (lines, words, characters, size)          | add `word-count` to `KLANGKD_FEATURES_ENABLE` |
+| `soliplex`   | Soliplex knowledge-base tools (list/query/reply, multi-turn RAG) | add `soliplex` to `KLANGKD_FEATURES_ENABLE`   |
 
 ### `soliplex`
 
 The Soliplex org's knowledge-base feature (list/query/reply, multi-turn RAG),
 vendored into this repo under `features/soliplex/`
-([#1686](https://github.com/mcdonc/klangk/issues/1686); upstream
+(upstream
 [`soliplex/klangk-plugin-soliplex`](https://github.com/soliplex/klangk-plugin-soliplex)
 `v0.4`). It is dormant by default because it needs a running Soliplex server to
 be useful — defaulting it on would surface a dead tool to every install. Its
@@ -158,7 +157,7 @@ features:
 
 Paths support `~` and `$ENV_VAR` expansion; relative paths resolve from the
 repo root (where `features.yaml` lives). The build materializes the payload into
-a throwaway, build-owned dir ([#1660](https://github.com/mcdonc/klangk/issues/1660))
+a throwaway, build-owned dir
 — not next to the source tree — then compiles it into the frontend + workspace
 image and emits `features.json`.
 
@@ -179,9 +178,7 @@ image and emits `features.json`.
 A feature can declare configuration keys (e.g. an OAuth client ID, a RAG
 endpoint URL) in its `package.json` under `klangk.config`. Declarations are
 collected at build time into `features.json`; the server resolves each key's
-value at runtime and bridges it to where the feature needs it
-([#1655](https://github.com/mcdonc/klangk/issues/1655),
-[#1662](https://github.com/mcdonc/klangk/issues/1662)):
+value at runtime and bridges it to where the feature needs it:
 
 - Every declared key is namespaced under the `KLANGKWS_FEATURE_` prefix (e.g.
   `KLANGKWS_FEATURE_SOLIPLEX_URL`). The prefix alone keeps feature config from
@@ -191,8 +188,7 @@ value at runtime and bridges it to where the feature needs it
   `GET /api/v1/config` (e.g. `KLANGKWS_FEATURE_SOLIPLEX_URL` → `soliplex_url`);
   `both` → both.
 - **Value precedence**, highest to lowest when a key is resolved: the env var,
-  then the `features_config:` block in `klangkd.yaml`
-  ([#1659](https://github.com/mcdonc/klangk/issues/1659)), then the
+  then the `features_config:` block in `klangkd.yaml`, then the
   feature-declared default. Env stays the escape hatch for per-invocation
   overrides.
 

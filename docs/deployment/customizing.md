@@ -149,7 +149,7 @@ When `true`, acceptance is held **for the session only** (in-memory) — the
 banner re-appears on every app restart / re-login until **I Accept** is
 clicked that session. It does **not** re-appear on in-app route changes within
 the same session. When `false` (default), behavior is unchanged (permanent
-hash-based acceptance). (#1544)
+hash-based acceptance).
 
 ### Custom CA Certificates
 
@@ -257,8 +257,7 @@ local-dev / customer-locked / team mapping.
 > runs `KLANGKD_AUTH_MODES=password` (or `oidc`/`both`) — set
 > `KLANGKD_DEFAULT_PASSWORD` accordingly. For a no-login single-user
 > experience, run klangk locally (devenv, or the bare binary on your own
-> machine), where `none` works out of the box. See
-> [#1391](https://github.com/mcdonc/klangk/issues/1391).
+> machine), where `none` works out of the box.
 
 ## Building a Custom Image (Features)
 

@@ -16,11 +16,11 @@ This means an operator can set the bulk of a deployment's config in the YAML fil
 
 `klangkd` resolves its config file in three modes:
 
-| Invocation                              | Behavior                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `klangkd`                               | Resolves `$KLANGKD_CONFIG_DIR/klangkd.yaml` (default `~/.config/klangkd/klangkd.yaml`). If the file is missing it is **generated** as a near-empty template pointing at the docs ([#1645](https://github.com/mcdonc/klangk/issues/1645)). No admin identity or password is emitted — the admin row is seeded at runtime: `default_user` defaults to `<unixuser>@example.com`, with `password_hash=None` in `none`/`oidc` mode (no password needed) and `KLANGKD_DEFAULT_PASSWORD` required in `password`/`both` mode (fail-fast if unset). |
-| `klangkd --config /path/to/config.yaml` | Uses the specified file. Missing → startup error. Explicit paths are never auto-generated.                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| `klangkd --config=none`                 | No config file — env vars and built-in defaults only.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| Invocation                              | Behavior                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `klangkd`                               | Resolves `$KLANGKD_CONFIG_DIR/klangkd.yaml` (default `~/.config/klangkd/klangkd.yaml`). If the file is missing it is **generated** as a near-empty template pointing at the docs. No admin identity or password is emitted — the admin row is seeded at runtime: `default_user` defaults to `<unixuser>@example.com`, with `password_hash=None` in `none`/`oidc` mode (no password needed) and `KLANGKD_DEFAULT_PASSWORD` required in `password`/`both` mode (fail-fast if unset). |
+| `klangkd --config /path/to/config.yaml` | Uses the specified file. Missing → startup error. Explicit paths are never auto-generated.                                                                                                                                                                                                                                                                                                                                                                                         |
+| `klangkd --config=none`                 | No config file — env vars and built-in defaults only.                                                                                                                                                                                                                                                                                                                                                                                                                              |
 
 A bare `klangkd` is the pip/uv first-run path: install the wheel, run `klangkd`, log in with the printed credentials. System deployments that manage config out-of-band typically use `--config=none` (the host container's `supervisord.conf` does this) or `--config=<explicit-path>` (a deployment pipeline writes the file before starting `klangkd`).
 
@@ -36,11 +36,11 @@ Config-file keys map directly to `KLANGK_*` environment variable names with the 
 
 ### `snake_case` or `kebab-case`
 
-Every config-file key accepts **either** `snake_case` or `kebab-case` — `jwt_secret` and `jwt-secret` resolve to the same setting, as do `egress_port` / `egress-port`, `auth_modes` / `auth-modes`, and so on ([#1538](https://github.com/mcdonc/klangk/issues/1538)). This matches the dual-form lookup the OIDC provider dicts already had and is forgiving of either style, but **`snake_case` is the preferred/documented form** — all examples in this chapter (and the field names they map to) use `snake_case`.
+Every config-file key accepts **either** `snake_case` or `kebab-case` — `jwt_secret` and `jwt-secret` resolve to the same setting, as do `egress_port` / `egress-port`, `auth_modes` / `auth-modes`, and so on. This matches the dual-form lookup the OIDC provider dicts already had and is forgiving of either style, but **`snake_case` is the preferred/documented form** — all examples in this chapter (and the field names they map to) use `snake_case`.
 
 ### Native scalar types
 
-Numeric, boolean, and list fields accept their natural YAML scalar types — a bare number for numeric fields (`access_token_hours: 48`, `port: 8997`), a bare `true`/`false` for boolean fields (`allow_sudo: true`), and a bare list for list fields. Quoted strings (`port: "8997"`) keep working everywhere; both forms parse identically ([#2603](https://github.com/mcdonc/klangk/issues/2603), [#2796](https://github.com/mcdonc/klangk/issues/2796), [#2967](https://github.com/mcdonc/klangk/issues/2967)). Env vars are always strings and behave exactly as before.
+Numeric, boolean, and list fields accept their natural YAML scalar types — a bare number for numeric fields (`access_token_hours: 48`, `port: 8997`), a bare `true`/`false` for boolean fields (`allow_sudo: true`), and a bare list for list fields. Quoted strings (`port: "8997"`) keep working everywhere; both forms parse identically. Env vars are always strings and behave exactly as before.
 
 ## `file:` and `cmd:` resolution
 
@@ -51,7 +51,7 @@ jwt_secret: "file:/run/secrets/jwt"
 smtp_password: "cmd:aws secretsmanager get-secret-value --secret-id klangk/smtp | jq -r .SecretString"
 ```
 
-The resolver is source-agnostic: it sees only the value, not where it came from. `KlangkSettings` runs every string field through the resolver once, in a `model_validator(mode="after")`, before the object leaves `__init__` ([#1461](https://github.com/mcdonc/klangk/issues/1461)). A bad reference (`file:/nonexistent`, `cmd:false`) fails fast at boot with a `ValidationError` — not silently at use time. Thereafter every `settings.field` read returns the already-resolved value; no caller wraps in a resolver call.
+The resolver is source-agnostic: it sees only the value, not where it came from. `KlangkSettings` runs every string field through the resolver once, in a `model_validator(mode="after")`, before the object leaves `__init__`. A bad reference (`file:/nonexistent`, `cmd:false`) fails fast at boot with a `ValidationError` — not silently at use time. Thereafter every `settings.field` read returns the already-resolved value; no caller wraps in a resolver call.
 
 ## Inline OIDC providers
 
@@ -82,7 +82,7 @@ If `KLANGKD_OIDC_CONFIG` is also set (as an env var), the separate file wins —
 
 ## Feature configuration (`features_config:`)
 
-Feature-declared config keys (the ones the build emits into `features.json` — the `container_env_keys` list plus the per-feature `config` blocks) are outside the `KLANGK_` settings model: their names aren't known at settings construction, so they're resolved per-key at use time by `resolve_dynamic_config`. That resolver had **one** value source — the server's environment. `features_config:` ([#1659](https://github.com/mcdonc/klangk/issues/1659)) adds a second source so long-lived deploy config (OAuth client IDs, RAG endpoints) can live in the committed `klangkd.yaml` instead of an env var:
+Feature-declared config keys (the ones the build emits into `features.json` — the `container_env_keys` list plus the per-feature `config` blocks) are outside the `KLANGK_` settings model: their names aren't known at settings construction, so they're resolved per-key at use time by `resolve_dynamic_config`. That resolver had **one** value source — the server's environment. `features_config:` adds a second source so long-lived deploy config (OAuth client IDs, RAG endpoints) can live in the committed `klangkd.yaml` instead of an env var:
 
 ```yaml
 features_config:
@@ -90,11 +90,11 @@ features_config:
   soliplex_url: "https://rag.example.com"
 ```
 
-Each key may be written as the **stripped, lowercased short form** — e.g. `soliplex_url`, the same key the frontend receives via `GET /api/v1/config` — or the full declared name (`KLANGKWS_FEATURE_SOLIPLEX_URL`, the same string that appears in `features.json`). The short form is preferred ([#1737](https://github.com/mcdonc/klangk/issues/1737)); both resolve identically. **Precedence** when a feature key is resolved: **env** > **`features_config:`** > **feature-declared default**. Env stays the escape hatch for per-invocation overrides; the block carries the durable deploy values; the feature default is the floor.
+Each key may be written as the **stripped, lowercased short form** — e.g. `soliplex_url`, the same key the frontend receives via `GET /api/v1/config` — or the full declared name (`KLANGKWS_FEATURE_SOLIPLEX_URL`, the same string that appears in `features.json`). The short form is preferred; both resolve identically. **Precedence** when a feature key is resolved: **env** > **`features_config:`** > **feature-declared default**. Env stays the escape hatch for per-invocation overrides; the block carries the durable deploy values; the feature default is the floor.
 
 `file:` / `cmd:` prefixes work on values in this block too — they're honored per-key at resolution time, consistent with how the same resolver treats env values. Unlike top-level `KLANGK_*` fields, a bad `file:`/`cmd:` reference here does **not** fail at boot (the values can't be resolved at construction); it logs and falls through to the feature default — the same behavior a broken env ref already has.
 
-This block is read at boot and on `SIGHUP` (reloadable, like the rest of the file). It supplies values only; it does **not** change which features are compiled in (build-time, [#1655](https://github.com/mcdonc/klangk/issues/1655)) or which are turned on (`KLANGKD_FEATURES_ENABLE`, deploy-time).
+This block is read at boot and on `SIGHUP` (reloadable, like the rest of the file). It supplies values only; it does **not** change which features are compiled in (build-time) or which are turned on (`KLANGKD_FEATURES_ENABLE`, deploy-time).
 
 > **Quote non-string values.** The block is typed as a plain string map and is resolved outside the typed settings model (`resolve_dynamic_config`), so quote numerics and booleans here — `soliplex_port: "8080"`, not `8080`. (Top-level settings fields, unlike this block, accept their native YAML scalar types — see above.)
 >
@@ -199,8 +199,7 @@ plus a separate container-egress listener on `KLANGKD_EGRESS_PORT`.
 never promote it.
 
 For each combination, klangk renders the **maximum-feature proxy template
-the combination can service** (the proxy is Caddy, the sole engine
-since #1642):
+the combination can service** (the proxy is Caddy, the sole engine):
 
 | `KLANGKD_PORT`   | `KLANGKD_AUTH_MODES`   | proxy template | browser?    | status                                                |
 | ---------------- | ---------------------- | -------------- | ----------- | ----------------------------------------------------- |
@@ -225,7 +224,7 @@ since #1642):
 > loopback TCP (local) > non-loopback TCP+gate. Headless is the most-secure
 > posture: the backend binds only a UDS (same-uid socket access), and the proxy
 > serves only the container-egress listener — no browser/TCP surface at all.
-> (The proxy engine is Caddy, the sole engine since #1642.)
+> (The proxy engine is Caddy, the sole engine.)
 
 | Key      | Default     | Env var          |
 | -------- | ----------- | ---------------- |
@@ -432,7 +431,7 @@ rewrite its ACL. Failures are logged, never fatal. Reloaded on SIGHUP.
 
 Custom CA certificates are not a config key — drop `.pem`/`.crt` files
 into `<KLANGKD_CUSTOMIZE_DIR>/certs/` and both the backend and workspace
-containers will trust them (#1360, #1523). There is no `ssl_cert_dir`
+containers will trust them. There is no `ssl_cert_dir`
 setting.
 
 ### File upload

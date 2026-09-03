@@ -56,8 +56,7 @@ can reach it." Two independent gates refuse it in Docker:
 
 For a no-login single-user experience, run klangk locally (devenv, or
 the bare binary on your own machine) instead of the published image.
-See [Auth Modes](../features/auth-modes.md) and
-[#1391](https://github.com/mcdonc/klangk/issues/1391).
+See [Auth Modes](../features/auth-modes.md).
 
 ## What the flags do
 

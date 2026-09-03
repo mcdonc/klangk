@@ -19,7 +19,7 @@ The workflow runs two jobs in parallel:
 - **`build-wheel`** — builds the `klangk` wheel (with the default-feature-set
   frontend baked in) and publishes it to PyPI, so `pip install klangk==<tag>`
   yields a working `klangkd` with the UI served from the in-wheel
-  `klangk/frontend/` (#1656).
+  `klangk/frontend/`.
 
 For patch releases, increment the patch version: `v0.1.1`.
 
@@ -33,7 +33,7 @@ trusted-publisher config on the `klangk` PyPI project.
 **One-time setup (PyPI side):** the `klangk` PyPI project must have a
 trusted publisher configured for:
 
-- PyPI project: `klangk` (the distribution name, #1606)
+- PyPI project: `klangk` (the distribution name)
 - GitHub repo: `mcdonc/klangk`
 - Workflow filename: `.github/workflows/release.yml`
 - Environment name: `pypi` (the job's `environment:`)
@@ -49,7 +49,7 @@ venv) and runs `python3 -m build --wheel` from `src/klangk/`. The hatch
 build hook (`src/klangk/hatch_build_package_data.py`) includes the Flutter
 web build at `klangk/frontend/` and **requires** it for non-editable wheel
 builds — so the `build-wheel` job runs `klangk:flutter-build` first (which
-runs `flutterbuildweb.sh` against the checked-in `features.yaml`, #1660).
+runs `flutterbuildweb.sh` against the checked-in `features.yaml`).
 
 To build a wheel locally for testing (after running `flutterbuildweb.sh`):
 

@@ -5,7 +5,7 @@ signals. Knowing which is which matters when you operate a deployment by
 hand — the difference between a _reload_ and a _full stop_ is whether
 running containers survive.
 
-## SIGINT / SIGTERM — graceful stop (#2527)
+## SIGINT / SIGTERM — graceful stop
 
 The normal shutdown path (Ctrl-C, `systemctl stop`, container-runtime
 graceful exit). Each phase is logged.
@@ -21,7 +21,7 @@ What happens, in order:
    auto-start, crash-restart) return a clear 503/error frame for the
    rest of the process's life; a start racing the shutdown is refused
    rather than killed mid-create.
-3. **Quiesce** (#2664) — wait up to `KLANGKD_QUIESCE_TIMEOUT` seconds
+3. **Quiesce** — wait up to `KLANGKD_QUIESCE_TIMEOUT` seconds
    (default 15) for in-flight HTTP requests to finish, so an upload or
    terminal snapshot in progress isn't cut off by the drain below.
    Stragglers at expiry are logged (WARNING) and left to finish against
@@ -52,7 +52,7 @@ one per-workspace stop grace (5s; stops run concurrently across
 workspaces). Raising `KLANGKD_QUIESCE_TIMEOUT` past ~85s blows the
 default 90s `TimeoutStopSec`.
 
-## SIGHUP — graceful runtime recycle (#1212, #1587, #2527, #2661)
+## SIGHUP — graceful runtime recycle
 
 Sent by `kill -HUP $(cat $KLANGKD_STATE_DIR/klangk-<instance>.pid)`, or by
 your service manager's "reload" action.
@@ -94,10 +94,10 @@ authenticated WebSocket clients receive a `server_recycle` event with a
    swapped onto `app.state.settings`; all subsystems read it live. The
    OIDC discovery/JWKS caches are cleared and providers re-initialized,
    features are re-scanned, SSL trust is re-applied, and the agent user
-   is re-seeded (reconciled to the fixed identity, #2718 — the identity
+   is re-seeded (reconciled to the fixed identity — the identity
    config keys are gone). CORS origins (`KLANGKD_CORS_ORIGINS`) are picked up
    automatically by the live CORS middleware; `KLANGKD_FRONTEND_DIR` is
-   remounted if it changed (#1610).
+   remounted if it changed.
 6. **Recycle the runtime** — close every WebSocket client with close
    code `1012` ("service restarted"), stop the idle/health/crash
    background loops, then re-run container-side startup: pre-warm podman,
@@ -154,7 +154,7 @@ SIGHUP can be sent several times in quick succession. A second signal
 arriving mid-recycle queues behind the first via an `asyncio.Lock`, so
 recycles never race — they run strictly one after another.
 
-## Scheduled stop / recycle (#2661)
+## Scheduled stop / recycle
 
 The signal paths above act **on receipt**. For a planned action, an
 admin can schedule a server stop or recycle ahead of time
@@ -186,7 +186,7 @@ or drop-in).
 ## Exit statuses
 
 `klangkd`'s exit status tells a supervisor _why_ the process left — in
-particular, whether restarting can help (#2666):
+particular, whether restarting can help:
 
 | Status | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |

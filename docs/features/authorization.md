@@ -23,7 +23,7 @@ friendlier interfaces:
 - **UI visibility** — tabs and buttons appear or disappear based on
   your permissions. If you don't have `files-view` permission on a
   workspace, the Files tab won't show up; likewise the Terminal tab
-  needs `terminal` (#2975), while opening the workspace at all needs
+  needs `terminal`, while opening the workspace at all needs
   `join-workspace`.
 
 For advanced use cases, the **Advanced ACL editor** in the Sharing

@@ -19,7 +19,7 @@ are under `/api/v1` except `/health`, `/empty`, and the
 
 Delete a group (admin).
 
-**Auth:** JWT required. User must have `manage-groups` permission on `/groups` (#2944).
+**Auth:** JWT required. User must have `manage-groups` permission on `/groups`.
 
 No request body.
 
@@ -33,7 +33,7 @@ No request body.
 
 Remove a user from a group (admin).
 
-**Auth:** JWT required. User must have `manage-groups` permission on `/groups` (#2944).
+**Auth:** JWT required. User must have `manage-groups` permission on `/groups`.
 
 No request body.
 
@@ -45,9 +45,9 @@ No request body.
 
 ### DELETE `/api/v1/server/schedule/{schedule_id}`
 
-Cancel a pending server stop/recycle schedule (#2661). All connected clients' countdowns update immediately.
+Cancel a pending server stop/recycle schedule. All connected clients' countdowns update immediately.
 
-**Auth:** JWT required. User must have the `manage-server-schedule` permission on `/server` (#2944).
+**Auth:** JWT required. User must have the `manage-server-schedule` permission on `/server`.
 
 No request body.
 
@@ -65,7 +65,7 @@ See [Server Scheduling](../features/server-scheduling.md).
 
 Revoke a pending invitation.
 
-**Auth:** JWT required. User must have the `manage-invitations` permission on `/invitations` (#2944).
+**Auth:** JWT required. User must have the `manage-invitations` permission on `/invitations`.
 
 No request body.
 
@@ -79,7 +79,7 @@ No request body.
 
 Delete a user account. Cannot delete self or the system agent user.
 
-**Auth:** JWT required. User must have the `manage-users` permission on `/users` (#2944).
+**Auth:** JWT required. User must have the `manage-users` permission on `/users`.
 
 No request body.
 
@@ -94,7 +94,7 @@ No request body.
 Reset a user's login lockout, allowing them to log in immediately after
 being locked out due to too many failed attempts.
 
-**Auth:** JWT required. User must have the `manage-users` permission on `/users` (#2944).
+**Auth:** JWT required. User must have the `manage-users` permission on `/users`.
 
 No request body.
 
@@ -113,7 +113,7 @@ session was established from (null = unknown, e.g. sessions created
 before the audit feature), `user_agent` is the client's User-Agent
 string (null = none was sent). Expired sessions are excluded.
 
-**Auth:** JWT required. User must have the `manage-users` permission on `/users` (#2944).
+**Auth:** JWT required. User must have the `manage-users` permission on `/users`.
 
 No request body.
 
@@ -136,7 +136,7 @@ No request body.
 
 List all ACL entries granted to a specific group across all resources.
 
-**Auth:** JWT required. User must have the `manage-acls` permission on `/acl` (#2944).
+**Auth:** JWT required. User must have the `manage-acls` permission on `/acl`.
 
 No request body.
 
@@ -158,7 +158,7 @@ No request body.
 
 List all ACL entries granted to a specific user across all resources.
 
-**Auth:** JWT required. User must have the `manage-acls` permission on `/acl` (#2944).
+**Auth:** JWT required. User must have the `manage-acls` permission on `/acl`.
 
 No request body.
 
@@ -206,7 +206,7 @@ No request body.
 
 Get a summary of the entire ACL tree across all resources.
 
-**Auth:** JWT required. User must have the `manage-acls` permission on `/acl` (#2944).
+**Auth:** JWT required. User must have the `manage-acls` permission on `/acl`.
 
 No request body.
 
@@ -226,14 +226,14 @@ one listing surface for every reader (pickers, share dialogs, the
 admin Groups tab).
 
 **Auth:** JWT required — any authenticated caller; writes on the tree
-need `manage-groups` (#2944).
+need `manage-groups`.
 
 Query parameters:
 
 - `page` (default 1), `page_size` (default 10, max 200)
 - `sort` (`name` | `created`), `order` (`asc` | `desc`)
 - `q` — substring filter on name
-- `source` — `manual` (hide the seeded per-workspace role groups, #2750) or
+- `source` — `manual` (hide the seeded per-workspace role groups) or
   `workspace-role` (show only them); omitted shows all
 
 No request body.
@@ -261,7 +261,7 @@ No request body.
 
 List members of a group (admin).
 
-**Auth:** JWT required. User must have `manage-groups` permission on `/groups` (#2944).
+**Auth:** JWT required. User must have `manage-groups` permission on `/groups`.
 
 No request body.
 
@@ -273,9 +273,9 @@ No request body.
 
 ### GET `/api/v1/server/schedule`
 
-List pending server stop/recycle schedules (#2661). Rows exist only while pending — fired or cancelled schedules are deleted.
+List pending server stop/recycle schedules. Rows exist only while pending — fired or cancelled schedules are deleted.
 
-**Auth:** JWT required. User must have the `manage-server-schedule` permission on `/server` (#2944).
+**Auth:** JWT required. User must have the `manage-server-schedule` permission on `/server`.
 
 No request body.
 
@@ -301,7 +301,7 @@ See [Server Scheduling](../features/server-scheduling.md).
 
 List all invitations (pending, accepted, and revoked).
 
-**Auth:** JWT required. User must have the `manage-invitations` permission on `/invitations` (#2944).
+**Auth:** JWT required. User must have the `manage-invitations` permission on `/invitations`.
 
 No request body.
 
@@ -325,7 +325,7 @@ No request body.
 
 List all user accounts in the system.
 
-**Auth:** JWT required. User must have the `manage-users` permission on `/users` (#2944).
+**Auth:** JWT required. User must have the `manage-users` permission on `/users`.
 
 No request body.
 
@@ -350,10 +350,10 @@ No request body.
 ### GET `/api/v1/users/{id}/workspaces`
 
 List workspaces owned by a user (admin). Used by the admin UI to show
-what a delete-user will destroy (#1224). Returns the standard pagination
+what a delete-user will destroy. Returns the standard pagination
 envelope.
 
-**Auth:** JWT required. User must have the `manage-users` permission on `/users` (#2944).
+**Auth:** JWT required. User must have the `manage-users` permission on `/users`.
 
 Query params: `limit` (1–200, default 100), `offset` (default 0).
 
@@ -450,7 +450,7 @@ and the branding / feature flags the pre-auth UI needs. An
 **authenticated** caller additionally receives the deploy-wide netfilter
 default + enabled flag (the egress perimeter is not exposed pre-auth)
 and the deploy-level capability toggles `nix_available` /
-`sudo_available` (#2974 — moved off the images listing; whether the
+`sudo_available` (moved off the images listing; whether the
 per-workspace nix mount can arm, and whether the deploy's sudo ceiling
 permits the per-workspace opt-in — sudo itself is off unless the
 workspace's settings store `allow_sudo: true`), plus any feature-declared frontend config keys and
@@ -503,11 +503,11 @@ see [Auth Modes](../features/auth-modes.md).
 
 List available container images that can be used when creating or
 editing workspaces. Deployment-level capability toggles (nix/sudo
-availability) moved to the authenticated-only `/config` fields (#2974).
+availability) moved to the authenticated-only `/config` fields.
 
 **Auth:** JWT required. User must have the `view-images` permission on
-`/images` (#2946; seeded Allow for Authenticated — the deliberate,
-ACL-editor-modifiable default, #2974).
+`/images` (seeded Allow for Authenticated — the deliberate,
+ACL-editor-modifiable default).
 
 No request body.
 
@@ -546,7 +546,7 @@ Search for users by email or handle. Used for autocomplete when sharing
 workspaces or adding group members.
 
 **Auth:** JWT required. User must have the `search-users` permission on
-`/users` (#2946; seeded Allow for Authenticated — distinct from
+`/users` (seeded Allow for Authenticated — distinct from
 `manage-users`, so picker surfaces work for non-admins). Query param:
 `q` (search string, min length 1).
 
@@ -583,7 +583,7 @@ No request body.
 List every podman volume this klangk instance manages.
 
 **Auth:** JWT required. User must have the `view-volumes` permission
-on `/volumes` (#2993; seeded Allow for the `admins` group — the admin
+on `/volumes` (seeded Allow for the `admins` group — the admin
 Volumes tab's listing gate). The creator label is surfaced as
 provenance, not used as an access filter. `created_by` is the
 creator's handle (null when the creator no longer exists or the
@@ -723,7 +723,7 @@ field.
 Get the resolved ACL entries for a workspace.
 
 **Auth:** JWT required. User must have `share-advanced` permission on
-`/workspaces/{id}` (#2764).
+`/workspaces/{id}`.
 
 No request body.
 
@@ -750,7 +750,7 @@ workspace configuration and container filesystem.
 
 **Auth:** JWT required. User must have the `export-workspace` permission on the
 workspace resource (`/workspaces/{id}`) — the owner's wildcard ACE and
-the seeded `owners-<id>` role group both cover it (#2707).
+the seeded `owners-<id>` role group both cover it.
 
 No request body. Returns `StreamingResponse` (`.tar.gz` binary stream).
 Headers: `Content-Disposition: attachment; filename="<name>.tar.gz"`,
@@ -790,7 +790,7 @@ Read the contents of a file inside the workspace container. Requires a
 running container (returns 409 if stopped).
 
 **Auth:** JWT required. User must have both `files-view` and `files-download`
-permissions on `/workspaces/{id}` (#2713). Query param: `path` (absolute
+permissions on `/workspaces/{id}`. Query param: `path` (absolute
 container path).
 
 No request body.
@@ -875,7 +875,7 @@ No request body.
 
 Update a group's name or description (admin).
 
-**Auth:** JWT required. User must have `manage-groups` permission on `/groups` (#2944).
+**Auth:** JWT required. User must have `manage-groups` permission on `/groups`.
 
 ```json
 { "name": "new-name", "description": "updated description" }
@@ -898,7 +898,7 @@ and its live WebSocket connections are closed (4001 → client logout).
 Admins cannot disable their own account, and the system agent cannot be
 disabled.
 
-**Auth:** JWT required. User must have the `manage-users` permission on `/users` (#2944).
+**Auth:** JWT required. User must have the `manage-users` permission on `/users`.
 
 ```json
 {
@@ -921,7 +921,7 @@ Change a user's role in a workspace. Set `role` to `null` to remove the
 user from all roles.
 
 **Auth:** JWT required. User must have `share-workspace` **and** `share-advanced` permission on
-`/workspaces/{id}` (#2764).
+`/workspaces/{id}`.
 
 ```json
 { "email": "user@example.com", "role": "coders" }
@@ -960,7 +960,7 @@ An empty patch (`{}`) is rejected with `400`. Like a `PUT`, a changed
 
 Create a new group (admin).
 
-**Auth:** JWT required. User must have `manage-groups` permission on `/groups` (#2944).
+**Auth:** JWT required. User must have `manage-groups` permission on `/groups`.
 
 ```json
 { "name": "my-group", "description": "optional description" }
@@ -976,7 +976,7 @@ Create a new group (admin).
 
 Add a user to a group (admin).
 
-**Auth:** JWT required. User must have `manage-groups` permission on `/groups` (#2944).
+**Auth:** JWT required. User must have `manage-groups` permission on `/groups`.
 
 ```json
 { "user_id": "uuid" }
@@ -990,9 +990,9 @@ Add a user to a group (admin).
 
 ### POST `/api/v1/server/schedule`
 
-Schedule a server stop or recycle for a future time (#2661). Provide `at` (absolute ISO-8601; a naive timestamp is interpreted as UTC) or `in_seconds` (positive relative delay; ignored when `at` is given); `action` is `stop` or `recycle`. The schedule persists in the DB across `klangkd` restarts; when it fires: a **stop** runs the graceful TERM/INT path and the process exits (code 0) — the service manager owns what happens next; a **recycle** runs the SIGHUP graceful restart in-process (listener and DB stay up) and never exits. In both, workspaces are drained gracefully and every connected client sees a live countdown.
+Schedule a server stop or recycle for a future time. Provide `at` (absolute ISO-8601; a naive timestamp is interpreted as UTC) or `in_seconds` (positive relative delay; ignored when `at` is given); `action` is `stop` or `recycle`. The schedule persists in the DB across `klangkd` restarts; when it fires: a **stop** runs the graceful TERM/INT path and the process exits (code 0) — the service manager owns what happens next; a **recycle** runs the SIGHUP graceful restart in-process (listener and DB stay up) and never exits. In both, workspaces are drained gracefully and every connected client sees a live countdown.
 
-**Auth:** JWT required. User must have the `manage-server-schedule` permission on `/server` (#2944).
+**Auth:** JWT required. User must have the `manage-server-schedule` permission on `/server`.
 
 ```json
 { "action": "recycle", "at": "2026-08-24T23:00:00+02:00" }
@@ -1020,7 +1020,7 @@ See [Server Scheduling](../features/server-scheduling.md).
 
 Send an invitation email to a new user.
 
-**Auth:** JWT required. User must have the `manage-invitations` permission on `/invitations` (#2944).
+**Auth:** JWT required. User must have the `manage-invitations` permission on `/invitations`.
 
 ```json
 { "email": "user@example.com" }
@@ -1036,7 +1036,7 @@ Send an invitation email to a new user.
 
 Resend an invitation email.
 
-**Auth:** JWT required. User must have the `manage-invitations` permission on `/invitations` (#2944).
+**Auth:** JWT required. User must have the `manage-invitations` permission on `/invitations`.
 
 No request body.
 
@@ -1053,7 +1053,7 @@ the given password. Set `send_verification_email` to `true` to create
 the user unverified and send a verification email so they can set their
 own password (the `password` field is ignored in this case).
 
-**Auth:** JWT required. User must have the `manage-users` permission on `/users` (#2944).
+**Auth:** JWT required. User must have the `manage-users` permission on `/users`.
 
 With password (default):
 
@@ -1220,7 +1220,7 @@ refresh and blocklist machinery.
 Log out the current session. Blocklists the token's JTI so it cannot be
 reused.
 
-**Auth:** none required — logout is idempotent (#2687). An absent,
+**Auth:** none required — logout is idempotent. An absent,
 expired, revoked, or invalid token still returns 200 (the token being
 unusable is logout's desired end state); the token is blocklisted when
 one is presented. `oidc_logout_url` is returned only when a valid token
@@ -1322,9 +1322,8 @@ Used by Pi extensions that need to interact with the user's browser
 
 **Auth:** Workspace JWT required + proxy IP ACL (container traffic only).
 Returns **403** when the deploy disabled the bridge
-(`KLANGKD_BROWSER_DELEGATE_ENABLED=false`, #2710), when the `browser_id`
-is unknown, or when it is not registered against the caller's workspace
-(#1715).
+(`KLANGKD_BROWSER_DELEGATE_ENABLED=false`), when the `browser_id`
+is unknown, or when it is not registered against the caller's workspace.
 
 ```json
 { "action": "navigate", "browser_id": "string" }
@@ -1341,9 +1340,8 @@ delimited JSON chunks.
 
 **Auth:** Workspace JWT required + proxy IP ACL (container traffic only).
 Returns **403** when the deploy disabled the bridge
-(`KLANGKD_BROWSER_DELEGATE_ENABLED=false`, #2710), when the `browser_id`
-is unknown, or when it is not registered against the caller's workspace
-(#1715).
+(`KLANGKD_BROWSER_DELEGATE_ENABLED=false`), when the `browser_id`
+is unknown, or when it is not registered against the caller's workspace.
 
 ```json
 { "action": "string", "browser_id": "string" }
@@ -1360,9 +1358,9 @@ label is provenance; the admin Volumes tab offers no create surface —
 this endpoint serves the CLI's volume commands).
 
 **Auth:** JWT required. User must have the `manage-volumes` permission
-on `/volumes` (#2993; seeded Allow for the `admins` group).
+on `/volumes` (seeded Allow for the `admins` group).
 
-**Quota (#2972):** when `KLANGKD_VOLUME_QUOTA_PER_USER` is set
+**Quota:** when `KLANGKD_VOLUME_QUOTA_PER_USER` is set
 (nonzero), a create that would take the caller past the cap is refused
 with `429` and a "delete a volume first" message naming the setting;
 the count is the caller's instance-managed volumes (`GET
@@ -1370,7 +1368,7 @@ the count is the caller's instance-managed volumes (`GET
 concurrent creates. The same cap also gates the workspace-start
 auto-create of mounted named volumes. `0` (the default) = unlimited.
 
-`name` must be podman-safe (#2971): start with an alphanumeric
+`name` must be podman-safe: start with an alphanumeric
 character, continue with `a-zA-Z0-9_.-` only, and be at most 64
 characters; violations return HTTP 422.
 
@@ -1412,28 +1410,28 @@ default, `KLANGKD_PER_HANDLE_HOME`) shares one `/home/klangk`. Omit it
 to inherit the server default.
 
 A `mounts` source with no `/` that doesn't start with `.` is a named
-volume and must be podman-safe (#3018): start with an alphanumeric
+volume and must be podman-safe: start with an alphanumeric
 character, continue with `a-zA-Z0-9_.-` only, and be at most 64
-characters — the same rule as the volumes API (#2971). Violations
+characters — the same rule as the volumes API. Violations
 return HTTP 400; bind-mount sources (absolute paths, `.`-prefixed)
 keep the protected-path / allowed-root checks.
 
-`settings` is a bag of per-workspace behavioral overrides (#864). Known
+`settings` is a bag of per-workspace behavioral overrides. Known
 keys (unknown keys are rejected with `400`):
 
-| Key              | Type    | Meaning                                                                                                           |
-| ---------------- | ------- | ----------------------------------------------------------------------------------------------------------------- |
-| `idle_timeout`   | int (s) | Idle timeout override; `0` = never idle out, unset = deploy default (#1018). Applies at the next container start. |
-| `bridge_timeout` | int (s) | Browser-delegate stream bridge timeout.                                                                           |
-| `cpu_limit`      | float   | `--cpus` limit (e.g. `2.0`).                                                                                      |
-| `memory_limit`   | string  | `--memory` limit (e.g. `"4g"`, `"512m"`).                                                                         |
-| `pids_limit`     | int     | `--pids-limit` (e.g. `512`).                                                                                      |
-| `tmp_size`       | string  | `/tmp` tmpfs size (e.g. `"4g"`).                                                                                  |
-| `nix`            | bool    | Mount a per-workspace `/nix`.                                                                                     |
-| `allow_sudo`     | bool    | Per-workspace sudo opt-in; absent = off (deploy `KLANGKD_ALLOW_SUDO` is a ceiling).                               |
+| Key              | Type    | Meaning                                                                                                   |
+| ---------------- | ------- | --------------------------------------------------------------------------------------------------------- |
+| `idle_timeout`   | int (s) | Idle timeout override; `0` = never idle out, unset = deploy default. Applies at the next container start. |
+| `bridge_timeout` | int (s) | Browser-delegate stream bridge timeout.                                                                   |
+| `cpu_limit`      | float   | `--cpus` limit (e.g. `2.0`).                                                                              |
+| `memory_limit`   | string  | `--memory` limit (e.g. `"4g"`, `"512m"`).                                                                 |
+| `pids_limit`     | int     | `--pids-limit` (e.g. `512`).                                                                              |
+| `tmp_size`       | string  | `/tmp` tmpfs size (e.g. `"4g"`).                                                                          |
+| `nix`            | bool    | Mount a per-workspace `/nix`.                                                                             |
+| `allow_sudo`     | bool    | Per-workspace sudo opt-in; absent = off (deploy `KLANGKD_ALLOW_SUDO` is a ceiling).                       |
 
 `classification_banner` is the workspace's classification marking,
-rendered as the persistent banner on the workspace page (#2768). Free
+rendered as the persistent banner on the workspace page. Free
 text, one line. Omitted/empty = inherit the deploy-wide default
 (`KLANGKD_CLASSIFICATION_BANNER`), resolved at display time; when
 neither is set, no banner is rendered.
@@ -1624,7 +1622,7 @@ No request body.
 Return the container status for a workspace.
 
 **Auth:** JWT required. User must have `monitor-workspace` permission on
-`/workspaces/{id}` (#2783 — the dedicated status-observation permission,
+`/workspaces/{id}` (the dedicated status-observation permission,
 granted alongside `terminal` by every share path).
 
 No request body.
@@ -1690,7 +1688,7 @@ Add a user to a workspace role. Valid roles: `owners`, `coders`,
 `collaborators`, `spectators`.
 
 **Auth:** JWT required. User must have `share-workspace` **and** `share-advanced` permission on
-`/workspaces/{id}` (#2764).
+`/workspaces/{id}`.
 
 ```json
 { "email": "user@example.com" }
@@ -1708,8 +1706,7 @@ Replace all ACL entries for a specific resource. Query param: `resource`.
 
 **Auth:** JWT required. User must have `manage-acls` permission on
 `/acl`. When the target is an individual workspace (`/workspaces/{id}`),
-the user must additionally hold `share-advanced` on that workspace
-(#2764).
+the user must additionally hold `share-advanced` on that workspace.
 
 ```json
 [
@@ -1768,7 +1765,7 @@ the workspace's next connect/start (open terminals keep their layout
 until they end).
 
 `mounts` named-volume sources are subject to the same podman-safe
-rule as on create (#3018); violations return HTTP 400.
+rule as on create; violations return HTTP 400.
 
 `settings` is a **full replace** of the
 [settings bag](#post-apiv1workspaces) — keys absent from the request are
@@ -1776,7 +1773,7 @@ reverted to the deploy-wide default, and an explicit `null` clears the
 whole bag. Use `PATCH /api/v1/workspaces/{id}/settings` to merge
 individual keys instead.
 
-`classification_banner` (#2768) replaces the workspace's marking
+`classification_banner` replaces the workspace's marking
 outright; an empty value clears the override back to the deploy-wide
 default (`KLANGKD_CLASSIFICATION_BANNER`). The banner is display-only —
 no container restart is needed and the web UI updates it live.
@@ -1792,7 +1789,7 @@ no container restart is needed and the web UI updates it live.
 Replace all ACL entries for a workspace.
 
 **Auth:** JWT required. User must have `share-advanced` permission on
-`/workspaces/{id}` (#2764) — `share-workspace` no longer suffices.
+`/workspaces/{id}` — `share-workspace` no longer suffices.
 
 ```json
 [
@@ -1826,15 +1823,15 @@ Replace all ACL entries for a workspace.
 ### DELETE `/api/v1/volumes/{name}`
 
 Delete an instance-managed podman volume. Any holder of the
-permission may delete any instance volume (#2993 — the surface is
+permission may delete any instance volume (the surface is
 admin-only by seed; the creator label is provenance, not an access
 filter).
 
 **Auth:** JWT required. User must have the `manage-volumes` permission
-on `/volumes` (#2993; seeded Allow for the `admins` group).
+on `/volumes` (seeded Allow for the `admins` group).
 
 `{name}` in the path must satisfy the same podman-safe rule as on
-create (#2971); violations return HTTP 422.
+create; violations return HTTP 422.
 
 No request body.
 
@@ -1909,7 +1906,7 @@ No request body.
 Remove a user from a workspace role.
 
 **Auth:** JWT required. User must have `share-workspace` **and** `share-advanced` permission on
-`/workspaces/{id}` (#2764).
+`/workspaces/{id}`.
 
 No request body.
 
@@ -1957,13 +1954,13 @@ Close codes: 4001 (missing/invalid token), 4002 (expired token).
 ### WebSocket `/ws/consent-decider`
 
 Registers a live egress-consent decider for its connection lifetime
-(#2308, #2244) — the interactive half of egress filtering. While a
+— the interactive half of egress filtering. While a
 decider is connected (and pinging inside
 `KLANGKD_CONSENT_DECIDER_TIMEOUT`), held egress requests are offered to
 it for accept/deny; the `klangk consent-decide` command drives this
 socket. Requires the `egress-consent` permission on the workspace
 (see [Egress Filtering](../features/egress-filtering.md)). Deciders are
-strictly workspace-scoped (#2976): the `workspace` query param is
+strictly workspace-scoped: the `workspace` query param is
 required — a handshake without it is refused.
 
 **Auth:** JWT required. Query param: `workspace` (the workspace id).
@@ -1972,9 +1969,9 @@ required — a handshake without it is refused.
 
 ### WebSocket `/ws/egress-sidecar`
 
-The network sidecar's blocked-egress event channel (#2311): the sidecar
+The network sidecar's blocked-egress event channel: the sidecar
 sends blocked-egress events here and receives verdicts (hold-and-prompt
-or static deny). Also carries revoke acks (#2339). Container-side only —
+or static deny). Also carries revoke acks. Container-side only —
 authenticated with the workspace JWT validated by the egress listener's
 `forward_auth`.
 
@@ -1987,7 +1984,7 @@ authenticated with the workspace JWT validated by the egress listener's
 Served under `/llm-proxy/` (no `/api/v1` prefix) — on the egress
 listener, gated by the proxy's workspace-JWT `forward_auth` + container
 IP ACL, so only workspace containers can reach them. The backend
-re-validates the workspace JWT itself (#2959): user login tokens and
+re-validates the workspace JWT itself: user login tokens and
 anonymous requests are rejected with `401` even on the backend port.
 See [LLM Proxy](../architecture/llm-proxy.md).
 

@@ -68,7 +68,7 @@ KLANGKD_OIDC_CONFIG=/path/to/oidc.yaml
    - `password` — email/password only
    - `none` — no-login single-user (local-dev) mode; OIDC config is ignored. See [Auth Modes](../features/auth-modes.md).
 
-   The default (when `KLANGKD_AUTH_MODES` is unset) is `none`; configuring OIDC no longer implies `both` — set `KLANGKD_AUTH_MODES=oidc` (or `both`) to turn OIDC login on (#1419).
+   The default (when `KLANGKD_AUTH_MODES` is unset) is `none`; configuring OIDC no longer implies `both` — set `KLANGKD_AUTH_MODES=oidc` (or `both`) to turn OIDC login on.
 
 ## Provider Config Fields
 
@@ -176,7 +176,7 @@ Async hooks are also supported (`async def`). The hook script can import from `k
 - **Return** a `set[str]` — login allowed, memberships synced to those groups
 - Groups returned by the hook are auto-created if they don't exist
 - Group names are literal and must match existing groups to have effect:
-  the seeded admin group is named `admins` (#2934) — return `"admins"`,
+  the seeded admin group is named `admins` — return `"admins"`,
   not `"admin"`, to grant admin. Deployments upgrading past the rename
   must update hooks **before** users log in again: an unchanged
   `"admin"` return auto-creates a permissionless `admin` group, and the

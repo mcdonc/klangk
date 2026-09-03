@@ -7,12 +7,6 @@ chapter explains what is covered, what the validation boundary is, and
 how to build and use the FIPS workspace image — and, for the
 containerized-backend deployment, the FIPS host image.
 
-The work is tracked in [#2570](https://github.com/mcdonc/klangk/issues/2570)
-(image + module), [#2576](https://github.com/mcdonc/klangk/issues/2576)
-(password hashing algorithm), and
-[#2577](https://github.com/mcdonc/klangk/issues/2577) (Node.js coverage);
-the containerized backend is [#2628](https://github.com/mcdonc/klangk/issues/2628).
-
 ## Background: what "FIPS mode" means here
 
 FIPS 140-3 validation applies to a specific **cryptographic module** —
@@ -87,7 +81,7 @@ signing (python-jose), and outbound TLS (`ssl`/httpx to the LLM proxy,
 OIDC discovery, SMTP). A stock host image ships Debian OpenSSL with no
 provider activated — outside the validated boundary.
 
-`src/containers/host/Dockerfile.fips` (#2628) fixes that by layering
+`src/containers/host/Dockerfile.fips` fixes that by layering
 the same validated module onto the host image, and swaps the embedded
 workspace tarball for the FIPS workspace image's — a FIPS host must
 ship a FIPS workspace, or every workspace start would fail the
@@ -114,7 +108,7 @@ tagged `:<calver>-<commit>` plus a floating `:latest`. The workflow's
 runtime spot-check runs klangkd's actual boot gate both ways — it must
 pass inside the FIPS image and refuse to boot inside the stock one.
 
-**Enforcement posture inside a container (#2628):** with
+**Enforcement posture inside a container:** with
 `KLANGKD_FIPS_MODE` on, klangkd detects it is containerized (the
 `/.dockerenv` / `/run/.containerenv` markers) and a failed process
 probe **aborts the boot** — inside an image we ship there is no "the
@@ -162,8 +156,7 @@ node -e "require('crypto').createHash('md5').update('x').digest('hex')"
 # -> error:0308010C ... unsupported
 ```
 
-`KLANGKD_FIPS_MODE=1` automates this at runtime (see
-[#2570](https://github.com/mcdonc/klangk/issues/2570)): with
+`KLANGKD_FIPS_MODE=1` automates this at runtime: with
 the mode on, **every workspace container is probed when klangkd starts
 or adopts it** — fresh creates at the create choke point, and
 previously-running containers on the first reconnect after a klangkd
@@ -206,8 +199,7 @@ above before rolling out.
 FIPS posture also depends on the algorithms klangkd itself uses for
 password storage. bcrypt bundles its own crypto and is not
 FIPS-approvable; it has been replaced with PBKDF2-HMAC-SHA512 via
-`hashlib`, which routes through the validated provider
-([#2576](https://github.com/mcdonc/klangk/issues/2576)).
+`hashlib`, which routes through the validated provider.
 
 ## Why the container meets FIPS requirements
 

@@ -37,8 +37,7 @@ you set above.
 > local dev on your own machine, where the port is not published, and it
 > freely issues an admin token with no password. For the no-login
 > single-user experience, run klangk locally via devenv (below) instead.
-> See [Auth Modes](features/auth-modes.md) and
-> [#1391](https://github.com/mcdonc/klangk/issues/1391).
+> See [Auth Modes](features/auth-modes.md).
 
 ## Run Using devenv
 

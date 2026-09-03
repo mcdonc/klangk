@@ -15,7 +15,7 @@ Hosted apps are accessible to anyone who can reach the Klangk server. Do not ser
 3. The proxy proxies requests from `/hosted/{workspace_id}/{port}/` directly to the container — no Python in the request path.
 
 !!! note
-**Works with egress filtering.** A workspace with an `allowed_domains` allow-list runs behind the [network sidecar](egress-filtering.md), which owns the shared network namespace; host ports are published on the sidecar (not the workspace — `--publish` is silently discarded under `--network container:`) and forward into the shared netns to the workspace's listener, so hosting works the same as for unrestricted workspaces (#2267). IPv4 clients are reachable; the sidecar default-denies IPv6, so IPv6-only clients to a published port fail (#2277).
+**Works with egress filtering.** A workspace with an `allowed_domains` allow-list runs behind the [network sidecar](egress-filtering.md), which owns the shared network namespace; host ports are published on the sidecar (not the workspace — `--publish` is silently discarded under `--network container:`) and forward into the shared netns to the workspace's listener, so hosting works the same as for unrestricted workspaces. IPv4 clients are reachable; the sidecar default-denies IPv6, so IPv6-only clients to a published port fail.
 
 ## Accessing hosted apps
 
@@ -110,10 +110,10 @@ server-wide. This is a single knob that doubles as the count configuration:
   `KLANGKWS_HOSTING_*` vars are not injected, so `klangk-hosted-url` and the
   agent's `get_hosted_url` tool error out cleanly. The same happens in
   headless deployments (`KLANGKD_PORT` unset): `/hosted/` is served by the
-  browser listener, which headless mode does not render (#2732).
+  browser listener, which headless mode does not render.
 - **`/hosted/<ws>/<port>/` returns 404** — the proxy locations are
   collapsed to a single `return 404` block.
 
 A positive value (e.g. `3`) caps each workspace at that many ports. Changing
 the value takes effect on each workspace's next container start (no backend
-restart needed). Per-workspace overrides are tracked separately in #1238.
+restart needed).

@@ -6,7 +6,7 @@ A workspace container can die unexpectedly: the kernel's OOM killer
 reaps it when it exceeds its [memory
 limit](../reference/environment.md) (`KLANGKD_CONTAINER_MEMORY_LIMIT`
 or the workspace's `memory_limit` override), the main process crashes,
-or something on the host removes the container outright. Before #2524,
+or something on the host removes the container outright. Previously,
 such a death was invisible until a human noticed — the workspace list
 kept showing the container as running, and recovery was entirely
 manual.

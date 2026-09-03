@@ -37,7 +37,7 @@ The split mirrors the distinction between intent (config — operator/user
 edits) and disposable runtime artifacts (state — tokens the CLI can
 regenerate via `klangk login`). The CLI's tree is `klangk`; the server's
 (`klangkd`) tree is separate (`~/.config/klangkd/`, `~/.local/state/klangkd/`)
-— different audiences, different shapes (#1646).
+— different audiences, different shapes.
 
 ### klangk.yaml
 
@@ -100,7 +100,7 @@ Per-server settings override global settings. CLI flags override both.
 By default, selecting a terminal in the TUI suspends the TUI and runs
 `klangk shell` in the same terminal. With `terminal-open-cmd` set, each
 selection instead spawns `klangk shell` in a **new terminal window** via
-the configured command, and the TUI stays running (#2685).
+the configured command, and the TUI stays running.
 
 The value is the command that opens a terminal; the `klangk shell`
 invocation is appended as trailing arguments (most terminals take the
@@ -266,10 +266,10 @@ klangk sandbox myws ~/projects/myapp    # specify sandbox root explicitly
 klangk sandbox myws --force             # re-apply config and re-run setup on existing workspace
 klangk exec my-project ls /home/klangk           # run a command in the container (login shell: sources ~/.profile)
 klangk exec --raw my-project rsync --server ...      # raw argv, no shell (for transports like rsync)
-klangk monitor                                        # stream all server events you can see (scoped to your workspaces, #1714) as JSON
+klangk monitor                                        # stream all server events you can see (scoped to your workspaces) as JSON
 klangk monitor --type service_health | jq .           # pretty-print health transitions for your workspaces
 klangk monitor --type service_health -- sh -c '[ "$KLANGK_HEALTHY" = false ] && notify-send "klangk" "$KLANGK_HEALTH_MESSAGE"'  # alert with the failure reason
-klangk consent-decide my-project     # decide a workspace's held egress requests live (egress filtering, #2310)
+klangk consent-decide my-project     # decide a workspace's held egress requests live (egress filtering)
 klangk sync ~/src my-project:/home/klangk/src      # push files to the container — needs the exec-and-sync permission
 klangk sync my-project:/home/klangk/src ~/src       # pull files out of the container — needs the exec-and-sync permission
 klangk sync src/ my-project:/home/klangk/src --delete --exclude '.git'  # push, deleting extras, skipping .git
