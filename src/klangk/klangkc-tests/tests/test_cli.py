@@ -4778,6 +4778,76 @@ class TestFrameIsPredicate:
             pred({"type": "error"})
 
 
+class TestShareStateConfirmedPredicate:
+    """terminals.share_state_confirmed: confirm the target window's
+    STATE, not the first shared_terminals frame (#3057).
+
+    A queued stale pre-command broadcast must not confirm share/unshare
+    prematurely; error frames surface immediately like frame_is.
+    """
+
+    def _frames(self, *msgs):
+        class FakeRecv:
+            def __init__(self, frames):
+                self._frames = list(frames)
+
+            async def recv(self):
+                return self._frames.pop(0)
+
+        import json as _json
+
+        return FakeRecv([_json.dumps(m) for m in msgs])
+
+    def _shared_list(self, *window_ids):
+        return {
+            "type": "shared_terminals",
+            "terminals": [
+                {"user_id": "u", "window_name": "w", "window_id": wid}
+                for wid in window_ids
+            ],
+        }
+
+    def test_share_waits_until_window_present(self):
+        from klangk.cli.terminals import share_state_confirmed
+        from klangk.cli.client import recv_until
+
+        # First frame is a stale pre-share broadcast (@0 absent) — the
+        # wait must continue to the refreshed list.
+        conn = self._frames(
+            self._shared_list(),
+            {"type": "terminal_output", "data": "x"},
+            self._shared_list("@0"),
+        )
+        msg = asyncio.run(
+            recv_until(
+                conn, share_state_confirmed("shared_terminals", "@0", True), 5
+            )
+        )
+        assert msg["type"] == "shared_terminals"
+
+    def test_unshare_waits_until_window_absent(self):
+        from klangk.cli.terminals import share_state_confirmed
+        from klangk.cli.client import recv_until
+
+        conn = self._frames(
+            self._shared_list("@0", "@1"),
+            self._shared_list("@1"),
+        )
+        msg = asyncio.run(
+            recv_until(
+                conn, share_state_confirmed("shared_terminals", "@0", False), 5
+            )
+        )
+        assert msg["type"] == "shared_terminals"
+
+    def test_error_frame_raises_immediately(self):
+        from klangk.cli.terminals import share_state_confirmed
+
+        pred = share_state_confirmed("shared_terminals", "@0", True)
+        with pytest.raises(ConnectionError, match="Window not found"):
+            pred({"type": "error", "message": "Window not found"})
+
+
 class TestCliBranchGaps2834:
     """#2834 branch gate: the CLI's guard outcomes the mainline tests
     only take one side of."""

@@ -187,7 +187,6 @@ class TestHealth:
         # the E2E harness detects fixture-server port collisions with it
         # (#3057).
         assert body["status"] == "ok"
-        assert body["instance"]
         assert isinstance(body["instance"], str) and body["instance"]
 
 

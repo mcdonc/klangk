@@ -102,17 +102,26 @@ _READINESS_TIMEOUT = 240
 # free_port() TOCTOU — release the socket, then klangkd's proxy rebinds it
 # — lets a second fixture server landing in that window steal the port and
 # answer /health for the first run's clients (observed as a cross-run 409
-# "workspace already exists" in the hermes suite). Detection (the /health
-# instance check) plus a redraw-retry makes the collision self-healing
-# instead of flaky. Two retries is plenty: each redraw is a fresh OS
-# ephemeral pick, so a repeat collision needs the same microsecond-scale
-# interleaving twice.
+# "workspace already exists" in the hermes sandbox suite,
+# sandboxes/tests/hermes). Detection (the /health instance check) plus a
+# redraw-retry makes the collision self-healing instead of flaky. Two
+# retries are plenty: a repeat collision needs the same
+# release→rebind steal to land twice, and each redraw is a fresh OS
+# ephemeral pick.
 PORT_CLAIM_ATTEMPTS = 3
 
-# Marker from klangkd's own _check_port_collisions refusal (main.py): an
-# early exit whose output carries it means a concurrent run's proxy bound
-# our drawn port before our klangkd started — retryable with a redraw.
-PORT_COLLISION_MARKER = "Another process is already listening"
+# Retryable early-exit signatures: klangkd's own _check_port_collisions
+# refusal (main.py) — a foreign listener was already bound when our server
+# started — and the proxy engine's bind failure, which is what a foreign
+# listener produces when it binds in the claim-release→rebind window that
+# opens AFTER our server's probe passed. Anything else (a config error,
+# a validator refusal) fails identically on every attempt and must
+# surface immediately.
+PORT_COLLISION_MARKERS = (
+    "Another process is already listening",
+    "caddy failed to bind a listener",
+    "address already in use",
+)
 
 
 class ForeignServerError(RuntimeError):
@@ -147,6 +156,27 @@ def claim_port() -> tuple[int, socket.socket]:
     held = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     held.bind(("127.0.0.1", 0))
     return held.getsockname()[1], held
+
+
+def claim_specific_port(port: int) -> socket.socket:
+    """Bind-and-hold a CALLER-chosen port number until spawn (#3057).
+
+    Suites that pass ``KLANGKD_PORT=str(free_port())`` they drew themselves
+    (the CLI E2E session fixture) otherwise get the full released-socket
+    race this module exists to close. A port that is already taken fails
+    fast here with a clear error, instead of a spawn whose own port probe
+    refuses it.
+    """
+    held = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        held.bind(("127.0.0.1", port))
+    except OSError:
+        held.close()
+        raise RuntimeError(
+            f"port {port} requested for the fixture server is already "
+            "in use — cannot claim it (#3057)"
+        )
+    return held
 
 
 # File-streamed server logs from live ``start_server`` handles (#2623).
@@ -306,6 +336,8 @@ def _start_server_once(
     See :func:`start_server` for the parameters; the retry loop lives
     there.
     """
+    auto_data_dir = data_dir is None
+    auto_state_dir = state_dir is None
     if data_dir is None:
         data_dir = os.path.realpath(tracked_mkdtemp("klangk-e2e-"))
     else:
@@ -328,14 +360,18 @@ def _start_server_once(
     # is released only at spawn time — the smallest release→rebind window
     # possible without handing klangkd a pre-bound listener fd.
     claims: list[socket.socket] = []
-    range_port, range_claim = claim_port()
-    claims.append(range_claim)
+    drawn: set[str] = set()
+    if "KLANGKD_PORT_RANGE_START" not in env_overrides:
+        range_port, range_claim = claim_port()
+        claims.append(range_claim)
+        drawn.add("KLANGKD_PORT_RANGE_START")
 
     overrides = dict(env_overrides)
     overrides.setdefault("KLANGKD_DATA_DIR", data_dir)
     overrides.setdefault("KLANGKD_STATE_DIR", state_dir)
     overrides.setdefault("KLANGKD_FRONTEND_DIR", FRONTEND_DIR)
-    overrides.setdefault("KLANGKD_PORT_RANGE_START", str(range_port))
+    if "KLANGKD_PORT_RANGE_START" not in overrides:
+        overrides["KLANGKD_PORT_RANGE_START"] = str(range_port)
 
     uds_path: str | None
     url: str | None
@@ -373,6 +409,21 @@ def _start_server_once(
         uds_path = None
         url = f"http://localhost:{tcp_port}"
 
+    # Caller-SUPPLIED port numbers get the same held-claim treatment
+    # (#3057 review): suites that draw with free_port() themselves (the CLI
+    # E2E session fixture passes KLANGKD_PORT=str(free_port())) otherwise
+    # keep the full released-socket race. Claim the exact number until
+    # spawn; an occupied one fails fast here instead of producing a spawn
+    # whose own port probe refuses it.
+    for key in (
+        "KLANGKD_PORT",
+        "KLANGKD_EGRESS_PORT",
+        "KLANGKD_PORT_RANGE_START",
+    ):
+        value = overrides.get(key)
+        if value is not None and key not in drawn:
+            claims.append(claim_specific_port(int(value)))
+
     env = clean_env(**overrides)
     cmd = ["python3", "-m", "klangk.main"]
     if config is not None:
@@ -386,7 +437,10 @@ def _start_server_once(
     if log_path == "":
         log_file = None
     else:
-        log_file = open(log_path, "w")  # noqa: SIM115
+        # Append, never truncate: a retry after a port collision must not
+        # erase the failed attempt's log — it is the only evidence the
+        # collision happened (#3057 review).
+        log_file = open(log_path, "a")  # noqa: SIM115
     # Release the held port claims only now — klangkd's proxy rebinds them
     # moments later, so this is the smallest release→rebind window the
     # spawn can have (#3057).
@@ -412,6 +466,7 @@ def _start_server_once(
         "url": url,
         "client": client,
         "log_path": log_path,
+        "owns_dirs": (auto_data_dir, auto_state_dir),
     }
     if wait_ready:
         try:
@@ -426,9 +481,11 @@ def _start_server_once(
             )
         except BaseException:
             # Leave no half-started server behind for the retry loop in
-            # :func:`start_server` — kill the proc, sweep containers,
-            # drop the dirs.
-            stop_server(server)
+            # :func:`start_server` — but NOT via stop_server, whose
+            # unconditional rmtree would delete caller-supplied dirs (a
+            # relaunched database, a config file) and convert a retryable
+            # collision into state loss (#3057 review).
+            _abandon_attempt(server)
             raise
     if log_file is not None:
         _active_log_paths.append(log_path)
@@ -494,9 +551,16 @@ def start_server(
     ``<data_dir>/instance-id``; a port stolen by a concurrent E2E run
     (the free_port TOCTOU) is detected and retried on fresh ports
     (:data:`PORT_CLAIM_ATTEMPTS` times) instead of failing the suite
-    (#3057).
+    (#3057). A CALLER-supplied ``KLANGKD_PORT`` pins the ingress port —
+    it still gets a held claim, but no redraw is possible, so a foreign
+    owner is a hard error rather than a retry.
     """
-    attempts = 1 if (uds or not wait_ready) else PORT_CLAIM_ATTEMPTS
+    port_is_drawn = "KLANGKD_PORT" not in env_overrides
+    attempts = (
+        PORT_CLAIM_ATTEMPTS
+        if (not uds and wait_ready and port_is_drawn)
+        else 1
+    )
     for attempt in range(attempts):
         try:
             return _start_server_once(
@@ -508,19 +572,28 @@ def start_server(
                 log_path=log_path,
                 env_overrides=env_overrides,
             )
-        except ForeignServerError:
+        except ForeignServerError as exc:
             # A concurrent run owns the drawn port — always redraw-worthy.
             if attempt + 1 == attempts:
                 raise
+            print(
+                f"start_server: attempt {attempt + 1}/{attempts} answered "
+                f"by a foreign klangkd; redrawing ports and respawning "
+                f"({exc})",
+                flush=True,
+            )
         except EarlyExitError as exc:
-            # Retry an early exit only when klangkd's own port-collision
-            # probe refused to start (someone bound our port first); a
-            # config error fails identically on every attempt, so surface
-            # it immediately.
-            if attempt + 1 == attempts or (
-                PORT_COLLISION_MARKER not in exc.output
-            ):
+            # Retry an early exit only when the output carries a
+            # port-collision signature; a config error fails identically
+            # on every attempt, so surface it immediately.
+            collided = any(m in exc.output for m in PORT_COLLISION_MARKERS)
+            if attempt + 1 == attempts or not collided:
                 raise
+            print(
+                f"start_server: attempt {attempt + 1}/{attempts} exited on "
+                "a port collision; redrawing ports and respawning",
+                flush=True,
+            )
     raise RuntimeError("start_server: no attempt outcome")  # pragma: no cover
 
 
@@ -573,6 +646,43 @@ def _cleanup_containers(data_dir: str) -> None:
     except FileNotFoundError:
         # podman not on PATH (e.g. a partial dev env) — nothing to clean.
         pass
+
+
+def _abandon_attempt(server: dict[str, Any]) -> None:
+    """Tear down a failed spawn attempt, preserving caller-owned dirs.
+
+    :func:`stop_server` is the wrong tool mid-retry: it rmtree's
+    ``data_dir``/``state_dir`` unconditionally, which would delete a
+    caller-provided database (the consent-prune suite relaunches on the
+    same dir) or a config file living there — turning a retryable port
+    collision into state loss. Here: kill the proc, sweep its labelled
+    containers (BEFORE any rmtree — the sweep reads ``instance-id``),
+    close the log file and client, and remove only the tempdirs this
+    harness created (``owns_dirs``).
+    """
+    proc: Popen = server["proc"]
+    try:
+        proc.kill()
+        proc.wait(timeout=5)
+    except (ProcessLookupError, subprocess.TimeoutExpired):
+        pass
+    log_file = getattr(proc, "_log_file", None)
+    if log_file is not None:
+        try:
+            log_file.close()
+        except Exception:
+            pass
+    close_popen_pipes(proc)
+    try:
+        server["client"].close()
+    except Exception:
+        pass
+    _cleanup_containers(server["data_dir"])
+    owns_data_dir, owns_state_dir = server["owns_dirs"]
+    if owns_data_dir:
+        shutil.rmtree(server["data_dir"], ignore_errors=True)
+    if owns_state_dir:
+        shutil.rmtree(server["state_dir"], ignore_errors=True)
 
 
 def stop_server(server: dict[str, Any]) -> None:
