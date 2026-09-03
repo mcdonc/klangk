@@ -5,8 +5,9 @@ Renames any existing agent row to the fixed identity
 already holds the ``klangk`` handle (it was never reserved before, so
 a deployment may legitimately have one) to a unique alternative.
 
-The seed path (``Lifecycle.seed_agent_user``) reconciles the agent row
-itself on every boot, so this migration's real job is the *human
+The seed path (``UsersModel.ensure_agent_user``, sequenced by
+``Lifecycle.seed_agent_user``) reconciles the agent row itself on every
+boot, so this migration's real job is the *human
 collision*: it must run before the seed's pre-check, or startup fails
 with "handle 'klangk' is already used by another user".
 

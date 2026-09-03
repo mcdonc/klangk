@@ -248,15 +248,9 @@ async def test_update_email_and_password(users):
 
 async def test_mark_unverified(users):
     u = await users.create_user("unv@x.com", "hash", verified=True)
-    row = await users.app.state.db.fetchone(
-        "SELECT verified FROM users WHERE id = ?", (u["id"],)
-    )
-    assert bool(row["verified"]) is True
+    assert (await users.get_user_by_email("unv@x.com"))["verified"] is True
     await users.mark_unverified(u["id"])
-    row = await users.app.state.db.fetchone(
-        "SELECT verified FROM users WHERE id = ?", (u["id"],)
-    )
-    assert bool(row["verified"]) is False
+    assert (await users.get_user_by_email("unv@x.com"))["verified"] is False
 
 
 async def test_agent_principal_guards(users):
@@ -303,7 +297,6 @@ async def test_ensure_agent_user_seeds_and_upserts(users, app_state):
             "UPDATE users SET handle = ?, email = ? WHERE id = ?",
             ("clanker", "clanker@example.com", AGENT_USER_ID),
         )
-    users.clear_agent_cache()
     await users.ensure_agent_user()
     agent = await users.get_user_by_id(AGENT_USER_ID)
     assert agent["handle"] == "klangk"
@@ -323,6 +316,8 @@ async def test_ensure_agent_user_refuses_human_handle_collision(
     with pytest.raises(RuntimeError, match="klangk"):
         await users.ensure_agent_user()
     assert await users.get_user_by_id(AGENT_USER_ID) is None
+    # The colliding human is untouched by the refusal.
+    assert (await users.get_user_by_handle("klangk"))["id"] == human["id"]
 
 
 async def test_agent_handle_reserved(users, agent_user):
