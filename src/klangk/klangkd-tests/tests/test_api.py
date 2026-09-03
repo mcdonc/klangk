@@ -1518,6 +1518,7 @@ class TestForgotPassword:
         )
         assert resp.status_code == 200
         assert resp.json()["status"] == "sent"
+        api.reset_timestamps.pop("nobody@example.com", None)
 
     async def test_forgot_disabled_user_no_email_still_sent(
         self, client, app, db, app_state
@@ -1557,6 +1558,50 @@ class TestForgotPassword:
                 json={"email": "forgot@example.com"},
             )
         assert resp2.status_code == 429
+        api.reset_timestamps.pop("forgot@example.com", None)
+
+    async def test_forgot_rate_limited_unknown_email(self, client, db):
+        """#3100: the cooldown must not be an account-existence oracle —
+        an unknown address answers 429 on the second request, exactly
+        like a known one."""
+        resp1 = await client.post(
+            "/api/v1/auth/forgot-password",
+            json={"email": "ghost-forgot@example.com"},
+        )
+        resp2 = await client.post(
+            "/api/v1/auth/forgot-password",
+            json={"email": "ghost-forgot@example.com"},
+        )
+        assert resp1.status_code == 200
+        assert resp1.json()["status"] == "sent"
+        assert resp2.status_code == 429
+        api.reset_timestamps.pop("ghost-forgot@example.com", None)
+
+    async def test_forgot_rate_limited_disabled_user(
+        self, client, app, db, app_state
+    ):
+        """#3100: a disabled account must be indistinguishable from an
+        enabled one across repeated requests — 429 on the second, no
+        email on either."""
+        u = await self._create_user(app_state)
+        await app.state.model.users.set_user_disabled(u["id"], True)
+        with patch.object(
+            emailsvc_mod.EmailService,
+            "send_password_reset_email",
+            new_callable=AsyncMock,
+        ) as mock_send:
+            resp1 = await client.post(
+                "/api/v1/auth/forgot-password",
+                json={"email": "forgot@example.com"},
+            )
+            resp2 = await client.post(
+                "/api/v1/auth/forgot-password",
+                json={"email": "forgot@example.com"},
+            )
+        assert resp1.status_code == 200
+        assert resp1.json()["status"] == "sent"
+        assert resp2.status_code == 429
+        mock_send.assert_not_awaited()
         api.reset_timestamps.pop("forgot@example.com", None)
 
     async def test_forgot_prunes_expired_entries(self, client, db, app_state):
