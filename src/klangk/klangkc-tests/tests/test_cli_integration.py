@@ -1620,6 +1620,21 @@ class TestShellConnectionError:
             shell(workspace="ws", terminal="x")
         assert exc_info.value.exit_code == 1
 
+    def test_shell_catches_container_timeout(self, monkeypatch):
+        """#3091: a container that never becomes ready exits with a one-line
+        message, not a raw asyncio.TimeoutError traceback."""
+        import asyncio as asyncio_mod
+
+        from klangk.cli.main import shell
+
+        self._shell_with_side_effect(monkeypatch, asyncio_mod.TimeoutError())
+
+        import typer
+
+        with pytest.raises(typer.Exit) as exc_info:
+            shell(workspace="ws", terminal="x")
+        assert exc_info.value.exit_code == 1
+
 
 class TestSSHAgentForwarding:
     @pytest.mark.filterwarnings("ignore::RuntimeWarning")

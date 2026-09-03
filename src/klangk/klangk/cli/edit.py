@@ -554,7 +554,10 @@ def apply_edit(client, ws, body: dict, restart: bool) -> None:
         context.err.print("[red]Workspace not found[/red]")
         raise typer.Exit(code=1)
     resp.raise_for_status()
-    typer.echo(f"Updated workspace {ws.name}")
+    # The server renamed it when body carries "name" — echo (and restart
+    # by id) against the new name; ws.name is the stale pre-edit value.
+    current_name = body.get("name") or ws.name
+    typer.echo(f"Updated workspace {current_name}")
 
     if restart:
         context.err.print(
@@ -563,8 +566,8 @@ def apply_edit(client, ws, body: dict, restart: bool) -> None:
         )
         answer = input("Restart now? [y/N] ").strip().lower()
         if answer in ("y", "yes"):
-            client.restart_workspace(ws.name)
-            typer.echo(f"Restarted workspace {ws.name}")
+            client.restart_workspace_by_id(ws.id)
+            typer.echo(f"Restarted workspace {current_name}")
 
 
 @context.app.command()

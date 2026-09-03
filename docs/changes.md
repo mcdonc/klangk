@@ -1960,6 +1960,24 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   Future (deny) and expires the row before letting the cancellation
   propagate.
 
+- **`klangk edit` restart-after-rename crash (#3091).** Restarting a
+  running workspace renamed by the same edit (`klangk edit my-ws --name
+new-ws …` then answering `y` to the restart prompt) crashed with an
+  uncaught `WorkspaceNotFoundError` traceback before the restart could
+  fire. The restart now targets the workspace id, and the
+  confirmation echoes show the new name.
+
+- **Consent-popup socket names mangled digits (#3091).** A typo in the
+  workspace-id sanitizer's character class (`0189` instead of the range
+  `0-9`) replaced digits 2–7 with `-` in the tmux socket and session
+  names, mangling nearly every workspace's consent-popup socket and
+  letting distinct ids collide on one socket.
+
+- **`klangk shell` / `klangk sandbox` timeout tracebacks (#3091).** A
+  container that never reaches the ready state within the wait budget
+  now surfaces a one-line timeout message and a nonzero exit instead
+  of a raw `TimeoutError` traceback.
+
 - **`egress_request` frames now carry one request shape on every delivery
   path (#3082).** A live hold fanned out to deciders carried a request dict
   without `duration`/`revoked_at`/`revoked_by`, while a connect-time replay

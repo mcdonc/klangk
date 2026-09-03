@@ -239,6 +239,40 @@ def shell_rejected(e: websockets.InvalidStatus) -> None:
     raise typer.Exit(code=1) from None
 
 
+def attach_shell(server_spec, token, ws, window, forward_agent) -> None:
+    """Run the PTY shell session, surfacing failures as a clean exit.
+
+    A handshake rejection, a dropped connection, or a container that
+    never becomes ready within the wait budget (#3091) each print a
+    one-line message and exit nonzero instead of a raw traceback — the
+    same presentation ``context.run_ws_command`` gives the exec and
+    terminal-share commands (#2876).
+    """
+    try:
+        asyncio.run(
+            ws_shell(
+                server_spec,
+                token,
+                ws.id,
+                window=window,
+                forward_agent=forward_agent,
+                max_size=context.ws_max_size(),
+            )
+        )
+    except websockets.InvalidStatus as e:
+        shell_rejected(e)
+    except ConnectionError as e:
+        reset_terminal()
+        drain_stdin()
+        context.err.print(f"[red]{e}[/red]")
+        raise typer.Exit(code=1) from None
+    except asyncio.TimeoutError as e:
+        reset_terminal()
+        drain_stdin()
+        context.err.print(f"[red]{context.timeout_detail(e)}[/red]")
+        raise typer.Exit(code=1) from None
+
+
 @context.app.command()
 def shell(
     workspace: str | None = typer.Argument(
@@ -297,22 +331,5 @@ def shell(
         # is not interactive-egress, or the member may not decide egress
         # (#2976: spectator-profile members never spawn a decider).
         raise typer.Exit(code=run_consent_popup(ws, terminal, forward_agent))
-    try:
-        asyncio.run(
-            ws_shell(
-                context.server_url(),
-                token,
-                ws.id,
-                window=terminal,
-                forward_agent=forward_agent,
-                max_size=context.ws_max_size(),
-            )
-        )
-        context.err.print(f"Disconnected from [bold]{ws.name}[/bold].")
-    except websockets.InvalidStatus as e:
-        shell_rejected(e)
-    except ConnectionError as e:
-        reset_terminal()
-        drain_stdin()
-        context.err.print(f"[red]{e}[/red]")
-        raise typer.Exit(code=1) from None
+    attach_shell(context.server_url(), token, ws, terminal, forward_agent)
+    context.err.print(f"Disconnected from [bold]{ws.name}[/bold].")
