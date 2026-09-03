@@ -1950,6 +1950,13 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Non-mapping `klangk.yaml` no longer crashes every CLI command
+  (#3094).** A config file holding valid YAML that is not a mapping
+  (a stray list or a bare string) used to abort every `klangk`
+  invocation with `AttributeError`. It is now treated as an empty
+  config, so commands run with defaults and a bad alias lookup misses
+  instead of crashing.
+
 - **Cancellation during a consent verdict no longer hangs the egress
   relay** (#3089). A decider disconnect or backend shutdown landing while
   the verdict's DB write was in flight escaped as a `CancelledError`

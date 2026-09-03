@@ -367,6 +367,18 @@ def test_remove_server_from_config(redirect_xdg):
     assert remove_server_from_config("zzz") is False
 
 
+def test_config_flows_survive_non_mapping_file(redirect_xdg):
+    """A valid-YAML-but-not-a-mapping klangk.yaml must not crash the
+    mutation flows with AttributeError — lookups miss (False) and an
+    add rewrites the file as a mapping (#3094)."""
+    cpath, _ = redirect_xdg
+    cpath.write_text("- oops\n")
+    assert remove_server_from_config("a") is False
+    assert update_server_in_config("a", "a", "https://a.example") is False
+    add_server_to_config("a", "https://a.example")
+    assert CLIConfig.load().servers["a"].url == "https://a.example"
+
+
 def test_update_server_in_config(redirect_xdg):
     add_server_to_config("a", "https://a.example")
     assert update_server_in_config("a", "a", "https://a2.example") is True
