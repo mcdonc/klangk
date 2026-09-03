@@ -154,7 +154,7 @@ cross-tenant and cross-user data access on shared hosts. Operators
 can cap how many volumes a user may create with
 `KLANGKD_VOLUME_QUOTA_PER_USER` (default `0` = unlimited). The cap
 is enforced at both creation paths — the volumes API and the
-workspace-start auto-create of mounted named volumes (#2972): an
+workspace-start auto-create of mounted named volumes: an
 API create past the cap fails with a clear 429, a workspace start
 past it fails with a clear start error.
 
@@ -162,7 +162,7 @@ past it fails with a clear start error.
 
 Containers stop automatically after 60 minutes of inactivity
 (configurable deploy-wide via `KLANGKD_IDLE_TIMEOUT_SECONDS`; the
-default was raised from 30 to 60 minutes in #2480). Activity includes
+default was raised from 30 to 60 minutes). Activity includes
 terminal input, file operations, and AI agent events — so containers
 stay alive during long-running LLM requests as long as events are
 flowing.
@@ -176,12 +176,12 @@ processes, like an auto-started gateway) keep running after you log out,
 so they're immediately available when you or a collaborator reconnect.
 Only the idle timeout (or an explicit, admin-gated _Shutdown container_
 command) tears a container down. This lets long-lived services outlive
-any single user's session (#301, #1235).
+any single user's session.
 
 ### Per-workspace override
 
 A workspace owner can override the deploy-wide default for a single
-workspace (#1018) — for example to keep a long-running service alive
+workspace — for example to keep a long-running service alive
 indefinitely, or to reap an expensive scratch workspace faster:
 
 - **Web UI:** set **Idle Timeout (s)** in the workspace's Settings tab

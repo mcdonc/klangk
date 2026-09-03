@@ -275,7 +275,7 @@ The setup script runs inside the container as the `klangk` user. It
 has access to everything that's been mounted and copied. The working
 directory is the sandbox root (the `mount-at` path).
 
-**Important:** Sudo is off by default for every workspace (#3047) —
+**Important:** Sudo is off by default for every workspace —
 the workspace must opt in (`allow_sudo: true` in its settings, or the
 _Allow sudo_ toggle / `klangk create --sudo`). When sudo is off, setup
 scripts are limited to user-space operations (installing to `~`,

@@ -2,14 +2,14 @@
 
 The compiled Flutter Web UI ships **inside the `klangk` wheel** at
 `klangk/frontend/`, so a `pip install klangk` deployment serves the UI out of
-the box — no separate frontend build or checkout required (#1600).
+the box — no separate frontend build or checkout required.
 
 ## Where the UI comes from
 
 `klangkd` resolves the directory it serves the UI from in this order:
 
 1. **`KLANGKD_FRONTEND_DIR`**, if set — point it at any built Flutter web
-   directory on the filesystem (#1456). Use this to serve a UI you built
+   directory on the filesystem. Use this to serve a UI you built
    yourself, or to override the default.
 2. **The in-package default** — `<site-packages>/klangk/frontend/`. This is
    the wheel's built-in copy, populated at wheel-build time (see below). For a

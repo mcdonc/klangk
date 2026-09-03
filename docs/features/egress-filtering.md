@@ -13,20 +13,18 @@ mode** (`egress_mode`, default `interactive` for new workspaces):
 - **`static`** — the classic allow-list: declare `allowed_domains` up
   front; everything else is denied and recorded for audit. No prompting,
   ever. Off-list DNS names return NXDOMAIN — the query never reaches an
-  upstream resolver (#3041), so there is no resolution oracle and no DNS
+  upstream resolver, so there is no resolution oracle and no DNS
   exfiltration channel; denied attempts recorded in the audit log are the
   connects that were dialed directly by IP. The mode is fixed at sidecar
   start — flipping a running workspace `interactive`→`static` keeps the old
-  DNS behavior until its next container start, like allow-list edits
-  (#2281, #3041).
+  DNS behavior until its next container start, like allow-list edits.
 - **`allow`** — default-permit with a deny-list: every host is reachable
   except names in `rejected_domains`; off-list egress is recorded and
-  auto-allowed with no prompt (#2406).
+  auto-allowed with no prompt.
 
 A `static` workspace with no `allowed_domains` (and no deploy-wide
 default) keeps unrestricted outbound networking exactly as before; an
-`interactive` workspace is always filtered, even with empty lists
-(#2325).
+`interactive` workspace is always filtered, even with empty lists.
 
 The mechanism uses a **network sidecar** — a small NET_ADMIN container
 that shares the filtered workspace's network namespace and owns its
@@ -65,24 +63,24 @@ gate at NFQUEUE, the consent loop, and the verdict — is in
    proxy. The proxy resolves each query against a real upstream, and
    **allow-lists resolved IPs at runtime** — so a domain whose IPs rotate
    (CDN, DNS round-robin) stays reachable without a container restart,
-   and a denied domain returns NXDOMAIN in `static` mode (#3041: the
+   and a denied domain returns NXDOMAIN in `static` mode (the
    query is refused locally — it is never forwarded, so there is no
    resolution oracle and no DNS exfiltration channel). In `interactive`
    and `allow` modes an off-list name resolves normally, but the proxy
-   records the IP-to-name mapping and installs no allow rule (#2324) —
+   records the IP-to-name mapping and installs no allow rule —
    resolution succeeding does _not_ mean egress is permitted; the gate is
    the SYN. This replaces the create-time
-   IP-pinning the old OCI hook model used (#2255). A resolved IP is allowed
+   IP-pinning the old OCI hook model used. A resolved IP is allowed
    **only for the DNS response's TTL**; the proxy re-resolves on the next
    query and a background sweep removes the allow-rule once the TTL
-   elapses, so stale IPs do not linger (#2256). The workspace is told
+   elapses, so stale IPs do not linger. The workspace is told
    its resolver is `1.1.1.1` (a placeholder) — the `:53` traffic is
    `REDIRECT`ed to the proxy before it ever leaves, so `1.1.1.1` is never
    actually reached; the proxy forwards to a _different_ detected upstream
    (loop avoidance).
 5. **IPv6 egress is default-denied** — the sidecar sets
    `ip6tables -P OUTPUT DROP`, so the v4 allow-list cannot be bypassed
-   over IPv6 (#1936). `allowed_domains` therefore accepts only hostnames
+   over IPv6. `allowed_domains` therefore accepts only hostnames
    and IPv4 addresses (no `[ipv6]` literals), and AAAA records returned by
    DNS are ignored.
 6. In interactive mode the ruleset additionally queues every non-approved
@@ -98,7 +96,7 @@ workspace lacks `CAP_NET_ADMIN` so it cannot flush the ruleset.
 ## Consent recording (all modes)
 
 Every blocked or off-list destination is recorded to the `egress_consent`
-table, regardless of `egress_mode` (#2242):
+table, regardless of `egress_mode`:
 
 - **static** -> recorded `denied` immediately, `decided_by` NULL (policy,
   no human). Static mode is strictly better than silent deny: every
@@ -109,9 +107,9 @@ table, regardless of `egress_mode` (#2242):
   or auto-expired (`expired` — deliberately distinct from a human deny)
   when no decider answers within `egress_consent_timeout`.
 - **allow** -> off-list destinations recorded `allowed`, `decided_by`
-  NULL (#2406) — a log of everything the workspace actually reached.
+  NULL — a log of everything the workspace actually reached.
 
-The table is bounded (#2303): a retention window
+The table is bounded: a retention window
 (`KLANGKD_EGRESS_CONSENT_RETENTION_DAYS`, default 30 days) deletes
 terminal rows older than it, and a per-workspace cap
 (`KLANGKD_EGRESS_CONSENT_ROW_CAP`, default 2000) trims the oldest rows
@@ -131,13 +129,13 @@ first connection to a host nobody has approved yet is held mid-`connect()`
 and surfaces as a consent request a human can allow or deny for a chosen
 duration. The allow-list is built interactively as the workspace actually
 reaches out; `allowed_domains` entries (and a deploy-wide default) act as
-pre-approvals that skip the prompt (#2325). Requests are per-workspace —
+pre-approvals that skip the prompt. Requests are per-workspace —
 there is no per-process attribution.
 
 ### A workspace is interactive only while a decider is connected
 
 `egress_mode = "interactive"` is the opt-in, but interactivity is
-**runtime state** (#2308): a workspace's off-list egress is actually held
+**runtime state**: a workspace's off-list egress is actually held
 only while **at least one live consent decider** is connected for it. A
 decider is a connected client — the `klangk
 consent-decide` TUI, the consent popup inside `klangk shell`, or the web
@@ -149,7 +147,7 @@ nobody to ask, off-list connections fail fast (an immediate TCP refusal,
 not a hang) and are recorded.
 
 A `static` workspace refuses decider registration outright, so the
-static/interactive boundary is structural, not just behavioral (#2394).
+static/interactive boundary is structural, not just behavioral.
 
 ### How a hold works
 
@@ -157,7 +155,7 @@ static/interactive boundary is structural, not just behavioral (#2394).
    names covered by an in-effect verdict) resolve and have their IPs
    learned as usual; `rejected_domains` names get NXDOMAIN. Any **other**
    name resolves normally, but the proxy records the IP-to-name mapping
-   and installs no allow rule (#2324) — resolution succeeding does _not_
+   and installs no allow rule — resolution succeeding does _not_
    mean egress is permitted.
 2. The first packet (the TCP SYN) to a non-approved IP is queued to the
    sidecar's NFQUEUE. The connection now **stalls inside `connect()`** —
@@ -180,16 +178,16 @@ left pending forever.
 
 ### Deciding
 
-- **`klangk consent-decide <workspace>`** — a standalone TUI decider
-  (#2310): a live queue of held requests (host:port and a countdown),
+- **`klangk consent-decide <workspace>`** — a standalone TUI decider:
+  a live queue of held requests (host:port and a countdown),
   allow/deny per row with the duration chosen at the action — bare
   `a`/`d` (or the row buttons) send the default `tilrestart`, `A`/`D`
-  open a duration picker first (#2511) — a rules screen (`r`) with revoke
-  (`x`) (#2340, #2341), and pause controls (#2332).
+  open a duration picker first — a rules screen (`r`) with revoke
+  (`x`), and pause controls.
 - **`klangk shell`** — shelling into an interactive workspace wraps the
   shell in a local tmux that floats the decider over it as a popup: a
   held request pops up without leaving the shell (`C-a p` reopens it;
-  skip the wrapper with `--no-consent-popup`) (#2383). Disconnect with
+  skip the wrapper with `--no-consent-popup`). Disconnect with
   the SSH-style escape — press **Enter**, then **~**, then **.** — after
   which the CLI prints `Disconnected from <workspace>.` and the wrapper
   cleans up; the `[exited]` line that may follow is tmux confirming the
@@ -197,17 +195,17 @@ left pending forever.
 - **Web UI** — the workspace page shows a consent banner with per-row
   allow/deny split buttons: a bare click uses the default duration
   (until restart), and the attached ▾ menu sends the verdict with any
-  other duration (#2246, #2499), plus a **Network** tab
+  other duration, plus a **Network** tab
   listing the in-effect rules with revoke actions.
 
 Several deciders may be connected at once (two CLI sessions and the web
 UI, say): each pending request is fanned out to all of them and the first
-decision wins (#2244). Deciders are strictly workspace-scoped (#2976):
+decision wins. Deciders are strictly workspace-scoped:
 there is no deploy-wide flavor — a decider handshake without a workspace
 param is refused.
 
 **Authorization.** A decider needs the `egress-consent` permission on
-the workspace (owner, coder, or collaborator — #2883;
+the workspace (owner, coder, or collaborator;
 spectators are watch-only and never see the Network tab or the consent
 banner). A verdict can only decide a
 request inside the decider's own workspace. Pausing prompting (below)
@@ -217,26 +215,26 @@ also pause.
 ### Decision durations
 
 A verdict carries a duration, chosen with the allow/deny action (default
-`tilrestart`, #2328): bare `a`/`d` in the TUI — or a plain button click
-on the web banner — send the default; the TUI's `A`/`D` picker (#2511)
+`tilrestart`): bare `a`/`d` in the TUI — or a plain button click
+on the web banner — send the default; the TUI's `A`/`D` picker
 chooses any other duration in the same step.
 
-| Duration                          | Meaning                                                                                                                                                                                                                         |
-| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `once`                            | This one connection only; the next connection to the same host:port prompts again (#2361).                                                                                                                                      |
-| `5m` / `15m` / `1h` / `1d` / `1w` | Timed: allowed (or denied) for the window, then the destination re-prompts.                                                                                                                                                     |
-| `tilrestart`                      | The workspace container's lifetime — the sidecar's in-memory rules; cleared on restart (#2346).                                                                                                                                 |
-| `forever`                         | The workspace's lifetime: an **allow** is appended to `allowed_domains` as `host:port` (#2368); a **deny** to `rejected_domains` (#2369). The sidecar re-reads both lists on start, so the verdict survives container restarts. |
+| Duration                          | Meaning                                                                                                                                                                                                         |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `once`                            | This one connection only; the next connection to the same host:port prompts again.                                                                                                                              |
+| `5m` / `15m` / `1h` / `1d` / `1w` | Timed: allowed (or denied) for the window, then the destination re-prompts.                                                                                                                                     |
+| `tilrestart`                      | The workspace container's lifetime — the sidecar's in-memory rules; cleared on restart.                                                                                                                         |
+| `forever`                         | The workspace's lifetime: an **allow** is appended to `allowed_domains` as `host:port`; a **deny** to `rejected_domains`. The sidecar re-reads both lists on start, so the verdict survives container restarts. |
 
 A timed or `forever` verdict is **host-scoped, not IP-scoped**: every IP
 the host resolves to — including CDN rotations — is covered for the
-duration, so a user is not re-prompted for a domain they already decided
-(#2372, #2446). Decisions persist to the workspace only; there is
+duration, so a user is not re-prompted for a domain they already decided.
+Decisions persist to the workspace only; there is
 currently no promotion of a verdict to a deploy-wide list.
 
 ### Pause
 
-A decider can pause prompting workspace-wide for 15m / 1h / 1d (#2332):
+A decider can pause prompting workspace-wide for 15m / 1h / 1d:
 while paused, off-list egress is auto-allowed per-connection with no
 prompt and no hold — a relief valve for a build or crawl that would
 otherwise flood the queue. A recorded deny still blocks while paused.
@@ -251,12 +249,12 @@ not a person), and — for a revoke — `revoked_at`/`revoked_by`. A timeout
 is recorded `expired`, distinguishable from a human deny.
 
 The rules view (the `r` screen of `consent-decide`, the web UI's Net
-Rules tab) shows this live over the `egress_rules` stream (#2338): the
+Rules tab) shows this live over the `egress_rules` stream: the
 static allow-list and reject-list, every in-effect verdict with its
 remaining window, and the pause state. An in-effect verdict can be
-**revoked** from there (#2339, #2341): the sidecar drops its rule at
+**revoked** from there: the sidecar drops its rule at
 once, the row is marked revoked, and a `forever` verdict's durable list
-entry is retracted so it does not re-apply on the next restart (#2370).
+entry is retracted so it does not re-apply on the next restart.
 `scripts/consent-watch.py` renders the raw table live on the server host.
 
 ### Operator notes
@@ -287,11 +285,10 @@ entry is retracted so it does not re-apply on the next restart (#2370).
   connects fail fast. Both are fail-closed.
 - **Idle timeout.** Egress activity (DNS queries, consented SYNs, byte
   counts) bumps the workspace idle timer, so an egress-only workload is
-  not reaped mid-transfer (#2479, #2485).
-- **`egress_mode` changes apply at the next container start** (#2409).
+  not reaped mid-transfer.
+- **`egress_mode` changes apply at the next container start**.
 - **`klangk sandbox`** runs its automated install in `allow` mode (no
-  decider is watching), then resets the workspace to `interactive`
-  (#2404).
+  decider is watching), then resets the workspace to `interactive`.
 
 ### Security model
 
@@ -327,7 +324,7 @@ required for the common case.
 1. Make the sidecar image available to podman:
    - **All-in-one host image** (`scripts/build-host-image.sh`): nothing to
      do — the sidecar image is embedded as a tarball in the host image and
-     `podman load`ed on first startup (#2301).
+     `podman load`ed on first startup.
    - **Dev**: the `klangk:build-network-sidecar` devenv task builds it from
      `src/containers/network/`.
    - **Other deploys**: publish the image to your registry and point
@@ -346,7 +343,7 @@ start** (fail-closed) rather than running unrestricted — see
 ### Deploy-wide default allow-list
 
 Set a deploy-wide allow-list applied to **every workspace that doesn't
-declare its own** `allowed_domains` (#1365) — e.g. to permit a curated
+declare its own** `allowed_domains` — e.g. to permit a curated
 set (package registries, a git host) by default across the whole deploy:
 
 ```bash
@@ -364,9 +361,9 @@ netfilter_default_domains:
 
 Entries use the same grammar as a workspace allow-list (`host` /
 `.domain` / `*.domain` / `host:port` / IPv4 CIDR — see the [API](#api)
-section; #1935, #2377) and are validated server-side at startup.
+section) and are validated server-side at startup.
 A malformed value **aborts startup** rather than silently disabling the
-default (#1939, reversing the #1772 fall-back); a SIGHUP reload with a bad
+default (reversing the fall-back); a SIGHUP reload with a bad
 value is denied and keeps the old config. Read at boot and on SIGHUP
 (reloadable).
 
@@ -377,7 +374,7 @@ from this default, and the workspace persists whatever the creator
 submits. A workspace's own `allowed_domains` — pre-filled or hand-
 written — is exactly what is enforced; an empty list in `interactive`
 mode means "prompt for everything". (The TUI create form does not
-pre-fill yet — #1931.)
+pre-fill yet.)
 
 ## Configuring a workspace
 
@@ -390,7 +387,7 @@ edit` TUI forms (`interactive (ask first)` / `static (deny + record)` /
 create-workspace dialog and settings panel, or `"egress_mode"` in the
 API body below. There is no flags-mode CLI option for it — use the
 interactive form or the API. A mode change takes effect at the next
-container start (#2409).
+container start.
 
 ### CLI
 
@@ -422,11 +419,11 @@ curl -X PUT https://klangkd/api/v1/workspaces/<id> \
 ```
 
 `egress_mode` is `"static"`, `"interactive"` (the default for new
-workspaces), or `"allow"` (#2239, #2406); like `allowed_domains`, it
+workspaces), or `"allow"`; like `allowed_domains`, it
 applies at the next container start.
 
 - `host` allows all ports to that host **only** — the apex, exactly
-  (`github.com` does not cover `api.github.com`) (#2377).
+  (`github.com` does not cover `api.github.com`).
 - `.host` allows all ports to that host **and its subdomains**
   (`.github.com` covers both `github.com` and `api.github.com`).
 - `host:port` / `.host:port` allow a single TCP port (1–65535) with the
@@ -435,22 +432,22 @@ applies at the next container start.
   matches `downloads.pypi.org`-style subdomains but not `pypi.org`
   itself. Append a port to scope it (`*.pypi.org:443`). The three forms
   (bare, leading dot, `*.`) let you allow the apex only, apex plus
-  subdomains, or subdomains without the apex (#2256, #2377).
+  subdomains, or subdomains without the apex.
   Matching always respects the dot boundary, so `evilexample.com` never
   matches an `example.com` spec.
 - `10.0.0.0/8` allows an entire IPv4 subnet (CIDR notation); append a
   port to scope it, e.g. `10.0.0.0/8:443`. A CIDR is installed as a
   single iptables `-d <ip>/<plen>` rule and is **not** DNS-resolved, so
   it is the stable choice for a private range whose individual hosts you
-  don't want to enumerate (#1935).
+  don't want to enumerate.
 - Resolved IPs (for `host`/`*.domain` specs) are allowed **only for the
   DNS response's TTL**; the sidecar's proxy re-resolves on each query and
   drops the allow-rule once the TTL elapses, so a stale IP is not reachable
-  indefinitely (#2256).
+  indefinitely.
 - IPv6 literals and IPv6 CIDRs (e.g. `[::1]`, `[2001:db8::1]:443`,
   `2001:db8::/32`) are **not** accepted — IPv6 egress is default-denied
   inside filtered containers, so a v6 destination is neither reachable
-  nor enforceable (#1936).
+  nor enforceable.
 - Each entry is validated server-side; malformed entries are rejected with
   HTTP 400.
 - An empty list (or `null`) means "no pre-approvals": in `interactive`
@@ -471,13 +468,12 @@ egress filtering is **not available** on the server (disabled via
 `KLANGKD_NETFILTER_ENABLED=false`, or the sidecar image unset/cleared),
 the workspace **refuses to start** rather than running unrestricted.
 Silently ignoring an allow-list (or the interactive opt-in) would
-disable a security control the user explicitly requested (#2254 review
-B2, #2325). The settings are still persisted, so they take effect the
+disable a security control the user explicitly requested. The settings are still persisted, so they take effect the
 moment filtering is re-enabled.
 
 An `allow`-mode workspace with no lists degrades to unrestricted
 instead of failing to start — it asked for permissiveness, not
-lockdown (#2406). A `static` workspace **without** lists always starts
+lockdown. A `static` workspace **without** lists always starts
 unrestricted, regardless of the filtering setting.
 
 ## Common service domain lists
@@ -526,7 +522,7 @@ If you also need raw file views, release-asset downloads, or Git LFS:
 
 A workspace that uses the web UI, GitHub Packages, or Copilot in
 addition to git typically needs a broader set. Because host matching is
-exact by default (#2377), use `.github.com`-style leading-dot entries
+exact by default, use `.github.com`-style leading-dot entries
 (apex + subdomains) or list the specific subdomains you use:
 
 | Entry                                       | Purpose                 |
@@ -810,8 +806,8 @@ netfilter_default_domains:
 ## Caveats
 
 - **IPv6 egress is default-denied — IPv4 egress only.** The sidecar sets
-  `ip6tables -P OUTPUT DROP`, so the allow-list can't be bypassed over v6
-  (#1936). Hostnames resolve to IPv4 only (AAAA records are ignored), and
+  `ip6tables -P OUTPUT DROP`, so the allow-list can't be bypassed over v6.
+  Hostnames resolve to IPv4 only (AAAA records are ignored), and
   `[ipv6]:port` literals are rejected by the validator. Trade-off: a
   workspace that genuinely needs IPv6 egress cannot use the filter —
   clear `allowed_domains` (and the deploy-wide default) and set
@@ -824,33 +820,32 @@ netfilter_default_domains:
   (workspace or deploy default). If you genuinely want unrestricted
   egress, set `egress_mode` to `static` or `allow` with an empty list (or
   set `KLANGKD_NETFILTER_ENABLED=false`) — those are the documented,
-  obvious ways to opt out (#1935).
+  obvious ways to opt out.
 - **Hostnames resolve at runtime — no restart needed on IP change.** The
   sidecar's DNS proxy resolves each query against a real upstream and
   allow-lists the IP at runtime, so a service that rotates IPs (CDNs like
   Fastly, CloudFront, Cloudflare) stays reachable without restarting the
   container. Static CIDR ranges (`10.0.0.0/8`) are installed as a single
-  stable `-d <ip>/<plen>` rule with no resolution (#1935).
+  stable `-d <ip>/<plen>` rule with no resolution.
 - **A CNAME can widen egress to an attacker-steerable IP.**
   The proxy allow-lists every A record in a response, including those reached
   via a CNAME chain. A `host:port` spec scopes a learned IP to that one TCP
   port; a bare `host` allows all ports; and a learned IP expires with the DNS
-  response's TTL (#2256). But within that port/TTL window, if an allowed
+  response's TTL. But within that port/TTL window, if an allowed
   domain CNAMEs to a host an attacker controls (or to a shared CDN frontend
   IP), that IP becomes reachable for the spec's ports. Prefer `host:port`
-  specs and avoid allow-listing domains whose CNAME targets you don't control
-  (#2279).
+  specs and avoid allow-listing domains whose CNAME targets you don't control.
 - **Dropping a domain from a running workspace does not revoke already-
   resolved IPs.** A resolved IP is allow-listed for the DNS response's TTL
   and the sidecar's proxy drops the rule once the TTL elapses, so stale IPs
-  do not persist indefinitely (#2256). But the allow-list a running sidecar
+  do not persist indefinitely. But the allow-list a running sidecar
   enforces is fixed at start — removing a domain from `allowed_domains` does
   not revoke egress to IPs the workspace already resolved; recreate the
-  workspace (or wait for TTL expiry) to fully revoke (#2281).
+  workspace (or wait for TTL expiry) to fully revoke.
 - **DNS is redirected to the sidecar's proxy, not blocked.** Outbound
   `:53` is `REDIRECT`ed to the sidecar's FQDN DNS proxy, which resolves
   against a real upstream and allow-lists the IPs at runtime; a denied
-  domain returns NXDOMAIN (`static` refuses the query locally, #3041;
+  domain returns NXDOMAIN (`static` refuses the query locally;
   `interactive`/`allow` resolve it but gate the connection). This does
   **not** prevent DNS tunneling through the proxy to attacker-controlled
   **allow-listed** domains or in `interactive`/`allow` mode (data can still
@@ -874,7 +869,7 @@ netfilter_default_domains:
   that VM (it owns its netns + iptables), so egress filtering works the
   same way as on Linux — no host `iptables`/`nsenter` is needed.
 - **Interactive mode denies off-list egress with no decider connected.**
-  Interactivity is runtime state (#2308): headless or agent-driven
+  Interactivity is runtime state: headless or agent-driven
   workspaces (auto-started services, CI jobs) that must egress
   unattended need a connected decider — or `static`/`allow` mode.
 - **A held connection blocks until decided (or it times out).** The hold
@@ -882,12 +877,12 @@ netfilter_default_domains:
   kernel's connect timeout); tools with their own shorter connect
   timeouts may give up before a human answers.
 - **Off-list names resolve in interactive mode.** The consent gate is the
-  connection SYN, not the DNS query (#2324), so a successful
+  connection SYN, not the DNS query, so a successful
   `getaddrinfo` does not mean the connection is permitted.
 - **Only `forever` verdicts survive a restart.** `tilrestart` and timed
   verdicts live in the sidecar's in-memory rules and die with the
-  container; `once` is per-connection by definition (#2346).
-- **Pausing consent auto-allows.** While a pause window (#2332) is open,
+  container; `once` is per-connection by definition.
+- **Pausing consent auto-allows.** While a pause window is open,
   every destination without a recorded deny is permitted
   per-connection — treat a pause as a temporary hole, not a hardening
   step.

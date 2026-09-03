@@ -2,7 +2,7 @@
 
 The super-E2E suite exercises klangk **end-to-end inside the real Docker
 host container** — the appliance self-hosted users run — rather than the
-devenv-shell deployment the other e2e suites target (#2561). It proves
+devenv-shell deployment the other e2e suites target. It proves
 the shipped image works feature-by-feature: supervisord as PID 1, klangkd
 under it, caddy fronting the UDS, and workspaces running inside **nested
 rootless podman** with the image's own storage config and uid mappings.
@@ -19,7 +19,7 @@ test-super-e2e
 `KLANGK_SUPER_E2E_IMAGE` selects a different image (default
 `klangk-host:latest`). Docker and the built host image are required —
 the suite fails loudly when either is missing (a silent skip would make
-CI green without testing anything, the gap #2561 closed).
+CI green without testing anything, the gap closed).
 
 ## What it covers
 

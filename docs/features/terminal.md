@@ -29,7 +29,7 @@ Tmux runs with no prefix key and no keybindings beyond scrollback — it
 looks and feels like a plain terminal, with a subtle status bar at the
 bottom showing the workspace name and the disconnect hint
 `Exit: Enter, then ~.` on the left, and a clickable **+ new** segment on
-the right that opens a new window (#2161).
+the right that opens a new window.
 
 ## How it maps to what you see
 
@@ -46,7 +46,7 @@ the right that opens a new window (#2161).
 Every terminal displays a thin status bar at the bottom of the screen.
 The left side shows the **workspace name** and the disconnect hint
 `Exit: Enter, then ~.`; the right side shows a clickable **+ new**
-segment that opens a new tmux window (#2161) — it works identically in
+segment that opens a new tmux window — it works identically in
 `klangk shell` and the browser terminal, since both are tmux clients on
 the same session. This helps you keep track of which workspace you are
 in, especially when you have multiple shells open across multiple
@@ -94,7 +94,7 @@ inside the container.
 ## Terminal tabs
 
 The Terminal tab itself mounts only for members holding the
-`terminal` permission (#2975) — every seeded role that uses the terminal
+`terminal` permission — every seeded role that uses the terminal
 has it, and a custom ACL can omit it (e.g. a files-only member sees no
 Terminal tab at all; opening the workspace at all is gated on
 `join-workspace` instead).

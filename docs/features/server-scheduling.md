@@ -1,7 +1,7 @@
 # Server Scheduling
 
 Admins can schedule a server **stop** or **recycle** at an absolute time
-or after a delay (#2661). Schedules live in the database (they survive a
+or after a delay. Schedules live in the database (they survive a
 `klangkd` restart), fire whether or not anyone is connected, and every
 connected client sees a live countdown while one is pending.
 
@@ -27,7 +27,7 @@ on receipt.
 
 ## Scheduling an action
 
-Schedules are managed from the Admin page (**Admin → Server**, #2684) —
+Schedules are managed from the Admin page (**Admin → Server**) —
 the tab is visible to users with the `admin` permission. Pick the
 action (**Stop** or **Recycle**) and when it should fire:
 
@@ -94,13 +94,13 @@ actions.
 ## What happens when a schedule fires
 
 The scheduler owns no teardown of its own — it hands off to the
-existing graceful lifecycle paths (#2661 scope: no OS commands):
+existing graceful lifecycle paths (no OS commands):
 
 1. **Delete the schedule row** — a crash mid-fire cannot re-fire it.
 2. **Notify** — broadcast `server_schedule_fired`; clients surface a
    "happening now" notice.
 3. **Hand off**:
-   - `stop` → SIGTERM to self: the #2527 graceful-shutdown path refuses
+   - `stop` → SIGTERM to self: the graceful-shutdown path refuses
      new starts, **quiesces** (waits up to `KLANGKD_QUIESCE_TIMEOUT`
      seconds for in-flight HTTP requests), drains every workspace
      through the graceful path (terminal stop frames +

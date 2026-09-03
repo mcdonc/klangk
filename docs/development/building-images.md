@@ -66,7 +66,7 @@ accumulate. The local `:latest` tag is never pushed to GHCR.
 ## Workspace Base Image Pin
 
 The workspace `Dockerfile` pins its base image to an **immutable digest**
-via a build `ARG` (#2063):
+via a build `ARG`:
 
 ```dockerfile
 ARG WORKSPACE_BASE_IMAGE=ghcr.io/mcdonc/klangk/klangk-workspace-base@sha256:…
@@ -92,7 +92,7 @@ are unaffected. To override at build time:
 `pull-base-image` pulls exactly this pinned reference (never a mutable
 `:latest`) so the local cache matches what a build consumes.
 
-## Pinned Third-Party Artifacts (#2063)
+## Pinned Third-Party Artifacts
 
 Every base image, release tarball, and apt repo key fetched from the
 network at image-build time is verified against a hash pinned in the
@@ -107,7 +107,7 @@ build loudly. (Known residuals beyond that scope are listed under
 | Pi agent npm tarball                             | `PI_AGENT_SHA512` in `src/containers/workspace/Dockerfile`                         | `npm view @earendil-works/pi-coding-agent@<ver> dist.integrity` (base64 sha512 → hex)                                                           |
 | uv                                               | `UV_SHA256_AMD64` / `UV_SHA256_ARM64` in `src/containers/workspace/Dockerfile`     | `sha256sum` of each arch tarball, or the `.sha256` sidecars in the GitHub release                                                               |
 | process-compose                                  | `PROCESS_COMPOSE_SHA256_AMD64` / `_ARM64` in `src/containers/workspace/Dockerfile` | `sha256sum` of each arch tarball                                                                                                                |
-| Debian base (workspace, FIPS builders, nix-seed) | digest in `src/containers/workspace/Dockerfile.base` (pre-existing, #2432)         | `docker buildx imagetools inspect debian:trixie-slim (read the Digest: line)`; keep the three aligned builders in sync                          |
+| Debian base (workspace, FIPS builders, nix-seed) | digest in `src/containers/workspace/Dockerfile.base` (pre-existing)                | `docker buildx imagetools inspect debian:trixie-slim (read the Digest: line)`; keep the three aligned builders in sync                          |
 | python host base                                 | digest in `src/containers/host/Dockerfile`                                         | `docker buildx imagetools inspect python:3.14-slim (read the Digest: line)`                                                                     |
 | Alpine (network sidecar)                         | digest in `src/containers/network/Dockerfile`                                      | `docker buildx imagetools inspect alpine:3.21 (read the Digest: line)`                                                                          |
 | NodeSource repo key                              | `NODESOURCE_KEY_SHA256` in `Dockerfile.base`                                       | `sha256sum` of the fetched `gpgkey/nodesource-repo.gpg.key` (after cross-checking the new key's fingerprint against NodeSource's docs)          |
@@ -131,8 +131,8 @@ Notes:
 
 Not everything fetched at build time is hash-verified. What remains
 trusted through TLS plus the source's own integrity mechanisms, and why
-(called out explicitly so the posture above is not over-read — #2788
-review):
+(called out explicitly so the posture above is not
+over-read):
 
 - **PyPI/npm dependency closures.** `pip install` of the klangk wheel's
   deps (host image, network sidecar) and npm's resolution of the Pi

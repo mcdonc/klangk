@@ -4,7 +4,7 @@ Pi extensions and tools inside the container can delegate actions to the browser
 
 ## Disabling the bridge
 
-`KLANGKD_BROWSER_DELEGATE_ENABLED=false` (#2710) turns the bridge off for the whole deployment: both endpoints return 403, browser tabs are no longer registered for bridge routing, no browser ID is attached into terminals started after the change, and `/api/v1/config` advertises `browser_delegate_enabled: false` so the web UI stops answering bridge requests. Reloadable on SIGHUP.
+`KLANGKD_BROWSER_DELEGATE_ENABLED=false` turns the bridge off for the whole deployment: both endpoints return 403, browser tabs are no longer registered for bridge routing, no browser ID is attached into terminals started after the change, and `/api/v1/config` advertises `browser_delegate_enabled: false` so the web UI stops answering bridge requests. Reloadable on SIGHUP.
 
 Two caveats when flipping the switch on a running deployment:
 
@@ -28,7 +28,7 @@ LLM calls tool → Pi extension execute()
   → shell out to klangk-browser-id to get current browser ID
   → HTTP POST to /api/v1/browser-delegate {action, browser_id, ...}
   → Backend resolves browser_id → (workspace_id, target_connection)
-    and rejects unless workspace_id matches the caller's workspace token (#1715)
+    and rejects unless workspace_id matches the caller's workspace token
   → WebSocket message to target only: {"type":"browser_request","id":"...","action":"..."}
   → Flutter BrowserDelegate handles action (fetch, celebrate, etc.)
   → WebSocket message: {"cmd":"browser_response","id":"...","data":"..."}

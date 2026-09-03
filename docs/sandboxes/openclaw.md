@@ -59,4 +59,4 @@ Runtime state (the gateway's single-instance lock and sqlite store)
 lives per workspace under the agent home
 (`~/.openclaw-state`, `OPENCLAW_STATE_DIR`), not on the shared mount:
 openclaw ≥ 2026.8.1 would otherwise let only the first workspace at a
-shared mount run a gateway (#2947).
+shared mount run a gateway.

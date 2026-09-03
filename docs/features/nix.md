@@ -4,7 +4,7 @@ Opt-in per-workspace [nix](https://nixos.org/) + [devenv](https://devenv.sh/),
 shared across workspaces without baking the ~1–2 GB nix store into every
 workspace image.
 
-> **Off by default (#2560).** The whole feature is gated by the
+> **Off by default.** The whole feature is gated by the
 > `nix_enabled` master switch (default `false`). While off, the nix toggle
 > is absent from all create/edit surfaces (web, TUI, CLI), the API rejects
 > a new `nix: true` opt-in with a clear error, and a workspace start with a
@@ -128,7 +128,7 @@ a clear error.
 Per workspace, tick **Nix** when creating it (or set `nix: true` via the API).
 That workspace then gets a `/nix` on start. Image selection stays the user's
 choice — the flag never forces an image. With the feature armed
-(`nix_enabled` on + `nix_seed` configured, #2560), the create-workspace
+(`nix_enabled` on + `nix_seed` configured), the create-workspace
 dialog shows a "Nix" checkbox; otherwise the checkbox is hidden and the API
 rejects a new `nix: true` (an edit form echoing an already-stored value is
 tolerated).

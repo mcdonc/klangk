@@ -205,8 +205,7 @@ The device flow is not GitHub-specific. Any OAuth provider that implements
 the RFC 8628 device authorization grant works. Today that means GitHub
 (OAuth Apps) and **GitLab 17.1+** — on GitLab the OAuth application must
 also have the device flow enabled (a per-app setting, off by default on
-new apps). Gitea has no device flow in any release yet
-([go-gitea/gitea#27309](https://github.com/go-gitea/gitea/issues/27309)),
+new apps). Gitea has no device flow in any release yet,
 and Atlassian/Bitbucket offers no public device authorization endpoint;
 hosts on those services use the PAT dialog.
 

@@ -51,11 +51,10 @@ OIDC, or combined login.
 ## Seeding behavior across modes
 
 On every boot, the lifespan seeds a default admin row **only when the admin
-group is empty** (first boot, or after every admin has been deleted —
-[#1622](https://github.com/mcdonc/klangk/issues/1622)). What gets seeded depends
+group is empty** (first boot, or after every admin has been deleted).
+What gets seeded depends
 on `auth_modes` and (for password modes) whether `KLANGKD_DEFAULT_PASSWORD`
-is staged. The two tables below are the acceptance matrix for this behavior
-([#1645](https://github.com/mcdonc/klangk/issues/1645)).
+is staged. The two tables below are the acceptance matrix for this behavior.
 
 ### Table A — first boot (fresh DB, admins group empty)
 
@@ -76,7 +75,7 @@ derived from the invoking Unix user. Explicit `KLANGKD_DEFAULT_USER` (env or
 
 ### Table B — subsequent starts (admins group non-empty)
 
-The [#1622](https://github.com/mcdonc/klangk/issues/1622) gate short-circuits
+The gate short-circuits
 seeding once any admin exists — so `default_user` / `default_password` /
 `auth_modes` changes after first boot have **no effect on the seeded row**.
 Subsequent starts don't re-seed, re-password, or re-email. Changing the admin
@@ -86,7 +85,7 @@ after first boot is done via the in-app UI or `klangk admin users *`.
 | ------------------ | ------------------------ | ---------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | any                | any                      | admin row exists with a real hash (was `password`/`both` at first boot)      | Seed skipped. Existing admin's email/password unchanged. Login uses the existing credentials.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | any                | any                      | admin row exists with `password_hash=None` (was `none`/`oidc` at first boot) | Seed skipped. Existing admin row untouched — `password_hash` stays `None`. If `auth_modes` is now `password`/`both`, **boot fails fast** with "requires at least one admin with a password" — the Table B lockout guard fires before the server serves traffic, so the operator can't get into an unrecoverable state. Recovery: flip back to `none` mode (the null hash is fine there), use `/auth/local` to get an admin token, run `klangk admin users set-password` to set a real hash, then flip back to `password`/`both`. Or re-empty the admins group + reseed with `KLANGKD_DEFAULT_PASSWORD` staged. |
-| any                | set                      | admins group emptied between boots                                           | Reseed from current `default_user`/`default_password` (delete-resurrection, #1622). Gating per Table A applies to this re-seed.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| any                | set                      | admins group emptied between boots                                           | Reseed from current `default_user`/`default_password` (delete-resurrection). Gating per Table A applies to this re-seed.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 
 ## No-auth mode (`none`)
 
@@ -104,8 +103,7 @@ without standing up the multi-user tier or logging in each session.
 > container as the Docker bridge IP, not `127.0.0.1`). The image therefore
 > runs `password` (or `oidc`/`both`). For a no-login single-user
 > experience, run klangk locally (devenv, or the bare binary on your own
-> machine) instead of the published image. See
-> [#1391](https://github.com/mcdonc/klangk/issues/1391).
+> machine) instead of the published image.
 
 In `none` mode the server freely issues a JWT for the seeded default user
 (`KLANGKD_DEFAULT_USER`, defaulting to `<unixuser>@example.com`, derived
@@ -246,6 +244,6 @@ email. If the default user's seeded email doesn't match a real SSO account,
 that first SSO login creates a _new_ user row and the default user's solo-mode
 data stays under the old email. To avoid orphaning data, set
 `KLANGKD_DEFAULT_USER` to your SSO email **before the first boot** (it's
-read only on first seed — editing it later has no effect, #1622), or assign
+read only on first seed — editing it later has no effect), or assign
 the default user's workspaces to the SSO identity via the admin API after
 linking.

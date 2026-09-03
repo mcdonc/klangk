@@ -143,7 +143,7 @@ failures (HTTP 500):
 | Stage            | Feature                             | What it does                                                |
 | ---------------- | ----------------------------------- | ----------------------------------------------------------- |
 | Before the start | **Admission control** (this page)   | Refuse starts the host cannot serve                         |
-| While running    | Memory-pressure eviction (#2526)    | Gracefully stop idle workspaces when availability stays low |
+| While running    | Memory-pressure eviction            | Gracefully stop idle workspaces when availability stays low |
 | After a death    | [Crash recovery](crash-recovery.md) | Classify the death, optionally restart with backoff         |
 
 ## Settings
