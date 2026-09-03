@@ -1496,7 +1496,7 @@ class TestForgotPassword:
         )
 
     async def test_forgot_sends_email(self, client, db, app_state):
-        await self._create_user(app_state)
+        user = await self._create_user(app_state)
         with patch.object(
             emailsvc_mod.EmailService,
             "send_password_reset_email",
@@ -1509,6 +1509,15 @@ class TestForgotPassword:
         assert resp.status_code == 200
         assert resp.json()["status"] == "sent"
         mock_send.assert_awaited_once()
+        # The URL build lives in schedule_reset_delivery (#3114), so pin
+        # it here: the delivered reset URL must carry a token that
+        # decodes to the account the request named.
+        email_arg, reset_url = mock_send.await_args.args
+        assert email_arg == "forgot@example.com"
+        assert "/#/reset-password?token=" in reset_url
+        token = reset_url.split("token=")[1]
+        decoded = app_state.state.auth.decode_password_reset_token(token)
+        assert decoded == user["id"]
         api.reset_timestamps.pop("forgot@example.com", None)
 
     async def test_forgot_unknown_email_still_returns_sent(self, client, db):
@@ -1540,6 +1549,68 @@ class TestForgotPassword:
         assert resp.status_code == 200
         assert resp.json()["status"] == "sent"
         mock_send.assert_not_awaited()
+        api.reset_timestamps.pop("forgot@example.com", None)
+
+    async def test_forgot_smtp_failure_answers_sent_and_logs(
+        self, client, db, app_state, caplog
+    ):
+        """#3114: an SMTP failure must not turn the response into a 503.
+        Only the existing-enabled path ever awaited the send, so the
+        status code was an account-existence and enabled-state oracle.
+        Delivery failures are logged server-side instead."""
+        import logging
+
+        await self._create_user(app_state)
+        with patch.object(
+            emailsvc_mod.EmailService,
+            "send_password_reset_email",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("SMTP is down"),
+        ):
+            with caplog.at_level(logging.ERROR, logger="klangk.api.auth"):
+                resp = await client.post(
+                    "/api/v1/auth/forgot-password",
+                    json={"email": "forgot@example.com"},
+                )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "sent"
+        assert any(
+            "Failed to send password reset email" in r.message
+            for r in caplog.records
+        )
+        api.reset_timestamps.pop("forgot@example.com", None)
+
+    async def test_forgot_non_send_paths_mint_token(
+        self, client, db, app, app_state
+    ):
+        """#3114 timing channel: the unknown and disabled paths perform
+        the same response-path work (the reset-token mint) as the
+        sending path, so response latency cannot reveal whether the
+        address belongs to an existing, enabled account."""
+        u = await self._create_user(app_state)
+        await app.state.model.users.set_user_disabled(u["id"], True)
+        with patch.object(
+            auth_mod.Auth,
+            "create_password_reset_token",
+            return_value="dummy-token",
+        ) as mint:
+            unknown = await client.post(
+                "/api/v1/auth/forgot-password",
+                json={"email": "nobody@example.com"},
+            )
+            disabled = await client.post(
+                "/api/v1/auth/forgot-password",
+                json={"email": "forgot@example.com"},
+            )
+        assert unknown.status_code == 200
+        assert disabled.status_code == 200
+        assert mint.call_count == 2
+        # Unknown mints against a discarded dummy subject; disabled
+        # against the real (unused) id — the design intent.
+        dummy_subject, real_subject = (c.args[0] for c in mint.call_args_list)
+        assert real_subject == u["id"]
+        assert dummy_subject != u["id"]
+        api.reset_timestamps.pop("nobody@example.com", None)
         api.reset_timestamps.pop("forgot@example.com", None)
 
     async def test_forgot_rate_limited(self, client, db, app_state):

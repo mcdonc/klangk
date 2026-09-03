@@ -256,6 +256,17 @@ operators or integrators to act when upgrading.
 
 ### Security
 
+- **Forgot-password no longer leaks account existence via SMTP
+  failures or response timing (#3114).** `POST
+/api/v1/auth/forgot-password` now answers `"sent"` immediately and
+  delivers the email in a background task, logging failures
+  server-side. Previously a broken SMTP backend answered 503 for
+  existing enabled accounts but 200 for unknown/disabled ones, and the
+  inline SMTP round-trip made the existing-enabled path measurably
+  slower — both usable as account-existence oracles. Operators should
+  watch the server log for reset-email delivery failures instead of
+  relying on the HTTP response.
+
 - **Forgot-password rate limiter no longer leaks account existence
   (#3100).** The 60-second per-address cooldown on
   `POST /api/v1/auth/forgot-password` now applies before the account
