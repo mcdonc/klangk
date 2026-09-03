@@ -46,6 +46,7 @@ import uuid
 
 import pytest
 
+from _e2e_env import ci_budget
 from _e2e_server import tracked_mkdtemp
 
 # The network sidecar image source (entrypoint.sh + Dockerfile), relative to
@@ -608,13 +609,15 @@ def _query(env, stack, name, server=None):
     last_exc = None
     for _attempt in range(2):
         try:
-            out = podman(*run_args, timeout=60)
+            # #3064: raw podman run of the sidecar image under four-suite
+            # CI contention can outrun 60s (the retry above catches the
+            # remainder).
+            out = podman(*run_args, timeout=ci_budget(60, 240))
             return out.stdout.strip()
         except subprocess.TimeoutExpired as exc:
             last_exc = exc
             print(
-                f"podman run {name!r} timed out after 60s "
-                "(wedged under load); retrying"
+                f"podman run {name!r} timed out (wedged under load); retrying"
             )
     raise last_exc
 
@@ -679,7 +682,7 @@ def _probe_somark(
         "python3",
         env["image"],
         *args,
-        timeout=60,
+        timeout=ci_budget(60, 240),
     )
     return out.stdout.strip()
 

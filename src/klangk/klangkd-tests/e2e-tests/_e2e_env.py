@@ -107,3 +107,16 @@ def clean_env(**overrides: str) -> dict[str, str]:
     env.setdefault("KLANGKD_AUTH_MODES", "password")
     env.update(overrides)
     return env
+
+
+def ci_budget(default: float, ci: float) -> float:
+    """Load-aware E2E budget, widened on CI (#3064).
+
+    The four E2E suites share one runner VM; under that storage/IO
+    contention a real podman bring-up (create/start/readiness) can
+    outrun a tight local-dev budget — the observed failures were
+    client-side 60s caps blowing while unrelated tests passed. Same
+    shape as the frontend's container-ready doubling (#2745). Local
+    runs keep the snappier default.
+    """
+    return ci if os.environ.get("CI") else default

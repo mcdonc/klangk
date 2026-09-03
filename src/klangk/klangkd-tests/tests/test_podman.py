@@ -531,6 +531,53 @@ class TestCreateContainer:
         args = _args(m)
         assert "--cap-add" not in args
 
+    async def test_timeout_retried_once(self, monkeypatch):
+        """#3064: a create that stalls past its budget is killed and run
+        once more (idempotent via --replace) instead of cascading into
+        every downstream waiter."""
+        calls = []
+
+        async def fake_run(args, *, check=True, stdin_data=None, timeout=None):
+            calls.append(timeout)
+            if len(calls) == 1:
+                raise podman.PodmanError(
+                    500, "podman create timed out after 120.0s"
+                )
+            return 0, "abc\n", ""
+
+        monkeypatch.setattr(_p, "run", fake_run)
+        cid = await _p.create_container("n", "img")
+        assert cid == "abc"
+        assert len(calls) == 2
+        assert calls[0] == calls[1]  # retry gets the same budget
+
+    async def test_non_timeout_error_not_retried(self, monkeypatch):
+        """A real create failure (e.g. name in use) must raise, not retry
+        — only the stall-and-kill timeout shape is retryable."""
+        calls = []
+
+        async def fake_run(args, *, check=True, stdin_data=None, timeout=None):
+            calls.append(timeout)
+            raise podman.PodmanError(409, "name is already in use")
+
+        monkeypatch.setattr(_p, "run", fake_run)
+        with pytest.raises(podman.PodmanError):
+            await _p.create_container("n", "img")
+        assert len(calls) == 1
+
+
+class TestBringupTimeout:
+    """#3064: bring-up budgets double on CI (four E2E suites share one
+    VM; the local-dev default stays snappy). Same shape as #2745."""
+
+    def test_local_default(self, monkeypatch):
+        monkeypatch.delenv("CI", raising=False)
+        assert podman.bringup_timeout() == 120.0
+
+    def test_ci_doubles(self, monkeypatch):
+        monkeypatch.setenv("CI", "true")
+        assert podman.bringup_timeout() == 240.0
+
 
 class TestStartContainer:
     async def test_start(self):

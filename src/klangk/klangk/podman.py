@@ -51,6 +51,16 @@ def subprocess_env() -> dict[str, str]:
     return {k: v for k, v in os.environ.items() if k != "LD_LIBRARY_PATH"}
 
 
+def bringup_timeout(default: float = 120.0, ci: float = 240.0) -> float:
+    """Podman bring-up budget, doubled on CI (#3064).
+
+    Four E2E suites share one CI VM; under that storage/IO contention a
+    create or start can legitimately outrun the local-dev budget. Same
+    load-aware shape as the frontend's container-ready doubling (#2745).
+    """
+    return ci if os.environ.get("CI") else default
+
+
 class PodmanError(Exception):
     """A podman CLI invocation failed.
 
@@ -498,8 +508,25 @@ class Podman:
             args += ["-e", entry]
         args.append(image)
         args += command or []
-        _rc, out, _err = await self.run(args, timeout=120.0)
+        _rc, out, _err = await self._run_create(args)
         return out.strip()
+
+    async def _run_create(self, args: list[str]) -> tuple[int, str, str]:
+        """Run ``podman create`` with one timeout retry (#3064).
+
+        A create that stalls past its budget under concurrent load used to
+        cascade into every downstream waiter (workspace start, WS connect,
+        teardown). ``create_container`` always passes ``--replace``, so a
+        retried create is idempotent — the stalled attempt was killed, run
+        it once more before giving up.
+        """
+        try:
+            return await self.run(args, timeout=bringup_timeout())
+        except PodmanError as exc:
+            if "timed out after" not in exc.message:
+                raise
+        logger.warning("podman create stalled past its budget; retrying once")
+        return await self.run(args, timeout=bringup_timeout())
 
     async def start_container(
         self,
@@ -516,7 +543,9 @@ class Podman:
         """
         args: list[str] = self._hooks_dir_args(hooks_dir)
         args += ["start", container_id]
-        await self.run(args, timeout=120.0)
+        # Same CI contention family as create (#3064): budget only, no
+        # retry — start is not idempotent the way --replace create is.
+        await self.run(args, timeout=bringup_timeout())
 
     async def wait_for_container_ready(
         self, container_id: str, *, timeout: float = 60.0
