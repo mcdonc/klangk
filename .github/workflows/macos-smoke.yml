@@ -22,11 +22,12 @@ on:
   pull_request:
     paths-ignore:
       # Docs/meta files can never affect what this workflow tests — a
-      # PR changing only these starts no run at all (#2957). GitHub
-      # filter patterns are root-anchored, so nested docs/ .md needs
-      # its own entry (#3051). Never widen the .md ignore into
-      # src/containers/: agent-context.md is COPYed into the workspace
-      # image, so a change there is a build-path change.
+      # PR changing only these starts no run at all (#2957). "*.md" is
+      # root-anchored (GitHub globs match full paths; * does not cross
+      # "/"), and docs/**/*.md covers the whole docs tree including
+      # its top level — docs/*.md is belt-and-braces (#3051). Never
+      # widen the .md ignore into src/containers/: agent-context.md is
+      # COPYed into the workspace image — a build-path change.
       - "*.md"
       - "docs/*.md"
       - "docs/**/*.md"
