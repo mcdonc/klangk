@@ -260,8 +260,8 @@ class Podman:
         ``communicate()`` forever.  Temp files avoid this.
 
         *timeout* caps how long we wait for the process (default 30 s).
-        On timeout the process is killed and a ``PodmanError(500, ...)`` is
-        raised (unless *check* is False, in which case rc=-1 is returned).
+        On timeout the process is killed and a :class:`PodmanTimeoutError`
+        is raised (unless *check* is False, in which case rc=-1 is returned).
         """
         cmd_label = f"podman {args[0]}" if args else "podman"
         t0 = time.monotonic()

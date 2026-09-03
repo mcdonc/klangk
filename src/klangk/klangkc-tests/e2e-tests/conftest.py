@@ -22,6 +22,13 @@ import sys
 
 import pytest
 
+# #3064: the CLI's WS-connect wait spans the server's whole bring-up chain
+# (create → start → readiness), whose budgets widen to 240s on CI. Widen
+# the client wait to match before any test module imports the client (the
+# TUI suites run it in-process, so a child-env stamp alone can't reach it).
+if os.environ.get("CI"):
+    os.environ.setdefault("KLANGKC_WS_CONNECT_TIMEOUT", "240")
+
 # Failure-diagnosability (#2623): attach what the file-streamed klangkd
 # logs recorded during a test to that test's failure report. The hooks live
 # in ``_e2e_logs`` inside the backend E2E suite's dir (the same shared

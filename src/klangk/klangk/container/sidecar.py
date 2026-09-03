@@ -26,7 +26,10 @@ from ..model.workspaces import EGRESS_MODE_STATIC
 logger = logging.getLogger(__name__)
 
 # fail-open window. Module-level so the timeout path is unit-testable fast.
-NETWORK_SIDECAR_READY_TIMEOUT = 30.0
+# CI-aware (#3064): this wait sits in-request inside the same bring-up
+# chain as create/start/readiness — under four-suite contention the
+# chain's other stages get 240s, so 30s local stays, 240s on CI.
+NETWORK_SIDECAR_READY_TIMEOUT = podman.bringup_timeout(30.0, 240.0)
 NETWORK_SIDECAR_READY_POLL = 0.3
 _NETWORK_SIDECAR_READY_TOKEN = "dns-proxy listening"
 # fwmark the sidecar's proxy stamps on its upstream socket and the entrypoint

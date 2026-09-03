@@ -21,6 +21,7 @@ import time
 import httpx
 import pytest
 
+from _e2e_env import ci_budget
 from _e2e_server import start_server, stop_server, ws_connect as _ws_dial
 
 # Fixed agent-identity home (#2718): the agent user *is* the ``klangk``
@@ -152,18 +153,21 @@ async def recv_until(ws, predicate, timeout=30):
 
 async def ws_connect(server, auth, workspace_id):
     """Open a WS, connect, wait for container_ready."""
+    # #3064: the wait spans the server's whole bring-up chain, whose
+    # budgets widen on CI — widen with them.
+    budget = ci_budget(60, 240)
     ws = await _ws_dial(server, f"/ws?token={auth['token']}", max_size=2**20)
     await ws.send(
         json.dumps({"cmd": "workspace_connect", "workspaceId": workspace_id})
     )
-    deadline = asyncio.get_event_loop().time() + 60
+    deadline = asyncio.get_event_loop().time() + budget
     while asyncio.get_event_loop().time() < deadline:
-        msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=60))
+        msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=budget))
         if _is_container_ready(msg):
             break
     else:
         await ws.close()
-        raise AssertionError("container_ready not received within 60s")
+        raise AssertionError(f"container_ready not received within {budget}s")
     return ws
 
 
