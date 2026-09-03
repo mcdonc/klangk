@@ -85,8 +85,14 @@ router = APIRouter()
 
 
 @root_router.get("/health")
-async def health():
-    return {"status": "ok"}
+async def health(app=Depends(get_app_dep)):
+    # The instance id lets a client confirm it reached *this* klangkd —
+    # the E2E harnesses use it to detect a fixture-server port collision
+    # (#3057): /health answering 200 proves a klangkd is up, but only a
+    # matching instance proves it is OURS (a concurrent run's proxy can
+    # own the port and forward to its own server, which would otherwise
+    # pass the readiness probe and receive this run's traffic).
+    return {"status": "ok", "instance": app.state.util.instance_id()}
 
 
 @root_router.get("/empty")

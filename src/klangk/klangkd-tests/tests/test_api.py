@@ -182,7 +182,13 @@ class TestHealth:
     async def test_health(self, client):
         resp = await client.get("/health")
         assert resp.status_code == 200
-        assert resp.json() == {"status": "ok"}
+        body = resp.json()
+        # The instance id lets a caller confirm it reached *this* klangkd —
+        # the E2E harness detects fixture-server port collisions with it
+        # (#3057).
+        assert body["status"] == "ok"
+        assert body["instance"]
+        assert isinstance(body["instance"], str) and body["instance"]
 
 
 class TestEmpty:

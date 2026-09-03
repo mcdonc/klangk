@@ -6684,7 +6684,9 @@ class TestTerminalWindowHandlers:
         conn = _base_conn(ws=sock)
         conn.container_id = None
         await conn.handle_terminal_new_window({})
-        assert sock.send_json.call_count == 0
+        # Not-attached refusals send a definite error frame — a silent
+        # return strands confirmation-less clients (#3057).
+        assert sock.send_json.call_args[0][0]["type"] == "error"
 
     async def test_new_window_success(self):
         sock = _mock_sock()
@@ -7789,7 +7791,7 @@ class TestTerminalController:
     async def test_new_window_no_container(self):
         ctrl, sock, _ = self._controller(container_id=None)
         await ctrl.new_window({})
-        sock.send_json.assert_not_called()
+        assert sock.send_json.call_args[0][0]["type"] == "error"
 
     async def test_new_window_error_sends_error(self):
         ctrl, sock, _ = self._controller()
@@ -7804,7 +7806,7 @@ class TestTerminalController:
     async def test_close_window_no_container(self):
         ctrl, sock, _ = self._controller(container_id=None)
         await ctrl.close_window({})
-        sock.send_json.assert_not_called()
+        assert sock.send_json.call_args[0][0]["type"] == "error"
 
     async def test_rename_window_no_name_sends_error(self):
         ctrl, sock, _ = self._controller()
@@ -7814,7 +7816,7 @@ class TestTerminalController:
     async def test_list_windows_no_container(self):
         ctrl, sock, _ = self._controller(container_id=None)
         await ctrl.list_windows()
-        sock.send_json.assert_not_called()
+        assert sock.send_json.call_args[0][0]["type"] == "error"
 
     async def test_list_windows_error_sends_error(self):
         ctrl, sock, _ = self._controller()
@@ -7829,7 +7831,7 @@ class TestTerminalController:
     async def test_select_window_no_container(self):
         ctrl, sock, _ = self._controller(container_id=None)
         await ctrl.select_window({"index": 0})
-        sock.send_json.assert_not_called()
+        assert sock.send_json.call_args[0][0]["type"] == "error"
 
     async def test_select_window_uses_grouped_session_name(self):
         ctrl, _, _ = self._controller()
@@ -8338,6 +8340,95 @@ class TestShareWindowHandlers:
             assert len(deleted) == 1
         finally:
             sockets.sessions.pop("ws-1", None)
+
+    async def test_share_window_not_attached_sends_error(self, user):
+        """share_window with no attached container answers with an error
+        frame, never silently — a confirmation-less client hangs on silence
+        (#3057)."""
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        conn.workspace_id = "ws-1"
+        conn.container_id = None
+        await conn.handle_share_window({"window_id": "@0"})
+        calls = [c[0][0] for c in sock.send_json.call_args_list]
+        assert any(
+            c.get("type") == "error"
+            and "No workspace terminal attached" in c.get("message", "")
+            for c in calls
+        )
+
+    async def test_unshare_window_not_attached_sends_error(self, user):
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        conn.workspace_id = "ws-1"
+        conn.container_id = None
+        await conn.handle_unshare_window({"window_id": "@0"})
+        calls = [c[0][0] for c in sock.send_json.call_args_list]
+        assert any(
+            c.get("type") == "error"
+            and "No workspace terminal attached" in c.get("message", "")
+            for c in calls
+        )
+
+    async def test_unshare_window_no_session_sends_error(self, user):
+        """A missing workspace session is a definite error, not a silent
+        no-op — the CLI waits on a shared_terminals frame after unshare and
+        blind-times-out on silence (#3057)."""
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        conn.workspace_id = "ws-no-session"
+        conn.container_id = "cid"
+        conn._user_home = "/home/admin"
+        await conn.handle_unshare_window({"window_id": "@0"})
+        calls = [c[0][0] for c in sock.send_json.call_args_list]
+        assert any(
+            c.get("type") == "error"
+            and "No workspace session" in c.get("message", "")
+            for c in calls
+        )
+
+    async def test_unshare_window_already_unshared_broadcasts(
+        self, user, temp_data_dir, app_state
+    ):
+        """Unsharing an already-unshared window is idempotent AND confirmed:
+        the current shared_terminals list is broadcast so the waiting client
+        exits promptly with a definite outcome (#3057)."""
+        app_state = _make_app_state()
+        sockets = app_state.state.sockets
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock, app_state=app_state)
+        conn.workspace_id = "ws-1"
+        conn.container_id = "cid"
+        conn._user_home = "/home/admin"
+        session = sockets.get_or_create_session("ws-1", app_state)
+        session.terminal_windows[user["id"]] = [
+            {"name": "1", "index": 0, "id": "@0", "shared": False},
+        ]
+        await session.add_subscriber(sock, "cid")
+        try:
+            with patch.object(_mock_term, "kill_joiner_sessions") as mock_kill:
+                await conn.handle_unshare_window({"window_id": "@0"})
+            mock_kill.assert_not_awaited()
+            calls = [c[0][0] for c in sock.send_json.call_args_list]
+            assert any(c.get("type") == "shared_terminals" for c in calls)
+            assert not any(
+                c.get("type") == "shared_terminal_deleted" for c in calls
+            )
+        finally:
+            sockets.sessions.pop("ws-1", None)
+
+    async def test_join_shared_terminal_not_attached_sends_error(self, user):
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock)
+        conn.workspace_id = "ws-1"
+        conn.container_id = None
+        await conn.handle_join_shared_terminal({"window_id": "@0"})
+        calls = [c[0][0] for c in sock.send_json.call_args_list]
+        assert any(
+            c.get("type") == "error"
+            and "No workspace terminal attached" in c.get("message", "")
+            for c in calls
+        )
 
     async def test_list_shared_terminals(self, user, temp_data_dir, app_state):
         async with _conn_in_workspace(

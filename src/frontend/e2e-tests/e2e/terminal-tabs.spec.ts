@@ -133,6 +133,34 @@ async function startTerminalAndGetWindows(
   return msg.windows as WindowInfo[];
 }
 
+/** Poll the server's window list until *predicate* holds (or timeout).
+ *
+ *  Window-list mutations are eventually consistent from a parallel WS
+ *  client's view: a queued pre-mutation broadcast can satisfy a bare
+ *  recvUntil before the mutation's own refreshed list lands (#3057). Each
+ *  round re-queries the authoritative list (terminal_list_windows) instead
+ *  of trusting the first frame. Returns the last-seen list so the caller's
+ *  assertion reports the real state on timeout. */
+async function waitForWindows(
+  client: TerminalWsClient,
+  predicate: (windows: WindowInfo[]) => boolean,
+  timeout = 10_000,
+): Promise<WindowInfo[]> {
+  const deadline = Date.now() + timeout;
+  let windows: WindowInfo[] = [];
+  while (Date.now() < deadline) {
+    client.send({ cmd: "terminal_list_windows" });
+    const msg = await client.recvUntil(
+      (m) => m.type === "terminal_windows",
+      Math.max(deadline - Date.now(), 1_000),
+    );
+    windows = msg.windows as WindowInfo[];
+    if (predicate(windows)) return windows;
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  return windows;
+}
+
 test.describe("terminal tabs", () => {
   test("terminal starts with one window", async ({ page, request }) => {
     const { workspaceId, token, cleanup } = await createAndOpenWorkspace(
@@ -250,12 +278,16 @@ test.describe("terminal tabs", () => {
           cmd: "terminal_close_window",
           index: tempWindow.index,
         });
-        const afterClose = await client.recvUntil(
-          (m) => m.type === "terminal_windows",
-        );
-        const remaining = afterClose.windows as WindowInfo[];
+        // The close handler broadcasts a refreshed terminal_windows list,
+        // but a stale pre-close frame can arrive first — poll the
+        // authoritative list until the closed window is really gone
+        // (#3057).
+        const remaining = (await waitForWindows(
+          client,
+          (ws) => !ws.some((w) => w.id === tempWindow.id),
+        )) as WindowInfo[];
         expect(remaining.length).toBe(1);
-        expect(remaining.some((w) => w.name === "temp")).toBe(false);
+        expect(remaining.some((w) => w.id === tempWindow.id)).toBe(false);
       } finally {
         client.close();
       }

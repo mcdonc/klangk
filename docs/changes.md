@@ -481,6 +481,11 @@ sync` report a clear permission-denied error.
 
 ### Added
 
+- **`/health` now reports the instance id (#3057).** The health endpoint
+  returns `{"status": "ok", "instance": "<id>"}` so a caller can confirm
+  it reached the intended klangkd (the id is the same one in
+  `<data_dir>/instance-id` and the podman `klangk.instance` labels). The
+  E2E harnesses use it to detect fixture-server port collisions.
 - **Backup and restore docs (#2999).** New "Backup and Restore" reference
   chapter covering the full-site backup set (data dir, labeled podman
   volumes with their labels, env + config file + `file:` secrets,
@@ -1940,6 +1945,16 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Terminal share/unshare/close no longer hang clients on refusal paths
+  (#3057).** The WebSocket handlers for `share_window`, `unshare_window`,
+  `join_shared_terminal`, and the own-window commands (`terminal_new_window`,
+  `terminal_close_window`, `terminal_rename_window`,
+  `terminal_list_windows`, `terminal_select_window`) sent no frame when the
+  connection had no attached terminal or workspace session, so a client
+  waiting for a confirmation timed out (10s CLI hang in
+  `klangk terminal share`/`unshare`); every refusal now answers with an
+  `error` frame, and unsharing an already-unshared terminal broadcasts the
+  current list so the command exits promptly with a definite outcome.
 - **Static egress: off-list DNS names return NXDOMAIN (#3041).** A
   `static` workspace with egress filtering resolved every off-list name
   through the upstream resolver when the consent stack was wired (which is

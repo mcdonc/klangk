@@ -1294,6 +1294,10 @@ class TerminalController:
         whose window list is the group's, i.e. the owner's. An ungated
         own-window frame mutates the owner's session."""
         if not self._conn.container_id or not self._conn._user_home:
+            # Silent returns here strand confirmation-less clients (the
+            # CLI / E2E specs wait on a frame after sending the command);
+            # a definite error frame closes the hang (#3057).
+            send_error(self._conn.sock, "No workspace terminal attached")
             return False
         return not await refused_without_perm(self._conn, "code-in-isolation")
 
@@ -1409,7 +1413,7 @@ class SharedTerminalController:
     async def share_window(self, msg: dict) -> None:
         """Mark one of the user's own windows as shared."""
 
-        if not self._attached():
+        if not self._require_attached():
             return
         if not await self._perm_or_deny("share-terminals"):
             return
@@ -1429,7 +1433,7 @@ class SharedTerminalController:
         member whose permission was revoked after sharing (#2875).
         """
 
-        if not self._attached():
+        if not self._require_attached():
             return
 
         resolved = self._find_own_window(msg, self._conn.user["id"])
@@ -1437,9 +1441,11 @@ class SharedTerminalController:
             return
         match, ws_session = resolved
         if not match.get("shared"):
-            # Already unshared — a no-op (idempotent, and cheap if a
-            # zero-permission client spams the command: no joiner
-            # kills, no broadcasts).
+            # Already unshared — idempotent, but never silent: broadcast the
+            # current list so a confirmation-less client (``recv_until`` on a
+            # shared_terminals frame, #3057) gets its definite outcome
+            # instead of timing out.
+            self.broadcast_shared_terminals(ws_session)
             return
         match["shared"] = False
         # Kick spectators/collaborators
@@ -1458,6 +1464,14 @@ class SharedTerminalController:
         """True when a container is attached and the user's handle is
         resolved."""
         return bool(self._conn.container_id and self._conn._user_home)
+
+    def _require_attached(self) -> bool:
+        """``_attached`` with a definite refusal: sends an error frame so a
+        confirmation-less client exits fast instead of hanging (#3057)."""
+        if self._attached():
+            return True
+        send_error(self._conn.sock, "No workspace terminal attached")
+        return False
 
     async def _perm_or_deny(self, perm: str) -> bool:
         """True when the connection holds *perm* (sends "Permission
@@ -1479,6 +1493,11 @@ class SharedTerminalController:
             self._conn.workspace_id
         )
         if not ws_session:
+            # Silent returns strand confirmation-less clients (#3057): a
+            # definite error frame lets the CLI exit fast with a reason
+            # instead of blind-timing-out on a shared_terminals frame that
+            # will never come.
+            send_error(self._conn.sock, "No workspace session")
             return None
         match = self.find_window(ws_session, user_id, window_id)
         if match is None:
@@ -1538,7 +1557,7 @@ class SharedTerminalController:
             self._conn.user.get("email"),
             msg,
         )
-        if not self._attached():
+        if not self._require_attached():
             return
         if not await self._perm_or_deny("spectate-on-shared-terminals"):
             return

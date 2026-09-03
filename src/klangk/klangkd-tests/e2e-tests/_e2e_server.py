@@ -31,6 +31,7 @@ from __future__ import annotations
 import atexit
 import os
 import shutil
+import socket
 import subprocess
 import tempfile
 import time
@@ -41,7 +42,6 @@ import httpx
 import websockets
 
 from _e2e_env import clean_env, close_popen_pipes
-from klangk.model import free_port
 
 # The launcher is invoked as a module (``python3 -m klangk.main``) from the
 # klangkd-tests dir — the same cwd the prior runtestserver launches used, so
@@ -96,6 +96,58 @@ _UDS_WS_HOST = "ws://klangkd"
 # it room to finish (observed: pre-warm 105-110s + seed ~2s vs a 120s
 # deadline that killed the server 2s before it came up).
 _READINESS_TIMEOUT = 240
+
+# How many times to redraw the TCP ports and respawn when a freshly drawn
+# port turns out to be owned by a concurrent E2E run (#3057). The
+# free_port() TOCTOU — release the socket, then klangkd's proxy rebinds it
+# — lets a second fixture server landing in that window steal the port and
+# answer /health for the first run's clients (observed as a cross-run 409
+# "workspace already exists" in the hermes suite). Detection (the /health
+# instance check) plus a redraw-retry makes the collision self-healing
+# instead of flaky. Two retries is plenty: each redraw is a fresh OS
+# ephemeral pick, so a repeat collision needs the same microsecond-scale
+# interleaving twice.
+PORT_CLAIM_ATTEMPTS = 3
+
+# Marker from klangkd's own _check_port_collisions refusal (main.py): an
+# early exit whose output carries it means a concurrent run's proxy bound
+# our drawn port before our klangkd started — retryable with a redraw.
+PORT_COLLISION_MARKER = "Another process is already listening"
+
+
+class ForeignServerError(RuntimeError):
+    """The drawn TCP port answers /health but is not THIS run's klangkd.
+
+    A concurrent E2E fixture grabbed the released port (the free_port
+    TOCTOU, #3057); its proxy forwards to its own server, which would
+    otherwise pass our readiness probe and silently receive this run's
+    CLI/API traffic.
+    """
+
+
+class EarlyExitError(RuntimeError):
+    """klangkd exited during startup. ``output`` is its drained log."""
+
+    def __init__(self, message: str, output: str):
+        super().__init__(message)
+        self.output = output
+
+
+def claim_port() -> tuple[int, socket.socket]:
+    """Draw an ephemeral port while holding the bound socket.
+
+    free_port() releases before returning, so two concurrent fixture
+    startups can be handed the same number (the OS reuses a just-released
+    ephemeral port for the next ``:0`` bind) and then race to rebind it
+    (#3057). Holding the claim means another fixture's draw cannot pick
+    this port; the caller closes the socket right before spawning klangkd,
+    shrinking the release→rebind window as far as it goes without fd
+    inheritance (the proxy cannot take a pre-bound listener fd).
+    """
+    held = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    held.bind(("127.0.0.1", 0))
+    return held.getsockname()[1], held
+
 
 # File-streamed server logs from live ``start_server`` handles (#2623).
 # Servers launched with ``log_path`` write their combined output to that
@@ -157,14 +209,41 @@ def _terminate(proc: Popen) -> None:
             pass
 
 
+def _instance_matches(resp: httpx.Response, instance_id_path: str) -> bool:
+    """True when a 200 /health response is from THIS run's klangkd.
+
+    The server writes ``<data_dir>/instance-id`` at startup, before it
+    serves; /health echoes it. Our server has answered ⇒ the file exists;
+    a mismatch (or missing file/field) means the port's owner is another
+    klangkd (#3057).
+    """
+    try:
+        with open(instance_id_path) as fh:
+            expected = fh.read().strip()
+    except OSError:
+        return False
+    try:
+        got = resp.json().get("instance", "")
+    except ValueError:
+        return False
+    return bool(got) and got == expected
+
+
 def _wait_ready(
     proc: Popen,
     *,
     uds_path: str | None,
     url: str | None,
     log_path: str | None = None,
+    instance_id_path: str | None = None,
 ) -> None:
-    """Poll ``/health`` until the server is up, else kill + raise with logs."""
+    """Poll ``/health`` until the server is up, else kill + raise with logs.
+
+    With ``instance_id_path`` (TCP mode), a healthy answer is only accepted
+    when the reported instance id matches ``<data_dir>/instance-id`` — the
+    responder must be THIS run's klangkd, not a concurrent fixture that
+    grabbed the drawn port (#3057).
+    """
     if uds_path is not None:
         client = httpx.Client(
             transport=httpx.HTTPTransport(uds=uds_path), base_url=_UDS_HOST
@@ -177,12 +256,24 @@ def _wait_ready(
         last_exc: Exception | None = None
         while time.time() < deadline:
             if proc.poll() is not None:
-                raise RuntimeError(
-                    f"klangkd exited early:\n{_drain_stdout(proc, log_path)}"
+                output = _drain_stdout(proc, log_path)
+                raise EarlyExitError(
+                    f"klangkd exited early:\n{output}", output
                 )
             try:
-                if client.get("/health", timeout=2).status_code == 200:
-                    return
+                resp = client.get("/health", timeout=2)
+                if resp.status_code == 200:
+                    if instance_id_path is None:
+                        return
+                    if _instance_matches(resp, instance_id_path):
+                        return
+                    raise ForeignServerError(
+                        f"{url} answers /health but is a FOREIGN klangkd "
+                        f"(instance mismatch) — a concurrent E2E run "
+                        f"grabbed the drawn port (#3057)"
+                    )
+            except (ForeignServerError, EarlyExitError):
+                raise
             except Exception as exc:  # not up yet
                 last_exc = exc
             time.sleep(0.5)
@@ -198,6 +289,150 @@ def _wait_ready(
         )
     finally:
         client.close()
+
+
+def _start_server_once(
+    *,
+    uds: bool,
+    wait_ready: bool,
+    data_dir: str | None,
+    state_dir: str | None,
+    config: str | None,
+    log_path: str | None,
+    env_overrides: dict[str, str],
+) -> dict[str, Any]:
+    """One spawn attempt (dirs created, ports drawn, readiness checked).
+
+    See :func:`start_server` for the parameters; the retry loop lives
+    there.
+    """
+    if data_dir is None:
+        data_dir = os.path.realpath(tracked_mkdtemp("klangk-e2e-"))
+    else:
+        os.makedirs(data_dir, exist_ok=True)
+    if state_dir is None:
+        state_dir = os.path.realpath(tracked_mkdtemp("klangk-e2e-state-"))
+    else:
+        os.makedirs(state_dir, exist_ok=True)
+    # Default to a file-streamed log inside the data dir so the failure
+    # hooks in ``_e2e_logs`` can attach what the server said (#2623); a
+    # captured pipe is only drainable at process exit and vanishes with
+    # the data dir. An explicit "" forces the old captured-pipe behavior
+    # (the smoketest reads its log while the server runs). #364 still
+    # applies: file streaming also avoids the 64 KB pipe-buffer deadlock.
+    if log_path is None:
+        log_path = os.path.join(data_dir, "klangkd-test-output.log")
+
+    # Draw ports as held claims (#3057): another concurrent fixture's
+    # ``:0`` draw cannot pick a number we currently hold, and each claim
+    # is released only at spawn time — the smallest release→rebind window
+    # possible without handing klangkd a pre-bound listener fd.
+    claims: list[socket.socket] = []
+    range_port, range_claim = claim_port()
+    claims.append(range_claim)
+
+    overrides = dict(env_overrides)
+    overrides.setdefault("KLANGKD_DATA_DIR", data_dir)
+    overrides.setdefault("KLANGKD_STATE_DIR", state_dir)
+    overrides.setdefault("KLANGKD_FRONTEND_DIR", FRONTEND_DIR)
+    overrides.setdefault("KLANGKD_PORT_RANGE_START", str(range_port))
+
+    uds_path: str | None
+    url: str | None
+    if uds:
+        # Headless: no KLANGKD_PORT, proxy suppressed. klangkd binds the UDS.
+        overrides.pop("KLANGKD_PORT", None)
+        overrides.setdefault("_KLANGKD_DISABLE_PROXY", "1")
+        uds_path = os.path.join(state_dir, "klangk.sock")
+        url = None
+    else:
+        # The proxy fronts the UDS on a TCP port; clients hit the proxy. Both the
+        # browser ingress (KLANGKD_PORT) and the container egress
+        # (KLANGKD_EGRESS_PORT, default 8995) are allocated fresh so a test
+        # never collides with a dev klangkd on the default egress port.
+        # If the caller supplied KLANGKD_PORT, honor it (url derives from the
+        # resolved port, not a separate free draw).
+        overrides["_KLANGKD_DISABLE_PROXY"] = ""
+        tcp_port = overrides.get("KLANGKD_PORT")
+        if tcp_port is None:
+            tcp_port, tcp_claim = claim_port()
+            claims.append(tcp_claim)
+            overrides["KLANGKD_PORT"] = str(tcp_port)
+        # Two independent draws can land on the same port when claims are
+        # released at spawn (the OS reuses a just-released ephemeral
+        # port). KLANGKD_EGRESS_PORT must differ from KLANGKD_PORT or the
+        # settings validator rejects it and klangkd exits early — redraw
+        # until distinct so the proxy's two listeners never collide.
+        if "KLANGKD_EGRESS_PORT" not in overrides:
+            egress_port, egress_claim = claim_port()
+            while str(egress_port) == str(tcp_port):
+                egress_claim.close()
+                egress_port, egress_claim = claim_port()
+            claims.append(egress_claim)
+            overrides["KLANGKD_EGRESS_PORT"] = str(egress_port)
+        uds_path = None
+        url = f"http://localhost:{tcp_port}"
+
+    env = clean_env(**overrides)
+    cmd = ["python3", "-m", "klangk.main"]
+    if config is not None:
+        cmd += ["--config", config]
+    else:
+        cmd.append("--config=none")
+    # When a log_path is given, stream the server's output to a file so a
+    # long-lived run can't fill the 64 KB OS pipe buffer and deadlock (#364)
+    # and the failure hooks can read it back (#2623). An empty string means
+    # the caller explicitly wants the captured pipe (drained on failure).
+    if log_path == "":
+        log_file = None
+    else:
+        log_file = open(log_path, "w")  # noqa: SIM115
+    # Release the held port claims only now — klangkd's proxy rebinds them
+    # moments later, so this is the smallest release→rebind window the
+    # spawn can have (#3057).
+    for held in claims:
+        held.close()
+    proc = subprocess.Popen(
+        cmd,
+        cwd=BACKEND_DIR,
+        env=env,
+        stdout=log_file if log_file is not None else subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    # Keep a reference so stop_server can close it; mirror the prior CLI
+    # suite's ``proc._log_file`` convention.
+    proc._log_file = log_file  # type: ignore[attr-defined]
+
+    client = httpx_client({"uds_path": uds_path, "url": url})
+    server = {
+        "proc": proc,
+        "data_dir": data_dir,
+        "state_dir": state_dir,
+        "uds_path": uds_path,
+        "url": url,
+        "client": client,
+        "log_path": log_path,
+    }
+    if wait_ready:
+        try:
+            _wait_ready(
+                proc,
+                uds_path=uds_path,
+                url=url,
+                log_path=log_path,
+                instance_id_path=(
+                    None if uds else os.path.join(data_dir, "instance-id")
+                ),
+            )
+        except BaseException:
+            # Leave no half-started server behind for the retry loop in
+            # :func:`start_server` — kill the proc, sweep containers,
+            # drop the dirs.
+            stop_server(server)
+            raise
+    if log_file is not None:
+        _active_log_paths.append(log_path)
+    return server
 
 
 def start_server(
@@ -218,13 +453,14 @@ def start_server(
         ``True`` (default) → UDS-direct: proxy suppressed, bind the socket at
         ``<state_dir>/klangk.sock``, return a UDS-configured ``client``. Use
         this for in-process Python clients.
-        ``False`` → TCP via the proxy: the proxy on a free ``KLANGKD_PORT``, return a
+        ``False`` → TCP via the proxy: the proxy on a free ``KLANGKD_PORT``,
+        return a ``url`` and a TCP ``client``: Use this for CLI / browser
+        suites.
     wait_ready:
         When ``False``, skip the ``/health`` readiness wait and return
         immediately after spawn — for tests whose server is EXPECTED to
         exit during startup (e.g. a past-due scheduled stop firing on
         boot); the default ``True`` treats that as a failure.
-        ``url`` and a TCP ``client``. Use this for CLI / browser suites.
     data_dir, state_dir:
         Optional explicit dirs (created otherwise as tempdirs).
     config:
@@ -252,97 +488,40 @@ def start_server(
     ``server["client"]`` directly). Build additional/custom clients with
     :func:`httpx_client` / :func:`httpx_async_client`, and websockets with
     :func:`ws_connect`. Pass the handle to :func:`stop_server` for teardown.
+
+    In TCP mode the drawn ports are claimed (bound and held) until spawn,
+    and readiness verifies the responder's instance id against this run's
+    ``<data_dir>/instance-id``; a port stolen by a concurrent E2E run
+    (the free_port TOCTOU) is detected and retried on fresh ports
+    (:data:`PORT_CLAIM_ATTEMPTS` times) instead of failing the suite
+    (#3057).
     """
-    if data_dir is None:
-        data_dir = os.path.realpath(tracked_mkdtemp("klangk-e2e-"))
-    if state_dir is None:
-        state_dir = os.path.realpath(tracked_mkdtemp("klangk-e2e-state-"))
-    # Default to a file-streamed log inside the data dir so the failure
-    # hooks in ``_e2e_logs`` can attach what the server said (#2623); a
-    # captured pipe is only drainable at process exit and vanishes with
-    # the data dir. An explicit "" forces the old captured-pipe behavior
-    # (the smoketest reads its log while the server runs). #364 still
-    # applies: file streaming also avoids the 64 KB pipe-buffer deadlock.
-    if log_path is None:
-        log_path = os.path.join(data_dir, "klangkd-test-output.log")
-
-    overrides = dict(env_overrides)
-    overrides.setdefault("KLANGKD_DATA_DIR", data_dir)
-    overrides.setdefault("KLANGKD_STATE_DIR", state_dir)
-    overrides.setdefault("KLANGKD_FRONTEND_DIR", FRONTEND_DIR)
-    overrides.setdefault("KLANGKD_PORT_RANGE_START", str(free_port()))
-
-    uds_path: str | None
-    url: str | None
-    if uds:
-        # Headless: no KLANGKD_PORT, proxy suppressed. klangkd binds the UDS.
-        overrides.pop("KLANGKD_PORT", None)
-        overrides.setdefault("_KLANGKD_DISABLE_PROXY", "1")
-        uds_path = os.path.join(state_dir, "klangk.sock")
-        url = None
-    else:
-        # The proxy fronts the UDS on a TCP port; clients hit the proxy. Both the
-        # browser ingress (KLANGKD_PORT) and the container egress
-        # (KLANGKD_EGRESS_PORT, default 8995) are allocated fresh so a test
-        # never collides with a dev klangkd on the default egress port.
-        # If the caller supplied KLANGKD_PORT, honor it (url derives from the
-        # resolved port, not a separate free draw).
-        overrides["_KLANGKD_DISABLE_PROXY"] = ""
-        tcp_port = overrides.get("KLANGKD_PORT")
-        if tcp_port is None:
-            tcp_port = str(free_port())
-            overrides["KLANGKD_PORT"] = tcp_port
-        # Two independent free_port() draws can return the same port on a
-        # busy runner (the OS reuses the just-released ephemeral port).
-        # KLANGKD_EGRESS_PORT must differ from KLANGKD_PORT or the settings
-        # validator rejects it and klangkd exits early — redraw until
-        # distinct so the proxy's two listeners never collide.
-        egress_port = str(free_port())
-        while egress_port == tcp_port:
-            egress_port = str(free_port())
-        overrides.setdefault("KLANGKD_EGRESS_PORT", egress_port)
-        uds_path = None
-        url = f"http://localhost:{tcp_port}"
-
-    env = clean_env(**overrides)
-    cmd = ["python3", "-m", "klangk.main"]
-    if config is not None:
-        cmd += ["--config", config]
-    else:
-        cmd.append("--config=none")
-    # When a log_path is given, stream the server's output to a file so a
-    # long-lived run can't fill the 64 KB OS pipe buffer and deadlock (#364)
-    # and the failure hooks can read it back (#2623). An empty string means
-    # the caller explicitly wants the captured pipe (drained on failure).
-    if log_path == "":
-        log_file = None
-    else:
-        log_file = open(log_path, "w")  # noqa: SIM115
-    proc = subprocess.Popen(
-        cmd,
-        cwd=BACKEND_DIR,
-        env=env,
-        stdout=log_file if log_file is not None else subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    )
-    # Keep a reference so stop_server can close it; mirror the prior CLI
-    # suite's ``proc._log_file`` convention.
-    proc._log_file = log_file  # type: ignore[attr-defined]
-    if wait_ready:
-        _wait_ready(proc, uds_path=uds_path, url=url, log_path=log_path)
-
-    client = httpx_client({"uds_path": uds_path, "url": url})
-    if log_file is not None:
-        _active_log_paths.append(log_path)
-    return {
-        "proc": proc,
-        "data_dir": data_dir,
-        "state_dir": state_dir,
-        "uds_path": uds_path,
-        "url": url,
-        "client": client,
-        "log_path": log_path,
-    }
+    attempts = 1 if (uds or not wait_ready) else PORT_CLAIM_ATTEMPTS
+    for attempt in range(attempts):
+        try:
+            return _start_server_once(
+                uds=uds,
+                wait_ready=wait_ready,
+                data_dir=data_dir,
+                state_dir=state_dir,
+                config=config,
+                log_path=log_path,
+                env_overrides=env_overrides,
+            )
+        except ForeignServerError:
+            # A concurrent run owns the drawn port — always redraw-worthy.
+            if attempt + 1 == attempts:
+                raise
+        except EarlyExitError as exc:
+            # Retry an early exit only when klangkd's own port-collision
+            # probe refused to start (someone bound our port first); a
+            # config error fails identically on every attempt, so surface
+            # it immediately.
+            if attempt + 1 == attempts or (
+                PORT_COLLISION_MARKER not in exc.output
+            ):
+                raise
+    raise RuntimeError("start_server: no attempt outcome")  # pragma: no cover
 
 
 def _cleanup_containers(data_dir: str) -> None:
