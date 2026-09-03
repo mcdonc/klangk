@@ -13,6 +13,7 @@ import json
 import types
 from unittest.mock import AsyncMock, Mock
 
+import pytest
 from fastapi import WebSocketDisconnect
 
 from klangk import auth
@@ -811,23 +812,31 @@ class TestConsentCoordinatorRules:
 
     async def test_rules_frame_includes_active_pause_window(self):
         # #2332: a live pause window is surfaced in the egress_rules frame so
-        # deciders render the pause indicator + remaining time.
+        # deciders render the pause indicator + remaining time. The window
+        # comes off the fetched workspace row (#3083 single-read design).
         import time
 
         app = _app()
         until = time.time() + 900
-        app.state.model.workspaces.get_consent_pause = AsyncMock(
-            return_value=until
+        app.state.model.workspaces.get_workspace = AsyncMock(
+            return_value={
+                "egress_mode": "interactive",
+                "consent_paused_until": until,
+            }
         )
         coord = ConsentCoordinator(app)
         frame = await coord.rules_frame(FULL_WS)
         assert frame["paused"] == {"paused": True, "until": until}
+        app.state.model.workspaces.get_consent_pause.assert_not_awaited()
 
     async def test_rules_frame_expired_pause_is_none(self):
         # A pause whose window has elapsed reads as not-paused (self-expiry).
         app = _app()
-        app.state.model.workspaces.get_consent_pause = AsyncMock(
-            return_value=1.0  # far in the past
+        app.state.model.workspaces.get_workspace = AsyncMock(
+            return_value={
+                "egress_mode": "interactive",
+                "consent_paused_until": 1.0,  # far in the past
+            }
         )
         coord = ConsentCoordinator(app)
         frame = await coord.rules_frame(FULL_WS)
@@ -1570,6 +1579,45 @@ class TestConsentCoordinatorStop:
         app.state.model.egress_consent.expire_pending.assert_awaited_once_with(
             "rid-1"
         )
+
+    async def test_cancel_hold_task_reraises_callers_cancellation(self):
+        # If the CALLER is cancelled while awaiting a child that ends NOT
+        # cancelled, the cancellation must propagate -- swallowing it would
+        # eat the caller's cancellation and unbalance its cancel count.
+        app = _app(request=request())
+        coord = ConsentCoordinator(app)
+        swallowed = asyncio.Event()
+
+        async def _swallowing_child():
+            try:
+                await asyncio.sleep(30)
+            except asyncio.CancelledError:
+                swallowed.set()
+                return  # end NOT cancelled (mirrors _timeout's except arm)
+
+        child = asyncio.create_task(_swallowing_child())
+        await asyncio.sleep(0)  # child now suspended in its sleep
+        wrapper = asyncio.create_task(coord._cancel_hold_task(child))
+        await swallowed.wait()  # child reaped our cancel and returned
+        wrapper.cancel()  # wrapper is queued-to-resume: _must_cancel is set
+        with pytest.raises(asyncio.CancelledError):
+            await wrapper
+        assert child.done() and not child.cancelled()
+
+    async def test_cancel_hold_task_swallows_poisoned_task_exception(self):
+        # A timeout task that died from a REAL exception (a bug in the
+        # timeout path) must not abort stop()'s fail-close loop for the
+        # remaining holds: the exception is logged and the reap continues.
+        app = _app(request=request())
+        coord = ConsentCoordinator(app)
+
+        async def _poisoned_child():
+            raise RuntimeError("poisoned")
+
+        child = asyncio.create_task(_poisoned_child())
+        await asyncio.sleep(0)  # child completed, exception stored
+        await coord._cancel_hold_task(child)  # must not raise
+        assert child.done() and not child.cancelled()
 
     async def test_stop_is_idempotent(self):
         app = _app(request=request())

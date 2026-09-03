@@ -157,7 +157,7 @@ def _forever_deny_entry(row: dict) -> str | None:
     return _forever_entry(host, row.get("dest_port"), DECISION_DENIED)
 
 
-def _forever_entry(host: str, port, decision: str) -> str | None:
+def _forever_entry(host: str, port: int | None, decision: str) -> str | None:
     """The durable-list entry a ``forever`` verdict of ``decision`` maps
     to (#3083): ``host:port`` when ported, a bare ``host`` for a port-less
     deny, or ``None`` for a port-less allow (never persisted -- see
@@ -217,16 +217,29 @@ class ConsentCoordinator:
 
         Awaiting delivers the cancellation and reaps the task before the
         caller moves on -- otherwise a shutdown that closes the loop first
-        emits "Task was destroyed but it is pending" noise. The task ends
-        cancelled (``await`` raises) when it never started -- its body's
-        ``except CancelledError`` never engaged -- so swallow that: the hold
-        was already popped and is fail-closed by the caller.
+        emits "Task was destroyed but it is pending" noise. Two outcomes
+        are swallowed on purpose:
+
+        - the task ends cancelled: either it never started (its body's
+          ``except CancelledError`` never engaged) or the cancellation
+          landed mid-``_fail_close`` -- the hold was already popped either
+          way, so the caller fail-closes it;
+        - the task died from a real exception (a bug in the timeout path):
+          logged here so one poisoned hold can never abort ``stop()``'s
+          fail-close loop for the remaining holds (or blow up ``resolve``).
+
+        A cancellation of the CALLER itself (delivered at this await while
+        the child ends not-cancelled) is re-raised -- swallowing it would
+        eat the caller's cancellation and unbalance its cancel count.
         """
         task.cancel()
         try:
             await task
         except asyncio.CancelledError:
-            pass
+            if not task.cancelled():
+                raise
+        except Exception:
+            logger.exception("consent: timeout task failed while reaping")
 
     async def stop(self) -> None:
         """Fail-close every in-flight hold (coordinator shutdown / sidecar gone).
@@ -420,8 +433,10 @@ class ConsentCoordinator:
     def _ws_is_paused(ws: dict | None) -> bool:
         """Is consent prompting paused for the workspace right now (#2332)?
 
-        Read off the single workspace-row fetch (``consent_paused_until``),
-        compared against ``now`` so a pause self-expires the moment its
+        Read off the single workspace-row fetch (``consent_paused_until``;
+        the column is REAL-or-NULL by schema and the model's write path
+        only ever stores numeric-or-NULL, so no extra type guard is
+        needed), compared against ``now`` so a pause self-expires the moment its
         window elapses (no sweep needed for correctness -- the gate
         re-evaluates on every hold).
 
@@ -1070,11 +1085,10 @@ class ConsentCoordinator:
     async def _rules_frame_for(self, ws: dict, workspace_id: str) -> dict:
         """The assembled frame: static lists, grouped in-effect verdicts,
         and the live pause window (#2332, read fresh so a self-expired pause
-        shows as cleared)."""
+        shows as cleared). The pause comes off the same fetched row as the
+        lists (#3083) -- one fewer read, and the view cannot disagree with
+        the hold gate's snapshot of the window."""
         rows = await self.app.state.model.egress_consent.list_active(
-            workspace_id
-        )
-        until = await self.app.state.model.workspaces.get_consent_pause(
             workspace_id
         )
         return {
@@ -1085,7 +1099,7 @@ class ConsentCoordinator:
             "reject_list": ws.get("rejected_domains") or [],
             "allowed": _by_decision(rows, DECISION_ALLOWED),
             "denied": _by_decision(rows, DECISION_DENIED),
-            "paused": _pause_frame(until),
+            "paused": _pause_frame(ws.get("consent_paused_until")),
         }
 
     @staticmethod

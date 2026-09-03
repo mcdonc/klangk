@@ -1587,7 +1587,7 @@ stop)`) and a `server: stop at 23:00 (in 1h 12m)` status line in the
 
 ### Changed
 
-- **`KLANGKD_EGRESS_CONSENT_RATE_LIMIT=0` now means unlimited (#3083).**
+- **`KLANGKD_EGRESS_CONSENT_RATE_LIMIT=0`** now means unlimited (#3083).
   Previously `0` denied every interactive consent hold (the pending cap
   compared `>= 0`); it now disables the per-workspace pending cap, matching
   the retention knobs where `0` turns a bound off.
