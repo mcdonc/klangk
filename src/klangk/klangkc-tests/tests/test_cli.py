@@ -25,6 +25,7 @@ from klangk.cli.config import (
     UserEntry,
     DEFAULT_WS_MAX_SIZE,
     ensure_config,
+    load_yaml_config,
     seed_config,
 )
 from klangk.cli.client import (
@@ -119,6 +120,32 @@ class TestCLIConfig:
         monkeypatch.setattr("klangk.cli.config.CONFIG_PATH", config_path)
         cfg = CLIConfig.load()
         assert cfg.servers == {}
+
+    def test_load_non_mapping_yaml_degrades_to_empty(
+        self, tmp_path, monkeypatch
+    ):
+        """A valid-YAML-but-not-a-mapping document (a stray list, a bare
+        string, a number) must not crash every CLI command with
+        AttributeError — it degrades to an empty config (#3094)."""
+        for bad in ("- oops\n", "just a string\n", "42\n"):
+            config_path = tmp_path / "klangk.yaml"
+            config_path.write_text(bad)
+            monkeypatch.setattr("klangk.cli.config.CONFIG_PATH", config_path)
+            cfg = CLIConfig.load()
+            assert cfg.servers == {}
+            assert cfg.forward_agent is None
+            assert cfg.ws_max_size is None
+            assert cfg.terminal_open_cmd is None
+
+    def test_load_yaml_config_non_mapping_returns_empty(
+        self, tmp_path, monkeypatch
+    ):
+        """load_yaml_config is the shared reader behind load(), the TUI
+        add/update/remove flows — it must coerce, not crash (#3094)."""
+        config_path = tmp_path / "klangk.yaml"
+        config_path.write_text("- a\n- b\n")
+        monkeypatch.setattr("klangk.cli.config.CONFIG_PATH", config_path)
+        assert load_yaml_config() == {}
 
     def test_resolve_server_alias(self):
         cfg = CLIConfig(

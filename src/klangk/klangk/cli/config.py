@@ -180,10 +180,7 @@ class CLIConfig:
 
     @classmethod
     def load(cls) -> CLIConfig:
-        if not CONFIG_PATH.exists():
-            return cls()
-        text = CONFIG_PATH.read_text()
-        data = yaml.safe_load(text) or {}
+        data = load_yaml_config()
         return cls(
             forward_agent=data.get("forward-agent"),
             ws_max_size=data.get("ws-max-size"),
@@ -285,10 +282,18 @@ def seed_config(server_url: str, user: str | None = None) -> None:
 
 
 def load_yaml_config() -> dict:
-    """The parsed klangk.yaml (empty when the file is absent)."""
+    """The parsed klangk.yaml (empty when absent or not a mapping).
+
+    klangk.yaml is user-edited: a document that is valid YAML but not a
+    mapping (a stray list, a bare string) must not crash every CLI
+    command with ``AttributeError`` — it degrades to an empty config
+    (#3094), the same degrade-not-crash rule as a bad
+    ``terminal-open-cmd`` (#2685).
+    """
     if not CONFIG_PATH.exists():
         return {}
-    return yaml.safe_load(CONFIG_PATH.read_text()) or {}
+    data = yaml.safe_load(CONFIG_PATH.read_text())
+    return data if isinstance(data, dict) else {}
 
 
 def add_server_to_config(
@@ -377,7 +382,7 @@ def remove_server_from_config(alias: str) -> bool:
     """
     if not CONFIG_PATH.exists():
         return False
-    data = yaml.safe_load(CONFIG_PATH.read_text()) or {}
+    data = load_yaml_config()
     servers = data.get("servers") or {}
     if alias not in servers:
         return False
