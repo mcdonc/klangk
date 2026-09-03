@@ -1953,6 +1953,13 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   double to 240s and container-readiness widens 60→240s; the CLI's
   WS-connect wait is now overridable via `KLANGKC_WS_CONNECT_TIMEOUT`
   (the e2e suites set it to 240s on CI).
+- **Renaming a workspace no longer kicks the TUI detail screen back to the
+  list (#3065).** The `workspaces_changed` push fired by the rename can
+  reach the open detail screen before the edit form's save dismisses, so
+  the reload resolved the workspace by its old name, missed, and was
+  treated as a deletion — popping the form and the screen mid-rename. The
+  screen now re-resolves the workspace by id on a name miss, adopts the
+  new name, and stays mounted; only a genuinely deleted workspace pops.
 - **Terminal share/unshare/close no longer hang clients on refusal paths
   (#3057).** The WebSocket handlers for `share_window`, `unshare_window`,
   `join_shared_terminal`, and the own-window commands (`terminal_new_window`,

@@ -323,6 +323,14 @@ class TuiState:
     def find_workspace(self, name: str) -> Workspace:
         return self.client().resolve_workspace(name)
 
+    def find_workspace_by_id(self, ws_id: str) -> Workspace:
+        """Resolve a workspace by id (owned or shared).
+
+        The detail screen uses this to tell a rename from a deletion
+        when a name-based resolve misses (#3065).
+        """
+        return self.client().find_workspace_by_id(ws_id)
+
     def restart_workspace(self, name: str) -> None:
         self.client().restart_workspace(name)
 

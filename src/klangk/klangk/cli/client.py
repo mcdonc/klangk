@@ -14,6 +14,7 @@ from pathlib import Path
 import re
 import select
 import socket
+from collections.abc import Callable
 import struct
 import sys
 import termios
@@ -660,12 +661,30 @@ class KlangkClient:
 
         Raises WorkspaceNotFoundError if not found.
         """
+        return self._resolve_workspace(lambda w: w.name == name, name)
+
+    def find_workspace_by_id(self, ws_id: str) -> Workspace:
+        """Find a workspace by id (owned or shared).
+
+        Raises WorkspaceNotFoundError if not found. Lets the TUI tell a
+        rename from a deletion when a name-based resolve misses (#3065).
+        """
+        return self._resolve_workspace(lambda w: w.id == ws_id, ws_id)
+
+    def _resolve_workspace(
+        self, matches: Callable[[Workspace], bool], key: str
+    ) -> Workspace:
+        """Scan owned + shared workspaces for the first match.
+
+        Shared fetch/match shape of :meth:`resolve_workspace` and
+        :meth:`find_workspace_by_id`.
+        """
         all_ws = self.list_workspaces(
             all_pages=True
         ) + self.list_shared_workspaces(all_pages=True)
-        match = next((w for w in all_ws if w.name == name), None)
+        match = next((w for w in all_ws if matches(w)), None)
         if match is None:
-            raise WorkspaceNotFoundError(name)
+            raise WorkspaceNotFoundError(key)
         return match
 
     def delete_workspace(self, name: str) -> None:

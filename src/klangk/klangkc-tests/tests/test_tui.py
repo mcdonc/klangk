@@ -461,6 +461,19 @@ def test_current_url_none_when_unconfigured(redirect_xdg):
     assert t.is_authenticated() is False
 
 
+def test_state_find_workspace_by_id_delegates(monkeypatch):
+    """#3065: TuiState.find_workspace_by_id delegates to the client."""
+    from unittest.mock import MagicMock
+
+    t = TuiState()
+    sent = []
+    fake_client = MagicMock()
+    fake_client.find_workspace_by_id = lambda wid: sent.append(wid) or "WS"
+    monkeypatch.setattr(t, "client", lambda: fake_client)
+    assert t.find_workspace_by_id("wid-1") == "WS"
+    assert sent == ["wid-1"]
+
+
 def test_reentry_auth_persists(redirect_xdg):
     """Credentials survive TuiState re-creation (#1813)."""
     add_server_to_config("srv", "https://srv.example")
@@ -2801,6 +2814,33 @@ async def _settle(app):
         except (WorkerCancelled, WorkerFailed):
             continue
         break
+
+
+async def _quiesce(app, pilot):
+    """Drain the worker pool past tail-spawned workers (#3065).
+
+    ``_settle`` gathers the workers present at call time and breaks after
+    one successful gather — a worker spawned at another worker's tail (the
+    post-edit reload chain: save → reload → list refresh) can already be
+    registered when that gather returns, yet never be awaited, leaving the
+    test to assert mid-flight. Re-gather until a gather finds the pool
+    empty, flush one message cycle, and confirm nothing spawned in it —
+    which closes the one-message-hop deferred registration this flow
+    needs (deeper message→message→worker chains would need another hop,
+    but no such chain exists here). Same exclusive-cancellation tolerance
+    as ``_settle``.
+    """
+    from textual.worker import WorkerCancelled, WorkerFailed
+
+    while True:
+        try:
+            await app.workers.wait_for_complete()
+        except (WorkerCancelled, WorkerFailed):
+            continue
+        if not len(app.workers):
+            await pilot.pause()
+            if not len(app.workers):
+                break
 
 
 async def _highlight_first(pilot, app, *, pane="#owned_list"):
@@ -8293,14 +8333,22 @@ async def test_detail_pops_when_workspace_deleted(monkeypatch):
             return a
         raise WorkspaceNotFoundError("gone")
 
+    def gone_by_id(wid):
+        raise WorkspaceNotFoundError(wid)
+
     st.find_workspace = find
+    st.find_workspace_by_id = gone_by_id
     app = KlangkApp(st)
     async with app.run_test() as pilot:
         app.push_screen(WorkspaceDetailScreen("alpha"))
         await pilot.pause()
         assert isinstance(app.screen, WorkspaceDetailScreen)
         app.screen.apply_status_event({"type": "workspaces_changed"})
-        await pilot.pause()
+        await _settle(app)
+        for _ in range(50):
+            if not isinstance(app.screen, WorkspaceDetailScreen):
+                break
+            await asyncio.sleep(0.02)
         assert isinstance(app.screen, MainScreen)  # popped back to the list
 
 
@@ -10969,42 +11017,49 @@ async def test_create_screen_tab_left_right_switches(monkeypatch):
 async def test_edit_rename_propagates_to_detail_and_list(monkeypatch):
     # #1778/#1768: renaming via the edit form must update the detail screen's
     # name (so it doesn't 404) and refresh the list (so the new name shows).
+    #
+    # #3065: the find stub is name-keyed, not a fixed pop queue. The flow
+    # legitimately issues several background loads (mount, the visit
+    # auto-start's post-restart reload, the post-edit reload), and a queue
+    # sized to an exact call count exhausts when worker starvation adds or
+    # delays a load — the flake: the extra lookup popped from an empty list
+    # and the assertion observed a stale, pre-rename resolution. Keying by
+    # name resolves any number of loads consistently, and _settle drains
+    # the reload spawned inside the save worker deterministically (a fixed
+    # pause count could observe it mid-flight under load).
     async def noop(*a, **k):
         return None
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
     original = _wsobj("alpha", image="base", running=False)
     renamed = _wsobj("renamed", image="base")
-    # Three loads consume the list: mount, the visit auto-start's
-    # post-restart re-load (both resolve by "alpha"), and the
-    # post-edit reload (resolves by "renamed").
-    returns = [original, original, renamed]
     finds = []
+
+    def find(n):
+        finds.append(n)
+        return renamed if n == "renamed" else original
+
     st = _ws(
         list_images=lambda: {"default": "base", "allowed": ["base", "py:3"]},
         allow_autostart=lambda: True,
         update_workspace=lambda wid, **f: None,
     )
-    st.find_workspace = lambda n: finds.append(n) or returns.pop(0)
+    st.find_workspace = find
     app = KlangkApp(st)
     async with app.run_test() as pilot:
         app.push_screen(WorkspaceDetailScreen("alpha"))
         await pilot.pause()
         assert app.screen._name == "alpha"
         app.screen.action_edit()
-        await app.workers.wait_for_complete()
-        await pilot.pause()
+        await _quiesce(app, pilot)
         es = app.screen
         es.query_one("#name").value = "renamed"
         es.save()
-        await app.workers.wait_for_complete()
         # The post-edit reload worker is spawned from inside the save
-        # worker, so wait_for_complete above may return before it has
-        # finished its refresh+load hops — give it event-loop cycles
-        # before asserting (#2768 review: the reload now also re-fetches
-        # the deploy marking, one extra to_thread hop).
-        for _ in range(10):
-            await pilot.pause()
+        # worker (which itself spawns the banner refresh + a list refresh
+        # off-thread), so drain the whole worker pool to quiescence, not
+        # a fixed number of pauses.
+        await _quiesce(app, pilot)
         # back on detail; name adopted + reloaded by the new name
         assert isinstance(app.screen, WorkspaceDetailScreen)
         assert app.screen._name == "renamed"
@@ -13662,7 +13717,11 @@ async def test_detail_reload_on_status_pops_modal_above(monkeypatch):
         def gone(n):
             raise WorkspaceNotFoundError("gone")
 
+        def gone_by_id(wid):
+            raise WorkspaceNotFoundError(wid)
+
         st.find_workspace = gone
+        st.find_workspace_by_id = gone_by_id
         d.apply_status_event({"type": "workspaces_changed"})
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -14599,8 +14658,12 @@ class TestDetailScreenBranchGaps2834:
             async def _noop_load():
                 pass
 
+            def _gone(wid):
+                raise WorkspaceNotFoundError(wid)
+
             screen._load = _noop_load
             screen._refresh_deploy_banner = _noop_load
+            app.tui_state.find_workspace_by_id = _gone
             screen._missing = True
             await screen._reload_on_status()
             for _ in range(50):
@@ -14610,6 +14673,108 @@ class TestDetailScreenBranchGaps2834:
             # The modal above was popped along with the dead detail
             # screen: back on the list (never the orphaned modal).
             assert not isinstance(app.screen, ConfirmScreen)
+
+    async def test_reload_on_status_adopts_rename_and_keeps_modal(self):
+        # #3065: the workspaces_changed push fired by a rename PUT can
+        # land while the edit form is still on top (the broadcast and
+        # the PUT response travel different connections). The old-name
+        # resolve then misses — the screen must recover by id (adopt the
+        # new name, reload, refresh the list) instead of treating the
+        # miss as deletion and popping the form + itself.
+        renamed = _wsobj("renamed", running=True)
+        async with self._detail() as (app, screen):
+            from klangk.cli.tui.screens.base import ConfirmScreen
+
+            await _settle(app)
+            app.push_screen(ConfirmScreen("form?"))
+            await asyncio.sleep(0)
+
+            def renamed_only(n):
+                if n == "renamed":
+                    return renamed
+                raise WorkspaceNotFoundError(n)
+
+            app.tui_state.find_workspace = renamed_only
+            app.tui_state.find_workspace_by_id = lambda wid: renamed
+            screen.apply_status_event({"type": "workspaces_changed"})
+            await _settle(app)
+            # Renamed, not deleted: the screen adopted the new name and
+            # stayed mounted under the still-open form.
+            assert screen._name == "renamed"
+            assert screen._ws is renamed
+            assert isinstance(app.screen, ConfirmScreen)
+            assert screen in app.screen_stack
+
+    async def test_reload_on_status_adoption_lookup_failure_keeps_screen(
+        self,
+    ):
+        # The by-id lookup failing transiently (network blip) is NOT a
+        # deletion: keep the screen mounted and let the next push decide
+        # (#3065) — do not destroy the user's open form.
+        async with self._detail() as (app, screen):
+            await _settle(app)
+
+            def gone(n):
+                raise WorkspaceNotFoundError(n)
+
+            def net_down(wid):
+                raise RuntimeError("net down")
+
+            app.tui_state.find_workspace = gone
+            app.tui_state.find_workspace_by_id = net_down
+            screen.apply_status_event({"type": "workspaces_changed"})
+            await _settle(app)
+            for _ in range(10):
+                await asyncio.sleep(0.02)
+            assert screen in app.screen_stack
+
+    async def test_reload_on_status_adoption_auth_error_overlays(
+        self,
+    ):
+        # An expired session surfacing during recovery takes _load's
+        # AuthError posture: the app-wide overlay, screen stays mounted
+        # (#3065) — not the deletion pop.
+        async with self._detail() as (app, screen):
+            await _settle(app)
+
+            def gone(n):
+                raise WorkspaceNotFoundError(n)
+
+            def expired(wid):
+                raise AuthError("expired")
+
+            app.tui_state.find_workspace = gone
+            app.tui_state.find_workspace_by_id = expired
+            screen.apply_status_event({"type": "workspaces_changed"})
+            await _settle(app)
+            for _ in range(10):
+                await asyncio.sleep(0.02)
+            assert screen in app.screen_stack
+            assert isinstance(app.screen, SessionExpiredScreen)
+
+    async def test_reload_on_status_without_ws_pops(self):
+        # No workspace object was ever resolved: there is no id to
+        # recover by, so a missing screen pops (#3065).
+        async with self._detail() as (app, screen):
+            await _settle(app)
+
+            async def _noop_load():
+                pass
+
+            def _gone(wid):
+                raise WorkspaceNotFoundError(wid)
+
+            screen._load = _noop_load
+            screen._refresh_deploy_banner = _noop_load
+            app.tui_state.find_workspace_by_id = _gone
+            screen._ws = None
+            screen._missing = True
+            await screen._reload_on_status()
+            for _ in range(50):
+                if screen not in app.screen_stack:
+                    break
+                await asyncio.sleep(0.02)
+            assert screen not in app.screen_stack
 
     async def test_reload_on_restart_missing_skips_terminals(self):
         async with self._detail() as (app, screen):
@@ -14984,8 +15149,12 @@ class TestFinalBranchGaps2834:
                 async def _noop_load():
                     pass
 
+                def _gone(wid):
+                    raise WorkspaceNotFoundError(wid)
+
                 screen._load = _noop_load
                 screen._refresh_deploy_banner = _noop_load
+                app.tui_state.find_workspace_by_id = _gone
                 screen._missing = True
                 real_pop = app.pop_above
 

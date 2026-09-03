@@ -748,8 +748,12 @@ class WorkspaceDetailScreen(StatusScreen):
         # SIGHUP-reloaded KLANGKD_CLASSIFICATION_BANNER re-marks here as
         # well, not just on fresh screen mounts (#2768 review).
         await self._refresh_deploy_banner()
+        # Capture the id before _load(): a miss clears _ws, and the
+        # rename recovery below needs the id to re-resolve under the
+        # workspace's current name (#3065).
+        wid = workspace_id_text(self._ws)
         await self._load()
-        if self._missing:
+        if self._missing and not await self.adopt_rename(wid):
             # The workspace was deleted out from under this screen. Pop any
             # modal sitting on top first (edit form / confirm dialog), then
             # self -- a bare pop_screen() would dismiss only the TOP screen,
@@ -758,6 +762,49 @@ class WorkspaceDetailScreen(StatusScreen):
             self.app.pop_above(self)
             if self.app.screen is self:
                 self.app.pop_screen()
+
+    async def adopt_rename(self, wid: str) -> bool:
+        """Recover when the old name missed because of a rename (#3065).
+
+        The PUT that renames a workspace broadcasts ``workspaces_changed``;
+        that push can reach this screen before the edit form's
+        save-and-dismiss adopts the new name (the broadcast and the PUT
+        response travel different connections, with no ordering
+        guarantee). Resolving by the old name then misses — which is
+        indistinguishable from deletion until the workspace is
+        re-resolved by id.
+
+        Returns True when the screen must stay mounted: the workspace
+        was found by id (adopt its current name, render it, refresh the
+        workspace list), or the by-id lookup itself failed — an expired
+        session surfaces the app-wide overlay (same posture as
+        ``_load``'s AuthError arm), and any other failure degrades to the
+        current display and lets the next push decide. Returns False only
+        for a workspace that is genuinely gone, so the caller pops.
+        """
+        try:
+            ws = await asyncio.to_thread(
+                self.app.tui_state.find_workspace_by_id, wid
+            )
+        except WorkspaceNotFoundError:
+            # By id it is gone too — genuinely deleted.
+            return False
+        except AuthError:
+            self.app.session_expired()
+            return True
+        except Exception as exc:  # noqa: BLE001 — a failed lookup is not deletion
+            logger.warning("Rename recovery lookup failed: %s", exc)
+            return True
+        # Adopt the freshly fetched object directly. Re-resolving by name
+        # would pay a third list fetch and re-open the exact race this
+        # recovers from (a second rename landing between the two).
+        self._ws = ws
+        self._name = ws.name
+        self._missing = False
+        self._load_error = None
+        self.refresh_display()
+        self.app.refresh_workspaces()
+        return True
 
     async def _reload_on_restart(self) -> None:
         """Full reload after a container start/restart (#1924).
