@@ -3,7 +3,9 @@
 query_name / a_records_with_ttl / nxdomain_for wrap dnspython; decision
 classifies a query; respond_allowed / forward_and_learn learn + reply (allow
 path), respond_recorded / forward_and_record record IP->host without an
-ACCEPT (consent-at-SYN path, #2324); handle_packet routes one query.
+ACCEPT (consent-at-SYN path, #2324); handle_packet routes one query — an
+off-list name NXDOMAINs in static mode and resolves+records in
+interactive/allow (#3041).
 """
 
 from __future__ import annotations
@@ -18,7 +20,7 @@ import dns.rcode
 
 from . import allowlist, rules
 from .allowlist import ports_for, rejected_for
-from .config import DEBUG, MARK, UPSTREAM
+from .config import DEBUG, EGRESS_MODE, MARK, RESOLVING_MODES, UPSTREAM
 from .rules import fmt_ports, learn_all
 
 if TYPE_CHECKING:
@@ -231,12 +233,18 @@ async def send_denied(
     qname: str,
     client: SidecarConsentClient | None,
 ) -> None:
-    """The deny path: interactive mode resolves + responds + records IP->host
-    (the SYN is consent-gated at NFQUEUE, not held here at the DNS query);
-    static mode (no client) NXDOMAINs."""
+    """The deny path (#3041): interactive/allow mode (a consent client +
+    :data:`EGRESS_MODE` in :data:`RESOLVING_MODES`) resolves + responds + records
+    IP->host (the SYN is consent-gated at NFQUEUE, not held here at the DNS
+    query; ``allow`` auto-allows at that same gate, #2406); every other mode --
+    static, an unrecognized value, or no consent client -- NXDOMAINs, so no
+    off-list query may reach the upstream (a resolution oracle + DNS exfil
+    channel bypassing the allow-list). The mode is keyed on the explicit env
+    var, NOT on client presence: the consent stack is wired on every filtered
+    workspace (static included, #2242/#2311)."""
     if DEBUG:
         print(f"deny  {qname}", flush=True)
-    if client is not None:
+    if client is not None and EGRESS_MODE in RESOLVING_MODES:
         await forward_and_record(s, data, addr, qname)
     else:
         send_nxdomain(s, data, addr)
@@ -266,10 +274,12 @@ async def handle_packet(
     """Classify + route one DNS query (the per-packet body of :func:`async_main`).
 
     Allow-listed names forward + learn (ACCEPT). A denied name in interactive
-    mode (a consent client) resolves + responds + records IP->host but installs
-    NO ACCEPT -- its connection SYN is consent-gated at NFQUEUE (#2324), so the
-    human decision window is the kernel's connect timeout (~127s), not the
-    resolver's <=30s getaddrinfo cap. Static mode (no client) -> NXDOMAIN.
+    or allow mode resolves + responds + records IP->host but installs
+    NO ACCEPT -- its connection SYN is consent-gated at NFQUEUE (#2324), so
+    the human decision window is the kernel's connect timeout (~127s), not
+    the resolver's <=30s getaddrinfo cap. Static mode -> NXDOMAIN for every
+    off-list name, keyed on the explicit :data:`EGRESS_MODE` (#3041) -- see
+    :func:`send_denied`.
     """
     try:
         qname = query_name(data)

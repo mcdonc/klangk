@@ -60,17 +60,18 @@ klangkd `egress_port` here (#2254 B1).
 
 ## Configuration (env)
 
-| var                                   | default    | meaning                                                                     |
-| ------------------------------------- | ---------- | --------------------------------------------------------------------------- |
-| `KLANGKNETWORK_EGRESS_ALLOW`          | _(empty)_  | comma-separated allow-list: `host[:port]`, `*.domain[:port]`, or CIDR       |
-| `KLANGKNETWORK_EGRESS_UPSTREAM`       | `8.8.8.8`  | real upstream the proxy forwards to                                         |
-| `KLANGKNETWORK_EGRESS_BACKEND_PORT`   | _(empty)_  | klangkd backend port on host.containers.internal                            |
-| `KLANGKNETWORK_EGRESS_LISTEN_PORT`    | `15353`    | UDP port the proxy listens on                                               |
-| `KLANGKNETWORK_EGRESS_MARK`           | `75`       | fwmark for the proxy's upstream socket (must match entrypoint.sh)           |
-| `KLANGKNETWORK_EGRESS_SWEEP_INTERVAL` | `5`        | seconds between learned-IP TTL-expiry sweeps                                |
-| `KLANGKNETWORK_EGRESS_MIN_TTL`        | `30`       | floor for a learned IP's lifetime (a 0-TTL response must not yank the rule) |
-| `KLANGKNETWORK_IPTABLES`              | `iptables` | iptables binary path                                                        |
-| `KLANGKNETWORK_EGRESS_DEBUG`          | unset      | if set, log each allow/deny decision                                        |
+| var                                   | default    | meaning                                                                                                    |
+| ------------------------------------- | ---------- | ---------------------------------------------------------------------------------------------------------- |
+| `KLANGKNETWORK_EGRESS_ALLOW`          | _(empty)_  | comma-separated allow-list: `host[:port]`, `*.domain[:port]`, or CIDR                                      |
+| `KLANGKNETWORK_EGRESS_MODE`           | `static`   | how off-list names are treated: `static` NXDOMAINs them; `interactive`/`allow` resolve + record (SYN gate) |
+| `KLANGKNETWORK_EGRESS_UPSTREAM`       | `8.8.8.8`  | real upstream the proxy forwards to                                                                        |
+| `KLANGKNETWORK_EGRESS_BACKEND_PORT`   | _(empty)_  | klangkd backend port on host.containers.internal                                                           |
+| `KLANGKNETWORK_EGRESS_LISTEN_PORT`    | `15353`    | UDP port the proxy listens on                                                                              |
+| `KLANGKNETWORK_EGRESS_MARK`           | `75`       | fwmark for the proxy's upstream socket (must match entrypoint.sh)                                          |
+| `KLANGKNETWORK_EGRESS_SWEEP_INTERVAL` | `5`        | seconds between learned-IP TTL-expiry sweeps                                                               |
+| `KLANGKNETWORK_EGRESS_MIN_TTL`        | `30`       | floor for a learned IP's lifetime (a 0-TTL response must not yank the rule)                                |
+| `KLANGKNETWORK_IPTABLES`              | `iptables` | iptables binary path                                                                                       |
+| `KLANGKNETWORK_EGRESS_DEBUG`          | unset      | if set, log each allow/deny decision                                                                       |
 
 ## Allow-list semantics (#2256)
 

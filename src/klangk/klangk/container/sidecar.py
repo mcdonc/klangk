@@ -21,6 +21,7 @@ from ..model.container_events import (
     EVENT_STOP,
     ROLE_SIDECAR,
 )
+from ..model.workspaces import EGRESS_MODE_STATIC
 
 logger = logging.getLogger(__name__)
 
@@ -244,7 +245,7 @@ class NetworkSidecarMixin:
         self,
         workspace_id: str,
         allowed_domains: list[str] | None,
-        egress_mode: str = "static",
+        egress_mode: str = EGRESS_MODE_STATIC,
         rejected_domains: list[str] | None = None,
         publish: list[tuple[int, int]] | None = None,
         slug: str = "",
@@ -272,7 +273,7 @@ class NetworkSidecarMixin:
         name = self.network_sidecar_name(workspace_id, slug)
         # Pick an upstream that differs from the REDIRECT target (1.1.1.1).
         env, binds = self._network_sidecar_env(
-            workspace_id, allowed_domains, rejected_domains
+            workspace_id, allowed_domains, rejected_domains, egress_mode
         )
 
         # Label the network sidecar with this klangk instance so the startup reaper
@@ -482,6 +483,7 @@ class NetworkSidecarMixin:
         workspace_id: str,
         allowed_domains: list[str] | None,
         rejected_domains: list[str] | None,
+        egress_mode: str,
     ) -> tuple[list[str], list[str]]:
         """(env, binds) for the network sidecar container."""
         upstream = self._network_sidecar_upstream()
@@ -489,6 +491,13 @@ class NetworkSidecarMixin:
             f"KLANGKNETWORK_EGRESS_ALLOW={','.join(allowed_domains or [])}",
             f"KLANGKNETWORK_EGRESS_REJECT={','.join(rejected_domains or [])}",
             f"KLANGKNETWORK_EGRESS_UPSTREAM={upstream}",
+            # The workspace's egress mode, passed EXPLICITLY (#3041): the
+            # sidecar must key its off-list DNS behavior on this, not on
+            # consent-client presence (the consent stack is wired on every
+            # filtered workspace below, static included, so presence says
+            # nothing about the mode). static -> NXDOMAIN off-list names;
+            # interactive/allow -> resolve + record for the SYN gate.
+            f"KLANGKNETWORK_EGRESS_MODE={egress_mode}",
             # The klangkd backend port (LLM proxy + bridge on
             # host.containers.internal). The network sidecar allow-lists it statically
             # — it's a /etc/hosts entry the FQDN proxy can't learn (#2254 B1).
@@ -509,11 +518,12 @@ class NetworkSidecarMixin:
         binds = []
         # #2242/#2311: consent recording runs for every filtered workspace
         # when the consent stack is wired, regardless of egress_mode -- the
-        # mode only affects the recorded decision (static=denied+no-human,
+        # mode affects the recorded decision (static=denied+no-human,
         # interactive=pending), applied by the coordinator over the sidecar
-        # WS. The workspace JWT is bind-mounted in and refreshed on rotation
-        # (write_sidecar_token), not baked in env (it rotates). The sweeper
-        # attribute gates the stack being present at all.
+        # WS, and the sidecar's off-list DNS behavior (the EGRESS_MODE env
+        # above, #3041). The workspace JWT is bind-mounted in and refreshed
+        # on rotation (write_sidecar_token), not baked in env (it rotates).
+        # The sweeper attribute gates the stack being present at all.
         if getattr(self.app.state, "consent_sweeper", None) is not None:
             consent_env, binds = self._consent_stack_env(workspace_id)
             env.extend(consent_env)

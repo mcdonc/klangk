@@ -2573,10 +2573,12 @@ def test_duration_ttl_mapping(proxy):
 
 
 class TestHandlePacket:
-    """The per-packet DNS routing (#2311 half B, #2324): classify -> forward /
-    resolve+record / NXDOMAIN. A statically-allow-listed name forwards + learns;
-    a denied name in interactive mode resolves + records IP->host (its SYN is
-    consent-gated at NFQUEUE); static mode (no client) -> NXDOMAIN."""
+    """The per-packet DNS routing (#2311 half B, #2324, #3041): classify ->
+    forward / resolve+record / NXDOMAIN. A statically-allow-listed name forwards
+    + learns; a denied name in interactive mode resolves + records IP->host
+    (its SYN is consent-gated at NFQUEUE); allow mode likewise resolves +
+    records (auto-allowed at the SYN, #2406); static mode NXDOMAINs every
+    off-list name even when a consent client is wired (#3041)."""
 
     async def test_allowed_name_forwards_and_learns(self, proxy, monkeypatch):
         monkeypatch.setattr(proxy.resolve, "query_name", lambda wire: "allowed.test")
@@ -2596,9 +2598,12 @@ class TestHandlePacket:
         await proxy.handle_packet(s, b"q", ("1.2.3.4", 53), None)
         s.sendto.assert_called_once_with(b"NXD", ("1.2.3.4", 53))
 
-    async def test_denied_with_client_resolves_and_records(self, proxy, monkeypatch):
+    async def test_denied_with_client_interactive_resolves_and_records(
+        self, proxy, monkeypatch
+    ):
         # Interactive: a denied name resolves + records IP->host (NO ACCEPT) so
         # its SYN is consent-gated at NFQUEUE -- it is NOT held at the DNS query.
+        monkeypatch.setattr(proxy.resolve, "EGRESS_MODE", "interactive")
         monkeypatch.setattr(proxy.resolve, "query_name", lambda wire: "evil.test")
         monkeypatch.setattr(proxy.allowlist, "SPECS", [])
         rec = AsyncMock()
@@ -2611,6 +2616,66 @@ class TestHandlePacket:
         await proxy.handle_packet(s, b"q", ("1.2.3.4", 53), client)
         rec.assert_awaited_once_with(s, b"q", ("1.2.3.4", 53), "evil.test")
         nxd.assert_not_called()  # not NXDOMAIN -- resolves for the SYN gate
+
+    async def test_denied_with_client_static_sends_nxdomain(self, proxy, monkeypatch):
+        # #3041: the consent stack is wired on EVERY filtered workspace
+        # (static included), so a present client must NOT imply that a denied
+        # name may resolve. Static mode NXDOMAINs it -- no off-list query
+        # reaches the upstream (no resolution oracle, no DNS exfil channel).
+        monkeypatch.setattr(proxy.resolve, "EGRESS_MODE", "static")
+        monkeypatch.setattr(proxy.resolve, "query_name", lambda wire: "evil.test")
+        monkeypatch.setattr(proxy.allowlist, "SPECS", [])
+        monkeypatch.setattr(proxy.resolve, "nxdomain_for", lambda d: b"NXD")
+        rec = AsyncMock()
+        monkeypatch.setattr(proxy.resolve, "forward_and_record", rec)
+        client = MagicMock()
+        client.connected = True
+        s = MagicMock()
+        await proxy.handle_packet(s, b"q", ("1.2.3.4", 53), client)
+        s.sendto.assert_called_once_with(b"NXD", ("1.2.3.4", 53))
+        rec.assert_not_awaited()  # NEVER forwarded -- that is the fix
+
+    async def test_denied_with_client_allow_resolves_and_records(
+        self, proxy, monkeypatch
+    ):
+        # Allow mode is default-permit (#2406): off-list DNS must resolve
+        # (record IP->host) so the SYN can hit the NFQUEUE gate, where the
+        # coordinator auto-allows. NXDOMAINing here would break allow mode.
+        monkeypatch.setattr(proxy.resolve, "EGRESS_MODE", "allow")
+        monkeypatch.setattr(proxy.resolve, "query_name", lambda wire: "any.test")
+        monkeypatch.setattr(proxy.allowlist, "SPECS", [])
+        rec = AsyncMock()
+        monkeypatch.setattr(proxy.resolve, "forward_and_record", rec)
+        nxd = MagicMock()
+        monkeypatch.setattr(proxy.resolve, "send_nxdomain", nxd)
+        client = MagicMock()
+        client.connected = True
+        s = MagicMock()
+        await proxy.handle_packet(s, b"q", ("1.2.3.4", 53), client)
+        rec.assert_awaited_once_with(s, b"q", ("1.2.3.4", 53), "any.test")
+        nxd.assert_not_called()
+
+    async def test_denied_with_client_unknown_mode_sends_nxdomain(
+        self, proxy, monkeypatch
+    ):
+        # #3041 review: the resolve gate is a WHITELIST (RESOLVING_MODES), not
+        # `!= "static"` -- an unrecognized env value (a typo, a future enum
+        # member) must fail CLOSED (NXDOMAIN), never silently resolve.
+        for bogus in ("Static", "interactive ", "frozen", ""):
+            monkeypatch.setattr(proxy.resolve, "EGRESS_MODE", bogus)
+            monkeypatch.setattr(proxy.resolve, "query_name", lambda wire: "evil.test")
+            monkeypatch.setattr(proxy.allowlist, "SPECS", [])
+            monkeypatch.setattr(proxy.resolve, "nxdomain_for", lambda d: b"NXD")
+            rec = AsyncMock()
+            monkeypatch.setattr(proxy.resolve, "forward_and_record", rec)
+            client = MagicMock()
+            client.connected = True
+            s = MagicMock()
+            await proxy.handle_packet(s, b"q", ("1.2.3.4", 53), client)
+            s.sendto.assert_called_once_with(b"NXD", ("1.2.3.4", 53))
+            rec.assert_not_awaited()
+            s.reset_mock()
+            rec.reset_mock()
 
     async def test_malformed_query_is_dropped(self, proxy, monkeypatch):
         def _boom(wire):

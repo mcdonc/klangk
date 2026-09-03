@@ -390,12 +390,15 @@ def _wait_ready(name, timeout=40):
     )
 
 
-@pytest.fixture
-def stack(env):
-    """A fresh (fake-upstream + network sidecar) pair on an isolated network.
+def _boot_stack(env, extra_sidecar_env=()):
+    """Create an isolated (fake-upstream + network sidecar) pair on a fresh
+    network (#3041 refactor of the ``stack`` fixture so tests can boot the
+    same pair with extra sidecar env, e.g. the consent stack).
 
-    Yields (upstream_ip, network_sidecar_name). The network sidecar
-    allow-lists allowed.test and points its upstream at the fake server.
+    Returns ``(upstream_ip, fu_name, nc_name, net_name)``; the CALLER owns
+    teardown (``_podman_cleanup`` the containers, then the network). The
+    sidecar allow-lists allowed.test and points its upstream at the fake
+    server; ``extra_sidecar_env`` are extra ``-e`` args for the sidecar.
     """
     net = f"netc-e2e-{uuid.uuid4().hex[:8]}"
     fu = f"netc-fu-{uuid.uuid4().hex[:8]}"
@@ -442,9 +445,26 @@ def stack(env):
             f"KLANGKNETWORK_EGRESS_UPSTREAM={upstream_ip}",
             "-e",
             "KLANGKNETWORK_EGRESS_ALLOW=allowed.test",
+            *extra_sidecar_env,
             env["image"],
         )
         _wait_ready(nc)
+        return upstream_ip, fu, nc, net
+    except BaseException:
+        _podman_cleanup("container", nc, fu)
+        _podman_cleanup("network", net)
+        raise
+
+
+@pytest.fixture
+def stack(env):
+    """A fresh (fake-upstream + network sidecar) pair on an isolated network.
+
+    Yields (upstream_ip, network_sidecar_name). The network sidecar
+    allow-lists allowed.test and points its upstream at the fake server.
+    """
+    upstream_ip, fu, nc, net = _boot_stack(env)
+    try:
         yield upstream_ip, nc
     finally:
         _podman_cleanup("container", nc, fu)
@@ -571,6 +591,27 @@ def _probe_somark(
     return out.stdout.strip()
 
 
+# The consent-stack env a production filtered sidecar gets (#2242/#2311):
+# CONSENT_URL is set on every filtered workspace regardless of egress_mode,
+# so these mirror the exact #3041 configuration. The host is unreachable on
+# purpose -- the WS client retries in the background and the DNS-path
+# behavior under test does not depend on the connection being up. The two
+# variants differ ONLY in KLANGKNETWORK_EGRESS_MODE.
+def _consent_stack_env(mode):
+    return (
+        "-e",
+        "KLANGKNETWORK_EGRESS_CONSENT_URL="
+        "http://fake-klangkd:8995/internal/egress-consent/events",
+        "-e",
+        f"KLANGKNETWORK_EGRESS_MODE={mode}",
+    )
+
+
+_CONSENT_STACK_STATIC_ENV = _consent_stack_env("static")
+
+_CONSENT_STACK_INTERACTIVE_ENV = _consent_stack_env("interactive")
+
+
 class TestNetworkSidecarE2E:
     """The network sidecar enforces FQDN egress + closes the upstream bypass."""
 
@@ -594,6 +635,37 @@ class TestNetworkSidecarE2E:
     def test_denied_domain_is_nxdomain(self, env, stack):
         # A name not on the allow-list is denied by the proxy.
         assert _query(env, stack, "denied.test") == "NXDOMAIN"
+
+    def test_static_mode_offlist_nxdomain_with_consent_wired(self, env):
+        # #3041: the regression. Production wires the consent stack (CONSENT_
+        # URL) on EVERY filtered workspace -- static included -- and the sidecar
+        # used to infer "interactive" from client presence, so a static
+        # workspace FORWARDED off-list queries to the upstream (a resolution
+        # oracle + DNS exfil channel through the allow-list). With the explicit
+        # KLANGKNETWORK_EGRESS_MODE=static, the off-list name (one the fake
+        # upstream WOULD answer: exfil.test -> 6.6.6.6) must NXDOMAIN locally.
+        # The unreachable consent host is deliberate: the client retries in the
+        # background and DNS behavior must not depend on the WS being up.
+        upstream_ip, fu, nc, net = _boot_stack(env, _CONSENT_STACK_STATIC_ENV)
+        try:
+            assert _query(env, (upstream_ip, nc), "exfil.test") == "NXDOMAIN"
+        finally:
+            _podman_cleanup("container", nc, fu)
+            _podman_cleanup("network", net)
+
+    def test_interactive_mode_offlist_resolves_with_consent_wired(self, env):
+        # The interactive counterpart (same consent-wired sidecar, only the
+        # mode differs): an off-list name resolves + records (#2324) -- the
+        # hold is at the connection SYN (NFQUEUE), not at the DNS query, so
+        # resolution succeeding is the mode's contract, not a leak.
+        upstream_ip, fu, nc, net = _boot_stack(
+            env, _CONSENT_STACK_INTERACTIVE_ENV
+        )
+        try:
+            assert _query(env, (upstream_ip, nc), "exfil.test") == "A 6.6.6.6"
+        finally:
+            _podman_cleanup("container", nc, fu)
+            _podman_cleanup("network", net)
 
     def test_network_sidecar_marks_upstream_rule(self, env, stack):
         # The mechanism: the network sidecar's OUTPUT allows upstream:53 only
@@ -653,6 +725,8 @@ class TestNetworkSidecarE2E:
                 "KLANGKNETWORK_EGRESS_ALLOW=allowed.test",
                 "-e",
                 "KLANGKNETWORK_EGRESS_CONSENT_URL=http://fake-klangkd:8995/internal/egress-consent/events",
+                "-e",
+                "KLANGKNETWORK_EGRESS_MODE=interactive",
                 env["image"],
             )
             _wait_ready(nc)
@@ -996,6 +1070,12 @@ def consent_stack(env):
             f"KLANGKNETWORK_EGRESS_ALLOW=allowed.test,{ver_ip}/32:8995",
             "-e",
             f"KLANGKNETWORK_EGRESS_CONSENT_URL=http://{ver_ip}:8995",
+            # #3041: the mode is explicit now (a consent URL alone no longer
+            # implies interactive). This stack models an interactive workspace:
+            # off-list names must resolve + record so the trigger's SYNs hit
+            # NFQUEUE and surface as egress frames at the verifier.
+            "-e",
+            "KLANGKNETWORK_EGRESS_MODE=interactive",
             env["image"],
         )
         _wait_ready(nc)

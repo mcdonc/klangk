@@ -128,7 +128,9 @@ def resolve_ws_host(consent_url: str) -> str | None:
 
 async def start_consent_client() -> SidecarConsentClient | None:
     """Start the WS consent client when consent is configured (a
-    :data:`config.CONSENT_URL`), else None (static mode)."""
+    :data:`config.CONSENT_URL`), else None. Note: consent is wired on every
+    filtered workspace (#2242/#2311), so a client here does NOT imply
+    interactive mode -- see :data:`config.EGRESS_MODE` (#3041)."""
     if not config.CONSENT_URL:
         return None
     client = consent.SidecarConsentClient(
@@ -145,7 +147,8 @@ def bind_dns_socket() -> socket.socket:
     s.setblocking(False)
     print(
         f"dns-proxy listening on 127.0.0.1:{LISTEN_PORT} "
-        f"(upstream={UPSTREAM[0]}, allowed={allowlist.SPECS})",
+        f"(upstream={UPSTREAM[0]}, allowed={allowlist.SPECS}, "
+        f"mode={config.EGRESS_MODE})",
         flush=True,
     )
     return s

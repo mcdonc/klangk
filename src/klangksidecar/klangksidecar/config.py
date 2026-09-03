@@ -52,6 +52,29 @@ QUEUE_NUM = int(os.environ.get("KLANGKNETWORK_EGRESS_NFQUEUE_NUM", "5139"))
 CONSENT_URL = os.environ.get("KLANGKNETWORK_EGRESS_CONSENT_URL", "")
 
 
+# The workspace's egress_mode (#3041), passed explicitly by klangkd so the
+# DNS proxy does NOT infer the mode from client presence -- the consent stack
+# is wired on EVERY filtered workspace (static included; #2242/#2311), so a
+# present client no longer implies interactive. 'static' -> an off-list name
+# NXDOMAINs (no query reaches the upstream: no resolution oracle, no DNS
+# exfil channel); 'interactive' -> resolves + records (the SYN is consent-held
+# at NFQUEUE); 'allow' -> resolves + records (the coordinator auto-allows at
+# the SYN, #2406). The default is the fail-closed 'static': a sidecar whose
+# klangkd predates the var (and wires consent on every workspace) denies
+# off-list names rather than resolving them.
+EGRESS_MODE = os.environ.get("KLANGKNETWORK_EGRESS_MODE", "static")
+
+
+# The modes in which an off-list (deny-classified) name may resolve + record
+# (#3041). Deliberately a WHITELIST, not `!= "static"`: an unrecognized value
+# (a typo, a future enum member) must fail CLOSED (NXDOMAIN), never silently
+# take the permissive resolve branch. The env var is a bare string and the
+# sidecar is the last line of defense (klangkd's DB column is bare TEXT with
+# no CHECK constraint; the daemon coerces on write, but a hand-launched or
+# future writer may not).
+RESOLVING_MODES = frozenset({"interactive", "allow"})
+
+
 # How long to await a verdict before fail-closing to deny. The consent gate is
 # the connection SYN (NFQUEUE), so this can match the kernel's connect timeout
 # (tcp_syn_retries ~= 127s) -- far longer than a DNS resolver's <=30s getaddrinfo
