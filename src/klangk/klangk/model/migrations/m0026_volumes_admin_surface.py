@@ -59,11 +59,8 @@ OLD_SEED_ROWS = (
 ADMIN_PERMISSIONS = ("view-volumes", "manage-volumes")
 
 
-async def apply(db) -> None:
-    cursor = await db.execute("SELECT COUNT(*) FROM acl_entries")
-    if (await cursor.fetchone())[0] == 0:
-        return  # fresh database — the boot seeds own it
-
+async def _delete_old_seed_rows(db) -> None:
+    """Remove the exact #2946 seed shapes on /volumes."""
     for action, principal_type, system_principal, permission in OLD_SEED_ROWS:
         await db.execute(
             "DELETE FROM acl_entries WHERE resource = '/volumes'"
@@ -72,22 +69,27 @@ async def apply(db) -> None:
             (action, principal_type, system_principal, permission),
         )
 
+
+async def _admins_group_id(db) -> str | None:
+    """The ``admins`` group's id, or None when absent (m0021 posture)."""
     cursor = await db.execute("SELECT id FROM groups WHERE name = 'admins'")
     row = await cursor.fetchone()
-    if row is None:
-        return  # no admins group: nothing to grant (the m0021 posture)
-    admins_id = row[0]
+    return None if row is None else row[0]
 
+
+async def _missing_admin_permissions(db, admins_id: str) -> list[str]:
+    """Seed-position-ordered admin permissions the group lacks."""
     cursor = await db.execute(
         "SELECT permission FROM acl_entries WHERE resource = '/volumes'"
         " AND action = ? AND principal_type = ? AND group_id = ?",
         (ACTION_ALLOW, PRINCIPAL_GROUP, admins_id),
     )
     held = {r[0] for r in await cursor.fetchall()}
-    missing = [p for p in ADMIN_PERMISSIONS if p not in held]
-    if not missing:
-        return
+    return [p for p in ADMIN_PERMISSIONS if p not in held]
 
+
+async def _insert_admin_rows(db, admins_id: str, missing: list[str]) -> None:
+    """Insert the admin rows at seed positions 0/1, parking survivors."""
     # Park the surviving rows two slots down so positions 0/1 are free.
     # UNIQUE(resource, position) forbids an in-place +2 shift past a
     # neighbor, so rows first jump far above the occupied range and
@@ -120,6 +122,22 @@ async def apply(db) -> None:
                 permission,
             ),
         )
+
+
+async def apply(db) -> None:
+    cursor = await db.execute("SELECT COUNT(*) FROM acl_entries")
+    if (await cursor.fetchone())[0] == 0:
+        return  # fresh database — the boot seeds own it
+
+    await _delete_old_seed_rows(db)
+
+    admins_id = await _admins_group_id(db)
+    if admins_id is None:
+        return  # no admins group: nothing to grant
+
+    missing = await _missing_admin_permissions(db, admins_id)
+    if missing:
+        await _insert_admin_rows(db, admins_id, missing)
 
 
 migration = Migration(
