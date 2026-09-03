@@ -12,14 +12,16 @@ import typer
 
 from . import context
 from .options import (
-    ALLOW_OPTION,
-    CPU_LIMIT_OPTION,
-    ENV_OPTION,
-    IDLE_TIMEOUT_OPTION,
-    MEMORY_LIMIT_OPTION,
-    MOUNT_OPTION,
-    PIDS_LIMIT_OPTION,
-    REJECT_OPTION,
+    AllowOption,
+    ClassificationBannerOption,
+    CpuLimitOption,
+    EnvOption,
+    IdleTimeoutOption,
+    MemoryLimitOption,
+    MountOption,
+    PidsLimitOption,
+    RejectOption,
+    SudoOption,
 )
 from .workspaces import build_settings, parse_env_list, prompt, SENTINEL
 from .mount import validate_allowed_domain_spec, validate_mount_spec
@@ -595,33 +597,16 @@ def edit(
             "health (exit 0 = healthy). Use '' to clear."
         ),
     ),
-    mount: list[str] | None = MOUNT_OPTION,
-    env: list[str] | None = ENV_OPTION,
-    allow: list[str] | None = ALLOW_OPTION,
-    reject: list[str] | None = REJECT_OPTION,
-    idle_timeout: int | None = IDLE_TIMEOUT_OPTION,
-    cpu_limit: float | None = CPU_LIMIT_OPTION,
-    memory_limit: str | None = MEMORY_LIMIT_OPTION,
-    pids_limit: int | None = PIDS_LIMIT_OPTION,
-    allow_sudo: bool | None = typer.Option(
-        None,
-        "--sudo/--no-sudo",
-        help=(
-            "Workspace sudo posture (server-permitting): off unless the "
-            "workspace opts in with --sudo. --no-sudo locks it down "
-            "(no passwordless sudo). Applies when the container is next "
-            "created"
-        ),
-    ),
-    classification_banner: str | None = typer.Option(
-        None,
-        "--classification-banner",
-        help=(
-            "Classification marking shown as a persistent banner on the "
-            "workspace page (free text, e.g. UNCLASSIFIED, CUI, SECRET). "
-            "Use '' to clear back to the server default"
-        ),
-    ),
+    mount: MountOption = None,
+    env: EnvOption = None,
+    allow: AllowOption = None,
+    reject: RejectOption = None,
+    idle_timeout: IdleTimeoutOption = None,
+    cpu_limit: CpuLimitOption = None,
+    memory_limit: MemoryLimitOption = None,
+    pids_limit: PidsLimitOption = None,
+    allow_sudo: SudoOption = None,
+    classification_banner: ClassificationBannerOption = None,
 ) -> None:
     """Edit workspace settings.
 

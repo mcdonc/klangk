@@ -639,24 +639,17 @@ class WorkspacesModel(Submodel):
                 )
 
     async def create_workspace_with_acl(
-        self,
-        user_id: str,
-        name: str,
-        image: str | None = None,
-        service_command: str | None = None,
-        auto_start: bool = False,
-        mounts: list[str] | None = None,
-        env: dict[str, str] | None = None,
-        setup_state: str = SETUP_STATE_COMPLETE,
-        health_check: str | None = None,
-        allowed_domains: list[str] | None = None,
-        rejected_domains: list[str] | None = None,
-        settings: dict | None = None,
-        egress_mode: str = EGRESS_MODE_DEFAULT,
-        per_handle_home: bool = True,
-        classification_banner: str | None = None,
+        self, user_id: str, name: str, **create_kwargs
     ) -> dict:
         """Create a workspace row AND seed its owner ACE + role groups.
+
+        Takes the create keyword arguments (``image``,
+        ``service_command``, ``auto_start``, ``mounts``, ``env``,
+        ``setup_state``, ``health_check``, ``allowed_domains``,
+        ``rejected_domains``, ``settings``, ``egress_mode``,
+        ``per_handle_home``, ``classification_banner``), validated by
+        :func:`_validated_create_kwargs` — the single declaration of
+        that signature (#3048).
 
         The row insert and the ACL/group seeding run in a **single
         transaction**, so any failure rolls the whole thing back — no
@@ -672,21 +665,7 @@ class WorkspacesModel(Submodel):
                 " wildcard owner ACE + owners-group membership makes its"
                 " UUID a privileged principal) — system agent"
             )
-        insert = _validated_create_kwargs(
-            image=image,
-            service_command=service_command,
-            auto_start=auto_start,
-            mounts=mounts,
-            env=env,
-            setup_state=setup_state,
-            health_check=health_check,
-            allowed_domains=allowed_domains,
-            rejected_domains=rejected_domains,
-            settings=settings,
-            egress_mode=egress_mode,
-            per_handle_home=per_handle_home,
-            classification_banner=classification_banner,
-        )
+        insert = _validated_create_kwargs(**create_kwargs)
         async with self.app.state.db.transaction() as db:
             ws = await self._insert_workspace_row(db, user_id, name, **insert)
             await self.seed_workspace_acl(db, ws, user_id)

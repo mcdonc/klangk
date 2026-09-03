@@ -89,8 +89,20 @@ def pull_request_trigger(wf):
     return pr
 
 
+def char_class_regex(seg, i):
+    """Translate a ``[...]`` class starting at *i*; return
+    ``(regex, index of the closing ``]``)``."""
+    end = seg.find("]", i)
+    if end == -1:
+        raise AssertionError(f"unclosed character class in {seg!r}")
+    body = seg[i + 1 : end]
+    if body.startswith(("!", "^")):
+        raise AssertionError(f"negated class not modeled: {seg!r}")
+    return "[" + body.replace("\\", "\\\\") + "]", end
+
+
 def segment_to_regex(seg):
-    """Translate one `/`-free segment: `*`, `[...]`, literals."""
+    """Translate one ``/``-free segment: ``*``, ``[...]``, literals."""
     out, i = "", 0
     while i < len(seg):
         c = seg[i]
@@ -99,18 +111,34 @@ def segment_to_regex(seg):
         elif c in "?+":
             raise AssertionError(f"unmodeled quantifier in segment {seg!r}")
         elif c == "[":
-            end = seg.find("]", i)
-            if end == -1:
-                raise AssertionError(f"unclosed character class in {seg!r}")
-            body = seg[i + 1 : end]
-            if body.startswith(("!", "^")):
-                raise AssertionError(f"negated class not modeled: {seg!r}")
-            out += "[" + body.replace("\\", "\\\\") + "]"
-            i = end
+            cls, i = char_class_regex(seg, i)
+            out += cls
         else:
             out += re.escape(c)
         i += 1
     return out
+
+
+def doublestar_regex(idx, last):
+    """Regex for a full-segment ``**`` at *idx* (``last`` = final)."""
+    if last:
+        return ".*"  # "docs/**" — everything under docs/
+    if idx == 0:
+        # "**/x" — zero or more leading dirs, bare "x" too.
+        return "(?:[^/]*/)*"
+    # Mid-path "**": at least one char per collapsed dir,
+    # so "a/**/b" matches "a/b" but never "ab".
+    return "(?:[^/]+/)*"
+
+
+def glob_segment_regex(seg, idx, last, pattern):
+    """Regex for one glob segment, trailing ``/`` included unless
+    *last* (``**`` patterns carry their own separators)."""
+    if seg == "**":
+        return doublestar_regex(idx, last)
+    if "**" in seg:
+        raise AssertionError(f"mid-segment '**' not modeled: {pattern!r}")
+    return segment_to_regex(seg) + ("" if last else "/")
 
 
 def glob_to_regex(pattern):
@@ -127,23 +155,7 @@ def glob_to_regex(pattern):
     segs = pattern.split("/")
     out = ""
     for idx, seg in enumerate(segs):
-        last = idx == len(segs) - 1
-        if seg == "**":
-            if last:
-                out += ".*"  # "docs/**" — everything under docs/
-            elif idx == 0:
-                # "**/x" — zero or more leading dirs, bare "x" too.
-                out += "(?:[^/]*/)*"
-            else:
-                # Mid-path "**": at least one char per collapsed dir,
-                # so "a/**/b" matches "a/b" but never "ab".
-                out += "(?:[^/]+/)*"
-        elif "**" in seg:
-            raise AssertionError(f"mid-segment '**' not modeled: {pattern!r}")
-        else:
-            out += segment_to_regex(seg)
-            if not last:
-                out += "/"
+        out += glob_segment_regex(seg, idx, idx == len(segs) - 1, pattern)
     return re.compile("^" + out + "$")
 
 
@@ -163,17 +175,25 @@ def test_unit_workflows_ignore_md_at_every_docs_depth():
         assert not missing, f"{name}: paths-ignore missing {sorted(missing)}"
 
 
-def test_docs_ignore_entries_have_the_intended_semantics():
-    # Root "*.md" must stay root-anchored (#2957), and "docs/**/*.md"
-    # must cover the whole docs tree INCLUDING its top level (the
-    # GitHub cheat sheet lists docs/README.md as a match).
+def test_root_md_glob_is_root_anchored():
+    # #2957: root "*.md" must not cross "/" into docs/.
     assert matches("*.md", ROOT_MD)
     assert not matches("*.md", DOCS_TOP_MD)
     assert not matches("*.md", DOCS_NESTED_MD)
+
+
+def test_docs_doublestar_covers_the_tree_including_its_top():
+    # "docs/**/*.md" must cover the whole docs tree INCLUDING its top
+    # level (the GitHub cheat sheet lists docs/README.md as a match,
+    # because "**/" spans zero directories); "docs/*.md" stays one
+    # level deep.
     assert matches("docs/*.md", DOCS_TOP_MD)
     assert not matches("docs/*.md", DOCS_NESTED_MD)
     assert matches("docs/**/*.md", DOCS_TOP_MD)
     assert matches("docs/**/*.md", DOCS_NESTED_MD)
+
+
+def test_docs_doublestar_never_matches_build_path_md():
     # Belt-and-braces docs/** must never swallow files outside docs/.
     assert not matches("docs/**/*.md", BUILD_PATH_MD)
 
@@ -186,12 +206,17 @@ def test_glob_model_fails_loud_on_unmodeled_constructs():
             glob_to_regex(bad)
 
 
+def paths_ignore_offenders(path):
+    """This workflow's paths-ignore entries that match BUILD_PATH_MD."""
+    pr = pull_request_trigger(load_workflow(path))
+    if not pr or "paths-ignore" not in pr:
+        return []
+    return [p for p in pr["paths-ignore"] if matches(p, BUILD_PATH_MD)]
+
+
 def test_no_paths_ignore_entry_matches_build_path_md():
     for path in all_workflows():
-        pr = pull_request_trigger(load_workflow(path))
-        if not pr or "paths-ignore" not in pr:
-            continue
-        offenders = [p for p in pr["paths-ignore"] if matches(p, BUILD_PATH_MD)]
+        offenders = paths_ignore_offenders(path)
         assert not offenders, (
             f"{path.name}: paths-ignore {offenders} would skip CI for "
             f"{BUILD_PATH_MD} — it is COPYed into the workspace image "
