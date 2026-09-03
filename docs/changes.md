@@ -1950,6 +1950,16 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Cancellation during a consent verdict no longer hangs the egress
+  relay** (#3089). A decider disconnect or backend shutdown landing while
+  the verdict's DB write was in flight escaped as a `CancelledError`
+  before the held connection's Future was resolved — with the hold popped
+  and its timeout cancelled, nothing could ever resolve it, so the
+  sidecar relay waited forever and the request row lingered pending
+  against the workspace's cap. The resolve path now fail-closes the
+  Future (deny) and expires the row before letting the cancellation
+  propagate.
+
 - **`egress_request` frames now carry one request shape on every delivery
   path (#3082).** A live hold fanned out to deciders carried a request dict
   without `duration`/`revoked_at`/`revoked_by`, while a connect-time replay

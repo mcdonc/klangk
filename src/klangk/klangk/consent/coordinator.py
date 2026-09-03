@@ -532,10 +532,10 @@ class ConsentCoordinator:
             # rule-management view (#2335 slice A) without a reconnect.
             await self._broadcast_rules(hold["workspace_id"])
 
-    async def _pop_hold(
+    def _pop_hold(
         self, request_id: str, decider_workspace: str | None
     ) -> dict | None:
-        """Pop + reap a held request's timeout task, or None when untouchable.
+        """Pop + timeout-cancel a held request, or None when untouchable.
 
         None when the request is not currently held (already resolved, timed
         out, never held) or -- defense-in-depth -- when a workspace-scoped
@@ -544,10 +544,10 @@ class ConsentCoordinator:
         peeked) -- the hold stays for a decider actually scoped to it.
 
         The pop and the timeout-task ``cancel()`` are synchronous -- no await
-        between them (the load-bearing invariant in ``_timeout``'s docstring)
-        -- and the task is then cancelled AND awaited (#3083) so it is
-        reaped before the caller moves on (no "Task was destroyed but it is
-        pending" noise when the loop closes first).
+        between them (the load-bearing invariant in ``_timeout``'s docstring).
+        Reaping the task (cancel AND await, #3083) is the caller's job, inside
+        its own cancellation-rescued region (#3089): a cancellation landing
+        on that await must fail-close the already-popped hold, not escape.
         """
         hold = self._holds.get(request_id)
         if hold is None:
@@ -555,8 +555,73 @@ class ConsentCoordinator:
         if not _hold_in_scope(hold, decider_workspace):
             return None
         del self._holds[request_id]
-        await self._cancel_hold_task(hold["task"])
+        hold["task"].cancel()
         return hold
+
+    def _resolve_popped_fail_close(
+        self, request_id: str, hold: dict, reason: str
+    ) -> None:
+        """Synchronously fail-close an already-popped hold (#3089).
+
+        No awaits: called from a task that is being cancelled, where any
+        suspension could re-deliver cancellation before the Future is set.
+        Resolves the Future deny and tells co-deciders to drop the request;
+        the pending row is expired best-effort by the caller afterwards.
+        An already-done Future (a committed verdict landed, or a racing
+        timeout) is left untouched AND un-broadcast -- a second
+        ``egress_resolved("expired")`` after the real "allowed"/"denied"
+        frame would contradict the committed decision on the wire.
+        """
+        if hold["future"].done():
+            return
+        hold["future"].set_result(
+            {
+                "decision": VERDICT_DENY,
+                "reason": reason,
+                "duration": DURATION_ONCE,
+            }
+        )
+        self._broadcast_resolved(request_id, hold["workspace_id"], "expired")
+
+    async def _decide_or_fail_close(
+        self,
+        request_id: str,
+        decision: str,
+        decided_by: str,
+        duration: str,
+    ) -> tuple[dict, str, dict | None, dict | None, bool]:
+        """``(verdict, resolved, forever_allow_row, forever_deny_row,
+        stranded)`` for one held request's decide step.
+
+        The error arm (decide() raised a DB error) fail-closes via the
+        caller's ``_finish_resolve`` and flags ``stranded`` so the row is
+        expired afterwards (#3081). Cancellation is NOT handled here: a
+        ``CancelledError`` is not an ``Exception``, so it escapes to the
+        caller's rescue (#3089), which owns fail-closing the popped hold.
+        """
+        try:
+            row = await self.app.state.model.egress_consent.decide(
+                request_id, decision, decided_by, duration
+            )
+        except Exception:
+            # decide() failed (DB error). The hold's own timeout is already
+            # cancelled, so the Future MUST be resolved by the caller --
+            # otherwise the sidecar relay awaits it forever. Fail-close to
+            # deny + broadcast so co-deciders drop it; the row is expired
+            # best-effort AFTER the Future is resolved, so a cancellation
+            # during that expire can never hang the relay.
+            logger.exception("consent: resolve failed; fail-closing to deny")
+            return (
+                {"decision": VERDICT_DENY, "reason": "error"},
+                "expired",
+                None,
+                None,
+                True,
+            )
+        verdict, resolved, allow_row, deny_row = _build_verdict(
+            row, decision, duration
+        )
+        return verdict, resolved, allow_row, deny_row, False
 
     async def resolve(
         self,
@@ -575,47 +640,55 @@ class ConsentCoordinator:
         Returns the verdict dict relayed to the sidecar, or ``None`` if the
         request is not currently held (already resolved, timed out, never
         held) or outside the decider's workspace (``decider_workspace``).
+
+        Cancellation-safe (#3089): a ``CancelledError`` delivered anywhere
+        past the pop (reaping the timeout task, the decide() write, the
+        finish sequence, the trailing stranded expire) is rescued before
+        re-raising -- the hold's Future keeps its committed verdict if one
+        landed, else is fail-closed deny -- so the popped, timeout-less
+        hold can never be left unresolvable (the sidecar relay awaits a
+        shielded Future with no timeout of its own and would hang forever)
+        and the stranded row still gets its best-effort expire.
         """
-        hold = await self._pop_hold(request_id, decider_workspace)
+        hold = self._pop_hold(request_id, decider_workspace)
         if hold is None:
             return None
-        forever_allow_row: dict | None = None
-        forever_deny_row: dict | None = None
-        stranded = False
         try:
-            row = await self.app.state.model.egress_consent.decide(
-                request_id, decision, decided_by, duration
-            )
-        except Exception:
-            # decide() failed (DB error). The hold's own timeout is already
-            # cancelled, so we MUST resolve the Future ourselves -- otherwise
-            # the sidecar relay awaits it forever ("no hold pending forever").
-            # Fail-close to deny + broadcast so co-deciders drop it; the row
-            # is expired best-effort AFTER the Future is resolved (below), so
-            # a cancellation during that expire can never hang the relay.
-            logger.exception("consent: resolve failed; fail-closing to deny")
-            verdict = {"decision": VERDICT_DENY, "reason": "error"}
-            resolved = "expired"
-            stranded = True
-        else:
+            await self._cancel_hold_task(hold["task"])
             (
                 verdict,
                 resolved,
                 forever_allow_row,
                 forever_deny_row,
-            ) = _build_verdict(row, decision, duration)
-        await self._finish_resolve(
-            request_id,
-            hold,
-            verdict,
-            resolved,
-            forever_allow_row,
-            forever_deny_row,
-        )
-        if stranded:
-            # A hold-less pending row can never be resolved by anyone yet
-            # still occupies a pending-cap slot (#3081); best-effort expire.
+                stranded,
+            ) = await self._decide_or_fail_close(
+                request_id, decision, decided_by, duration
+            )
+            await self._finish_resolve(
+                request_id,
+                hold,
+                verdict,
+                resolved,
+                forever_allow_row,
+                forever_deny_row,
+            )
+            if stranded:
+                # A hold-less pending row can never be resolved by anyone
+                # yet still occupies a pending-cap slot (#3081);
+                # best-effort expire -- inside the rescued region so a
+                # cancellation during it cannot skip the row's expiry.
+                await self._expire_stranded(request_id)
+        except BaseException:
+            # #3089: a cancellation is NOT an Exception -- without this
+            # rescue it would escape with the hold already popped and its
+            # timeout already cancelled, so nothing could ever resolve the
+            # Future: the relay's shielded await hangs, and a rolled-back
+            # decide leaves the row pending-but-invisible (the #3081 wedge)
+            # until the startup reaper. Fail-close NOW (synchronously,
+            # done-guarded), expire the row best-effort, then propagate.
+            self._resolve_popped_fail_close(request_id, hold, "error")
             await self._expire_stranded(request_id)
+            raise
         return verdict
 
     async def _persist_forever_allow(self, row: dict) -> None:
@@ -998,8 +1071,9 @@ class ConsentCoordinator:
     async def _expire_stranded(self, request_id: str) -> None:
         """Best-effort expire of a pending row whose hold is gone (#3081).
 
-        Called only after the hold was popped (``resolve``'s decide-failure
-        arm, ``_fail_close``): a row left ``pending`` with no live hold can
+        Called only after the hold was popped (``resolve``'s error and
+        cancellation arms, ``_fail_close``): a row left ``pending`` with
+        no live hold can
         never be resolved -- ``snapshot()`` replays only rows still held,
         and a verdict for its id returns ``None`` -- yet ``count_pending``
         keeps counting it against the workspace's pending cap until the

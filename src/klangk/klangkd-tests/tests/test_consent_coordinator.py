@@ -1235,6 +1235,211 @@ class TestConsentCoordinatorResolve:
         assert verdict == {"decision": "deny", "reason": "error"}
         assert fut_done_at_expire == [True]
 
+    async def test_resolve_cancelled_during_decide_fail_closes_future(self):
+        # #3089: a CancelledError delivered while decide() is in flight is
+        # not an Exception -- without the BaseException arm it would escape
+        # with the hold popped and its timeout cancelled, leaving nothing
+        # able to resolve the Future: the sidecar relay awaits it (shielded,
+        # no timeout of its own) forever. The Future must be fail-closed
+        # deny + the stranded row expired, then the cancellation re-raised.
+        app = _app(request=request())
+        entered = asyncio.Event()
+        fut_done_at_expire: list[bool] = []
+
+        async def _hanging_decide(*args):
+            entered.set()
+            await asyncio.Event().wait()  # suspend until cancelled
+
+        async def _expire(request_id):
+            fut_done_at_expire.append(fut.done())
+
+        app.state.model.egress_consent.decide = AsyncMock(
+            side_effect=_hanging_decide
+        )
+        app.state.model.egress_consent.expire_pending = AsyncMock(
+            side_effect=_expire
+        )
+        coord = ConsentCoordinator(app)
+        fut = await coord.hold(FULL_WS, "1.2.3.4", 443)
+        app.state.consent_deciders.broadcast.reset_mock()
+        task = asyncio.create_task(coord.resolve("rid-1", "allowed", "a@x"))
+        await entered.wait()  # resolve is now suspended inside decide()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        # the Future was fail-closed BEFORE the row expire ran, and the
+        # cancellation still propagated
+        assert fut_done_at_expire == [True]
+        assert fut.result() == {
+            "decision": "deny",
+            "reason": "error",
+            "duration": "once",
+        }
+        frames = [
+            c.args[1]
+            for c in app.state.consent_deciders.broadcast.call_args_list
+        ]
+        assert {
+            "type": "egress_resolved",
+            "workspace_id": FULL_WS,
+            "request_id": "rid-1",
+            "decision": "expired",
+        } in frames
+        assert coord._holds == {}  # no orphaned hold, no unresolvable Future
+
+    async def test_resolve_cancelled_with_preset_future_skips_set_result(self):
+        # The done-guard on the cancel path: a Future already resolved (a
+        # racing timeout's set_result) keeps its first verdict; the cancel
+        # arm only broadcasts + expires, then re-raises.
+        app = _app(request=request())
+        entered = asyncio.Event()
+
+        async def _hanging_decide(*args):
+            entered.set()
+            await asyncio.Event().wait()
+
+        app.state.model.egress_consent.decide = AsyncMock(
+            side_effect=_hanging_decide
+        )
+        coord = ConsentCoordinator(app)
+        fut = await coord.hold(FULL_WS, "1.2.3.4", 443)
+        fut.set_result(
+            {"decision": "deny", "reason": "timeout", "duration": "once"}
+        )
+        task = asyncio.create_task(coord.resolve("rid-1", "allowed", "a@x"))
+        await entered.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert fut.result()["reason"] == "timeout"  # not clobbered
+        app.state.model.egress_consent.expire_pending.assert_awaited_once_with(
+            "rid-1"
+        )
+
+    async def test_resolve_cancelled_during_timeout_reap_fail_closes(self):
+        # #3089, the other await past the pop: a cancellation landing while
+        # the timeout task is being reaped (before decide() is even called)
+        # must also fail-close the Future -- the hold is already popped and
+        # its timeout cancelled, so nothing else could resolve it.
+        app = _app(request=request())
+        coord = ConsentCoordinator(app)
+        fut = await coord.hold(FULL_WS, "1.2.3.4", 443)
+        reaping = asyncio.Event()
+
+        async def _hanging_reap(task):
+            reaping.set()
+            await asyncio.Event().wait()
+
+        coord._cancel_hold_task = _hanging_reap
+        app.state.model.egress_consent.decide = AsyncMock(
+            side_effect=AssertionError("decide must not run")
+        )
+        task = asyncio.create_task(coord.resolve("rid-1", "allowed", "a@x"))
+        await reaping.wait()  # resolve is now suspended reaping the timeout
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert fut.result() == {
+            "decision": "deny",
+            "reason": "error",
+            "duration": "once",
+        }
+        app.state.model.egress_consent.decide.assert_not_awaited()
+        app.state.model.egress_consent.expire_pending.assert_awaited_once_with(
+            "rid-1"
+        )
+        assert coord._holds == {}
+
+    async def test_resolve_cancelled_at_reap_composes_guard_and_rescue(self):
+        # The real guard->rescue composition, no monkeypatch: the caller is
+        # cancelled at the reap await while the timeout task ends NOT
+        # cancelled -> the swallow-guard in _cancel_hold_task re-raises ->
+        # resolve's rescue fail-closes the popped hold.
+        import contextlib
+
+        app = _app(request=request())
+        coord = ConsentCoordinator(app)
+        fut = await coord.hold(FULL_WS, "1.2.3.4", 443)
+        orig_task = coord._holds["rid-1"]["task"]
+        completing = asyncio.Event()
+
+        async def _slow_swallowing_timeout():
+            try:
+                await asyncio.sleep(30)
+            except asyncio.CancelledError:
+                await asyncio.sleep(0)  # one more tick before completing
+                completing.set()
+                return  # ends NOT cancelled (like _timeout's except arm)
+
+        child = asyncio.create_task(_slow_swallowing_timeout())
+        await asyncio.sleep(0)  # child now parked in its sleep
+        coord._holds["rid-1"]["task"] = child
+        task = asyncio.create_task(coord.resolve("rid-1", "allowed", "a@x"))
+        # resolve popped the hold, cancelled + is reaping the swapped child
+        await completing.wait()
+        task.cancel()  # resolve is queued-to-resume: the _must_cancel path
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert child.done() and not child.cancelled()
+        assert fut.result() == {
+            "decision": "deny",
+            "reason": "error",
+            "duration": "once",
+        }
+        app.state.model.egress_consent.decide.assert_not_awaited()
+        app.state.model.egress_consent.expire_pending.assert_awaited_once_with(
+            "rid-1"
+        )
+        # reap the displaced original timeout task (no pending-task noise)
+        orig_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await orig_task
+
+    async def test_resolve_cancelled_after_decide_keeps_committed_verdict(
+        self,
+    ):
+        # decide() committed (row allowed) and the cancellation lands during
+        # the finish sequence's persist await: the already-set Future keeps
+        # the REAL verdict (the relay gets the allow, not a retroactive
+        # deny), no contradictory "expired" broadcast follows the real one,
+        # and the rescue's expire is a no-op on the non-pending row.
+        row = request()
+        row["decision"] = "allowed"
+        row["duration"] = "forever"
+        app = _app(request=request(), decide_row=row)
+        coord = ConsentCoordinator(app)
+        fut = await coord.hold(FULL_WS, "1.2.3.4", 443)
+        persisting = asyncio.Event()
+
+        async def _hanging_persist(*args):
+            persisting.set()
+            await asyncio.Event().wait()
+
+        app.state.model.workspaces.add_allowed_domain = AsyncMock(
+            side_effect=_hanging_persist
+        )
+        task = asyncio.create_task(
+            coord.resolve("rid-1", "allowed", "a@x", duration="forever")
+        )
+        await persisting.wait()  # Future set; resolve suspended in persist
+        app.state.consent_deciders.broadcast.reset_mock()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert fut.result()["decision"] == "allow"  # committed verdict kept
+        frames = [
+            c.args[1]
+            for c in app.state.consent_deciders.broadcast.call_args_list
+        ]
+        assert not any(
+            f.get("type") == "egress_resolved"
+            and f.get("decision") == "expired"
+            for f in frames
+        )
+        app.state.model.egress_consent.expire_pending.assert_awaited_once_with(
+            "rid-1"
+        )
+
     async def test_concurrent_resolves_first_decision_wins(self):
         # two deciders resolve the same hold concurrently: exactly one wins
         # (one decide() write), the other is a no-op (returns None).
