@@ -14,6 +14,7 @@ from pathlib import Path
 import re
 import select
 import socket
+from collections.abc import Callable
 import struct
 import sys
 import termios
@@ -670,7 +671,9 @@ class KlangkClient:
         """
         return self._resolve_workspace(lambda w: w.id == ws_id, ws_id)
 
-    def _resolve_workspace(self, matches, key: str) -> Workspace:
+    def _resolve_workspace(
+        self, matches: Callable[[Workspace], bool], key: str
+    ) -> Workspace:
         """Scan owned + shared workspaces for the first match.
 
         Shared fetch/match shape of :meth:`resolve_workspace` and

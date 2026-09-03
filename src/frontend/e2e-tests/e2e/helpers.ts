@@ -399,8 +399,9 @@ export async function createWorkspace(
  *  shared-home provisioning can exceed the old 120s — the failing test
  *  then burned its retry on the same starved bring-up. 120s stays the
  *  local-dev default via the explicit override; CI inherits the
- *  load-tolerant budget. */
-const CONTAINER_READY_TIMEOUT = process.env.CI ? 240_000 : 120_000;
+ *  load-tolerant budget. Exported so the parallel-WS specs reuse the
+ *  same family budget for their container/PTY phases (#3065). */
+export const CONTAINER_READY_TIMEOUT = process.env.CI ? 240_000 : 120_000;
 
 /** Open a workspace in the browser and wait for the container to be ready. */
 export async function openWorkspace(

@@ -772,25 +772,37 @@ class WorkspaceDetailScreen(StatusScreen):
         response travel different connections, with no ordering
         guarantee). Resolving by the old name then misses — which is
         indistinguishable from deletion until the workspace is
-        re-resolved by id. When it is found, adopt the current name,
-        reload, and refresh the workspace list. Returns False when the
-        workspace is truly gone (or the by-id lookup itself fails — keep
-        the screen mounted and let the next push decide), so the caller
-        pops.
+        re-resolved by id.
+
+        Returns True when the screen must stay mounted: the workspace
+        was found by id (adopt its current name, render it, refresh the
+        workspace list), or the by-id lookup itself failed — an expired
+        session surfaces the app-wide overlay (same posture as
+        ``_load``'s AuthError arm), and any other failure degrades to the
+        current display and lets the next push decide. Returns False only
+        for a workspace that is genuinely gone, so the caller pops.
         """
-        if not wid:
-            return False
         try:
             ws = await asyncio.to_thread(
                 self.app.tui_state.find_workspace_by_id, wid
             )
+        except WorkspaceNotFoundError:
+            # By id it is gone too — genuinely deleted.
+            return False
+        except AuthError:
+            self.app.session_expired()
+            return True
         except Exception as exc:  # noqa: BLE001 — a failed lookup is not deletion
             logger.warning("Rename recovery lookup failed: %s", exc)
-            return False
+            return True
+        # Adopt the freshly fetched object directly. Re-resolving by name
+        # would pay a third list fetch and re-open the exact race this
+        # recovers from (a second rename landing between the two).
+        self._ws = ws
         self._name = ws.name
-        await self._load()
-        if self._missing:
-            return False
+        self._missing = False
+        self._load_error = None
+        self.refresh_display()
         self.app.refresh_workspaces()
         return True
 

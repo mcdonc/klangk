@@ -2817,16 +2817,18 @@ async def _settle(app):
 
 
 async def _quiesce(app, pilot):
-    """Drain the worker pool to true quiescence (#3065).
+    """Drain the worker pool past tail-spawned workers (#3065).
 
     ``_settle`` gathers the workers present at call time and breaks after
     one successful gather — a worker spawned at another worker's tail (the
     post-edit reload chain: save → reload → list refresh) can already be
     registered when that gather returns, yet never be awaited, leaving the
     test to assert mid-flight. Re-gather until a gather finds the pool
-    empty, flush one message cycle, and confirm nothing spawned in it
-    (registration of a worker started from a message callback lands a tick
-    later). Same exclusive-cancellation tolerance as ``_settle``.
+    empty, flush one message cycle, and confirm nothing spawned in it —
+    which closes the one-message-hop deferred registration this flow
+    needs (deeper message→message→worker chains would need another hop,
+    but no such chain exists here). Same exclusive-cancellation tolerance
+    as ``_settle``.
     """
     from textual.worker import WorkerCancelled, WorkerFailed
 
@@ -14703,37 +14705,68 @@ class TestDetailScreenBranchGaps2834:
             assert isinstance(app.screen, ConfirmScreen)
             assert screen in app.screen_stack
 
-    async def test_reload_on_status_adoption_still_missing_pops(self):
-        # The by-id recovery found the workspace, but the name resolve
-        # still missed after adoption — treat the screen as dead (#3065).
-        renamed = _wsobj("renamed", running=True)
+    async def test_reload_on_status_adoption_lookup_failure_keeps_screen(
+        self,
+    ):
+        # The by-id lookup failing transiently (network blip) is NOT a
+        # deletion: keep the screen mounted and let the next push decide
+        # (#3065) — do not destroy the user's open form.
         async with self._detail() as (app, screen):
             await _settle(app)
 
-            def never(n):
+            def gone(n):
                 raise WorkspaceNotFoundError(n)
 
-            app.tui_state.find_workspace = never
-            app.tui_state.find_workspace_by_id = lambda wid: renamed
+            def net_down(wid):
+                raise RuntimeError("net down")
+
+            app.tui_state.find_workspace = gone
+            app.tui_state.find_workspace_by_id = net_down
             screen.apply_status_event({"type": "workspaces_changed"})
             await _settle(app)
-            for _ in range(50):
-                if screen not in app.screen_stack:
-                    break
+            for _ in range(10):
                 await asyncio.sleep(0.02)
-            assert screen not in app.screen_stack
+            assert screen in app.screen_stack
+
+    async def test_reload_on_status_adoption_auth_error_overlays(
+        self,
+    ):
+        # An expired session surfacing during recovery takes _load's
+        # AuthError posture: the app-wide overlay, screen stays mounted
+        # (#3065) — not the deletion pop.
+        async with self._detail() as (app, screen):
+            await _settle(app)
+
+            def gone(n):
+                raise WorkspaceNotFoundError(n)
+
+            def expired(wid):
+                raise AuthError("expired")
+
+            app.tui_state.find_workspace = gone
+            app.tui_state.find_workspace_by_id = expired
+            screen.apply_status_event({"type": "workspaces_changed"})
+            await _settle(app)
+            for _ in range(10):
+                await asyncio.sleep(0.02)
+            assert screen in app.screen_stack
+            assert isinstance(app.screen, SessionExpiredScreen)
 
     async def test_reload_on_status_without_ws_pops(self):
         # No workspace object was ever resolved: there is no id to
-        # recover by, so a missing screen pops (#3065 guard branch).
+        # recover by, so a missing screen pops (#3065).
         async with self._detail() as (app, screen):
             await _settle(app)
 
             async def _noop_load():
                 pass
 
+            def _gone(wid):
+                raise WorkspaceNotFoundError(wid)
+
             screen._load = _noop_load
             screen._refresh_deploy_banner = _noop_load
+            app.tui_state.find_workspace_by_id = _gone
             screen._ws = None
             screen._missing = True
             await screen._reload_on_status()
