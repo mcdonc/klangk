@@ -130,6 +130,42 @@ def is_allowed_read_only_input(data: str) -> bool:
     return _READ_ONLY_INPUT.fullmatch(data) is not None
 
 
+def decode_b64_payload(raw, cmd: str) -> bytes | None:
+    """Base64-decode a client frame payload, or None when malformed.
+
+    ``base64.b64decode`` raises ``binascii.Error`` (a ``ValueError``) on
+    invalid base64 and ``TypeError`` on a non-str/bytes ``data`` field —
+    either used to propagate out of the exec_input/ssh_agent_data
+    handlers and tear down the whole WebSocket session (#3071). Callers
+    drop the frame (a warning is logged here) and keep the session.
+    ``validate=True`` rejects non-alphabet characters instead of
+    silently discarding them, so a malformed frame drops rather than
+    misdecoding.
+    """
+    try:
+        return base64.b64decode(raw, validate=True)
+    except (TypeError, ValueError):
+        logger.warning("%s: invalid base64 payload, dropping", cmd)
+        return None
+
+
+def valid_dimension(value, fallback: int) -> int:
+    """A usable terminal dimension (cols/rows) from a client frame.
+
+    ``_set_winsize`` packs dimensions with ``struct.pack("HHHH", ...)``,
+    which raises ``TypeError`` on non-ints and ``struct.error`` outside
+    the unsigned-short range — a ``None``/str/oversized ``cols`` used to
+    crash ``terminal_resize`` and kill the session, and the bad value
+    was persisted into ``cols``/``rows`` to poison later starts (#3071).
+    Malformed values fall back to *fallback* (the current stored size).
+    """
+    if isinstance(value, bool) or not isinstance(value, int):
+        return fallback
+    if not 0 <= value <= 0xFFFF:
+        return fallback
+    return value
+
+
 def ssh_agent_socket_path(user_id: str) -> str:
     """Deterministic in-container path for a user's forwarded SSH-agent socket.
 
@@ -317,10 +353,30 @@ class SshAgentForwarder:
         if proc is None or proc.stdin is None:
             return
         raw = msg.get("data", "")
-        if raw:
-            decoded = base64.b64decode(raw)
+        if not raw:
+            return
+        decoded = decode_b64_payload(raw, "ssh_agent_data")
+        if decoded is None:
+            return
+        await self.write_relay_stdin(proc, decoded)
+
+    async def write_relay_stdin(self, proc, decoded: bytes) -> None:
+        """Write *decoded* to socat stdin, tearing down a dead relay.
+
+        A dead relay (socat/container gone) raises BrokenPipeError/
+        ConnectionResetError on write and RuntimeError on drain — the
+        frame is dropped and the forwarder is stopped so subsequent
+        frames short-circuit on ``proc is None`` instead of warning
+        forever (#3071).
+        """
+        try:
             proc.stdin.write(decoded)
             await proc.stdin.drain()
+        except (ConnectionError, RuntimeError):
+            logger.warning(
+                "SSH agent relay stdin gone; dropping frame and stopping relay"
+            )
+            await self.stop()
 
     async def stop_command(self) -> None:
         """Stop SSH agent forwarding and notify the client."""
@@ -472,16 +528,18 @@ class ExecController:
         session = self.session
         if session is None or not session.is_alive:
             return
-        raw = base64.b64decode(msg.get("data", ""))
-        if len(raw) > MAX_INPUT_SIZE:
+        decoded = decode_b64_payload(msg.get("data", ""), "exec_input")
+        if decoded is None:
+            return
+        if len(decoded) > MAX_INPUT_SIZE:
             logger.warning(
-                "exec_input too large (%d bytes), dropping", len(raw)
+                "exec_input too large (%d bytes), dropping", len(decoded)
             )
             return
         self._conn.app.state.container_registry.record_activity(
             self._conn.container_id
         )
-        await session.write(raw)
+        await session.write(decoded)
 
     async def close_stdin(self) -> None:
         session = self.session
@@ -758,6 +816,10 @@ class TerminalController:
         await self.stop()
         cols = msg.get("cols", self.cols)
         rows = msg.get("rows", self.rows)
+        # Malformed dimensions must not poison the stored size for later
+        # starts nor crash session.start (#3071).
+        cols = valid_dimension(cols, self.cols)
+        rows = valid_dimension(rows, self.rows)
         logger.info(
             "terminal_start: cols=%s rows=%s (0 may make tmux/podman attach fail)",
             cols,
@@ -976,8 +1038,11 @@ class TerminalController:
         return session.read_only and not is_allowed_read_only_input(data)
 
     async def resize(self, msg: dict) -> None:
-        self.cols = msg.get("cols", 80)
-        self.rows = msg.get("rows", 24)
+        # A malformed cols/rows (null, string, oversized) is replaced with
+        # the current stored size instead of crashing _set_winsize and
+        # being persisted for subsequent starts (#3071).
+        self.cols = valid_dimension(msg.get("cols", 80), self.cols)
+        self.rows = valid_dimension(msg.get("rows", 24), self.rows)
         session = self.session
         if session is None:
             return

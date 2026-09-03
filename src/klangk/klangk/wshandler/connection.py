@@ -472,6 +472,13 @@ class Connection:
             # client stays connected and can retry once capacity frees.
             send_error(self.sock, str(exc), code="capacity")
             return False
+        except PodmanError as exc:
+            # Same mapping as the restart path (#2676): a podman launch
+            # failure must surface its actionable message, not escape
+            # to the per-frame guard's generic "Error handling
+            # command" frame (#3071) nor drop the session.
+            send_error(self.sock, f"Container start failed: {exc}")
+            return False
 
     def _container_label(
         self, workspace_id: str, ports: list
