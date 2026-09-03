@@ -629,6 +629,25 @@ async def _apply_live_state_updates(
     await _sync_tmux_workspace_name(app, live_state, fields)
 
 
+async def _update_workspace_fields(
+    app, workspace_id: str, owner_id: str, fields: dict
+) -> bool:
+    """Apply a workspace field update; 409 when a rename collides with
+    another name the owner already holds (UNIQUE(user_id, name)) — the
+    same mapping the create, duplicate, and import paths apply."""
+    try:
+        return await app.state.model.workspaces.update_workspace(
+            workspace_id, owner_id, **fields
+        )
+    except SAIntegrityError:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"A workspace named {fields.get('name')!r} already exists"
+            ),
+        )
+
+
 @router.put("/workspaces/{workspace_id}")
 async def update_workspace(
     workspace_id: str,
@@ -652,8 +671,8 @@ async def update_workspace(
         _check_nix_optin(
             fields["settings"], app, previous=workspace["settings"]
         )
-    updated = await app.state.model.workspaces.update_workspace(
-        workspace_id, workspace["user_id"], **fields
+    updated = await _update_workspace_fields(
+        app, workspace_id, workspace["user_id"], fields
     )
     if not updated:
         raise HTTPException(status_code=404, detail="Workspace not found")

@@ -370,6 +370,16 @@ async def _update_user_password(app, user_id: str, password: str) -> None:
     await app.state.model.users.update_password(user_id, password_hash)
 
 
+async def _update_user_email(app, user_id: str, email: str) -> None:
+    """Apply an email change: 400 on a malformed address or one already
+    used by another account — the same checks change-email applies."""
+    auth.validate_email(email)
+    existing = await app.state.model.users.get_user_by_email(email)
+    if existing is not None and existing["id"] != user_id:
+        raise HTTPException(status_code=400, detail="Email already in use")
+    await app.state.model.users.update_email(user_id, email)
+
+
 async def _update_user_handle(app, user_id: str, handle: str) -> None:
     """Set + propagate a handle change to live WS sessions; 400 on an
     invalid handle."""
@@ -389,7 +399,7 @@ async def update_user(
 ):
     await _require_user(app, user_id)
     if req.email is not None:
-        await app.state.model.users.update_email(user_id, req.email)
+        await _update_user_email(app, user_id, req.email)
     if req.password is not None:
         await _update_user_password(app, user_id, req.password)
     if req.handle is not None:

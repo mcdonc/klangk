@@ -3318,6 +3318,31 @@ class TestWorkspaceRoutes:
         assert match[0]["name"] == "renamed"
         assert match[0]["service_command"] == "pi"
 
+    async def test_update_workspace_name_collision(self, client, user):
+        """#3097: renaming onto another name the owner holds is a 409
+        (same as create/duplicate/import), not a 500 off UNIQUE(user_id,
+        name)."""
+        headers = await _auth_headers(client)
+        for name in ("collide-a", "collide-b"):
+            resp = await client.post(
+                "/api/v1/workspaces",
+                json={"name": name},
+                headers=headers,
+            )
+            assert resp.status_code == 200
+            if name == "collide-a":
+                ws_id = resp.json()["id"]
+        resp = await client.put(
+            f"/api/v1/workspaces/{ws_id}",
+            json={"name": "collide-b"},
+            headers=headers,
+        )
+        assert resp.status_code == 409
+        assert "collide-b" in resp.json()["detail"]
+        resp = await client.get("/api/v1/workspaces", headers=headers)
+        match = [w for w in resp.json() if w["id"] == ws_id]
+        assert match[0]["name"] == "collide-a"
+
     async def test_update_workspace_egress_mode(self, client, user):
         # #2409: egress_mode is editable (PUT), taking effect on next start.
         headers = await _auth_headers(client)
@@ -9197,12 +9222,43 @@ class TestAdminEndpoints:
         headers = await self._admin_headers(client)
         resp = await client.patch(
             f"/api/v1/users/{user['id']}",
-            json={"email": "renamed"},
+            json={"email": "renamed@example.com"},
             headers=headers,
         )
         assert resp.status_code == 200
         updated = await app_state.state.model.users.get_user_by_id(user["id"])
-        assert updated["email"] == "renamed"
+        assert updated["email"] == "renamed@example.com"
+
+    async def test_update_email_invalid_rejected(
+        self, client, admin_user, user, app_state
+    ):
+        """#3097: a malformed address is rejected, not persisted."""
+        headers = await self._admin_headers(client)
+        resp = await client.patch(
+            f"/api/v1/users/{user['id']}",
+            json={"email": "not-an-email"},
+            headers=headers,
+        )
+        assert resp.status_code == 400
+        assert "valid email" in resp.json()["detail"]
+        updated = await app_state.state.model.users.get_user_by_id(user["id"])
+        assert updated["email"] == user["email"]
+
+    async def test_update_email_duplicate_rejected(
+        self, client, admin_user, user, app_state
+    ):
+        """#3097: an address owned by another account is a 400, not a
+        500 off the users.email UNIQUE constraint."""
+        headers = await self._admin_headers(client)
+        resp = await client.patch(
+            f"/api/v1/users/{user['id']}",
+            json={"email": admin_user["email"]},
+            headers=headers,
+        )
+        assert resp.status_code == 400
+        assert resp.json()["detail"] == "Email already in use"
+        updated = await app_state.state.model.users.get_user_by_id(user["id"])
+        assert updated["email"] == user["email"]
 
     async def test_update_password(self, client, admin_user, user):
         headers = await self._admin_headers(client)

@@ -2006,6 +2006,17 @@ new-ws …` then answering `y` to the restart prompt) crashed with an
   pressing Enter there was a no-op (the create form already submitted).
   Enter now saves the form from that field as well.
 
+- **Admin user email updates are now validated (#3097).** `PATCH
+/api/v1/users/{id}` rejects a malformed address (400 "Must be a valid
+  email address") and an address already used by another account (400
+  "Email already in use") instead of persisting invalid emails or
+  returning a 500 off the `users.email` unique constraint.
+
+- **Workspace rename conflicts now return 409 (#3097).** `PUT
+/api/v1/workspaces/{id}` renaming a workspace onto another name the
+  owner already holds returns the same 409 "A workspace named … already
+  exists" as the create, duplicate, and import paths, instead of a 500.
+
 - **`egress_request` frames now carry one request shape on every delivery
   path (#3082).** A live hold fanned out to deciders carried a request dict
   without `duration`/`revoked_at`/`revoked_by`, while a connect-time replay
