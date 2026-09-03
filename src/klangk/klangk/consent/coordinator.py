@@ -333,13 +333,22 @@ class ConsentCoordinator:
         ``consent_paused_until`` on the workspace to ``now + duration`` and
         broadcasts a refreshed ``egress_rules`` frame so every decider sees
         the pause window. The window is honored only while the workspace
-        stays in interactive egress mode: an ``egress_mode`` update clears
-        it (#3080), and the hold gate ignores it outside interactive mode
-        regardless. Returns ``{"ok": bool, "until": float | None}`` --
-        ``ok`` is False for an unknown duration or a missing workspace.
+        stays in interactive egress mode: an actual ``egress_mode`` switch
+        clears it (#3080), the hold gate ignores it outside interactive mode
+        regardless, and a pause set on a workspace since switched away from
+        interactive is refused (``ok`` False). Returns
+        ``{"ok": bool, "until": float | None}`` -- ``ok`` is False for an
+        unknown duration, a non-interactive workspace, or a missing
+        workspace.
         """
         secs = _PAUSE_SECONDS.get(duration)
         if secs is None:
+            return {"ok": False, "until": None}
+        if not await workspace_opted_in(self.app, workspace_id):
+            # #3086 review: the pause is an interactive-mode affordance --
+            # a lingering decider socket (connected before a mode switch)
+            # must not store a new inert window that only confuses the
+            # rules view; the hold gate would ignore it regardless.
             return {"ok": False, "until": None}
         until = time.time() + secs
         if not await self.app.state.model.workspaces.set_consent_pause(

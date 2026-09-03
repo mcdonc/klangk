@@ -14,6 +14,7 @@ import pytest
 
 from klangk.model.acl import ACTION_ALLOW, PRINCIPAL_USER
 from klangk.model.workspaces import (
+    EGRESS_MODE_INTERACTIVE,
     EGRESS_MODE_STATIC,
     SETUP_STATE_COMPLETE,
     SETUP_STATE_PENDING,
@@ -86,16 +87,34 @@ async def test_set_consent_pause_missing_workspace_false(ws):
 
 
 async def test_update_workspace_egress_mode_clears_consent_pause(ws, user):
-    # #3080: an egress_mode write ends the consent-pause window -- the
-    # pause is an interactive-mode affordance and must not outlive a mode
-    # switch (a stale window would auto-allow off-list egress again if the
-    # workspace were later switched back to interactive).
+    # #3080: an actual egress-mode switch ends the consent-pause window --
+    # the pause is an interactive-mode affordance and must not outlive a
+    # mode switch (a stale window would auto-allow off-list egress again
+    # if the workspace were later switched back to interactive).
     row = await ws.create_workspace(user["id"], "pause-mode")
     await ws.set_consent_pause(row["id"], 1234.5)
     assert await ws.update_workspace(
         row["id"], user["id"], egress_mode=EGRESS_MODE_STATIC
     )
     assert await ws.get_consent_pause(row["id"]) is None
+
+
+async def test_update_workspace_mode_echo_keeps_consent_pause(ws, user):
+    # #3086 review: both first-party clients echo egress_mode in every
+    # save payload; a no-op echo (same stored mode, possibly alongside
+    # unrelated edits like a rename) must not cancel a live pause.
+    row = await ws.create_workspace(user["id"], "pause-echo")
+    await ws.set_consent_pause(row["id"], 1234.5)
+    assert await ws.update_workspace(
+        row["id"],
+        user["id"],
+        name="renamed",
+        egress_mode=EGRESS_MODE_INTERACTIVE,
+    )
+    got = await ws.get_workspace_by_id(row["id"])
+    assert got["name"] == "renamed"
+    assert got["egress_mode"] == EGRESS_MODE_INTERACTIVE
+    assert await ws.get_consent_pause(row["id"]) == 1234.5
 
 
 async def test_update_workspace_other_fields_keep_consent_pause(ws, user):

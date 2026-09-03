@@ -720,6 +720,17 @@ class TestConsentCoordinatorPause:
         assert result == {"ok": False, "until": None}
         app.state.consent_deciders.broadcast.assert_not_called()
 
+    async def test_pause_refuses_outside_interactive_mode(self):
+        # #3086 review: the pause is an interactive-mode affordance -- a
+        # decider connected before a switch to static must not store a new
+        # inert window (the hold gate would ignore it regardless).
+        app = _app(egress_mode="static")
+        coord = ConsentCoordinator(app)
+        result = await coord.pause(FULL_WS, "1h")
+        assert result == {"ok": False, "until": None}
+        app.state.model.workspaces.set_consent_pause.assert_not_awaited()
+        app.state.consent_deciders.broadcast.assert_not_called()
+
     async def test_unpause_clears_and_broadcasts(self):
         app = _app()
         coord = ConsentCoordinator(app)
@@ -1674,6 +1685,10 @@ class TestConsentCoordinatorPauseIntegration:
             await coord.hold(ws["id"], "offlist.example.com", 443)
         ).result()
         assert verdict == {"decision": "deny", "reason": "static"}
+        assert await wsm.get_consent_pause(ws["id"]) is None
+        # a lingering decider cannot store a fresh window on the now-static
+        # workspace either (#3086 review)
+        assert (await coord.pause(ws["id"], "1h"))["ok"] is False
         assert await wsm.get_consent_pause(ws["id"]) is None
         # back to interactive: no resurrection -- the hold is held for a
         # decider instead of auto-allowed
