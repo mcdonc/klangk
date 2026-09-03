@@ -1184,6 +1184,32 @@ class TestAuthError:
 
 
 class TestLogout:
+    @pytest.fixture(autouse=True, scope="class")
+    @staticmethod
+    def _restore_login(cli_config):
+        """Re-login after the class so later tests keep a working config.
+
+        ``test_logout`` clears the server entry from the CLI config
+        (``CLIState.clear_credentials``), and the config is shared by the
+        whole xdist worker (``cli_config`` is session-scoped). Without
+        restoring the login, every later test on this worker without its
+        own re-login fixture fails with "No server configured" depending
+        on scheduling (#3058).
+        """
+        yield
+        run(
+            [
+                "klangk",
+                "login",
+                cli_config["server_url"],
+                "test@example.com",
+                "--password-file",
+                "-",
+            ],
+            input="testpass\n",
+            env=cli_config["env"],
+        )
+
     def test_logout(self, cli_config):
         result = run(
             ["klangk", "logout"],
