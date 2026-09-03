@@ -545,48 +545,27 @@ class KlangkClient:
             settings=w.get("settings"),
         )
 
-    def create_workspace(
-        self,
-        name: str,
-        image: str | None = None,
-        service_command: str | None = None,
-        auto_start: bool = False,
-        mounts: list[str] | None = None,
-        env: dict[str, str] | None = None,
-        setup_state: str | None = None,
-        health_check: str | None = None,
-        allowed_domains: list[str] | None = None,
-        egress_mode: str | None = None,
-        rejected_domains: list[str] | None = None,
-        settings: dict | None = None,
-        per_handle_home: bool | None = None,
-        classification_banner: str | None = None,
-    ) -> Workspace:
+    def create_workspace(self, name: str, **optional) -> Workspace:
+        """Create a workspace (``POST /api/v1/workspaces``).
+
+        Keyword fields mirror the server's ``CreateWorkspaceRequest``
+        body schema (the ``klangk.cli`` isolation rule forbids importing
+        the server's model, so the field list is not repeated here
+        (#3048)). Falsy values are omitted — the server applies its
+        defaults — except ``per_handle_home``, where ``None`` means
+        "not chosen" and ``False`` is sent. Empty/None
+        ``classification_banner`` inherits the deploy default marking
+        (KLANGKD_CLASSIFICATION_BANNER); only a non-empty label sets the
+        per-workspace override (#2768).
+        """
         body: dict = {"name": name}
-        optional = {
-            "image": image,
-            "service_command": service_command,
-            "auto_start": auto_start,
-            "mounts": mounts,
-            "env": env,
-            "setup_state": setup_state,
-            "health_check": health_check,
-            "allowed_domains": allowed_domains,
-            "egress_mode": egress_mode,
-            "rejected_domains": rejected_domains,
-            "settings": settings,
-            # Empty/None = inherit the deploy default marking
-            # (KLANGKD_CLASSIFICATION_BANNER); only a non-empty label sets
-            # the per-workspace override (#2768).
-            "classification_banner": classification_banner,
-        }
         for key, value in optional.items():
             if value:
                 body[key] = value
         # None = not chosen: the server applies the deploy default
         # (KLANGKD_PER_HANDLE_HOME) — same convention as egress_mode.
-        if per_handle_home is not None:
-            body["per_handle_home"] = per_handle_home
+        if optional.get("per_handle_home") is not None:
+            body["per_handle_home"] = optional["per_handle_home"]
         resp = self.post("/api/v1/workspaces", json=body)
         self.check_auth(resp)
         self._raise_for_status(resp)
