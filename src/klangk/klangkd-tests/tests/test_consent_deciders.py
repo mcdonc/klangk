@@ -476,6 +476,35 @@ class TestConsentDeciderWS:
         assert "refused: Forbidden" in caplog.text
         assert "user=a@x" in caplog.text
 
+    async def test_handshake_marks_each_step(self):
+        """#3069: the authz and workspace marks are recorded inside
+        ``_refuse_invalid_handshake`` — one per step, not two identical
+        totals after both steps finished (the #2420 breakdown was fiction)."""
+        from klangk.wshandler.decider import _refuse_invalid_handshake
+
+        app = _ws_app({"id": "u1", "email": "a@x"})
+        ws = _FakeWS({"token": "tok", "workspace": WS}, [])
+        marks: list[str] = []
+        refused = await _refuse_invalid_handshake(
+            ws, app, WS, {"id": "u1", "email": "a@x"}, hs_mark=marks.append
+        )
+        assert refused is False
+        assert marks == ["authz", "workspace"]
+
+    async def test_authz_refusal_marks_authz_only(self):
+        """A refusal at the permission check stops before the workspace
+        step, so only the authz mark is recorded."""
+        from klangk.wshandler.decider import _refuse_invalid_handshake
+
+        app = _ws_app({"id": "u1", "email": "a@x"}, allowed=False)
+        ws = _FakeWS({"token": "tok", "workspace": WS}, [])
+        marks: list[str] = []
+        refused = await _refuse_invalid_handshake(
+            ws, app, WS, {"id": "u1", "email": "a@x"}, hs_mark=marks.append
+        )
+        assert refused is True
+        assert marks == ["authz"]
+
     async def test_missing_workspace_param_is_refused(self):
         # #2976: consent is strictly a workspace concern -- there is no
         # deploy-wide decider flavor, so a handshake with no ``workspace``

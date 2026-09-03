@@ -295,7 +295,14 @@ class SshAgentForwarder:
             await self._relay_stream(proc.stdout)
         except asyncio.CancelledError:
             logger.debug("SSH agent output relay cancelled")
-        except OSError as e:
+        except WS_ERRORS as e:
+            # #3069: WS_ERRORS includes SlowClientError — a client that
+            # stops reading its agent relay must end the relay task
+            # quietly (it also covers OSError/ConnectionError from a dead
+            # socat). Unhandled, the task completes with the exception
+            # and it resurfaces from ``_cancel_task``'s ``await self.task``
+            # through ``stop()``/``Connection.cleanup``, dropping the whole
+            # WebSocket (and skipping the handler's connections.pop).
             logger.warning("SSH agent output relay error: %s", e)
 
     async def _relay_stream(self, stdout) -> None:
@@ -353,6 +360,11 @@ class SshAgentForwarder:
             await self.task
         except asyncio.CancelledError:
             pass
+        except Exception:
+            # #3069: a task that already completed with an exception must
+            # not leak it through stop()/cleanup() — same shape as
+            # SafeWebSocket.stop_sender's await.
+            logger.exception("SSH agent relay task failed")
         self.task = None
 
     async def _kill_proc(self) -> None:

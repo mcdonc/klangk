@@ -2594,6 +2594,27 @@ class TestHandleWebsocketDispatch:
         websocket = await self._run_commands(user, [{"cmd": "terminal_start"}])
         websocket.accept.assert_awaited_once()
 
+    async def test_cleanup_failure_still_pops_connection(self, user, caplog):
+        """#3069: a cleanup exception must not skip the registry pop —
+        otherwise the SafeWebSocket->Connection entry leaks."""
+        import logging
+
+        app_state = _make_app_state()
+        token = _auth().create_token(user["id"], user["email"])
+        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket.receive_text = AsyncMock(side_effect=[WebSocketDisconnect()])
+        with (
+            patch.object(
+                Connection,
+                "cleanup",
+                new=AsyncMock(side_effect=RuntimeError("cleanup boom")),
+            ),
+            caplog.at_level(logging.ERROR, logger="klangk.wshandler.dispatch"),
+        ):
+            await handle_websocket(websocket, app_state)  # must not raise
+        assert app_state.state.sockets.connections == {}
+        assert "Connection cleanup failed" in caplog.text
+
     async def test_dispatch_terminal_input(self, user):
         websocket = await self._run_commands(
             user, [{"cmd": "terminal_input", "data": "x"}]
@@ -3899,6 +3920,52 @@ class TestSSHAgentHandlers:
         ]
         assert len(calls) == 1
         assert base64.b64decode(calls[0]["data"]) == b"agent-response"
+
+    async def test_forward_ssh_agent_output_swallows_slow_client(self, caplog):
+        """#3069: a slow client must end the relay quietly.
+
+        Unhandled, the relay task completed with SlowClientError and it
+        resurfaced from _cancel_task's await through stop()/cleanup(),
+        dropping the whole WebSocket and skipping the handler's
+        connections.pop.
+        """
+        import logging
+
+        sock = _mock_sock()
+        sock.send_json = MagicMock(
+            side_effect=SlowClientError("outbound queue full")
+        )
+        conn = _base_conn(ws=sock)
+        conn.container_id = "cid"
+        mock_proc = AsyncMock()
+        mock_proc.stdout = AsyncMock()
+        mock_proc.stdout.read = AsyncMock(side_effect=[b"agent-response", b""])
+        conn.ssh_agent.proc = mock_proc
+        with caplog.at_level(
+            logging.WARNING, logger="klangk.wshandler.controllers"
+        ):
+            await conn._forward_ssh_agent_output()  # must not raise
+        assert "SSH agent output relay error" in caplog.text
+
+    async def test_cancel_task_swallows_failed_task_exception(self, caplog):
+        """#3069: awaiting an already-failed task must not leak its
+        exception through stop()/cleanup()."""
+        import logging
+
+        conn = _base_conn()
+
+        async def boom():
+            raise ValueError("relay bug")
+
+        task = asyncio.create_task(boom())
+        await asyncio.sleep(0)  # let it fail
+        conn.ssh_agent.task = task
+        with caplog.at_level(
+            logging.ERROR, logger="klangk.wshandler.controllers"
+        ):
+            await conn.ssh_agent._cancel_task()  # must not raise
+        assert conn.ssh_agent.task is None
+        assert "SSH agent relay task failed" in caplog.text
 
     async def test_ssh_agent_start_with_terminal(self, app_state):
         """SSH_AUTH_SOCK is passed to TerminalSession when agent is active."""

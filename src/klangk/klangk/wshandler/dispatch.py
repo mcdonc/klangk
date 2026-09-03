@@ -176,7 +176,13 @@ async def handle_websocket(websocket: WebSocket, app) -> None:
         await _run_websocket_session(conn, safe_ws, user, app)
     finally:
         await safe_ws.stop_sender()
-        await conn.cleanup()
+        try:
+            await conn.cleanup()
+        except Exception:  # noqa: BLE001
+            # #3069: cleanup failing must not skip the registry pop below
+            # (a stale SafeWebSocket->Connection entry would leak until the
+            # next fanout pruned it) — log and keep tearing down.
+            logger.exception("Connection cleanup failed")
         # Container is intentionally left running — idle timeout will clean it up.
         # This allows instant reconnection when navigating back to the workspace.
         app.state.sockets.connections.pop(safe_ws, None)
