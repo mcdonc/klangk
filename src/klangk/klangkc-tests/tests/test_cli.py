@@ -1252,6 +1252,16 @@ class TestKlangkClient:
             client.create_workspace("n2")
             assert "egress_mode" not in client.post.call_args.kwargs["json"]
 
+    def test_create_workspace_rejects_unknown_fields(self):
+        # The **optional signature must not swallow typo'd kwargs: the
+        # server's pydantic model ignores unknown keys, so a typo would
+        # silently drop the field (#3048 review).
+        client = KlangkClient("http://test:8995", "token")
+        with patch.object(client, "post") as post:
+            with pytest.raises(TypeError, match="bogus"):
+                client.create_workspace("n", bogus=1)
+            post.assert_not_called()
+
     def test_create_workspace_includes_per_handle_home(self):
         client = KlangkClient("http://test:8995", "token")
         mock_resp = MagicMock(status_code=200)

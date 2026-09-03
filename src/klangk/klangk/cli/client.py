@@ -270,6 +270,30 @@ def token_expires_soon(token: str) -> bool:
     return _time.time() >= (exp - _REFRESH_MARGIN_SECONDS)
 
 
+# The create-body field names accepted by create_workspace. The cli/
+# isolation rule forbids importing the server's CreateWorkspaceRequest
+# model, so the names are pinned here and checked on entry: pydantic
+# ignores unknown keys, so a typo'd kwarg must fail client-side instead
+# of silently dropping the field (#3048 review).
+CREATE_FIELDS = frozenset(
+    {
+        "image",
+        "service_command",
+        "auto_start",
+        "mounts",
+        "env",
+        "setup_state",
+        "health_check",
+        "allowed_domains",
+        "egress_mode",
+        "rejected_domains",
+        "settings",
+        "per_handle_home",
+        "classification_banner",
+    }
+)
+
+
 class KlangkClient:
     def __init__(self, server_url: str, token: str | None = None):
         self.server_url = server_url
@@ -548,16 +572,23 @@ class KlangkClient:
     def create_workspace(self, name: str, **optional) -> Workspace:
         """Create a workspace (``POST /api/v1/workspaces``).
 
-        Keyword fields mirror the server's ``CreateWorkspaceRequest``
-        body schema (the ``klangk.cli`` isolation rule forbids importing
-        the server's model, so the field list is not repeated here
-        (#3048)). Falsy values are omitted — the server applies its
+        Keyword fields are restricted to ``CREATE_FIELDS`` (they mirror
+        the server's ``CreateWorkspaceRequest`` body schema; the
+        ``klangk.cli`` isolation rule forbids importing the model).
+        Unknown keys raise ``TypeError`` — the server would silently
+        drop them. Falsy values are omitted — the server applies its
         defaults — except ``per_handle_home``, where ``None`` means
         "not chosen" and ``False`` is sent. Empty/None
         ``classification_banner`` inherits the deploy default marking
         (KLANGKD_CLASSIFICATION_BANNER); only a non-empty label sets the
         per-workspace override (#2768).
         """
+        unknown = optional.keys() - CREATE_FIELDS
+        if unknown:
+            raise TypeError(
+                "create_workspace() got unexpected keyword argument(s):"
+                f" {', '.join(sorted(unknown))}"
+            )
         body: dict = {"name": name}
         for key, value in optional.items():
             if value:

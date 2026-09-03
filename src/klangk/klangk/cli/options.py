@@ -87,8 +87,8 @@ ClassificationBannerOption = Annotated[
         help=(
             "Classification marking shown as a persistent banner on the "
             "workspace page (free text, e.g. UNCLASSIFIED, CUI, SECRET). "
-            "Empty or omitted = the server default "
-            "(KLANGKD_CLASSIFICATION_BANNER)"
+            "'' = the server default (KLANGKD_CLASSIFICATION_BANNER); "
+            "omitted = the server default on create, unchanged on edit"
         ),
     ),
 ]
