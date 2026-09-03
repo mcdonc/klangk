@@ -199,8 +199,7 @@ plus a separate container-egress listener on `KLANGKD_EGRESS_PORT`.
 never promote it.
 
 For each combination, klangk renders the **maximum-feature proxy template
-the combination can service** (the proxy is Caddy, the sole
-engine):
+the combination can service** (the proxy is Caddy, the sole engine):
 
 | `KLANGKD_PORT`   | `KLANGKD_AUTH_MODES`   | proxy template | browser?    | status                                                |
 | ---------------- | ---------------------- | -------------- | ----------- | ----------------------------------------------------- |
