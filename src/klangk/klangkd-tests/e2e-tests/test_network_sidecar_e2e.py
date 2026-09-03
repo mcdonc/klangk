@@ -376,12 +376,18 @@ def _reap_follow(follow):
             pass
 
 
-def _container_logs(name, followed=b""):
-    """Full ``podman logs`` for *name*; the followed bytes if that fails."""
-    full = podman("logs", name, check=False, timeout=20)
-    if full.returncode == 0:
-        return full.stdout
-    return followed.decode(errors="replace")
+def _logs_snapshot(name):
+    """One-shot ``podman logs`` — unlike ``--follow`` it REPLAYS history.
+
+    ``podman logs --follow`` on the CI runners streams only output written
+    AFTER the attach: the sidecar prints its listening line ~1s after
+    ``podman run``, the follow attaches later, and the needle is never
+    delivered even though a one-shot logs call shows it (CI run 33708005147:
+    ~80 reattaches over 40s, line present in the failure-time snapshot).
+    Every probe cycle therefore starts from a snapshot; the follow only
+    adds NEW output on top (#3062).
+    """
+    return podman("logs", name, check=False, timeout=20).stdout
 
 
 def _container_state(name):
@@ -402,11 +408,12 @@ def _follow_once(name, needle, deadline):
 
     Checking the needle inside the read loop matters: a genuinely-following
     podman never EOFs a running container, so waiting for the process to
-    exit would sit on the needle until the deadline. Conversely, on the CI
-    runners' podman the follow can hit EOF at the current end-of-log BEFORE
-    the container's first line lands (it exits 0 while the container is
-    still running) — so the caller must reattach rather than treat EOF as
-    the container's death (#3063 CI run 33706670438).
+    exit would sit on the needle until the deadline. Conversely, podman's
+    follow streams only output written AFTER the attach (no history replay
+    — see ``_logs_snapshot``), and can EOF at the current end-of-log while
+    the container is still running — so the caller snapshots first, treats
+    EOF as a signal to reattach, not as the container's death (#3063 CI
+    runs 33706670438 / 33708005147).
     """
     follow = subprocess.Popen(
         ["podman", "logs", "--follow", name],
@@ -434,36 +441,35 @@ def _follow_once(name, needle, deadline):
 def _follow_logs_until(name, needle, timeout, what):
     """Fail via pytest unless *needle* appears in *name*'s logs in *timeout*.
 
-    Reads the log stream on long-lived ``podman logs --follow`` processes
-    instead of a fresh ``podman`` CLI pair (logs + inspect) per 0.5s poll
-    tick: each CLI invocation pays podman startup and storage-lock
-    round-trips, which under concurrent E2E suites can consume the whole
-    budget even though the needle appeared early (#3062). When the follow
-    stream ends, a stopped container fails fast with its state and full
-    logs; a still-running one is reattached after one poll interval (the
-    EOF-before-first-line race above), which degrades to exactly the old
-    poll cadence at worst.
+    Each cycle snapshots the log (history replay — see ``_logs_snapshot``)
+    and then follows the stream for new output until the needle appears,
+    the follow EOFs, or the deadline passes. A stopped container fails
+    fast with its state and logs; a still-running one reattaches after one
+    poll interval. Best case (needle already printed) costs a single CLI
+    call; a podman whose follow works costs snapshot + one long-lived
+    follow; a podman whose follow is inert degrades to the old 0.5s poll
+    cadence — never worse than the poller this replaces (#3062).
     """
     encoded = needle.encode()
-    buf = b""
     deadline = time.monotonic() + timeout
-    while encoded not in buf:
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            pytest.fail(
-                f"{what} within {timeout}s\n"
-                f"logs:\n{_container_logs(name, buf)}"
-            )
-        buf += _follow_once(name, encoded, deadline)
-        if encoded in buf:
-            break
+    while True:
+        snapshot = _logs_snapshot(name)
+        if encoded in snapshot.encode(errors="replace"):
+            return
+        if time.monotonic() >= deadline:
+            pytest.fail(f"{what} within {timeout}s\nlogs:\n{snapshot}")
+        followed = _follow_once(name, encoded, deadline)
+        if encoded in followed:
+            return
         state = _container_state(name)
         if "exited" in state or "stopped" in state:
             pytest.fail(
                 f"{what}: container exited before the expected log line. "
                 f"state={state}\n"
-                f"logs:\n{_container_logs(name, buf)}"
+                f"logs:\n{snapshot}"
             )
+        if time.monotonic() >= deadline:
+            pytest.fail(f"{what} within {timeout}s\nlogs:\n{snapshot}")
         time.sleep(0.5)
 
 
