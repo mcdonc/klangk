@@ -501,9 +501,12 @@ class ConsentCoordinator:
             # decide() failed (DB error). The hold's own timeout is already
             # cancelled, so we MUST resolve the Future ourselves -- otherwise
             # the sidecar relay awaits it forever ("no hold pending forever").
-            # Fail-close to deny + broadcast so co-deciders drop it; the
-            # pending row is left for GC.
+            # Fail-close to deny + broadcast so co-deciders drop it, and
+            # best-effort expire the row: a hold-less pending row can never
+            # be resolved by anyone yet still occupies a pending-cap slot
+            # (#3081).
             logger.exception("consent: resolve failed; fail-closing to deny")
+            await self._expire_stranded(request_id)
             verdict = {"decision": VERDICT_DENY, "reason": "error"}
             resolved = "expired"
         else:
@@ -802,14 +805,7 @@ class ConsentCoordinator:
         hold = self._holds.pop(request_id, None)
         if hold is None:
             return
-        try:
-            await self.app.state.model.egress_consent.expire_pending(
-                request_id
-            )
-        except Exception:
-            logger.exception(
-                "consent: failed to expire held request %s", request_id[:8]
-            )
+        await self._expire_stranded(request_id)
         if not hold["future"].done():
             hold["future"].set_result(
                 {
@@ -819,6 +815,34 @@ class ConsentCoordinator:
                 }
             )
         self._broadcast_resolved(request_id, hold["workspace_id"], "expired")
+
+    async def _expire_stranded(self, request_id: str) -> None:
+        """Best-effort expire of a pending row whose hold is gone (#3081).
+
+        Called only after the hold was popped (``resolve``'s decide-failure
+        arm, ``_fail_close``): a row left ``pending`` with no live hold can
+        never be resolved -- ``snapshot()`` replays only rows still held,
+        and a verdict for its id returns ``None`` -- yet ``count_pending``
+        keeps counting it against the workspace's pending cap until the
+        retention sweep (default 30 days) or the startup reaper, so enough
+        of them wedge every new hold into ``rate_limited`` denials.
+        Retried once -- a first failure is typically a transient DB error,
+        and the retry re-runs after the failing transaction unwound. A
+        second failure is logged and the row falls back to the startup
+        reaper (``expire_all_pending``).
+        """
+        for attempt in (1, 2):
+            try:
+                await self.app.state.model.egress_consent.expire_pending(
+                    request_id
+                )
+                return
+            except Exception:
+                logger.exception(
+                    "consent: failed to expire held request %s (attempt %d)",
+                    request_id[:8],
+                    attempt,
+                )
 
     def _fanout(self, request: dict) -> None:
         """Broadcast the pending request to the workspace's deciders (#2244).
