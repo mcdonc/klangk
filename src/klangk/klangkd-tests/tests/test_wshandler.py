@@ -2284,6 +2284,34 @@ class TestHandleWorkspaceConnect:
         assert len(errors) == 1
         assert "does not exist" in errors[0]["message"]
 
+    async def test_connect_container_start_podman_error(
+        self, user, agent_user, app_state
+    ):
+        """#3071/#2676: a PodmanError from start_container surfaces its
+        actionable message, matching the restart path — not the per-frame
+        guard's generic frame, nor a dropped session."""
+        sock = _mock_sock()
+        workspace = await _create_workspace_with_acl(
+            app_state, user["id"], "podman-fail"
+        )
+        conn = _base_conn(user=user, ws=sock)
+
+        with patch.object(
+            Connection,
+            "start_workspace_container",
+            side_effect=PodmanError(500, "no space left on device"),
+        ):
+            await conn.handle_workspace_connect(
+                {"workspaceId": workspace["id"]}
+            )
+
+        calls = [c[0][0] for c in sock.send_json.call_args_list]
+        errors = [c for c in calls if c.get("type") == "error"]
+        assert len(errors) == 1
+        assert errors[0]["message"] == (
+            "Container start failed: [500] no space left on device"
+        )
+
     async def test_connect_capacity_refusal_error_frame(
         self, user, agent_user, app_state
     ):
@@ -2988,6 +3016,59 @@ class TestHandleWebsocket:
         assert websocket not in sockets.connections
         calls = [c[0][0] for c in websocket.send_json.call_args_list]
         assert not any("Error handling command" in str(c) for c in calls)
+
+    async def test_state_handler_exception_error_frame_session_survives(
+        self, user, app_state
+    ):
+        """#3071: the per-frame guard covers the WS_STATE_COMMANDS table
+        too — a raising state handler gets an error frame, not a dropped
+        session."""
+        app_state = _make_app_state()
+
+        token = _auth().create_token(user["id"], user["email"])
+        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket.receive_text = AsyncMock(
+            side_effect=[
+                json.dumps({"cmd": "browser_response", "id": "x"}),
+                json.dumps({"cmd": "bogus"}),
+                WebSocketDisconnect(),
+            ]
+        )
+
+        with patch.object(
+            app_state.state.sockets,
+            "handle_browser_response",
+            side_effect=ValueError("state handler bug"),
+        ):
+            await handle_websocket(websocket, app_state)
+
+        calls = [c[0][0] for c in websocket.send_json.call_args_list]
+        assert any("Error handling command" in str(c) for c in calls)
+        assert any("Unknown command" in str(c) for c in calls)
+
+    async def test_unhashable_cmd_error_frame_session_survives(
+        self, user, app_state
+    ):
+        """#3071: an unhashable cmd (list) raises TypeError inside the
+        table lookup — the guard answers it with an error frame and the
+        session keeps dispatching."""
+        app_state = _make_app_state()
+
+        token = _auth().create_token(user["id"], user["email"])
+        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket.receive_text = AsyncMock(
+            side_effect=[
+                json.dumps({"cmd": ["bogus"]}),
+                json.dumps({"cmd": "bogus"}),
+                WebSocketDisconnect(),
+            ]
+        )
+
+        await handle_websocket(websocket, app_state)
+
+        calls = [c[0][0] for c in websocket.send_json.call_args_list]
+        assert any("Error handling command" in str(c) for c in calls)
+        assert any("Unknown command" in str(c) for c in calls)
 
     async def test_ui_ready_with_pending(self, user, app_state):
         app_state = _make_app_state()
@@ -4445,7 +4526,8 @@ class TestSshAgentForwarder:
 
     async def test_data_dead_relay_write_broken_pipe(self):
         """#3071: a write to a dead socat relay (BrokenPipeError) is
-        dropped, not propagated to kill the whole session."""
+        dropped and the relay is torn down, not propagated to kill the
+        whole session — and later frames short-circuit on proc None."""
         fwd, _ = self._forwarder()
         mock_proc = AsyncMock()
         mock_proc.stdin = AsyncMock()
@@ -4453,13 +4535,15 @@ class TestSshAgentForwarder:
         mock_proc.stdin.drain = AsyncMock()
         fwd.proc = mock_proc
 
-        await fwd.data({"data": base64.b64encode(b"x").decode()})
+        with patch.object(fwd, "stop", new=AsyncMock()) as stop:
+            await fwd.data({"data": base64.b64encode(b"x").decode()})
 
         mock_proc.stdin.drain.assert_not_awaited()
+        stop.assert_awaited_once()
 
     async def test_data_dead_relay_drain_error(self):
-        """#3071: drain() raising (dead relay / closed loop) is dropped
-        too."""
+        """#3071: drain() raising (dead relay / closed loop) tears the
+        relay down too."""
         fwd, _ = self._forwarder()
         mock_proc = AsyncMock()
         mock_proc.stdin = AsyncMock()
@@ -4467,9 +4551,11 @@ class TestSshAgentForwarder:
         mock_proc.stdin.drain = AsyncMock(side_effect=RuntimeError("dead"))
         fwd.proc = mock_proc
 
-        await fwd.data({"data": base64.b64encode(b"x").decode()})
+        with patch.object(fwd, "stop", new=AsyncMock()) as stop:
+            await fwd.data({"data": base64.b64encode(b"x").decode()})
 
         mock_proc.stdin.write.assert_called_once()
+        stop.assert_awaited_once()
 
     async def test_stop_command_notifies_client(self):
         fwd, sock = self._forwarder()

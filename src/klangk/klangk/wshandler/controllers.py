@@ -138,9 +138,12 @@ def decode_b64_payload(raw, cmd: str) -> bytes | None:
     either used to propagate out of the exec_input/ssh_agent_data
     handlers and tear down the whole WebSocket session (#3071). Callers
     drop the frame (a warning is logged here) and keep the session.
+    ``validate=True`` rejects non-alphabet characters instead of
+    silently discarding them, so a malformed frame drops rather than
+    misdecoding.
     """
     try:
-        return base64.b64decode(raw)
+        return base64.b64decode(raw, validate=True)
     except (TypeError, ValueError):
         logger.warning("%s: invalid base64 payload, dropping", cmd)
         return None
@@ -358,18 +361,22 @@ class SshAgentForwarder:
         await self.write_relay_stdin(proc, decoded)
 
     async def write_relay_stdin(self, proc, decoded: bytes) -> None:
-        """Write *decoded* to socat stdin, dropping the frame on a dead relay.
+        """Write *decoded* to socat stdin, tearing down a dead relay.
 
         A dead relay (socat/container gone) raises BrokenPipeError/
         ConnectionResetError on write and RuntimeError on drain — the
-        frame is dropped instead of killing the whole WebSocket session;
-        stop()/disconnect handles relay teardown (#3071).
+        frame is dropped and the forwarder is stopped so subsequent
+        frames short-circuit on ``proc is None`` instead of warning
+        forever (#3071).
         """
         try:
             proc.stdin.write(decoded)
             await proc.stdin.drain()
         except (ConnectionError, RuntimeError):
-            logger.warning("SSH agent relay stdin gone; dropping frame")
+            logger.warning(
+                "SSH agent relay stdin gone; dropping frame and stopping relay"
+            )
+            await self.stop()
 
     async def stop_command(self) -> None:
         """Stop SSH agent forwarding and notify the client."""
