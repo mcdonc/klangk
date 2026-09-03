@@ -248,7 +248,8 @@ class LLMRouter:
     router is ``None`` and the endpoints return 503.
 
     **Passthrough mode**: when the config has exactly one wildcard entry
-    (``model_name`` contains ``*``), litellm is bypassed entirely.
+    (``model_name`` is exactly ``*`` — see :func:`is_passthrough`),
+    litellm is bypassed entirely.
     Requests are forwarded to the upstream via httpx, and ``/models``
     queries the upstream for dynamic model discovery.
     """
@@ -268,6 +269,13 @@ class LLMRouter:
         if not models:
             self._router = None
             self._passthrough_base = None
+            self._passthrough_key = ""
+            # A passthrough→empty reload must close the old client too —
+            # the early return used to skip the close below, leaking the
+            # client's connections for the life of the process.
+            if self._http_client is not None:
+                _spawn_aclose(self._http_client)
+                self._http_client = None
             return
 
         model_list = _build_model_list(models, settings.llm_api_key)

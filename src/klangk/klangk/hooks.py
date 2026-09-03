@@ -310,6 +310,24 @@ def _resolve_hook_callable(path: str, func_name: str) -> Callable:
     return hook
 
 
+def _validated_change_error(app, changed: dict) -> str | None:
+    """:func:`_validate_hook_changes` with a raising validator treated
+    as an invalid change.
+
+    A mistyped value (``allowed_domains = [123]``, a non-iterable
+    ``mounts``) reaches a non-``ValueError`` path inside a validator;
+    per the log-and-continue contract that must reject the change, not
+    fail the create."""
+    try:
+        return _validate_hook_changes(app, changed)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "workspace-created hook change could not be validated",
+            exc_info=exc,
+        )
+        return f"validation raised {type(exc).__name__}: {exc}"
+
+
 class WorkspaceHookHandle(dict):
     """The workspace row as seen by a workspace-created hook (#2762).
 
@@ -548,7 +566,7 @@ class Hooks:
         changed = hook_field_changes(handle, workspace)
         if not changed:
             return workspace
-        invalid = _validate_hook_changes(self.app, changed)
+        invalid = _validated_change_error(self.app, changed)
         if invalid is not None:
             logger.warning(
                 "workspace-created hook %s made an invalid change to "

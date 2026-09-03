@@ -455,6 +455,26 @@ class TestPassthrough:
         await asyncio.sleep(0)
         old_client.aclose.assert_called_once()
 
+    async def test_reconfigure_to_empty_closes_old_client(self):
+        """Reconfiguring from passthrough to no models closes the client."""
+        import asyncio
+
+        app = _app()
+        app.state.settings.llm_models = [
+            {"model_name": "*", "litellm_params": {"api_base": "http://x:1"}}
+        ]
+        router = LLMRouter(app)
+        assert router.passthrough
+        old_client = AsyncMock()
+        router._http_client = old_client
+
+        router.reconfigure(_app())
+        assert not router.passthrough
+        assert not router.active
+        assert router._http_client is None
+        await asyncio.sleep(0)
+        old_client.aclose.assert_called_once()
+
     async def test_list_upstream_models_passthrough(self):
         app = _app()
         app.state.settings.llm_models = [

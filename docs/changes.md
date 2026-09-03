@@ -2014,6 +2014,19 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   `klangk-setup-home` failure used to stay bare forever (no
   `.profile`/`.bashrc`); an empty user directory now re-triggers the
   copy, matching the shared-home behavior.
+- **A mistyped workspace-created-hook change no longer fails the
+  create (#3123).** A hook assigning a mistyped value (e.g.
+  `allowed_domains = [123]` or a non-iterable `mounts`) crashed the
+  validation step and 500'd the workspace create/import/duplicate
+  request. Per the documented failure semantics the change is now
+  logged as invalid and the workspace is returned exactly as created.
+
+- **`KLANGKD_SOCKET` / `KLANGKD_CADDY_ADMIN_SOCKET` changes on SIGHUP
+  now warn (#3123).** Both sockets are bound for the life of the
+  process (uvicorn's listener, the Caddy child's admin UDS); a reloaded
+  value never applied and silently desynced the proxy supervision. The
+  reload now logs the same "requires a full process restart" warning
+  as `KLANGKD_PORT`/`KLANGKD_LISTEN`.
 
 - **Non-mapping `klangk.yaml` no longer crashes every CLI command
   (#3094).** A config file holding valid YAML that is not a mapping
