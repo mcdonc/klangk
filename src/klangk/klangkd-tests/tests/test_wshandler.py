@@ -10760,6 +10760,45 @@ class TestSharedTerminalController:
         finally:
             sockets.sessions.pop("ws-1", None)
 
+    async def test_delete_agent_shared_terminal_closes_service_session(
+        self, user, temp_data_dir, app_state
+    ):
+        """Agent-owned windows live in the ``service`` tmux session — the
+        close must target it, not a session named after the agent's
+        user_id (which never exists, so the delete always failed) (#3072)."""
+        app_state = _make_app_state()
+        sockets = app_state.state.sockets
+        ctrl, sock, _ = self._controller(user=user, app_state=app_state)
+        ws = self._ws_session(app_state=app_state)
+        ws.terminal_windows[model.AGENT_USER_ID] = [
+            {"id": "@0", "index": 0, "name": "service-cmd", "shared": True}
+        ]
+        try:
+            _, stop = await self._viewer(
+                app_state,
+                ws,
+                owner_user_id=model.AGENT_USER_ID,
+                window_id="@0",
+            )
+            with (
+                patch.object(
+                    app_state.state.model.workspaces,
+                    "get_workspace_by_id",
+                    new=AsyncMock(return_value={"user_id": user["id"]}),
+                ),
+                patch.object(_mock_term, "close_window") as close,
+            ):
+                await ctrl.delete_shared_terminal(
+                    {"user_id": model.AGENT_USER_ID, "window_id": "@0"}
+                )
+            stop.assert_awaited_once()
+            close.assert_awaited_once_with(
+                "cid", ctrl._join_target_for(model.AGENT_USER_ID), "@0"
+            )
+            assert ws.terminal_windows[model.AGENT_USER_ID] == []
+        finally:
+            sockets.sessions.pop("ws-1", None)
+
     # --- join_shared_terminal ---
 
     async def test_join_shared_terminal_no_container(self, user):

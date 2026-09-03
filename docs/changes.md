@@ -2008,7 +2008,10 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   window watcher (leaving tab-strip sync dead until reconnect). Kicks
   are now per viewer: only the connections actually viewing the
   affected window are disconnected, and viewers of the owner's other
-  shared windows keep their sessions.
+  shared windows keep their sessions. Deleting an agent-owned shared
+  terminal also works now — the close targeted a tmux session named
+  after the agent's user id instead of the `service` session and
+  always failed with "Failed to delete shared terminal".
 - **Terminal share/unshare/close no longer hang clients on refusal paths
   (#3057).** The WebSocket handlers for `share_window`, `unshare_window`,
   `join_shared_terminal`, and the own-window commands (`terminal_new_window`,

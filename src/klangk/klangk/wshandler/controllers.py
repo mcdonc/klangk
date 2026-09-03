@@ -1614,10 +1614,8 @@ class SharedTerminalController:
         sockets = self._conn.app.state.sockets
         for sock in list(ws_session.subscribers):
             conn = sockets.connections.get(sock)
-            if not self._views_window(
-                getattr(conn, "viewing_shared", None),
-                owner_user_id,
-                window_id,
+            if conn is None or not self._views_window(
+                conn.viewing_shared, owner_user_id, window_id
             ):
                 continue
             try:
@@ -1935,9 +1933,13 @@ class SharedTerminalController:
         sending the error frame) on failure."""
         try:
             await self._kick_joiners(ws_session, owner_user_id, window_id)
+            # Agent-owned windows live in the standalone ``service``
+            # session, not one named after the agent's user_id — the
+            # same mapping joins use (#3072; targeting the user_id made
+            # every agent-window delete fail in list-windows).
             await self._conn.app.state.terminal.close_window(
                 self._conn.container_id,
-                owner_user_id,
+                self._join_target_for(owner_user_id),
                 window_id,
             )
             return True
