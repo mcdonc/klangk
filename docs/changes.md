@@ -256,6 +256,14 @@ operators or integrators to act when upgrading.
 
 ### Security
 
+- **Forgot-password rate limiter no longer leaks account existence
+  (#3100).** The 60-second per-address cooldown on
+  `POST /api/v1/auth/forgot-password` now applies before the account
+  lookup, so unknown, disabled, and enabled addresses all answer 429
+  identically on a repeated request. Previously only existing enabled
+  accounts could be rate-limited, making the cooldown an oracle for
+  both account existence and the disabled state.
+
 - **Per-frame gates on the own-terminal and ssh-agent WS commands
   (#3022).** With `join-workspace` as the connect gate (#2975), a
   join-only member could reach frames whose only protection was the

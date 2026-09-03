@@ -292,6 +292,16 @@ async def forgot_password(
     app=Depends(get_app_dep),
 ):
     """Send a password reset email if the account exists."""
+    # Rate limit first, keyed on the submitted address only (#3100): the
+    # cooldown must not depend on whether the account exists or is
+    # disabled, or its 429 becomes an existence oracle that the
+    # ``"sent"``-for-everything posture below exists to prevent.
+    if _rate_limited(reset_timestamps, RESET_COOLDOWN_SECONDS, req.email):
+        raise HTTPException(
+            status_code=429,
+            detail="Please wait before requesting another email",
+        )
+
     user = await app.state.model.users.get_user_by_email(req.email)
     if user is None:
         # Don't reveal whether the email exists
@@ -304,13 +314,6 @@ async def forgot_password(
     # state to an anonymous caller.
     if user.get("disabled"):
         return {"status": "sent"}
-
-    # Rate limit: one reset email per address per minute
-    if _rate_limited(reset_timestamps, RESET_COOLDOWN_SECONDS, req.email):
-        raise HTTPException(
-            status_code=429,
-            detail="Please wait before requesting another email",
-        )
 
     hostname, proto, base_path = request.app.state.util.derive_hosting_info(
         request.headers, request.client.host if request.client else None
