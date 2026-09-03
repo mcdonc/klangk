@@ -1945,6 +1945,13 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **`egress_request` frames now carry one request shape on every delivery
+  path (#3082).** A live hold fanned out to deciders carried a request dict
+  without `duration`/`revoked_at`/`revoked_by`, while a connect-time replay
+  of the same held request carried all columns. Both paths now emit the full
+  column set, so clients keying on any field behave identically whether a
+  request arrives live or via replay.
+
 - **Stale consent pause no longer auto-allows in static-mode workspaces
   (#3080).** The consent-pause window (`set_consent_pause`, e.g. a 1d
   pause set by a decider) was honored by the egress gate even after the
@@ -1955,6 +1962,7 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   switch clears the stored window (unrelated edits that merely re-send
   the current mode leave a live pause alone) so it cannot resurrect on a
   later switch back.
+
 - **Consent rate-limit wedge on DB errors (#3081).** When a database
   error struck while recording a decider verdict or expiring a timed-out
   request, the row stayed `pending` forever with no live hold — invisible
@@ -1964,6 +1972,7 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   the verdict and retry expiring the row once; a row that still cannot
   be expired is reaped at the next backend start instead of lingering
   for the retention window.
+
 - **Malformed client frames no longer drop the WebSocket session
   (#3071).** Any command handler exception now gets an error frame and
   the connection stays up, instead of ending the whole session:
