@@ -549,3 +549,14 @@ alone — run the destroy consciously and explicitly every time.
   anything to the main branch or use the main repository to commit anything —
   all commits go on the worktree's own branch within the worktree.
 - Worktrees should have a directory name no longer than 16 characters.
+
+## Pull request titles
+
+- Every PR created to address a GitHub issue must include that issue's
+  number in the PR title, as a parenthesized suffix — e.g.
+  `Add DNS search domains (#2055)`. GitHub appends the PR's own number
+  at squash-merge time, so the issue number in the title is what ties
+  the PR back to its originating issue in lists, history, and
+  notifications.
+- This applies to every PR opened from a `gh issue` (via `/workon`,
+  `/stackon`, or directly) — check the title before `gh pr create`.
