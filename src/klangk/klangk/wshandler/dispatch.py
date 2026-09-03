@@ -79,6 +79,16 @@ async def ws_authenticate(websocket: WebSocket, app):
     return result
 
 
+# Exceptions raised by a *handler* that mean the connection itself is
+# dead (client gone, outbound queue full, starlette's "not connected"):
+# they must end the session — ``_run_websocket_session`` maps each to
+# its log line. Any other handler exception is a frame-level failure
+# and is answered with an error frame instead (#3071): a buggy or
+# malicious client must not be able to tear down its own session with
+# a malformed frame.
+WS_SESSION_ERRORS = (WebSocketDisconnect, SlowClientError, RuntimeError)
+
+
 async def _dispatch_connection_command(conn, cmd, msg) -> bool:
     """Dispatch a Connection-table command; False when *cmd* is not one."""
     entry = WS_CONNECTION_COMMANDS.get(cmd)
@@ -93,6 +103,31 @@ async def _dispatch_connection_command(conn, cmd, msg) -> bool:
     return True
 
 
+async def _dispatch_frame(conn, safe_ws, msg, app) -> None:
+    """Dispatch one decoded frame, guarding handler failures per-frame.
+
+    Connection-table first, then state-command table, else an error
+    frame. A handler exception is logged and answered with an error
+    frame so the loop keeps the session alive (#3071) — except the
+    connection-level failures (``WS_SESSION_ERRORS``), which must keep
+    propagating to end the session.
+    """
+    cmd = msg.get("cmd")
+    try:
+        if await _dispatch_connection_command(conn, cmd, msg):
+            return
+        state_method = WS_STATE_COMMANDS.get(cmd)
+        if state_method is not None:
+            getattr(app.state.sockets, state_method)(msg, safe_ws)
+        else:
+            send_error(safe_ws, f"Unknown command: {cmd}")
+    except WS_SESSION_ERRORS:
+        raise
+    except Exception:
+        logger.exception("Error handling WS command %r", cmd)
+        send_error(safe_ws, f"Error handling command: {cmd}")
+
+
 async def dispatch_ws_loop(conn, safe_ws, user: dict, app) -> None:
     """Receive/dispatch frames until the socket drops. Connection-command
     table first, then state-command table, else an error frame."""
@@ -103,17 +138,15 @@ async def dispatch_ws_loop(conn, safe_ws, user: dict, app) -> None:
         except json.JSONDecodeError:
             send_error(safe_ws, "Invalid JSON")
             continue
+        # A JSON frame must be an object: a list/scalar/None payload has
+        # no "cmd", and ``msg.get`` on it would AttributeError (#3071).
+        if not isinstance(msg, dict):
+            send_error(safe_ws, "Invalid frame: expected a JSON object")
+            continue
 
         log_ws_msg("RECV", msg, user)
 
-        cmd = msg.get("cmd")
-        if await _dispatch_connection_command(conn, cmd, msg):
-            continue
-        state_method = WS_STATE_COMMANDS.get(cmd)
-        if state_method is not None:
-            getattr(app.state.sockets, state_method)(msg, safe_ws)
-        else:
-            send_error(safe_ws, f"Unknown command: {cmd}")
+        await _dispatch_frame(conn, safe_ws, msg, app)
 
 
 async def _send_connect_snapshots(safe_ws, app) -> None:

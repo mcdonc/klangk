@@ -700,6 +700,47 @@ class TestHandleTerminalResize:
         await conn.handle_terminal_resize({"cols": 120, "rows": 40})
         assert conn.terminal_session is None
 
+    async def test_resize_malformed_values_fall_back(self):
+        """#3071: a null/string/bool/oversized cols or rows must not raise
+        (struct.pack only takes unsigned shorts), must not be persisted,
+        and must not tear down the session — each bad field falls back to
+        the current stored size."""
+        t = _mock_terminal()
+        conn = _base_conn()
+        conn.terminal_session = t
+
+        await conn.handle_terminal_resize({"cols": 120, "rows": 40})
+        t.resize.reset_mock()
+
+        # null / string / bool / oversized — all fall back to 120x40.
+        await conn.handle_terminal_resize({"cols": None, "rows": None})
+        await conn.handle_terminal_resize({"cols": "120", "rows": "40"})
+        await conn.handle_terminal_resize({"cols": True, "rows": False})
+        await conn.handle_terminal_resize({"cols": 70000, "rows": -1})
+        await conn.handle_terminal_resize({"cols": 1.5, "rows": 2.5})
+
+        assert t.resize.await_count == 5
+        for call in t.resize.await_args_list:
+            assert call.args == (120, 40)
+        assert conn.terminal.cols == 120
+        assert conn.terminal.rows == 40
+
+    async def test_resize_valid_after_malformed_not_poisoned(self):
+        """A malformed frame must not poison the stored size for a later
+        valid resize or terminal_start (#3071)."""
+        t = _mock_terminal()
+        conn = _base_conn()
+        conn.terminal_session = t
+
+        await conn.handle_terminal_resize({"cols": None, "rows": "x"})
+        assert conn.terminal.cols == 80
+        assert conn.terminal.rows == 24
+
+        await conn.handle_terminal_resize({"cols": 100, "rows": 30})
+        t.resize.assert_awaited_with(100, 30)
+        assert conn.terminal.cols == 100
+        assert conn.terminal.rows == 30
+
 
 # --- handle_terminal_stop ---
 
@@ -831,6 +872,34 @@ class TestHandleTerminalStart:
             pass
         registry.revoke_workspace_browsers("ws")
         registry.states.pop("ws", None)
+
+    async def test_start_malformed_dims_fall_back(self):
+        """#3071: terminal_start with non-int cols/rows falls back to the
+        stored size instead of crashing session.start inside the task
+        ("Terminal start failed")."""
+        app_state = _make_app_state()
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock, app_state=app_state)
+        conn.container_id = "cid"
+        conn.workspace_id = "ws"
+        conn._user_home = "/home/testuser"
+        conn.has_perm = AsyncMock(return_value=True)
+
+        with patch.object(_ws_controllers, "TerminalSession") as MockTS:
+            mock_session = _mock_terminal()
+            MockTS.return_value = mock_session
+            await conn.handle_terminal_start({"cols": "x", "rows": None})
+            # Let the background task run
+            await asyncio.sleep(0)
+
+        mock_session.start.assert_awaited_once_with(80, 24)
+        assert conn.terminal.cols == 80
+        assert conn.terminal.rows == 24
+        conn.terminal_task.cancel()
+        try:
+            await conn.terminal_task
+        except asyncio.CancelledError:
+            pass
 
     async def test_terminal_start_fires_service_command(self, app_state):
         """terminal_start fires the service command in the agent's service
@@ -2837,6 +2906,89 @@ class TestHandleWebsocket:
         calls = [c[0][0] for c in websocket.send_json.call_args_list]
         assert any("Unknown command" in str(c) for c in calls)
 
+    @pytest.mark.parametrize("frame", ["[]", '"x"', "3", "null"])
+    async def test_non_dict_frame_rejected_session_survives(
+        self, user, app_state, frame
+    ):
+        """#3071: a JSON frame that is not an object has no "cmd" and must
+        get an error frame — not an AttributeError that drops the session.
+        The following valid frame still processes."""
+        app_state = _make_app_state()
+
+        token = _auth().create_token(user["id"], user["email"])
+        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket.receive_text = AsyncMock(
+            side_effect=[
+                frame,
+                json.dumps({"cmd": "bogus"}),
+                WebSocketDisconnect(),
+            ]
+        )
+
+        await handle_websocket(websocket, app_state)
+
+        calls = [c[0][0] for c in websocket.send_json.call_args_list]
+        assert any("Invalid frame" in str(c) for c in calls)
+        assert any("Unknown command" in str(c) for c in calls)
+
+    async def test_handler_exception_error_frame_session_survives(
+        self, user, app_state
+    ):
+        """#3071: a handler exception must be answered with an error frame
+        and the loop must keep dispatching — not end the session."""
+        app_state = _make_app_state()
+
+        token = _auth().create_token(user["id"], user["email"])
+        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket.receive_text = AsyncMock(
+            side_effect=[
+                json.dumps({"cmd": "heartbeat"}),
+                json.dumps({"cmd": "bogus"}),
+                WebSocketDisconnect(),
+            ]
+        )
+
+        with patch.object(
+            Connection,
+            "handle_heartbeat",
+            new=AsyncMock(side_effect=ValueError("handler bug")),
+        ):
+            await handle_websocket(websocket, app_state)
+
+        calls = [c[0][0] for c in websocket.send_json.call_args_list]
+        assert any("Error handling command" in str(c) for c in calls)
+        # The loop survived: the frame after the failing one was dispatched.
+        assert any("Unknown command" in str(c) for c in calls)
+
+    async def test_handler_slow_client_error_ends_session(
+        self, user, app_state
+    ):
+        """#3071: the per-frame guard must not swallow connection-level
+        failures — a SlowClientError from a handler ends the session."""
+        app_state = _make_app_state()
+        sockets = app_state.state.sockets
+
+        token = _auth().create_token(user["id"], user["email"])
+        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket.receive_text = AsyncMock(
+            side_effect=[
+                json.dumps({"cmd": "heartbeat"}),
+                WebSocketDisconnect(),
+            ]
+        )
+
+        with patch.object(
+            Connection,
+            "handle_heartbeat",
+            new=AsyncMock(side_effect=SlowClientError("outbound queue full")),
+        ):
+            await handle_websocket(websocket, app_state)
+
+        websocket.accept.assert_awaited_once()
+        assert websocket not in sockets.connections
+        calls = [c[0][0] for c in websocket.send_json.call_args_list]
+        assert not any("Error handling command" in str(c) for c in calls)
+
     async def test_ui_ready_with_pending(self, user, app_state):
         app_state = _make_app_state()
         sockets = app_state.state.sockets
@@ -3136,6 +3288,21 @@ class TestExecHandlers:
             b"x" * (_ws_support.MAX_INPUT_SIZE + 1)
         ).decode()
         await conn.handle_exec_input({"data": big_data})
+        session.write.assert_not_awaited()
+
+    @pytest.mark.parametrize("data", ["!!!not-base64!!!", 5, None, ["x"]])
+    async def test_exec_input_invalid_base64_dropped(self, data):
+        """#3071: invalid base64 (or a non-string data field) must be
+        dropped, not raise binascii.Error/TypeError out of the handler
+        and kill the session."""
+        session = AsyncMock()
+        session.is_alive = True
+        conn = _base_conn()
+        conn.container_id = "cid"
+        conn.exec_session = session
+
+        await conn.handle_exec_input({"data": data})
+
         session.write.assert_not_awaited()
 
     async def test_exec_close_stdin(self):
@@ -4261,6 +4428,48 @@ class TestSshAgentForwarder:
         fwd.proc = mock_proc
         await fwd.data({"data": ""})
         mock_proc.stdin.write.assert_not_called()
+
+    @pytest.mark.parametrize("data", ["!!!not-base64!!!", 5, None])
+    async def test_data_invalid_base64_dropped(self, data):
+        """#3071: invalid base64 (or a non-string data field) must be
+        dropped, not raise out of the handler and kill the session."""
+        fwd, _ = self._forwarder()
+        mock_proc = AsyncMock()
+        mock_proc.stdin = AsyncMock()
+        mock_proc.stdin.write = MagicMock()
+        fwd.proc = mock_proc
+
+        await fwd.data({"data": data})
+
+        mock_proc.stdin.write.assert_not_called()
+
+    async def test_data_dead_relay_write_broken_pipe(self):
+        """#3071: a write to a dead socat relay (BrokenPipeError) is
+        dropped, not propagated to kill the whole session."""
+        fwd, _ = self._forwarder()
+        mock_proc = AsyncMock()
+        mock_proc.stdin = AsyncMock()
+        mock_proc.stdin.write = MagicMock(side_effect=BrokenPipeError())
+        mock_proc.stdin.drain = AsyncMock()
+        fwd.proc = mock_proc
+
+        await fwd.data({"data": base64.b64encode(b"x").decode()})
+
+        mock_proc.stdin.drain.assert_not_awaited()
+
+    async def test_data_dead_relay_drain_error(self):
+        """#3071: drain() raising (dead relay / closed loop) is dropped
+        too."""
+        fwd, _ = self._forwarder()
+        mock_proc = AsyncMock()
+        mock_proc.stdin = AsyncMock()
+        mock_proc.stdin.write = MagicMock()
+        mock_proc.stdin.drain = AsyncMock(side_effect=RuntimeError("dead"))
+        fwd.proc = mock_proc
+
+        await fwd.data({"data": base64.b64encode(b"x").decode()})
+
+        mock_proc.stdin.write.assert_called_once()
 
     async def test_stop_command_notifies_client(self):
         fwd, sock = self._forwarder()

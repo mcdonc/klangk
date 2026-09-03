@@ -1945,6 +1945,17 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Malformed client frames no longer drop the WebSocket session
+  (#3071).** Any command handler exception now gets an error frame and
+  the connection stays up, instead of ending the whole session:
+  non-object JSON frames (`[]`, `"x"`, `3`) are rejected as invalid
+  frames, invalid base64 in `exec_input`/`ssh_agent_data` is dropped,
+  a `terminal_resize` with null/string/oversized dimensions falls back
+  to the last known size (previously persisted and poisoning later
+  starts), and a dead SSH-agent relay is torn down instead of killing
+  the socket. A `PodmanError` during `workspace_connect` now surfaces
+  as `Container start failed: …` (matching the restart path, #2676)
+  rather than a generic handler-error frame.
 - **Crash auto-restart (#3074).** `KLANGKD_CONTAINER_RESTART_ENABLED`
   never restarted a workspace: every crash-detected death was
   misclassified as a user action and left the workspace stopped with no
