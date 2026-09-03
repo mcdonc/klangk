@@ -65,6 +65,16 @@ CONSENT_URL = os.environ.get("KLANGKNETWORK_EGRESS_CONSENT_URL", "")
 EGRESS_MODE = os.environ.get("KLANGKNETWORK_EGRESS_MODE", "static")
 
 
+# The modes in which an off-list (deny-classified) name may resolve + record
+# (#3041). Deliberately a WHITELIST, not `!= "static"`: an unrecognized value
+# (a typo, a future enum member) must fail CLOSED (NXDOMAIN), never silently
+# take the permissive resolve branch. The env var is a bare string and the
+# sidecar is the last line of defense (klangkd's DB column is bare TEXT with
+# no CHECK constraint; the daemon coerces on write, but a hand-launched or
+# future writer may not).
+RESOLVING_MODES = frozenset({"interactive", "allow"})
+
+
 # How long to await a verdict before fail-closing to deny. The consent gate is
 # the connection SYN (NFQUEUE), so this can match the kernel's connect timeout
 # (tcp_syn_retries ~= 127s) -- far longer than a DNS resolver's <=30s getaddrinfo

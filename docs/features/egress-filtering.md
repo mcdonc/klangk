@@ -15,7 +15,10 @@ mode** (`egress_mode`, default `interactive` for new workspaces):
   ever. Off-list DNS names return NXDOMAIN — the query never reaches an
   upstream resolver (#3041), so there is no resolution oracle and no DNS
   exfiltration channel; denied attempts recorded in the audit log are the
-  connects that were dialed directly by IP.
+  connects that were dialed directly by IP. The mode is fixed at sidecar
+  start — flipping a running workspace `interactive`→`static` keeps the old
+  DNS behavior until its next container start, like allow-list edits
+  (#2281, #3041).
 - **`allow`** — default-permit with a deny-list: every host is reachable
   except names in `rejected_domains`; off-list egress is recorded and
   auto-allowed with no prompt (#2406).
@@ -63,7 +66,7 @@ gate at NFQUEUE, the consent loop, and the verdict — is in
    **allow-lists resolved IPs at runtime** — so a domain whose IPs rotate
    (CDN, DNS round-robin) stays reachable without a container restart,
    and a denied domain returns NXDOMAIN in `static` mode (#3041: the
-   query is refused locally — it is never forwarded, so the mode is no
+   query is refused locally — it is never forwarded, so there is no
    resolution oracle and no DNS exfiltration channel). In `interactive`
    and `allow` modes an off-list name resolves normally, but the proxy
    records the IP-to-name mapping and installs no allow rule (#2324) —

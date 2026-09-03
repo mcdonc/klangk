@@ -2655,6 +2655,28 @@ class TestHandlePacket:
         rec.assert_awaited_once_with(s, b"q", ("1.2.3.4", 53), "any.test")
         nxd.assert_not_called()
 
+    async def test_denied_with_client_unknown_mode_sends_nxdomain(
+        self, proxy, monkeypatch
+    ):
+        # #3041 review: the resolve gate is a WHITELIST (RESOLVING_MODES), not
+        # `!= "static"` -- an unrecognized env value (a typo, a future enum
+        # member) must fail CLOSED (NXDOMAIN), never silently resolve.
+        for bogus in ("Static", "interactive ", "frozen", ""):
+            monkeypatch.setattr(proxy.resolve, "EGRESS_MODE", bogus)
+            monkeypatch.setattr(proxy.resolve, "query_name", lambda wire: "evil.test")
+            monkeypatch.setattr(proxy.allowlist, "SPECS", [])
+            monkeypatch.setattr(proxy.resolve, "nxdomain_for", lambda d: b"NXD")
+            rec = AsyncMock()
+            monkeypatch.setattr(proxy.resolve, "forward_and_record", rec)
+            client = MagicMock()
+            client.connected = True
+            s = MagicMock()
+            await proxy.handle_packet(s, b"q", ("1.2.3.4", 53), client)
+            s.sendto.assert_called_once_with(b"NXD", ("1.2.3.4", 53))
+            rec.assert_not_awaited()
+            s.reset_mock()
+            rec.reset_mock()
+
     async def test_malformed_query_is_dropped(self, proxy, monkeypatch):
         def _boom(wire):
             raise RuntimeError("bad wire")

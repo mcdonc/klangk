@@ -20,7 +20,7 @@ import dns.rcode
 
 from . import allowlist, rules
 from .allowlist import ports_for, rejected_for
-from .config import DEBUG, EGRESS_MODE, MARK, UPSTREAM
+from .config import DEBUG, EGRESS_MODE, MARK, RESOLVING_MODES, UPSTREAM
 from .rules import fmt_ports, learn_all
 
 if TYPE_CHECKING:
@@ -233,18 +233,18 @@ async def send_denied(
     qname: str,
     client: SidecarConsentClient | None,
 ) -> None:
-    """The deny path (#3041): interactive/allow mode (a consent client + a
-    non-static :data:`EGRESS_MODE`) resolves + responds + records IP->host (the
-    SYN is consent-gated at NFQUEUE, not held here at the DNS query; ``allow``
-    auto-allows at that same gate, #2406); static mode NXDOMAINs even though
-    the consent client is wired -- no off-list query may reach the upstream (a
-    resolution oracle + DNS exfil channel bypassing the allow-list). The mode
-    is keyed on the explicit env var, NOT on client presence: the consent
-    stack is wired on every filtered workspace (static included,
-    #2242/#2311)."""
+    """The deny path (#3041): interactive/allow mode (a consent client +
+    :data:`EGRESS_MODE` in :data:`RESOLVING_MODES`) resolves + responds + records
+    IP->host (the SYN is consent-gated at NFQUEUE, not held here at the DNS
+    query; ``allow`` auto-allows at that same gate, #2406); every other mode --
+    static, an unrecognized value, or no consent client -- NXDOMAINs, so no
+    off-list query may reach the upstream (a resolution oracle + DNS exfil
+    channel bypassing the allow-list). The mode is keyed on the explicit env
+    var, NOT on client presence: the consent stack is wired on every filtered
+    workspace (static included, #2242/#2311)."""
     if DEBUG:
         print(f"deny  {qname}", flush=True)
-    if client is not None and EGRESS_MODE != "static":
+    if client is not None and EGRESS_MODE in RESOLVING_MODES:
         await forward_and_record(s, data, addr, qname)
     else:
         send_nxdomain(s, data, addr)

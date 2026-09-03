@@ -1948,7 +1948,11 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   `egress_mode` to the network sidecar explicitly
   (`KLANGKNETWORK_EGRESS_MODE`), and the sidecar refuses off-list queries
   locally in `static` mode. `interactive` and `allow` modes are unchanged
-  (they resolve and gate the connection at the SYN). See
+  (they resolve and gate the connection at the SYN). The fix lives in the
+  sidecar image: on manual-registry deploys update `network_sidecar_image`
+  together with klangkd, or the env var is silently ignored (the all-in-one
+  host image embeds both). A mode change on a running workspace takes effect
+  at the next container start, like allow-list edits. See
   [Egress filtering](features/egress-filtering.md).
 
 - **Tab-strip sync survives a container restart (#3015).** The

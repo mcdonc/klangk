@@ -21,6 +21,7 @@ from ..model.container_events import (
     EVENT_STOP,
     ROLE_SIDECAR,
 )
+from ..model.workspaces import EGRESS_MODE_STATIC
 
 logger = logging.getLogger(__name__)
 
@@ -244,7 +245,7 @@ class NetworkSidecarMixin:
         self,
         workspace_id: str,
         allowed_domains: list[str] | None,
-        egress_mode: str = "static",
+        egress_mode: str = EGRESS_MODE_STATIC,
         rejected_domains: list[str] | None = None,
         publish: list[tuple[int, int]] | None = None,
         slug: str = "",
