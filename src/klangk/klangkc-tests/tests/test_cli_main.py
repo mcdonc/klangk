@@ -1672,6 +1672,7 @@ class TestMainCLI:
                             "user_id": "u1",
                             "handle": "me",
                             "window_name": "build",
+                            "window_id": "@1",
                         },
                     ],
                 }

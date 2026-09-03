@@ -26,6 +26,28 @@ from . import context
 from .sandboxcmd import resolve_workspace_and_url
 
 
+def share_state_confirmed(frame_type: str, window_id: str, shared: bool):
+    """Predicate that confirms a window's share STATE, not just any frame.
+
+    A bare ``frame_is("shared_terminals")`` confirms on the first list
+    frame — which under load can be a stale pre-command broadcast queued
+    ahead of the command's own refresh (#3057). Waits until the target
+    window's presence in the shared list matches the command's intent
+    (present for share, absent for unshare), surfacing server error
+    frames immediately like :func:`frame_is`.
+    """
+
+    def predicate(msg) -> bool:
+        if msg.get("type") == "error":
+            raise ConnectionError(msg.get("message", "terminal error"))
+        if msg.get("type") != frame_type:
+            return False
+        ids = {t.get("window_id") for t in msg.get("terminals", [])}
+        return (window_id in ids) if shared else (window_id not in ids)
+
+    return predicate
+
+
 async def recv_until_event(conn, timeout: float, on_message=None):
     """Wait for the post-``ui_ready`` container_ready event frame.
 
@@ -307,9 +329,15 @@ def _set_terminal_shared(
                 raise typer.Exit(code=1)
 
             await conn.send(json.dumps({"cmd": cmd, "window_id": match["id"]}))
-            # Wait for shared_terminals confirmation
+            # Wait for the refreshed shared_terminals list to actually
+            # reflect the command — a stale pre-command broadcast must not
+            # confirm (#3057).
             await recv_until(
-                conn, frame_is("shared_terminals"), CONFIRM_TIMEOUT
+                conn,
+                share_state_confirmed(
+                    "shared_terminals", match["id"], cmd == "share_window"
+                ),
+                CONFIRM_TIMEOUT,
             )
             context.err.print(f"[green]{done_msg}[/green]")
 
