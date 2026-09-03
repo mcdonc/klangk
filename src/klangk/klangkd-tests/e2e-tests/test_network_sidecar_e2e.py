@@ -366,10 +366,18 @@ def _free_port():
 
 
 def _reap_follow(follow):
-    """Kill a ``podman logs --follow`` helper and close its pipe."""
+    """Kill a ``podman logs --follow`` helper and close its pipe.
+
+    ``wait`` is bounded: an unkillable (D-state) podman — the plausible
+    mechanism behind the runner-side stall class (#2616/#3064/#3120) — is
+    abandoned rather than hung on; pytest-timeout stays the backstop.
+    """
     if follow.poll() is None:
         follow.kill()
-    follow.wait()
+    try:
+        follow.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        pass
     if follow.stdout is not None:
         try:
             follow.stdout.close()
@@ -401,11 +409,13 @@ def _logs_snapshot(name):
 
 
 def _container_state(name):
-    """``<status> <exitcode>`` for container *name* via podman inspect.
+    """``(state, stalled)`` for container *name* via podman inspect.
 
-    A wedged probe (#3120 — same runner-side podman stall class) yields
-    ``""``: an unknown state the caller treats as still-running and
-    re-probes within its deadline.
+    ``state`` is ``"<status> <exitcode>"``. A wedged probe (#3120 — same
+    runner-side podman stall class) yields ``("", True)``: an unknown
+    state the caller treats as still-running and re-probes within its
+    deadline. A failed inspect on a vanished container also reports a
+    ``""`` state (with ``False``) — read neither as a specific status.
     """
     try:
         return podman(
@@ -415,9 +425,9 @@ def _container_state(name):
             name,
             check=False,
             timeout=5,
-        ).stdout.strip()
+        ).stdout.strip(), False
     except subprocess.TimeoutExpired:
-        return ""
+        return "", True
 
 
 def _follow_once(name, needle, deadline):
@@ -468,8 +478,8 @@ def _follow_logs_until(name, needle, timeout, what):
     follow; a podman whose follow is inert degrades to the old 0.5s poll
     cadence — never worse than the poller this replaces (#3062). A wedged
     snapshot or state probe counts as no data and is retried inside the
-    same deadline (#3120) — a stalled ``podman logs`` costs one 5 s cycle,
-    not a fixture ERROR.
+    same deadline (#3120) — each wedged call costs its 5 s timeout, not a
+    fixture ERROR.
     """
     encoded = needle.encode()
     deadline = time.monotonic() + timeout
@@ -488,7 +498,9 @@ def _follow_logs_until(name, needle, timeout, what):
         followed = _follow_once(name, encoded, deadline)
         if encoded in followed:
             return
-        state = _container_state(name)
+        state, state_stalled = _container_state(name)
+        if state_stalled:
+            stalls += 1
         if "exited" in state or "stopped" in state:
             pytest.fail(
                 f"{what}: container exited before the expected log line. "
@@ -503,11 +515,11 @@ def _follow_logs_until(name, needle, timeout, what):
 def _deadline_msg(what, timeout, snapshot, stalls):
     """Deadline-exceeded failure message for ``_follow_logs_until``.
 
-    Notes how many ``podman logs`` snapshots wedged (#3120) so the report
+    Notes how many ``podman logs``/``inspect`` probes wedged (#3120) so the report
     distinguishes "container never logged the needle" from "podman itself
     stalled" — the SIGKILLed process leaves nothing else to go on.
     """
-    note = f" (podman logs snapshots stalled {stalls}x)" if stalls else ""
+    note = f" (podman probes stalled {stalls}x)" if stalls else ""
     return f"{what} within {timeout}s{note}\nlogs:\n{snapshot}"
 
 

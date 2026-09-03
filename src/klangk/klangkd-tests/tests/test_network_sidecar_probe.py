@@ -59,7 +59,16 @@ class TestSnapshotStallContract:
     def test_container_state_wedge_yields_unknown(self, monkeypatch):
         mod = load_probe_module(monkeypatch)
         monkeypatch.setattr(mod, "podman", _wedge)
-        assert mod._container_state("nc") == ""
+        assert mod._container_state("nc") == ("", True)
+
+    def test_deadline_msg_counts_wedged_probes(self, monkeypatch):
+        mod = load_probe_module(monkeypatch)
+        assert mod._deadline_msg("not ready", 40, "log line", 2) == (
+            "not ready within 40s (podman probes stalled 2x)\nlogs:\nlog line"
+        )
+        assert mod._deadline_msg("not ready", 40, "log line", 0) == (
+            "not ready within 40s\nlogs:\nlog line"
+        )
 
 
 class TestFollowLogsUntil:
@@ -138,3 +147,56 @@ class TestFollowLogsUntil:
         monkeypatch.setattr(mod, "_follow_once", lambda *args: b"")
         with pytest.raises(Failed, match="container exited"):
             mod._follow_logs_until("nc", "dns-proxy listening", 5, "not ready")
+
+
+class StubFollow:
+    """Just enough Popen surface for ``_reap_follow`` (stdout is self)."""
+
+    def __init__(self, unkillable=False):
+        self.unkillable = unkillable
+        self.returncode = None
+        self.killed = False
+        self.closed = False
+
+    def poll(self):
+        return self.returncode
+
+    def kill(self):
+        self.killed = True
+        if not self.unkillable:
+            self.returncode = -9
+
+    def wait(self, timeout=None):
+        if self.unkillable:
+            raise subprocess.TimeoutExpired(["podman", "logs"], timeout)
+        return self.returncode
+
+    def close(self):
+        self.closed = True
+
+    @property
+    def stdout(self):
+        return self
+
+
+class TestReapFollow:
+    def test_already_exited_follow_is_just_closed(self, monkeypatch):
+        mod = load_probe_module(monkeypatch)
+        stub = StubFollow()
+        stub.returncode = 0
+        mod._reap_follow(stub)
+        assert not stub.killed and stub.closed
+
+    def test_reap_kills_and_closes(self, monkeypatch):
+        mod = load_probe_module(monkeypatch)
+        stub = StubFollow()
+        mod._reap_follow(stub)
+        assert stub.killed and stub.returncode == -9 and stub.closed
+
+    def test_reap_abandons_unkillable_follow(self, monkeypatch):
+        # D-state podman: kill lands, wait never completes — reap must
+        # still close the pipe and return instead of hanging on it.
+        mod = load_probe_module(monkeypatch)
+        stub = StubFollow(unkillable=True)
+        mod._reap_follow(stub)
+        assert stub.killed and stub.closed
