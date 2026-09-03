@@ -129,6 +129,21 @@ _SIDECAR_PROBE_HOSTS = [
     "rust-lang.org",
     "gnupg.org",
 ]
+# Mixed-users phase (#3112): the second identity's email. The member is
+# always ensured + shared into the workspace's coders role (both identities
+# must hold egress-consent); the SECOND decider runs on the member's token by
+# default (the seeded admin acts) and on the admin's token under --as-member
+# (the member acts).
+ADMIN_EMAIL = "smoke@example.com"
+# Fresh real destinations for the mixed-users phase (#3112), untouched by
+# the fuzz pool, the probe list, or any other phase, so each check starts
+# from a clean consent state.
+_MIXED_HOSTS = {
+    "visibility": "sqlite.org",
+    "late_other": "gnu.org",
+    "late_acting": "debian.org",
+    "carryover": "mozilla.org",
+}
 # Concurrent fan-out size for the per-connection-cache phase (#2441): N
 # distinct hosts fired at once must surface N distinct held requests, proving
 # the post-#2331 NFQUEUE consumer holds N flows concurrently (not serialized).
@@ -504,6 +519,10 @@ class RawDecider:
         # ("allowed"/"denied"/"expired") -- the observable audit distinction
         # between a human verdict and a consent-timeout auto-expire (#2392).
         self.resolved: dict[str, str | None] = {}
+        # canon -> latest in-effect verdict row from an ``egress_rules``
+        # broadcast (carries ``decided_by``; the mixed-users phase's
+        # attribution check, #3112).
+        self.rules: dict[str, dict] = {}
         self._ping_task: asyncio.Task | None = None
         if ping:
             self.start_pinger()
@@ -524,6 +543,14 @@ class RawDecider:
         # Factored out so the pause-ack waiter can re-enter it for any
         # egress_request/egress_resolved frame that lands alongside the ack.
         t = msg.get("type")
+        if t == "egress_rules":
+            rows = list(msg.get("allowed") or []) + list(
+                msg.get("denied") or []
+            )
+            self.rules = {
+                _canonical(str(r.get("dest_host") or "")): r for r in rows
+            }
+            return ("rules", msg)
         if t == "egress_request":
             req = msg.get("request") or {}
             rid = req.get("id")
@@ -564,6 +591,21 @@ class RawDecider:
         while time.time() < deadline:
             if rid in self.resolved:
                 return self.resolved[rid]
+            await self._recv(0.4)
+        return None
+
+    async def wait_rule(
+        self, canon: str, timeout: float = 12.0
+    ) -> dict | None:
+        """The in-effect verdict row for ``canon``, or None on timeout.
+
+        Polls while draining so the refreshed ``egress_rules`` broadcast
+        (sent after each verdict/revoke) actually lands (#3112).
+        """
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if canon in self.rules:
+                return self.rules[canon]
             await self._recv(0.4)
         return None
 
@@ -796,6 +838,25 @@ _DETAIL_PREFIX_NAMES: list[tuple[str, str]] = [
     ("no hold surfaced for the", "NO-EXPECTED-REQUEST"),
     ("concurrent same-host deduped to one prompt, but both", "ALLOW-REFUSED"),
     ("fan-out phase failed", "UNEXPECTED-ERROR"),
+    # mixed users (#3112): two identities decide one workspace at once.
+    ("not seen by BOTH users", "MIXEDUSER-NOT-SHARED"),
+    ("the app didn't see the other user's resolve", "CONN-NOT-CLEAN"),
+    ("first cross-user deny", "CONN-NOT-CLEAN"),
+    (
+        "late cross-user verdict took effect",
+        "MIXEDUSER-LATE-VERDICT-APPLIED",
+    ),
+    ("no re-prompt after the late verdict", "HUNG-NFQUEUE-DNS"),
+    ("decided_by=", "AUDIT-MISATTRIBUTED"),
+    ("no egress_rules frame", "CONN-NOT-CLEAN"),
+    ("cross-user 1h allow did not cover", "MIXEDUSER-CARRYOVER-BROKEN"),
+    ("revoke by the non-deciding user", "MIXEDUSER-REVOKE-BROKEN"),
+    ("user id lookup missed", "MIXEDUSER-SETUP"),
+    ("other user's allow was refused", "ALLOW-REFUSED"),
+    ("other user's allow:", "HUNG-NFQUEUE-DNS"),
+    ("cross-user covered allow was refused", "ALLOW-REFUSED"),
+    ("cross-user covered allow:", "HUNG-NFQUEUE-DNS"),
+    ("mixed-users phase failed", "UNEXPECTED-ERROR"),
     ("run aborted", "UNEXPECTED-ERROR"),
 ]
 
@@ -842,6 +903,12 @@ OUTCOME_NAMES: dict[str, str] = {
     "CONCURRENT-NOT-DEDUPED": "concurrent connections to the same destination each produced a prompt (the coordinator's per-destination dedup is broken -- each should collapse to one).",
     "ONCE-CROSS-CONN": "a `once` verdict on one connection released a separate concurrent connection to the same host (the verdict leaked across connections -- #2361).",
     "RETRANSMIT-DUPLICATED": "a held connection's SYN retransmits produced more than one consent request (the in-flight dedup is broken -- #2366).",
+    "MIXEDUSER-NOT-SHARED": "a pending request was not visible to both users' deciders (workspace-scoped fanout broken across users). #3112",
+    "MIXEDUSER-LATE-VERDICT-APPLIED": "a late verdict from the other user took effect (first-decision-wins broken across users). #3112",
+    "MIXEDUSER-CARRYOVER-BROKEN": "a carrying verdict issued by one user did not cover a later connection while the other user's decider watched. #3112",
+    "MIXEDUSER-REVOKE-BROKEN": "a revoke by the non-deciding user did not drop the other user's verdict (no re-prompt). #3112",
+    "AUDIT-MISATTRIBUTED": "an egress_rules verdict row's decided_by names the wrong user (NULL or the other identity). #3112",
+    "MIXEDUSER-SETUP": "mixed-users phase bring-up failed (member login, user id lookup). #3112",
 }
 
 _EXPECT_CONN_NAMES = {
@@ -902,6 +969,20 @@ class _Summary:
     findings: int = 0
     mismatches: int = 0
     rows: list[_Result] = field(default_factory=list)
+
+
+def _mixed_release_detail(label: str, status: str, ec: int | None) -> str:
+    """Detail for an expect-released classify row so its outcome name maps.
+
+    A bare ``_classify_conn`` status recorded with no detail would fall
+    through ``_outcome_name`` to the ``??`` gap (probe rows carry no
+    ``expect_conn``); give MISMATCH/FINDING rows a mapped prefix instead.
+    """
+    if status == MISMATCH:
+        return f"{label} was refused"
+    if status == FINDING:
+        return f"{label}: unexpected exit ({_exit_label(ec)})"
+    return ""
 
 
 class SmokeTest:
@@ -1285,6 +1366,63 @@ class SmokeTest:
                 )
         finally:
             client.close()
+
+    @staticmethod
+    def _user_id_by_email(server: dict, admin: dict, email: str) -> str | None:
+        """The stable users.id for ``email`` via the admin user list (#3112).
+
+        egress_consent.decided_by records this id, so the mixed-users phase
+        compares it against the rules-frame row's attributer.
+        """
+        client = httpx.Client(
+            base_url=server["url"], headers=admin["headers"], timeout=30
+        )
+        try:
+            r = client.get(
+                "/api/v1/users", params={"q": email, "page_size": 50}
+            )
+            if r.status_code != 200:
+                raise RuntimeError(
+                    f"user lookup failed: {r.status_code} {r.text}"
+                )
+            for row in r.json().get("users", []):
+                if row.get("email") == email:
+                    return row["id"]
+            return None
+        finally:
+            client.close()
+
+    async def _mixed_setup(self) -> tuple[dict, str | None]:
+        """Provision + log in the second identity for the mixed phase (#3112).
+
+        Returns (other_auth, other_user_id). The member is always ensured
+        and shared into the main workspace's coders role (idempotent) so
+        BOTH identities hold egress-consent on it; the second identity is
+        the member by default (the admin acts) and the bootstrap admin
+        under --as-member (the member acts). The id feeds the decided_by
+        check; None means the lookup missed and the attribution check
+        degrades to a finding.
+        """
+        await asyncio.to_thread(
+            self._ensure_member, self.server, self.admin_auth
+        )
+        await asyncio.to_thread(
+            self._share_coder, self.server, self.admin_auth, self.ws_id
+        )
+        if self.args.as_member:
+            other_auth, other_email = self.admin_auth, ADMIN_EMAIL
+        else:
+            other_auth = await asyncio.to_thread(
+                self._login,
+                self.server["url"],
+                MEMBER_EMAIL,
+                MEMBER_PASSWORD,
+            )
+            other_email = MEMBER_EMAIL
+        other_id = await asyncio.to_thread(
+            self._user_id_by_email, self.server, self.admin_auth, other_email
+        )
+        return other_auth, other_id
 
     async def _new_workspace(self, *args, **kwargs) -> str:
         """Create a workspace the acting identity can use.
@@ -2008,6 +2146,7 @@ class SmokeTest:
         attempts: int = 4,
         *,
         ping: bool = False,
+        token: str | None = None,
     ) -> RawDecider:
         # Retry a 2nd-decider attach with a generous open timeout so a
         # transient WS-upgrade outage is ridden out rather than failing the
@@ -2032,8 +2171,10 @@ class SmokeTest:
         # workspace's consent (needs egress-consent on it). Consent is
         # strictly workspace-scoped (#2976); there is no deploy-wide
         # flavor. Used by the decider-scope phase's isolation probe
-        # (#2392) and the multi-decider/audit phases.
-        url = f"/ws/consent-decider?token={self.auth['token']}&workspace={workspace_id}"
+        # (#2392), the multi-decider/audit phases, and --with a ``token``
+        # override-- the mixed-users phase's second identity (#3112).
+        tok = token or self.auth["token"]
+        url = f"/ws/consent-decider?token={tok}&workspace={workspace_id}"
         last: Exception | None = None
         for i in range(attempts):
             began = time.time()
@@ -2200,6 +2341,381 @@ class SmokeTest:
         )
         if sy == MISMATCH and not self.args.continue_run:
             self._abort = True
+
+    # -- mixed-users phase (#3112) --------------------------------------
+    async def run_mixed_users_phase(self, pilot) -> None:
+        """Two identities decide the SAME workspace at once (#3112).
+
+        The acting identity's textual app plus a raw decider on the OTHER
+        identity's token (the seeded member by default; the bootstrap admin
+        under --as-member, where the member already acts) are live
+        simultaneously, and the phase pins the semantics that must NOT
+        change with the users' identity: workspace-scoped (not user-scoped)
+        fanout, first-decision-wins and carryover across users, per-user
+        ``decided_by`` attribution, and a revoke by the non-deciding user.
+        Connections come from the shared workspace container -- consent
+        governs the workspace, so every decider of the workspace sees them
+        no matter which user connects.
+        """
+        if not self.args.mixed_users:
+            return
+        print("\n--- mixed users: two identities, one workspace (#3112) ---")
+        d_other: RawDecider | None = None
+        try:
+            other_auth, other_id = await self._mixed_setup()
+            d_other = await self._connect_raw_decider(
+                self.ws_id, ping=True, token=other_auth["token"]
+            )
+            self._extra_deciders.append(d_other)
+            await d_other.settle()
+            who = "admin" if self.args.as_member else "member"
+            print(f"second decider attached on the {who}'s token")
+            ok = await self._mixed_visibility(pilot, d_other)
+            if ok or self.args.continue_run:
+                ok = await self._mixed_late_verdict(pilot, d_other)
+            if ok or self.args.continue_run:
+                await self._mixed_carryover(pilot, d_other, other_id)
+        except Exception as e:  # noqa: BLE001
+            self._record_probe(
+                _Step(
+                    self.summary.total, "(mixed)", "n/a", False, "mixed", "-"
+                ),
+                "bring up second identity",
+                "error",
+                None,
+                MISMATCH,
+                f"mixed-users phase failed: {e!r}",
+            )
+            if not self.args.continue_run:
+                self._abort = True
+        finally:
+            # CRITICAL: a live second decider keeps the workspace interactive
+            # (and would break later phases' premises -- fail-closed,
+            # no-decider), so close it eagerly; teardown is a backstop
+            # (double-close is a safe no-op).
+            if d_other is not None:
+                await d_other.close()
+
+    async def _mixed_visibility(self, pilot, d_other: RawDecider) -> bool:
+        """1) shared visibility: one off-list SYN surfaces the SAME request
+        in both users' deciders; the other user's allow releases it and the
+        acting app sees the resolve (cross-user co-decider sync)."""
+        host = _MIXED_HOSTS["visibility"]
+        canon = _canonical(host)
+        step = _Step(
+            self.summary.total, host, "domain", False, "mixed-vis", "-"
+        )
+        outfile = f"/tmp/smoke_mu_v_{self.summary.total}.out"
+        _trigger(self.container, host, outfile)
+        rid_other = await d_other.wait_for(canon, 12.0)
+        rid_app = await _wait_for_request(self.app, canon, 8.0)
+        if rid_other is None or rid_app is None or rid_app != rid_other:
+            await self._mixed_settle_held(pilot, d_other, rid_app, rid_other)
+            ec = _parse_exit(await _wait_result(self.container, outfile))
+            self._record_probe(
+                step,
+                "hold (both users)",
+                "no-request(!)",
+                ec,
+                MISMATCH,
+                "not seen by BOTH users' deciders (workspace fanout broken)",
+            )
+            return False
+        await d_other.verdict(rid_other, DECISION_ALLOWED, DURATION_ONCE)
+        synced = await _wait_resolved(self.app, rid_other, 15.0)
+        ec = _parse_exit(await _wait_result(self.container, outfile))
+        if not synced:
+            self._record_probe(
+                step,
+                "other user allows -> app synced",
+                "held(!)",
+                ec,
+                FINDING,
+                "the app didn't see the other user's resolve (sidecar hiccup)",
+            )
+            return True
+        status = _classify_conn(EXPECT_RELEASED, ec)
+        self._record_probe(
+            step,
+            "other user allows -> app synced",
+            "resolved",
+            ec,
+            status,
+            _mixed_release_detail("other user's allow", status, ec),
+        )
+        return True
+
+    async def _mixed_late_verdict(self, pilot, d_other: RawDecider) -> bool:
+        """2) first-decision-wins ACROSS users, both directions: whichever
+        user denies first wins; the other user's late allow on the same
+        request must be a no-op -- no rule is installed, so the next
+        connection re-prompts."""
+        ok = await self._mixed_late_one(
+            pilot, d_other, _MIXED_HOSTS["late_other"], by_other=True
+        )
+        if not ok and not self.args.continue_run:
+            return False
+        return await self._mixed_late_one(
+            pilot, d_other, _MIXED_HOSTS["late_acting"], by_other=False
+        )
+
+    async def _mixed_late_one(
+        self, pilot, d_other: RawDecider, host: str, *, by_other: bool
+    ) -> bool:
+        """One first-wins direction: ``by_other`` picks which user's deny is
+        first (the other user's late allow/forever must then install
+        nothing)."""
+        canon = _canonical(host)
+        step = _Step(
+            self.summary.total, host, "domain", False, "mixed-late", "-"
+        )
+        outfile = f"/tmp/smoke_mu_l_{self.summary.total}.out"
+        _trigger(self.container, host, outfile)
+        rid_other = await d_other.wait_for(canon, 12.0)
+        rid_app = await _wait_for_request(self.app, canon, 8.0)
+        if rid_other is None or rid_app is None:
+            await self._mixed_settle_held(pilot, d_other, rid_app, rid_other)
+            self._record_probe(
+                step,
+                "hold",
+                "no-request(!)",
+                None,
+                FINDING,
+                "no hold surfaced (sidecar readiness, #2417)",
+            )
+            return True
+        # First verdict (deny/once) from the chosen user.
+        if by_other:
+            await d_other.verdict(rid_other, DECISION_DENIED, DURATION_ONCE)
+        else:
+            self.app._decide_id(rid_app, DECISION_DENIED, DURATION_ONCE)
+            await pilot.pause()
+        await _wait_resolved(self.app, rid_other, 15.0)
+        ec1 = _parse_exit(await _wait_result(self.container, outfile))
+        if ec1 != EXIT_REFUSED:
+            self._record_probe(
+                step,
+                "first deny (cross-user)",
+                "not-refused(!)",
+                ec1,
+                FINDING,
+                f"first cross-user deny not cleanly refused (exit {ec1})",
+            )
+            return True
+        # Late verdict (allow/forever) from the OTHER user: must be a no-op.
+        if by_other:
+            self.app._decide_id(rid_app, DECISION_ALLOWED, DURATION_FOREVER)
+            await pilot.pause()
+        else:
+            await d_other.verdict(
+                rid_other, DECISION_ALLOWED, DURATION_FOREVER
+            )
+        await asyncio.sleep(0.5)
+        # Proof it installed nothing: the next connection must re-prompt
+        # (a wrongly-applied forever-allow would connect covered).
+        outfile2 = f"/tmp/smoke_mu_l2_{self.summary.total}.out"
+        _trigger(self.container, host, outfile2)
+        rid2 = await _wait_for_request(self.app, canon, timeout=12.0)
+        if rid2 is None:
+            ec2 = _parse_exit(
+                await _wait_result(self.container, outfile2, timeout=10.0)
+            )
+            if ec2 == 0:
+                self._record_probe(
+                    step,
+                    "late verdict no-op",
+                    "covered(!)",
+                    ec2,
+                    MISMATCH,
+                    "late cross-user verdict took effect (re-prompt missing)",
+                )
+                return False
+            self._record_probe(
+                step,
+                "late verdict no-op",
+                "no-reprompt(!)",
+                ec2,
+                FINDING,
+                "no re-prompt after the late verdict (hung / NFQUEUE-DNS)",
+            )
+            return True
+        self.app._decide_id(rid2, DECISION_ALLOWED, DURATION_ONCE)
+        await pilot.pause()
+        await _wait_resolved(self.app, rid2, 15.0)
+        ec2 = _parse_exit(await _wait_result(self.container, outfile2))
+        self._record_probe(
+            step,
+            "late verdict no-op",
+            "re-prompt",
+            ec2,
+            PASS,
+            "first decision won; the late cross-user verdict "
+            "installed no rule",
+        )
+        return True
+
+    async def _mixed_settle_held(
+        self,
+        pilot,
+        d_other: RawDecider,
+        rid_app: str | None,
+        rid_other: str | None,
+    ) -> None:
+        """Release a half-seen hold so it cannot dangle: allow/once from
+        whichever side holds it (best-effort, both may be None)."""
+        if rid_app is not None:
+            self.app._decide_id(rid_app, DECISION_ALLOWED, DURATION_ONCE)
+            await pilot.pause()
+        elif rid_other is not None:
+            await d_other.verdict(rid_other, DECISION_ALLOWED, DURATION_ONCE)
+
+    async def _mixed_carryover(
+        self, pilot, d_other: RawDecider, other_id: str | None
+    ) -> None:
+        """3) a carrying verdict by the OTHER user covers later connections
+        regardless of decider (workspace-scoped, not decider-scoped); the
+        egress_rules row names that user (``decided_by``); and the ACTING
+        user can revoke it (cross-user revoke -> re-prompt)."""
+        host = _MIXED_HOSTS["carryover"]
+        canon = _canonical(host)
+        step = _Step(
+            self.summary.total, host, "domain", False, "mixed-carry", "-"
+        )
+        outfile = f"/tmp/smoke_mu_c_{self.summary.total}.out"
+        _trigger(self.container, host, outfile)
+        rid_other = await d_other.wait_for(canon, 12.0)
+        rid_app = await _wait_for_request(self.app, canon, 8.0)
+        if rid_other is None or rid_app is None:
+            await self._mixed_settle_held(pilot, d_other, rid_app, rid_other)
+            self._record_probe(
+                step,
+                "hold",
+                "no-request(!)",
+                None,
+                FINDING,
+                "no hold surfaced (sidecar readiness, #2417)",
+            )
+            return
+        # The other user's 1h allow: carries, and its row must name them.
+        await d_other.verdict(rid_other, DECISION_ALLOWED, DURATION_1H)
+        await _wait_resolved(self.app, rid_other, 15.0)
+        ec = _parse_exit(await _wait_result(self.container, outfile))
+        await self._mixed_check_attribution(d_other, step, canon, other_id, ec)
+        # Carryover: the next connection is covered (no request anywhere).
+        outfile2 = f"/tmp/smoke_mu_c2_{self.summary.total}.out"
+        _trigger(self.container, host, outfile2)
+        stray = await _wait_no_request(self.app, canon, window=6.0)
+        stray_other = await d_other.wait_no_request(canon, window=6.0)
+        ec2 = _parse_exit(await _wait_result(self.container, outfile2))
+        if stray is not None or stray_other is not None:
+            await self._mixed_settle_held(pilot, d_other, stray, stray_other)
+            self._record_probe(
+                step,
+                "cross-user carryover",
+                "request(!)",
+                ec2,
+                MISMATCH,
+                "cross-user 1h allow did not cover the retry "
+                "(verdict is decider-scoped?)",
+            )
+            return
+        carry_status = _classify_conn(EXPECT_RELEASED, ec2)
+        self._record_probe(
+            step,
+            "cross-user carryover",
+            "no-req",
+            ec2,
+            carry_status,
+            _mixed_release_detail(
+                "cross-user covered allow", carry_status, ec2
+            ),
+        )
+        # Cross-user revoke: the ACTING user drops the other user's verdict.
+        try:
+            if self.app._ws is not None:
+                await self.app._ws.send(make_revoke(rid_other))
+        except Exception:
+            pass
+        await pilot.pause()
+        await asyncio.sleep(2.0)  # let the server + sidecar process the drop
+        outfile3 = f"/tmp/smoke_mu_c3_{self.summary.total}.out"
+        _trigger(self.container, host, outfile3)
+        rid3 = await _wait_for_request(self.app, canon, timeout=12.0)
+        if rid3 is None:
+            ec3 = _parse_exit(
+                await _wait_result(self.container, outfile3, timeout=10.0)
+            )
+            self._record_probe(
+                step,
+                "cross-user revoke",
+                "no-reprompt(!)",
+                ec3,
+                FINDING if ec3 is None else MISMATCH,
+                "post-revoke connection hung (NFQUEUE/DNS)"
+                if ec3 is None
+                else "revoke by the non-deciding user did not drop the "
+                "rule (still covered)",
+            )
+            return
+        self.app._decide_id(rid3, DECISION_ALLOWED, DURATION_ONCE)
+        await pilot.pause()
+        await _wait_resolved(self.app, rid3, 15.0)
+        ec3 = _parse_exit(await _wait_result(self.container, outfile3))
+        self._record_probe(
+            step,
+            "cross-user revoke",
+            "re-prompt",
+            ec3,
+            PASS,
+            "the acting user's revoke dropped the other user's verdict",
+        )
+
+    async def _mixed_check_attribution(
+        self,
+        d_other: RawDecider,
+        step: _Step,
+        canon: str,
+        other_id: str | None,
+        ec: int | None,
+    ) -> None:
+        """The refreshed egress_rules row for a verdict must name the user
+        who decided it (``decided_by``), not the run's acting identity."""
+        row = await d_other.wait_rule(canon, 12.0)
+        if row is None:
+            self._record_probe(
+                step,
+                "audit decided_by",
+                "no-rules(!)",
+                ec,
+                FINDING,
+                "no egress_rules frame carried the verdict row",
+            )
+            return
+        if other_id is None:
+            self._record_probe(
+                step,
+                "audit decided_by",
+                "no-id(!)",
+                ec,
+                FINDING,
+                "user id lookup missed; cannot check attribution",
+            )
+            return
+        by = row.get("decided_by")
+        if by == other_id and row.get("decision") == DECISION_ALLOWED:
+            self._record_probe(
+                step, "audit decided_by", "other-user", ec, PASS, ""
+            )
+        else:
+            self._record_probe(
+                step,
+                "audit decided_by",
+                str(by),
+                ec,
+                MISMATCH,
+                f"decided_by={by!r} decision={row.get('decision')!r} "
+                f"(expected the OTHER user's id)",
+            )
 
     async def run_snapshot_replay_phase(self, pilot) -> None:
         """Reconnect snapshot replay: a request resolved while a decider is
@@ -4907,6 +5423,8 @@ class SmokeTest:
                 if not stop and not self._abort:
                     await self.run_multi_decider_phase(pilot)
                 if not stop and not self._abort:
+                    await self.run_mixed_users_phase(pilot)
+                if not stop and not self._abort:
                     await self.run_snapshot_replay_phase(pilot)
                 if not stop and not self._abort:
                     await self.run_fanout_phase(pilot)
@@ -5200,6 +5718,15 @@ def main() -> int:
         dest="multi_decider",
         action="store_false",
         help="skip the multiple-deciders (first-wins + sync) phase",
+    )
+    p.add_argument(
+        "--no-mixed-users",
+        dest="mixed_users",
+        action="store_false",
+        help="skip the mixed-users phase (#3112): two identities (the acting "
+        "one plus the member, or the admin under --as-member) decide the "
+        "same workspace at once -- shared visibility, first-decision-wins + "
+        "carryover across users, decided_by attribution, cross-user revoke",
     )
     p.add_argument(
         "--snapshot",
