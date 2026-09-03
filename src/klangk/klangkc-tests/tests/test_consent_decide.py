@@ -987,7 +987,10 @@ class TestAppActions:
             # The modal dismissed despite the flash on the disconnected path.
             assert not isinstance(app.screen, tui_consent.DurationPickerScreen)
             status = app.query_one("#status", Static)
-            assert "reconnecting" in str(status.content)
+            # "disconnected" only appears in the FLASH text — the plain
+            # disconnected status line says "reconnecting" without it —
+            # so this discriminates the flash from the idle status line.
+            assert "disconnected" in str(status.content)
 
     async def test_D_opens_picker_enter_sends_picked_duration(self):
         app = _make_app()

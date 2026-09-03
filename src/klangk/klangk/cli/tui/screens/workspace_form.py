@@ -142,6 +142,21 @@ _EDITOR_INPUT_HANDLERS = {
     "reject_input": "_add_rejected_domain",
 }
 
+# Enter in any of these scalar inputs submits the form. Shared by the
+# create and edit forms — the two lists drifted once already (the edit
+# form lost tmp_size, #3096), so keep one literal.
+_SCALAR_SUBMIT_IDS = (
+    "name",
+    "command",
+    "health_check",
+    "classification_banner",
+    "idle_timeout",
+    "cpu_limit",
+    "memory_limit",
+    "pids_limit",
+    "tmp_size",
+)
+
 
 def compose_general_pane(
     image_select, *, name="", auto_start=False, nix=False, allow_sudo=False
@@ -1135,17 +1150,7 @@ class CreateWorkspaceScreen(WorkspaceFormMixin, TabSkipMixin, StatusScreen):
     def on_input_submitted(self, event: Input.Submitted) -> None:
         self.handle_form_input_submitted(
             event,
-            submit_ids=(
-                "name",
-                "command",
-                "health_check",
-                "classification_banner",
-                "idle_timeout",
-                "cpu_limit",
-                "memory_limit",
-                "pids_limit",
-                "tmp_size",
-            ),
+            submit_ids=_SCALAR_SUBMIT_IDS,
             submit=self._create,
         )
 
@@ -1722,13 +1727,13 @@ class EditWorkspaceScreen(WorkspaceFormMixin, TabSkipMixin, StatusScreen):
         if self in self.app.screen_stack:
             self.dismiss(result)
 
-    def prompt_restart_after_save(self, ws_name, dismiss_name) -> None:
+    def prompt_restart_after_save(self, ws_id, dismiss_name) -> None:
         """Ask whether to restart the running container to apply the save."""
 
         def _after(restart: bool) -> None:
             if restart:
                 self.run_worker(
-                    self._do_restart_after_save(ws_name, dismiss_name),
+                    self._do_restart_after_save(ws_id, dismiss_name),
                     exit_on_error=False,
                 )
             else:
@@ -1760,16 +1765,18 @@ class EditWorkspaceScreen(WorkspaceFormMixin, TabSkipMixin, StatusScreen):
             self.msg(f"Failed to save: {exc}", error=True)
             return
         if restart_needed:
-            # The PUT above already applied the rename, so the restart must
-            # target the post-save name (#3096).
-            self.prompt_restart_after_save(name, name)
+            # Restart by id: the PUT above may have renamed the workspace,
+            # and names are only unique per owner — a shared workspace
+            # renamed onto another visible workspace's name would otherwise
+            # restart the wrong container (#3096).
+            self.prompt_restart_after_save(ws.id, name)
         else:
             self._safe_dismiss(name)
 
-    async def _do_restart_after_save(self, ws_name, dismiss_name) -> None:
+    async def _do_restart_after_save(self, ws_id, dismiss_name) -> None:
         try:
             await asyncio.to_thread(
-                self.app.tui_state.restart_workspace, ws_name
+                self.app.tui_state.restart_workspace_by_id, ws_id
             )
         except Exception as exc:
             self.msg(f"Saved, but restart failed: {exc}", error=True)
@@ -1789,17 +1796,7 @@ class EditWorkspaceScreen(WorkspaceFormMixin, TabSkipMixin, StatusScreen):
     def on_input_submitted(self, event: Input.Submitted) -> None:
         self.handle_form_input_submitted(
             event,
-            submit_ids=(
-                "name",
-                "command",
-                "health_check",
-                "classification_banner",
-                "idle_timeout",
-                "cpu_limit",
-                "memory_limit",
-                "pids_limit",
-                "tmp_size",
-            ),
+            submit_ids=_SCALAR_SUBMIT_IDS,
             submit=self.save,
         )
 

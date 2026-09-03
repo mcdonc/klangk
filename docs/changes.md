@@ -1990,7 +1990,9 @@ new-ws …` then answering `y` to the restart prompt) crashed with an
   workspace (#3096).** Accepting the post-save restart prompt on a
   renamed workspace called `restart` with the pre-rename name, which
   missed and left the workspace running the old configuration ("Saved,
-  but restart failed"). The restart now targets the post-save name.
+  but restart failed"). The restart now targets the workspace by id, so
+  it resolves after a rename and cannot hit a different workspace that
+  happens to share the name.
 
 - **`klangk consent-decide`: picking a duration while disconnected no
   longer strands the picker (#3096).** Submitting a duration from the
