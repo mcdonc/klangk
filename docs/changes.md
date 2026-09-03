@@ -1950,19 +1950,21 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
-- **`klangk shell` and `klangk sandbox` now use the standard auth gate
-  (#3090).** Both commands checked for a stored token directly, so on a
-  no-auth (`auth_modes: none`) server they refused with "Not logged in"
-  instead of auto-logging in like every other command, and with a stale
-  default UDS they suggested `klangk login` (which would fail to connect)
-  instead of reporting the unreachable socket.
-
 - **Non-mapping `klangk.yaml` no longer crashes every CLI command
   (#3094).** A config file holding valid YAML that is not a mapping
   (a stray list or a bare string) used to abort every `klangk`
   invocation with `AttributeError`. It is now treated as an empty
   config, so commands run with defaults and a bad alias lookup misses
   instead of crashing.
+
+- **`klangk sandbox` copy/setup paths are now shell-quoted (#3093).** A
+  `.klangk-sandbox.yaml` `copy:` destination containing spaces (or a
+  `mount-at`/`setup:` path containing spaces or single quotes) no longer
+  misdirects the copy or breaks the generated setup command. The setup
+  script now runs as `bash <quoted path>` instead of `bash -c '<path>'`;
+  the `-c` layer re-parsed the quoted path as a command line and
+  word-split it. `setup:` was never documented to accept shell syntax,
+  so a script path is all it passes now.
 
 - **Cancellation during a consent verdict no longer hangs the egress
   relay** (#3089). A decider disconnect or backend shutdown landing while
