@@ -70,14 +70,14 @@ async def _delete_old_seed_rows(db) -> None:
         )
 
 
-async def _admins_group_id(db) -> int | None:
+async def _admins_group_id(db) -> str | None:
     """The ``admins`` group's id, or None when absent (m0021 posture)."""
     cursor = await db.execute("SELECT id FROM groups WHERE name = 'admins'")
     row = await cursor.fetchone()
     return None if row is None else row[0]
 
 
-async def _missing_admin_permissions(db, admins_id: int) -> list[str]:
+async def _missing_admin_permissions(db, admins_id: str) -> list[str]:
     """Seed-position-ordered admin permissions the group lacks."""
     cursor = await db.execute(
         "SELECT permission FROM acl_entries WHERE resource = '/volumes'"
@@ -88,7 +88,7 @@ async def _missing_admin_permissions(db, admins_id: int) -> list[str]:
     return [p for p in ADMIN_PERMISSIONS if p not in held]
 
 
-async def _insert_admin_rows(db, admins_id: int, missing: list[str]) -> None:
+async def _insert_admin_rows(db, admins_id: str, missing: list[str]) -> None:
     """Insert the admin rows at seed positions 0/1, parking survivors."""
     # Park the surviving rows two slots down so positions 0/1 are free.
     # UNIQUE(resource, position) forbids an in-place +2 shift past a

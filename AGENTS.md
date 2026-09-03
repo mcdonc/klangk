@@ -231,8 +231,8 @@ Every function, method, and block in `src/klangk/klangk/**/*.py`,
 `scripts/**/*.py` must be xenon rank **A or better** (cyclomatic complexity
 ≤ 5), and the per-module and codebase **averages** must also stay rank A
 (≤ 5). The gate runs as the `xenon` pre-commit hook defined in `devenv.nix`
-(`--max-absolute A --max-modules A --max-average A`); it grades the **full
-tree** on every commit made through the devenv shell (`pass_filenames =
+(`--max-absolute A --max-modules A --max-average A`); on every commit that
+stages a graded `.py` file it grades the **full tree** (`pass_filenames =
 false` — a staged subset's average can exceed 5 while the whole tree
 passes, so partial grading would flap). Nothing in CI enforces it yet —
 the hook is the only gate, so do not bypass it with `--no-verify`.

@@ -264,7 +264,7 @@ in
     # invocation over the exact hook file set, so `devenv shell -- xenon`
     # (ad hoc) and `pre-commit run xenon` (staged) can't drift. At rank A
     # (#3052) the hook grades the full tree (pass_filenames=false), so
-    # the two invocations are literally identical.
+    # the two invocations are identical.
     "klangk:xenon" = {
       exec = "xenon --max-absolute A --max-modules A --max-average A $(git ls-files 'src/klangk/klangk/*.py' 'src/klangksidecar/klangksidecar/*.py' 'scripts/*.py')";
     };
