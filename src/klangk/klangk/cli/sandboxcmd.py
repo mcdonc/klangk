@@ -254,12 +254,9 @@ def sandbox(
     volumes, copies files, and runs the setup script.  Use
     ``klangk shell`` afterwards to connect.
     """
-    token = context.session_token()
-    if not token:
-        context.err.print(
-            "[red]Not logged in[/red] — run [bold]klangk login[/bold] first."
-        )
-        raise typer.Exit(code=1)
+    # require_auth (not a raw token check) so none-mode auto-login
+    # (#1374) and the stale-UDS hint (#1676) apply to sandbox too (#3090).
+    context.require_auth()
 
     sandbox_root = Path(path).resolve()
     config = load_config_or_exit(sandbox_root)
@@ -267,6 +264,7 @@ def sandbox(
     client = context.client()
     handle = client.get_handle()
     surl = context.server_url()
+    token = context.session_token()
     created = False
 
     # Check if workspace already exists.

@@ -5590,6 +5590,7 @@ class TestCliBranchGaps2834d:
         cfg = types.SimpleNamespace(image="img", mounts=[], env={}, setup=None)
         ws = types.SimpleNamespace(id="ws-exist")
         with (
+            patch("klangk.cli.context.require_auth"),
             patch("klangk.cli.context.session_token", lambda: "tok"),
             patch("klangk.cli.context.server_url", lambda: "http://t:8995"),
             patch.object(sandboxcmd, "load_sandbox_config", lambda p: cfg),
@@ -5608,17 +5609,39 @@ class TestCliBranchGaps2834d:
 
     def test_shell_bool_flag_skips_normalization(self):
         # no_consent_popup already a bool: the OptionInfo normalization
-        # arm is skipped; the run then exits cleanly without a token.
+        # arm is skipped; the run then exits at the auth gate.
         from klangk.cli import shellcmd
 
         with (
-            patch("klangk.cli.context.session_token", lambda: ""),
+            patch(
+                "klangk.cli.context.require_auth",
+                MagicMock(side_effect=typer.Exit()),
+            ),
             patch("klangk.cli.context.err", MagicMock()),
         ):
-            import typer as typer_mod
-
-            with pytest.raises(typer_mod.Exit):
+            with pytest.raises(typer.Exit):
                 shellcmd.shell("ws", None, None, True)
+
+    def test_shell_routes_auth_through_require_auth(self):
+        """shell gates via require_auth, not a raw token check (#3090):
+        none-mode auto-login (#1374) and the stale-UDS message (#1676)
+        apply to it like every other command."""
+        from klangk.cli import shellcmd
+
+        guard = MagicMock()
+        fake_client = MagicMock()
+        fake_client.list_workspaces.return_value = []
+        with (
+            patch("klangk.cli.context.require_auth", guard),
+            patch("klangk.cli.context.session_token", lambda: "tok"),
+            patch("klangk.cli.context.client", lambda: fake_client),
+            patch("klangk.cli.context.err", MagicMock()),
+        ):
+            # No workspace arg + empty list -> the interactive picker's
+            # "No workspaces found" exit, past the auth gate.
+            with pytest.raises(typer.Exit):
+                shellcmd.shell(None, None, None, True)
+        guard.assert_called_once()
 
 
 # --- No-cover audit tests (#2910) ---------------------------------------
@@ -6009,10 +6032,31 @@ class TestSandboxCommandGuards:
     def test_sandbox_without_token_exits(self, monkeypatch, tmp_path):
         from klangk.cli import sandboxcmd
 
-        monkeypatch.setattr(sandboxcmd.context, "session_token", lambda: "")
+        monkeypatch.setattr(
+            sandboxcmd.context,
+            "require_auth",
+            MagicMock(side_effect=typer.Exit()),
+        )
         monkeypatch.setattr(sandboxcmd.context, "err", MagicMock())
         with pytest.raises(typer.Exit):
             sandboxcmd.sandbox("ws", str(tmp_path))
+
+    def test_sandbox_routes_auth_through_require_auth(
+        self, monkeypatch, tmp_path
+    ):
+        """sandbox gates via require_auth, not a raw token check (#3090):
+        none-mode auto-login (#1374) and the stale-UDS message (#1676)
+        apply to it like every other command."""
+        from klangk.cli import sandboxcmd
+
+        guard = MagicMock()
+        monkeypatch.setattr(sandboxcmd.context, "require_auth", guard)
+        monkeypatch.setattr(sandboxcmd.context, "err", MagicMock())
+        # No .klangk-sandbox.yaml in tmp_path -> the config-load exit,
+        # which sits past the auth gate.
+        with pytest.raises(typer.Exit):
+            sandboxcmd.sandbox("ws", str(tmp_path))
+        guard.assert_called_once()
 
     def test_run_sandbox_setup_expired_session_exits(self, monkeypatch):
         from klangk.cli import sandboxcmd
