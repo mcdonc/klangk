@@ -93,6 +93,13 @@ class EgressConsentModel(Submodel):
         Uses ``INSERT OR IGNORE`` against the partial unique index
         ``idx_egress_consent_pending_dedup`` to atomically deduplicate —
         no TOCTOU between a separate has_pending() check and the insert.
+
+        The row is re-read inside the same transaction (the :meth:`decide`
+        pattern) and returned via :func:`_row_to_dict`, so the returned dict
+        carries the full column set -- the exact shape ``list_requests``
+        rows have. The live ``egress_request`` frame (``_fanout`` in the
+        coordinator) frames this dict, so live and replayed
+        (``snapshot``) frames cannot drift apart (#3082).
         """
         request_id = str(uuid.uuid4())
         requested_at = time.time()
@@ -115,18 +122,7 @@ class EgressConsentModel(Submodel):
             )
             if cursor.rowcount == 0:
                 return None
-        return {
-            "id": request_id,
-            "workspace_id": workspace_id,
-            "dest_host": dest_host,
-            "dest_port": dest_port,
-            "pid": pid,
-            "process_name": process_name,
-            "decision": DECISION_PENDING,
-            "requested_at": requested_at,
-            "decided_at": None,
-            "decided_by": None,
-        }
+            return await _select_row(db, request_id)
 
     async def record_static_denial(
         self,
@@ -177,7 +173,9 @@ class EgressConsentModel(Submodel):
         dest_port: int | None,
     ) -> dict | None:
         """INSERT OR IGNORE one static-mode consent row; the new row, or
-        None when the mode's dedup index already had it."""
+        None when the mode's dedup index already had it. Re-read inside the
+        transaction (like :meth:`create_request`, #3082) so every returned
+        row dict carries the full :func:`_row_to_dict` column set."""
         request_id = str(uuid.uuid4())
         now = time.time()
         async with self.app.state.db.transaction() as db:
@@ -199,18 +197,7 @@ class EgressConsentModel(Submodel):
             )
             if cursor.rowcount == 0:
                 return None
-        return {
-            "id": request_id,
-            "workspace_id": workspace_id,
-            "dest_host": dest_host,
-            "dest_port": dest_port,
-            "pid": None,
-            "process_name": None,
-            "decision": decision,
-            "requested_at": now,
-            "decided_at": now,
-            "decided_by": None,
-        }
+            return await _select_row(db, request_id)
 
     async def get_request(self, request_id: str) -> dict | None:
         """Get a single consent request by ID."""
@@ -722,6 +709,19 @@ class EgressConsentModel(Submodel):
                 cursor = await db.execute(sql, params)
                 removed += cursor.rowcount
         return removed
+
+
+async def _select_row(db, request_id: str) -> dict | None:
+    """Re-read one full row inside an open transaction (the #3082 shape
+    guarantee: an inserted row is returned via the same
+    :func:`_row_to_dict` mapping the read paths use, so a returned dict can
+    never carry a different key set than a ``list_requests`` row)."""
+    cursor = await db.execute(
+        f"SELECT {_EC_COLUMNS} FROM egress_consent WHERE id = ?",  # noqa: S608
+        (request_id,),
+    )
+    row = await cursor.fetchone()
+    return _row_to_dict(row) if row else None
 
 
 def _row_to_dict(row) -> dict:

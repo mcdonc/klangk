@@ -160,6 +160,42 @@ async def test_create_request_dedup_returns_none(ec, ws, user):
     assert await ec.count_pending(w["id"]) == 1
 
 
+async def test_create_request_returns_full_column_set(ec, ws, user):
+    """#3082: the returned dict is the exact ``_row_to_dict`` shape.
+
+    The live ``egress_request`` fanout (coordinator ``_fanout``) frames the
+    ``create_request`` return value, while the connect-time replay
+    (``snapshot`` -> ``list_requests``) frames DB rows; both must carry the
+    same key set so a decider sees one shape per delivery path. The unset
+    lifecycle columns come back as explicit ``None``.
+    """
+    w = await ws.create_workspace(user["id"], "shape-ws")
+    req = await ec.create_request(w["id"], "shape.example.com", 443)
+    row = await ec.get_request(req["id"])
+    # full equality, not just key-set: both sides are re-read through the
+    # same _row_to_dict, so a column mis-mapping or value mangling fails
+    # here too (and floats round-trip identically on both sides -- no flake)
+    assert req == row
+    assert req["duration"] is None
+    assert req["decided_at"] is None
+    assert req["decided_by"] is None
+    assert req["revoked_at"] is None
+    assert req["revoked_by"] is None
+
+
+async def test_record_static_rows_return_full_column_set(ec, ws, user):
+    """#3082: the static-mode recorders return the full ``_row_to_dict``
+    shape too (same guarantee as ``create_request``)."""
+    w = await ws.create_workspace(user["id"], "static-shape-ws")
+    denier = await ec.record_static_denial(w["id"], "evil.example.com", 443)
+    allower = await ec.record_static_allow(w["id"], "ok.example.com", 443)
+    for req in (denier, allower):
+        row = await ec.get_request(req["id"])
+        assert req == row
+        assert req["revoked_at"] is None
+        assert req["revoked_by"] is None
+
+
 async def test_record_static_denial_inserts_denied_no_human(ec, ws, user):
     w = await ws.create_workspace(user["id"], "static-denial-ws")
     req = await ec.record_static_denial(w["id"], "evil.com", 443)

@@ -1815,6 +1815,42 @@ class TestConsentCoordinatorPauseIntegration:
         assert fut2.result()["reason"] == "paused"
 
 
+class TestConsentFrameShapeIntegration:
+    """#3082: live fanout and connect-time replay carry one request shape.
+
+    Drives the REAL model: the ``egress_request`` frame ``_fanout`` sends on
+    hold() and the frame ``snapshot()`` returns to a reconnecting decider must
+    carry the same ``request`` key set, so no client can observe a
+    delivery-path-dependent shape.
+    """
+
+    async def test_fanout_and_snapshot_frames_share_request_shape(
+        self, app_state, user
+    ):
+        from klangk.model.workspaces import EGRESS_MODE_INTERACTIVE
+
+        _wire_coordinator_extras(app_state)
+        ws = await app_state.state.model.workspaces.create_workspace(
+            user["id"], "shape-int", egress_mode=EGRESS_MODE_INTERACTIVE
+        )
+        coord = ConsentCoordinator(app_state)
+        await coord.hold(ws["id"], "live.example.com", 443)
+        live = [
+            c.args[1]
+            for c in app_state.state.consent_deciders.broadcast.call_args_list
+            if c.args[1]["type"] == "egress_request"
+        ]
+        assert len(live) == 1
+        replayed = await coord.snapshot(ws["id"])
+        assert len(replayed) == 1
+        assert set(live[0]["request"]) == set(replayed[0]["request"])
+        # the unset lifecycle columns are present-and-None on both paths
+        for frame in (live[0], replayed[0]):
+            assert frame["request"]["duration"] is None
+            assert frame["request"]["revoked_at"] is None
+            assert frame["request"]["revoked_by"] is None
+
+
 class TestCoordinatorBranchGaps2834:
     """#2834 branch gate: hold/fail-close/refresh outcomes the mainline
     revoke + stop tests only take one side of."""
