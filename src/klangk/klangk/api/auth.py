@@ -536,11 +536,7 @@ async def change_email(
         raise HTTPException(status_code=400, detail="Email already in use")
     await app.state.model.users.update_email(user["id"], req.email)
     # Mark as unverified and send verification email
-    async with app.state.model.transaction() as db:
-        await db.execute(
-            "UPDATE users SET verified = 0 WHERE id = ?",
-            (user["id"],),
-        )
+    await app.state.model.users.mark_unverified(user["id"])
 
     hostname, proto, base_path = request.app.state.util.derive_hosting_info(
         request.headers, request.client.host if request.client else None

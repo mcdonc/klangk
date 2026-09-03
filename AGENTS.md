@@ -194,6 +194,24 @@ runtime swap (the SIGHUP config reload, #1587) propagate without per-subsystem
 `reconfigure()` boilerplate. Cached subobject references silently keep the old
 value after a swap and are a recurring source of stale-config bugs (#1608).
 
+## Raw SQL containment (`klangk.model`)
+
+SQL string literals and `.execute()` calls belong **only inside
+`src/klangk/klangk/model/`** — the data-access layer. Code anywhere else in
+the backend (`api/`, `lifecycle.py`, `workspaces.py`, `wshandler/`, …) must go
+through the model-layer API (`app.state.model.users.*`, `app.state.model.workspaces.*`, …) — open a transaction only via the model facade when a
+call site genuinely needs a raw connection it already owns from a model helper
+(#3068). The `klangk.cli` subpackage never touches the DB at all (see its
+isolation rule below).
+
+Check before committing:
+
+```bash
+rg '\.execute\(' src/klangk/klangk -g '*.py' --glob '!**/model/**' --glob '!**/cli/**'
+```
+
+should come back empty.
+
 ## Naming: avoid leading underscores
 
 Do not start module names, function/method names, class names, or

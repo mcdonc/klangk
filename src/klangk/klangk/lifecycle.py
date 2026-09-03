@@ -39,7 +39,6 @@ from .model import (
     SYSTEM_AUTHENTICATED,
     SYSTEM_EVERYONE,
 )
-from .model import AGENT_USER_ID
 from .model.users import ADMIN_GROUP_NAME, AGENT_EMAIL, AGENT_HANDLE
 
 logger = logging.getLogger(__name__)
@@ -510,53 +509,14 @@ class Lifecycle:
     async def seed_agent_user(self) -> None:
         """Ensure the agent user exists in the DB with the fixed identity.
 
-        The agent *is* the klangk user (#2718): handle `klangk`, email
-        `klangk@example.com` — constant, not configurable (the former
-        ``KLANGKWS_FEATURE_CHAT_AGENT_EMAIL/HANDLE`` keys are gone).
-        Upsert is idempotent and reconciles pre-#2718 rows (e.g. a
-        `clanker`-era (pre-#2718) deployment) back to the fixed identity on every
-        boot, so the migration only has to handle the colliding-human
-        edge case once.
-
-        Refuses to seed while a *human* user holds the `klangk` handle.
-        A colliding agent handle is destructive:
-        ``ensure_home_symlink`` would later migrate that user's home files
-        into the agent's tree via its workspace-import adoption branch.
-        The ``users.handle`` UNIQUE constraint is the structural backstop,
-        but we fail loudly here with an actionable message instead of
-        letting a bare ``IntegrityError`` abort startup mid-sequence.
-        See #1137.
+        Sequencing wrapper only: the SQL lives in the model layer
+        (``UsersModel.ensure_agent_user`` — raw SQL stays inside
+        ``klangk/model``, #3068). See that method for the fixed
+        identity (#2718), the idempotent upsert, and the
+        handle-collision refusal (#1137).
         """
-        handle = AGENT_HANDLE
-        email = AGENT_EMAIL
-        async with self.app.state.db.transaction() as db:
-            # Pre-check: refuse the fixed handle while claimed by a
-            # non-agent user. The m0008 migration bumps such users to a
-            # unique alternative, so this fires only if the migration
-            # was skipped (e.g. a hand-built DB).
-            cursor = await db.execute(
-                "SELECT id FROM users WHERE handle = ? AND id != ?",
-                (handle, AGENT_USER_ID),
-            )
-            if await cursor.fetchone() is not None:
-                # #2738 audit: ConfigurationError (not bare RuntimeError) —
-                # a hand-built DB a restart cannot fix; EX_CONFIG (#2666)
-                # beats a supervisor restart-loop.
-                raise ConfigurationError(
-                    f"Cannot seed agent user: handle {handle!r} is already"
-                    " used by another user. The m0008 migration should have"
-                    " relocated it — re-run migrations or rename the user"
-                    " manually."
-                )
-            await db.execute(
-                "INSERT INTO users (id, email, password_hash, verified,"
-                " provider, handle)"
-                " VALUES (?, ?, NULL, 1, 'system', ?)"
-                " ON CONFLICT(id) DO UPDATE SET email = ?, handle = ?",
-                (AGENT_USER_ID, email, handle, email, handle),
-            )
-        self.app.state.model.users.clear_agent_cache()
-        logger.info("Seeded agent user '%s' (%s)", handle, email)
+        await self.app.state.model.users.ensure_agent_user()
+        logger.info("Seeded agent user '%s' (%s)", AGENT_HANDLE, AGENT_EMAIL)
 
     async def startup(self) -> None:
         """Container-side startup (self-healing on re-run).

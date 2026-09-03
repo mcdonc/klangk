@@ -246,6 +246,19 @@ async def test_update_email_and_password(users):
     assert fetched["password_hash"] == "newhash"
 
 
+async def test_mark_unverified(users):
+    u = await users.create_user("unv@x.com", "hash", verified=True)
+    row = await users.app.state.db.fetchone(
+        "SELECT verified FROM users WHERE id = ?", (u["id"],)
+    )
+    assert bool(row["verified"]) is True
+    await users.mark_unverified(u["id"])
+    row = await users.app.state.db.fetchone(
+        "SELECT verified FROM users WHERE id = ?", (u["id"],)
+    )
+    assert bool(row["verified"]) is False
+
+
 async def test_agent_principal_guards(users):
     with pytest.raises(AgentPrincipalError):
         await users.add_user_to_group(AGENT_USER_ID, "gid")
@@ -275,6 +288,41 @@ async def test_agent_user_unseeded_fallback(users):
     assert au["id"] == AGENT_USER_ID
     assert au["handle"]  # fallback handle
     users.clear_agent_cache()
+
+
+async def test_ensure_agent_user_seeds_and_upserts(users, app_state):
+    """ensure_agent_user creates the fixed-identity row and reconciles
+    a drifted (pre-#2718) row back to it (#3068)."""
+    await users.ensure_agent_user()
+    agent = await users.get_user_by_id(AGENT_USER_ID)
+    assert agent["email"] == "klangk@example.com"
+    assert agent["handle"] == "klangk"
+    # Drift the row (clanker-era), then re-seed: reconciled.
+    async with app_state.state.db.transaction() as db:
+        await db.execute(
+            "UPDATE users SET handle = ?, email = ? WHERE id = ?",
+            ("clanker", "clanker@example.com", AGENT_USER_ID),
+        )
+    users.clear_agent_cache()
+    await users.ensure_agent_user()
+    agent = await users.get_user_by_id(AGENT_USER_ID)
+    assert agent["handle"] == "klangk"
+    assert agent["email"] == "klangk@example.com"
+
+
+async def test_ensure_agent_user_refuses_human_handle_collision(
+    users, app_state
+):
+    """A human holding the fixed handle aborts the seed (#1137, #3068)."""
+    human = await users.create_user("alice@example.com", "hash", verified=True)
+    async with app_state.state.db.transaction() as db:
+        await db.execute(
+            "UPDATE users SET handle = 'klangk' WHERE id = ?",
+            (human["id"],),
+        )
+    with pytest.raises(RuntimeError, match="klangk"):
+        await users.ensure_agent_user()
+    assert await users.get_user_by_id(AGENT_USER_ID) is None
 
 
 async def test_agent_handle_reserved(users, agent_user):
