@@ -1258,55 +1258,6 @@ class TestBuildShellCommandTmuxDisabled:
         assert unique is not None
 
 
-class TestKillJoinerSessions:
-    async def test_kills_non_owner_sessions(self):
-        with patch.object(
-            _terminal,
-            "tmux_command",
-            side_effect=[
-                "admin\nbob-abc123\ncarol-def456\n",  # list-sessions
-                "",  # kill bob
-                "",  # kill carol
-            ],
-        ) as mock_cmd:
-            await _terminal.kill_joiner_sessions("cid", "admin")
-        # Should have called list-sessions + kill for bob and carol
-        assert mock_cmd.call_count == 3
-
-    async def test_no_joiners(self):
-        with patch.object(
-            _terminal,
-            "tmux_command",
-            return_value="admin\n",
-        ) as mock_cmd:
-            await _terminal.kill_joiner_sessions("cid", "admin")
-        # Only list-sessions, no kills
-        assert mock_cmd.call_count == 1
-
-    async def test_kill_session_error_ignored(self):
-        """If kill-session fails for a joiner, continue with others."""
-        with patch.object(
-            _terminal,
-            "tmux_command",
-            side_effect=[
-                "admin\nbob-abc\ncarol-def\n",  # list-sessions
-                TerminalError("already exited"),  # kill bob fails
-                "",  # kill carol succeeds
-            ],
-        ) as mock_cmd:
-            await _terminal.kill_joiner_sessions("cid", "admin")
-        assert mock_cmd.call_count == 3
-
-    async def test_no_sessions(self):
-        with patch.object(
-            _terminal,
-            "tmux_command",
-            side_effect=TerminalError("no sessions"),
-        ):
-            # Should not raise
-            await _terminal.kill_joiner_sessions("cid", "admin")
-
-
 class TestTerminalSessionJoin:
     async def test_join_session_no_socket(self):
         """Joining a session group on default server."""

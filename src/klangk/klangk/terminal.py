@@ -1024,36 +1024,6 @@ class Terminal:
         )
         return await self.list_windows(container_id, session_name)
 
-    async def kill_joiner_sessions(
-        self, container_id: str, owner_handle: str
-    ) -> None:
-        """Kill all session-group sessions except the owner's own session.
-
-        Used when unsharing to disconnect spectators/collaborators.
-        """
-        try:
-            output = await self.tmux_command(
-                container_id,
-                owner_handle,
-                [
-                    "list-sessions",
-                    "-F",
-                    "#{session_name}",
-                ],
-            )
-            for session_name in output.strip().splitlines():
-                if session_name != owner_handle:
-                    try:
-                        await self.tmux_command(
-                            container_id,
-                            owner_handle,
-                            ["kill-session", "-t", session_name],
-                        )
-                    except TerminalError:
-                        pass  # Session may have already exited
-        except TerminalError:
-            pass  # No sessions
-
 
 # ---------------------------------------------------------------------------
 # Shell process (PTY layer — needs podman.bin, no Terminal ref)
