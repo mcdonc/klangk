@@ -525,6 +525,29 @@ class UpdateWorkspaceRequest(WorkspaceBodyFields):
     classification_banner: str | None = None
 
 
+# PUT-updatable columns that are NOT NULL and whose null has no
+# documented PUT meaning: an explicit null must be a 400, not a
+# constraint violation surfacing as a fabricated 409 collision
+# (#3097) or a ValueError 500 off the enum coercers. auto_start /
+# per_handle_home nulls stay legal — they coerce to 0 by design
+# (see UpdateWorkspaceRequest).
+_NOT_NULL_UPDATE_FIELDS = frozenset({"name", "setup_state", "egress_mode"})
+
+
+def _reject_null_fields(fields: dict) -> None:
+    """400 when the PUT body explicitly nulls a NOT NULL column.
+
+    ``exclude_unset=True`` keeps keys the client sent as ``null``, so
+    without this check a ``{"name": null}`` reaches the UPDATE and trips
+    the constraint — which the rename-collision mapping would then
+    misreport as "A workspace named None already exists"."""
+    for key in _NOT_NULL_UPDATE_FIELDS:
+        if key in fields and fields[key] is None:
+            raise HTTPException(
+                status_code=400, detail=f"Field '{key}' cannot be null"
+            )
+
+
 def _validate_update_fields(app, fields: dict) -> None:
     """Validate the PUT body's fields (mirrors the create API); mutates
     ``fields`` in place (normalized domain lists / settings / banner)."""
@@ -533,8 +556,9 @@ def _validate_update_fields(app, fields: dict) -> None:
 
 
 def _validate_update_core(app, fields: dict) -> None:
-    """The 400-raising checks: autostart enablement, image allow-list,
-    mount validity."""
+    """The 400-raising checks: null rejection, autostart enablement,
+    image allow-list, mount validity."""
+    _reject_null_fields(fields)
     _check_autostart(fields.get("auto_start"), app)
     if "image" in fields:
         _check_image(fields["image"], app)
@@ -628,6 +652,25 @@ async def _apply_live_state_updates(
     await _sync_tmux_workspace_name(app, live_state, fields)
 
 
+async def _update_workspace_fields(
+    app, workspace_id: str, owner_id: str, fields: dict
+) -> bool:
+    """Apply a workspace field update; 409 when a rename collides with
+    another name the owner already holds (UNIQUE(user_id, name)) — the
+    same mapping the create, duplicate, and import paths apply."""
+    try:
+        return await app.state.model.workspaces.update_workspace(
+            workspace_id, owner_id, **fields
+        )
+    except SAIntegrityError:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"A workspace named {fields.get('name')!r} already exists"
+            ),
+        )
+
+
 @router.put("/workspaces/{workspace_id}")
 async def update_workspace(
     workspace_id: str,
@@ -651,8 +694,8 @@ async def update_workspace(
         _check_nix_optin(
             fields["settings"], app, previous=workspace["settings"]
         )
-    updated = await app.state.model.workspaces.update_workspace(
-        workspace_id, workspace["user_id"], **fields
+    updated = await _update_workspace_fields(
+        app, workspace_id, workspace["user_id"], fields
     )
     if not updated:
         raise HTTPException(status_code=404, detail="Workspace not found")
