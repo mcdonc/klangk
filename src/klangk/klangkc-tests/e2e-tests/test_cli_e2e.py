@@ -1197,7 +1197,7 @@ class TestLogout:
         on scheduling (#3058).
         """
         yield
-        run(
+        result = run(
             [
                 "klangk",
                 "login",
@@ -1209,6 +1209,7 @@ class TestLogout:
             input="testpass\n",
             env=cli_config["env"],
         )
+        assert result.returncode == 0, result.stderr
 
     def test_logout(self, cli_config):
         result = run(
