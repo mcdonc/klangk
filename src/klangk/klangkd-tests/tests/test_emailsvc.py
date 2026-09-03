@@ -83,10 +83,16 @@ class TestSmtpConfigUseTls:
         svc = _email_service({"KLANGKD_SMTP_USE_TLS": value})
         assert svc.smtp_config()["use_tls"] is True
 
-    @pytest.mark.parametrize("value", ["false", "0", "no", "", "off"])
+    @pytest.mark.parametrize("value", ["false", "0", "no", "off"])
     def test_falsy_spellings_disable_starttls(self, value):
         svc = _email_service({"KLANGKD_SMTP_USE_TLS": value})
         assert svc.smtp_config()["use_tls"] is False
+
+    def test_empty_means_default_tls_on(self):
+        """#3124: an explicitly emptied value means unset — the field's
+        default ("true") — instead of silently disabling STARTTLS."""
+        svc = _email_service({"KLANGKD_SMTP_USE_TLS": ""})
+        assert svc.smtp_config()["use_tls"] is True
 
     def test_explicit_null_is_false_not_a_crash(self, tmp_path):
         # ``smtp_use_tls:`` (explicit null) parses to None; the shared

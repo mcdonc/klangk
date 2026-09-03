@@ -88,26 +88,53 @@ def _parse_providers(
     """Parse a list of raw provider dicts into OIDCProvider objects.
 
     Shared by both inline (config-file ``oidc_providers:``) and external
-    (``KLANGKD_OIDC_CONFIG``) loading paths.
+    (``KLANGKD_OIDC_CONFIG``) loading paths. Raises
+    :class:`~klangk.exceptions.ConfigurationError` on a malformed shape
+    — a non-list document (an empty external file parses as ``None``; a
+    ``providers:`` wrapper parses as a mapping), a non-mapping entry, or
+    a duplicate provider id — so a bad config fails boot with an
+    actionable message instead of a raw TypeError/AttributeError, and
+    two providers can never silently shadow each other's login button
+    or cross-poison the id-keyed discovery/JWKS caches (#3124).
     """
-    providers = []
-    for entry in entries:
-        secret = resolve_file_value(get(entry, "client-secret", ""))
-        providers.append(
-            OIDCProvider(
-                id=entry["id"],
-                display_name=get(entry, "display-name"),
-                issuer=entry["issuer"].rstrip("/"),
-                client_id=get(entry, "client-id"),
-                client_secret=secret or "",
-                scopes=entry.get("scopes", "openid email profile"),
-                ca_cert=_resolve_ca_cert(entry, config_dir),
-                token_validation_pem=get(entry, "token-validation-pem", None),
-                logout_redirect=get(entry, "logout-redirect", False),
-                trust_email=get(entry, "trust-email", False),
-            )
+    if not isinstance(entries, list):
+        raise ConfigurationError(
+            "OIDC provider config must be a YAML list of provider entries"
         )
+    providers = []
+    seen: set = set()
+    for entry in entries:
+        if not isinstance(entry, dict):
+            raise ConfigurationError(
+                "OIDC provider entries must be mappings, got "
+                f"{type(entry).__name__}: {entry!r}"
+            )
+        provider = _provider_from_entry(entry, config_dir)
+        if provider.id in seen:
+            raise ConfigurationError(
+                f"duplicate OIDC provider id {provider.id!r} — provider ids "
+                "must be unique"
+            )
+        seen.add(provider.id)
+        providers.append(provider)
     return providers
+
+
+def _provider_from_entry(entry: dict, config_dir: str | None) -> OIDCProvider:
+    """One provider dict -> :class:`OIDCProvider`."""
+    secret = resolve_file_value(get(entry, "client-secret", ""))
+    return OIDCProvider(
+        id=entry["id"],
+        display_name=get(entry, "display-name"),
+        issuer=entry["issuer"].rstrip("/"),
+        client_id=get(entry, "client-id"),
+        client_secret=secret or "",
+        scopes=entry.get("scopes", "openid email profile"),
+        ca_cert=_resolve_ca_cert(entry, config_dir),
+        token_validation_pem=get(entry, "token-validation-pem", None),
+        logout_redirect=get(entry, "logout-redirect", False),
+        trust_email=get(entry, "trust-email", False),
+    )
 
 
 def parse_hook_value(raw: str) -> tuple[str, str]:

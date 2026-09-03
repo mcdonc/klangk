@@ -1969,6 +1969,35 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Exec-stdin failures surface as the command's exit status (#3124).** A
+  container-side command that exits before consuming piped stdin (a file
+  upload racing a dying container) no longer raises an unhandled
+  broken-pipe error out of the files API. The per-call timeout now bounds
+  runs that block writing stdin: a payload larger than the pipe buffer
+  with a child that never reads used to hang the call forever with the
+  timeout un-armed.
+
+- **Malformed `KLANGKD_OIDC_CONFIG` files fail boot with a configuration
+  error (#3124).** An empty file or a YAML mapping (e.g. a `providers:`
+  wrapper) used to crash startup with a raw TypeError/AttributeError;
+  both now raise a `ConfigurationError` naming the problem. Duplicate
+  provider ids are rejected too — the second provider used to be
+  silently shadowed at login while still showing its own button.
+
+- **`KLANGKD_PORT` / `KLANGKD_EGRESS_PORT` values are validated
+  (#3124).** A non-numeric, out-of-range, or explicitly emptied value
+  now fails settings construction with a named-setting error instead
+  of crashing the launcher with a raw `ValueError`; empty means unset
+  (headless browser port / the built-in egress default). An emptied
+  `KLANGKD_SMTP_USE_TLS=` likewise resolves to its default (TLS on)
+  rather than silently disabling TLS.
+
+- **A failed first-time home skeleton copy retries on the next connect
+  (#3124).** A per-handle home left empty by a transient
+  `klangk-setup-home` failure used to stay bare forever (no
+  `.profile`/`.bashrc`); an empty user directory now re-triggers the
+  copy, matching the shared-home behavior.
+
 - **Non-mapping `klangk.yaml` no longer crashes every CLI command
   (#3094).** A config file holding valid YAML that is not a mapping
   (a stray list or a bare string) used to abort every `klangk`

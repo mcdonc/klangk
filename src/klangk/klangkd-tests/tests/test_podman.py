@@ -4,6 +4,7 @@ import asyncio
 import json
 import subprocess
 import sys
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -198,6 +199,83 @@ class TestRun:
                 await _p.run(["rm", "-f", "cid"], timeout=0.1)
         assert exc.value.status == 500
         assert "timed out" in exc.value.message
+
+    async def test_stdin_pipe_error_swallowed(self):
+        """#3124: a child that exits before consuming stdin ends the feed
+        silently — the rc is the result, not an escaped exception."""
+        proc = _procs(("", "", 3))[0]
+        proc.stdin.drain = AsyncMock(side_effect=ConnectionResetError())
+        with patch(EXEC, AsyncMock(return_value=proc)):
+            rc, _out, _err = await _p.run(
+                ["x"], stdin_data=b"payload", check=False
+            )
+        assert rc == 3
+        proc.stdin.write.assert_called_once_with(b"payload")
+        proc.stdin.close.assert_called_once()
+
+
+# --- run_raw stdin feeder (#3124) ---
+
+
+def _sh_podman() -> podman.Podman:
+    """A Podman wrapper whose binary is /bin/sh, for real-subprocess
+    coverage of the stdin feeder (early exit, stuck child)."""
+    settings = make_settings({"KLANGKD_PODMAN_BIN": "/bin/sh"})
+    return podman.Podman(
+        types.SimpleNamespace(state=types.SimpleNamespace(settings=settings))
+    )
+
+
+class TestRunRawStdinFeeder:
+    async def test_early_exit_returns_rc(self):
+        """A real child that exits without draining 1MiB of stdin: the
+        run returns its rc instead of raising BrokenPipeError (#3124)."""
+        rc, _out, _err = await _sh_podman().run_raw(
+            ["-c", "exit 3"],
+            stdin_data=b"x" * (1 << 20),
+            check=False,
+            timeout=30,
+        )
+        assert rc == 3
+
+    async def test_stuck_child_timeout_bounds_run(self):
+        """A real child that never reads a 1MiB stdin: the timeout kills
+        the run (drain no longer blocks before the wait, #3124)."""
+        t0 = time.monotonic()
+        rc, _out, err = await _sh_podman().run_raw(
+            ["-c", "sleep 60"],
+            stdin_data=b"x" * (1 << 20),
+            check=False,
+            timeout=1,
+        )
+        elapsed = time.monotonic() - t0
+        assert rc == -1
+        assert "timed out" in err
+        assert elapsed < 30  # bounded well under the child's 60s
+
+    async def test_start_stdin_task_none_without_data(self):
+        assert podman.Podman._start_stdin_task(None, None) is None
+
+    async def test_settle_stdin_task_none(self):
+        """Settling no feeder is a no-op."""
+        await podman.Podman._settle_stdin_task(None)
+
+    async def test_settle_stdin_task_awaits_done(self):
+        task = asyncio.create_task(asyncio.sleep(0))
+        await asyncio.sleep(0)
+        await podman.Podman._settle_stdin_task(task)
+        assert task.done() and not task.cancelled()
+
+    async def test_settle_stdin_task_cancels_pending(self):
+        """A feeder still pending when the run ends is cancelled, not
+        leaked."""
+
+        async def hang():
+            await asyncio.Event().wait()
+
+        task = asyncio.create_task(hang())
+        await podman.Podman._settle_stdin_task(task)
+        assert task.cancelled()
 
 
 # --- containers ---

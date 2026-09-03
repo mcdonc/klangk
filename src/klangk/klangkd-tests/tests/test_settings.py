@@ -806,6 +806,68 @@ class TestResolveSocketAndPorts:
                 }
             )
 
+    def test_port_empty_is_headless(self):
+        """#3124: an explicitly emptied env var means unset, never an
+        empty string that crashes int() callers."""
+        s = KlangkSettings(
+            env={"KLANGKD_STATE_DIR": "/tmp/state", "KLANGKD_PORT": ""}
+        )
+        assert s.port is None
+
+    def test_egress_port_empty_gets_default(self):
+        s = KlangkSettings(
+            env={"KLANGKD_STATE_DIR": "/tmp/state", "KLANGKD_EGRESS_PORT": ""}
+        )
+        assert s.egress_port == "8995"
+
+    def test_proxy_port_empty_gets_default(self):
+        s = KlangkSettings(
+            env={"KLANGKD_STATE_DIR": "/tmp/state", "KLANGKD_PROXY_PORT": ""}
+        )
+        assert s.egress_port == "8995"
+
+    def test_port_non_numeric_rejected(self):
+        """#3124: a typo'd port fails construction with the setting named,
+        not a raw ValueError from the launcher's int()."""
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError) as exc_info:
+            KlangkSettings(
+                env={"KLANGKD_STATE_DIR": "/tmp/state", "KLANGKD_PORT": "abc"}
+            )
+        assert "KLANGKD_PORT" in str(exc_info.value)
+
+    def test_egress_port_non_numeric_rejected(self):
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError) as exc_info:
+            KlangkSettings(
+                env={
+                    "KLANGKD_STATE_DIR": "/tmp/state",
+                    "KLANGKD_EGRESS_PORT": "8x95",
+                }
+            )
+        assert "KLANGKD_EGRESS_PORT" in str(exc_info.value)
+
+    def test_port_out_of_range_rejected(self):
+        from pydantic import ValidationError
+
+        for bad in ("0", "70000"):
+            with pytest.raises(ValidationError) as exc_info:
+                KlangkSettings(
+                    env={
+                        "KLANGKD_STATE_DIR": "/tmp/state",
+                        "KLANGKD_PORT": bad,
+                    }
+                )
+            assert "KLANGKD_PORT" in str(exc_info.value)
+
+    def test_port_numeric_string_accepted(self):
+        s = KlangkSettings(
+            env={"KLANGKD_STATE_DIR": "/tmp/state", "KLANGKD_PORT": "8997"}
+        )
+        assert s.port == "8997"
+
     def test_socket_too_long_rejected(self):
         from pydantic import ValidationError
 
@@ -1876,11 +1938,21 @@ class TestBoolStringSettingCoercion:
 
     @pytest.mark.parametrize(
         "field,value",
-        [(f, v) for f in FIELDS for v in ("1", "yes", "no", "", "TRUE")],
+        [(f, v) for f in FIELDS for v in ("1", "yes", "no", "TRUE")],
     )
     def test_env_strings_unchanged(self, field, value):
         s = make_settings({f"KLANGKD_{field.upper()}": value})
         assert getattr(s, field) == value
+
+    @pytest.mark.parametrize("field", FIELDS)
+    def test_env_empty_means_default(self, field):
+        """#3124: an explicitly emptied value means unset — the field's
+        declared default, never a silent knob flip (``smtp_use_tls=``
+        must keep TLS on, not disable it)."""
+        s = make_settings({f"KLANGKD_{field.upper()}": ""})
+        default = KlangkSettings.model_fields[field].default
+        expected = None if default is None else str(default)
+        assert getattr(s, field) == expected
 
     def test_yaml_quoted_strings_unchanged(self, tmp_path):
         cfg = tmp_path / "config.yaml"
@@ -1916,6 +1988,12 @@ class TestBoolStringSettingCoercion:
         assert s.test_mode is None
 
 
+# The port trio of INT_STRING_FIELDS — additionally validated numeric
+# 1-65535 at construction (#3124), so "0"/"" are not pass-throughs for
+# them. Module level: a class-body comprehension cannot see class attrs.
+PORT_STRING_FIELDS = ("port", "egress_port", "proxy_port")
+
+
 class TestIntStringSettingCoercion:
     """Str-typed port/timeout settings accept native YAML ints (#2967).
 
@@ -1930,7 +2008,7 @@ class TestIntStringSettingCoercion:
     FIELDS = list(INT_STRING_FIELDS)
 
     @pytest.mark.parametrize("field", FIELDS)
-    @pytest.mark.parametrize("value", [8997, 0])
+    @pytest.mark.parametrize("value", [8997])
     def test_yaml_native_int(self, field, value, tmp_path):
         cfg = tmp_path / "config.yaml"
         cfg.write_text(f"{field}: {value}\n")
@@ -1939,7 +2017,15 @@ class TestIntStringSettingCoercion:
 
     @pytest.mark.parametrize(
         "field,value",
-        [(f, v) for f in FIELDS for v in ("8997", "0", " 30", "")],
+        [
+            (f, v)
+            for f in FIELDS
+            for v in (
+                ("8997", " 30")
+                if f in PORT_STRING_FIELDS
+                else ("8997", "0", " 30", "")
+            )
+        ],
     )
     def test_env_strings_unchanged(self, field, value):
         s = make_settings({f"KLANGKD_{field.upper()}": value})
