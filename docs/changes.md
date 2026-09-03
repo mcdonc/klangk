@@ -1950,6 +1950,13 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **`klangk shell` and `klangk sandbox` now use the standard auth gate
+  (#3090).** Both commands checked for a stored token directly, so on a
+  no-auth (`auth_modes: none`) server they refused with "Not logged in"
+  instead of auto-logging in like every other command, and with a stale
+  default UDS they suggested `klangk login` (which would fail to connect)
+  instead of reporting the unreachable socket.
+
 - **Non-mapping `klangk.yaml` no longer crashes every CLI command
   (#3094).** A config file holding valid YAML that is not a mapping
   (a stray list or a bare string) used to abort every `klangk`

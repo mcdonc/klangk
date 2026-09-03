@@ -307,12 +307,10 @@ def shell(
     forward_agent, no_consent_popup = normalize_shell_flags(
         forward_agent, no_consent_popup
     )
+    # require_auth (not a raw token check) so none-mode auto-login
+    # (#1374) and the stale-UDS hint (#1676) apply to shell too (#3090).
+    context.require_auth()
     token = context.session_token()
-    if not token:
-        context.err.print(
-            "[red]Not logged in[/red] — run [bold]klangk login[/bold] first."
-        )
-        raise typer.Exit(code=1)
 
     client = context.client()
 
