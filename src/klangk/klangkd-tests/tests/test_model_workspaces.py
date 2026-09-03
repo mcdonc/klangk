@@ -14,6 +14,7 @@ import pytest
 
 from klangk.model.acl import ACTION_ALLOW, PRINCIPAL_USER
 from klangk.model.workspaces import (
+    EGRESS_MODE_STATIC,
     SETUP_STATE_COMPLETE,
     SETUP_STATE_PENDING,
 )
@@ -82,6 +83,27 @@ async def test_set_consent_pause_clear_with_none(ws, user):
 
 async def test_set_consent_pause_missing_workspace_false(ws):
     assert await ws.set_consent_pause("no-such-ws", 1234.0) is False
+
+
+async def test_update_workspace_egress_mode_clears_consent_pause(ws, user):
+    # #3080: an egress_mode write ends the consent-pause window -- the
+    # pause is an interactive-mode affordance and must not outlive a mode
+    # switch (a stale window would auto-allow off-list egress again if the
+    # workspace were later switched back to interactive).
+    row = await ws.create_workspace(user["id"], "pause-mode")
+    await ws.set_consent_pause(row["id"], 1234.5)
+    assert await ws.update_workspace(
+        row["id"], user["id"], egress_mode=EGRESS_MODE_STATIC
+    )
+    assert await ws.get_consent_pause(row["id"]) is None
+
+
+async def test_update_workspace_other_fields_keep_consent_pause(ws, user):
+    # A write that does not touch egress_mode leaves the window alone.
+    row = await ws.create_workspace(user["id"], "pause-keep")
+    await ws.set_consent_pause(row["id"], 1234.5)
+    assert await ws.update_workspace(row["id"], user["id"], name="renamed")
+    assert await ws.get_consent_pause(row["id"]) == 1234.5
 
 
 async def test_get_consent_pause_missing_workspace_none(ws):

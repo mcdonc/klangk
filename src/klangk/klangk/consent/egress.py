@@ -38,13 +38,25 @@ logger = logging.getLogger(__name__)
 PRUNE_INTERVAL = 3600.0
 
 
+async def workspace_opted_in(app, workspace_id: str) -> bool:
+    """True iff the workspace exists and its ``egress_mode`` is interactive.
+
+    The workspace-side half of interactivity (#2308) -- the runtime half is
+    a live decider. Also the gate for the consent pause (#2332): the pause
+    is a decider prompting affordance, honored only in interactive mode so
+    a pause left over from an interactive epoch cannot auto-allow egress
+    from a workspace since switched to static/allow (#3080, fail-closed).
+    """
+    ws = await app.state.model.workspaces.get_workspace(workspace_id)
+    return bool(ws) and ws.get("egress_mode") == EGRESS_MODE_INTERACTIVE
+
+
 async def workspace_is_interactive(app, workspace_id: str) -> bool:
     # #2308: interactivity is runtime state -- a workspace is interactive
     # only while a live consent decider is registered for it, AND the
     # workspace has opted in (egress_mode). No decider -> static behavior
     # (clean denial, no held connection).
-    ws = await app.state.model.workspaces.get_workspace(workspace_id)
-    if not ws or ws.get("egress_mode") != EGRESS_MODE_INTERACTIVE:
+    if not await workspace_opted_in(app, workspace_id):
         return False
     return app.state.consent_deciders.has_decider(workspace_id)
 

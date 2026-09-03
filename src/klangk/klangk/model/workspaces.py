@@ -146,6 +146,18 @@ SORT_COLUMNS = {"created": "created_at", "name": "name"}
 CLASSIFICATION_BANNER_MAX_LEN = 120
 
 
+def _clear_stale_consent_pause(to_set: dict) -> None:
+    """End any consent-pause window carried by an ``egress_mode`` write (#3080).
+
+    The pause is an interactive-mode decider affordance; a mode switch must
+    not leave a stale window behind (it would auto-allow off-list egress
+    again if the workspace returned to interactive mode later). Mutates
+    ``to_set`` in place so the clear rides the same atomic UPDATE.
+    """
+    if "egress_mode" in to_set:
+        to_set["consent_paused_until"] = None
+
+
 def _banner_character_error(v: str) -> str | None:
     """Error message for control/invisible characters in a marking.
 
@@ -1055,6 +1067,7 @@ class WorkspacesModel(Submodel):
         }
         if not to_set:
             return False
+        _clear_stale_consent_pause(to_set)
         set_clause = ", ".join(f"{k} = ?" for k in to_set)
         values = list(to_set.values()) + [workspace_id, user_id]
         async with self.app.state.db.transaction() as db:

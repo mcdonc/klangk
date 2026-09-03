@@ -12,7 +12,10 @@ awaits that Future and sends the verdict back over its socket (#2311).
 Fail-closed throughout:
 
 - no decider registered (or workspace not opted in) -> immediate static
-  denial (no hold, no pending row, deny verdict at once);
+  denial (no hold, no pending row, deny verdict at once); the sole
+  exception is a live consent-pause window (#2332), and that too is
+  honored only in interactive egress mode (#3080) -- a static workspace
+  never auto-allows;
 - decider too slow -> the per-hold timeout expires the row + denies;
 - coordinator shutdown -> every in-flight hold is denied (a sidecar restart's
   in-process holds die with the process, and the orphaned pending rows are
@@ -35,7 +38,7 @@ import asyncio
 import logging
 import time
 
-from .egress import workspace_is_interactive
+from .egress import workspace_is_interactive, workspace_opted_in
 from ..model.egress_consent import (
     DECISION_ALLOWED,
     DECISION_DENIED,
@@ -285,6 +288,10 @@ class ConsentCoordinator:
     ) -> asyncio.Future:
         """Gate-check a blocked egress and create a hold; return its verdict Future.
 
+        - egress_mode allow -> record + allow at once (default-permit).
+        - interactive mode + a live pause window -> the paused gate (#2332;
+          honored only in interactive mode, #3080: a stale pause must not
+          auto-allow egress in a static/allow workspace).
         - not interactive (no decider, or workspace not opted in) -> record a
           static denial and resolve the Future deny at once (no pending row,
           no hold, no timeout) -- the sidecar denies immediately.
@@ -325,7 +332,10 @@ class ConsentCoordinator:
         it for a decider); a recorded deny still blocks. Sets
         ``consent_paused_until`` on the workspace to ``now + duration`` and
         broadcasts a refreshed ``egress_rules`` frame so every decider sees
-        the pause window. Returns ``{"ok": bool, "until": float | None}`` --
+        the pause window. The window is honored only while the workspace
+        stays in interactive egress mode: an ``egress_mode`` update clears
+        it (#3080), and the hold gate ignores it outside interactive mode
+        regardless. Returns ``{"ok": bool, "until": float | None}`` --
         ``ok`` is False for an unknown duration or a missing workspace.
         """
         secs = _PAUSE_SECONDS.get(duration)
@@ -359,7 +369,20 @@ class ConsentCoordinator:
         Reads ``consent_paused_until`` live and compares against ``now``, so a
         pause self-expires the moment its window elapses (no sweep needed for
         correctness -- the gate re-evaluates on every hold).
+
+        #3080: honored only while the workspace is in interactive egress
+        mode. A pause set in an interactive epoch must not auto-allow
+        off-list egress after the workspace is switched to static (or
+        allow) -- those modes answer before the pause is consulted, so a
+        static workspace stays default-deny for the whole stale window.
+        The decider-liveness half of interactivity is deliberately NOT
+        required here: a decider pauses prompting and then walks away, so
+        the window must keep auto-allowing after the decider disconnects
+        (that is the pause's purpose), while the mode gate above still
+        bounds it to opted-in workspaces.
         """
+        if not await workspace_opted_in(self.app, workspace_id):
+            return False
         until = await self.app.state.model.workspaces.get_consent_pause(
             workspace_id
         )
