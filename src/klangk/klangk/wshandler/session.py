@@ -340,20 +340,75 @@ class WorkspaceSession:
     ) -> None:
         """Register a connection as a subscriber (acquires lock).
 
+        #3070: the caller resolves this session via
+        ``get_or_create_session`` without a lock, so a last-disconnect
+        ``remove_session`` may pop and ``reset()`` it in the gap before
+        this lock acquisition. Under the lock the registry mapping is
+        re-verified (:meth:`_mapping_target`): a popped session with no
+        replacement reclaims its slot, and a session a replacement has
+        superseded routes the subscriber to the replacement instead —
+        attaching to a superseded session would orphan the subscriber
+        (every later ``get_session`` resolves a different session, so
+        workspace broadcasts are missed) and leak the orphan's
+        token-renewal task and window watcher for the process life.
+
         When *token_expiry* is provided and no renewal loop is running
         yet, ``start_token_renewal`` is called under the session lock so
         two concurrent callers cannot both observe ``expiry is None``
         and create duplicate renewal tasks.
+
+        Side effect callers must know about: on the reclaim path this
+        method re-registers the session into ``sockets.sessions``
+        itself, so callers must have resolved the session through
+        ``get_or_create_session`` (never a bare constructor) for the
+        registry to stay consistent.
         """
         async with self.lock:
-            self.container_id = container_id
-            self.subscribers.add(sock)
-            if (
-                token_expiry is not None
-                and self.workspace_token_expiry is None
-            ):
-                self.start_token_renewal(token_expiry)
-            self.start_window_sync()
+            target = self._mapping_target()
+            if target is self:
+                self.container_id = container_id
+                self.subscribers.add(sock)
+                if (
+                    token_expiry is not None
+                    and self.workspace_token_expiry is None
+                ):
+                    self.start_token_renewal(token_expiry)
+                self.start_window_sync()
+                return
+        # Superseded while the caller held its reference (#3070): our
+        # lock is released; attach on the mapped session, which
+        # re-verifies its own mapping under its own lock.
+        await target.add_subscriber(
+            sock, container_id, token_expiry=token_expiry
+        )
+
+    def _mapping_target(self) -> "WorkspaceSession":
+        """Under the session lock: the session a new subscriber joins.
+
+        The #3070 re-verification of the ``sockets.sessions`` mapping,
+        with no await between the read and the write below (atomic in
+        the event loop):
+
+        - ``self`` when already mapped, when registry-less
+          (``app=None`` test sessions), or after reclaiming a slot that
+          a racing last-disconnect ``remove_session`` popped while no
+          replacement was created in the gap — the session was already
+          ``reset()`` under that lock, so it is empty and fresh for the
+          new subscriber, and its disconnect cleanup finds it via the
+          mapping again.
+        - the mapped replacement when another session owns the slot:
+          the caller's reference is stale and must not be attached to.
+        """
+        if self.app is None:
+            return self
+        sessions = self.app.state.sockets.sessions
+        mapped = sessions.get(self.workspace_id)
+        if mapped is None:
+            sessions[self.workspace_id] = self
+            return self
+        if mapped is self:
+            return self
+        return mapped
 
     async def remove_subscriber(self, sock: SafeWebSocket) -> bool:
         """Unregister a connection (acquires lock).
@@ -841,11 +896,30 @@ class WebSocketState:
             # Re-check: someone may have added a subscriber while we waited.
             if session.subscribers:
                 return
+            # #3070: the mapping may have moved while we waited for this
+            # lock — the session we resolved may have been popped, its
+            # slot reclaimed or replaced by another. Only the mapped
+            # session's own teardown pops; a moved-on mapping owns its
+            # lifecycle (the stale session was already reset by whoever
+            # popped it).
+            if self.sessions.get(workspace_id) is not session:
+                return
             self.sessions.pop(workspace_id, None)
             await session.reset()
 
     async def remove_session_locked(self, session: WorkspaceSession) -> None:
-        """Remove session when caller already holds ``session.lock``."""
+        """Remove session when caller already holds ``session.lock``.
+
+        Same guards as :meth:`remove_session`: a session with remaining
+        subscribers is left in place, and a mapping that has moved on to
+        another session owns its own lifecycle (#3070) — a caller holding
+        a *stale* session's lock must not pop the replacement's slot and
+        reset it, reintroducing the orphan this file guards against.
+        """
+        if session.subscribers:
+            return
+        if self.sessions.get(session.workspace_id) is not session:
+            return
         self.sessions.pop(session.workspace_id, None)
         await session.reset()
 
