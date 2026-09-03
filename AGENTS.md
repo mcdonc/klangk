@@ -585,3 +585,20 @@ alone — run the destroy consciously and explicitly every time.
   notifications.
 - This applies to every PR opened from a `gh issue` (via `/workon`,
   `/stackon`, or directly) — check the title before `gh pr create`.
+
+## Stacked PRs (retarget before deleting the base branch)
+
+- A PR merges into its **base** branch. When a PR is stacked on another
+  open PR (base = that PR's head branch, not `main`), the base PR must
+  merge first — merging the stacked PR first squashes its commits into
+  the side branch, never landing them on `main` independently.
+- **Before merging the base PR (or letting any cleanup delete its
+  branch), retarget every PR based on it to `main`**
+  (`gh pr edit <stacked#> --base main`, then rebase its branch onto the
+  post-merge `main` and force-push). Deleting a PR's branch closes any
+  PR based on it — GitHub does not retarget automatically — and a closed
+  PR can be neither reopened (base gone) nor retargeted (closed). The
+  only recovery is restoring the deleted branch at its merge SHA,
+  reopening, retargeting, and deleting it again (see the #3087/#3095
+  sequence). The `/merge` skill deletes the merged PR's branch as
+  cleanup, so do the retarget before running it.
