@@ -105,5 +105,23 @@ def clean_env(**overrides: str) -> dict[str, str]:
     # E2E baseline defaults.
     env["_KLANGKD_DISABLE_PROXY"] = "1"
     env.setdefault("KLANGKD_AUTH_MODES", "password")
+    # #3064: child CLI/TUI processes get the widened WS-connect wait on CI
+    # to match the bring-up budgets (the strip above removes any ambient
+    # value, so this stamp is the only way it reaches the child).
+    if os.environ.get("CI"):
+        env.setdefault("KLANGKC_WS_CONNECT_TIMEOUT", "240")
     env.update(overrides)
     return env
+
+
+def ci_budget(default: float, ci: float) -> float:
+    """Load-aware E2E budget, widened on CI (#3064).
+
+    The four E2E suites share one runner VM; under that storage/IO
+    contention a real podman bring-up (create/start/readiness) can
+    outrun a tight local-dev budget — the observed failures were
+    client-side 60s caps blowing while unrelated tests passed. Same
+    shape as the frontend's container-ready doubling (#2745). Local
+    runs keep the snappier default.
+    """
+    return ci if os.environ.get("CI") else default

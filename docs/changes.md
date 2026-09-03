@@ -1945,6 +1945,14 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Podman create retry and CI-aware bring-up budgets (#3064).** A
+  `podman create` that stalls past its budget (120s local, 240s on CI)
+  under load is now killed and retried once (idempotent via
+  `--replace`), so a stalled create no longer 500s straight into the
+  workspace start/connect path. On CI (`CI` env), create/start budgets
+  double to 240s and container-readiness widens 60→240s; the CLI's
+  WS-connect wait is now overridable via `KLANGKC_WS_CONNECT_TIMEOUT`
+  (the e2e suites set it to 240s on CI).
 - **Terminal share/unshare/close no longer hang clients on refusal paths
   (#3057).** The WebSocket handlers for `share_window`, `unshare_window`,
   `join_shared_terminal`, and the own-window commands (`terminal_new_window`,

@@ -531,6 +531,96 @@ class TestCreateContainer:
         args = _args(m)
         assert "--cap-add" not in args
 
+    async def test_timeout_retried_once(self, monkeypatch):
+        """#3064: a create that stalls past its budget is killed and run
+        once more (idempotent via --replace) instead of cascading into
+        every downstream waiter."""
+        monkeypatch.delenv("CI", raising=False)
+        calls = []
+
+        async def fake_run(args, *, check=True, stdin_data=None, timeout=None):
+            calls.append((args, timeout))
+            if len(calls) == 1:
+                raise podman.PodmanTimeoutError(
+                    500, "podman create timed out after 120.0s"
+                )
+            return 0, "abc\n", ""
+
+        monkeypatch.setattr(_p, "run", fake_run)
+        cid = await _p.create_container("n", "img")
+        assert cid == "abc"
+        assert len(calls) == 2
+        assert calls[0][1] == calls[1][1] == 120.0  # retry, same budget
+        assert "--replace" in calls[0][0]  # what makes the retry idempotent
+
+    async def test_timeout_without_replace_not_retried(self, monkeypatch):
+        """No --replace, no safe retry: the killed first attempt may have
+        left the name claimed, so the timeout must surface immediately."""
+        monkeypatch.delenv("CI", raising=False)
+
+        async def fake_run(args, *, check=True, stdin_data=None, timeout=None):
+            raise podman.PodmanTimeoutError(
+                500, "podman create timed out after 120.0s"
+            )
+
+        monkeypatch.setattr(_p, "run", fake_run)
+        with pytest.raises(podman.PodmanTimeoutError):
+            await _p.create_container("n", "img", replace=False)
+
+    async def test_non_timeout_error_not_retried(self, monkeypatch):
+        """A real create failure (e.g. name in use) must raise, not retry
+        — only the stall-and-kill timeout shape is retryable."""
+        monkeypatch.delenv("CI", raising=False)
+        calls = []
+
+        async def fake_run(args, *, check=True, stdin_data=None, timeout=None):
+            calls.append(timeout)
+            raise podman.PodmanError(409, "name is already in use")
+
+        monkeypatch.setattr(_p, "run", fake_run)
+        with pytest.raises(podman.PodmanError) as exc_info:
+            await _p.create_container("n", "img")
+        assert not isinstance(exc_info.value, podman.PodmanTimeoutError)
+        assert len(calls) == 1
+
+
+class TestRunTimeoutError:
+    async def test_checked_timeout_raises_timeout_error(self):
+        """#3064: on a checked run, a timeout raises PodmanTimeoutError —
+        the structural marker _run_create's retry branches on (a timed-out
+        create with partial stderr would lose a string-only marker)."""
+        mock_proc = _procs(("", "pulling layers...", 0))[0]
+        mock_proc.wait = AsyncMock(side_effect=[asyncio.TimeoutError, 0])
+        mock_proc.kill = MagicMock()
+
+        def side_effect(*args, **kwargs):
+            sf = kwargs.get("stdout")
+            ef = kwargs.get("stderr")
+            if hasattr(sf, "write"):
+                sf.write(b"")
+            if hasattr(ef, "write"):
+                ef.write(b"pulling layers...")
+            return mock_proc
+
+        with patch(EXEC, AsyncMock(side_effect=side_effect)):
+            with pytest.raises(podman.PodmanTimeoutError) as exc_info:
+                await _p.run(["create", "img"], timeout=0.001)
+        # Non-empty stderr survives as the message; the type is the marker.
+        assert "pulling layers" in exc_info.value.message
+
+
+class TestBringupTimeout:
+    """#3064: bring-up budgets double on CI (four E2E suites share one
+    VM; the local-dev default stays snappy). Same shape as #2745."""
+
+    def test_local_default(self, monkeypatch):
+        monkeypatch.delenv("CI", raising=False)
+        assert podman.bringup_timeout() == 120.0
+
+    def test_ci_doubles(self, monkeypatch):
+        monkeypatch.setenv("CI", "true")
+        assert podman.bringup_timeout() == 240.0
+
 
 class TestStartContainer:
     async def test_start(self):

@@ -52,7 +52,11 @@ _RETRY_ATTEMPTS = 3
 RESIZE_POLL_INTERVAL = 1.0  # seconds between terminal size checks
 _RETRY_BACKOFF = 2.0  # seconds, doubled each retry
 
-_WS_CONNECT_TIMEOUT = 60  # seconds to wait for container_ready
+# Seconds to wait for container_ready. The wait spans the server's whole
+# bring-up chain (create → start → readiness), so under load it can
+# legitimately outrun 60s; overridable via env for the e2e runs that
+# widen the chain's budgets on CI (#3064).
+_WS_CONNECT_TIMEOUT = float(os.environ.get("KLANGKC_WS_CONNECT_TIMEOUT", "60"))
 _HEARTBEAT_INTERVAL = 60  # seconds between terminal heartbeats
 _STDIN_DRAIN_TIMEOUT = 2  # seconds to let exec stdin forwarder finish
 

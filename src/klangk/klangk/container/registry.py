@@ -29,7 +29,7 @@ from ..model.container_events import (
     ROLE_SIDECAR,
     ROLE_WORKSPACE,
 )
-from ..podman import PodmanError
+from ..podman import PodmanError, bringup_timeout
 from ..ssl_trust import SSL_MOUNT_DEST as _SSL_MOUNT_DEST
 from ..settings import parse_bool_setting
 from ..workspace_settings import resolve_allow_sudo
@@ -1329,7 +1329,13 @@ class ContainerRegistry(NetworkSidecarMixin):
         # terminals, exec, agent, health check — gets a genuine readiness
         # guarantee regardless of shell, closing the race that previously
         # only the in-bashrc gate covered (and only for bash).
-        await self.app.state.podman.wait_for_container_ready(cid)
+        # Readiness budget is CI-aware too (#3064): this wait sits inside
+        # the same bring-up chain as create/start, and a client POST that
+        # can legally spend 240s on CI must not be capped by a flat 60s
+        # here.
+        await self.app.state.podman.wait_for_container_ready(
+            cid, timeout=bringup_timeout(60.0, 240.0)
+        )
 
         # FIPS enforcement (#2570, #2591): the gate runs at this single
         # create choke point (fail closed — see _fips_gate).

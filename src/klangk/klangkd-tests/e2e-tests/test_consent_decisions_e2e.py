@@ -28,6 +28,7 @@ import time
 
 import pytest
 
+from _e2e_env import ci_budget
 from _e2e_server import start_server, stop_server
 from test_agent_home_e2e import ws_connect
 
@@ -87,7 +88,9 @@ def workspace(server, auth):
             "egress_mode": "interactive",
             "auto_start": True,
         },
-        timeout=60,
+        # #3064: full bring-up under four-suite CI contention can outrun
+        # a 60s local-dev budget (same family as #2745's doubling).
+        timeout=ci_budget(60, 240),
     )
     assert resp.status_code == 200, resp.text
     ws_id = resp.json()["id"]
@@ -737,7 +740,7 @@ class TestConsentDecisionEndStates:
                     server["client"].post,
                     f"/api/v1/workspaces/{ws_id}/restart",
                     headers=auth["headers"],
-                    timeout=120,
+                    timeout=ci_budget(120, 240),
                 )
                 assert restart.status_code == 200, restart.text
                 # The pre-restart workspace WS is stale; wait on a fresh one
@@ -833,7 +836,7 @@ class TestConsentDecisionEndStates:
                     server["client"].post,
                     f"/api/v1/workspaces/{ws_id}/restart",
                     headers=auth["headers"],
-                    timeout=120,
+                    timeout=ci_budget(120, 240),
                 )
                 assert restart.status_code == 200, restart.text
                 await ws_conn.close()

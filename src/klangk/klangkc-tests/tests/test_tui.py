@@ -10446,12 +10446,12 @@ async def test_edit_screen_classification_banner_in_save_body(monkeypatch):
         # Change it, save.
         es.query_one("#classification_banner").value = "CUI"
         es.save()
-        await app.workers.wait_for_complete()
+        await _settle(app)
         assert updated[-1]["classification_banner"] == "CUI"
         # Clear it, save — None clears the override back to inherit.
         es.query_one("#classification_banner").value = "   "
         es.save()
-        await app.workers.wait_for_complete()
+        await _settle(app)
         assert updated[-1]["classification_banner"] is None
 
 
