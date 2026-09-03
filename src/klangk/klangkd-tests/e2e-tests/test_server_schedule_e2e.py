@@ -19,11 +19,11 @@ import time
 import pytest
 
 from _e2e_server import (
-    free_port,
     start_server,
     stop_server,
     ws_connect as _ws_dial,
 )
+from klangk.model import free_port
 
 
 def _own_server(tag: str):
