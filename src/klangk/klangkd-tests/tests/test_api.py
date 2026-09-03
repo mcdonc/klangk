@@ -1310,7 +1310,9 @@ class TestResendVerification:
 
     async def test_resend_rate_limited(self, client, db, app_state):
         # Clear stale rate limit state from parallel test workers
-        api.resend_timestamps.pop("unverified@example.com", None)
+        api.resend_timestamps.pop(
+            api.rate_limit_key("unverified@example.com"), None
+        )
         await self._create_unverified_user(app_state)
         with patch.object(
             emailsvc_mod.EmailService,
@@ -1333,7 +1335,9 @@ class TestResendVerification:
                 },
             )
         assert resp2.status_code == 429
-        api.resend_timestamps.pop("unverified@example.com", None)
+        api.resend_timestamps.pop(
+            api.rate_limit_key("unverified@example.com"), None
+        )
 
     async def test_resend_prunes_expired_entries(self, client, db, app_state):
         # Stale rate-limit state from parallel test workers
@@ -1355,12 +1359,13 @@ class TestResendVerification:
             # Backdate the entry past the cooldown window.
             import time
 
-            api.resend_timestamps["unverified@example.com"] = (
-                time.time() - api.RESEND_COOLDOWN_SECONDS - 1
+            key = api.rate_limit_key("unverified@example.com")
+            api.resend_timestamps[key] = (
+                time.monotonic() - api.RESEND_COOLDOWN_SECONDS - 1
             )
             # Also seed an unrelated expired address to confirm it is evicted.
-            api.resend_timestamps["stale@example.com"] = (
-                time.time() - api.RESEND_COOLDOWN_SECONDS - 1
+            api.resend_timestamps[api.rate_limit_key("stale@example.com")] = (
+                time.monotonic() - api.RESEND_COOLDOWN_SECONDS - 1
             )
             resp2 = await client.post(
                 "/api/v1/auth/resend-verification",
@@ -1372,7 +1377,10 @@ class TestResendVerification:
         # Expired entry no longer rate-limits, and unrelated stale entry
         # was swept on access.
         assert resp2.status_code == 200
-        assert "stale@example.com" not in api.resend_timestamps
+        assert (
+            api.rate_limit_key("stale@example.com")
+            not in api.resend_timestamps
+        )
         api.resend_timestamps.clear()
 
 
@@ -1444,7 +1452,9 @@ class TestResendVerificationLockout:
             await self._post(client, "unverified@example.com", "wrong")
         info = await attempts.get_login_attempt_info("unverified@example.com")
         assert info["attempt_count"] == 2
-        api.resend_timestamps.pop("unverified@example.com", None)
+        api.resend_timestamps.pop(
+            api.rate_limit_key("unverified@example.com"), None
+        )
         with patch.object(
             emailsvc_mod.EmailService,
             "send_verification_email",
@@ -1458,7 +1468,9 @@ class TestResendVerificationLockout:
             await attempts.get_login_attempt_info("unverified@example.com")
             is None
         )
-        api.resend_timestamps.pop("unverified@example.com", None)
+        api.resend_timestamps.pop(
+            api.rate_limit_key("unverified@example.com"), None
+        )
 
     async def test_window_reset_not_lockout(self, client, db, app_state):
         """A near-threshold count whose first failure predates the window
@@ -1518,7 +1530,9 @@ class TestForgotPassword:
         token = reset_url.split("token=")[1]
         decoded = app_state.state.auth.decode_password_reset_token(token)
         assert decoded == user["id"]
-        api.reset_timestamps.pop("forgot@example.com", None)
+        api.reset_timestamps.pop(
+            api.rate_limit_key("forgot@example.com"), None
+        )
 
     async def test_forgot_unknown_email_still_returns_sent(self, client, db):
         resp = await client.post(
@@ -1527,7 +1541,9 @@ class TestForgotPassword:
         )
         assert resp.status_code == 200
         assert resp.json()["status"] == "sent"
-        api.reset_timestamps.pop("nobody@example.com", None)
+        api.reset_timestamps.pop(
+            api.rate_limit_key("nobody@example.com"), None
+        )
 
     async def test_forgot_disabled_user_no_email_still_sent(
         self, client, app, db, app_state
@@ -1549,7 +1565,9 @@ class TestForgotPassword:
         assert resp.status_code == 200
         assert resp.json()["status"] == "sent"
         mock_send.assert_not_awaited()
-        api.reset_timestamps.pop("forgot@example.com", None)
+        api.reset_timestamps.pop(
+            api.rate_limit_key("forgot@example.com"), None
+        )
 
     async def test_forgot_smtp_failure_answers_sent_and_logs(
         self, client, db, app_state, caplog
@@ -1578,7 +1596,9 @@ class TestForgotPassword:
             "Failed to send password reset email" in r.message
             for r in caplog.records
         )
-        api.reset_timestamps.pop("forgot@example.com", None)
+        api.reset_timestamps.pop(
+            api.rate_limit_key("forgot@example.com"), None
+        )
 
     async def test_forgot_non_send_paths_mint_token(
         self, client, db, app, app_state
@@ -1610,8 +1630,12 @@ class TestForgotPassword:
         dummy_subject, real_subject = (c.args[0] for c in mint.call_args_list)
         assert real_subject == u["id"]
         assert dummy_subject != u["id"]
-        api.reset_timestamps.pop("nobody@example.com", None)
-        api.reset_timestamps.pop("forgot@example.com", None)
+        api.reset_timestamps.pop(
+            api.rate_limit_key("nobody@example.com"), None
+        )
+        api.reset_timestamps.pop(
+            api.rate_limit_key("forgot@example.com"), None
+        )
 
     async def test_forgot_rate_limited(self, client, db, app_state):
         await self._create_user(app_state)
@@ -1629,7 +1653,9 @@ class TestForgotPassword:
                 json={"email": "forgot@example.com"},
             )
         assert resp2.status_code == 429
-        api.reset_timestamps.pop("forgot@example.com", None)
+        api.reset_timestamps.pop(
+            api.rate_limit_key("forgot@example.com"), None
+        )
 
     async def test_forgot_rate_limited_unknown_email(self, client, db):
         """#3100: the cooldown must not be an account-existence oracle —
@@ -1646,7 +1672,9 @@ class TestForgotPassword:
         assert resp1.status_code == 200
         assert resp1.json()["status"] == "sent"
         assert resp2.status_code == 429
-        api.reset_timestamps.pop("ghost-forgot@example.com", None)
+        api.reset_timestamps.pop(
+            api.rate_limit_key("ghost-forgot@example.com"), None
+        )
 
     async def test_forgot_rate_limited_disabled_user(
         self, client, app, db, app_state
@@ -1673,7 +1701,9 @@ class TestForgotPassword:
         assert resp1.json()["status"] == "sent"
         assert resp2.status_code == 429
         mock_send.assert_not_awaited()
-        api.reset_timestamps.pop("forgot@example.com", None)
+        api.reset_timestamps.pop(
+            api.rate_limit_key("forgot@example.com"), None
+        )
 
     async def test_forgot_prunes_expired_entries(self, client, db, app_state):
         api.reset_timestamps.clear()
@@ -1691,18 +1721,113 @@ class TestForgotPassword:
             # Backdate the entry and seed an unrelated expired address.
             import time
 
-            api.reset_timestamps["forgot@example.com"] = (
-                time.time() - api.RESET_COOLDOWN_SECONDS - 1
+            api.reset_timestamps[api.rate_limit_key("forgot@example.com")] = (
+                time.monotonic() - api.RESET_COOLDOWN_SECONDS - 1
             )
-            api.reset_timestamps["stale@example.com"] = (
-                time.time() - api.RESET_COOLDOWN_SECONDS - 1
+            api.reset_timestamps[api.rate_limit_key("stale@example.com")] = (
+                time.monotonic() - api.RESET_COOLDOWN_SECONDS - 1
             )
             resp2 = await client.post(
                 "/api/v1/auth/forgot-password",
                 json={"email": "forgot@example.com"},
             )
         assert resp2.status_code == 200
-        assert "stale@example.com" not in api.reset_timestamps
+        assert (
+            api.rate_limit_key("stale@example.com") not in api.reset_timestamps
+        )
+        api.reset_timestamps.clear()
+
+    async def test_forgot_flood_caps_dict_size(self, client, db, monkeypatch):
+        """#3113: a flood of unique unknown addresses cannot grow the
+        dict past the cap (oldest entries are shed instead), and every
+        flood response stays identical to a known-address one — no
+        existence oracle under pressure. An over-full dict (seeded past
+        a shrunk cap) is likewise driven back under the cap in one
+        request."""
+        import sys
+        import time
+
+        monkeypatch.setattr(
+            sys.modules["klangk.api.auth"], "RATE_LIMIT_MAX_ENTRIES", 5
+        )
+        api.reset_timestamps.clear()
+        for i in range(25):
+            resp = await client.post(
+                "/api/v1/auth/forgot-password",
+                json={"email": f"flood-{i}@example.com"},
+            )
+            assert resp.status_code == 200
+            assert resp.json()["status"] == "sent"
+        assert len(api.reset_timestamps) <= 5
+        for i in range(7):
+            api.reset_timestamps[
+                api.rate_limit_key(f"seed-{i}@example.com")
+            ] = time.monotonic()
+        resp = await client.post(
+            "/api/v1/auth/forgot-password",
+            json={"email": "after@example.com"},
+        )
+        assert resp.status_code == 200
+        assert len(api.reset_timestamps) <= 5
+        api.reset_timestamps.clear()
+
+    async def test_forgot_rate_limit_keys_hold_no_raw_email(
+        self, client, db, app_state
+    ):
+        """#3113: the dict is keyed by fixed-width hashes, so no raw
+        (possibly attacker-chosen, arbitrarily long) address is
+        retained past the request."""
+        await self._create_user(app_state)
+        with patch.object(
+            emailsvc_mod.EmailService,
+            "send_password_reset_email",
+            new_callable=AsyncMock,
+        ):
+            await client.post(
+                "/api/v1/auth/forgot-password",
+                json={"email": "forgot@example.com"},
+            )
+        assert api.rate_limit_key("forgot@example.com") in api.reset_timestamps
+        assert all("@" not in key for key in api.reset_timestamps)
+        assert all(len(key) == 32 for key in api.reset_timestamps)
+        api.reset_timestamps.clear()
+
+    async def test_forgot_limited_while_dict_near_full(
+        self, client, db, app_state, monkeypatch
+    ):
+        """#3113: the cooldown check is unaffected by a dict at the
+        cap — a recorded address still 429s while junk entries fill the
+        dict around it. Its protection lasts while fewer than
+        RATE_LIMIT_MAX_ENTRIES newer entries arrive (the window is the
+        most recent cap entries), not indefinitely."""
+        import sys
+
+        monkeypatch.setattr(
+            sys.modules["klangk.api.auth"], "RATE_LIMIT_MAX_ENTRIES", 5
+        )
+        await self._create_user(app_state)
+        with patch.object(
+            emailsvc_mod.EmailService,
+            "send_password_reset_email",
+            new_callable=AsyncMock,
+        ):
+            resp1 = await client.post(
+                "/api/v1/auth/forgot-password",
+                json={"email": "forgot@example.com"},
+            )
+            assert resp1.status_code == 200
+            # Junk entries fill the dict to the cap without evicting
+            # the recorded address.
+            for i in range(4):
+                await client.post(
+                    "/api/v1/auth/forgot-password",
+                    json={"email": f"junk-{i}@example.com"},
+                )
+            resp2 = await client.post(
+                "/api/v1/auth/forgot-password",
+                json={"email": "forgot@example.com"},
+            )
+        assert resp2.status_code == 429
         api.reset_timestamps.clear()
 
 
