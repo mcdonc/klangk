@@ -4083,6 +4083,26 @@ class TestMainCLI:
         client.restart_workspace_by_id.assert_called_once_with(ws.id)
         client.restart_workspace.assert_not_called()
 
+    def test_edit_rejects_empty_new_name(self, logged_in_cfg, monkeypatch):
+        """--name '' (or whitespace) is refused before any request: the
+        server would otherwise accept a zero-length rename while the CLI
+        echoes keep the old name (review of #3091)."""
+        from klangk.cli import main
+
+        client = MagicMock()
+        with patch.object(context_mod, "client", return_value=client):
+            from typer.testing import CliRunner
+
+            runner = CliRunner()
+            result = runner.invoke(
+                main.app,
+                ["edit", "my-ws", "--name", ""],
+            )
+            assert result.exit_code == 1
+            assert "cannot be empty" in result.output
+
+        client.put.assert_not_called()
+
     def test_edit_no_restart_when_stopped(self, logged_in_cfg, monkeypatch):
         """Stopped ws + create-time field → no restart prompt."""
         from klangk.cli import main

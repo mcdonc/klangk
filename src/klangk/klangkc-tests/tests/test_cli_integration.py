@@ -1628,12 +1628,24 @@ class TestShellConnectionError:
         from klangk.cli.main import shell
 
         self._shell_with_side_effect(monkeypatch, asyncio_mod.TimeoutError())
+        err = MagicMock()
+        monkeypatch.setattr("klangk.cli.context.err", err)
+        # The cleanup pair runs through shellcmd's own imported bindings.
+        reset = MagicMock()
+        drain = MagicMock()
+        monkeypatch.setattr("klangk.cli.shellcmd.reset_terminal", reset)
+        monkeypatch.setattr("klangk.cli.shellcmd.drain_stdin", drain)
 
         import typer
 
         with pytest.raises(typer.Exit) as exc_info:
             shell(workspace="ws", terminal="x")
         assert exc_info.value.exit_code == 1
+        # A one-line message was printed (not a traceback) …
+        assert "Timed out" in str(err.print.call_args_list)
+        # … and the terminal was restored before exiting.
+        reset.assert_called_once()
+        drain.assert_called_once()
 
 
 class TestSSHAgentForwarding:

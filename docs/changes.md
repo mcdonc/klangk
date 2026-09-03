@@ -1964,8 +1964,9 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   running workspace renamed by the same edit (`klangk edit my-ws --name
 new-ws …` then answering `y` to the restart prompt) crashed with an
   uncaught `WorkspaceNotFoundError` traceback before the restart could
-  fire. The restart now targets the workspace id, and the
-  confirmation echoes show the new name.
+  fire. The restart now targets the workspace id, the confirmation
+  echoes show the new name, and an empty `--name` is rejected instead
+  of silently renaming the workspace to the empty string.
 
 - **Consent-popup socket names mangled digits (#3091).** A typo in the
   workspace-id sanitizer's character class (`0189` instead of the range

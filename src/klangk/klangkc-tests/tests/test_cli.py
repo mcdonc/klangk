@@ -6054,7 +6054,8 @@ class TestSandboxCommandGuards:
             "sandbox_setup_only",
             MagicMock(side_effect=asyncio_mod.TimeoutError()),
         )
-        monkeypatch.setattr(sandboxcmd.context, "err", MagicMock())
+        err = MagicMock()
+        monkeypatch.setattr(sandboxcmd.context, "err", err)
         with pytest.raises(typer.Exit) as exc_info:
             sandboxcmd.run_sandbox_setup(
                 "http://s",
@@ -6067,6 +6068,8 @@ class TestSandboxCommandGuards:
                 MagicMock(),
             )
         assert exc_info.value.exit_code == 1
+        # A one-line message was printed (not a traceback).
+        assert "Timed out" in str(err.print.call_args_list)
 
     def test_mark_setup_state_warns_on_failure(self):
         from klangk.cli.sandboxcmd import mark_setup_state

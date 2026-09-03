@@ -616,6 +616,12 @@ def edit(
     Without flags, interactively prompts for each field.
     Press Enter to keep the current value.
     """
+    if name is not None and not name.strip():
+        # The server has no min-length on the rename field, so an empty
+        # --name would otherwise rename to "" while the echoes still show
+        # the old name (review of #3091).
+        context.err.print("[red]New name cannot be empty[/red]")
+        raise typer.Exit(code=1)
     context.require_auth()
     client = context.client()
     ws = context.resolve_or_exit(client, workspace)
