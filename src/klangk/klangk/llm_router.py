@@ -383,7 +383,15 @@ class LLMRouter:
             ),
             stream=True,
         )
-        resp.raise_for_status()
+        if resp.is_error:
+            # Release the streamed response's pooled connection before
+            # raising. Nobody downstream closes it on the error path —
+            # the API handler only sees the exception — and the
+            # HTTPStatusError keeps the response referenced, so the
+            # connection would sit held against the pool's limits until
+            # GC under sustained upstream errors.
+            await resp.aclose()
+            resp.raise_for_status()
         return resp
 
     async def list_upstream_models(self) -> list[dict[str, Any]]:

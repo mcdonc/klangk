@@ -8,6 +8,7 @@ import types
 from unittest.mock import AsyncMock, patch
 
 import httpx
+import pytest
 
 from klangk import llm_router as llm_router_mod
 from klangk.llm_router import (
@@ -422,6 +423,7 @@ class TestPassthrough:
         ]
         router = LLMRouter(app)
         mock_resp = AsyncMock()
+        mock_resp.is_error = False
         mock_resp.raise_for_status = lambda: None
         mock_client = AsyncMock()
         mock_client.build_request.return_value = "fake-request"
@@ -433,6 +435,39 @@ class TestPassthrough:
         )
         assert resp is mock_resp
         mock_client.send.assert_called_once()
+
+    async def test_passthrough_stream_error_closes_response(self):
+        """An error status closes the streamed response before raising —
+        the API layer only sees the exception, so an orphaned streamed
+        response would hold its pool connection until GC (#3123)."""
+        app = _app()
+        app.state.settings.llm_models = [
+            {
+                "model_name": "*",
+                "litellm_params": {
+                    "api_base": "http://fake:1234/v1",
+                    "api_key": "test-key",
+                },
+            }
+        ]
+        router = LLMRouter(app)
+
+        def _raise():
+            raise httpx.HTTPStatusError("502", request=None, response=None)
+
+        mock_resp = AsyncMock()
+        mock_resp.is_error = True
+        mock_resp.raise_for_status = _raise
+        mock_client = AsyncMock()
+        mock_client.build_request.return_value = "fake-request"
+        mock_client.send.return_value = mock_resp
+        router._http_client = mock_client
+
+        with pytest.raises(httpx.HTTPStatusError):
+            await router.passthrough_completion_stream(
+                {"model": "test", "messages": [], "stream": True}
+            )
+        mock_resp.aclose.assert_awaited_once()
 
     async def test_reconfigure_closes_old_client(self):
         """Reconfiguring from passthrough to router closes the httpx client."""

@@ -2028,6 +2028,20 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   reload now logs the same "requires a full process restart" warning
   as `KLANGKD_PORT`/`KLANGKD_LISTEN`.
 
+- **Typo'd CIDR settings no longer wedge the proxy (#3123).** An
+  invalid entry in `KLANGKD_TRUSTED_PROXY_CIDRS` or
+  `KLANGKD_CONTAINER_SUBNETS` flowed into the Caddyfile, where Caddy
+  rejects it at adapt time — the config push failed and the watchdog
+  kill/respawn loop left the whole proxy down on a typo. Invalid
+  entries are now skipped with a warning (fail-closed: narrower
+  egress allowlist / loopback-only proxy trust, and an all-invalid
+  container-subnet list denies container egress like a blank one).
+
+- **`klangkd doctor` pacman hints use `-S` (#3123).** The install hint
+  for an arch-family host emitted `sudo pacman install <pkg>`; pacman
+  has no `install` subcommand, so the hint failed verbatim. It now
+  emits `sudo pacman -S <pkg>`.
+
 - **Non-mapping `klangk.yaml` no longer crashes every CLI command
   (#3094).** A config file holding valid YAML that is not a mapping
   (a stray list or a bare string) used to abort every `klangk`

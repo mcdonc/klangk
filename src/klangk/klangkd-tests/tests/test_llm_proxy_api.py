@@ -333,6 +333,7 @@ class TestChatCompletions:
         app.state.llm_router = lr
 
         mock_resp = AsyncMock()
+        mock_resp.is_error = False
         mock_resp.raise_for_status = lambda: None
 
         async def fake_lines():

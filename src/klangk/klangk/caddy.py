@@ -79,6 +79,33 @@ def _split_sources(raw: str) -> list[str]:
     return [s.strip() for s in raw.split(",") if s.strip()]
 
 
+def _valid_cidr_tokens(tokens: list[str]) -> list[str]:
+    """The tokens that parse as an IP address or CIDR.
+
+    An invalid entry is warned and skipped: garbage would otherwise
+    flow into the Caddyfile (a ``remote_ip`` matcher or
+    ``trusted_proxies static`` argument), where Caddy rejects it at
+    adapt time — the ``POST /load`` fails and the watchdog's
+    kill/respawn loop wedges the whole proxy on a typo'd setting.
+    Skipping fails toward *less* access (narrower egress allowlist /
+    narrower XFF trust), never more.
+    """
+    valid: list[str] = []
+    for token in tokens:
+        try:
+            ipaddress.ip_network(token, strict=False)
+        except ValueError:
+            logger.warning(
+                "ignoring invalid IP/CIDR entry %r — entries must be IPs"
+                " or CIDRs (KLANGKD_TRUSTED_PROXY_CIDRS /"
+                " KLANGKD_CONTAINER_SUBNETS)",
+                token,
+            )
+        else:
+            valid.append(token)
+    return valid
+
+
 def _non_loopback(entries: list[str]) -> list[str]:
     """The non-loopback subset (loopback keeps full browser UI/API access)."""
     return [s for s in entries if not _is_loopback(s)]
@@ -96,9 +123,11 @@ def _warned_non_loopback(entries: list[str]) -> list[str]:
     return deny_entries
 
 
-def _explicit_source_entries(raw: str) -> tuple[list[str], list[str]]:
-    """(acl, deny) from the explicit KLANGKD_CONTAINER_SUBNETS setting."""
-    entries = _split_sources(raw)
+def _explicit_source_entries(
+    entries: list[str],
+) -> tuple[list[str], list[str]]:
+    """(acl, deny) from the explicit (pre-validated)
+    KLANGKD_CONTAINER_SUBNETS entries."""
     return entries, _warned_non_loopback(entries)
 
 
@@ -302,7 +331,15 @@ class CaddyRenderer:
         """
         explicit = self.app.state.settings.container_subnets
         if explicit:
-            return _explicit_source_entries(str(explicit))
+            tokens = _split_sources(str(explicit))
+            entries = _valid_cidr_tokens(tokens)
+            if len(entries) != len(tokens):
+                logger.warning(
+                    "KLANGKD_CONTAINER_SUBNETS: invalid entries skipped"
+                    " (valid: %r)",
+                    entries,
+                )
+            return _explicit_source_entries(entries)
         addrs = detect_host_ipv4s()
         if addrs:
             return addrs, _non_loopback(addrs)
@@ -357,16 +394,10 @@ class CaddyRenderer:
 
     def _trusted_proxy_cidrs(self) -> list[str]:
         """Validated KLANGKD_TRUSTED_PROXY_CIDRS entries (loopback if empty/invalid)."""
-        raw = self.app.state.settings.trusted_proxy_cidrs
-        entries: list[str] = []
-        for token in (raw or "").split(","):
-            token = token.strip()
-            if not token:
-                continue
-            entries.append(token)
-        if not entries:
-            entries = ["127.0.0.1", "::1"]
-        return entries
+        entries = _valid_cidr_tokens(
+            _split_sources(self.app.state.settings.trusted_proxy_cidrs or "")
+        )
+        return entries or ["127.0.0.1", "::1"]
 
     # -- global options ----------------------------------------------------
 
@@ -898,9 +929,13 @@ class CaddyWatchdog:
         """Poll the admin UDS until Caddy accepts a connection (or timeout).
 
         Any HTTP response (any status) counts as "up" — the admin endpoint is
-        listening. A connection failure (missing socket / refused — raised by
-        httpx as :class:`~httpx.ConnectError`) means not-up yet: sleep and
-        retry until the deadline, then return ``False``.
+        listening. A transport-level failure (missing socket / refused —
+        raised by httpx as :class:`~httpx.ConnectError`, but also a stalled
+        peer raising a read *timeout* or protocol error) means not-up yet:
+        every :class:`~httpx.HTTPError` is retried, not just the connect
+        flavor — an uncaught one would kill the whole supervision task and
+        leave a blank-config Caddy running unsupervised. Sleep and retry
+        until the deadline, then return ``False``.
         """
         deadline = asyncio.get_running_loop().time() + timeout
         loop = asyncio.get_running_loop()
@@ -926,7 +961,7 @@ class CaddyWatchdog:
                     # real socket — don't let it mask the successful connect.
                     pass
                 return True
-            except (httpx.ConnectError, OSError):
+            except (httpx.HTTPError, OSError):
                 await asyncio.sleep(0.2)
         return False
 
