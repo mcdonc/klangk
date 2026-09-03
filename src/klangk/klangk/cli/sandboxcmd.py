@@ -207,6 +207,9 @@ def run_sandbox_setup(
     except ConnectionError as e:
         context.err.print(f"[red]{e}[/red]")
         raise typer.Exit(code=1) from None
+    except asyncio.TimeoutError as e:
+        context.err.print(f"[red]{context.timeout_detail(e)}[/red]")
+        raise typer.Exit(code=1) from None
 
 
 def load_config_or_exit(sandbox_root: Path):

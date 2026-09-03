@@ -3923,7 +3923,7 @@ class TestMainCLI:
                 # The restart offer fired (its warning goes to stderr).
                 assert answers and "restart now?" in answers[0].lower()
 
-        client.restart_workspace.assert_not_called()  # declined
+        client.restart_workspace_by_id.assert_not_called()  # declined
 
     def test_edit_sudo_lockdown_on_absent_bag_no_prompt(
         self, logged_in_cfg, monkeypatch
@@ -4014,7 +4014,7 @@ class TestMainCLI:
                 assert result.exit_code == 0
                 assert "Updated" in result.stdout
 
-        client.restart_workspace.assert_not_called()
+        client.restart_workspace_by_id.assert_not_called()
 
     def test_edit_restart_needed_accept(self, logged_in_cfg, monkeypatch):
         """Running ws + create-time field → warn, user accepts restart."""
@@ -4042,7 +4042,66 @@ class TestMainCLI:
                 assert result.exit_code == 0
                 assert "Restarted" in result.stdout
 
-        client.restart_workspace.assert_called_once_with("my-ws")
+        client.restart_workspace_by_id.assert_called_once_with(ws.id)
+
+    def test_edit_rename_restart_targets_id(self, logged_in_cfg, monkeypatch):
+        """#3091: restarting a workspace renamed by the same edit must go
+        by id — the old name no longer resolves after the rename."""
+        from klangk.cli import main
+
+        ws = Workspace(
+            id="ws1" + "0" * 52,
+            name="my-ws",
+            created_at="2025-01-01T00:00:00Z",
+            running=True,
+        )
+        client = MagicMock()
+        client.resolve_workspace.return_value = ws
+        client.put.return_value = MagicMock(status_code=200)
+
+        with patch.object(context_mod, "client", return_value=client):
+            with patch("builtins.input", return_value="y"):
+                from typer.testing import CliRunner
+
+                runner = CliRunner()
+                result = runner.invoke(
+                    main.app,
+                    [
+                        "edit",
+                        "my-ws",
+                        "--name",
+                        "new-ws",
+                        "--image",
+                        "new-img",
+                    ],
+                )
+                assert result.exit_code == 0
+                # The echoes carry the new name, not the stale pre-edit one.
+                assert "Updated workspace new-ws" in result.stdout
+                assert "Restarted workspace new-ws" in result.stdout
+
+        client.restart_workspace_by_id.assert_called_once_with(ws.id)
+        client.restart_workspace.assert_not_called()
+
+    def test_edit_rejects_empty_new_name(self, logged_in_cfg, monkeypatch):
+        """--name '' (or whitespace) is refused before any request: the
+        server would otherwise accept a zero-length rename while the CLI
+        echoes keep the old name (review of #3091)."""
+        from klangk.cli import main
+
+        client = MagicMock()
+        with patch.object(context_mod, "client", return_value=client):
+            from typer.testing import CliRunner
+
+            runner = CliRunner()
+            result = runner.invoke(
+                main.app,
+                ["edit", "my-ws", "--name", ""],
+            )
+            assert result.exit_code == 1
+            assert "cannot be empty" in result.output
+
+        client.put.assert_not_called()
 
     def test_edit_no_restart_when_stopped(self, logged_in_cfg, monkeypatch):
         """Stopped ws + create-time field → no restart prompt."""
@@ -4069,7 +4128,7 @@ class TestMainCLI:
             assert result.exit_code == 0
             assert "Restart" not in result.stdout
 
-        client.restart_workspace.assert_not_called()
+        client.restart_workspace_by_id.assert_not_called()
 
     def test_edit_no_restart_for_name(self, logged_in_cfg, monkeypatch):
         """Running ws + non-create-time field (name) → no restart prompt."""
@@ -4096,7 +4155,7 @@ class TestMainCLI:
             assert result.exit_code == 0
             assert "Restart" not in result.stdout
 
-        client.restart_workspace.assert_not_called()
+        client.restart_workspace_by_id.assert_not_called()
 
     def test_dup_workspace(self, logged_in_cfg, monkeypatch):
         from klangk.cli import main

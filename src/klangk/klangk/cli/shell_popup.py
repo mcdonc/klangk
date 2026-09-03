@@ -107,7 +107,7 @@ def tmux_usable(version: tuple[int, int] | None) -> bool:
 
 def _sanitize(name: str) -> str:
     """Make a tmux-safe session-name fragment (no ``.`` or ``:``)."""
-    return re.sub(r"[^A-Za-z0189_-]", "-", name)[:24] or "ws"
+    return re.sub(r"[^A-Za-z0-9_-]", "-", name)[:24] or "ws"
 
 
 def socket_path(workspace_id: str) -> str:

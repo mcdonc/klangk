@@ -109,6 +109,13 @@ class TestNaming:
         p = sp.socket_path("w.s:i")
         assert ":" not in p and "w.s:i.sock" not in p
 
+    def test_socket_path_keeps_digits(self):
+        """#3091: the sanitizer's character class is the range 0-9, not the
+        literal set "0189" — digits 2-7 must survive, or nearly every
+        uuid-hex workspace id gets mangled (and ids can collide)."""
+        assert sp._sanitize("abc123def456") == "abc123def456"
+        assert sp.socket_path("e7c2b6a4").endswith("e7c2b6a4.sock")
+
     def test_session_names_prefixed_and_safe(self):
         outer = sp.outer_session_name("wsid")
         hidden = sp.hidden_session_name("wsid")

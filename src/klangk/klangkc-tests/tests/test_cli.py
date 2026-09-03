@@ -6068,6 +6068,36 @@ class TestSandboxCommandGuards:
                 MagicMock(),
             )
 
+    def test_run_sandbox_setup_timeout_exits(self, monkeypatch):
+        """#3091: a container that never becomes ready exits with a one-line
+        message, not a raw asyncio.TimeoutError traceback."""
+        import asyncio as asyncio_mod
+
+        from klangk.cli import sandboxcmd
+
+        monkeypatch.setattr(sandboxcmd.context, "ws_max_size", lambda: 2**20)
+        monkeypatch.setattr(
+            sandboxcmd,
+            "sandbox_setup_only",
+            MagicMock(side_effect=asyncio_mod.TimeoutError()),
+        )
+        err = MagicMock()
+        monkeypatch.setattr(sandboxcmd.context, "err", err)
+        with pytest.raises(typer.Exit) as exc_info:
+            sandboxcmd.run_sandbox_setup(
+                "http://s",
+                "tok",
+                "ws",
+                "ws-id",
+                MagicMock(),
+                Path("/tmp"),
+                "handle",
+                MagicMock(),
+            )
+        assert exc_info.value.exit_code == 1
+        # A one-line message was printed (not a traceback).
+        assert "Timed out" in str(err.print.call_args_list)
+
     def test_mark_setup_state_warns_on_failure(self):
         from klangk.cli.sandboxcmd import mark_setup_state
 
