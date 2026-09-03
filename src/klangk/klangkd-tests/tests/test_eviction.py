@@ -703,6 +703,44 @@ class TestRunLoop:
         await self._run_briefly(evictor, seconds=0.1)
         evictor.evict_one.assert_not_awaited()
 
+    async def test_loop_honors_settings_swap_during_sleep(
+        self, monkeypatch, tmp_path
+    ):
+        """#3074: a SIGHUP reload swaps the settings object; the loop
+        must read ``memory_eviction_enabled`` live after its sleep, not
+        from a pre-sleep snapshot — disabling eviction takes effect on
+        the very next poll, with no extra measurement/eviction cycle."""
+        app, evictor = self._evictor(
+            {
+                "KLANGKD_MEMORY_EVICTION_POLL_INTERVAL": "0.001",
+                # High sustain so the enabled phase measures but can
+                # never open an eviction episode.
+                "KLANGKD_MEMORY_EVICTION_SUSTAIN_POLLS": "1000",
+            }
+        )
+        monkeypatch.setattr(
+            "klangk.container.eviction.MIN_POLL_INTERVAL_SECONDS", 0.001
+        )
+        measure = AsyncMock(return_value=0.01)
+        monkeypatch.setattr(
+            "klangk.container.eviction.measure_available_fraction", measure
+        )
+        evictor.evict_one = AsyncMock(return_value=True)
+        evictor.start()
+        try:
+            await asyncio.sleep(0.05)  # loop polls while still enabled
+            polls_while_enabled = measure.await_count
+            assert polls_while_enabled > 0
+            # SIGHUP: the settings OBJECT is swapped for a fresh one.
+            app.state.settings = make_settings(
+                {"KLANGKD_MEMORY_EVICTION_ENABLED": "false"}
+            )
+            await asyncio.sleep(0.15)
+        finally:
+            await evictor.stop()
+        assert measure.await_count == polls_while_enabled
+        evictor.evict_one.assert_not_awaited()
+
     async def test_loop_survives_evict_one_raise(self, monkeypatch, caplog):
         """A failing eviction cycle must not kill the loop (#2627 review B1).
 

@@ -455,7 +455,8 @@ class CrashRecoveryMonitor:
         having begun-and-completed since), and the post-teardown guard —
         run synchronously, with NO await between it and the
         ``create_task`` inside :meth:`schedule_restart` — catches a stop
-        that began while the teardown awaits ran. Any stop beginning
+        that began while the teardown awaits ran, allowing for the
+        teardown's own single epoch bump (#3074). Any stop beginning
         after ``create_task`` cancels the pending task at its entry
         (:meth:`ContainerRegistry.stop_and_remove_container` calls
         ``on_expected_stop` before its first await). Together these make
@@ -506,12 +507,16 @@ class CrashRecoveryMonitor:
         # Post-teardown sync guards (#2524 review): NO await between these
         # checks and either the tracker insert or the create_task inside
         # schedule_restart, so the single-threaded loop cannot interleave
-        # here. A stop that began during the awaits above bumped the
-        # epoch (its entry is synchronous); a user start that raced us
-        # left a fresh container running (registry state present). In
-        # both cases the user action owns the workspace now — record the
-        # death event for viewers, but drop the tracker and never
-        # restart.
+        # here. Our own teardown above bumped the stop epoch by exactly
+        # one (synchronously at its entry), so the guard allows that one
+        # bump; TWO or more bumps mean a stop that began during the
+        # awaits above also ran (its entry is synchronous), and a user
+        # start that raced us left a fresh container running (registry
+        # state present). In both cases the user action owns the
+        # workspace now — record the death event for viewers, but drop
+        # the tracker and never restart (#3074: comparing against the
+        # pre-teardown epoch verbatim tripped on our own bump, so no
+        # sweep-detected death ever scheduled a restart).
         self._finalize_death(registry, ws_id, cause, message, tracker, epoch)
 
     def _finalize_death(
@@ -561,13 +566,33 @@ class CrashRecoveryMonitor:
         captured."""
         return epoch is not None and registry.stop_epoch.get(ws_id, 0) != epoch
 
+    @staticmethod
+    def _stop_epoch_moved_beyond_teardown(
+        registry, ws_id: str, epoch: int | None
+    ) -> bool:
+        """True when the stop epoch moved by more than the crash
+        teardown's own single bump (#3074).
+
+        ``handle_death``'s ``stop_and_remove_container`` call bumps the
+        epoch synchronously at entry, so after the teardown exactly +1
+        over the pre-handling epoch is the monitor itself. A strict
+        inequality (``_stop_epoch_moved``) would flag every death as
+        "user action interleaved"; +2 or more means a user stop also
+        began during the handling awaits — that stop owns the workspace.
+        The entry guards keep the strict form: they run *before* the
+        teardown's bump, so any movement there is a user stop.
+        """
+        return (
+            epoch is not None and registry.stop_epoch.get(ws_id, 0) > epoch + 1
+        )
+
     def _user_action_interleaved(
         self, registry, ws_id: str, epoch: int | None
     ) -> bool:
         """True when a user action raced the death handling and owns the
-        workspace now: a stop began/completed during the awaits, or a
-        start re-created registry state."""
-        if self._stop_epoch_moved(registry, ws_id, epoch):
+        workspace now: a stop began/completed during the awaits (beyond
+        the teardown's own bump), or a start re-created registry state."""
+        if self._stop_epoch_moved_beyond_teardown(registry, ws_id, epoch):
             return True
         return registry.states.get(ws_id) is not None
 

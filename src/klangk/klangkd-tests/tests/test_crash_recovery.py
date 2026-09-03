@@ -694,6 +694,26 @@ class TestHandleDeathDisabled:
             "container removed externally (not found)"
         )
 
+    async def test_sweep_records_cause_when_disabled(self):
+        """#3074: via the sweep path (the only production caller, which
+        passes a non-None epoch), a death with restart off still records
+        the tracker so /status shows why the workspace died."""
+        app_state = make_app_state()  # restart disabled (the default)
+        reg = app_state.state.container_registry
+        monitor = reg.crash
+        dead_state(reg)
+        with patch_podman_methods(
+            app_state,
+            inspect_dead(),
+            listed=[pod_entry("cid-crash", "exited")],
+        ):
+            await monitor.sweep_once()
+        assert monitor.pending == {}
+        assert monitor.trackers["ws-crash"].last_cause.startswith(
+            "killed by SIGKILL"
+        )
+        assert monitor.status("ws-crash")["state"] == "dead"
+
 
 class TestRestartEnabled:
     async def test_restart_after_backoff(self, crash_env):
@@ -730,6 +750,42 @@ class TestRestartEnabled:
         assert tracker.last_started_at is not None
         assert monitor.status("ws-crash")["state"] == "recovering"
         assert monitor.pending == {}
+
+    async def test_sweep_schedules_restart(self, crash_env):
+        """#3074: the production path. The sweep — the only caller that
+        passes a non-None epoch — must schedule the delayed restart even
+        though its own teardown bumped the stop epoch (the pre-#3074
+        post-teardown guard tripped on that bump and dropped every
+        death as "user action interleaved")."""
+        app_state = make_app_state(crash_env)
+        reg = app_state.state.container_registry
+        monitor = reg.crash
+        dead_state(reg)
+        started = []
+
+        async def fake_start(ws, **kwargs):
+            started.append(ws["id"])
+            return "new-cid", "created"
+
+        with patch_podman_methods(
+            app_state,
+            inspect_dead(),
+            listed=[pod_entry("cid-crash", "exited")],
+        ):
+            with patch.object(
+                app_state.state.model.workspaces,
+                "get_workspace_by_id",
+                AsyncMock(return_value={"id": "ws-crash"}),
+            ):
+                with patch.object(
+                    app_state.state.workspaces, "start_workspace", fake_start
+                ):
+                    await monitor.sweep_once()
+                    assert "ws-crash" in monitor.pending
+                    await monitor.pending["ws-crash"]
+        assert started == ["ws-crash"]
+        assert monitor.trackers["ws-crash"].attempts == 1
+        assert monitor.trackers["ws-crash"].last_started_at is not None
 
     async def test_memory_limit_resolved_from_workspace_bag(self, crash_env):
         app_state = make_app_state(crash_env)
