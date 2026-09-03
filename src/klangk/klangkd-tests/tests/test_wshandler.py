@@ -1976,6 +1976,46 @@ class TestCleanupConnection:
         await conn.cleanup()
         assert conn.terminal_session is None
 
+    async def test_cleanup_step_failure_skips_nothing(self, app_state, caplog):
+        """#3069: one teardown step failing must neither skip the other
+        stops nor the subscriber removal after them."""
+        import logging
+
+        app_state = _make_app_state()
+        sockets = app_state.state.sockets
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock, app_state=app_state)
+        conn.container_id = "ctr-teardown"
+        conn.workspace_id = "ws-teardown"
+        conn._idle_cb = None
+        session = WorkspaceSession("ws-teardown", app_state)
+        session.subscribers.add(sock)
+        sockets.sessions["ws-teardown"] = session
+        stopped = []
+
+        async def failing_stop():
+            stopped.append("terminal")
+            raise RuntimeError("terminal teardown boom")
+
+        async def ok_exec():
+            stopped.append("exec")
+
+        async def ok_ssh():
+            stopped.append("ssh")
+
+        conn.stop_terminal = failing_stop
+        conn.stop_exec = ok_exec
+        conn._stop_ssh_agent = ok_ssh
+        with caplog.at_level(
+            logging.ERROR, logger="klangk.wshandler.connection"
+        ):
+            await conn.cleanup()
+        # All three stops ran despite the first raising …
+        assert stopped == ["terminal", "exec", "ssh"]
+        assert "Cleanup step failing_stop failed" in caplog.text
+        # … and the session bookkeeping after them still ran.
+        assert "ws-teardown" not in sockets.sessions
+
 
 # --- handle_prompt ---
 

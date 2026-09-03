@@ -87,17 +87,8 @@ async def _refuse(
     await websocket.close(code=code, reason=reason)
 
 
-def _no_hs_mark(label: str) -> None:
-    """Default no-op handshake mark (direct callers/tests).
-
-    #3069: the real per-step marks are recorded inside
-    ``_refuse_invalid_handshake`` so each label measures its own step; a
-    no-op default keeps the helper callable without a marker.
-    """
-
-
 async def _refuse_invalid_handshake(
-    websocket: WebSocket, app, workspace: str, user: dict, hs_mark=_no_hs_mark
+    websocket: WebSocket, app, workspace: str, user: dict, *, hs_mark
 ) -> bool:
     """Authorization + static-mode gate for a consent decider.
 

@@ -747,9 +747,7 @@ class Connection:
         self.app.state.container_registry.revoke_browser(self.sock)
         self.browser_id = None
 
-        await self.stop_terminal()
-        await self.stop_exec()
-        await self._stop_ssh_agent()
+        await self._teardown_sessions_safely()
 
         # Remove this connection from the workspace session's subscriber sets.
         # If no subscribers remain, remove the session entirely. The container
@@ -765,6 +763,20 @@ class Connection:
                 # Lock is released by remove_subscriber, so use the
                 # lock-acquiring version.
                 await self.app.state.sockets.remove_session(workspace_id)
+
+    async def _teardown_sessions_safely(self) -> None:
+        """Stop terminal/exec/ssh-agent, each guarded (#3069).
+
+        One stop failing must neither skip the others nor the session
+        bookkeeping after them — pre-#3069 a raise here stranded the
+        socket in ``session.subscribers`` forever. Each failure is
+        logged; cancellation (CancelledError) still propagates.
+        """
+        for stop in (self.stop_terminal, self.stop_exec, self._stop_ssh_agent):
+            try:
+                await stop()
+            except Exception:
+                logger.exception("Cleanup step %s failed", stop.__name__)
 
     def _remove_idle_callback(self, workspace_id) -> None:
         """Drop this connection's idle callback, if armed."""

@@ -86,7 +86,9 @@ class SidecarConnections:
         socket under the same workspace id; the stale socket's teardown must
         leave the replacement's registration alone — otherwise every later
         ``send_drop`` finds "no sidecar" and revocations proceed unenforced
-        while a live sidecar is connected.
+        while a live sidecar is connected. A pending drop-ack enqueued over
+        the stale socket is no longer failed here either; the revoke
+        caller's timeout (see ``send_drop``) is the fail-closed backstop.
         """
         registered = self._conns.get(workspace_id)
         if registered is not None and registered is not sock:
