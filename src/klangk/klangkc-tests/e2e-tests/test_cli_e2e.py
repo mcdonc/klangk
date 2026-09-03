@@ -16,7 +16,6 @@ from pathlib import Path
 
 import pytest
 
-from klangk.model import free_port
 import sys
 
 sys.path.insert(
@@ -81,11 +80,10 @@ def _stop_server(server, data_dir=None):
 def server():
     """Start a real Klangk server for the test session."""
     data_dir = tracked_mkdtemp("klangk-cli-e2e-")
-    port = str(free_port())
-    proc, base_url = _start_server(data_dir, port)
+    proc, base_url = _start_server(data_dir)
     yield {
         "url": base_url,
-        "port": port,
+        "port": base_url.rsplit(":", 1)[-1],
         "data_dir": data_dir,
         "proc": proc,
     }
@@ -646,7 +644,6 @@ class TestAutoStart:
         data_dir = tracked_mkdtemp("klangk-autostart-")
         proc, base_url = _start_server(
             data_dir,
-            str(free_port()),
             extra_env={"KLANGKD_ALLOW_AUTOSTART": "1"},
         )
         config_dir = tmp_path_factory.mktemp("klangk-autostart-config")
@@ -756,7 +753,6 @@ class TestSandboxAutoStartServiceCommand:
     WS = "e2e-sandbox-defcmd"
     # Free port (allocated once at class-definition time) so this never
     # collides with the other class-scoped servers or the session server.
-    PORT = str(free_port())
 
     @pytest.fixture(autouse=True, scope="class")
     @staticmethod
@@ -764,7 +760,6 @@ class TestSandboxAutoStartServiceCommand:
         data_dir = tracked_mkdtemp("klangk-sandbox-defcmd-")
         proc, base_url = _start_server(
             data_dir,
-            TestSandboxAutoStartServiceCommand.PORT,
             extra_env={"KLANGKD_ALLOW_AUTOSTART": "1"},
         )
         config_dir = tmp_path_factory.mktemp("klangk-sandbox-defcmd-config")
@@ -1553,7 +1548,6 @@ class TestAllowedMountRoots:
         data_dir = tracked_mkdtemp("klangk-mount-roots-")
         proc, base_url = _start_server(
             data_dir,
-            str(free_port()),
             extra_env={"KLANGKD_ALLOWED_MOUNT_ROOTS": "/tmp,/home"},
         )
         config_dir = tmp_path_factory.mktemp("klangk-mount-roots-config")
@@ -1630,7 +1624,7 @@ class TestVolumeUserIsolation:
         import httpx
 
         data_dir = tracked_mkdtemp("klangk-vol-iso-")
-        proc, base_url = _start_server(data_dir, str(free_port()))
+        proc, base_url = _start_server(data_dir)
 
         # Register a second user via the API
         httpx.post(
@@ -1776,7 +1770,7 @@ class TestTerminalSharing:
     @staticmethod
     def _dedicated_server(tmp_path_factory, request):
         data_dir = tracked_mkdtemp("klangk-terminal-sharing-")
-        proc, base_url = _start_server(data_dir, str(free_port()))
+        proc, base_url = _start_server(data_dir)
         config_dir = tmp_path_factory.mktemp("klangk-terminal-sharing-config")
         env = clean_env(HOME=str(config_dir))
         (config_dir / ".config" / "klangk").mkdir(parents=True)
@@ -2089,7 +2083,6 @@ def short_token_server():
     data_dir = tracked_mkdtemp("klangk-refresh-e2e-")
     proc, base_url = _start_server(
         data_dir,
-        str(free_port()),
         extra_env={"KLANGKD_ACCESS_TOKEN_HOURS": "0.002"},
     )
     yield {"url": base_url, "data_dir": data_dir, "proc": proc}

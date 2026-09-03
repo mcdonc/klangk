@@ -409,21 +409,6 @@ def _start_server_once(
         uds_path = None
         url = f"http://localhost:{tcp_port}"
 
-    # Caller-SUPPLIED port numbers get the same held-claim treatment
-    # (#3057 review): suites that draw with free_port() themselves (the CLI
-    # E2E session fixture passes KLANGKD_PORT=str(free_port())) otherwise
-    # keep the full released-socket race. Claim the exact number until
-    # spawn; an occupied one fails fast here instead of producing a spawn
-    # whose own port probe refuses it.
-    for key in (
-        "KLANGKD_PORT",
-        "KLANGKD_EGRESS_PORT",
-        "KLANGKD_PORT_RANGE_START",
-    ):
-        value = overrides.get(key)
-        if value is not None and key not in drawn:
-            claims.append(claim_specific_port(int(value)))
-
     env = clean_env(**overrides)
     cmd = ["python3", "-m", "klangk.main"]
     if config is not None:
