@@ -334,6 +334,13 @@ class TuiState:
     def restart_workspace(self, name: str) -> None:
         self.client().restart_workspace(name)
 
+    def restart_workspace_by_id(self, workspace_id: str) -> None:
+        """Restart by id — unambiguous even when the workspace was just
+        renamed, or when a shared workspace shares a name with another
+        workspace visible to this user (names are unique per owner, not
+        globally) (#3096)."""
+        self.client().restart_workspace_by_id(workspace_id)
+
     def stop_workspace(self, name: str) -> None:
         self.client().stop_workspace(name)
 

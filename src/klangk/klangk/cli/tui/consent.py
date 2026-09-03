@@ -1300,15 +1300,16 @@ class ConsentDeciderApp(App):
         """
         self._flash_msg = f" [red]![/red] {escape(message)}"
         self._flash_until = time.time() + ttl
-        # Query the ACTIVE screen (App.query_one searches the app's default
-        # screen, not a pushed one): the main queue's ``#status`` or the rules
-        # screen's ``#rules-status`` (a revoke can be issued / its ack can
-        # arrive while either is up).
-        screen = self.screen
-        target = (
-            "#rules-status" if isinstance(screen, RulesScreen) else "#status"
-        )
-        screen.query_one(target, Static).update(self._flash_msg)
+        # The rules screen owns its own status bar (a revoke can be issued
+        # / its ack can arrive while it is up); otherwise query app-level so
+        # the message lands on the main queue's ``#status`` even when a
+        # modal — the duration picker — is the active screen (#3096).
+        if isinstance(self.screen, RulesScreen):
+            self.screen.query_one("#rules-status", Static).update(
+                self._flash_msg
+            )
+        else:
+            self.query_one("#status", Static).update(self._flash_msg)
 
     # -- actions -----------------------------------------------------------
 

@@ -173,6 +173,7 @@ def _authed_state(**extra):
         current_user_id=lambda: None,
         close_terminal=_async_empty,
         restart_workspace=lambda n: None,
+        restart_workspace_by_id=lambda n: None,
         # Stubbed so MainScreen.do_create doesn't make a real (timing-out)
         # HTTP call for the allowed-domains list (#1989).
         default_allowed_domains=lambda: [],
@@ -196,6 +197,7 @@ def _ws(owned=None, shared=None, **extra):
         current_user_id=lambda: None,
         close_terminal=_async_empty,
         restart_workspace=lambda n: None,
+        restart_workspace_by_id=lambda n: None,
         # Stubbed so MainScreen.do_create doesn't make a real (timing-out)
         # HTTP call for the allowed-domains list (#1989).
         default_allowed_domains=lambda: [],
@@ -2724,11 +2726,13 @@ def test_tui_state_workspace_methods(monkeypatch, redirect_xdg):
     assert st.list_shared_workspaces()[0].name == "b"
     assert st.find_workspace("a").name == "a"
     st.restart_workspace("a")
+    st.restart_workspace_by_id("id-a")
     st.stop_workspace("a")
     st.start_workspace("a")
     st.delete_workspace("a")
     assert st.duplicate_workspace("a", "c") == {"id": "3", "name": "c"}
     fake.restart_workspace.assert_called_once_with("a")
+    fake.restart_workspace_by_id.assert_called_once_with("id-a")
     fake.stop_workspace.assert_called_once_with("a")
     fake.start_workspace.assert_called_once_with("a")
     fake.delete_workspace.assert_called_once_with("a")
@@ -9626,7 +9630,8 @@ def _edit_state(ws, *, update=None, restart=None, **extra):
         list_images=lambda: {"default": "base", "allowed": ["base", "py:3"]},
         allow_autostart=lambda: True,
         update_workspace=update or (lambda *a, **k: None),
-        restart_workspace=restart or (lambda *a, **k: None),
+        # The edit form restarts by id (#3096).
+        restart_workspace_by_id=restart or (lambda *a, **k: None),
     )
     base.update(extra)
     return _ws(**base)
@@ -10628,6 +10633,60 @@ async def test_edit_screen_restart_declined(monkeypatch):
         app.screen.dismiss(False)  # decline restart
         await pilot.pause()
         assert restarted == []
+        assert not isinstance(app.screen, EditWorkspaceScreen)
+
+
+async def test_edit_screen_rename_restart_targets_id(monkeypatch):
+    # The PUT applies the rename, so the post-save restart must target the
+    # workspace id — the stale name would miss, and even the NEW name is
+    # ambiguous (names are unique per owner, not globally) (#3096).
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    restarted = []
+    ws = _wsobj("oldname", image="base", running=True)
+    app = KlangkApp(
+        _edit_state(ws, restart=lambda *a, **k: restarted.append(a))
+    )
+    async with app.run_test() as pilot:
+        _edit_screen(app, ws)
+        await pilot.pause()
+        es = app.screen
+        es.query_one("#name", Input).value = "newname"
+        es.query_one("#image", Select).value = "py:3"  # create-time change
+        es.save()
+        await app.workers.wait_for_complete()
+        assert isinstance(app.screen, ConfirmScreen)  # restart offered
+        app.screen.dismiss(True)
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        assert restarted == [("id-oldname",)]
+
+
+async def test_edit_screen_enter_in_tmp_size_submits(monkeypatch):
+    # Enter in the /tmp size input submits the edit form (the edit form's
+    # submit_ids omitted tmp_size) (#3096).
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    updated = []
+    ws = _wsobj("alpha", image="base")
+    app = KlangkApp(_edit_state(ws, update=lambda *a, **k: updated.append(k)))
+    async with app.run_test(size=(140, 40)) as pilot:
+        _edit_screen(app, ws)
+        await pilot.pause()
+        es = app.screen
+        tmp = es.query_one("#tmp_size", Input)
+        tmp.value = "2"
+        es.set_focus(tmp)
+        await pilot.pause()
+        await pilot.press("enter")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        # The form submitted: update_workspace ran and the screen dismissed.
+        assert updated and updated[0].get("name") == "alpha"
         assert not isinstance(app.screen, EditWorkspaceScreen)
 
 

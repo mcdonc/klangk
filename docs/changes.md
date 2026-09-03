@@ -1986,6 +1986,26 @@ new-ws …` then answering `y` to the restart prompt) crashed with an
   now surfaces a one-line timeout message and a nonzero exit instead
   of a raw `TimeoutError` traceback.
 
+- **TUI edit form: rename + "Restart now" now restarts the renamed
+  workspace (#3096).** Accepting the post-save restart prompt on a
+  renamed workspace called `restart` with the pre-rename name, which
+  missed and left the workspace running the old configuration ("Saved,
+  but restart failed"). The restart now targets the workspace by id, so
+  it resolves after a rename and cannot hit a different workspace that
+  happens to share the name.
+
+- **`klangk consent-decide`: picking a duration while disconnected no
+  longer strands the picker (#3096).** Submitting a duration from the
+  picker with the socket down flashed to the picker screen (which has no
+  status bar), raising before the modal dismissed — Enter then did
+  nothing and only Esc closed the picker. The flash now lands on the
+  queue screen's status line and the modal dismisses normally.
+
+- **TUI edit form: Enter in the /tmp size field now submits (#3096).**
+  The edit form's Enter-submit id list omitted the /tmp size input, so
+  pressing Enter there was a no-op (the create form already submitted).
+  Enter now saves the form from that field as well.
+
 - **`egress_request` frames now carry one request shape on every delivery
   path (#3082).** A live hold fanned out to deciders carried a request dict
   without `duration`/`revoked_at`/`revoked_by`, while a connect-time replay
