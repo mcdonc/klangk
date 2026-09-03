@@ -196,6 +196,28 @@ def hash_fallback_handle(base: str) -> str:
     return f"{base[: MAX_HANDLE_LEN - 9]}-{suffix}"
 
 
+def _admin_rename_error(current: str, name: str) -> str | None:
+    """The rename-rejection message, or None when the rename is safe.
+
+    Guard logic for ``_reject_admin_group_rename`` (#2995): renaming
+    the ``admins`` group away flips every instance-admin's
+    ``is_admin`` off; renaming another group onto the name mints a
+    fake ``admins`` group. Both rejected; descriptions stay editable
+    and a same-name no-op passes.
+    """
+    if current == ADMIN_GROUP_NAME and name != ADMIN_GROUP_NAME:
+        return (
+            "The admins group cannot be renamed: instance-admin"
+            " status derives from its name (#2995)"
+        )
+    if current != ADMIN_GROUP_NAME and name == ADMIN_GROUP_NAME:
+        return (
+            "The name 'admins' is reserved for the instance-admin"
+            " group (#2995)"
+        )
+    return None
+
+
 async def generate_handle(db, email: str) -> str:
     """Return a unique handle derived from *email* on connection *db*.
 
@@ -718,28 +740,15 @@ class UsersModel(Submodel):
     async def _reject_admin_group_rename(
         self, group_id: str, name: str | None
     ) -> None:
-        """Guard: the ``admins`` group's name is load-bearing (#2995).
-
-        Renaming the group away flips every instance-admin's
-        ``is_admin`` off; renaming another group onto the name mints a
-        fake ``admins`` group. Both rejected; descriptions stay
-        editable and a same-name no-op passes.
-        """
+        """Guard: the ``admins`` group's name is load-bearing (#2995)."""
         if name is None:
             return
         current = await self._group_name(group_id)
         if current is None:
             return
-        if current == ADMIN_GROUP_NAME and name != ADMIN_GROUP_NAME:
-            raise AdminGroupProtectionError(
-                "The admins group cannot be renamed: instance-admin"
-                " status derives from its name (#2995)"
-            )
-        if current != ADMIN_GROUP_NAME and name == ADMIN_GROUP_NAME:
-            raise AdminGroupProtectionError(
-                "The name 'admins' is reserved for the instance-admin"
-                " group (#2995)"
-            )
+        message = _admin_rename_error(current, name)
+        if message is not None:
+            raise AdminGroupProtectionError(message)
 
     async def _reject_admin_group_delete(self, group_id: str) -> None:
         """Guard: the ``admins`` group cannot be deleted (#2995) —

@@ -262,11 +262,11 @@ in
     };
     # The complexity gate as a one-word task (#2828): the exact hook
     # invocation over the exact hook file set, so `devenv shell -- xenon`
-    # (ad hoc) and `pre-commit run xenon` (staged) can't drift. Note the
-    # hook grades the STAGED subset; this task grades the whole tree —
-    # stricter or equal, never more lenient.
+    # (ad hoc) and `pre-commit run xenon` (staged) can't drift. At rank A
+    # (#3052) the hook grades the full tree (pass_filenames=false), so
+    # the two invocations are literally identical.
     "klangk:xenon" = {
-      exec = "xenon --max-absolute B --max-modules B --max-average B $(git ls-files 'src/klangk/klangk/*.py' 'src/klangksidecar/klangksidecar/*.py' 'scripts/*.py')";
+      exec = "xenon --max-absolute A --max-modules A --max-average A $(git ls-files 'src/klangk/klangk/*.py' 'src/klangksidecar/klangksidecar/*.py' 'scripts/*.py')";
     };
     # Token-clone scan of the backend (#2904): the same invocation the
     # consolidation issues used (--min-tokens 70). Advisory only — the
@@ -740,20 +740,23 @@ in
     # (#2818-#2842), so the excludes are gone — every production .py file is
     # checked (klangkd + CLI under src/klangk/klangk/, the network sidecar
     # under src/klangksidecar/klangksidecar/, and scripts/).
-    # Module and codebase averages are also gated at B (#2846): --max-modules
+    # Module and codebase averages are also gated (#2846): --max-modules
     # grades each staged module on its own average, so partial staging cannot
     # cause false failures; --max-average used to flap pre-ratchet (a global
     # average over only the staged files), but with every block <= 10 no
-    # subset's average can exceed 10, so B-level flapping is impossible. That
-    # returns only if averages are ratcheted to A — then grade the full tree
-    # (pass_filenames = false) instead of the staged subset.
+    # subset's average could exceed 10, so B-level flapping was impossible.
+    # At rank A (#3052) that returns: a staged subset's average can exceed 5
+    # while the whole tree passes, so the hook now grades the full tree —
+    # pass_filenames = false, the entry enumerates the same git ls-files set
+    # the klangk:xenon task uses, and `files` stays as the run trigger (only
+    # complexity-relevant commits pay the scan).
     xenon = {
       enable = true;
       name = "xenon";
-      entry = "${pkgs.xenon}/bin/xenon --max-absolute B --max-modules B --max-average B";
+      entry = "bash -c 'xenon --max-absolute A --max-modules A --max-average A $(git ls-files \"src/klangk/klangk/*.py\" \"src/klangksidecar/klangksidecar/*.py\" \"scripts/*.py\")'";
       files = "^src/klangk/klangk/.*\\.py$|^src/klangksidecar/klangksidecar/.*\\.py$|^scripts/.*\\.py$";
       language = "system";
-      pass_filenames = true;
+      pass_filenames = false;
     };
     # Dart
     dart-format = {
