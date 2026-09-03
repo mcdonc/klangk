@@ -1587,6 +1587,11 @@ stop)`) and a `server: stop at 23:00 (in 1h 12m)` status line in the
 
 ### Changed
 
+- **`KLANGKD_EGRESS_CONSENT_RATE_LIMIT=0` now means unlimited (#3083).**
+  Previously `0` denied every interactive consent hold (the pending cap
+  compared `>= 0`); it now disables the per-workspace pending cap, matching
+  the retention knobs where `0` turns a bound off.
+
 - **Server admin schedule list (#3002).** The explanatory paragraph
   ("A stop exits the server process…") no longer renders above the
   schedule list on the Server admin tab; the list now fills the tab
@@ -1962,7 +1967,6 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   switch clears the stored window (unrelated edits that merely re-send
   the current mode leave a live pause alone) so it cannot resurrect on a
   later switch back.
-
 - **Consent rate-limit wedge on DB errors (#3081).** When a database
   error struck while recording a decider verdict or expiring a timed-out
   request, the row stayed `pending` forever with no live hold — invisible
@@ -1972,6 +1976,13 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   the verdict and retry expiring the row once; a row that still cannot
   be expired is reaped at the next backend start instead of lingering
   for the retention window.
+- **Consent revoke races and shared `forever` entries** (#3083). Two
+  deciders revoking the same verdict concurrently no longer show a
+  misleading "revoke failed — still in effect" ack on the losing side
+  (it is now an idempotent success). Revoking one of two identical
+  `forever` verdicts for the same `host:port` no longer retracts the
+  durable allow/reject-list entry the surviving verdict still needs
+  (it is retracted only when the last `forever` verdict sharing it goes).
 
 - **Malformed client frames no longer drop the WebSocket session
   (#3071).** Any command handler exception now gets an error frame and

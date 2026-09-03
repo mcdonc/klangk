@@ -69,6 +69,7 @@ def _app(
         return_value=(
             {
                 "egress_mode": egress_mode,
+                "consent_paused_until": None,
                 "allowed_domains": allowed_domains,
                 "rejected_domains": rejected_domains,
             }
@@ -214,6 +215,35 @@ class TestConsentCoordinatorRevoke:
         assert await coord.revoke("rid-1", "a@x") is False
         app.state.sidecar_connections.send_drop.assert_not_called()
 
+    async def test_revoke_already_revoked_row_is_idempotent(self):
+        # #3083, the wider window: the concurrent winner committed before
+        # our first read, so the row already reads revoked -> idempotent
+        # success, not a misleading "revoke failed" ack. The winner already
+        # dropped the rule + retracted, so no second drop is sent.
+        app = _app()
+        app.state.model.egress_consent.get_request = AsyncMock(
+            return_value=_active_row(decision="revoked")
+        )
+        app.state.model.egress_consent.revoke = AsyncMock(return_value=None)
+        coord = ConsentCoordinator(app)
+        assert await coord.revoke("rid-1", "a@x") is True
+        app.state.sidecar_connections.send_drop.assert_not_called()
+        app.state.model.egress_consent.revoke.assert_not_awaited()
+
+    async def test_revoke_already_revoked_outside_scope_returns_false(self):
+        # A revoked row OUTSIDE the decider's workspace stays a refusal.
+        app = _app()
+        app.state.model.egress_consent.get_request = AsyncMock(
+            return_value=_active_row(decision="revoked")
+        )
+        app.state.model.egress_consent.revoke = AsyncMock(return_value=None)
+        coord = ConsentCoordinator(app)
+        assert (
+            await coord.revoke("rid-1", "a@x", decider_workspace="other")
+            is False
+        )
+        app.state.sidecar_connections.send_drop.assert_not_called()
+
     async def test_revoke_outside_decider_workspace_returns_false(self):
         app = _app()
         app.state.model.egress_consent.get_request = AsyncMock(
@@ -227,7 +257,9 @@ class TestConsentCoordinatorRevoke:
         app.state.sidecar_connections.send_drop.assert_not_called()
 
     async def test_revoke_model_returns_none_returns_false(self):
-        # race: the row changed under us -> model.revoke returns None
+        # race: the row changed under us -> model.revoke returns None AND the
+        # re-read shows the row is NOT revoked (e.g. it flipped back to
+        # pending) -> failure (the row may still be enforced).
         app = _app()
         app.state.model.egress_consent.get_request = AsyncMock(
             return_value=_active_row()
@@ -235,6 +267,22 @@ class TestConsentCoordinatorRevoke:
         app.state.model.egress_consent.revoke = AsyncMock(return_value=None)
         coord = ConsentCoordinator(app)
         assert await coord.revoke("rid-1", "a@x") is False
+
+    async def test_revoke_losing_race_with_duplicate_is_idempotent(self):
+        # #3083: two deciders revoke the same verdict concurrently; the
+        # loser's model.revoke UPDATE matches nothing (the winner flipped the
+        # row) -> re-read shows the row already revoked -> idempotent success,
+        # not a misleading "revoke failed -- still in effect" ack.
+        app = _app()
+        active = _active_row()
+        revoked = _active_row(decision="revoked")
+        app.state.model.egress_consent.get_request = AsyncMock(
+            side_effect=[active, revoked]
+        )
+        app.state.model.egress_consent.revoke = AsyncMock(return_value=None)
+        coord = ConsentCoordinator(app)
+        assert await coord.revoke("rid-1", "a@x") is True
+        assert app.state.model.egress_consent.get_request.await_count == 2
 
     async def test_revoke_forever_allow_retracts_allowed_domains(self):
         # #2370: revoking a forever allow retracts the durable allowed_domains
@@ -360,6 +408,104 @@ class TestConsentCoordinatorRevoke:
         assert await coord.revoke("rid-1", "a@x") is True
         app.state.model.workspaces.remove_allowed_domain.assert_not_awaited()
 
+    def _forever_app(self, decision="allowed", survivors=()):
+        """An app whose get_request returns an active ``forever`` row whose
+        revoke succeeds, with ``survivors`` as the in-effect rows
+        ``list_active`` reports (#3083 shared-entry tests)."""
+        app = _app(active_rows=list(survivors))
+        row = _active_row(decision=decision)
+        row["duration"] = "forever"
+        app.state.model.egress_consent.get_request = AsyncMock(
+            side_effect=[row, row]
+        )
+        app.state.model.egress_consent.revoke = AsyncMock(
+            return_value=_active_row(decision="revoked")
+        )
+        return app, row
+
+    async def test_revoke_forever_keeps_entry_shared_with_survivor(self):
+        # #3083: two forever allows for the same host:port share ONE
+        # allowed_domains entry; revoking one row must NOT retract it while
+        # the survivor is still in effect.
+        survivor = _active_row(req_id="rid-2")
+        survivor["duration"] = "forever"
+        app, _row = self._forever_app(survivors=[survivor])
+        coord = ConsentCoordinator(app)
+        assert await coord.revoke("rid-1", "a@x") is True
+        app.state.model.workspaces.remove_allowed_domain.assert_not_awaited()
+
+    async def test_revoke_forever_retracts_when_survivor_differs(self):
+        # The survivor is for a different port -> a different durable entry
+        # -> the revoked row's entry is still retracted.
+        survivor = _active_row(req_id="rid-2")
+        survivor["duration"] = "forever"
+        survivor["dest_port"] = 8443
+        app, _row = self._forever_app(survivors=[survivor])
+        coord = ConsentCoordinator(app)
+        assert await coord.revoke("rid-1", "a@x") is True
+        app.state.model.workspaces.remove_allowed_domain.assert_awaited_once_with(
+            FULL_WS, "1.2.3.4:443"
+        )
+
+    async def test_revoke_forever_retracts_when_survivor_not_forever(self):
+        # A tilrestart survivor never owned the durable entry (only forever
+        # verdicts persist one) -> the revoked row's entry is retracted.
+        survivor = _active_row(req_id="rid-2")  # duration tilrestart
+        app, _row = self._forever_app(survivors=[survivor])
+        coord = ConsentCoordinator(app)
+        assert await coord.revoke("rid-1", "a@x") is True
+        app.state.model.workspaces.remove_allowed_domain.assert_awaited_once_with(
+            FULL_WS, "1.2.3.4:443"
+        )
+
+    async def test_revoke_forever_retracts_when_survivor_other_decision(self):
+        # A forever DENY survivor maps to rejected_domains, a different list
+        # -> the revoked allow's entry is still retracted.
+        survivor = _active_row(req_id="rid-2", decision="denied")
+        survivor["duration"] = "forever"
+        app, _row = self._forever_app(survivors=[survivor])
+        coord = ConsentCoordinator(app)
+        assert await coord.revoke("rid-1", "a@x") is True
+        app.state.model.workspaces.remove_allowed_domain.assert_awaited_once_with(
+            FULL_WS, "1.2.3.4:443"
+        )
+
+    async def test_revoke_forever_deny_shared_entry_kept(self):
+        # The deny mirror of the shared-entry guard.
+        survivor = _active_row(req_id="rid-2", decision="denied")
+        survivor["duration"] = "forever"
+        app, _row = self._forever_app(decision="denied", survivors=[survivor])
+        coord = ConsentCoordinator(app)
+        assert await coord.revoke("rid-1", "a@x") is True
+        app.state.model.workspaces.remove_rejected_domain.assert_not_awaited()
+
+    async def test_revoke_forever_ignores_survivor_with_same_id(self):
+        # Defense-in-depth: a survivor carrying the SAME id as the revoked
+        # row (a stale concurrent read) is filtered out -- the entry is
+        # retracted, not kept alive by the row being revoked.
+        stale = _active_row(req_id="rid-1")
+        stale["duration"] = "forever"
+        app, _row = self._forever_app(survivors=[stale])
+        coord = ConsentCoordinator(app)
+        assert await coord.revoke("rid-1", "a@x") is True
+        app.state.model.workspaces.remove_allowed_domain.assert_awaited_once_with(
+            FULL_WS, "1.2.3.4:443"
+        )
+
+    async def test_revoke_forever_ignores_portless_allow_survivor(self):
+        # A port-less forever-allow survivor maps to NO durable entry (it
+        # was never persisted), so it cannot keep the revoked row's entry
+        # alive -- the entry is retracted.
+        survivor = _active_row(req_id="rid-2")
+        survivor["duration"] = "forever"
+        survivor["dest_port"] = 0
+        app, _row = self._forever_app(survivors=[survivor])
+        coord = ConsentCoordinator(app)
+        assert await coord.revoke("rid-1", "a@x") is True
+        app.state.model.workspaces.remove_allowed_domain.assert_awaited_once_with(
+            FULL_WS, "1.2.3.4:443"
+        )
+
 
 class TestConsentCoordinatorGate:
     async def test_no_decider_records_static_and_denies_at_once(self):
@@ -437,6 +583,28 @@ class TestConsentCoordinatorGate:
         assert not fut.done()  # held, awaiting verdict
         assert "rid-1" in coord._holds
         app.state.model.egress_consent.create_request.assert_awaited_once()
+
+    async def test_hold_reads_the_workspace_row_once(self):
+        # #3083: all three gates (allow mode, pause, interactivity) are
+        # served by ONE get_workspace read -- previously the allow gate and
+        # the interactivity predicate each fetched the row (and the pause
+        # gate a third read via get_consent_pause).
+        app = _app(request=request())
+        coord = ConsentCoordinator(app)
+        await coord.hold(FULL_WS, "1.2.3.4", 443)
+        app.state.model.workspaces.get_workspace.assert_awaited_once_with(
+            FULL_WS
+        )
+        app.state.model.workspaces.get_consent_pause.assert_not_awaited()
+
+    async def test_rate_limit_zero_means_unlimited(self):
+        # #3083: 0 disables the cap (matching the retention knobs), NOT
+        # "deny every hold" -- even with pending rows over any count.
+        app = _app(count_pending=999, rate_limit=0, request=request())
+        coord = ConsentCoordinator(app)
+        fut = await coord.hold(FULL_WS, "1.2.3.4", 443)
+        assert not fut.done()  # held, not rate-limited
+        assert "rid-1" in coord._holds
 
     async def test_hold_db_error_fail_closes_to_deny(self):
         # a DB/model failure during the static-deny recording must not crash the
@@ -756,15 +924,26 @@ class TestConsentCoordinatorPause:
 
 
 class TestConsentCoordinatorHoldPaused:
+    def _paused_app(self, *, egress_mode="interactive", **kwargs):
+        """An app whose workspace row carries a live pause window (#2332;
+        since #3083 hold() reads the pause off the workspace row, not via
+        get_consent_pause -- the row's egress_mode carries the #3080
+        interactive-only pause gate)."""
+        import time
+
+        app = _app(**kwargs)
+        app.state.model.workspaces.get_workspace = AsyncMock(
+            return_value={
+                "egress_mode": egress_mode,
+                "consent_paused_until": time.time() + 600,
+            }
+        )
+        return app
+
     async def test_paused_auto_allows_no_hold(self):
         # #2332: while paused, a destination with no in-effect verdict is
         # auto-allowed at once -- no hold, no pending row, no static denial.
-        import time
-
-        app = _app(request=request())
-        app.state.model.workspaces.get_consent_pause = AsyncMock(
-            return_value=time.time() + 600
-        )
+        app = self._paused_app(request=request())
         coord = ConsentCoordinator(app)
         fut = await coord.hold(FULL_WS, "1.2.3.4", 443)
         verdict = fut.result()
@@ -777,12 +956,7 @@ class TestConsentCoordinatorHoldPaused:
     async def test_paused_respects_recorded_deny(self):
         # A recorded in-effect deny still blocks while paused (the pause does
         # not override existing verdicts).
-        import time
-
-        app = _app(request=request())
-        app.state.model.workspaces.get_consent_pause = AsyncMock(
-            return_value=time.time() + 600
-        )
+        app = self._paused_app(request=request())
         app.state.model.egress_consent.active_verdict_for = AsyncMock(
             return_value={
                 "id": "rid-1",
@@ -803,12 +977,7 @@ class TestConsentCoordinatorHoldPaused:
 
     async def test_paused_allow_verdict_still_allows(self):
         # An in-effect ALLOW verdict is respected too (allow either way).
-        import time
-
-        app = _app(request=request())
-        app.state.model.workspaces.get_consent_pause = AsyncMock(
-            return_value=time.time() + 600
-        )
+        app = self._paused_app(request=request())
         app.state.model.egress_consent.active_verdict_for = AsyncMock(
             return_value={
                 "id": "rid-1",
@@ -825,12 +994,10 @@ class TestConsentCoordinatorHoldPaused:
     async def test_stale_pause_in_static_mode_fails_closed(self):
         # #3080: a pause set while interactive must not auto-allow after
         # the workspace is switched to static -- the static denial wins
-        # (the pause is an interactive-mode affordance only).
-        import time
-
-        app = _app(request=request(), egress_mode="static")
-        app.state.model.workspaces.get_consent_pause = AsyncMock(
-            return_value=time.time() + 600
+        # (the pause is an interactive-mode affordance only). The row
+        # carries a LIVE pause window alongside the static mode.
+        app = self._paused_app(
+            egress_mode="static", request=request(), has_decider=True
         )
         coord = ConsentCoordinator(app)
         fut = await coord.hold(FULL_WS, "1.2.3.4", 443)
@@ -847,12 +1014,7 @@ class TestConsentCoordinatorHoldPaused:
         # and walks away -- the window keeps auto-allowing (the mode is
         # still interactive) instead of flipping every off-list
         # destination to static denials.
-        import time
-
-        app = _app(request=request(), has_decider=False)
-        app.state.model.workspaces.get_consent_pause = AsyncMock(
-            return_value=time.time() + 600
-        )
+        app = self._paused_app(request=request(), has_decider=False)
         coord = ConsentCoordinator(app)
         fut = await coord.hold(FULL_WS, "1.2.3.4", 443)
         assert fut.result()["reason"] == "paused"
@@ -862,8 +1024,11 @@ class TestConsentCoordinatorHoldPaused:
         # A pause whose window elapsed is not paused -> the normal interactive
         # gate applies (here: a decider is present -> hold).
         app = _app(request=request())
-        app.state.model.workspaces.get_consent_pause = AsyncMock(
-            return_value=1.0  # past
+        app.state.model.workspaces.get_workspace = AsyncMock(
+            return_value={
+                "egress_mode": "interactive",
+                "consent_paused_until": 1.0,  # past
+            }
         )
         coord = ConsentCoordinator(app)
         fut = await coord.hold(FULL_WS, "1.2.3.4", 443)
@@ -875,12 +1040,7 @@ class TestConsentCoordinatorHoldPaused:
     async def test_paused_db_error_fail_closes_to_deny(self):
         # A model failure in the pause path must not strand the hold -- the
         # outer guard fail-closes to deny.
-        import time
-
-        app = _app(request=request())
-        app.state.model.workspaces.get_consent_pause = AsyncMock(
-            return_value=time.time() + 600
-        )
+        app = self._paused_app(request=request())
         app.state.model.egress_consent.active_verdict_for = AsyncMock(
             side_effect=RuntimeError("db gone")
         )
@@ -951,6 +1111,34 @@ class TestConsentCoordinatorResolve:
         # timeout cancelled -> the row was NOT expired
         app.state.model.egress_consent.expire_pending.assert_not_awaited()
         assert fut.result()["decision"] == "allow"
+
+    async def test_resolve_awaits_cancelled_timeout_task(self):
+        # #3083: resolve cancels AND awaits the hold's timeout task before
+        # moving on -- here the task already started and is parked in its
+        # sleep, so the cancel lands inside its except arm (normal return).
+        app = _app(request=request(), decide_row=request())
+        coord = ConsentCoordinator(app)
+        await coord.hold(FULL_WS, "1.2.3.4", 443)
+        await asyncio.sleep(0)  # let the timeout task take its first step
+        task = coord._holds["rid-1"]["task"]
+        await coord.resolve("rid-1", "allowed", "a@x")
+        assert task.done()
+        assert not task.cancelled()  # its except-CancelledError arm returned
+
+    async def test_resolve_awaits_task_cancelled_before_it_started(self):
+        # The timeout task never started (hold() ran without yielding to the
+        # loop); the cancel kills the coroutine before its body engages, the
+        # task ends CANCELLED, and resolve must swallow the CancelledError
+        # from awaiting it (the arm of _cancel_hold_task's except).
+        app = _app(request=request(), decide_row=request())
+        coord = ConsentCoordinator(app)
+        await coord.hold(FULL_WS, "1.2.3.4", 443)
+        task = coord._holds["rid-1"]["task"]
+        assert not task.done()
+        verdict = await coord.resolve("rid-1", "allowed", "a@x")
+        assert verdict["decision"] == "allow"
+        assert task.done()
+        assert task.cancelled()
 
     async def test_resolve_fail_closes_when_decide_raises(self):
         # decide() raising (DB error) must not orphan the Future -- the hold's
@@ -1356,6 +1544,33 @@ class TestConsentCoordinatorStop:
         }
         assert expired == {"r1", "r2"}
 
+    async def test_stop_awaits_cancelled_timeout_tasks(self):
+        # #3083: stop() cancels AND awaits each hold's timeout task, so no
+        # pending task outlives the coordinator (no "Task was destroyed but
+        # it is pending" noise when the loop closes right after).
+        app = _app(request=request())
+        coord = ConsentCoordinator(app)
+        await coord.hold(FULL_WS, "1.2.3.4", 443)
+        task = coord._holds["rid-1"]["task"]
+        await coord.stop()
+        assert task.done()  # cancelled AND reaped before stop returned
+
+    async def test_stop_awaits_task_cancelled_before_it_started(self):
+        # The timeout task never got a first step (hold() ran without
+        # yielding); cancelling it kills the coroutine before its body's
+        # except-CancelledError engages, so the task ends CANCELLED -- the
+        # await must swallow that, and the hold still fail-closes.
+        app = _app(request=request())
+        coord = ConsentCoordinator(app)
+        await coord.hold(FULL_WS, "1.2.3.4", 443)
+        task = coord._holds["rid-1"]["task"]
+        await coord.stop()
+        assert task.done()
+        assert task.cancelled()
+        app.state.model.egress_consent.expire_pending.assert_awaited_once_with(
+            "rid-1"
+        )
+
     async def test_stop_is_idempotent(self):
         app = _app(request=request())
         coord = ConsentCoordinator(app)
@@ -1671,6 +1886,72 @@ class TestEgressSidecarWS:
         await handler
         assert ws.sent == []  # relay cancelled before it could send
         assert not fut.done()  # the coordinator's hold Future is untouched
+
+
+class TestConsentRevokeIntegration3083:
+    """Real DB + real model: the #3083 revoke nits end-to-end."""
+
+    async def _interactive_ws(self, app_state, user, name):
+        from klangk.model.workspaces import EGRESS_MODE_INTERACTIVE
+
+        _wire_coordinator_extras(app_state)
+        return await app_state.state.model.workspaces.create_workspace(
+            user["id"], name, egress_mode=EGRESS_MODE_INTERACTIVE
+        )
+
+    async def test_shared_forever_entry_survives_one_revoke(
+        self, app_state, user
+    ):
+        # #3083: two forever allows for one host:port share a single
+        # allowed_domains entry. Revoking one verdict keeps the entry (the
+        # survivor still needs it); revoking the survivor retracts it.
+        ws = await self._interactive_ws(app_state, user, "shared-forever")
+        ec = app_state.state.model.egress_consent
+        coord = ConsentCoordinator(app_state)
+        ids = []
+        for _ in range(2):
+            # hold -> resolve `forever` (the path that persists the entry)
+            await coord.hold(ws["id"], "shared.example.com", 443)
+            req_id = next(iter(coord._holds))
+            verdict = await coord.resolve(
+                req_id, "allowed", user["id"], duration="forever"
+            )
+            assert verdict["decision"] == "allow"
+            ids.append(req_id)
+        row = await app_state.state.model.workspaces.get_workspace(ws["id"])
+        assert row["allowed_domains"] == ["shared.example.com:443"]
+        # revoke ONE of the two -> the shared entry must survive
+        assert await coord.revoke(ids[0], user["id"]) is True
+        row = await app_state.state.model.workspaces.get_workspace(ws["id"])
+        assert row["allowed_domains"] == ["shared.example.com:443"]
+        active = await ec.list_active(ws["id"])
+        assert [r["id"] for r in active] == [ids[1]]
+        # revoke the survivor -> now the entry is retracted
+        assert await coord.revoke(ids[1], user["id"]) is True
+        row = await app_state.state.model.workspaces.get_workspace(ws["id"])
+        assert row["allowed_domains"] == []
+        assert await ec.list_active(ws["id"]) == []
+
+    async def test_concurrent_duplicate_revokes_both_ack_success(
+        self, app_state, user
+    ):
+        # #3083: two deciders revoke the same verdict concurrently: both
+        # revokes ack success (the loser's is idempotent), never a
+        # misleading "revoke failed -- still in effect".
+        ws = await self._interactive_ws(app_state, user, "dup-revoke")
+        ec = app_state.state.model.egress_consent
+        coord = ConsentCoordinator(app_state)
+        await coord.hold(ws["id"], "dup.example.com", 443)
+        req_id = next(iter(coord._holds))
+        await coord.resolve(req_id, "allowed", user["id"], "tilrestart")
+        results = await asyncio.gather(
+            coord.revoke(req_id, user["id"]),
+            coord.revoke(req_id, user["id"]),
+        )
+        assert results == [True, True]
+        fresh = await ec.get_request(req_id)
+        assert fresh["decision"] == "revoked"
+        assert await ec.list_active(ws["id"]) == []
 
 
 # --- pause integration: real model round-trip (#2332) ------------------------

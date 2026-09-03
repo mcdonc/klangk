@@ -251,7 +251,8 @@ _WORKSPACE_FULL_COLUMNS = (
     "SELECT id, user_id, name, container_id, num_ports, image,"
     " service_command, auto_start, setup_state, health_check,"
     " mounts, env, allowed_domains, rejected_domains, settings,"
-    " egress_mode, per_handle_home, classification_banner"
+    " egress_mode, per_handle_home, classification_banner,"
+    " consent_paused_until"
 )
 
 
@@ -290,11 +291,14 @@ def _workspace_core_fields(row, *, auto_start=True) -> dict:
 
 
 def _workspace_row_to_dict(row, *, auto_start=True) -> dict:
-    """The full-row shape: core fields plus the owner-only columns."""
+    """The full-row shape: core fields plus the owner-only columns and
+    ``consent_paused_until`` (surfaced so the consent coordinator's hold
+    gate reads mode + pause off one fetch, #3083)."""
     return {
         **_workspace_core_fields(row, auto_start=auto_start),
         "user_id": row["user_id"],
         "num_ports": row["num_ports"],
+        "consent_paused_until": row["consent_paused_until"],
     }
 
 

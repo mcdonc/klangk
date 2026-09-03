@@ -38,16 +38,17 @@ import asyncio
 import logging
 import time
 
-from .egress import workspace_is_interactive, workspace_opted_in
+from .egress import workspace_opted_in
 from ..model.egress_consent import (
     DECISION_ALLOWED,
     DECISION_DENIED,
     DECISION_PENDING,
+    DECISION_REVOKED,
     DURATION_DEFAULT,
     DURATION_FOREVER,
     DURATION_ONCE,
 )
-from ..model.workspaces import EGRESS_MODE_ALLOW
+from ..model.workspaces import EGRESS_MODE_ALLOW, EGRESS_MODE_INTERACTIVE
 
 logger = logging.getLogger(__name__)
 
@@ -127,11 +128,11 @@ def _forever_allow_entry(row: dict) -> str | None:
     in-memory ACCEPT for this session; durability is simply withheld
     (#2368)."""
     host = row.get("dest_host")
-    port = row.get("dest_port")
     workspace_id = row.get("workspace_id")
     if not host or not workspace_id:
         return None
-    if not port:
+    entry = _forever_entry(host, row.get("dest_port"), DECISION_ALLOWED)
+    if entry is None:
         logger.info(
             "consent: forever allow of port-less dest %s ws=%s not "
             "persisted (a bare host would broaden to all-ports); "
@@ -139,8 +140,7 @@ def _forever_allow_entry(row: dict) -> str | None:
             host,
             str(workspace_id)[:8],
         )
-        return None
-    return f"{host}:{port}"
+    return entry
 
 
 def _forever_deny_entry(row: dict) -> str | None:
@@ -151,10 +151,20 @@ def _forever_deny_entry(row: dict) -> str | None:
     NXDOMAIN'd before resolution), so the whole host is the natural unit,
     and "block more" is the safe direction."""
     host = row.get("dest_host")
-    port = row.get("dest_port")
     workspace_id = row.get("workspace_id")
     if not host or not workspace_id:
         return None
+    return _forever_entry(host, row.get("dest_port"), DECISION_DENIED)
+
+
+def _forever_entry(host: str, port, decision: str) -> str | None:
+    """The durable-list entry a ``forever`` verdict of ``decision`` maps
+    to (#3083): ``host:port`` when ported, a bare ``host`` for a port-less
+    deny, or ``None`` for a port-less allow (never persisted -- see
+    :func:`_forever_allow_entry`). One builder for the persist and retract
+    sides so the two cannot drift apart."""
+    if decision == DECISION_ALLOWED:
+        return f"{host}:{port}" if port else None
     return f"{host}:{port}" if port else host
 
 
@@ -202,16 +212,34 @@ class ConsentCoordinator:
         Kept so every ``app.state`` subsystem has a uniform start/stop pair.
         """
 
+    async def _cancel_hold_task(self, task: asyncio.Task) -> None:
+        """Cancel a hold's timeout task and await its completion (#3083).
+
+        Awaiting delivers the cancellation and reaps the task before the
+        caller moves on -- otherwise a shutdown that closes the loop first
+        emits "Task was destroyed but it is pending" noise. The task ends
+        cancelled (``await`` raises) when it never started -- its body's
+        ``except CancelledError`` never engaged -- so swallow that: the hold
+        was already popped and is fail-closed by the caller.
+        """
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
     async def stop(self) -> None:
         """Fail-close every in-flight hold (coordinator shutdown / sidecar gone).
 
         Each orphaned pending row is expired (audit) and its Future resolved
         deny, so a sidecar restart leaves no leaked allow and no hung relay.
+        The hold's timeout task is cancelled AND awaited (#3083) so no
+        pending task outlives the coordinator.
         """
         for request_id in list(self._holds):
             hold = self._holds.get(request_id)
             if hold is not None:
-                hold["task"].cancel()
+                await self._cancel_hold_task(hold["task"])
             await self._fail_close(request_id, reason="shutdown")
 
     async def _allow_mode_verdict(
@@ -272,7 +300,11 @@ class ConsentCoordinator:
         """The interactive path: a deny Future for a rate-limited or
         duplicate request, else the registered hold's verdict Future."""
         consent = self.app.state.model.egress_consent
-        if await consent.count_pending(workspace_id) >= self.rate_limit:
+        # rate_limit == 0 disables the cap (unlimited pending holds),
+        # matching the retention knobs where 0 means off (#3083).
+        if self.rate_limit > 0 and (
+            await consent.count_pending(workspace_id) >= self.rate_limit
+        ):
             return _completed_verdict(
                 {"decision": VERDICT_DENY, "reason": "rate_limited"}
             )
@@ -287,6 +319,10 @@ class ConsentCoordinator:
         self, workspace_id: str, dst: str, dport: int | None
     ) -> asyncio.Future:
         """Gate-check a blocked egress and create a hold; return its verdict Future.
+
+        One ``get_workspace`` read serves all three gates (#3083): the
+        egress_mode (allow vs static vs interactive) and the live
+        ``consent_paused_until`` window both come off the fetched row.
 
         - egress_mode allow -> record + allow at once (default-permit).
         - interactive mode + a live pause window -> the paused gate (#2332;
@@ -303,13 +339,16 @@ class ConsentCoordinator:
           timeout, and fan out to the workspace's deciders (#2244 stub).
         """
         try:
-            if await self._is_allow(workspace_id):
+            ws = await self.app.state.model.workspaces.get_workspace(
+                workspace_id
+            )
+            if self._ws_is_allow(ws):
                 return await self._allow_mode_verdict(workspace_id, dst, dport)
-            if await self._is_paused(workspace_id):
+            if self._ws_is_paused(ws):
                 return await self._paused_gate_verdict(
                     workspace_id, dst, dport
                 )
-            if not await self.is_interactive(workspace_id):
+            if not self._ws_is_interactive(ws, workspace_id):
                 return await self._static_denial_verdict(
                     workspace_id, dst, dport
                 )
@@ -372,12 +411,19 @@ class ConsentCoordinator:
             await self._broadcast_rules(workspace_id)
         return {"ok": ok}
 
-    async def _is_paused(self, workspace_id: str) -> bool:
+    @staticmethod
+    def _ws_is_allow(ws: dict | None) -> bool:
+        """egress_mode == allow: default-permit (record + allow, no prompt) (#2406)."""
+        return bool(ws) and ws.get("egress_mode") == EGRESS_MODE_ALLOW
+
+    @staticmethod
+    def _ws_is_paused(ws: dict | None) -> bool:
         """Is consent prompting paused for the workspace right now (#2332)?
 
-        Reads ``consent_paused_until`` live and compares against ``now``, so a
-        pause self-expires the moment its window elapses (no sweep needed for
-        correctness -- the gate re-evaluates on every hold).
+        Read off the single workspace-row fetch (``consent_paused_until``),
+        compared against ``now`` so a pause self-expires the moment its
+        window elapses (no sweep needed for correctness -- the gate
+        re-evaluates on every hold).
 
         #3080: honored only while the workspace is in interactive egress
         mode. A pause set in an interactive epoch must not auto-allow
@@ -387,15 +433,23 @@ class ConsentCoordinator:
         The decider-liveness half of interactivity is deliberately NOT
         required here: a decider pauses prompting and then walks away, so
         the window must keep auto-allowing after the decider disconnects
-        (that is the pause's purpose), while the mode gate above still
-        bounds it to opted-in workspaces.
+        (that is the pause's purpose), while the mode gate still bounds it
+        to opted-in workspaces.
         """
-        if not await workspace_opted_in(self.app, workspace_id):
+        if not ws or ws.get("egress_mode") != EGRESS_MODE_INTERACTIVE:
             return False
-        until = await self.app.state.model.workspaces.get_consent_pause(
-            workspace_id
-        )
+        until = ws.get("consent_paused_until")
         return until is not None and until > time.time()
+
+    def _ws_is_interactive(self, ws: dict | None, workspace_id: str) -> bool:
+        """Interactive iff the workspace opted in AND a live decider exists (#2308).
+
+        The decider check is registry state (in-memory, no DB read), so with
+        the workspace row already fetched this costs no extra round-trip.
+        """
+        if not ws or ws.get("egress_mode") != EGRESS_MODE_INTERACTIVE:
+            return False
+        return self.app.state.consent_deciders.has_decider(workspace_id)
 
     async def _paused_verdict(
         self, workspace_id: str, dst: str, dport: int | None
@@ -463,16 +517,22 @@ class ConsentCoordinator:
             # rule-management view (#2335 slice A) without a reconnect.
             await self._broadcast_rules(hold["workspace_id"])
 
-    def _pop_hold(
+    async def _pop_hold(
         self, request_id: str, decider_workspace: str | None
     ) -> dict | None:
-        """Pop + timeout-cancel a held request, or None when untouchable.
+        """Pop + reap a held request's timeout task, or None when untouchable.
 
         None when the request is not currently held (already resolved, timed
         out, never held) or -- defense-in-depth -- when a workspace-scoped
         decider would decide a request outside its workspace
         (``decider_workspace``); in that case nothing is popped (we only
         peeked) -- the hold stays for a decider actually scoped to it.
+
+        The pop and the timeout-task ``cancel()`` are synchronous -- no await
+        between them (the load-bearing invariant in ``_timeout``'s docstring)
+        -- and the task is then cancelled AND awaited (#3083) so it is
+        reaped before the caller moves on (no "Task was destroyed but it is
+        pending" noise when the loop closes first).
         """
         hold = self._holds.get(request_id)
         if hold is None:
@@ -480,7 +540,7 @@ class ConsentCoordinator:
         if not _hold_in_scope(hold, decider_workspace):
             return None
         del self._holds[request_id]
-        hold["task"].cancel()
+        await self._cancel_hold_task(hold["task"])
         return hold
 
     async def resolve(
@@ -501,7 +561,7 @@ class ConsentCoordinator:
         request is not currently held (already resolved, timed out, never
         held) or outside the decider's workspace (``decider_workspace``).
         """
-        hold = self._pop_hold(request_id, decider_workspace)
+        hold = await self._pop_hold(request_id, decider_workspace)
         if hold is None:
             return None
         forever_allow_row: dict | None = None
@@ -647,18 +707,12 @@ class ConsentCoordinator:
                 str(workspace_id)[:8],
             )
 
-    def _retract_spec(self, row: dict, decision: str):
-        """``(remove callable, entry)`` for the durable-list retract, or
-        ``None`` when there is nothing to retract."""
-        host = row.get("dest_host")
-        port = row.get("dest_port")
+    def _durable_remove(self, decision: str):
+        """The workspaces-model remover for one durable list (allow vs deny)."""
+        workspaces = self.app.state.model.workspaces
         if decision == DECISION_ALLOWED:
-            if not port:
-                return None  # port-less allow was never persisted
-            remove = self.app.state.model.workspaces.remove_allowed_domain
-            return remove, f"{host}:{port}"
-        remove = self.app.state.model.workspaces.remove_rejected_domain
-        return remove, (f"{host}:{port}" if port else host)
+            return workspaces.remove_allowed_domain
+        return workspaces.remove_rejected_domain
 
     async def _remove_list_entry(
         self, remove, workspace_id: str, entry: str, decision: str
@@ -682,6 +736,42 @@ class ConsentCoordinator:
                 str(workspace_id)[:8],
             )
 
+    def _maps_to_forever_entry(
+        self, other: dict, decision: str, entry: str
+    ) -> bool:
+        """Does ``other`` (an in-effect row) still need the durable ``entry``?"""
+        if other["decision"] != decision:
+            return False
+        if other.get("duration") != DURATION_FOREVER:
+            return False
+        shared = _forever_entry(
+            other.get("dest_host"), other.get("dest_port"), decision
+        )
+        return shared is not None and shared.lower() == entry.lower()
+
+    async def _forever_entry_still_shared(
+        self, row: dict, decision: str, entry: str
+    ) -> bool:
+        """True when another in-effect ``forever`` verdict still maps to
+        ``entry`` (#3083).
+
+        Two ``forever`` verdicts for the same ``host:port`` share ONE
+        durable ``allowed_domains``/``rejected_domains`` entry, so revoking
+        either row must not retract the entry while the survivor is still
+        in effect -- that would silently strip its cross-restart
+        durability while ``list_active`` still shows it. The revoked row is
+        already marked ``revoked`` (excluded from ``list_active``), so the
+        id filter is defense-in-depth only.
+        """
+        rows = await self.app.state.model.egress_consent.list_active(
+            row["workspace_id"]
+        )
+        return any(
+            self._maps_to_forever_entry(other, decision, entry)
+            for other in rows
+            if other["id"] != row["id"]
+        )
+
     async def _retract_forever_entry(self, row: dict, decision: str) -> None:
         """Retract the durable list entry a ``forever`` verdict added (#2370).
 
@@ -691,6 +781,9 @@ class ConsentCoordinator:
         verdict does not re-apply on the next sidecar restart. The deciding
         connection's in-memory ACCEPT/REJECT + ``_SESSION_HOST_ALLOWS``/
         ``_VERDICT_CACHE`` were already cleared by the drop the caller sent.
+
+        Skipped while another in-effect ``forever`` verdict still maps to
+        the same entry (#3083, :meth:`_forever_entry_still_shared`).
 
         Best-effort (failures logged + swallowed): the row is already revoked,
         so a persistence failure only risks the entry re-applying on restart,
@@ -702,10 +795,19 @@ class ConsentCoordinator:
         workspace_id = row.get("workspace_id")
         if not host or not workspace_id:
             return
-        spec = self._retract_spec(row, decision)
-        if spec is None:
+        entry = _forever_entry(host, row.get("dest_port"), decision)
+        if entry is None:
             return
-        remove, entry = spec
+        if await self._forever_entry_still_shared(row, decision, entry):
+            logger.info(
+                "consent: forever %s entry %s kept -- another in-effect "
+                "forever verdict shares it ws=%s",
+                decision,
+                entry,
+                str(workspace_id)[:8],
+            )
+            return
+        remove = self._durable_remove(decision)
         await self._remove_list_entry(remove, workspace_id, entry, decision)
 
     def _revocable(
@@ -744,6 +846,63 @@ class ConsentCoordinator:
         except asyncio.TimeoutError:
             return False
 
+    async def _row_revoked(self, request_id: str, revoked_by: str) -> bool:
+        """Mark the row revoked; True when it IS revoked afterwards.
+
+        A concurrent duplicate revoke can lose the ``UPDATE`` (the winner
+        flipped the row first) -- the row-already-revoked outcome is an
+        idempotent success (#3083), not a failure: the rule is dropped and
+        the row is revoked either way, so the losing decider must not see
+        "revoke failed -- still in effect".
+        """
+        if (
+            await self.app.state.model.egress_consent.revoke(
+                request_id, revoked_by
+            )
+            is not None
+        ):
+            return True
+        fresh = await self.app.state.model.egress_consent.get_request(
+            request_id
+        )
+        return fresh is not None and fresh["decision"] == DECISION_REVOKED
+
+    async def _apply_revoke(
+        self, row: dict, request_id: str, revoked_by: str
+    ) -> bool:
+        """Drop the sidecar rule, mark the row revoked, retract the durable
+        ``forever`` entry. True when the verdict is undone (or was already
+        undone by a concurrent revoke)."""
+        workspace_id = row["workspace_id"]
+        # Ask the sidecar to drop its rule for this host+decision.
+        if not await self._sidecar_acked_drop(
+            workspace_id, row["dest_host"], row["decision"]
+        ):
+            return False
+        if not await self._row_revoked(request_id, revoked_by):
+            return False
+        # #2370: retract the durable list entry a `forever` verdict added so it
+        # does not re-apply on the next sidecar restart. Best-effort (failures
+        # logged + swallowed): the row is already revoked and the in-memory
+        # rules already dropped, so a failure only risks re-application on
+        # restart, not a broken revoke.
+        if row.get("duration") == DURATION_FOREVER:
+            await self._retract_forever_entry(row, row["decision"])
+        return True
+
+    def _already_revoked_in_scope(
+        self, row: dict | None, decider_workspace: str | None
+    ) -> bool:
+        """#3083: True for a row a concurrent revoke already flipped to
+        ``revoked`` (within the decider's scope) -- an idempotent success
+        for :meth:`revoke`, not a failure."""
+        if row is None or row["decision"] != DECISION_REVOKED:
+            return False
+        return (
+            decider_workspace is None
+            or row["workspace_id"] == decider_workspace
+        )
+
     async def revoke(
         self,
         request_id: str,
@@ -755,43 +914,31 @@ class ConsentCoordinator:
 
         Drops the sidecar's learned rule for the verdict's host (immediate,
         not waiting for the duration/restart) and marks the row ``revoked``.
-        Returns True if revoked; False if the request isn't an active verdict,
-        is outside the decider's workspace (``decider_workspace``), or the
-        sidecar never acked the drop. Fail-closed: a connected-but-
-        unresponsive sidecar leaves the row enforced rather than falsely
-        marking it revoked (the view must not claim "not in effect" while the
-        rule still fires).
+        Returns True if revoked -- including when a concurrent revoke
+        already did it (idempotent success at either race window: the row
+        already reads revoked, or the ``UPDATE`` loses, #3083); False if the
+        request isn't a verdict, is outside the decider's workspace
+        (``decider_workspace``), or the sidecar never acked the drop.
+        Fail-closed: a connected-but-unresponsive sidecar leaves the row
+        enforced rather than falsely marking it revoked (the view must not
+        claim "not in effect" while the rule still fires).
         """
         row = await self.app.state.model.egress_consent.get_request(request_id)
         if not self._revocable(row, decider_workspace):
-            return False
-        workspace_id = row["workspace_id"]
-        host = row["dest_host"]
-        decision = row["decision"]
+            # A concurrent revoke that already flipped the row did the full
+            # work (rule drop + forever retract + rules broadcast); ack
+            # idempotently instead of failing (#3083).
+            return self._already_revoked_in_scope(row, decider_workspace)
         # NOTE (#2370): a `forever` verdict also lives in the workspace's
         # allowed_domains/rejected_domains (added in resolve, #2368/#2369),
-        # which the sidecar re-reads on restart. The drop above cleared the
-        # in-memory rules + _SESSION_HOST_ALLOWS/_VERDICT_CACHE; retract the durable
-        # entry too (after the row is marked revoked) so the verdict does not
-        # re-apply on the next sidecar restart.
-        # Ask the sidecar to drop its rule for this host+decision.
-        if not await self._sidecar_acked_drop(workspace_id, host, decision):
+        # which the sidecar re-reads on restart. The drop clears the
+        # in-memory rules + _SESSION_HOST_ALLOWS/_VERDICT_CACHE; the durable
+        # entry is retracted inside _apply_revoke (after the row is marked
+        # revoked) so the verdict does not re-apply on the next sidecar
+        # restart.
+        if not await self._apply_revoke(row, request_id, revoked_by):
             return False
-        if (
-            await self.app.state.model.egress_consent.revoke(
-                request_id, revoked_by
-            )
-            is None
-        ):
-            return False
-        # #2370: retract the durable list entry a `forever` verdict added so it
-        # does not re-apply on the next sidecar restart. Best-effort (failures
-        # logged + swallowed): the row is already revoked and the in-memory
-        # rules already dropped, so a failure only risks re-application on
-        # restart, not a broken revoke.
-        if row.get("duration") == DURATION_FOREVER:
-            await self._retract_forever_entry(row, decision)
-        await self._broadcast_rules(workspace_id)
+        await self._broadcast_rules(row["workspace_id"])
         return True
 
     async def _timeout(self, request_id: str) -> None:
@@ -984,12 +1131,3 @@ class ConsentCoordinator:
             return
         if frame is not None:
             self.app.state.consent_deciders.broadcast(workspace_id, frame)
-
-    async def is_interactive(self, workspace_id: str) -> bool:
-        """Interactive iff the workspace opted in AND a live decider exists (#2308)."""
-        return await workspace_is_interactive(self.app, workspace_id)
-
-    async def _is_allow(self, workspace_id: str) -> bool:
-        """egress_mode == allow: default-permit (record + allow, no prompt) (#2406)."""
-        ws = await self.app.state.model.workspaces.get_workspace(workspace_id)
-        return bool(ws) and ws.get("egress_mode") == EGRESS_MODE_ALLOW

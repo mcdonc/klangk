@@ -1,4 +1,4 @@
-"""Egress-consent retention sweep + interactivity predicate.
+"""Egress-consent retention sweep.
 
 The event half of the original #2242 design (sidecar POSTs each blocked
 destination to an HTTP endpoint; ``EgressConsentMonitor.submit`` → persist →
@@ -8,15 +8,17 @@ expire) never shipped. #2311 replaced it with the sidecar's WebSocket
 allows/denials, creates pending requests, arms timeouts, and fans out to
 deciders — synchronously, returning a verdict Future so the sidecar can
 hold the connection SYN in the kernel. A queued POST could not answer a
-held connection, which is why the coordinator design won.
+held connection, which is why the coordinator design won. The
+runtime-interactivity predicate lives on the coordinator itself
+(``_ws_is_interactive``) since #3083 folded it into the single
+workspace-row read; :func:`workspace_opted_in` (the workspace-side half,
+#3080) stays here for the pause paths.
 
 What remains here is periodic retention (:class:`EgressConsentSweeper`,
 #2303) — bounding ``egress_consent`` table growth past the retention
-window / per-workspace cap — plus the :func:`workspace_is_interactive`
-predicate the coordinator gate-checks with. Since #2924 the same sweeper
-also prunes the ``container_events`` audit table (retention window +
-deploy-wide row cap) — the one hourly housekeeping loop for every
-bounded table.
+window / per-workspace cap — since #2924 joined by the
+``container_events`` prune (retention window + deploy-wide row cap) —
+the one hourly housekeeping loop for every bounded table.
 """
 
 from __future__ import annotations
@@ -49,16 +51,6 @@ async def workspace_opted_in(app, workspace_id: str) -> bool:
     """
     ws = await app.state.model.workspaces.get_workspace(workspace_id)
     return bool(ws) and ws.get("egress_mode") == EGRESS_MODE_INTERACTIVE
-
-
-async def workspace_is_interactive(app, workspace_id: str) -> bool:
-    # #2308: interactivity is runtime state -- a workspace is interactive
-    # only while a live consent decider is registered for it, AND the
-    # workspace has opted in (egress_mode). No decider -> static behavior
-    # (clean denial, no held connection).
-    if not await workspace_opted_in(app, workspace_id):
-        return False
-    return app.state.consent_deciders.has_decider(workspace_id)
 
 
 class EgressConsentSweeper(IntervalWorker):
