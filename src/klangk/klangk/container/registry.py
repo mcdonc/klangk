@@ -601,18 +601,32 @@ class ContainerRegistry(NetworkSidecarMixin):
         pre-existing delete-vs-start race outcome, not a new one.
 
         The stop-epoch pop resets the workspace to the implicit 0
-        (``get``'s default, i.e. "never stopped"): the #2625 crash
-        guards compare epochs by inequality, so anything deleted
-        mid-detection reads as "changed" and skips — it can never
-        cause a wrong restart. Bounds ``_workspace_locks`` and
-        ``stop_epoch`` against unbounded growth from workspace
-        create/delete churn, mirroring how
+        (``get``'s default, i.e. "never stopped"). The #2625 crash
+        *entry* guards compare epochs by strict inequality and run
+        before any crash-teardown bump, so a delete mid-detection still
+        reads as "changed" and skips. The *post-teardown* guard
+        (#3074) allows the crash teardown's own single bump, and a
+        popped epoch (0) does not read as moved — so a delete landing
+        during death handling's awaits can reach the restart scheduler;
+        the scheduled task's workspace-row check
+        (``CrashRecoveryMonitor._restartable_workspace``) abandons it,
+        because the prune callers run after the DB row is gone. The
+        ``crash.clear`` below drops any retained crash tracker and
+        cancels a pending restart at delete time; the narrow window
+        where a delete completes *between* the crash teardown and
+        ``_finalize_death`` may still leave one stale tracker entry
+        until process exit (invisible — no row). Bounds
+        ``_workspace_locks`` and ``stop_epoch`` against unbounded
+        growth from workspace create/delete churn, mirroring how
         :meth:`prune_service_session_locks` bounds the per-container
         lock dict (#1351). A no-op when neither entry exists (the
         workspace was never started in this process).
         """
         self._workspace_locks.pop(workspace_id, None)
         self.stop_epoch.pop(workspace_id, None)
+        # Delete-time crash cleanup (#3074 review): the workspace row is
+        # gone, so any crash state or pending restart for it is obsolete.
+        self.crash.clear(workspace_id)
 
     # --- State tracking ---
 

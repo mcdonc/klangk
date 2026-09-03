@@ -362,6 +362,19 @@ class MemoryPressureEvictor:
         """Consecutive below-threshold polls before evictions begin."""
         return self.app.state.settings.memory_eviction_sustain_polls
 
+    @property
+    def _enabled(self) -> bool:
+        """Whether the evictor is armed (live off settings)."""
+        return self.app.state.settings.memory_eviction_enabled
+
+    @property
+    def _poll_interval(self) -> float:
+        """Poll interval, floored (live off settings)."""
+        return max(
+            self.app.state.settings.memory_eviction_poll_interval,
+            MIN_POLL_INTERVAL_SECONDS,
+        )
+
     def start(self) -> None:
         """Start the eviction loop (idempotent). Runs until :meth:`stop`."""
         if self._task is None:
@@ -613,13 +626,13 @@ class MemoryPressureEvictor:
         pressured = False
         warned_unreadable = False
         while True:
-            settings = self.app.state.settings
-            interval = max(
-                settings.memory_eviction_poll_interval,
-                MIN_POLL_INTERVAL_SECONDS,
-            )
-            await asyncio.sleep(interval)
-            if not settings.memory_eviction_enabled:
+            await asyncio.sleep(self._poll_interval)
+            # Everything below reads settings LIVE off app.state (never a
+            # snapshot taken before the sleep): a SIGHUP reload swaps the
+            # settings object (#1587), and a pre-sleep snapshot would act
+            # on stale values for one cycle — e.g. evict once more after
+            # the operator disabled eviction (#3074).
+            if not self._enabled:
                 below = 0
                 pressured = False
                 continue

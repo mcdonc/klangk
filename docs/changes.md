@@ -1945,6 +1945,16 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Crash auto-restart (#3074).** `KLANGKD_CONTAINER_RESTART_ENABLED`
+  never restarted a workspace: every crash-detected death was
+  misclassified as a user action and left the workspace stopped with no
+  crash state on `/status`. Restart now works as documented (backoff,
+  bounded retries, crash-loop terminal state), and the death cause is
+  recorded for the status API even with restart disabled.
+- **`KLANGKD_MEMORY_EVICTION_ENABLED` reload (#3074).** A SIGHUP config
+  reload that disables memory-pressure eviction now takes effect on the
+  next poll instead of one cycle late, so turning the evictor off under
+  sustained pressure cannot evict one more workspace after the reload.
 - **Podman create retry and CI-aware bring-up budgets (#3064).** A
   `podman create` that stalls past its budget (120s local, 240s on CI)
   under load is now killed and retried once (idempotent via
