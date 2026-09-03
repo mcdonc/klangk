@@ -886,11 +886,3 @@ netfilter_default_domains:
   every destination without a recorded deny is permitted
   per-connection — treat a pause as a temporary hole, not a hardening
   step.
-
-## References
-
-- [FQDN egress via a DNS-proxy sidecar][fqdn-sidecar]
-- [Interactive (Little-Snitch-style) egress consent][interactive-epic]
-
-[fqdn-sidecar]: https://github.com/mcdonc/klangk/issues/2250
-[interactive-epic]: https://github.com/mcdonc/klangk/issues/2239

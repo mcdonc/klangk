@@ -13,9 +13,8 @@ chapter, it does not replace it. For retiring a site permanently, see
 [Decommissioning](../deployment/decommissioning.md).
 
 !!! note
-Automated, scheduled snapshots of the data dir are tracked separately.
-When that feature
-lands it will cover the data-dir half of this procedure; the podman
+Automated, scheduled snapshots of the data dir are not available yet.
+When that feature lands it will cover the data-dir half of this procedure; the podman
 volume half (below) stays manual either way.
 
 ## Where klangk state lives

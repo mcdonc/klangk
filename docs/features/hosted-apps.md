@@ -116,4 +116,4 @@ server-wide. This is a single knob that doubles as the count configuration:
 
 A positive value (e.g. `3`) caps each workspace at that many ports. Changing
 the value takes effect on each workspace's next container start (no backend
-restart needed). Per-workspace overrides are tracked separately.
+restart needed).

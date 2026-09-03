@@ -19,7 +19,7 @@ test-super-e2e
 `KLANGK_SUPER_E2E_IMAGE` selects a different image (default
 `klangk-host:latest`). Docker and the built host image are required —
 the suite fails loudly when either is missing (a silent skip would make
-CI green without testing anything, the gap closed).
+CI green without testing anything — the gap this suite closes).
 
 ## What it covers
 

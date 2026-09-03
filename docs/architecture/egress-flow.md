@@ -9,10 +9,9 @@ model in one place.
 
 For operator-facing configuration (enablement, `allowed_domains` grammar
 by example, service lists) see [Egress Filtering][egress-docs]. This page
-is about what happens at runtime, inside the [network sidecar][egress-issue].
+is about what happens at runtime, inside the [network sidecar](../features/egress-filtering.md).
 
 [egress-docs]: ../features/egress-filtering.md
-[egress-issue]: https://github.com/mcdonc/klangk/issues/2250
 
 ## The short version
 
