@@ -356,6 +356,12 @@ class WorkspaceSession:
         yet, ``start_token_renewal`` is called under the session lock so
         two concurrent callers cannot both observe ``expiry is None``
         and create duplicate renewal tasks.
+
+        Side effect callers must know about: on the reclaim path this
+        method re-registers the session into ``sockets.sessions``
+        itself, so callers must have resolved the session through
+        ``get_or_create_session`` (never a bare constructor) for the
+        registry to stay consistent.
         """
         async with self.lock:
             target = self._mapping_target()
@@ -902,7 +908,18 @@ class WebSocketState:
             await session.reset()
 
     async def remove_session_locked(self, session: WorkspaceSession) -> None:
-        """Remove session when caller already holds ``session.lock``."""
+        """Remove session when caller already holds ``session.lock``.
+
+        Same guards as :meth:`remove_session`: a session with remaining
+        subscribers is left in place, and a mapping that has moved on to
+        another session owns its own lifecycle (#3070) — a caller holding
+        a *stale* session's lock must not pop the replacement's slot and
+        reset it, reintroducing the orphan this file guards against.
+        """
+        if session.subscribers:
+            return
+        if self.sessions.get(session.workspace_id) is not session:
+            return
         self.sessions.pop(session.workspace_id, None)
         await session.reset()
 

@@ -5725,6 +5725,37 @@ class TestRemoveSessionLocked:
         finally:
             sockets.sessions.pop("ws-locked-rm", None)
 
+    async def test_keeps_session_with_subscribers(self, app_state):
+        """The locked variant re-checks subscribers too (#3070): a
+        session someone re-attached to under the lock is not popped."""
+        app_state = _make_app_state()
+        sockets = app_state.state.sockets
+        session = sockets.get_or_create_session("ws-locked-sub", app_state)
+        try:
+            async with session.lock:
+                session.subscribers.add(_mock_sock())
+                await sockets.remove_session_locked(session)
+            assert "ws-locked-sub" in sockets.sessions
+        finally:
+            session.subscribers.clear()
+            sockets.sessions.pop("ws-locked-sub", None)
+
+    async def test_skips_moved_on_mapping(self, app_state):
+        """The locked variant re-checks mapping identity too (#3070): a
+        caller holding a stale session's lock must not pop the slot a
+        replacement session now owns."""
+        app_state = _make_app_state()
+        sockets = app_state.state.sockets
+        session = sockets.get_or_create_session("ws-locked-moved", app_state)
+        replacement = WorkspaceSession("ws-locked-moved", app_state)
+        try:
+            async with session.lock:
+                sockets.sessions["ws-locked-moved"] = replacement
+                await sockets.remove_session_locked(session)
+            assert sockets.sessions["ws-locked-moved"] is replacement
+        finally:
+            sockets.sessions.pop("ws-locked-moved", None)
+
 
 class TestGetOrCreateSessionAtomicity:
     async def test_returns_same_session_for_same_workspace(self, app_state):
@@ -5848,12 +5879,18 @@ class TestSessionOrphanRace:
             await sockets.remove_session("ws-3070-reclaim")
             assert "ws-3070-reclaim" not in sockets.sessions
 
-            # Connection B's add finally acquires the lock.
+            # Connection B's add finally acquires the lock — with a
+            # token expiry, so the reclaimed session re-arms renewal.
             sock_b = _mock_sock()
-            await session.add_subscriber(sock_b, "cid")
+            expiry = datetime.now(timezone.utc) + timedelta(hours=12)
+            await session.add_subscriber(sock_b, "cid", token_expiry=expiry)
 
         assert sockets.sessions["ws-3070-reclaim"] is session
         assert sock_b in session.subscribers
+        # The leak property: renewal re-established on the reclaimed
+        # session, then torn down (task cancelled and cleared) by B's
+        # own disconnect — pre-fix the orphan's task ran forever.
+        assert session._token_renewal_task is not None
 
         # And B's own disconnect still finds the mapped session and
         # tears it down — pre-fix, cleanup resolved nothing, so the
@@ -5861,6 +5898,38 @@ class TestSessionOrphanRace:
         assert await session.remove_subscriber(sock_b) is True
         await sockets.remove_session("ws-3070-reclaim")
         assert "ws-3070-reclaim" not in sockets.sessions
+        assert session._token_renewal_task is None
+
+    async def test_reclaim_restarts_window_watcher(self, app_state):
+        """A reclaimed session is fresh for the watcher logic: reset()
+        stopped the old watcher, so the re-attached subscriber's
+        add_subscriber builds a new one instead of reusing the dead
+        field (the #3015 path reads ``_window_watcher is None``)."""
+        app_state = _make_app_state()
+        sockets = app_state.state.sockets
+        sock_a, sock_b = _mock_sock(), _mock_sock()
+        session = sockets.get_or_create_session("ws-3070-watch", app_state)
+        with patch("klangk.wshandler.session.WindowEventWatcher") as wc:
+            wc.return_value.start = AsyncMock()
+            wc.return_value.stop = AsyncMock()
+
+            await session.add_subscriber(sock_a, "cid")  # watcher #1
+            assert await session.remove_subscriber(sock_a) is True
+            await sockets.remove_session("ws-3070-watch")  # pop + reset
+
+            await session.add_subscriber(sock_b, "cid")  # reclaim
+
+            # A fresh watcher was built for the reclaimed session.
+            assert wc.call_count == 2
+            assert session._window_watcher is wc.return_value
+
+            # Final teardown stops it and leaves no watcher behind.
+            assert await session.remove_subscriber(sock_b) is True
+            await sockets.remove_session("ws-3070-watch")
+            for _ in range(3):
+                await asyncio.sleep(0)  # drain the spawned stop task
+            assert session._window_watcher is None
+            assert wc.return_value.stop.await_count == 2
 
     async def test_superseded_session_routes_to_replacement(self, app_state):
         """When a replacement session was created in the pop→add gap,
