@@ -88,7 +88,11 @@ def _valid_cidr_tokens(tokens: list[str]) -> list[str]:
     adapt time — the ``POST /load`` fails and the watchdog's
     kill/respawn loop wedges the whole proxy on a typo'd setting.
     Skipping fails toward *less* access (narrower egress allowlist /
-    narrower XFF trust), never more.
+    narrower XFF trust), never more. The warning deliberately does not
+    echo the entry value: the fields are env-sourced, and clear-text
+    logging them is flagged by CodeQL
+    (py/clear-text-logging-sensitive-data) — the operator re-reads
+    their own short config list to spot the offender.
     """
     valid: list[str] = []
     for token in tokens:
@@ -96,10 +100,9 @@ def _valid_cidr_tokens(tokens: list[str]) -> list[str]:
             ipaddress.ip_network(token, strict=False)
         except ValueError:
             logger.warning(
-                "ignoring invalid IP/CIDR entry %r — entries must be IPs"
-                " or CIDRs (KLANGKD_TRUSTED_PROXY_CIDRS /"
-                " KLANGKD_CONTAINER_SUBNETS)",
-                token,
+                "ignoring an invalid IP/CIDR entry — entries must be"
+                " IPs or CIDRs (KLANGKD_TRUSTED_PROXY_CIDRS /"
+                " KLANGKD_CONTAINER_SUBNETS)"
             )
         else:
             valid.append(token)
@@ -335,9 +338,9 @@ class CaddyRenderer:
             entries = _valid_cidr_tokens(tokens)
             if len(entries) != len(tokens):
                 logger.warning(
-                    "KLANGKD_CONTAINER_SUBNETS: invalid entries skipped"
-                    " (valid: %r)",
-                    entries,
+                    "KLANGKD_CONTAINER_SUBNETS: skipped %d invalid"
+                    " entry/entries (the valid ones remain in effect)",
+                    len(tokens) - len(entries),
                 )
             return _explicit_source_entries(entries)
         addrs = detect_host_ipv4s()

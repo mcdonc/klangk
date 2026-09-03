@@ -272,7 +272,7 @@ class TestContainerSourceLists:
         with caplog.at_level("WARNING"):
             lst = _renderer(s)._egress_remote_ip_list()
         assert lst == ""
-        assert "invalid entries skipped" in caplog.text
+        assert "invalid entry" in caplog.text
 
     def test_invalid_trusted_proxy_cidr_skipped(self, caplog):
         s = make_settings({"KLANGKD_TRUSTED_PROXY_CIDRS": "oops,10.0.0.0/8"})
