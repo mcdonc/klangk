@@ -703,13 +703,17 @@ class TestRunLoop:
         await self._run_briefly(evictor, seconds=0.1)
         evictor.evict_one.assert_not_awaited()
 
-    async def test_loop_honors_settings_swap_during_sleep(
-        self, monkeypatch, tmp_path
-    ):
+    async def test_loop_honors_settings_swap_during_sleep(self, monkeypatch):
         """#3074: a SIGHUP reload swaps the settings object; the loop
         must read ``memory_eviction_enabled`` live after its sleep, not
         from a pre-sleep snapshot — disabling eviction takes effect on
-        the very next poll, with no extra measurement/eviction cycle."""
+        the very next poll, with no extra measurement/eviction cycle.
+
+        Deterministic despite the wall-clock sleeps: the mocked
+        ``measure``/``evict_one`` never yield to the loop, so the only
+        suspension point per iteration is the interval sleep — the
+        enabled phase cannot slip an extra poll past the swap.
+        """
         app, evictor = self._evictor(
             {
                 "KLANGKD_MEMORY_EVICTION_POLL_INTERVAL": "0.001",
