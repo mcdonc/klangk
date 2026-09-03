@@ -103,7 +103,7 @@ async def _refuse_invalid_handshake(
     (its non-allow-listed egress is denied immediately with a static
     verdict). Refuse a workspace-scoped decider at registration so the
     static/interactive boundary is structural (enforced here), not just
-    behavioral (the coordinator's hold-time ``is_interactive`` gate stays
+    behavioral (the coordinator's hold-time interactivity gate stays
     as defense-in-depth). Reads the same egress_mode the coordinator does.
 
     NB: these closes run before websocket.accept(), so the ASGI server

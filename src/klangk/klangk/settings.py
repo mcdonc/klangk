@@ -1157,8 +1157,9 @@ class KlangkSettings(BaseSettings):
     network_sidecar_image: str = "klangk-network-sidecar"
     # egress_consent_rate_limit / egress_consent_timeout: interactive-mode
     # consent monitor (#2242) tuning. rate_limit caps pending requests per
-    # workspace (anti attention-flood from adversarial containers); timeout
-    # is how long a request stays pending before the monitor auto-expires it
+    # workspace (anti attention-flood from adversarial containers); 0
+    # disables the cap (unlimited pending holds, #3083). timeout is how long
+    # a request stays pending before the monitor auto-expires it
     # (DECISION_EXPIRED). Now that consent gates the connection SYN (#2324)
     # the human window is the kernel's connect timeout (~127s), so the default
     # matches it (was 30s when the gate was the DNS query, bounded by

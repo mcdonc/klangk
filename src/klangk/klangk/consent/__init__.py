@@ -3,9 +3,10 @@
 The former flat modules became single-responsibility submodules:
 
 - :mod:`.egress`      — was ``klangk/consent.py``: the egress-consent
-  retention sweep (:class:`EgressConsentSweeper`) plus
-  ``workspace_is_interactive``. (The event-intake half of the original
-  design was superseded by the sidecar WS + coordinator, #2311.)
+  retention sweep (:class:`EgressConsentSweeper`). (The event-intake
+  half of the original design was superseded by the sidecar WS +
+  coordinator, #2311; the interactivity predicate moved onto the
+  coordinator with the single workspace-row read, #3083.)
 - :mod:`.deciders`    — was ``klangk/consent_deciders.py``: the runtime
   registry of live consent deciders (``ConsentDeciderRegistry``).
 - :mod:`.coordinator` — was ``klangk/consent_coordinator.py``: decision
@@ -25,5 +26,4 @@ from .deciders import ConsentDeciderRegistry as ConsentDeciderRegistry
 from .egress import (
     EgressConsentSweeper as EgressConsentSweeper,
     PRUNE_INTERVAL as PRUNE_INTERVAL,
-    workspace_is_interactive as workspace_is_interactive,
 )

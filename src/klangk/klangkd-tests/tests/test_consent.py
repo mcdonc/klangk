@@ -1,6 +1,6 @@
 """Unit tests for :mod:`klangk.consent.egress` — the retention sweeper
-(#2303) and ``workspace_is_interactive`` (#2308). Event intake lives in the
-coordinator (see test_consent_coordinator.py); the sweeper only prunes.
+(#2303). Event intake lives in the coordinator (see
+test_consent_coordinator.py); the sweeper only prunes.
 """
 
 from __future__ import annotations
@@ -26,45 +26,11 @@ def _app(
     container_events = types.SimpleNamespace(
         prune=events_prune or AsyncMock(return_value=0)
     )
-    workspaces = AsyncMock()
-    workspaces.get_workspace = AsyncMock(
-        return_value={"egress_mode": "interactive"}
-    )
     app.state.model = types.SimpleNamespace(
         egress_consent=egress_consent,
         container_events=container_events,
-        workspaces=workspaces,
-    )
-    app.state.consent_deciders = types.SimpleNamespace(
-        has_decider=lambda workspace_id: True
     )
     return app
-
-
-class TestWorkspaceIsInteractive:
-    async def test_interactive_with_decider(self):
-        assert await consent.workspace_is_interactive(_app(), FULL_WS)
-
-    async def test_missing_workspace(self):
-        app = _app()
-        app.state.model.workspaces.get_workspace = AsyncMock(return_value=None)
-        assert not await consent.workspace_is_interactive(app, FULL_WS)
-
-    async def test_static_mode(self):
-        app = _app()
-        app.state.model.workspaces.get_workspace = AsyncMock(
-            return_value={"egress_mode": "static"}
-        )
-        assert not await consent.workspace_is_interactive(app, FULL_WS)
-
-    async def test_no_decider_registered(self):
-        # #2308: interactivity is runtime state — no live decider means
-        # static behavior (clean denial, no held connection).
-        app = _app()
-        app.state.consent_deciders = types.SimpleNamespace(
-            has_decider=lambda workspace_id: False
-        )
-        assert not await consent.workspace_is_interactive(app, FULL_WS)
 
 
 class TestEgressConsentSweeper:
