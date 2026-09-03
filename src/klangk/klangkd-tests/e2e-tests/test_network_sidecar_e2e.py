@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import os
 import platform
+import selectors
 import shutil
 import socket
 import subprocess
@@ -363,30 +364,122 @@ def _free_port():
     return port
 
 
-def _wait_ready(name, timeout=40):
-    """Wait for the network sidecar's proxy to print its listening line."""
+def _reap_follow(follow):
+    """Kill a ``podman logs --follow`` helper and close its pipe."""
+    if follow.poll() is None:
+        follow.kill()
+    follow.wait()
+    if follow.stdout is not None:
+        try:
+            follow.stdout.close()
+        except OSError:
+            pass
+
+
+def _logs_snapshot(name):
+    """One-shot ``podman logs`` — unlike ``--follow`` it REPLAYS history.
+
+    ``podman logs --follow`` on the CI runners streams only output written
+    AFTER the attach: the sidecar prints its listening line ~1s after
+    ``podman run``, the follow attaches later, and the needle is never
+    delivered even though a one-shot logs call shows it (CI run 33708005147:
+    ~80 reattaches over 40s, line present in the failure-time snapshot).
+    Every probe cycle therefore starts from a snapshot; the follow only
+    adds NEW output on top (#3062).
+    """
+    return podman("logs", name, check=False, timeout=20).stdout
+
+
+def _container_state(name):
+    """``<status> <exitcode>`` for container *name* via podman inspect."""
+    return podman(
+        "inspect",
+        "-f",
+        "{{.State.Status}} {{.State.ExitCode}}",
+        name,
+        check=False,
+        timeout=20,
+    ).stdout.strip()
+
+
+def _follow_once(name, needle, deadline):
+    """Attach ``podman logs --follow``; return bytes read until the stream
+    ends, *deadline* passes, or *needle* appears in the stream.
+
+    Checking the needle inside the read loop matters: a genuinely-following
+    podman never EOFs a running container, so waiting for the process to
+    exit would sit on the needle until the deadline. Conversely, podman's
+    follow streams only output written AFTER the attach (no history replay
+    — see ``_logs_snapshot``), and can EOF at the current end-of-log while
+    the container is still running — so the caller snapshots first, treats
+    EOF as a signal to reattach, not as the container's death (#3063 CI
+    runs 33706670438 / 33708005147).
+    """
+    follow = subprocess.Popen(
+        ["podman", "logs", "--follow", name],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    sel = selectors.DefaultSelector()
+    sel.register(follow.stdout, selectors.EVENT_READ)
+    buf = b""
+    try:
+        while needle not in buf:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or not sel.select(timeout=remaining):
+                break
+            chunk = os.read(follow.stdout.fileno(), 65536)
+            if not chunk:
+                break
+            buf += chunk
+    finally:
+        sel.close()
+        _reap_follow(follow)
+    return buf
+
+
+def _follow_logs_until(name, needle, timeout, what):
+    """Fail via pytest unless *needle* appears in *name*'s logs in *timeout*.
+
+    Each cycle snapshots the log (history replay — see ``_logs_snapshot``)
+    and then follows the stream for new output until the needle appears,
+    the follow EOFs, or the deadline passes. A stopped container fails
+    fast with its state and logs; a still-running one reattaches after one
+    poll interval. Best case (needle already printed) costs a single CLI
+    call; a podman whose follow works costs snapshot + one long-lived
+    follow; a podman whose follow is inert degrades to the old 0.5s poll
+    cadence — never worse than the poller this replaces (#3062).
+    """
+    encoded = needle.encode()
     deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        logs = podman("logs", name, check=False).stdout
-        if "dns-proxy listening" in logs:
+    while True:
+        snapshot = _logs_snapshot(name)
+        if encoded in snapshot.encode(errors="replace"):
             return
-        # Surface an early crash (e.g. SO_MARK / iptables failure).
-        state = podman(
-            "inspect",
-            "-f",
-            "{{.State.Status}} {{.State.ExitCode}}",
-            name,
-            check=False,
-        ).stdout.strip()
+        if time.monotonic() >= deadline:
+            pytest.fail(f"{what} within {timeout}s\nlogs:\n{snapshot}")
+        followed = _follow_once(name, encoded, deadline)
+        if encoded in followed:
+            return
+        state = _container_state(name)
         if "exited" in state or "stopped" in state:
             pytest.fail(
-                f"network sidecar {name} exited before ready. state={state}\n"
-                f"logs:\n{podman('logs', name, check=False).stdout}"
+                f"{what}: container exited before the expected log line. "
+                f"state={state}\n"
+                f"logs:\n{snapshot}"
             )
+        if time.monotonic() >= deadline:
+            pytest.fail(f"{what} within {timeout}s\nlogs:\n{snapshot}")
         time.sleep(0.5)
-    pytest.fail(
-        f"network sidecar {name} not ready within {timeout}s\n"
-        f"logs:\n{podman('logs', name, check=False).stdout}"
+
+
+def _wait_ready(name, timeout=40):
+    """Wait for the network sidecar's proxy to print its listening line."""
+    _follow_logs_until(
+        name,
+        "dns-proxy listening",
+        timeout,
+        f"network sidecar {name} not ready",
     )
 
 
@@ -736,19 +829,9 @@ class TestNetworkSidecarE2E:
                 for ln in rules.splitlines()
             ), f"no NFQUEUE queue-5139 rule in interactive mode:\n{rules}"
             # The NFQUEUE consumer thread (proxy.py) binds after the proxy is
-            # ready; poll its log to prove the consumer runs in the real image.
-            deadline = time.monotonic() + 20
-            bound = False
-            while time.monotonic() < deadline:
-                logs = podman("logs", nc, check=False).stdout
-                if "nfqueue consumer bound to queue 5139" in logs:
-                    bound = True
-                    break
-                time.sleep(0.5)
-            assert bound, (
-                "NFQUEUE consumer did not bind in interactive mode:\n"
-                f"{podman('logs', nc, check=False).stdout}"
-            )
+            # ready; wait for its log line (fails with the sidecar's logs if
+            # it never binds) to prove the consumer runs in the real image.
+            _wait_log(nc, "nfqueue consumer bound to queue 5139", timeout=20)
         finally:
             _podman_cleanup("container", nc)
             _podman_cleanup("network", net)
@@ -978,17 +1061,8 @@ t2.join()
 
 
 def _wait_log(name, needle, timeout=20):
-    """Poll ``podman logs <name>`` for ``needle`` or fail with the logs."""
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        logs = podman("logs", name, check=False).stdout
-        if needle in logs:
-            return
-        time.sleep(0.5)
-    pytest.fail(
-        f"{needle!r} not in {name} logs within {timeout}s\\n"
-        f"logs:\\n{podman('logs', name, check=False).stdout}"
-    )
+    """Wait until ``needle`` appears in ``name``'s logs, following the stream."""
+    _follow_logs_until(name, needle, timeout, f"{needle!r} not in {name} logs")
 
 
 @pytest.fixture
