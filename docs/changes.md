@@ -1946,11 +1946,11 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 ### Fixed
 
 - **Podman create retry and CI-aware bring-up budgets (#3064).** A
-  `podman create` that stalls past its 120s budget under load is now
-  killed and retried once (idempotent via `--replace`) instead of
-  surfacing a 500 that cascades into workspace start and connect
-  timeouts. `create`/`start` budgets double to 240s when `CI` is set
-  in the environment.
+  `podman create` that stalls past its budget (120s local, 240s on CI)
+  under load is now killed and retried once (idempotent via
+  `--replace`) instead of surfacing a 500 that cascades into workspace
+  start and connect timeouts. `create`/`start`/container-readiness
+  budgets double to 240s when `CI` is set in the environment.
 - **Terminal share/unshare/close no longer hang clients on refusal paths
   (#3057).** The WebSocket handlers for `share_window`, `unshare_window`,
   `join_shared_terminal`, and the own-window commands (`terminal_new_window`,

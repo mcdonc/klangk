@@ -73,6 +73,17 @@ class PodmanError(Exception):
         super().__init__(f"[{status}] {message}")
 
 
+class PodmanTimeoutError(PodmanError):
+    """A podman CLI invocation exceeded its timeout budget (#3064).
+
+    Structural signal — ``_run_create``'s retry branches on this type,
+    not on message text: a timed-out create that wrote partial stderr
+    (image-pull progress, storage warnings) still carries the marker,
+    while a non-timeout stderr that merely mentions a timeout does not
+    become retryable.
+    """
+
+
 _NOT_FOUND_HINTS = ("no such", "not found", "no container")
 _IN_USE_HINTS = ("in use", "being used", "already in use")
 
@@ -202,10 +213,18 @@ class Podman:
         rc, err = Podman._timeout_rc(err, cmd_label, timeout, timed_out, rc)
         Podman._log_podman_timing(cmd_label, timings, err)
         if check and rc != 0:
-            raise PodmanError(
-                classify(err), err.strip() or f"podman {args[0]}"
-            )
+            Podman._raise_podman_error(err, args, timed_out)
         return rc, err
+
+    @staticmethod
+    def _raise_podman_error(
+        err: str, args: list[str], timed_out: bool
+    ) -> None:
+        """Raise the right error for a failed checked run: the structural
+        PodmanTimeoutError marker on a budget overrun (#3064), else the
+        plain classified PodmanError."""
+        error_class = PodmanTimeoutError if timed_out else PodmanError
+        raise error_class(classify(err), err.strip() or f"podman {args[0]}")
 
     async def run(
         self,
@@ -508,22 +527,26 @@ class Podman:
             args += ["-e", entry]
         args.append(image)
         args += command or []
-        _rc, out, _err = await self._run_create(args)
+        _rc, out, _err = await self._run_create(args, replace)
         return out.strip()
 
-    async def _run_create(self, args: list[str]) -> tuple[int, str, str]:
+    async def _run_create(
+        self, args: list[str], replace: bool
+    ) -> tuple[int, str, str]:
         """Run ``podman create`` with one timeout retry (#3064).
 
         A create that stalls past its budget under concurrent load used to
         cascade into every downstream waiter (workspace start, WS connect,
-        teardown). ``create_container`` always passes ``--replace``, so a
-        retried create is idempotent — the stalled attempt was killed, run
-        it once more before giving up.
+        teardown). With ``replace=True`` (``create_container``'s default)
+        a retried create is idempotent — the stalled attempt was killed,
+        run it once more before giving up. Without it there is no safe
+        retry: the first, killed attempt may have left the name claimed,
+        so the timeout surfaces immediately instead.
         """
         try:
             return await self.run(args, timeout=bringup_timeout())
-        except PodmanError as exc:
-            if "timed out after" not in exc.message:
+        except PodmanTimeoutError:
+            if not replace:
                 raise
         logger.warning("podman create stalled past its budget; retrying once")
         return await self.run(args, timeout=bringup_timeout())

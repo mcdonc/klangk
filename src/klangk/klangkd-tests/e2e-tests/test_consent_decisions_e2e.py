@@ -740,7 +740,7 @@ class TestConsentDecisionEndStates:
                     server["client"].post,
                     f"/api/v1/workspaces/{ws_id}/restart",
                     headers=auth["headers"],
-                    timeout=120,
+                    timeout=ci_budget(120, 240),
                 )
                 assert restart.status_code == 200, restart.text
                 # The pre-restart workspace WS is stale; wait on a fresh one
@@ -836,7 +836,7 @@ class TestConsentDecisionEndStates:
                     server["client"].post,
                     f"/api/v1/workspaces/{ws_id}/restart",
                     headers=auth["headers"],
-                    timeout=120,
+                    timeout=ci_budget(120, 240),
                 )
                 assert restart.status_code == 200, restart.text
                 await ws_conn.close()
