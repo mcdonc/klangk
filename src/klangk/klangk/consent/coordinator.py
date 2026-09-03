@@ -463,6 +463,26 @@ class ConsentCoordinator:
             # rule-management view (#2335 slice A) without a reconnect.
             await self._broadcast_rules(hold["workspace_id"])
 
+    def _pop_hold(
+        self, request_id: str, decider_workspace: str | None
+    ) -> dict | None:
+        """Pop + timeout-cancel a held request, or None when untouchable.
+
+        None when the request is not currently held (already resolved, timed
+        out, never held) or -- defense-in-depth -- when a workspace-scoped
+        decider would decide a request outside its workspace
+        (``decider_workspace``); in that case nothing is popped (we only
+        peeked) -- the hold stays for a decider actually scoped to it.
+        """
+        hold = self._holds.get(request_id)
+        if hold is None:
+            return None
+        if not _hold_in_scope(hold, decider_workspace):
+            return None
+        del self._holds[request_id]
+        hold["task"].cancel()
+        return hold
+
     async def resolve(
         self,
         request_id: str,
@@ -479,20 +499,14 @@ class ConsentCoordinator:
         frame so co-deciders drop it (first-decision-wins across N deciders).
         Returns the verdict dict relayed to the sidecar, or ``None`` if the
         request is not currently held (already resolved, timed out, never
-        held) or -- defense-in-depth -- if a workspace-scoped decider tries to
-        decide a request outside its workspace (``decider_workspace``).
+        held) or outside the decider's workspace (``decider_workspace``).
         """
-        hold = self._holds.get(request_id)
+        hold = self._pop_hold(request_id, decider_workspace)
         if hold is None:
             return None
-        if not _hold_in_scope(hold, decider_workspace):
-            # Restore nothing (we only peeked); the hold stays for a decider
-            # actually scoped to it.
-            return None
-        hold = self._holds.pop(request_id)
-        hold["task"].cancel()
         forever_allow_row: dict | None = None
         forever_deny_row: dict | None = None
+        stranded = False
         try:
             row = await self.app.state.model.egress_consent.decide(
                 request_id, decision, decided_by, duration
@@ -501,14 +515,13 @@ class ConsentCoordinator:
             # decide() failed (DB error). The hold's own timeout is already
             # cancelled, so we MUST resolve the Future ourselves -- otherwise
             # the sidecar relay awaits it forever ("no hold pending forever").
-            # Fail-close to deny + broadcast so co-deciders drop it, and
-            # best-effort expire the row: a hold-less pending row can never
-            # be resolved by anyone yet still occupies a pending-cap slot
-            # (#3081).
+            # Fail-close to deny + broadcast so co-deciders drop it; the row
+            # is expired best-effort AFTER the Future is resolved (below), so
+            # a cancellation during that expire can never hang the relay.
             logger.exception("consent: resolve failed; fail-closing to deny")
-            await self._expire_stranded(request_id)
             verdict = {"decision": VERDICT_DENY, "reason": "error"}
             resolved = "expired"
+            stranded = True
         else:
             (
                 verdict,
@@ -524,6 +537,10 @@ class ConsentCoordinator:
             forever_allow_row,
             forever_deny_row,
         )
+        if stranded:
+            # A hold-less pending row can never be resolved by anyone yet
+            # still occupies a pending-cap slot (#3081); best-effort expire.
+            await self._expire_stranded(request_id)
         return verdict
 
     async def _persist_forever_allow(self, row: dict) -> None:
@@ -826,10 +843,13 @@ class ConsentCoordinator:
         keeps counting it against the workspace's pending cap until the
         retention sweep (default 30 days) or the startup reaper, so enough
         of them wedge every new hold into ``rate_limited`` denials.
-        Retried once -- a first failure is typically a transient DB error,
-        and the retry re-runs after the failing transaction unwound. A
-        second failure is logged and the row falls back to the startup
-        reaper (``expire_all_pending``).
+        Retried once: a first failure is typically transient (a lock
+        timeout that rolled back, say) and sometimes clears on a fresh
+        attempt. The retry can re-block up to ``busy_timeout`` again, so
+        ``stop()`` across N holds serializes at most 2N slow attempts --
+        bounded, and the reaper remains the backstop. A second failure is
+        logged and the row falls back to the startup reaper
+        (``expire_all_pending``).
         """
         for attempt in (1, 2):
             try:

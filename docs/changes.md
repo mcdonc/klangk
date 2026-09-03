@@ -1960,8 +1960,10 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   request, the row stayed `pending` forever with no live hold — invisible
   to deciders yet counted against the workspace's pending cap
   (`KLANGKD_EGRESS_CONSENT_RATE_LIMIT`), eventually wedging every new
-  request into `rate_limited` denials until restart. Both error paths now
-  retry expiring the row once, so it becomes terminal promptly.
+  request into `rate_limited` denials. Both error paths now fail-close
+  the verdict and retry expiring the row once; a row that still cannot
+  be expired is reaped at the next backend start instead of lingering
+  for the retention window.
 - **Malformed client frames no longer drop the WebSocket session
   (#3071).** Any command handler exception now gets an error frame and
   the connection stays up, instead of ending the whole session:
