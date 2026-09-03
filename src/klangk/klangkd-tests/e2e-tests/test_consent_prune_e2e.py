@@ -62,6 +62,10 @@ def _login(server: dict) -> dict:
 
 
 def _create_workspace(server: dict, headers: dict, name: str) -> str:
+    # Bring-up calls share _BRINGUP_TIMEOUT, not a fixed per-call budget:
+    # under concurrent E2E suites the handler can legitimately spend over
+    # 30s in container bring-up before answering, which used to surface as
+    # an httpx ReadTimeout instead of a real assertion failure (#3062).
     resp = server["client"].post(
         "/api/v1/workspaces",
         headers=headers,
@@ -73,12 +77,14 @@ def _create_workspace(server: dict, headers: dict, name: str) -> str:
             # _trigger). This is the revert-to-static path of #2308.
             "egress_mode": "interactive",
         },
-        timeout=30,
+        timeout=_BRINGUP_TIMEOUT,
     )
     assert resp.status_code == 200, resp.text
     ws_id = resp.json()["id"]
     resp = server["client"].post(
-        f"/api/v1/workspaces/{ws_id}/start", headers=headers, timeout=60
+        f"/api/v1/workspaces/{ws_id}/start",
+        headers=headers,
+        timeout=_BRINGUP_TIMEOUT,
     )
     assert resp.status_code == 200, resp.text
     return ws_id

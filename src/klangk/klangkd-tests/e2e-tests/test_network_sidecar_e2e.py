@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import os
 import platform
+import selectors
 import shutil
 import socket
 import subprocess
@@ -363,30 +364,80 @@ def _free_port():
     return port
 
 
+def _reap_follow(follow):
+    """Kill a ``podman logs --follow`` helper and close its pipe."""
+    if follow.poll() is None:
+        follow.kill()
+    follow.wait()
+    if follow.stdout is not None:
+        try:
+            follow.stdout.close()
+        except OSError:
+            pass
+
+
+def _container_logs(name, followed=b""):
+    """Full ``podman logs`` for *name*; the followed bytes if that fails."""
+    full = podman("logs", name, check=False)
+    if full.returncode == 0:
+        return full.stdout
+    return followed.decode(errors="replace")
+
+
+def _follow_logs_until(name, needle, timeout, what):
+    """Fail via pytest unless *needle* appears in *name*'s logs in *timeout*.
+
+    Follows the stream on ONE long-lived ``podman logs --follow`` process
+    instead of a fresh ``podman logs`` per poll tick: each CLI invocation
+    pays podman startup and storage-lock round-trips, which under
+    concurrent E2E suites can consume the whole budget even though the
+    needle appeared early (#3062). The follow process hits EOF when the
+    container stops, which doubles as the early-crash signal.
+    """
+    encoded = needle.encode()
+    follow = subprocess.Popen(
+        ["podman", "logs", "--follow", name],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    sel = selectors.DefaultSelector()
+    sel.register(follow.stdout, selectors.EVENT_READ)
+    buf = b""
+    deadline = time.monotonic() + timeout
+    try:
+        while encoded not in buf:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or not sel.select(timeout=remaining):
+                pytest.fail(
+                    f"{what} within {timeout}s\n"
+                    f"logs:\n{_container_logs(name, buf)}"
+                )
+            chunk = os.read(follow.stdout.fileno(), 65536)
+            if not chunk:  # EOF: container (or the follow) ended early
+                state = podman(
+                    "inspect",
+                    "-f",
+                    "{{.State.Status}} {{.State.ExitCode}}",
+                    name,
+                    check=False,
+                ).stdout.strip()
+                pytest.fail(
+                    f"{what}: log stream ended early. state={state}\n"
+                    f"logs:\n{_container_logs(name, buf)}"
+                )
+            buf += chunk
+    finally:
+        sel.close()
+        _reap_follow(follow)
+
+
 def _wait_ready(name, timeout=40):
     """Wait for the network sidecar's proxy to print its listening line."""
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        logs = podman("logs", name, check=False).stdout
-        if "dns-proxy listening" in logs:
-            return
-        # Surface an early crash (e.g. SO_MARK / iptables failure).
-        state = podman(
-            "inspect",
-            "-f",
-            "{{.State.Status}} {{.State.ExitCode}}",
-            name,
-            check=False,
-        ).stdout.strip()
-        if "exited" in state or "stopped" in state:
-            pytest.fail(
-                f"network sidecar {name} exited before ready. state={state}\n"
-                f"logs:\n{podman('logs', name, check=False).stdout}"
-            )
-        time.sleep(0.5)
-    pytest.fail(
-        f"network sidecar {name} not ready within {timeout}s\n"
-        f"logs:\n{podman('logs', name, check=False).stdout}"
+    _follow_logs_until(
+        name,
+        "dns-proxy listening",
+        timeout,
+        f"network sidecar {name} not ready",
     )
 
 
@@ -978,17 +1029,8 @@ t2.join()
 
 
 def _wait_log(name, needle, timeout=20):
-    """Poll ``podman logs <name>`` for ``needle`` or fail with the logs."""
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        logs = podman("logs", name, check=False).stdout
-        if needle in logs:
-            return
-        time.sleep(0.5)
-    pytest.fail(
-        f"{needle!r} not in {name} logs within {timeout}s\\n"
-        f"logs:\\n{podman('logs', name, check=False).stdout}"
-    )
+    """Wait until ``needle`` appears in ``name``'s logs, following the stream."""
+    _follow_logs_until(name, needle, timeout, f"{needle!r} not in {name} logs")
 
 
 @pytest.fixture

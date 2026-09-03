@@ -101,6 +101,34 @@ def _wait_for_port_closed(port, timeout=10):
     return False
 
 
+def _drain_output(proc, timeout=30):
+    """Best-effort drain of a killed klangkd's captured output.
+
+    A surviving descendant (the Caddy proxy) inherits klangkd's stdout
+    pipe, so ``communicate()`` may not EOF promptly after the kill even
+    when PDEATHSIG is working — the pipe closes only when the *last*
+    holder exits (#3062). Wait *timeout* seconds for a clean drain, then
+    fall back to a non-blocking read of whatever is buffered so the
+    diagnostic still surfaces instead of a ``TimeoutExpired`` masking
+    the real failure.
+    """
+    try:
+        out, _ = proc.communicate(timeout=timeout)
+        return out or b""
+    except subprocess.TimeoutExpired:
+        chunks = []
+        try:
+            os.set_blocking(proc.stdout.fileno(), False)
+            while True:
+                data = os.read(proc.stdout.fileno(), 65536)
+                if not data:
+                    break
+                chunks.append(data)
+        except (BlockingIOError, OSError, ValueError):
+            pass
+        return b"".join(chunks)
+
+
 def _signal_test(sig):
     """Start klangkd + the Caddy proxy, send *sig*, assert the proxy port closes."""
     proc, egress_port = _start_klangkd()
@@ -108,7 +136,7 @@ def _signal_test(sig):
         ok = _wait_for_proxy(egress_port)
         if not ok:
             proc.kill()
-            out, _ = proc.communicate(timeout=5)
+            out = _drain_output(proc)
             pytest.fail(
                 f"klangkd did not start:\n"
                 f"{out.decode(errors='replace')[:2000]}"
