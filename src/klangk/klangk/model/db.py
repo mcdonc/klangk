@@ -208,6 +208,32 @@ class DB:
         finally:
             await db.close()
 
+    @asynccontextmanager
+    async def write_transaction(self):
+        """Context manager like :meth:`transaction`, but the write lock
+        is taken up front (``BEGIN IMMEDIATE``).
+
+        A plain :meth:`transaction` only starts the driver transaction
+        at the first DML statement, so decision-then-write helpers that
+        SELECT first compute on a pre-lock snapshot: two concurrent
+        writers can both pass a duplicate check or both allocate the
+        same positions, and the loser's write silently clobbers the
+        winner's. Here the lock precedes every read, so reads see all
+        committed data and concurrent writers serialize behind this
+        transaction (#3101). The migration runner uses the same
+        explicit-``BEGIN`` posture for the same reason.
+        """
+        db = await self.get_db()
+        try:
+            await db.execute("BEGIN IMMEDIATE")
+            yield db
+            await db.commit()
+        except BaseException:
+            await db.rollback()
+            raise
+        finally:
+            await db.close()
+
     async def fetchone(self, query: str, params: tuple = ()) -> Row | None:
         """Run a single-row SELECT and return the row, or ``None``."""
         async with self.transaction() as db:

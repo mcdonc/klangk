@@ -1966,6 +1966,29 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   word-split it. `setup:` was never documented to accept shell syntax,
   so a script path is all it passes now.
 
+- **Concurrent duplicate registrations and invite accepts return a
+  clean 4xx (#3101).** The production email-verification `register`
+  path and `accept-invite` only pre-checked for an existing account
+  before inserting, so two racing requests made the loser hit a 500;
+  they now catch the lost race and return the same 400 as the
+  pre-check.
+- **One pending invitation per email (#3101).** `POST /invitations`
+  now enforces a single pending invitation per address (partial
+  unique index, migration 0028 revokes any duplicate pending rows
+  created by the old race; history is kept), so concurrent sends can
+  no longer mint two pending invitations.
+- **Workspace member/group share is atomic and duplicate-safe
+  (#3101).** Sharing a workspace with a user or group writes the whole
+  permission block in one transaction: a failure no longer leaves a
+  partial share, concurrent shares no longer collide on positions, and
+  re-sharing an already-shared principal is rejected with 409 instead
+  of stacking a duplicate block.
+- **Export no longer hides a tar failure behind a 200 (#3101).** A
+  missing `tar` binary fails the export with a clean 500, and a tar
+  that dies mid-run aborts the download (logged at ERROR with tar's
+  stderr) instead of delivering a truncated archive; the CLI removes
+  the partial file and reports the interrupted transfer.
+
 - **Cancellation during a consent verdict no longer hangs the egress
   relay** (#3089). A decider disconnect or backend shutdown landing while
   the verdict's DB write was in flight escaped as a `CancelledError`

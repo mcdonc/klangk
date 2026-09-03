@@ -88,6 +88,7 @@ class TestRunner:
             (25, "0025_drop_dead_images_deny_row"),
             (26, "0026_volumes_admin_surface"),
             (27, "0027_retire_admin_marker"),
+            (28, "0028_invitations_pending_unique"),
         ]
         async with aiosqlite.connect(str(app_state.state.db.db_path)) as db:
             assert await _recorded(db) == expected
@@ -181,6 +182,7 @@ class TestRunner:
                 (25, "0025_drop_dead_images_deny_row"),
                 (26, "0026_volumes_admin_surface"),
                 (27, "0027_retire_admin_marker"),
+                (28, "0028_invitations_pending_unique"),
             ]
 
     async def test_m0008_agent_identity_and_human_collision(
@@ -3026,5 +3028,102 @@ class TestM0027RetireAdminMarker:
             await m0027_retire_admin_marker.migration.apply(db)
             cursor = await db.execute("SELECT COUNT(*) FROM acl_entries")
             assert (await cursor.fetchone())[0] == 0
+        finally:
+            await db.__aexit__(None, None, None)
+
+
+class TestM0028InvitationsPendingUnique:
+    """m0028 collapses duplicate pending invitations (the pre-#3101 race
+    residue) and backfills the one-pending-per-email partial index."""
+
+    async def _db(self, tmp_path):
+        db = aiosqlite.connect(str(tmp_path / "m0028.db"))
+        db = await db.__aenter__()
+        await db.execute(
+            "CREATE TABLE invitations ("
+            " id TEXT PRIMARY KEY, email TEXT NOT NULL,"
+            " invited_by TEXT NOT NULL,"
+            " status TEXT NOT NULL DEFAULT 'pending',"
+            " created_at TEXT NOT NULL DEFAULT (datetime('now')),"
+            " accepted_at TEXT)"
+        )
+        return db
+
+    async def _insert(
+        self, db, id, email, status, created_at, invited_by="inviter"
+    ):
+        await db.execute(
+            "INSERT INTO invitations (id, email, invited_by, status,"
+            " created_at) VALUES (?, ?, ?, ?, ?)",
+            (id, email, invited_by, status, created_at),
+        )
+
+    async def _statuses(self, db, email) -> list[tuple]:
+        cursor = await db.execute(
+            "SELECT id, status FROM invitations WHERE email = ?"
+            " ORDER BY created_at, id",
+            (email,),
+        )
+        return list(await cursor.fetchall())
+
+    async def test_dedupes_and_creates_index(self, tmp_path):
+        from klangk.model.migrations import m0028_invitations_pending_unique
+
+        db = await self._db(tmp_path)
+        try:
+            # Race residue: two pendings for one email (oldest first).
+            await self._insert(db, "old", "a@b.com", "pending", "2026-01-01")
+            await self._insert(db, "new", "a@b.com", "pending", "2026-01-02")
+            # History for the same email must survive untouched.
+            await self._insert(db, "acc", "a@b.com", "accepted", "2025-12-01")
+            await self._insert(db, "rev", "a@b.com", "revoked", "2025-12-02")
+            # Another email's pending is unaffected.
+            await self._insert(db, "b1", "b@b.com", "pending", "2026-01-03")
+            await db.commit()
+
+            await m0028_invitations_pending_unique.migration.apply(db)
+
+            assert await self._statuses(db, "a@b.com") == [
+                ("acc", "accepted"),
+                ("rev", "revoked"),
+                ("old", "pending"),
+                ("new", "revoked"),
+            ]
+            assert await self._statuses(db, "b@b.com") == [("b1", "pending")]
+
+            # The index now forbids a second pending for one email.
+            with pytest.raises(Exception) as exc_info:
+                await self._insert(db, "again", "a@b.com", "pending", "x")
+            assert "UNIQUE" in str(exc_info.value)
+
+            # Idempotent: a re-run changes nothing and raises not.
+            await m0028_invitations_pending_unique.migration.apply(db)
+            assert await self._statuses(db, "a@b.com") == [
+                ("acc", "accepted"),
+                ("rev", "revoked"),
+                ("old", "pending"),
+                ("new", "revoked"),
+            ]
+        finally:
+            await db.__aexit__(None, None, None)
+
+    async def test_no_duplicates_is_noop(self, tmp_path):
+        from klangk.model.migrations import m0028_invitations_pending_unique
+
+        db = await self._db(tmp_path)
+        try:
+            await self._insert(db, "solo", "c@b.com", "pending", "2026-01-01")
+            await db.commit()
+            await m0028_invitations_pending_unique.migration.apply(db)
+            assert await self._statuses(db, "c@b.com") == [("solo", "pending")]
+            # An empty pending set is fine too.
+            await db.execute(
+                "UPDATE invitations SET status = 'accepted' WHERE id = 'solo'"
+            )
+            await db.commit()
+            await m0028_invitations_pending_unique.migration.apply(db)
+            assert await self._statuses(db, "c@b.com") == [
+                ("solo", "accepted")
+            ]
         finally:
             await db.__aexit__(None, None, None)

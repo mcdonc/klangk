@@ -5048,6 +5048,32 @@ class TestExportImportCLI:
         with pytest.raises(typer.Exit):
             main.export_workspace(name="err-ws", output=tmp_path / "o.tar.gz")
 
+    def test_export_transfer_interrupted(
+        self, logged_in_cfg, monkeypatch, tmp_path, capsys
+    ):
+        """A mid-body abort (server-side tar failure, #3101) exits 1,
+        reports the interrupted transfer, and removes the partial
+        archive instead of leaving a file that only fails at import
+        time."""
+        from klangk.cli import main
+
+        ws = Workspace(id="ws-x-id", name="x-ws", created_at="2025-01-01")
+        out = tmp_path / "x.tar.gz"
+
+        def partial_then_abort(ws_id, out_path, on_progress=None):
+            out_path.write_bytes(b"partial archive")
+            raise httpx.RemoteProtocolError("peer closed connection")
+
+        client = MagicMock()
+        client.resolve_workspace.return_value = ws
+        client.export_workspace.side_effect = partial_then_abort
+        monkeypatch.setattr(context_mod, "client", lambda: client)
+
+        with pytest.raises(typer.Exit):
+            main.export_workspace(name="x-ws", output=out)
+        assert not out.exists()
+        assert "interrupted" in capsys.readouterr().err
+
     def test_export_http_error_403(self, logged_in_cfg, monkeypatch, tmp_path):
         """#2707: the export-permission denial gets a specific message."""
         from klangk.cli import main

@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi import FastAPI
 import httpx
 from httpx import AsyncClient, ASGITransport
+from sqlalchemy.exc import IntegrityError as SAIntegrityError
 
 from klangk import (
     api,
@@ -852,6 +853,36 @@ class TestAuthRoutes:
             headers={"Authorization": f"Bearer {token}"},
         )
         assert resp.status_code == 400
+
+    async def test_register_race_integrity_error(self, client, app, db):
+        """The production email-verification path must catch a lost
+        duplicate-email race: same opaque 400 as the pre-check, no 500,
+        and no verification email sent (#3101)."""
+        with (
+            patch.object(
+                app.state.model.users,
+                "insert_unverified_user",
+                side_effect=SAIntegrityError(
+                    "statement", {}, Exception("UNIQUE constraint failed")
+                ),
+            ),
+            patch.object(
+                emailsvc_mod.EmailService,
+                "send_verification_email",
+                new_callable=AsyncMock,
+            ) as mock_send,
+        ):
+            resp = await client.post(
+                "/api/v1/auth/register",
+                json={"email": "race@example.com", "password": "newpass1"},
+            )
+        assert resp.status_code == 400
+        assert resp.json()["detail"] == "Registration failed"
+        mock_send.assert_not_called()
+        assert (
+            await app.state.model.users.get_user_by_email("race@example.com")
+            is None
+        )
 
     async def test_verify_email(self, client, db, app_state):
         """Verify endpoint marks user as verified."""
@@ -4837,6 +4868,43 @@ class TestWorkspaceSharingRoutes:
             "view",
         ]
 
+    async def test_add_member_duplicate_rejected(
+        self, client, user, app_state
+    ):
+        """Re-sharing an already-shared member is a 409, not a second
+        stacked block (#3101)."""
+        headers = await _auth_headers(client)
+        other = await self._create_other_user(app_state)
+        resp = await client.post(
+            "/api/v1/workspaces", headers=headers, json={"name": "share-ws"}
+        )
+        ws_id = resp.json()["id"]
+        assert (
+            await client.post(
+                f"/api/v1/workspaces/{ws_id}/members",
+                headers=headers,
+                json={"email": "other@example.com"},
+            )
+        ).status_code == 200
+
+        resp = await client.post(
+            f"/api/v1/workspaces/{ws_id}/members",
+            headers=headers,
+            json={"email": "other@example.com"},
+        )
+        assert resp.status_code == 409
+        assert "already has access" in resp.json()["detail"]
+        entries = await app_state.state.model.acl.get_acl_entries(
+            f"/workspaces/{ws_id}"
+        )
+        member_entries = [
+            e
+            for e in entries
+            if e["principal_type"] == model.PRINCIPAL_USER
+            and e["user_id"] == other["id"]
+        ]
+        assert len(member_entries) == 7  # one block, not two
+
     async def test_add_member_notifies_owner_and_target(
         self, client, app, user, sockets, app_state
     ):
@@ -6147,6 +6215,45 @@ class TestWorkspaceGroupSharing:
             "view",
         ]
 
+    async def test_share_with_group_duplicate_rejected(
+        self, client, user, app_state
+    ):
+        """Re-sharing an already-shared group is a 409, not a second
+        stacked block (#3101)."""
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces",
+            headers=headers,
+            json={"name": "group-dup-ws"},
+        )
+        ws_id = resp.json()["id"]
+        group = await app_state.state.model.users.create_group("dup-devs")
+
+        assert (
+            await client.post(
+                f"/api/v1/workspaces/{ws_id}/groups",
+                headers=headers,
+                json={"group_id": group["id"]},
+            )
+        ).status_code == 200
+        resp = await client.post(
+            f"/api/v1/workspaces/{ws_id}/groups",
+            headers=headers,
+            json={"group_id": group["id"]},
+        )
+        assert resp.status_code == 409
+        assert "already has access" in resp.json()["detail"]
+        entries = await app_state.state.model.acl.get_acl_entries(
+            f"/workspaces/{ws_id}"
+        )
+        group_entries = [
+            e
+            for e in entries
+            if e["principal_type"] == model.PRINCIPAL_GROUP
+            and e["group_id"] == group["id"]
+        ]
+        assert len(group_entries) == 6  # one block, not two
+
     async def test_remove_group(self, client, user, app_state):
         headers = await _auth_headers(client)
         resp = await client.post(
@@ -6219,7 +6326,10 @@ class TestWorkspaceGroupSharing:
         assert resp.status_code == 400
         assert "grantable only" in resp.json()["detail"]
 
-        # Its own workspace's role group stays grantable.
+        # Its own workspace's role group stays grantable in principle —
+        # but it already holds the seeded owner grants on that
+        # workspace, so the share is a detected duplicate (409, #3101),
+        # never a second stacked block.
         owners_a = await app_state.state.model.users.get_group_by_name(
             f"owners-{ws_a}"
         )
@@ -6228,7 +6338,18 @@ class TestWorkspaceGroupSharing:
             headers=headers,
             json={"group_id": owners_a["id"]},
         )
-        assert resp.status_code == 200
+        assert resp.status_code == 409
+        assert "already has access" in resp.json()["detail"]
+        entries = await app_state.state.model.acl.get_acl_entries(
+            f"/workspaces/{ws_a}"
+        )
+        owners_entries = [
+            e
+            for e in entries
+            if e["principal_type"] == model.PRINCIPAL_GROUP
+            and e["group_id"] == owners_a["id"]
+        ]
+        assert len(owners_entries) == 1  # the seeded wildcard, not a stack
 
     async def test_replace_acl_rejects_other_workspaces_role_group(
         self, client, user, app_state
@@ -10621,6 +10742,89 @@ class TestWorkspaceExportImport:
             assert metadata["name"] == "export-test"
             assert "instance_id" in metadata
 
+    async def test_export_missing_tar_binary_is_clean_500(
+        self, client, admin_user, user, app
+    ):
+        """A tar that cannot start fails before the response begins —
+        a clean 500, not an empty 200 body (#3101)."""
+        headers = await self._user_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces", headers=headers, json={"name": "no-tar"}
+        )
+        ws = resp.json()
+        with patch("shutil.which", return_value=None):
+            resp = await client.get(
+                f"/api/v1/workspaces/{ws['id']}/export", headers=headers
+            )
+        assert resp.status_code == 500
+        assert "tar binary" in resp.json()["detail"]
+
+    async def test_export_tar_failure_aborts_body(
+        self, client, admin_user, user, app, caplog
+    ):
+        """A tar that fails mid-run must not deliver a clean 200 with a
+        truncated archive: the stream aborts and the failure is logged
+        at ERROR with tar's stderr (#3101)."""
+        import logging
+
+        headers = await self._user_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces",
+            headers=headers,
+            json={"name": "bad-tar"},
+        )
+        ws = resp.json()
+        home = app.state.workspaces.home_path(ws["id"])
+        home.mkdir(parents=True, exist_ok=True)
+        (home / "data.txt").write_text("x" * 4096)
+
+        real_args = app.state.workspaces.build_export_tar_args
+
+        def broken_args(output, tmpdir, home_dir):
+            # Real archive args plus a member that cannot exist: tar
+            # streams the valid members, then exits nonzero.
+            return real_args(output, tmpdir, home_dir) + [
+                "/nonexistent-member-xyz"
+            ]
+
+        caplog.set_level(logging.ERROR, logger="klangk.api.workspaces")
+        with patch.object(
+            app.state.workspaces, "build_export_tar_args", broken_args
+        ):
+            with pytest.raises(RuntimeError, match="Export tar failed"):
+                await client.get(
+                    f"/api/v1/workspaces/{ws['id']}/export", headers=headers
+                )
+        assert any(
+            "export tar failed" in r.message.lower() for r in caplog.records
+        )
+
+    async def test_export_subprocess_spawn_failure_aborts_body(
+        self, client, admin_user, user, app
+    ):
+        """A spawn failure after the pre-flight (e.g. the binary
+        vanished) aborts the stream too, without leaking the stderr
+        temp file (#3101)."""
+        headers = await self._user_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces",
+            headers=headers,
+            json={"name": "spawn-fail"},
+        )
+        ws = resp.json()
+
+        async def no_exec(*args, **kwargs):
+            raise FileNotFoundError("tar vanished")
+
+        with patch(
+            "klangk.api.workspaces.asyncio.create_subprocess_exec",
+            no_exec,
+        ):
+            with pytest.raises(FileNotFoundError):
+                await client.get(
+                    f"/api/v1/workspaces/{ws['id']}/export", headers=headers
+                )
+
     async def test_export_requires_permission(
         self, client, admin_user, user, app_state
     ):
@@ -12279,6 +12483,40 @@ class TestInvitations:
         assert resp.status_code == 400
         assert "pending invitation" in resp.json()["detail"]
 
+    async def test_send_invitation_race_integrity_error(
+        self, client, app, admin_user, app_state
+    ):
+        """A concurrent send that wins the pending-invitation race (the
+        m0028 partial unique index is the backstop) gets the pre-check's
+        400, and only one invitation row exists (#3101)."""
+        headers = await self._admin_headers(client)
+        with (
+            patch.object(
+                app.state.model.invitations,
+                "create_invitation",
+                side_effect=SAIntegrityError(
+                    "statement", {}, Exception("UNIQUE constraint failed")
+                ),
+            ),
+            patch.object(
+                emailsvc_mod.EmailService,
+                "send_invitation_email",
+                new_callable=AsyncMock,
+            ) as mock_send,
+        ):
+            resp = await client.post(
+                "/api/v1/invitations",
+                headers=headers,
+                json={"email": "inv-race@example.com"},
+            )
+        assert resp.status_code == 400
+        assert "pending invitation" in resp.json()["detail"]
+        mock_send.assert_not_called()
+        result = await app.state.model.invitations.list_invitations(
+            q="inv-race"
+        )
+        assert result["total"] == 0
+
     async def test_send_invitation_invalid_email(self, client, admin_user):
         headers = await self._admin_headers(client)
         resp = await client.post(
@@ -12763,6 +13001,42 @@ class TestInvitations:
         )
         assert resp.status_code == 400
         assert "already exists" in resp.json()["detail"]
+
+    async def test_accept_invite_race_integrity_error(
+        self, client, app, admin_user, app_state
+    ):
+        """A concurrent accept/registration that wins the UNIQUE
+        constraint surfaces as the pre-check's 400, not a 500 (#3101)."""
+        headers = await self._admin_headers(client)
+        with patch.object(
+            emailsvc_mod.EmailService,
+            "send_invitation_email",
+            new_callable=AsyncMock,
+        ):
+            create_resp = await client.post(
+                "/api/v1/invitations",
+                headers=headers,
+                json={"email": "ace-race@example.com"},
+            )
+        inv_id = create_resp.json()["id"]
+        token = _auth().create_invitation_token(inv_id, "ace-race@example.com")
+
+        with patch.object(
+            app.state.model.users,
+            "create_user",
+            side_effect=SAIntegrityError(
+                "statement", {}, Exception("UNIQUE constraint failed")
+            ),
+        ):
+            resp = await client.post(
+                "/api/v1/auth/accept-invite",
+                json={"token": token, "password": "newpassword"},
+            )
+        assert resp.status_code == 400
+        assert "already exists" in resp.json()["detail"]
+        # The invitation is still pending — nothing was consumed.
+        invitation = await app.state.model.invitations.get_invitation(inv_id)
+        assert invitation["status"] == "pending"
 
     async def test_accept_invite_wrong_purpose_token(self, client, db):
         # Use a verification token (wrong purpose)

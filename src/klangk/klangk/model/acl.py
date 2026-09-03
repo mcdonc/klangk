@@ -95,6 +95,26 @@ def _reject_agent_principal(entry: dict) -> None:
         )
 
 
+def next_position(entries: list[dict]) -> int:
+    """One past the resource's current highest ACE position."""
+    return max((e["position"] for e in entries), default=-1) + 1
+
+
+def is_principal_entry(
+    entry: dict, principal_type: int, user_id, group_id
+) -> bool:
+    """True when *entry* grants to the given principal.
+
+    The ids are compared as exact values (``None`` matches ``None``);
+    ``row_to_acl_entry`` always materializes both columns.
+    """
+    return (
+        entry["principal_type"] == principal_type
+        and entry["user_id"] == user_id
+        and entry["group_id"] == group_id
+    )
+
+
 class ACLModel(Submodel):
     """ACL data access, through ``app_state.db``.
 
@@ -182,6 +202,91 @@ class ACLModel(Submodel):
             (resource,),
         )
         return [row_to_acl_entry(row) for row in rows]
+
+    async def _select_acl_entries(self, db, resource: str) -> list[dict]:
+        """Read a resource's entries on the passed connection.
+
+        The share helper reads inside its ``write_transaction`` so the
+        duplicate check and position allocation see the same locked
+        snapshot the writes land on (#3101).
+        """
+        cursor = await db.execute(
+            "SELECT id, resource, position, action, principal_type,"
+            " user_id, group_id, system_principal, permission"
+            " FROM acl_entries WHERE resource = ?"
+            " ORDER BY position",
+            (resource,),
+        )
+        return [row_to_acl_entry(row) for row in await cursor.fetchall()]
+
+    async def add_principal_entries(
+        self,
+        resource: str,
+        permissions: list[str],
+        principal_type: int,
+        user_id: str | None = None,
+        group_id: str | None = None,
+    ) -> bool:
+        """Append a principal's permission block atomically (#3101).
+
+        The duplicate check, the position allocation, and every insert
+        run in one ``write_transaction`` (write lock held throughout),
+        so a failure anywhere rolls the whole block back — no partial
+        share with ``view`` but not ``files-*`` — and concurrent shares
+        serialize instead of computing overlapping positions or
+        stacking duplicate blocks. Returns True when the block was
+        added, False when the principal already holds entries on the
+        resource.
+
+        Raises the same guards as :meth:`add_acl_entry`
+        (:class:`AgentPrincipalError`, :class:`WorkspaceRoleScopeError`).
+        """
+        template = {
+            "action": ACTION_ALLOW,
+            "principal_type": principal_type,
+            "user_id": user_id,
+            "group_id": group_id,
+            "system_principal": None,
+        }
+        _reject_agent_principal(template)
+        async with self.app.state.db.write_transaction() as db:
+            entries = await self._load_locked_entries(
+                db, resource, principal_type, user_id, group_id
+            )
+            if entries is None:
+                return False
+            base = next_position(entries)
+            for i, permission in enumerate(permissions):
+                await self._insert_acl_entry(
+                    db,
+                    resource,
+                    {
+                        **template,
+                        "position": base + i,
+                        "permission": permission,
+                    },
+                )
+        return True
+
+    async def _load_locked_entries(
+        self, db, resource: str, principal_type: int, user_id, group_id
+    ) -> list[dict] | None:
+        """Scope-check the principal, then read the locked entry list.
+
+        Returns ``None`` when the principal already holds entries on
+        the resource (duplicate share) — the caller must not append a
+        second block. Runs on the caller's ``write_transaction``
+        connection so the answer matches the snapshot the writes land
+        on.
+        """
+        if principal_type == PRINCIPAL_GROUP and group_id is not None:
+            await self._check_role_group_scope(db, resource, group_id)
+        entries = await self._select_acl_entries(db, resource)
+        duplicate = any(
+            is_principal_entry(e, principal_type, user_id, group_id)
+            for e in entries
+        )
+        return None if duplicate else entries
 
     async def get_acl_entries_map(
         self,

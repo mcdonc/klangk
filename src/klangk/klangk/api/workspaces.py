@@ -45,7 +45,6 @@ from ..workspace_settings import (
 )
 from .common import get_app_dep
 from ..model import (
-    ACTION_ALLOW,
     EGRESS_MODE_DEFAULT,
     EGRESS_MODES,
     PRINCIPAL_GROUP,
@@ -1119,6 +1118,16 @@ async def export_workspace(
     """
     workspace = await _exportable_workspace(app, workspace_id, user["id"])
 
+    # Pre-flight before the response starts (#3101): once the first
+    # chunk goes out the status line is already 200, so a tar binary
+    # that cannot even start must fail here as a clean 500 instead of
+    # an empty 200 body.
+    if shutil.which("tar") is None:
+        raise HTTPException(
+            status_code=500,
+            detail="Export failed: the tar binary is not available",
+        )
+
     home_dir = app.state.workspaces.home_path(workspace_id)
     ws_name = workspace["name"]
 
@@ -1144,11 +1153,19 @@ async def export_workspace(
                 "-", tmpdir, home_dir
             )
 
-            proc = await asyncio.create_subprocess_exec(
-                *tar_args,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.DEVNULL,
-            )
+            # stderr goes to a temp file, not DEVNULL: on a tar failure
+            # the reason must reach the log, and a pipe would risk
+            # deadlocking on a stderr flood (#3101).
+            stderr_file = tempfile.TemporaryFile()
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    *tar_args,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=stderr_file,
+                )
+            except BaseException:
+                stderr_file.close()
+                raise
             try:
                 while True:
                     chunk = await proc.stdout.read(_CHUNK_SIZE)
@@ -1156,10 +1173,30 @@ async def export_workspace(
                         break
                     yield chunk
                 await proc.wait()
+                if proc.returncode != 0:
+                    # The status line is already sent, so the body can
+                    # only be aborted — raise so the transfer breaks
+                    # mid-stream instead of delivering a clean 200 with
+                    # a truncated archive the user later fails to
+                    # import (#3101).
+                    stderr_file.seek(0)
+                    stderr_text = stderr_file.read(2000).decode(
+                        errors="replace"
+                    )
+                    logger.error(
+                        "Workspace export tar failed (rc=%s) for %s: %s",
+                        proc.returncode,
+                        workspace_id,
+                        stderr_text,
+                    )
+                    raise RuntimeError(
+                        f"Export tar failed with rc={proc.returncode}"
+                    )
             finally:
                 if proc.returncode is None:
                     proc.kill()
                     await proc.wait()
+                stderr_file.close()
         finally:
             shutil.rmtree(tmpdir, ignore_errors=True)
 
@@ -1513,6 +1550,31 @@ class AddMemberRequest(BaseModel):
     email: str
 
 
+# What a simple share grants (#3101): one block appended atomically by
+# the model layer. ``join-workspace`` is the connect gate (#2975) and
+# ``monitor-workspace`` keeps health/status frames flowing (#2783).
+MEMBER_SHARE_PERMISSIONS = (
+    "view",
+    "monitor-workspace",
+    "join-workspace",
+    "terminal",
+    "files-view",
+    "files-download",
+    "files-write",
+)
+
+# Group shares mirror the member block minus the monitor grant the
+# role-group layout never carried.
+GROUP_SHARE_PERMISSIONS = (
+    "view",
+    "join-workspace",
+    "terminal",
+    "files-view",
+    "files-download",
+    "files-write",
+)
+
+
 @router.post("/workspaces/{workspace_id}/members")
 async def add_workspace_member(
     workspace_id: str,
@@ -1529,34 +1591,20 @@ async def add_workspace_member(
         raise HTTPException(
             status_code=400, detail="Cannot share with yourself"
         )
-    # Add ACL entries granting the target user view+monitor+join+
-    # terminal+files(+dl/ul) on this workspace, packed at the next available
-    # positions. ``join-workspace`` is the connect gate (#2975) — it rides
-    # along with ``terminal`` so a shared member keeps the ability to open
-    # the workspace at all; ``monitor`` rides along too (#2783) so the
-    # member keeps receiving health/status frames — either can also be
-    # granted alone for monitoring-only members.
-    resource = f"/workspaces/{workspace_id}"
-    existing = await app.state.model.acl.get_acl_entries(resource)
-    next_pos = max((e["position"] for e in existing), default=-1) + 1
-    for perm in (
-        "view",
-        "monitor-workspace",
-        "join-workspace",
-        "terminal",
-        "files-view",
-        "files-download",
-        "files-write",
-    ):
-        await app.state.model.acl.add_acl_entry(
-            resource,
-            next_pos,
-            ACTION_ALLOW,
-            perm,
-            PRINCIPAL_USER,
-            user_id=target["id"],
+    # Append the member's whole permission block in one transaction —
+    # positions allocated inside it, duplicates detected instead of
+    # stacking a second block (#3101).
+    shared = await app.state.model.acl.add_principal_entries(
+        f"/workspaces/{workspace_id}",
+        list(MEMBER_SHARE_PERMISSIONS),
+        PRINCIPAL_USER,
+        user_id=target["id"],
+    )
+    if not shared:
+        raise HTTPException(
+            status_code=409,
+            detail="This user already has access to the workspace",
         )
-        next_pos += 1
     app.state.sockets.notify_user_workspaces_changed(user["id"])
     app.state.sockets.notify_user_workspaces_changed(target["id"])
     return {
@@ -1834,26 +1882,16 @@ async def add_workspace_group(
     group = await app.state.model.users.get_group_by_id(body.group_id)
     if group is None:
         raise HTTPException(status_code=404, detail="Group not found")
-    resource = f"/workspaces/{workspace_id}"
-    existing = await app.state.model.acl.get_acl_entries(resource)
-    max_pos = max((e["position"] for e in existing), default=-1)
-    for i, perm in enumerate(
-        [
-            "view",
-            "join-workspace",
-            "terminal",
-            "files-view",
-            "files-download",
-            "files-write",
-        ]
-    ):
-        await app.state.model.acl.add_acl_entry(
-            resource,
-            max_pos + 1 + i,
-            ACTION_ALLOW,
-            perm,
-            PRINCIPAL_GROUP,
-            group_id=body.group_id,
+    shared = await app.state.model.acl.add_principal_entries(
+        f"/workspaces/{workspace_id}",
+        list(GROUP_SHARE_PERMISSIONS),
+        PRINCIPAL_GROUP,
+        group_id=body.group_id,
+    )
+    if not shared:
+        raise HTTPException(
+            status_code=409,
+            detail="This group already has access to the workspace",
         )
     return {"status": "shared", "group_id": group["id"], "name": group["name"]}
 

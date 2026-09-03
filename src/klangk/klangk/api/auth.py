@@ -22,6 +22,7 @@ from fastapi.security import HTTPAuthorizationCredentials
 
 import httpx
 from pydantic import BaseModel
+from sqlalchemy.exc import IntegrityError as SAIntegrityError
 
 from .. import (
     auth,
@@ -147,9 +148,7 @@ async def register(
     # Insert user and send email in a transaction — if the email fails,
     # the user insert is rolled back so they can try again.
     async with app.state.model.transaction() as db:
-        await app.state.model.users.insert_unverified_user(
-            db, user_id, req.email, password_hash
-        )
+        await insert_user_or_race_400(app, db, user_id, req, password_hash)
         logger.info("User inserted (uncommitted): %s", req.email)
         await send_email(
             app.state.email.send_verification_email(
@@ -161,6 +160,27 @@ async def register(
         logger.info("Verification email sent, committing user: %s", req.email)
 
     return {"status": "pending_verification", "email": req.email}
+
+
+async def insert_user_or_race_400(
+    app, db, user_id, req, password_hash
+) -> None:
+    """Insert the unverified user row, mapping a lost race to a 400.
+
+    The duplicate-email pre-check in ``register`` is not atomic with
+    the INSERT, so a concurrent registration that wins the UNIQUE
+    constraint must surface as the same opaque 400 the pre-check
+    returns — no enumeration, no 500 (#3101; production-path twin of
+    the #877 fix).
+    """
+    try:
+        await app.state.model.users.insert_unverified_user(
+            db, user_id, req.email, password_hash
+        )
+    except SAIntegrityError:
+        raise HTTPException(
+            status_code=400, detail="Registration failed"
+        ) from None
 
 
 @router.get("/auth/verify")
@@ -659,6 +679,28 @@ class AcceptInviteRequest(BaseModel):
     password: str
 
 
+async def create_invited_user(
+    request: Request, email: str, password: str
+) -> dict:
+    """Create the verified account for an accepted invitation.
+
+    The duplicate-email pre-check in the caller is not atomic with the
+    INSERT, so a concurrent accept (or registration) that wins the
+    UNIQUE constraint must surface as the same 400 the pre-check
+    returns, not an unhandled 500 (#3101).
+    """
+    password_hash = await asyncio.to_thread(auth.hash_password, password)
+    try:
+        return await request.app.state.model.users.create_user(
+            email, password_hash, verified=True
+        )
+    except SAIntegrityError:
+        raise HTTPException(
+            status_code=400,
+            detail="An account with this email already exists",
+        ) from None
+
+
 @router.post("/auth/accept-invite")
 async def accept_invite(req: AcceptInviteRequest, request: Request):
     """Accept an invitation and create a verified account."""
@@ -685,10 +727,7 @@ async def accept_invite(req: AcceptInviteRequest, request: Request):
             status_code=400, detail="An account with this email already exists"
         )
 
-    password_hash = await asyncio.to_thread(auth.hash_password, req.password)
-    user = await request.app.state.model.users.create_user(
-        email, password_hash, verified=True
-    )
+    user = await create_invited_user(request, email, req.password)
     await request.app.state.model.invitations.mark_invitation_accepted(
         invitation_id
     )
