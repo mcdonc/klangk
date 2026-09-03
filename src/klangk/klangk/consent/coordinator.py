@@ -463,6 +463,26 @@ class ConsentCoordinator:
             # rule-management view (#2335 slice A) without a reconnect.
             await self._broadcast_rules(hold["workspace_id"])
 
+    def _pop_hold(
+        self, request_id: str, decider_workspace: str | None
+    ) -> dict | None:
+        """Pop + timeout-cancel a held request, or None when untouchable.
+
+        None when the request is not currently held (already resolved, timed
+        out, never held) or -- defense-in-depth -- when a workspace-scoped
+        decider would decide a request outside its workspace
+        (``decider_workspace``); in that case nothing is popped (we only
+        peeked) -- the hold stays for a decider actually scoped to it.
+        """
+        hold = self._holds.get(request_id)
+        if hold is None:
+            return None
+        if not _hold_in_scope(hold, decider_workspace):
+            return None
+        del self._holds[request_id]
+        hold["task"].cancel()
+        return hold
+
     async def resolve(
         self,
         request_id: str,
@@ -479,20 +499,14 @@ class ConsentCoordinator:
         frame so co-deciders drop it (first-decision-wins across N deciders).
         Returns the verdict dict relayed to the sidecar, or ``None`` if the
         request is not currently held (already resolved, timed out, never
-        held) or -- defense-in-depth -- if a workspace-scoped decider tries to
-        decide a request outside its workspace (``decider_workspace``).
+        held) or outside the decider's workspace (``decider_workspace``).
         """
-        hold = self._holds.get(request_id)
+        hold = self._pop_hold(request_id, decider_workspace)
         if hold is None:
             return None
-        if not _hold_in_scope(hold, decider_workspace):
-            # Restore nothing (we only peeked); the hold stays for a decider
-            # actually scoped to it.
-            return None
-        hold = self._holds.pop(request_id)
-        hold["task"].cancel()
         forever_allow_row: dict | None = None
         forever_deny_row: dict | None = None
+        stranded = False
         try:
             row = await self.app.state.model.egress_consent.decide(
                 request_id, decision, decided_by, duration
@@ -501,11 +515,13 @@ class ConsentCoordinator:
             # decide() failed (DB error). The hold's own timeout is already
             # cancelled, so we MUST resolve the Future ourselves -- otherwise
             # the sidecar relay awaits it forever ("no hold pending forever").
-            # Fail-close to deny + broadcast so co-deciders drop it; the
-            # pending row is left for GC.
+            # Fail-close to deny + broadcast so co-deciders drop it; the row
+            # is expired best-effort AFTER the Future is resolved (below), so
+            # a cancellation during that expire can never hang the relay.
             logger.exception("consent: resolve failed; fail-closing to deny")
             verdict = {"decision": VERDICT_DENY, "reason": "error"}
             resolved = "expired"
+            stranded = True
         else:
             (
                 verdict,
@@ -521,6 +537,10 @@ class ConsentCoordinator:
             forever_allow_row,
             forever_deny_row,
         )
+        if stranded:
+            # A hold-less pending row can never be resolved by anyone yet
+            # still occupies a pending-cap slot (#3081); best-effort expire.
+            await self._expire_stranded(request_id)
         return verdict
 
     async def _persist_forever_allow(self, row: dict) -> None:
@@ -802,14 +822,7 @@ class ConsentCoordinator:
         hold = self._holds.pop(request_id, None)
         if hold is None:
             return
-        try:
-            await self.app.state.model.egress_consent.expire_pending(
-                request_id
-            )
-        except Exception:
-            logger.exception(
-                "consent: failed to expire held request %s", request_id[:8]
-            )
+        await self._expire_stranded(request_id)
         if not hold["future"].done():
             hold["future"].set_result(
                 {
@@ -819,6 +832,37 @@ class ConsentCoordinator:
                 }
             )
         self._broadcast_resolved(request_id, hold["workspace_id"], "expired")
+
+    async def _expire_stranded(self, request_id: str) -> None:
+        """Best-effort expire of a pending row whose hold is gone (#3081).
+
+        Called only after the hold was popped (``resolve``'s decide-failure
+        arm, ``_fail_close``): a row left ``pending`` with no live hold can
+        never be resolved -- ``snapshot()`` replays only rows still held,
+        and a verdict for its id returns ``None`` -- yet ``count_pending``
+        keeps counting it against the workspace's pending cap until the
+        retention sweep (default 30 days) or the startup reaper, so enough
+        of them wedge every new hold into ``rate_limited`` denials.
+        Retried once: a first failure is typically transient (a lock
+        timeout that rolled back, say) and sometimes clears on a fresh
+        attempt. The retry can re-block up to ``busy_timeout`` again, so
+        ``stop()`` across N holds serializes at most 2N slow attempts --
+        bounded, and the reaper remains the backstop. A second failure is
+        logged and the row falls back to the startup reaper
+        (``expire_all_pending``).
+        """
+        for attempt in (1, 2):
+            try:
+                await self.app.state.model.egress_consent.expire_pending(
+                    request_id
+                )
+                return
+            except Exception:
+                logger.exception(
+                    "consent: failed to expire held request %s (attempt %d)",
+                    request_id[:8],
+                    attempt,
+                )
 
     def _fanout(self, request: dict) -> None:
         """Broadcast the pending request to the workspace's deciders (#2244).

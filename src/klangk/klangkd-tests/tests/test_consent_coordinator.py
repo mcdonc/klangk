@@ -969,6 +969,74 @@ class TestConsentCoordinatorResolve:
         assert frame["type"] == "egress_resolved"
         assert frame["decision"] == "expired"
         assert coord._holds == {}  # hold gone, no orphan
+        # #3081: the stranded row is expired best-effort, not left pending
+        # invisible-but-counted against the workspace's pending cap.
+        app.state.model.egress_consent.expire_pending.assert_awaited_once_with(
+            "rid-1"
+        )
+
+    async def test_resolve_expire_retry_recovers_transient_error(self):
+        # #3081: decide() raises AND the first expire attempt fails
+        # transiently -- the single retry lands, the row does not linger
+        # pending for the retention window.
+        app = _app(request=request())
+        app.state.model.egress_consent.decide = AsyncMock(
+            side_effect=RuntimeError("db gone")
+        )
+        app.state.model.egress_consent.expire_pending = AsyncMock(
+            side_effect=[RuntimeError("db locked"), True]
+        )
+        coord = ConsentCoordinator(app)
+        fut = await coord.hold(FULL_WS, "1.2.3.4", 443)
+        verdict = await coord.resolve("rid-1", "allowed", "a@x")
+        assert verdict == {"decision": "deny", "reason": "error"}
+        assert app.state.model.egress_consent.expire_pending.await_count == 2
+        assert all(
+            call.args == ("rid-1",)
+            for call in app.state.model.egress_consent.expire_pending.await_args_list
+        )
+        assert fut.result()["decision"] == "deny"
+
+    async def test_resolve_expire_double_failure_still_resolves_deny(self):
+        # #3081: decide() raises AND both expire attempts fail -- the Future
+        # still resolves deny (the expire runs after _finish_resolve, so its
+        # failure can never hang the relay); the row falls back to the
+        # startup reaper.
+        app = _app(request=request())
+        app.state.model.egress_consent.decide = AsyncMock(
+            side_effect=RuntimeError("db gone")
+        )
+        app.state.model.egress_consent.expire_pending = AsyncMock(
+            side_effect=RuntimeError("db gone")
+        )
+        coord = ConsentCoordinator(app)
+        fut = await coord.hold(FULL_WS, "1.2.3.4", 443)
+        verdict = await coord.resolve("rid-1", "allowed", "a@x")
+        assert verdict == {"decision": "deny", "reason": "error"}
+        assert fut.done() and fut.result()["decision"] == "deny"
+        assert app.state.model.egress_consent.expire_pending.await_count == 2
+
+    async def test_resolve_error_arm_resolves_future_before_expire(self):
+        # The stranded expire is awaited only AFTER the Future is resolved:
+        # a cancellation delivered during the (best-effort) expire can no
+        # longer hang the sidecar relay awaiting the Future.
+        app = _app(request=request())
+        app.state.model.egress_consent.decide = AsyncMock(
+            side_effect=RuntimeError("db gone")
+        )
+        coord = ConsentCoordinator(app)
+        fut = await coord.hold(FULL_WS, "1.2.3.4", 443)
+        fut_done_at_expire: list[bool] = []
+
+        async def _expire(request_id):
+            fut_done_at_expire.append(fut.done())
+
+        app.state.model.egress_consent.expire_pending = AsyncMock(
+            side_effect=_expire
+        )
+        verdict = await coord.resolve("rid-1", "allowed", "a@x")
+        assert verdict == {"decision": "deny", "reason": "error"}
+        assert fut_done_at_expire == [True]
 
     async def test_concurrent_resolves_first_decision_wins(self):
         # two deciders resolve the same hold concurrently: exactly one wins
@@ -1234,7 +1302,8 @@ class TestConsentCoordinatorTimeout:
 
     async def test_timeout_still_denies_when_expire_raises(self):
         # expire_pending failing must not strand the hold -- it logs + still
-        # resolves the Future deny.
+        # resolves the Future deny. Both attempts fail (#3081 adds one
+        # retry); the row then falls back to the startup reaper.
         app = _app(timeout=0.05, request=request())
         app.state.model.egress_consent.expire_pending = AsyncMock(
             side_effect=RuntimeError("db gone")
@@ -1247,9 +1316,25 @@ class TestConsentCoordinatorTimeout:
             "reason": "timeout",
             "duration": "once",
         }
-        app.state.model.egress_consent.expire_pending.assert_awaited_once_with(
-            "rid-1"
+        assert app.state.model.egress_consent.expire_pending.await_count == 2
+        assert all(
+            call.args == ("rid-1",)
+            for call in app.state.model.egress_consent.expire_pending.await_args_list
         )
+
+    async def test_timeout_expire_retry_recovers_transient_error(self):
+        # #3081: the first expire attempt fails transiently -- the retry
+        # lands and the row does not linger pending with no live hold.
+        app = _app(timeout=0.05, request=request())
+        app.state.model.egress_consent.expire_pending = AsyncMock(
+            side_effect=[RuntimeError("db locked"), True]
+        )
+        coord = ConsentCoordinator(app)
+        fut = await coord.hold(FULL_WS, "1.2.3.4", 443)
+        verdict = await fut
+        assert verdict["decision"] == "deny"
+        assert app.state.model.egress_consent.expire_pending.await_count == 2
+        assert coord._holds == {}
 
 
 class TestConsentCoordinatorStop:

@@ -1955,6 +1955,15 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   switch clears the stored window (unrelated edits that merely re-send
   the current mode leave a live pause alone) so it cannot resurrect on a
   later switch back.
+- **Consent rate-limit wedge on DB errors (#3081).** When a database
+  error struck while recording a decider verdict or expiring a timed-out
+  request, the row stayed `pending` forever with no live hold — invisible
+  to deciders yet counted against the workspace's pending cap
+  (`KLANGKD_EGRESS_CONSENT_RATE_LIMIT`), eventually wedging every new
+  request into `rate_limited` denials. Both error paths now fail-close
+  the verdict and retry expiring the row once; a row that still cannot
+  be expired is reaped at the next backend start instead of lingering
+  for the retention window.
 - **Malformed client frames no longer drop the WebSocket session
   (#3071).** Any command handler exception now gets an error frame and
   the connection stays up, instead of ending the whole session:
