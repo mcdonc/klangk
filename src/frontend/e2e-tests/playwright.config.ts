@@ -49,7 +49,14 @@ const webkitUse = {
 
 export default defineConfig({
   testDir: "./e2e",
-  timeout: 300_000,
+  // #3065: on CI the test timeout must exceed the worst-case setup chain
+  // (register + workspace-create retries + login) PLUS the 240s
+  // container-readiness budget — otherwise a slow-but-succeeding setup
+  // pushes the readiness wait into the hard 300s kill, which surfaces as
+  // an opaque "Test timeout of 300000ms exceeded" instead of the
+  // diagnostic readiness rejection (and the burn wastes the retry budget
+  // on the same starved bring-up). Locally 300s stays plenty.
+  timeout: process.env.CI ? 480_000 : 300_000,
   retries: process.env.CI ? 1 : 0,
   workers: process.env.KLANGKBUILD_E2E_WORKERS
     ? /^\d+$/.test(process.env.KLANGKBUILD_E2E_WORKERS)

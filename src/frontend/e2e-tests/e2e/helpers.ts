@@ -418,6 +418,11 @@ export async function openWorkspace(
   // race where a separate waitForTerminalReady listener misses the frame.
   let resolveContainer: () => void;
   let resolveTerminal: (() => void) | null = null;
+  // #3065: latch the terminal frame. The terminal wait's budget starts
+  // when the container becomes ready (below), so a terminal_started
+  // frame that lands in the gap before that wait is armed must not be
+  // lost to a null resolveTerminal.
+  let terminalSeen = false;
   const secs = Math.round(containerTimeout / 1000);
   const containerPromise = new Promise<void>((resolve, reject) => {
     resolveContainer = resolve;
@@ -426,23 +431,38 @@ export async function openWorkspace(
       containerTimeout,
     );
   });
-  const terminalPromise = waitForTerminal
-    ? new Promise<void>((resolve, reject) => {
-        resolveTerminal = resolve;
-        setTimeout(
-          () =>
-            reject(new Error(`Terminal did not become ready within ${secs}s`)),
-          containerTimeout,
-        );
-      })
-    : Promise.resolve();
+  // #3065: the terminal phase gets its OWN full budget, counted from
+  // container_ready — not the container budget's remainder. Under CI's
+  // four-suite contention a container that comes up at, say, 200s left
+  // the terminal start (PTY bring-up) with a fraction of the budget and
+  // failed as "Terminal did not become ready within 240s" even though
+  // the terminal phase itself had barely started.
+  const terminalWait = waitForTerminal
+    ? () =>
+        new Promise<void>((resolve, reject) => {
+          if (terminalSeen) {
+            resolve();
+            return;
+          }
+          resolveTerminal = resolve;
+          setTimeout(
+            () =>
+              reject(
+                new Error(`Terminal did not become ready within ${secs}s`),
+              ),
+            containerTimeout,
+          );
+        })
+    : () => Promise.resolve();
 
   page.on("websocket", (ws: { on: Function }) => {
     ws.on("framereceived", (frame: { payload: string | Buffer }) => {
       const text = frame.payload.toString();
       if (text.includes("container_ready")) resolveContainer!();
-      if (resolveTerminal && text.includes("terminal_started"))
-        resolveTerminal();
+      if (text.includes("terminal_started")) {
+        terminalSeen = true;
+        if (resolveTerminal) resolveTerminal();
+      }
     });
   });
 
@@ -455,7 +475,7 @@ export async function openWorkspace(
   await page.goto(`/#/workspace/${workspaceId}`, { waitUntil: "load" });
   await waitForFlutter(page);
   await containerPromise;
-  await terminalPromise;
+  await terminalWait();
   await dismissAccessibility(page);
 }
 

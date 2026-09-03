@@ -2,7 +2,10 @@ import { test, expect } from "@playwright/test";
 import WebSocket from "ws";
 import { createAndOpenWorkspace, API_BASE } from "./helpers";
 
-test("new terminal tab round-trip completes within 2 seconds", async ({
+// #3065: the title said "2 seconds" long after the assert moved to 10s
+// (#2649) — the mismatch misled flake triage into re-litigating the
+// budget instead of the real failure (readiness-hang in setup).
+test("new terminal tab round-trip completes within 10 seconds", async ({
   page,
   request,
 }) => {

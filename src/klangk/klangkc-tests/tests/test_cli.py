@@ -1203,6 +1203,24 @@ class TestKlangkClient:
             with pytest.raises(AuthError, match="Session expired"):
                 client.list_workspaces()
 
+    def test_find_workspace_by_id(self):
+        # #3065: id-based resolve (owned or shared) — the TUI's
+        # rename-vs-deletion recovery on a name miss.
+        client = KlangkClient("http://test:8995", "token")
+        mine = Workspace(id="ws-mine", name="alpha", created_at="x")
+        shared = Workspace(id="ws-shared", name="beta", created_at="x")
+        client.list_workspaces = MagicMock(return_value=[mine])
+        client.list_shared_workspaces = MagicMock(return_value=[shared])
+        assert client.find_workspace_by_id("ws-shared") is shared
+        assert client.find_workspace_by_id("ws-mine") is mine
+
+    def test_find_workspace_by_id_not_found(self):
+        client = KlangkClient("http://test:8995", "token")
+        client.list_workspaces = MagicMock(return_value=[])
+        client.list_shared_workspaces = MagicMock(return_value=[])
+        with pytest.raises(WorkspaceNotFoundError):
+            client.find_workspace_by_id("nope")
+
     def test_duplicate_workspace(self):
         client = KlangkClient("http://test:8995", "token")
         fake_ws = MagicMock(id="src-id")

@@ -2,6 +2,17 @@ import { test, expect } from "@playwright/test";
 import WebSocket from "ws";
 import { createAndOpenWorkspace, API_BASE } from "./helpers";
 
+// #3065: CI-aware budget for the parallel-WS path's container and PTY
+// bring-up phases (connect handshake, container_ready waits,
+// terminal_start). They sat at a flat 60s while the page path already
+// doubles its readiness budget to 240s on CI (#2745) — under the
+// four-suite VM contention the WS path's budget blew first ("recv timed
+// out" / "connect timed out") and the retry only passed once the load
+// spike had passed. Post-readiness command round-trips (new window,
+// rename, close, list) keep the 60s default: they are cheap against an
+// already-running container.
+const CONTAINER_PHASE_TIMEOUT = process.env.CI ? 240_000 : 60_000;
+
 // Helper: open a parallel WebSocket, connect to the workspace, wait for
 // container_ready, then expose send/receive for window management commands.
 
@@ -90,7 +101,7 @@ async function connectToWorkspace(
     const timeout = setTimeout(() => {
       ws.close();
       reject(new Error("connect timed out"));
-    }, 60_000);
+    }, CONTAINER_PHASE_TIMEOUT);
 
     const client = new TerminalWsClient(ws);
 
@@ -106,7 +117,10 @@ async function connectToWorkspace(
     // Drive through the connection flow
     (async () => {
       // Wait for container_ready
-      await client.recvUntil((m) => m.type === "container_ready");
+      await client.recvUntil(
+        (m) => m.type === "container_ready",
+        CONTAINER_PHASE_TIMEOUT,
+      );
       // Send ui_ready
       client.send({ cmd: "ui_ready" });
       // Wait for container_ready
@@ -114,6 +128,7 @@ async function connectToWorkspace(
         (m) =>
           m.type === "event" &&
           (m.event as Record<string, unknown>)?.name === "container_ready",
+        CONTAINER_PHASE_TIMEOUT,
       );
       clearTimeout(timeout);
       resolve(client);
@@ -129,7 +144,12 @@ async function startTerminalAndGetWindows(
   client: TerminalWsClient,
 ): Promise<WindowInfo[]> {
   client.send({ cmd: "terminal_start", cols: 80, rows: 24 });
-  const msg = await client.recvUntil((m) => m.type === "terminal_windows");
+  // PTY bring-up in a just-started container: same CI contention
+  // family as the container phases (#3065).
+  const msg = await client.recvUntil(
+    (m) => m.type === "terminal_windows",
+    CONTAINER_PHASE_TIMEOUT,
+  );
   return msg.windows as WindowInfo[];
 }
 
