@@ -1960,6 +1960,17 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   treated as a deletion — popping the form and the screen mid-rename. The
   screen now re-resolves the workspace by id on a name miss, adopts the
   new name, and stays mounted; only a genuinely deleted workspace pops.
+- **Connects can no longer attach to a torn-down workspace session
+  (#3070).** A WebSocket connect that raced the last member's
+  disconnect could attach to a session already removed from the
+  connection registry: the new member then silently missed every
+  workspace broadcast (terminal tabs, shared terminals, lifecycle
+  events) until reconnecting, and the orphaned session's background
+  token-renewal task and window watcher leaked for the life of the
+  process. The registry mapping is now re-verified under the session
+  lock on attach: a popped-but-unsuperseded session reclaims its slot,
+  and one that a newer session replaced routes the subscriber to the
+  replacement.
 - **Terminal share/unshare/close no longer hang clients on refusal paths
   (#3057).** The WebSocket handlers for `share_window`, `unshare_window`,
   `join_shared_terminal`, and the own-window commands (`terminal_new_window`,

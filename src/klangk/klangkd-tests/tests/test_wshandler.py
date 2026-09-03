@@ -5821,6 +5821,104 @@ class TestCleanupSubscriberRace:
         sockets.sessions.pop("ws-conc", None)
 
 
+class TestSessionOrphanRace:
+    """#3070: ``add_subscriber`` must never attach to a session that a
+    racing last-disconnect ``remove_session`` already popped from the
+    registry — such a subscriber misses every later workspace broadcast
+    (``get_session`` resolves a different session) and the orphan's
+    token-renewal task and window watcher leak for the process life."""
+
+    async def test_popped_session_reclaims_its_slot(self, app_state):
+        """The #3070 interleaving: connection B resolves the session,
+        then A's last-disconnect ``remove_subscriber`` +
+        ``remove_session`` run to completion (pop + reset) before B's
+        ``add_subscriber`` acquires the lock — B's session reclaims the
+        empty slot instead of taking B as an orphan subscriber."""
+        app_state = _make_app_state()
+        sockets = app_state.state.sockets
+        sock_a = _mock_sock()
+        session = sockets.get_or_create_session("ws-3070-reclaim", app_state)
+        with patch.object(
+            WorkspaceSession, "start_window_sync", lambda s: None
+        ):
+            await session.add_subscriber(sock_a, "cid")
+
+            # Connection A (last disconnect) runs to completion.
+            assert await session.remove_subscriber(sock_a) is True
+            await sockets.remove_session("ws-3070-reclaim")
+            assert "ws-3070-reclaim" not in sockets.sessions
+
+            # Connection B's add finally acquires the lock.
+            sock_b = _mock_sock()
+            await session.add_subscriber(sock_b, "cid")
+
+        assert sockets.sessions["ws-3070-reclaim"] is session
+        assert sock_b in session.subscribers
+
+        # And B's own disconnect still finds the mapped session and
+        # tears it down — pre-fix, cleanup resolved nothing, so the
+        # orphan's token-renewal task and window watcher leaked.
+        assert await session.remove_subscriber(sock_b) is True
+        await sockets.remove_session("ws-3070-reclaim")
+        assert "ws-3070-reclaim" not in sockets.sessions
+
+    async def test_superseded_session_routes_to_replacement(self, app_state):
+        """When a replacement session was created in the pop→add gap,
+        the stale reference must not attach: the subscriber is routed
+        to the mapped replacement instead."""
+        app_state = _make_app_state()
+        sockets = app_state.state.sockets
+        session = sockets.get_or_create_session("ws-3070-swap", app_state)
+        # The racing last-disconnect pop, then a replacement connection
+        # creating a fresh session before B's add runs.
+        sockets.sessions.pop("ws-3070-swap")
+        await session.reset()
+        replacement = sockets.get_or_create_session("ws-3070-swap", app_state)
+
+        sock = _mock_sock()
+        with patch.object(
+            WorkspaceSession, "start_window_sync", lambda s: None
+        ):
+            await session.add_subscriber(sock, "cid")
+
+        assert sock not in session.subscribers
+        assert sock in replacement.subscribers
+        assert sockets.sessions["ws-3070-swap"] is replacement
+
+    async def test_registryless_session_attaches_directly(self, app_state):
+        """A bare session (``app=None``, no registry to verify against)
+        keeps the direct attach."""
+        sock = _mock_sock()
+        session = WorkspaceSession("ws-3070-noapp")
+        with patch.object(
+            WorkspaceSession, "start_window_sync", lambda s: None
+        ):
+            await session.add_subscriber(sock, "cid")
+        assert sock in session.subscribers
+
+    async def test_remove_session_skips_moved_on_mapping(self, app_state):
+        """#3070: when the mapping moves while ``remove_session`` waits
+        for the lock, the mapped replacement owns its lifecycle — the
+        stale remover must not pop or reset it."""
+        app_state = _make_app_state()
+        sockets = app_state.state.sockets
+        session = sockets.get_or_create_session("ws-3070-moved", app_state)
+
+        with patch.object(WorkspaceSession, "reset", new_callable=AsyncMock):
+            async with session.lock:
+                remover = asyncio.create_task(
+                    sockets.remove_session("ws-3070-moved")
+                )
+                await asyncio.sleep(0)  # remover queues on the lock
+                # The slot moves while it waits (reclaimed/replaced).
+                replacement = WorkspaceSession("ws-3070-moved", app_state)
+                sockets.sessions["ws-3070-moved"] = replacement
+            await remover
+
+            assert sockets.sessions["ws-3070-moved"] is replacement
+            WorkspaceSession.reset.assert_not_awaited()
+
+
 class TestWsDebugLogging:
     async def test_recv_logged_when_debug(self, user, monkeypatch, app_state):
         app_state = _make_app_state()
