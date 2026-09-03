@@ -3343,6 +3343,59 @@ class TestWorkspaceRoutes:
         match = [w for w in resp.json() if w["id"] == ws_id]
         assert match[0]["name"] == "collide-a"
 
+    async def test_update_workspace_cross_owner_name_ok(
+        self, client, user, app_state
+    ):
+        """#3097: the name constraint is per-owner — renaming onto a name
+        a different owner holds must succeed, not 409."""
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces",
+            json={"name": "cross-owner"},
+            headers=headers,
+        )
+        ws_id = resp.json()["id"]
+        other = await app_state.state.model.users.create_user(
+            "crossowner@example.com", "irrelevant-hash", verified=True
+        )
+        await app_state.state.model.workspaces.create_workspace_with_acl(
+            other["id"], "cross-owner-target"
+        )
+        resp = await client.put(
+            f"/api/v1/workspaces/{ws_id}",
+            json={"name": "cross-owner-target"},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        resp = await client.get("/api/v1/workspaces", headers=headers)
+        match = [w for w in resp.json() if w["id"] == ws_id]
+        assert match[0]["name"] == "cross-owner-target"
+
+    async def test_update_workspace_null_not_null_field_rejected(
+        self, client, user, app_state
+    ):
+        """#3097: explicitly nulling a NOT NULL column is a 400 — not a
+        fabricated 409 collision (name) or a 500 (setup_state/
+        egress_mode enum coercers). auto_start/per_handle_home nulls
+        stay legal (documented coerce-to-0)."""
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces",
+            json={"name": "null-guard"},
+            headers=headers,
+        )
+        ws_id = resp.json()["id"]
+        for field in ("name", "setup_state", "egress_mode"):
+            resp = await client.put(
+                f"/api/v1/workspaces/{ws_id}",
+                json={field: None},
+                headers=headers,
+            )
+            assert resp.status_code == 400, field
+            assert resp.json()["detail"] == f"Field '{field}' cannot be null"
+        row = await app_state.state.model.workspaces.get_workspace(ws_id)
+        assert row["name"] == "null-guard"
+
     async def test_update_workspace_egress_mode(self, client, user):
         # #2409: egress_mode is editable (PUT), taking effect on next start.
         headers = await _auth_headers(client)
@@ -9259,6 +9312,46 @@ class TestAdminEndpoints:
         assert resp.json()["detail"] == "Email already in use"
         updated = await app_state.state.model.users.get_user_by_id(user["id"])
         assert updated["email"] == user["email"]
+
+    async def test_update_email_same_email_noop(
+        self, client, admin_user, user, app_state
+    ):
+        """#3097: patching a user with their own current email is an
+        idempotent 200, not a duplicate rejection."""
+        headers = await self._admin_headers(client)
+        resp = await client.patch(
+            f"/api/v1/users/{user['id']}",
+            json={"email": user["email"]},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        updated = await app_state.state.model.users.get_user_by_id(user["id"])
+        assert updated["email"] == user["email"]
+
+    async def test_update_email_integrity_race_guard(
+        self, client, app, admin_user, user, monkeypatch
+    ):
+        """#3097: a duplicate that slips past the pre-check (the address
+        claimed between the check and the write) is a 400, not a 500 off
+        the users.email UNIQUE constraint."""
+        from sqlalchemy.exc import IntegrityError as SAIntegrityError
+
+        async def claim_in_between(_user_id, _email):
+            raise SAIntegrityError("UPDATE users", {}, Exception("dup"))
+
+        monkeypatch.setattr(
+            app.state.model.users,
+            "update_email",
+            claim_in_between,
+        )
+        headers = await self._admin_headers(client)
+        resp = await client.patch(
+            f"/api/v1/users/{user['id']}",
+            json={"email": "claimed-in-between@example.com"},
+            headers=headers,
+        )
+        assert resp.status_code == 400
+        assert resp.json()["detail"] == "Email already in use"
 
     async def test_update_password(self, client, admin_user, user):
         headers = await self._admin_headers(client)

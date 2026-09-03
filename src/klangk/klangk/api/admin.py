@@ -12,6 +12,7 @@ from fastapi import (
     Request,
 )
 from pydantic import BaseModel
+from sqlalchemy.exc import IntegrityError as SAIntegrityError
 
 from .. import (
     acl,
@@ -377,7 +378,14 @@ async def _update_user_email(app, user_id: str, email: str) -> None:
     existing = await app.state.model.users.get_user_by_email(email)
     if existing is not None and existing["id"] != user_id:
         raise HTTPException(status_code=400, detail="Email already in use")
-    await app.state.model.users.update_email(user_id, email)
+    try:
+        await app.state.model.users.update_email(user_id, email)
+    except SAIntegrityError:
+        # The pre-check above is not atomic with the UPDATE (#3101's
+        # TOCTOU family): a concurrent registration or change-email can
+        # claim the address in between. Map the race to the same 400 the
+        # pre-check returns instead of an unhandled 500 (#3097).
+        raise HTTPException(status_code=400, detail="Email already in use")
 
 
 async def _update_user_handle(app, user_id: str, handle: str) -> None:

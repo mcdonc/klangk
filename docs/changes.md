@@ -2016,6 +2016,8 @@ new-ws …` then answering `y` to the restart prompt) crashed with an
 /api/v1/workspaces/{id}` renaming a workspace onto another name the
   owner already holds returns the same 409 "A workspace named … already
   exists" as the create, duplicate, and import paths, instead of a 500.
+  Explicitly nulling a non-nullable field (`name`, `setup_state`,
+  `egress_mode`) is now a 400 instead of a 500 or a misleading 409.
 
 - **`egress_request` frames now carry one request shape on every delivery
   path (#3082).** A live hold fanned out to deciders carried a request dict
