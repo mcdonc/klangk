@@ -5,6 +5,7 @@ import re
 import uuid
 from datetime import datetime, timedelta, timezone
 
+from ..exceptions import ConfigurationError
 from .base import Submodel
 
 
@@ -387,6 +388,56 @@ class UsersModel(Submodel):
         """Clear the cached agent user so the next lookup hits the DB."""
         global agent_user_cache
         agent_user_cache = None
+
+    async def ensure_agent_user(self) -> None:
+        """Ensure the agent user exists in the DB with the fixed identity.
+
+        The agent *is* the klangk user (#2718): handle `klangk`, email
+        `klangk@example.com` — constant, not configurable (the former
+        ``KLANGKWS_FEATURE_CHAT_AGENT_EMAIL/HANDLE`` keys are gone).
+        Upsert is idempotent and reconciles pre-#2718 rows (e.g. a
+        `clanker`-era (pre-#2718) deployment) back to the fixed identity
+        on every boot, so the migration only has to handle the
+        colliding-human edge case once.
+
+        Refuses to seed while a *human* user holds the `klangk` handle.
+        A colliding agent handle is destructive:
+        ``ensure_home_symlink`` would later migrate that user's home
+        files into the agent's tree via its workspace-import adoption
+        branch. The ``users.handle`` UNIQUE constraint is the structural
+        backstop, but we fail loudly here with an actionable message
+        instead of letting a bare ``IntegrityError`` abort startup
+        mid-sequence. See #1137.
+        """
+        handle = AGENT_HANDLE
+        email = AGENT_EMAIL
+        async with self.app.state.db.transaction() as db:
+            # Pre-check: refuse the fixed handle while claimed by a
+            # non-agent user. The m0008 migration bumps such users to a
+            # unique alternative, so this fires only if the migration
+            # was skipped (e.g. a hand-built DB).
+            cursor = await db.execute(
+                "SELECT id FROM users WHERE handle = ? AND id != ?",
+                (handle, AGENT_USER_ID),
+            )
+            if await cursor.fetchone() is not None:
+                # #2738 audit: ConfigurationError (not bare RuntimeError)
+                # — a hand-built DB a restart cannot fix; EX_CONFIG
+                # (#2666) beats a supervisor restart-loop.
+                raise ConfigurationError(
+                    f"Cannot seed agent user: handle {handle!r} is"
+                    " already used by another user. The m0008 migration"
+                    " should have relocated it — re-run migrations or"
+                    " rename the user manually."
+                )
+            await db.execute(
+                "INSERT INTO users (id, email, password_hash, verified,"
+                " provider, handle)"
+                " VALUES (?, ?, NULL, 1, 'system', ?)"
+                " ON CONFLICT(id) DO UPDATE SET email = ?, handle = ?",
+                (AGENT_USER_ID, email, handle, email, handle),
+            )
+        self.clear_agent_cache()
 
     async def unique_handle(self, db, base: str) -> str:
         """Return a unique handle on the passed connection.
@@ -958,6 +1009,18 @@ class UsersModel(Submodel):
         async with self.app.state.db.transaction() as db:
             await db.execute(
                 "UPDATE users SET email = ? WHERE id = ?", (email, user_id)
+            )
+
+    async def mark_unverified(self, user_id: str) -> None:
+        """Flip a user back to unverified (change-email flow).
+
+        The email changed under the old verification, so the account
+        must re-verify against the new address before it counts as
+        verified.
+        """
+        async with self.app.state.db.transaction() as db:
+            await db.execute(
+                "UPDATE users SET verified = 0 WHERE id = ?", (user_id,)
             )
 
     async def update_password(self, user_id: str, password_hash: str) -> None:
