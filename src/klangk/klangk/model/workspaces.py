@@ -146,6 +146,30 @@ SORT_COLUMNS = {"created": "created_at", "name": "name"}
 CLASSIFICATION_BANNER_MAX_LEN = 120
 
 
+def _mode_switch_pause_clear(to_set: dict) -> tuple[str, list]:
+    """(SET-clause tail, extra params) ending a consent pause on a real
+    egress-mode switch (#3080).
+
+    The pause is an interactive-mode decider affordance; a mode switch must
+    not leave a stale window behind (it would auto-allow off-list egress
+    again if the workspace returned to interactive mode later). But both
+    first-party clients echo ``egress_mode`` in every workspace-save payload
+    (#3086 review), so the clear must not fire on a no-op echo either -- a
+    routine rename would otherwise cancel a live pause. The CASE compares
+    against the row's pre-update mode (SQLite evaluates SET expressions
+    against the old row), so the window ends only when the write actually
+    switches modes, atomically in the same UPDATE.
+    """
+    if "egress_mode" not in to_set:
+        return "", []
+    return (
+        ", consent_paused_until ="
+        " CASE WHEN egress_mode IS NOT ?"
+        " THEN NULL ELSE consent_paused_until END",
+        [to_set["egress_mode"]],
+    )
+
+
 def _banner_character_error(v: str) -> str | None:
     """Error message for control/invisible characters in a marking.
 
@@ -1055,8 +1079,9 @@ class WorkspacesModel(Submodel):
         }
         if not to_set:
             return False
-        set_clause = ", ".join(f"{k} = ?" for k in to_set)
-        values = list(to_set.values()) + [workspace_id, user_id]
+        clause_tail, extra = _mode_switch_pause_clear(to_set)
+        set_clause = ", ".join(f"{k} = ?" for k in to_set) + clause_tail
+        values = list(to_set.values()) + extra + [workspace_id, user_id]
         async with self.app.state.db.transaction() as db:
             cursor = await db.execute(
                 f"UPDATE workspaces SET {set_clause}"  # noqa: S608

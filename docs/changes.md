@@ -1945,6 +1945,16 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Stale consent pause no longer auto-allows in static-mode workspaces
+  (#3080).** The consent-pause window (`set_consent_pause`, e.g. a 1d
+  pause set by a decider) was honored by the egress gate even after the
+  workspace's `egress_mode` was switched away from `interactive`, so a
+  static (default-deny) workspace auto-allowed every off-list
+  destination for the rest of the window. The pause is now applied only
+  while the workspace is in interactive mode, and an actual `egress_mode`
+  switch clears the stored window (unrelated edits that merely re-send
+  the current mode leave a live pause alone) so it cannot resurrect on a
+  later switch back.
 - **Malformed client frames no longer drop the WebSocket session
   (#3071).** Any command handler exception now gets an error frame and
   the connection stays up, instead of ending the whole session:
