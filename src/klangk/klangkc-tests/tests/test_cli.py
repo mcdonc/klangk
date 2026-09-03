@@ -6035,11 +6035,17 @@ class TestSandboxCommandGuards:
         monkeypatch.setattr(
             sandboxcmd.context,
             "require_auth",
-            MagicMock(side_effect=typer.Exit()),
+            MagicMock(side_effect=typer.Exit(code=1)),
         )
         monkeypatch.setattr(sandboxcmd.context, "err", MagicMock())
-        with pytest.raises(typer.Exit):
+        load = MagicMock()
+        monkeypatch.setattr(sandboxcmd, "load_sandbox_config", load)
+        with pytest.raises(typer.Exit) as excinfo:
             sandboxcmd.sandbox("ws", str(tmp_path))
+        assert excinfo.value.exit_code == 1
+        # Refused auth stops the command at the gate — the local
+        # config-load exit (also code 1) must not mask a missing gate.
+        load.assert_not_called()
 
     def test_sandbox_routes_auth_through_require_auth(
         self, monkeypatch, tmp_path
@@ -6057,6 +6063,38 @@ class TestSandboxCommandGuards:
         with pytest.raises(typer.Exit):
             sandboxcmd.sandbox("ws", str(tmp_path))
         guard.assert_called_once()
+
+    def test_shell_none_mode_auto_login_end_to_end(self, monkeypatch):
+        """The #3090 fix in action: fresh state, none-mode server, no
+        stored token — shell auto-logs in (#1374) and proceeds past the
+        auth gate instead of refusing with "Not logged in"."""
+        from klangk.cli import shellcmd
+        from klangk.cli.config import CLIState
+
+        state = CLIState()
+        state.active_server = "http://localhost:8995"
+        state.save()
+        monkeypatch.setattr(
+            "klangk.cli.context.fetch_config",
+            lambda _: {"auth_modes": "none", "oidc_providers": []},
+        )
+        monkeypatch.setattr(
+            "klangk.cli.context.local_login",
+            lambda url: ("admin@example.com", "jwt-auto"),
+        )
+        fake_client = MagicMock()
+        fake_client.list_workspaces.return_value = []
+        monkeypatch.setattr(shellcmd.context, "client", lambda: fake_client)
+        monkeypatch.setattr(shellcmd.context, "err", MagicMock())
+        # Real require_auth: none-mode probe -> auto-login -> token
+        # stored; the command then runs past the gate to the empty
+        # workspace list ("No workspaces found" exit, code 1).
+        with pytest.raises(typer.Exit) as excinfo:
+            shellcmd.shell(None, None, None, True)
+        assert excinfo.value.exit_code == 1
+        fake_client.list_workspaces.assert_called_once()
+        # The auto-issued token is what the command itself resolves.
+        assert shellcmd.context.session_token() == "jwt-auto"
 
     def test_run_sandbox_setup_expired_session_exits(self, monkeypatch):
         from klangk.cli import sandboxcmd
