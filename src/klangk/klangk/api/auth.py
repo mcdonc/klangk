@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 
 from fastapi import (
     APIRouter,
+    BackgroundTasks,
     Depends,
     HTTPException,
     Request,
@@ -305,13 +306,71 @@ reset_timestamps: dict[str, float] = {}
 RESET_COOLDOWN_SECONDS = 60
 
 
+async def deliver_reset_email(
+    email_service, email: str, reset_url: str
+) -> None:
+    """Background reset-email delivery (#3114).
+
+    Runs after the HTTP response has been sent. Failures are logged
+    server-side (operators keep visibility) and never surfaced to the
+    anonymous caller — a 503 would only fire on the existing-enabled
+    path, making the status code an account-existence oracle.
+    """
+    try:
+        await email_service.send_password_reset_email(email, reset_url)
+    except Exception:
+        logger.exception("Failed to send password reset email to %s", email)
+
+
+def schedule_reset_delivery(
+    background_tasks: BackgroundTasks,
+    request: Request,
+    email: str,
+    user: dict | None,
+) -> None:
+    """Queue the reset-email delivery off the response path (#3114).
+
+    The endpoint's response — status, body, and timing — must not
+    depend on whether *email* names an existing, enabled account.
+    Every path mints a reset token, the only response-path work the
+    real delivery pays (unknown addresses mint against a nonexistent
+    dummy id; the token is discarded), so latency cannot reveal which
+    branch ran. Only the existing-enabled path queues the background
+    send; disabled accounts still get no email (#2588).
+    """
+    sendable = user is not None and not user.get("disabled")
+    subject = user["id"] if user is not None else str(uuid.uuid4())
+    reset_token = request.app.state.auth.create_password_reset_token(subject)
+    if sendable:
+        hostname, proto, base_path = (
+            request.app.state.util.derive_hosting_info(
+                request.headers,
+                request.client.host if request.client else None,
+            )
+        )
+        reset_url = (
+            f"{proto}://{hostname}{base_path}"
+            f"/#/reset-password?token={reset_token}"
+        )
+        background_tasks.add_task(
+            deliver_reset_email, request.app.state.email, email, reset_url
+        )
+
+
 @router.post("/auth/forgot-password")
 async def forgot_password(
     req: ForgotPasswordRequest,
     request: Request,
+    background_tasks: BackgroundTasks,
     app=Depends(get_app_dep),
 ):
-    """Send a password reset email if the account exists."""
+    """Send a password reset email if the account exists.
+
+    The response is byte- and timing-identical for unknown, disabled,
+    and existing-enabled addresses (#2588, #3100, #3114): delivery
+    happens in a background task after the response is sent, and its
+    failures are logged server-side only.
+    """
     # Rate limit first, keyed on the submitted address only (#3100): the
     # cooldown must not depend on whether the account exists or is
     # disabled, or its 429 becomes an existence oracle that the
@@ -323,32 +382,7 @@ async def forgot_password(
         )
 
     user = await app.state.model.users.get_user_by_email(req.email)
-    if user is None:
-        # Don't reveal whether the email exists
-        return {"status": "sent"}
-
-    # Disabled accounts get no reset email (#2588): the reset itself is
-    # refused (403 below), so a link would only confuse — and letting a
-    # disabled account drive outbound mail is its own nuisance. Still
-    # answer ``"sent"`` so the endpoint never reveals the disabled
-    # state to an anonymous caller.
-    if user.get("disabled"):
-        return {"status": "sent"}
-
-    hostname, proto, base_path = request.app.state.util.derive_hosting_info(
-        request.headers, request.client.host if request.client else None
-    )
-    reset_token = request.app.state.auth.create_password_reset_token(
-        user["id"]
-    )
-    reset_url = (
-        f"{proto}://{hostname}{base_path}/#/reset-password?token={reset_token}"
-    )
-    await send_email(
-        app.state.email.send_password_reset_email(req.email, reset_url),
-        req.email,
-        "password reset email",
-    )
+    schedule_reset_delivery(background_tasks, request, req.email, user)
     return {"status": "sent"}
 
 

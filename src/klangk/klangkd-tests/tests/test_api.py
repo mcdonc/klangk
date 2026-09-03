@@ -1542,6 +1542,62 @@ class TestForgotPassword:
         mock_send.assert_not_awaited()
         api.reset_timestamps.pop("forgot@example.com", None)
 
+    async def test_forgot_smtp_failure_answers_sent_and_logs(
+        self, client, db, app_state, caplog
+    ):
+        """#3114: an SMTP failure must not turn the response into a 503.
+        Only the existing-enabled path ever awaited the send, so the
+        status code was an account-existence and enabled-state oracle.
+        Delivery failures are logged server-side instead."""
+        import logging
+
+        await self._create_user(app_state)
+        with patch.object(
+            emailsvc_mod.EmailService,
+            "send_password_reset_email",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("SMTP is down"),
+        ):
+            with caplog.at_level(logging.ERROR, logger="klangk.api.auth"):
+                resp = await client.post(
+                    "/api/v1/auth/forgot-password",
+                    json={"email": "forgot@example.com"},
+                )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "sent"
+        assert any(
+            "Failed to send password reset email" in r.message
+            for r in caplog.records
+        )
+        api.reset_timestamps.pop("forgot@example.com", None)
+
+    async def test_forgot_non_send_paths_mint_token(
+        self, client, db, app, app_state
+    ):
+        """#3114 timing channel: the unknown and disabled paths perform
+        the same response-path work (the reset-token mint) as the
+        sending path, so response latency cannot reveal whether the
+        address belongs to an existing, enabled account."""
+        u = await self._create_user(app_state)
+        await app.state.model.users.set_user_disabled(u["id"], True)
+        with patch.object(
+            auth_mod.Auth,
+            "create_password_reset_token",
+            return_value="dummy-token",
+        ) as mint:
+            unknown = await client.post(
+                "/api/v1/auth/forgot-password",
+                json={"email": "nobody@example.com"},
+            )
+            disabled = await client.post(
+                "/api/v1/auth/forgot-password",
+                json={"email": "forgot@example.com"},
+            )
+        assert unknown.status_code == 200
+        assert disabled.status_code == 200
+        assert mint.call_count == 2
+        api.reset_timestamps.pop("forgot@example.com", None)
+
     async def test_forgot_rate_limited(self, client, db, app_state):
         await self._create_user(app_state)
         with patch.object(
