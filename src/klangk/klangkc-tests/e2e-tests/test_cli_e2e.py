@@ -1838,6 +1838,29 @@ class TestTerminalSharing:
 class TestContainerReplace:
     """Verify podman --replace handles stale/crashed containers."""
 
+    @pytest.fixture(autouse=True)
+    @staticmethod
+    def _login(cli_config):
+        """Ensure logged in for this test class.
+
+        TestLogout (scheduled anywhere under xdist) wipes the server entry
+        from the session-shared CLI config, so any class WITHOUT its own
+        re-login fails with "no server configured" when it lands after it
+        on the same worker. Same pattern as TestExportSymlinks et al.
+        """
+        run(
+            [
+                "klangk",
+                "login",
+                cli_config["server_url"],
+                "test@example.com",
+                "--password-file",
+                "-",
+            ],
+            input="testpass\n",
+            env=cli_config["env"],
+        )
+
     def test_exec_after_external_stop(self, cli_config):
         """Kill a workspace container externally, then exec again.
 
