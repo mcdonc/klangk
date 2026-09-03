@@ -1036,6 +1036,191 @@ class TestWorkspaceSharing:
         assert result["next_offset"] is None
 
 
+class TestAddPrincipalEntries:
+    """The atomic member/group share block (#3101).
+
+    add_principal_entries appends a principal's permission block in one
+    write_transaction: duplicate detection, position allocation, and
+    every insert share a single locked snapshot.
+    """
+
+    PERMS = ["view", "join-workspace", "terminal"]
+
+    async def test_user_block_appended_after_existing(
+        self, workspace, user, app_state
+    ):
+        other = await app_state.state.model.users.create_user(
+            "block@example.com", "hash"
+        )
+        resource = f"/workspaces/{workspace['id']}"
+        await app_state.state.model.acl.add_acl_entry(
+            resource,
+            0,
+            model.ACTION_ALLOW,
+            "view",
+            model.PRINCIPAL_USER,
+            user_id=user["id"],
+        )
+
+        assert await app_state.state.model.acl.add_principal_entries(
+            resource, self.PERMS, model.PRINCIPAL_USER, user_id=other["id"]
+        )
+        entries = await app_state.state.model.acl.get_acl_entries(resource)
+        added = [e for e in entries if e["user_id"] == other["id"]]
+        assert [e["permission"] for e in added] == self.PERMS
+        assert [e["position"] for e in added] == [
+            1,
+            2,
+            3,
+        ]
+
+    async def test_duplicate_returns_false_adds_nothing(
+        self, workspace, user, app_state
+    ):
+        other = await app_state.state.model.users.create_user(
+            "dup@example.com", "hash"
+        )
+        resource = f"/workspaces/{workspace['id']}"
+        m = app_state.state.model.acl
+        assert await m.add_principal_entries(
+            resource, self.PERMS, model.PRINCIPAL_USER, user_id=other["id"]
+        )
+        before = await m.get_acl_entries(resource)
+
+        assert not await m.add_principal_entries(
+            resource, self.PERMS, model.PRINCIPAL_USER, user_id=other["id"]
+        )
+
+        assert await m.get_acl_entries(resource) == before
+
+    async def test_mid_block_failure_rolls_back(
+        self, workspace, user, app_state
+    ):
+        """A failure partway through the block leaves no partial share."""
+        from unittest.mock import patch
+
+        other = await app_state.state.model.users.create_user(
+            "partial@example.com", "hash"
+        )
+        resource = f"/workspaces/{workspace['id']}"
+        m = app_state.state.model.acl
+        before = await m.get_acl_entries(resource)
+        original = type(m)._insert_acl_entry
+        calls = []
+
+        async def flaky(self, db, res, entry):
+            calls.append(entry["permission"])
+            if len(calls) == 3:
+                raise RuntimeError("boom mid-block")
+            return await original(self, db, res, entry)
+
+        with patch.object(type(m), "_insert_acl_entry", flaky):
+            with pytest.raises(RuntimeError, match="boom mid-block"):
+                await m.add_principal_entries(
+                    resource,
+                    self.PERMS,
+                    model.PRINCIPAL_USER,
+                    user_id=other["id"],
+                )
+        assert len(calls) == 3  # the third insert is the one that failed
+        assert await m.get_acl_entries(resource) == before
+
+    async def test_role_group_scope_guard_blocks_first(
+        self, workspace, user, app_state
+    ):
+        """The #2750 scope guard fires inside the same transaction, so a
+        cross-workspace role-group share writes nothing."""
+        from klangk.model.users import WorkspaceRoleScopeError
+
+        ws_b = await app_state.state.model.workspaces.create_workspace(
+            user["id"], "scope-guard-b"
+        )
+        owners_b = await app_state.state.model.users.create_group(
+            f"owners-{ws_b['id']}", source=model.GROUP_SOURCE_WORKSPACE_ROLE
+        )
+        resource = f"/workspaces/{workspace['id']}"
+        m = app_state.state.model.acl
+        before = await m.get_acl_entries(resource)
+
+        with pytest.raises(WorkspaceRoleScopeError):
+            await m.add_principal_entries(
+                resource,
+                self.PERMS,
+                model.PRINCIPAL_GROUP,
+                group_id=owners_b["id"],
+            )
+        assert await m.get_acl_entries(resource) == before
+
+    async def test_agent_principal_rejected(self, workspace, user, app_state):
+        from klangk.model.users import AgentPrincipalError
+
+        resource = f"/workspaces/{workspace['id']}"
+        with pytest.raises(AgentPrincipalError):
+            await app_state.state.model.acl.add_principal_entries(
+                resource,
+                self.PERMS,
+                model.PRINCIPAL_USER,
+                user_id=model.AGENT_USER_ID,
+            )
+
+    async def test_concurrent_same_principal_one_block(
+        self, workspace, user, app_state
+    ):
+        """Two in-flight shares for the same user: the write lock
+        serializes them, one block lands, the loser is told duplicate."""
+        other = await app_state.state.model.users.create_user(
+            "racer@example.com", "hash"
+        )
+        resource = f"/workspaces/{workspace['id']}"
+        m = app_state.state.model.acl
+        results = await asyncio.gather(
+            m.add_principal_entries(
+                resource,
+                self.PERMS,
+                model.PRINCIPAL_USER,
+                user_id=other["id"],
+            ),
+            m.add_principal_entries(
+                resource,
+                self.PERMS,
+                model.PRINCIPAL_USER,
+                user_id=other["id"],
+            ),
+        )
+        assert sorted(results) == [False, True]
+        entries = await m.get_acl_entries(resource)
+        added = [e for e in entries if e["user_id"] == other["id"]]
+        assert [e["permission"] for e in added] == self.PERMS
+
+    async def test_concurrent_distinct_principals_no_overlap(
+        self, workspace, user, app_state
+    ):
+        """Two in-flight shares for different users both land with
+        disjoint positions — no lost update, no UNIQUE backstop 500."""
+        a = await app_state.state.model.users.create_user(
+            "racer-a@example.com", "hash"
+        )
+        b = await app_state.state.model.users.create_user(
+            "racer-b@example.com", "hash"
+        )
+        resource = f"/workspaces/{workspace['id']}"
+        m = app_state.state.model.acl
+        results = await asyncio.gather(
+            m.add_principal_entries(
+                resource, self.PERMS, model.PRINCIPAL_USER, user_id=a["id"]
+            ),
+            m.add_principal_entries(
+                resource, self.PERMS, model.PRINCIPAL_USER, user_id=b["id"]
+            ),
+        )
+        assert results == [True, True]
+        entries = await m.get_acl_entries(resource)
+        positions = [e["position"] for e in entries]
+        assert len(positions) == len(set(positions))
+        assert len([e for e in entries if e["user_id"] == a["id"]]) == 3
+        assert len([e for e in entries if e["user_id"] == b["id"]]) == 3
+
+
 class TestSearchUsers:
     async def test_search_by_prefix(self, user, app_state):
         await app_state.state.model.users.create_user(
@@ -1763,6 +1948,26 @@ class TestInvitations:
         assert not await app_state.state.model.invitations.revoke_invitation(
             "nonexistent"
         )
+
+    async def test_second_pending_for_same_email_rejected(
+        self, db, admin_user, app_state
+    ):
+        """The partial unique index (m0028) is the storage backstop for
+        the send route's non-atomic pending pre-check (#3101): a second
+        pending row for one email cannot exist, while history for the
+        same email stays unlimited."""
+        m = app_state.state.model.invitations
+        first = await m.create_invitation("idx@b.com", admin_user["id"])
+        with pytest.raises(sqlalchemy.exc.IntegrityError):
+            await m.create_invitation("idx@b.com", admin_user["id"])
+
+        # Freeing the pending slot (accept or revoke) re-enables a new
+        # invitation for the same email; history rows coexist.
+        assert await m.revoke_invitation(first["id"])
+        second = await m.create_invitation("idx@b.com", admin_user["id"])
+        assert await m.mark_invitation_accepted(second["id"])
+        third = await m.create_invitation("idx@b.com", admin_user["id"])
+        assert third["status"] == "pending"
 
 
 class TestOIDCUsers:

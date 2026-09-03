@@ -521,6 +521,17 @@ def export_workspace(
                 progress.update(task_id, total=final, completed=final)
     except httpx.HTTPStatusError as e:
         export_error(e)
+    except httpx.RequestError:
+        # A mid-body abort (server-side tar failure breaks the stream
+        # instead of shipping a truncated 200, #3101) lands here —
+        # remove the partial archive rather than leave a file that
+        # only fails confusingly at import time.
+        out_path.unlink(missing_ok=True)
+        context.err.print(
+            "[red]Export failed:[/red] transfer interrupted —"
+            " the archive was not completed"
+        )
+        raise typer.Exit(code=1) from None
     _out = Console()
     _out.print(f"Exported [bold]{name}[/bold] → {out_path}")
 

@@ -12,6 +12,7 @@ from fastapi import (
     Request,
 )
 from pydantic import BaseModel
+from sqlalchemy.exc import IntegrityError as SAIntegrityError
 
 from .. import (
     acl,
@@ -65,6 +66,25 @@ def _validate_root_acl(entries, resource: str) -> None:
         )
 
 
+async def create_invitation_or_race_400(app, req, admin) -> dict:
+    """Create the invitation row, mapping a lost race to a 400.
+
+    The pending pre-check in ``send_invitation`` is not atomic with the
+    insert, so a concurrent send that wins the partial unique index
+    (m0028) must surface as the same 400 the pre-check returns — and
+    only one pending invitation survives (#3101).
+    """
+    try:
+        return await app.state.model.invitations.create_invitation(
+            req.email, admin["id"]
+        )
+    except SAIntegrityError:
+        raise HTTPException(
+            status_code=400,
+            detail="A pending invitation already exists for this email",
+        ) from None
+
+
 @router.post("/invitations")
 async def send_invitation(
     req: SendInviteRequest,
@@ -95,9 +115,7 @@ async def send_invitation(
             detail="A pending invitation already exists for this email",
         )
 
-    invitation = await app.state.model.invitations.create_invitation(
-        req.email, admin["id"]
-    )
+    invitation = await create_invitation_or_race_400(app, req, admin)
     token = app.state.auth.create_invitation_token(invitation["id"], req.email)
 
     hostname, proto, base_path = request.app.state.util.derive_hosting_info(

@@ -384,6 +384,16 @@ async def init_core_tables(db) -> None:
             accepted_at TEXT
         )
     """)
+    # One pending invitation per email (#3101): the get-pending
+    # pre-check in the send-invitation route is not atomic with the
+    # insert, so two concurrent sends used to mint two pending rows.
+    # The partial index (accepted/revoked history stays unlimited)
+    # makes the loser's insert fail at the storage layer; migration
+    # 0028 backfills this on deployed databases.
+    await db.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_invitations_pending_dedup"
+        " ON invitations(email) WHERE status = 'pending'"
+    )
 
 
 def _shared_ec_columns(ec_old_cols: set[str]) -> list[str]:
