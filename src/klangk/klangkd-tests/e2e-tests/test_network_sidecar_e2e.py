@@ -378,23 +378,36 @@ def _reap_follow(follow):
 
 def _container_logs(name, followed=b""):
     """Full ``podman logs`` for *name*; the followed bytes if that fails."""
-    full = podman("logs", name, check=False)
+    full = podman("logs", name, check=False, timeout=20)
     if full.returncode == 0:
         return full.stdout
     return followed.decode(errors="replace")
 
 
-def _follow_logs_until(name, needle, timeout, what):
-    """Fail via pytest unless *needle* appears in *name*'s logs in *timeout*.
+def _container_state(name):
+    """``<status> <exitcode>`` for container *name* via podman inspect."""
+    return podman(
+        "inspect",
+        "-f",
+        "{{.State.Status}} {{.State.ExitCode}}",
+        name,
+        check=False,
+        timeout=20,
+    ).stdout.strip()
 
-    Follows the stream on ONE long-lived ``podman logs --follow`` process
-    instead of a fresh ``podman logs`` per poll tick: each CLI invocation
-    pays podman startup and storage-lock round-trips, which under
-    concurrent E2E suites can consume the whole budget even though the
-    needle appeared early (#3062). The follow process hits EOF when the
-    container stops, which doubles as the early-crash signal.
+
+def _follow_once(name, needle, deadline):
+    """Attach ``podman logs --follow``; return bytes read until the stream
+    ends, *deadline* passes, or *needle* appears in the stream.
+
+    Checking the needle inside the read loop matters: a genuinely-following
+    podman never EOFs a running container, so waiting for the process to
+    exit would sit on the needle until the deadline. Conversely, on the CI
+    runners' podman the follow can hit EOF at the current end-of-log BEFORE
+    the container's first line lands (it exits 0 while the container is
+    still running) — so the caller must reattach rather than treat EOF as
+    the container's death (#3063 CI run 33706670438).
     """
-    encoded = needle.encode()
     follow = subprocess.Popen(
         ["podman", "logs", "--follow", name],
         stdout=subprocess.PIPE,
@@ -403,32 +416,55 @@ def _follow_logs_until(name, needle, timeout, what):
     sel = selectors.DefaultSelector()
     sel.register(follow.stdout, selectors.EVENT_READ)
     buf = b""
-    deadline = time.monotonic() + timeout
     try:
-        while encoded not in buf:
+        while needle not in buf:
             remaining = deadline - time.monotonic()
             if remaining <= 0 or not sel.select(timeout=remaining):
-                pytest.fail(
-                    f"{what} within {timeout}s\n"
-                    f"logs:\n{_container_logs(name, buf)}"
-                )
+                break
             chunk = os.read(follow.stdout.fileno(), 65536)
-            if not chunk:  # EOF: container (or the follow) ended early
-                state = podman(
-                    "inspect",
-                    "-f",
-                    "{{.State.Status}} {{.State.ExitCode}}",
-                    name,
-                    check=False,
-                ).stdout.strip()
-                pytest.fail(
-                    f"{what}: log stream ended early. state={state}\n"
-                    f"logs:\n{_container_logs(name, buf)}"
-                )
+            if not chunk:
+                break
             buf += chunk
     finally:
         sel.close()
         _reap_follow(follow)
+    return buf
+
+
+def _follow_logs_until(name, needle, timeout, what):
+    """Fail via pytest unless *needle* appears in *name*'s logs in *timeout*.
+
+    Reads the log stream on long-lived ``podman logs --follow`` processes
+    instead of a fresh ``podman`` CLI pair (logs + inspect) per 0.5s poll
+    tick: each CLI invocation pays podman startup and storage-lock
+    round-trips, which under concurrent E2E suites can consume the whole
+    budget even though the needle appeared early (#3062). When the follow
+    stream ends, a stopped container fails fast with its state and full
+    logs; a still-running one is reattached after one poll interval (the
+    EOF-before-first-line race above), which degrades to exactly the old
+    poll cadence at worst.
+    """
+    encoded = needle.encode()
+    buf = b""
+    deadline = time.monotonic() + timeout
+    while encoded not in buf:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            pytest.fail(
+                f"{what} within {timeout}s\n"
+                f"logs:\n{_container_logs(name, buf)}"
+            )
+        buf += _follow_once(name, encoded, deadline)
+        if encoded in buf:
+            break
+        state = _container_state(name)
+        if "exited" in state or "stopped" in state:
+            pytest.fail(
+                f"{what}: container exited before the expected log line. "
+                f"state={state}\n"
+                f"logs:\n{_container_logs(name, buf)}"
+            )
+        time.sleep(0.5)
 
 
 def _wait_ready(name, timeout=40):
@@ -787,19 +823,9 @@ class TestNetworkSidecarE2E:
                 for ln in rules.splitlines()
             ), f"no NFQUEUE queue-5139 rule in interactive mode:\n{rules}"
             # The NFQUEUE consumer thread (proxy.py) binds after the proxy is
-            # ready; poll its log to prove the consumer runs in the real image.
-            deadline = time.monotonic() + 20
-            bound = False
-            while time.monotonic() < deadline:
-                logs = podman("logs", nc, check=False).stdout
-                if "nfqueue consumer bound to queue 5139" in logs:
-                    bound = True
-                    break
-                time.sleep(0.5)
-            assert bound, (
-                "NFQUEUE consumer did not bind in interactive mode:\n"
-                f"{podman('logs', nc, check=False).stdout}"
-            )
+            # ready; wait for its log line (fails with the sidecar's logs if
+            # it never binds) to prove the consumer runs in the real image.
+            _wait_log(nc, "nfqueue consumer bound to queue 5139", timeout=20)
         finally:
             _podman_cleanup("container", nc)
             _podman_cleanup("network", net)

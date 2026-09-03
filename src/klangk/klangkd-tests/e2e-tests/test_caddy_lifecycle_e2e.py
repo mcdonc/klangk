@@ -115,8 +115,12 @@ def _drain_output(proc, timeout=30):
     try:
         out, _ = proc.communicate(timeout=timeout)
         return out or b""
-    except subprocess.TimeoutExpired:
-        chunks = []
+    except subprocess.TimeoutExpired as exc:
+        # communicate() consumed the pipe into its own buffers before timing
+        # out; the partial output rides on the exception, and the kernel pipe
+        # buffer is empty — seed the fallback with it or the diagnostic is
+        # lost in exactly the scenario this helper exists for.
+        chunks = [exc.output or b""]
         try:
             os.set_blocking(proc.stdout.fileno(), False)
             while True:
@@ -124,7 +128,7 @@ def _drain_output(proc, timeout=30):
                 if not data:
                     break
                 chunks.append(data)
-        except (BlockingIOError, OSError, ValueError):
+        except (OSError, ValueError):
             pass
         return b"".join(chunks)
 

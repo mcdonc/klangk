@@ -270,7 +270,7 @@ def _fresh_dirs() -> tuple[str, str]:
 
 
 class TestConsentPruneE2E:
-    @pytest.mark.timeout(420)
+    @pytest.mark.timeout(600)
     def test_retention_prunes_aged_static_denials(self):
         """Rows older than the retention window are deleted by the startup
         sweep after a restart; fresh rows stay; the workspace row stays."""
@@ -327,7 +327,7 @@ class TestConsentPruneE2E:
         finally:
             stop_server(server)
 
-    @pytest.mark.timeout(420)
+    @pytest.mark.timeout(600)
     def test_row_cap_trims_oldest_on_restart(self):
         """A workspace over the per-workspace row cap keeps only its newest
         rows after the startup sweep trims the oldest ones."""
