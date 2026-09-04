@@ -24,6 +24,12 @@ for at most that long, not indefinitely.
 
 Owns only ``app`` (the app-ownership rule); the timeout is read live via
 property so a SIGHUP reload propagates.
+
+#3162: entries carry the JTI of the user JWT that authenticated the
+decider handshake, so a hard token revocation (logout, session-limit
+eviction) can close the decider sockets that token opened — the same
+kick the main ``/ws`` registry got in #3152. Refresh rotation
+retargets the entry onto the new JTI instead of closing it.
 """
 
 from __future__ import annotations
@@ -54,7 +60,8 @@ class ConsentDeciderRegistry:
     def __init__(self, app) -> None:
         self.app = app
         # decider_id -> {"ws": workspace_id, "seen": monotonic,
-        #                 "email": str, "sock": SafeWebSocket}
+        #                 "email": str, "sock": SafeWebSocket,
+        #                 "jti": str | None}
         self._deciders: dict[str, dict] = {}
         self._reaper: asyncio.Task | None = None
 
@@ -71,18 +78,23 @@ class ConsentDeciderRegistry:
         workspace_id: str,
         email: str | None,
         sock,
+        jti: str | None = None,
     ) -> None:
         """Register a live decider (connect). Idempotent on decider_id.
 
         ``sock`` is the decider's :class:`SafeWebSocket`; the endpoint owns its
         lifecycle (start/stop sender) -- the registry holds only a reference for
-        :meth:`broadcast` fanout.
+        :meth:`broadcast` fanout. ``jti`` is the ID of the user JWT that
+        authenticated the handshake (#3162) so a later hard revocation can
+        close exactly this decider; ``None`` on registrations built without
+        one (tests) -- never kicked by JTI.
         """
         self._deciders[decider_id] = {
             "ws": workspace_id,
             "seen": time.monotonic(),
             "email": email,
             "sock": sock,
+            "jti": jti,
         }
         logger.info(
             "consent decider registered: scope=%s decider=%s",
@@ -146,6 +158,52 @@ class ConsentDeciderRegistry:
         for did in dead:
             self._deciders.pop(did, None)
         return delivered
+
+    async def disconnect_by_jti(
+        self, jti: str, *, code: int = 4001, reason: str = ""
+    ) -> int:
+        """Close every live decider registered with *jti* (#3162).
+
+        Hard token revocation (logout, session-limit eviction) must cut
+        the decider sockets that token opened, not just reject the next
+        connect — a decider holds egress-consent authority (verdicts,
+        revokes, pause), so it must not outlive its credential. Code 4001
+        makes the client log out rather than reconnect-loop, the same
+        convention as ``WebSocketState.disconnect_by_jti`` (#3152).
+        Entries are dropped here so the workspace's consent authority
+        ends at revocation, not when the receive loop notices; the
+        endpoint's ``finally`` deregister is then a no-op. Returns how
+        many deciders were closed.
+        """
+        victims = [
+            (did, entry)
+            for did, entry in self._deciders.items()
+            if entry["jti"] == jti
+        ]
+        for did, entry in victims:
+            self._deciders.pop(did, None)
+            try:
+                await entry["sock"].close(code=code, reason=reason)
+            except Exception:  # noqa: BLE001
+                logger.debug("Error closing decider socket for jti %s", jti)
+        return len(victims)
+
+    def reattach_jti(self, old_jti: str, new_jti: str) -> int:
+        """Move live deciders from *old_jti* onto *new_jti* (#3162).
+
+        A token refresh keeps the session — and its decider socket —
+        alive under the new token; retargeting keeps the entry's JTI
+        equal to the session row's current JTI so a later hard
+        revocation (logout, session-limit eviction) still finds the
+        decider (mirrors ``WebSocketState.reattach_jti``, #3152).
+        Returns how many deciders were moved.
+        """
+        moved = 0
+        for entry in self._deciders.values():
+            if entry["jti"] == old_jti:
+                entry["jti"] = new_jti
+                moved += 1
+        return moved
 
     def start(self) -> None:
         """Start the liveness reaper (idempotent). Runs until :meth:`stop`."""

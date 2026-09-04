@@ -721,12 +721,18 @@ class Auth:
         """Close live WS connections authenticated with *jti* (#3152).
 
         Revocation must cut the sockets the token opened, not just
-        reject the next connect. Minimal app states (tests) may not wire
-        ``sockets`` — then there is nothing to close.
+        reject the next connect — both the main ``/ws`` connections and
+        the consent-decider sockets (#3162: a decider holds
+        egress-consent authority and lives in its own registry). Minimal
+        app states (tests) may not wire ``sockets`` or
+        ``consent_deciders`` — then there is nothing to close.
         """
         sockets = getattr(self.app.state, "sockets", None)
         if sockets is not None:
             await sockets.disconnect_by_jti(jti, reason="Token revoked")
+        deciders = getattr(self.app.state, "consent_deciders", None)
+        if deciders is not None:
+            await deciders.disconnect_by_jti(jti, reason="Token revoked")
 
     async def revoke_all_user_sessions(self, user_id: str) -> None:
         """Blocklist and delete every session for *user_id* (#3152).
@@ -1096,12 +1102,17 @@ class Auth:
 
         Keeps ``conn.jti`` equal to the session row's current JTI so a
         later hard revocation (logout, eviction) still finds the socket
-        the refreshed session is using. Minimal app states (tests) may
-        not wire ``sockets`` — then there is nothing to retarget.
+        the refreshed session is using — for the main ``/ws``
+        connections and the consent-decider registrations alike
+        (#3162). Minimal app states (tests) may not wire ``sockets`` or
+        ``consent_deciders`` — then there is nothing to retarget.
         """
         sockets = getattr(self.app.state, "sockets", None)
         if sockets is not None:
             sockets.reattach_jti(old_jti, new_jti)
+        deciders = getattr(self.app.state, "consent_deciders", None)
+        if deciders is not None:
+            deciders.reattach_jti(old_jti, new_jti)
 
     async def _expired_token_response(self, token: str) -> TokenResponse:
         """A previously-refreshed expired token still returns its cached

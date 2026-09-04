@@ -32,7 +32,11 @@ it targets the decider's own workspace (defense-in-depth), enforced in
 ``resolve`` via ``decider_workspace``. Pause/unpause share the same single
 gate as the connection itself (#2883): anyone who may register may also
 pause. Auth mirrors the main ``/ws`` handler: a user JWT in the ``token``
-query param.
+query param — including its revocation story (#3162): the handshake
+records the token's JTI on the registry entry, and a hard revocation
+(logout, session-limit eviction) closes the decider socket with 4001,
+just like the main handler's connections (#3152). Refresh rotation
+retargets the entry onto the new JTI instead of closing it.
 
 Outbound writes go through :class:`SafeWebSocket` (bounded queue +
 ``SlowClientError``) like the main ``/ws`` handler.
@@ -225,7 +229,12 @@ async def _dispatch_decider_message(
 
 
 async def _decider_authenticate(websocket: WebSocket, app, _hs_mark):
-    """Validate the decider socket's token; refuse + None on failure."""
+    """Validate the decider socket's token; refuse + None on failure.
+
+    Success returns ``(user, jti)`` — the token's JTI rides along so the
+    registration can be targeted for closing when that token is later
+    hard-revoked (#3162), mirroring ``ws_authenticate`` (#3152).
+    """
     token = websocket.query_params.get("token")
     if not token:
         await _refuse(websocket, 4001, "Missing token")
@@ -238,7 +247,7 @@ async def _decider_authenticate(websocket: WebSocket, app, _hs_mark):
     if result is None:
         await _refuse(websocket, 4001, "Invalid token")
         return None
-    return result
+    return result, app.state.auth.decode_token(token).get("jti")
 
 
 _FRAME_DISCONNECTED = object()
@@ -326,9 +335,10 @@ async def handle_consent_decider(websocket: WebSocket, app) -> None:
     def _hs_mark(label: str) -> None:
         _hs_marks.append((label, time.monotonic()))
 
-    user = await _decider_authenticate(websocket, app, _hs_mark)
-    if user is None:
+    authed = await _decider_authenticate(websocket, app, _hs_mark)
+    if authed is None:
         return
+    user, jti = authed
     workspace = websocket.query_params.get("workspace")
     if workspace is None:
         # #2976: consent is strictly a workspace concern -- there is no
@@ -354,7 +364,7 @@ async def handle_consent_decider(websocket: WebSocket, app) -> None:
     decider_id = str(uuid.uuid4())
     email = user.get("email")
     try:
-        registry.register(decider_id, workspace, email, safe_ws)
+        registry.register(decider_id, workspace, email, safe_ws, jti=jti)
         # Register BEFORE reading the snapshot: a hold created between the two
         # is then delivered twice (once live via fanout, once from the
         # snapshot). That duplicate is benign -- the second verdict no-ops
