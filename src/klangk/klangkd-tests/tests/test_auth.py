@@ -2547,3 +2547,277 @@ class TestChangeExpiredPassword:
             user["email"]
         )
         assert not a.password_expired(row)
+class TestSessionIdleTimeout:
+    """#3151: idle sessions terminate at the refresh seam (STIG
+    V-222389/390), with the privileged 15/10 window split and tokens
+    capped at the window."""
+
+    def _armed(self):
+        return _auth({"KLANGKD_SESSION_IDLE_TIMEOUT_MINUTES": "15"})
+
+    async def _backdate(self, a, jti: str, minutes: float) -> None:
+        """Set the session row's last_seen_at to *minutes* ago."""
+        old = (
+            datetime.now(timezone.utc) - timedelta(minutes=minutes)
+        ).isoformat()
+        async with a.app.state.db.transaction() as tx:
+            await tx.execute(
+                "UPDATE user_sessions SET last_seen_at = ? WHERE jti = ?",
+                (old, jti),
+            )
+
+    def _lifetime_minutes(self, a, token: str) -> float:
+        payload = a.decode_token(token, allow_expired=True)
+        delta = datetime.fromtimestamp(
+            payload["exp"], tz=timezone.utc
+        ) - datetime.fromtimestamp(payload["iat"], tz=timezone.utc)
+        return delta.total_seconds() / 60
+
+    async def test_unarmed_refresh_unchanged(self, user, db):
+        """0 (off) restores today's behavior exactly: a session idle for
+        days still refreshes, and the token keeps its full configured
+        lifetime."""
+        a = _auth()
+        token = await a.issue_token(user["id"], user["email"])
+        jti = a.decode_token(token)["jti"]
+        await self._backdate(a, jti, minutes=60 * 24 * 7)
+        refreshed = await a.refresh_token(token)
+        assert refreshed.access_token
+        assert self._lifetime_minutes(a, refreshed.access_token) > 23 * 60
+
+    async def test_armed_active_session_refreshes_capped(self, user, db):
+        """A recently-active session refreshes normally; the replacement
+        token is capped at the window (15 min) instead of 24 h."""
+        a = self._armed()
+        token = await a.issue_token(user["id"], user["email"])
+        refreshed = await a.refresh_token(token)
+        assert refreshed.access_token
+        assert self._lifetime_minutes(a, refreshed.access_token) <= 15
+
+    async def test_armed_issuance_capped(self, user, db):
+        """issue_token caps at the window too — the idle client surfaces
+        at the refresh seam within window + one refresh interval."""
+        a = self._armed()
+        token = await a.issue_token(user["id"], user["email"])
+        assert self._lifetime_minutes(a, token) <= 15
+
+    async def test_armed_idle_refresh_refused_and_revoked(
+        self, user, db, app_state
+    ):
+        """An idle session's refresh is refused (401), the token is
+        blocklisted with no cached replacement, and the session row is
+        gone."""
+        a = self._armed()
+        token = await a.issue_token(user["id"], user["email"])
+        jti = a.decode_token(token)["jti"]
+        await self._backdate(a, jti, minutes=16)
+        with pytest.raises(HTTPException) as exc_info:
+            await a.refresh_token(token)
+        assert exc_info.value.status_code == 401
+        assert "inactivity" in exc_info.value.detail
+        rows = await app_state.state.model.sessions.list_sessions(user["id"])
+        assert rows == []
+        # The refused token reads as revoked, not refreshable.
+        with pytest.raises(HTTPException) as exc_info:
+            await a.refresh_token(token)
+        assert exc_info.value.detail == "Token has been revoked"
+
+    async def test_idle_boundary_is_inclusive(self, user, db):
+        """Exactly at the window is still alive; past it terminates."""
+        a = self._armed()
+        token = await a.issue_token(user["id"], user["email"])
+        jti = a.decode_token(token)["jti"]
+        await self._backdate(a, jti, minutes=14)
+        refreshed = await a.refresh_token(token)
+        assert refreshed.access_token
+        jti2 = a.decode_token(refreshed.access_token)["jti"]
+        await self._backdate(a, jti2, minutes=16)
+        with pytest.raises(HTTPException) as exc_info:
+            await a.refresh_token(refreshed.access_token)
+        assert exc_info.value.status_code == 401
+
+    async def test_refresh_only_client_terminates(self, user, app_state):
+        """A client that only refreshes (no real activity) cannot
+        survive past ~the window: a refresh at 0.8×window still
+        succeeds, but it stamps nothing — the row keeps the original
+        last_seen, so once wall-clock time carries the idle estimate
+        past the window the next refresh is refused."""
+        a = self._armed()
+        token = await a.issue_token(user["id"], user["email"])
+        jti = a.decode_token(token)["jti"]
+        await self._backdate(a, jti, minutes=12)  # 0.8 × 15
+        refreshed = await a.refresh_token(token)
+        # The swap carried the stale last_seen forward untouched.
+        jti2 = a.decode_token(refreshed.access_token)["jti"]
+        last_seen = await app_state.state.model.sessions.get_last_seen(jti2)
+        assert last_seen is not None
+        assert datetime.fromisoformat(last_seen) < datetime.now(
+            timezone.utc
+        ) - timedelta(minutes=11)
+        # Four minutes later the idle estimate crosses the window.
+        await self._backdate(a, jti2, minutes=16)
+        with pytest.raises(HTTPException):
+            await a.refresh_token(refreshed.access_token)
+
+    async def test_missing_session_row_fails_open(self, user, db):
+        """A token with no session row (pre-#2585 issuance) cannot be
+        judged idle — the refresh proceeds, matching every other
+        row-tolerant path."""
+        a = self._armed()
+        token = a.create_token(user["id"], user["email"])
+        refreshed = await a.refresh_token(token)
+        assert refreshed.access_token
+
+    async def test_unparseable_stamp_fails_open(self, user, app_state, db):
+        """A corrupt last_seen value cannot be judged either — the
+        refresh proceeds rather than stranding the session."""
+        a = self._armed()
+        token = await a.issue_token(user["id"], user["email"])
+        jti = a.decode_token(token)["jti"]
+        async with a.app.state.db.transaction() as tx:
+            await tx.execute(
+                "UPDATE user_sessions SET last_seen_at = 'garbage'"
+                " WHERE jti = ?",
+                (jti,),
+            )
+        refreshed = await a.refresh_token(token)
+        assert refreshed.access_token
+
+    async def test_admin_gets_privileged_window(
+        self, user, admin_group, app_state, db
+    ):
+        """Admins-group members get the shorter (10 min) window: their
+        tokens are capped at 10 minutes and they idle out sooner."""
+        await app_state.state.model.users.add_user_to_group(
+            user["id"], admin_group["id"]
+        )
+        a = self._armed()
+        token = await a.issue_token(user["id"], user["email"])
+        assert self._lifetime_minutes(a, token) <= 10
+        jti = a.decode_token(token)["jti"]
+        await self._backdate(a, jti, minutes=11)
+        with pytest.raises(HTTPException) as exc_info:
+            await a.refresh_token(token)
+        assert exc_info.value.status_code == 401
+
+    async def test_admin_window_never_exceeds_setting(
+        self, user, admin_group, app_state, db
+    ):
+        """A setting below the privileged cap applies to admins too."""
+        a = _auth({"KLANGKD_SESSION_IDLE_TIMEOUT_MINUTES": "5"})
+        await app_state.state.model.users.add_user_to_group(
+            user["id"], admin_group["id"]
+        )
+        token = await a.issue_token(user["id"], user["email"])
+        assert self._lifetime_minutes(a, token) <= 5
+
+    async def test_is_admin_resolution(self, user, admin_group, app_state, db):
+        """The one-query admin check matches group membership."""
+        users = app_state.state.model.users
+        assert await users.is_admin(user["id"]) is False
+        await users.add_user_to_group(user["id"], admin_group["id"])
+        assert await users.is_admin(user["id"]) is True
+
+    async def test_effective_window_pure_helper(self):
+        a = _auth()
+        assert a.effective_session_idle_minutes(False) == 0
+        assert a.effective_session_idle_minutes(True) == 0
+        armed = self._armed()
+        assert armed.effective_session_idle_minutes(False) == 15
+        assert armed.effective_session_idle_minutes(True) == 10
+
+
+class TestSessionActivityStamping:
+    """#3151: real traffic (HTTP deps, WS frames) stamps the session's
+    last_seen; the refresh seam deliberately does not."""
+
+    def _armed(self):
+        return _auth({"KLANGKD_SESSION_IDLE_TIMEOUT_MINUTES": "15"})
+
+    async def _backdate(self, a, jti: str, minutes: float) -> None:
+        """Set the session row's last_seen_at to *minutes* ago."""
+        old = (
+            datetime.now(timezone.utc) - timedelta(minutes=minutes)
+        ).isoformat()
+        async with a.app.state.db.transaction() as tx:
+            await tx.execute(
+                "UPDATE user_sessions SET last_seen_at = ? WHERE jti = ?",
+                (old, jti),
+            )
+
+    async def test_record_session_activity_throttled(self, user, app_state):
+        a = self._armed()
+        token = await a.issue_token(user["id"], user["email"])
+        jti = a.decode_token(token)["jti"]
+        first = await app_state.state.model.sessions.get_last_seen(jti)
+        await a.record_session_activity(jti)
+        second = await app_state.state.model.sessions.get_last_seen(jti)
+        assert second != first  # fresh clock: the first call writes
+        await a.record_session_activity(jti)
+        assert (
+            await app_state.state.model.sessions.get_last_seen(jti) == second
+        )  # inside the interval: no write
+        a.session_stamps[jti] -= auth.ACTIVITY_STAMP_INTERVAL
+        await a.record_session_activity(jti)
+        assert (
+            await app_state.state.model.sessions.get_last_seen(jti) != second
+        )
+
+    async def test_stamp_dict_length_capped(self, user, monkeypatch):
+        """The per-JTI throttle dict sheds its stalest entries at the
+        cap — sessions churn (every refresh mints a new JTI), so the
+        dict must stay bounded (#3151)."""
+        monkeypatch.setattr(auth, "SESSION_STAMP_MAX_ENTRIES", 3)
+        a = self._armed()
+        for i in range(3):
+            a.session_stamps[f"jti-{i}"] = 1.0  # stale, insertion-ordered
+        await a.record_session_activity("jti-new")
+        assert "jti-0" not in a.session_stamps  # stalest evicted
+        assert "jti-new" in a.session_stamps
+
+    async def test_unarmed_stamp_is_noop(self, user, db):
+        """With the window off, stamping costs nothing (not even the
+        dict entry)."""
+        a = _auth()
+        await a.record_session_activity("any-jti")
+        assert a.session_stamps == {}
+
+    async def test_http_dependency_stamps_session(self, user, app_state, db):
+        """get_current_user stamps the presented token's session."""
+        a = self._armed()
+        token = await a.issue_token(user["id"], user["email"])
+        jti = a.decode_token(token)["jti"]
+        await self._backdate(a, jti, minutes=30)
+        creds = HTTPAuthorizationCredentials(
+            scheme="Bearer", credentials=token
+        )
+        await auth.get_current_user(_req(a), creds)
+        last_seen = await app_state.state.model.sessions.get_last_seen(jti)
+        assert last_seen is not None
+        assert datetime.fromisoformat(last_seen) > datetime.now(
+            timezone.utc
+        ) - timedelta(minutes=1)
+
+    async def test_ws_connect_stamps_session(self, user, app_state, db):
+        """The WebSocket token path (get_user_from_token) stamps too."""
+        a = self._armed()
+        token = await a.issue_token(user["id"], user["email"])
+        jti = a.decode_token(token)["jti"]
+        await self._backdate(a, jti, minutes=30)
+        assert await a.get_user_from_token(token) is not None
+        last_seen = await app_state.state.model.sessions.get_last_seen(jti)
+        assert datetime.fromisoformat(last_seen) > datetime.now(
+            timezone.utc
+        ) - timedelta(minutes=1)
+
+    async def test_refresh_does_not_stamp_session(self, user, app_state, db):
+        """The enforcement seam is not activity: a refresh leaves the
+        session's last_seen exactly where it was."""
+        a = self._armed()
+        token = await a.issue_token(user["id"], user["email"])
+        jti = a.decode_token(token)["jti"]
+        await self._backdate(a, jti, minutes=10)
+        before = await app_state.state.model.sessions.get_last_seen(jti)
+        await a.refresh_token(token)
+        rows = await app_state.state.model.sessions.list_sessions(user["id"])
+        assert rows[0]["last_seen_at"] == before

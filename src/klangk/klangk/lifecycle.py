@@ -787,6 +787,7 @@ class Lifecycle:
         "container_registry",
         "consent_sweeper",
         "inactivity_sweeper",
+        "session_idle_monitor",
         "memory_evictor",
         "consent_coordinator",
         "consent_deciders",
@@ -1279,6 +1280,7 @@ def start_background_workers(app: FastAPI) -> None:
     """Start every interval worker (sweepers, evictor, scheduler)."""
     app.state.consent_sweeper.start()
     app.state.inactivity_sweeper.start()
+    app.state.session_idle_monitor.start()
     app.state.consent_coordinator.start()
     app.state.consent_deciders.start()
     app.state.sidecar_connections.start()
@@ -1303,6 +1305,7 @@ async def stop_background_workers(app: FastAPI) -> None:
     if server_scheduler is not None:
         await server_scheduler.stop()
     await app.state.inactivity_sweeper.stop()
+    await app.state.session_idle_monitor.stop()
     await app.state.memory_evictor.stop()
     await app.state.consent_coordinator.stop()
     await app.state.consent_deciders.stop()

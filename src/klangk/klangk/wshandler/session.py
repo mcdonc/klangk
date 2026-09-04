@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 from .. import model
 from ..acl import check_permission_inmemory, resource_ancestors
+from ..auth import PRIVILEGED_SESSION_IDLE_MINUTES
 from ..terminal import SERVICE_CMD_WINDOW
 from .window_watcher import WindowEventWatcher
 from .safe_websocket import SafeWebSocket, WS_ERRORS, broadcast_to_set
@@ -1035,6 +1036,43 @@ class WebSocketState:
                 conn.jti = new_jti
                 moved += 1
         return moved
+
+    async def close_idle_connections(self, window_for_user) -> int:
+        """Close WebSocket connections quiet past the idle window (#3151).
+
+        *window_for_user* is an awaitable ``(user_id) -> minutes`` (the
+        admin-aware window) — resolved only for connections already
+        idle past the shortest possible window, so the common sweep
+        costs no DB reads. Close code 4001 makes the client log out
+        rather than reconnect-loop against a session that will fail
+        its next refresh anyway. Returns how many were closed. The
+        handler's own ``finally`` cleanup runs as for any disconnect.
+        """
+        now = time.monotonic()
+        closed = 0
+        for sock, conn in list(self.connections.items()):
+            idle_secs = now - conn.last_seen_monotonic
+            if idle_secs <= self._min_idle_secs():
+                continue
+            window = await window_for_user(conn.user.get("id"))
+            if window > 0 and idle_secs > window * 60:
+                logger.info(
+                    "session idle timeout: closing idle WebSocket for"
+                    " %s (idle %.0fs, window %dmin)",
+                    conn.user.get("email"),
+                    idle_secs,
+                    window,
+                )
+                await sock.close(code=4001, reason="Session idle timeout")
+                closed += 1
+        return closed
+
+    def _min_idle_secs(self) -> float:
+        """Seconds after which a connection is an idle-window *suspect*
+        (#3151): the shortest window any user can have (the configured
+        window, or the privileged cap — whichever is smaller)."""
+        window = self.app.state.settings.session_idle_timeout_minutes
+        return min(window, PRIVILEGED_SESSION_IDLE_MINUTES) * 60
 
     async def reset_workspace(
         self, workspace_id: str, *, expected_container_id: str | None = None

@@ -621,6 +621,14 @@ sync` report a clear permission-denied error.
 
 ### Added
 
+- **`KLANGKD_SESSION_IDLE_TIMEOUT_MINUTES` (#3151).** Idle session
+  timeout (STIG V-222389/390): after this many minutes without an
+  authenticated HTTP request or WebSocket frame, a session's token
+  refresh is refused (and the token blocklisted) and its quiet
+  WebSocket is closed (4001 → client logout). Admins-group members get
+  the shorter privileged window (`min(window, 10)`); set `15` for the
+  STIG 15/10 split. Armed tokens are capped at the window. `0` (the
+  default) restores age-only expiry exactly. Reloadable on SIGHUP.
 - **`KLANGKD_LOG_FORMAT` / `KLANGKD_LOG_FILE` (#3156).** New settings for
   SIEM/central-log forwarding. `KLANGKD_LOG_FORMAT`
   (`text`, the default, or `json`) switches the console log stream to one
@@ -698,6 +706,7 @@ sync` report a clear permission-denied error.
   bumped on every audit-write failure, best-effort paths included;
   zeroed on restart) and `fail_closed` so assessors can verify the
   mode. Reloadable on SIGHUP.
+
 - **All five container images now publish on a release tag (#3140).**
   Pushing `vX.Y.Z` publishes `klangk-host`, `klangk-host-fips`,
   `klangk-workspace`, `klangk-workspace-fips`, and the newly pullable

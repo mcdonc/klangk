@@ -899,6 +899,18 @@ class KlangkSettings(BaseSettings):
     # revoked via the token blocklist (its next HTTP request 401s and
     # its next WS connect is rejected with 4001 -> client logout).
     max_sessions_per_user: int | None = 0
+    # Idle session timeout (#3151, STIG V-222389/390). Minutes of
+    # inactivity (no HTTP request, no WebSocket frame) after which a
+    # login session is terminated: the token's refresh is refused (and
+    # the token blocklisted) at the next rotation, and a quiet
+    # WebSocket is closed by the server (4001 -> client logout).
+    # Admins-group members get the shorter privileged window
+    # (min(window, 10) minutes). 0 (the default) disables the timeout
+    # entirely — tokens then expire by age only, as before. When armed,
+    # access-token lifetimes are capped at the window so an idle client
+    # surfaces at the refresh seam within window + one refresh interval.
+    # Reloadable on SIGHUP (read live at issue/refresh/sweep time).
+    session_idle_timeout_minutes: int = 0
     # Dormant-account auto-disable (#2588). Accounts (except the system
     # agent and members of the admin group) whose newest activity
     # signal — last API access, last login, or creation — is older than
@@ -1739,6 +1751,7 @@ class KlangkSettings(BaseSettings):
         "password_min_age_hours",
         "password_max_age_days",
         "inactivity_disable_days",
+        "session_idle_timeout_minutes",
         "port_range_start",
         "websocket_msg_size_max",
         "api_rate_limit",
@@ -1785,6 +1798,8 @@ class KlangkSettings(BaseSettings):
             "password_min_age_hours",
             "password_max_age_days",
             "inactivity_disable_days",
+            # Disables the idle session timeout (#3151).
+            "session_idle_timeout_minutes",
             # Disables the per-user running-workspace cap (#2525).
             "max_running_workspaces_per_user",
             # Disables the per-workspace volume quota (#3153).

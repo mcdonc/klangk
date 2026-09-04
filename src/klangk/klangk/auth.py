@@ -62,6 +62,20 @@ _SALT_BYTES = 16
 # measured in days — one UPDATE per user per minute is ample precision
 # and keeps idle-poling clients off the write path.
 ACTIVITY_STAMP_INTERVAL = 60.0
+
+# STIG V-222389/390 split (#3151): privileged sessions terminate after
+# a shorter idle window than unprivileged ones. The privileged window
+# is the lesser of the configured unprivileged window and this cap —
+# ``KLANGKD_SESSION_IDLE_TIMEOUT_MINUTES=15`` (the STIG value) yields
+# 15 min for regular users and 10 for admins-group members.
+PRIVILEGED_SESSION_IDLE_MINUTES = 10
+
+# Ceiling on the per-JTI stamp-throttle dict (#3151): sessions churn
+# (every refresh mints a new JTI), so the dict is length-capped the
+# same way the rate-limit dicts are — under a monotonic clock,
+# insertion order tracks stamp order, so the head is always the
+# stalest entry.
+SESSION_STAMP_MAX_ENTRIES = 10_000
 # Sanity ceiling on the iteration count read back from a stored hash, so
 # a corrupt or tampered row cannot stall a login indefinitely.
 _MAX_VERIFY_ITERATIONS = 10_000_000
@@ -403,6 +417,11 @@ class Auth:
         # (#2588) — transient runtime state (not settings-derived), so
         # it survives reconfigure and is deliberately not reset there.
         self.activity_stamps: dict[str, float] = {}
+        # Per-JTI monotonic clock of the last session last_seen_at
+        # write (#3151) — same class of transient throttle state, keyed
+        # by session so one user's two browsers cannot suppress each
+        # other's stamps.
+        self.session_stamps: dict[str, float] = {}
 
     def reconfigure(self, app) -> None:
         self.app = app
@@ -502,6 +521,11 @@ class Auth:
     @property
     def workspace_token_expire_hours(self) -> float:
         return self.app.state.settings.workspace_token_hours
+
+    @property
+    def session_idle_timeout_minutes(self) -> int:
+        """Configured idle-session window in minutes; 0 = off (#3151)."""
+        return self.app.state.settings.session_idle_timeout_minutes
 
     # --- secret / startup guard ---
 
@@ -806,18 +830,104 @@ class Auth:
 
     # --- access tokens ---
 
-    def create_token(self, user_id: str, email: str) -> str:
-        jti = str(uuid.uuid4())
-        expire = datetime.now(timezone.utc) + timedelta(
-            hours=self.token_expire_hours
+    def effective_session_idle_minutes(self, is_admin: bool) -> int:
+        """The idle-session window for a session owner (#3151).
+
+        Pure helper over the live setting: 0 (off) for everyone; else
+        the configured window for regular users and the lesser of it
+        and :data:`PRIVILEGED_SESSION_IDLE_MINUTES` for admins-group
+        members (STIG V-222390's shorter privileged window).
+        """
+        window = self.session_idle_timeout_minutes
+        if window <= 0:
+            return 0
+        if is_admin:
+            return min(window, PRIVILEGED_SESSION_IDLE_MINUTES)
+        return window
+
+    async def idle_window_minutes_for_user(self, user_id: str) -> int:
+        """The caller's idle window, resolving admins-group membership.
+
+        The one DB read per token issue/refresh that keys the 15/10
+        split (#3151). Short-circuits to 0 when the timeout is off so
+        the unarmed path pays nothing.
+        """
+        if self.session_idle_timeout_minutes <= 0:
+            return 0
+        is_admin = await self.app.state.model.users.is_admin(user_id)
+        return self.effective_session_idle_minutes(is_admin)
+
+    def _session_stamp_interval(self) -> float:
+        """Throttle interval for session last_seen writes (#3151).
+
+        One write per JTI per interval keeps idle-polling clients off
+        the write path (the ``users.n_at`` pattern); the interval also
+        scales down with a short window so a 1-minute STIG window is
+        not starved by a 60-second stamp lag.
+        """
+        window_secs = self.session_idle_timeout_minutes * 60
+        return min(ACTIVITY_STAMP_INTERVAL, window_secs / 4)
+
+    async def record_session_activity(self, jti: str) -> None:
+        """Stamp ``user_sessions.last_seen_at`` (throttled) (#3151).
+
+        Called from the token-auth choke points (the HTTP dependencies
+        and the WebSocket connect/frame paths) — real traffic only:
+        the refresh endpoint deliberately does NOT call this (it is the
+        enforcement seam, not activity, or an idle client that only
+        refreshes would survive forever). No-op unless the window is
+        armed. The per-JTI clock bounds the dict; dead JTIs are popped
+        on logout/swap and the length cap is the backstop.
+        """
+        if self.session_idle_timeout_minutes <= 0:
+            return
+        now = time.monotonic()
+        last = self.session_stamps.get(jti)
+        if last is not None and now - last < self._session_stamp_interval():
+            return
+        while len(self.session_stamps) >= SESSION_STAMP_MAX_ENTRIES:
+            del self.session_stamps[next(iter(self.session_stamps))]
+        self.session_stamps[jti] = now
+        await self.app.state.model.sessions.touch_session(jti)
+
+    def create_token(
+        self, user_id: str, email: str, expire_hours: float | None = None
+    ) -> str:
+        """Mint an access token, optionally overriding the lifetime.
+
+        *expire_hours* (when given) is the capped lifetime the idle
+        window demands (#3151) — see :meth:`create_capped_token`.
+        """
+        lifetime = (
+            self.token_expire_hours if expire_hours is None else expire_hours
         )
+        jti = str(uuid.uuid4())
+        now = datetime.now(timezone.utc)
+        expire = now + timedelta(hours=lifetime)
         payload = {
             "sub": user_id,
             "email": email,
             "jti": jti,
+            "iat": now,
             "exp": expire,
         }
         return jwt.encode(payload, self.secret, algorithm=self.algorithm)
+
+    async def create_capped_token(self, user_id: str, email: str) -> str:
+        """Mint an access token capped at the owner's idle window (#3151).
+
+        With the window armed, a token that outlives it would let an
+        idle session coast past the window on one long-lived token, so
+        the lifetime is the lesser of ``KLANGKD_ACCESS_TOKEN_HOURS``
+        and the (admin-aware) window. The client's 80%-of-lifetime
+        refresh schedule then surfaces it at the refresh seam within
+        the window. Unarmed → the plain configured lifetime.
+        """
+        window_hours = (await self.idle_window_minutes_for_user(user_id)) / 60
+        lifetime = self.token_expire_hours
+        if window_hours > 0:
+            lifetime = min(lifetime, window_hours)
+        return self.create_token(user_id, email, expire_hours=lifetime)
 
     async def issue_token(
         self,
@@ -839,9 +949,11 @@ class Auth:
         sessions from other workstations. Then
         :meth:`_enforce_session_limit` revokes the user's oldest sessions
         past ``KLANGKD_MAX_SESSIONS_PER_USER`` (0 = unlimited; the table
-        is still purged of expired rows so it stays bounded).
+        is still purged of expired rows so it stays bounded). The minted
+        token's lifetime is capped at the owner's idle window when the
+        idle session timeout is armed (#3151).
         """
-        token = self.create_token(user_id, email)
+        token = await self.create_capped_token(user_id, email)
         payload = self.decode_token(token)
         expires_at = datetime.fromtimestamp(
             payload["exp"], tz=timezone.utc
@@ -1370,6 +1482,9 @@ class Auth:
             jti, user_id, new_payload["jti"], new_expires_at
         )
         self._retarget_refreshed_sockets(jti, new_payload["jti"])
+        # The old JTI is dead — drop its stamp-throttle entry (#3151)
+        # so the dict tracks live sessions, not history.
+        self.session_stamps.pop(jti, None)
 
     def _retarget_refreshed_sockets(self, old_jti: str, new_jti: str) -> None:
         """Move live WS connections onto the refreshed token's JTI (#3152).
@@ -1399,12 +1514,64 @@ class Auth:
                 return await self._cached_refresh_response(cached)
         raise HTTPException(status_code=401, detail="Token expired")
 
+    async def _session_idle_seconds(self, jti: str) -> float | None:
+        """Seconds since the session's last seen stamp; ``None`` when it
+        cannot be judged (no session row — a pre-#2585 token — or an
+        unparseable stamp). Callers fail open on ``None``, the same
+        posture as every other session-row-tolerant path (#3151)."""
+        last_seen = await self.app.state.model.sessions.get_last_seen(jti)
+        if last_seen is None:
+            return None
+        try:
+            last = datetime.fromisoformat(last_seen)
+        except ValueError:
+            return None
+        return (datetime.now(timezone.utc) - last).total_seconds()
+
+    async def _revoke_idle_session(self, jti: str, exp) -> None:
+        """Terminate an idle session: blocklist the token (no cached
+        replacement, so any later use 401s as revoked) and drop its
+        session row (#3151)."""
+        logger.info(
+            "session idle timeout: revoking jti=%s (idle past the"
+            " configured window)",
+            jti,
+        )
+        expires_at = datetime.fromtimestamp(exp, tz=timezone.utc).isoformat()
+        await self.app.state.model.tokens.blocklist_token(jti, expires_at)
+        await self.app.state.model.sessions.remove_session(jti)
+        raise HTTPException(
+            status_code=401,
+            detail="Session timed out due to inactivity",
+        )
+
+    async def _reject_idle_session(self, jti: str, exp, user_id: str) -> None:
+        """The idle check at the refresh seam (#3151).
+
+        With the window armed, a session whose last real activity
+        (HTTP request or WebSocket frame — never a refresh) is older
+        than the owner's window is terminated instead of rotated.
+        Enforcing here rather than per request keeps every API call
+        off the enforcement path while bounding an idle session's life
+        to the window plus one refresh interval.
+        """
+        window = await self.idle_window_minutes_for_user(user_id)
+        if window <= 0:
+            return
+        idle_secs = await self._session_idle_seconds(jti)
+        if idle_secs is None or idle_secs <= window * 60:
+            return
+        await self._revoke_idle_session(jti, exp)
+
     async def refresh_token(self, token: str) -> TokenResponse:
         """Exchange a valid access token for a new one.
 
         The old token's JTI is blocklisted with the new token cached
         alongside it, making the endpoint idempotent: repeated calls
-        with the same old token return the same new token.
+        with the same old token return the same new token. With the
+        idle session timeout armed (#3151), an idle session is
+        terminated here instead of rotated, and the replacement token
+        is capped at the owner's idle window.
         """
         try:
             payload = self.decode_token(token)
@@ -1420,12 +1587,16 @@ class Auth:
                 return cached
 
             user = await self._require_active_user(user_id)
+            await self._reject_idle_session(jti, exp, user_id)
             # A refresh is authenticated API use (#2588 review): stamp so
             # a headless client that only refreshes (no other API calls)
-            # still counts as active.
+            # still counts as active. This is the *user-level* clock only
+            # — the session-level last_seen is deliberately untouched
+            # (#3151), or an idle client that only refreshes would never
+            # time out.
             await self.record_activity(user_id)
 
-            new_token = self.create_token(user_id, email)
+            new_token = await self.create_capped_token(user_id, email)
             await self._swap_token(jti, exp, user_id, new_token)
             # Refreshing a pre-#2585 token (no row) INSERTS one; enforce
             # so the cap holds on every path that adds a session row,
@@ -1475,6 +1646,7 @@ class Auth:
             )
             return None
         await self.record_activity(user_id)
+        await self.record_session_activity(jti)
         return user
 
     def _ws_token_reject_reason(self, user: dict) -> str | None:
@@ -1521,6 +1693,7 @@ class Auth:
                 )
                 await self.app.state.model.sessions.remove_session(jti)
                 await self._kick_revoked_sockets(jti)
+                self.session_stamps.pop(jti, None)
         except JWTError:
             pass
 
@@ -1543,6 +1716,7 @@ async def _authenticated_user(request: Request, credentials) -> dict:
     user = await request.app.state.model.users.get_user_by_id(user_id)
     if user is None:
         raise HTTPException(status_code=401, detail="User not found")
+    await request.app.state.auth.record_session_activity(jti)
     return user
 
 
@@ -1556,7 +1730,11 @@ async def _optional_user(request: Request, credentials) -> dict | None:
         return None
     if await request.app.state.model.tokens.is_token_blocklisted(jti):
         return None
-    return await request.app.state.model.users.get_user_by_id(user_id)
+    user = await request.app.state.model.users.get_user_by_id(user_id)
+    if user is None:
+        return None
+    await request.app.state.auth.record_session_activity(jti)
+    return user
 
 
 async def get_current_user(

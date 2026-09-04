@@ -544,10 +544,12 @@ async def list_user_sessions(
 
     The queryable half of concurrent-logon auditing: one row per
     unexpired session, oldest first, carrying when it was established,
-    when it expires, and the effective client IP / user agent it came
-    from. The logon-time audit record (server log) fires when a new
-    login is concurrent with a session from a different workstation;
-    this endpoint is how an operator reviews the trail afterwards.
+    when it expires, the effective client IP / user agent it came
+    from, and when it was last seen active (#3151 — the clock the idle
+    timeout judges). The logon-time audit record (server log) fires
+    when a new login is concurrent with a session from a different
+    workstation; this endpoint is how an operator reviews the trail
+    afterwards.
     """
     user = await app.state.model.users.get_user_by_id(user_id)
     if user is None:
@@ -561,6 +563,7 @@ async def list_user_sessions(
                 "expires_at": row["expires_at"],
                 "source_ip": row["source_ip"],
                 "user_agent": row["user_agent"],
+                "last_seen_at": row["last_seen_at"],
             }
             for row in rows
         ]

@@ -82,6 +82,7 @@ from . import (
     files,
     first_run,
     server_schedule,
+    session_idle,
     hooks as hooks_mod,
     inactivity,
     model,
@@ -235,6 +236,10 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     # agent and admin-group members) whose last activity is older than
     # KLANGKD_INACTIVITY_DISABLE_DAYS.
     app.state.inactivity_sweeper = inactivity.InactivitySweeper(app)
+    # #3151: idle-session sweeper — closes WebSocket connections quiet
+    # past KLANGKD_SESSION_IDLE_TIMEOUT_MINUTES (the HTTP half is
+    # enforced at the refresh seam in Auth).
+    app.state.session_idle_monitor = session_idle.SessionIdleMonitor(app)
     # #2526: MemoryPressureEvictor — host memory-pressure eviction of idle
     # workspaces (sibling loop to the registry's IdleMonitor). Reads its
     # thresholds live off settings (SIGHUP-reloadable) via self.app.

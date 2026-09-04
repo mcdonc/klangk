@@ -905,6 +905,23 @@ class UsersModel(Submodel):
             for row in rows
         ]
 
+    async def is_admin(self, user_id: str) -> bool:
+        """True when *user_id* is a member of the ``admins`` group.
+
+        The one-query form of :meth:`get_user_groups` +
+        ``_is_instance_admin``, for hot paths that only need the bit
+        (the idle-session privileged window, #3151 — resolved at token
+        issue/refresh). The group's existence is boot-seeded; no row →
+        not an admin.
+        """
+        row = await self.app.state.db.fetchone(
+            "SELECT 1 FROM user_groups ug"
+            " JOIN groups g ON g.id = ug.group_id"
+            " WHERE ug.user_id = ? AND g.name = ? LIMIT 1",
+            (user_id, ADMIN_GROUP_NAME),
+        )
+        return row is not None
+
     async def get_user_by_email(self, email: str) -> dict | None:
         row = await self.app.state.db.fetchone(
             _USER_COLUMNS + " FROM users WHERE email = ?",
