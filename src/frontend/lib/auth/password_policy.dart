@@ -127,7 +127,7 @@ class PasswordPolicy {
   /// ``password_edit_distance`` (#3173). Substitutions, insertions, and
   /// deletions each count as one changed character, so prefixing or
   /// appending to the old password cannot dodge the rule.
-  static int _editDistance(List<int> old, List neu) {
+  static int _editDistance(List<int> old, List<int> neu) {
     var prev = List<int>.generate(neu.length + 1, (j) => j);
     for (var i = 1; i <= old.length; i++) {
       final cur = List<int>.filled(neu.length + 1, 0);

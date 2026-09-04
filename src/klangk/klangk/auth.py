@@ -113,9 +113,9 @@ def password_edit_distance(old: str, new: str) -> int:
     number of characters". Insertions/deletions counting is what kills
     the positional-diff workaround (prepending to ``Password1234!``
     changes every position yet is one inserted character). Passwords
-    are capped at 72 bytes, so the DP table is at most 72x72 cells —
-    trivial cost, and pure Python keeps the server/CLI mirrors
-    identical.
+    are capped at 72 bytes (so at most 72 code points), keeping
+    the DP table trivially small. Pure Python keeps the server/CLI
+    mirrors identical.
     """
     prev = list(range(len(new) + 1))
     for i, old_char in enumerate(old, start=1):

@@ -124,6 +124,78 @@ void main() {
     });
   });
 
+  group('PasswordPolicy.fromConfig minChanged', () {
+    test('parses password_min_changed', () {
+      final p = PasswordPolicy.fromConfig({'password_min_changed': 8});
+      expect(p.minChanged, 8);
+    });
+
+    test('defaults to zero when absent', () {
+      final p = PasswordPolicy.fromConfig({});
+      expect(p.minChanged, 0);
+    });
+
+    test('non-numeric falls back to zero', () {
+      final p = PasswordPolicy.fromConfig({'password_min_changed': 'many'});
+      expect(p.minChanged, 0);
+    });
+  });
+
+  group('PasswordPolicy.changedError', () {
+    const policy = PasswordPolicy(minChanged: 8);
+
+    test('disabled when minChanged is zero', () {
+      const off = PasswordPolicy(minChanged: 0);
+      expect(off.changedError('same', 'same'), isNull);
+    });
+
+    test('identical passwords rejected', () {
+      expect(policy.changedError('testpass', 'testpass'), isNotNull);
+    });
+
+    test('one substitution rejected', () {
+      expect(policy.changedError('Password1', 'Password9'), isNotNull);
+    });
+
+    test('one insertion rejected (prepend workaround)', () {
+      // Prepending shifts every position but the edit distance is 1.
+      expect(policy.changedError('Password1', 'xPassword1'), isNotNull);
+    });
+
+    test('enough change passes', () {
+      // distance("testpass", "Qwerty!234") == 8 — at the floor.
+      expect(policy.changedError('testpass', 'Qwerty!234'), isNull);
+    });
+
+    test('message mentions the minimum', () {
+      final err = policy.changedError('testpass', 'testpas9');
+      expect(err, contains('8 characters'));
+    });
+
+    test('counts code points not UTF-16 units', () {
+      // 4 emoji vs 1: distance is 3 code points.
+      const p = PasswordPolicy(minChanged: 4);
+      expect(
+        p.changedError('\u{1f600}\u{1f600}\u{1f600}\u{1f600}', '\u{1f600}'),
+        isNotNull,
+      );
+      expect(
+        p.changedError(
+          '\u{1f600}\u{1f600}\u{1f600}\u{1f600}',
+          '\u{1f601}\u{1f602}\u{1f603}\u{1f604}',
+        ),
+        isNull,
+      );
+    });
+
+    test('empty strings handled', () {
+      const p = PasswordPolicy(minChanged: 3);
+      expect(p.changedError('', 'abc'), isNull);
+      expect(p.changedError('abc', ''), isNull);
+      expect(p.changedError('', 'ab'), isNotNull);
+    });
+  });
+
   group('PasswordPolicy.helperText', () {
     test('describes the length floor', () {
       const p = PasswordPolicy(minLength: 12);
