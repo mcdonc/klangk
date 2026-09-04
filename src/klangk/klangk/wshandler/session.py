@@ -995,6 +995,31 @@ class WebSocketState:
                 logger.debug("Error closing socket for user %s", user_id)
         return len(socks)
 
+    async def disconnect_by_jti(
+        self, jti: str, *, code: int = 4001, reason: str = ""
+    ) -> int:
+        """Close every live connection authenticated with *jti* (#3152).
+
+        Hard token revocation (logout, session-limit eviction) must cut
+        the sockets that token opened, not just reject the next connect.
+        Refresh rotation deliberately does not come through here — a
+        refresh keeps the session (and its socket) alive under the new
+        token. Code 4001 makes the client log out rather than
+        reconnect-loop, the same convention as ``disconnect_user``.
+        Only the sockets are closed — each handler's ``finally`` block
+        then runs the normal disconnect cleanup. Returns how many
+        connections were closed.
+        """
+        socks = [
+            sock for sock, conn in self.connections.items() if conn.jti == jti
+        ]
+        for sock in socks:
+            try:
+                await sock.close(code=code, reason=reason)
+            except Exception:  # noqa: BLE001
+                logger.debug("Error closing socket for jti %s", jti)
+        return len(socks)
+
     async def reset_workspace(
         self, workspace_id: str, *, expected_container_id: str | None = None
     ) -> None:

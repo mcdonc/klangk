@@ -717,6 +717,17 @@ class Auth:
             ", ".join(others),
         )
 
+    async def _kick_revoked_sockets(self, jti: str) -> None:
+        """Close live WS connections authenticated with *jti* (#3152).
+
+        Revocation must cut the sockets the token opened, not just
+        reject the next connect. Minimal app states (tests) may not wire
+        ``sockets`` — then there is nothing to close.
+        """
+        sockets = getattr(self.app.state, "sockets", None)
+        if sockets is not None:
+            await sockets.disconnect_by_jti(jti, reason="Token revoked")
+
     async def _revoke_sessions(
         self, user_id: str, rows: list[dict], limit: int
     ) -> None:
@@ -725,7 +736,8 @@ class Auth:
         Victims are removed oldest-first by blocklisting their JTIs (the
         same revocation path as logout: the next HTTP request 401s with
         "Token has been revoked"; the next WebSocket connect is rejected
-        with 4001 → client logout), then their session rows are deleted.
+        with 4001 → client logout), then their session rows are deleted,
+        and their live WebSocket connections are closed (#3152).
         Blocklisting happens BEFORE the delete so a crash between the two
         can only leave a dead token's row behind (purged on the next
         issuance), never a live token without a row.
@@ -741,6 +753,7 @@ class Auth:
             await self.app.state.model.tokens.blocklist_token(
                 row["jti"], row["expires_at"]
             )
+            await self._kick_revoked_sockets(row["jti"])
         await self.app.state.model.sessions.remove_sessions(
             [row["jti"] for row in rows]
         )
@@ -1159,7 +1172,8 @@ class Auth:
             return None
 
     async def logout(self, token: str) -> None:
-        """Blocklist the token's JTI and drop its session row."""
+        """Blocklist the token's JTI, drop its session row, and close the
+        WebSocket connections it authenticated (#3152)."""
         try:
             payload = self.decode_token(token)
             jti = payload.get("jti")
@@ -1172,6 +1186,7 @@ class Auth:
                     jti, expires_at
                 )
                 await self.app.state.model.sessions.remove_session(jti)
+                await self._kick_revoked_sockets(jti)
         except JWTError:
             pass
 

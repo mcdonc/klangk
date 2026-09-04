@@ -945,6 +945,68 @@ class TestAuthRoutes:
         assert resp.json()["status"] == "ok"
         mock_stop.assert_not_called()
 
+    async def test_logout_kicks_live_sockets(self, client, app, user):
+        """#3152: logout closes the WS connections the logged-out token
+        authenticated (4001 -> client logout), not just future connects —
+        and leaves other sessions of the same user connected."""
+        from klangk.wshandler.session import WebSocketState
+        from klangk import wshandler
+
+        assert isinstance(app.state.sockets, WebSocketState)
+        resp = await client.post(
+            "/api/v1/auth/login",
+            json={
+                "identifier": "testuser@example.com",
+                "password": "testpass",
+            },
+        )
+        token = resp.json()["access_token"]
+        jti = app.state.auth.decode_token(token)["jti"]
+        closed: list[tuple[int, str]] = []
+
+        class FakeSock:
+            async def close(self, code=1000, reason=""):
+                closed.append((code, reason))
+
+        # Same user, different session; and another user entirely: both
+        # must survive the logout of the victim's token.
+        victim = types.SimpleNamespace(
+            user={"id": user["id"], "email": user["email"]}, jti=jti
+        )
+        other_session = types.SimpleNamespace(
+            user={"id": user["id"], "email": user["email"]},
+            jti="another-jti",
+        )
+        other_user = types.SimpleNamespace(
+            user={"id": "someone-else", "email": "other@example.com"},
+            jti="third-jti",
+        )
+        app.state.sockets.connections[FakeSock()] = other_user
+        app.state.sockets.connections[FakeSock()] = other_session
+        app.state.sockets.connections[FakeSock()] = victim
+
+        resp = await client.post(
+            "/api/v1/auth/logout",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200
+        assert closed == [(4001, "Token revoked")]
+
+        # A socket whose close() raises must not break the kick: the
+        # remaining sockets are still closed and the count is right.
+        class BadSock:
+            async def close(self, code=1000, reason=""):
+                raise RuntimeError("already closed")
+
+        app.state.sockets.connections.clear()
+        app.state.sockets.connections[BadSock()] = victim
+        app.state.sockets.connections[FakeSock()] = victim
+        kicked = await wshandler.disconnect_by_jti(
+            app.state.sockets, jti, reason="Token revoked"
+        )
+        assert kicked == 2
+        app.state.sockets.connections.clear()
+
     async def test_logout_no_auth(self, client):
         # Idempotent (#2687): no token presented means nothing to revoke,
         # which is the desired end state — not an auth failure.

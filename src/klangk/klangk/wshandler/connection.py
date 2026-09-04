@@ -34,10 +34,17 @@ logger = logging.getLogger(__name__)
 class Connection:
     """Per-WebSocket connection state and command handlers."""
 
-    def __init__(self, ws: SafeWebSocket, user: dict, app):
+    def __init__(
+        self, ws: SafeWebSocket, user: dict, app, jti: str | None = None
+    ):
         self.app = app
         self.sock = ws
         self.user = user
+        # JTI of the access token this socket authenticated with (#3152):
+        # lets a hard revocation (logout, session-limit eviction) close
+        # exactly the connections that token opened — not every session
+        # of the user. ``None`` on connections built without one (tests).
+        self.jti = jti
         self.workspace_id: str | None = None
         self.container_id: str | None = None
         # Terminal sessions are owned by the TerminalController

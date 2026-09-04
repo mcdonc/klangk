@@ -124,6 +124,22 @@ async def disconnect_user(
     return await sockets.disconnect_user(user_id, code=code, reason=reason)
 
 
+async def disconnect_by_jti(
+    sockets: WebSocketState,
+    jti: str,
+    *,
+    code: int = 4001,
+    reason: str = "",
+) -> int:
+    """Close every live connection authenticated with *jti* (#3152).
+
+    Hard revocation (logout, session-limit eviction) cuts the sockets
+    that token opened; 4001 makes the client log out rather than
+    reconnect-loop. Thin delegation to ``WebSocketState.disconnect_by_jti``.
+    """
+    return await sockets.disconnect_by_jti(jti, code=code, reason=reason)
+
+
 async def refresh_user_handle(
     sockets: WebSocketState, user_id: str, new_handle: str
 ) -> None:

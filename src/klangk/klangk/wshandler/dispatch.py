@@ -63,7 +63,12 @@ WS_STATE_COMMANDS: dict[str, str] = {
 
 
 async def ws_authenticate(websocket: WebSocket, app):
-    """Validate the socket's token; close and return None on failure."""
+    """Validate the socket's token; close and return None on failure.
+
+    Success returns ``(user, jti)`` — the token's JTI rides along so
+    the connection can be targeted for closing when that token is
+    later hard-revoked (#3152).
+    """
     token = websocket.query_params.get("token")
     if not token:
         await websocket.close(code=4001, reason="Missing token")
@@ -76,7 +81,7 @@ async def ws_authenticate(websocket: WebSocket, app):
     if result is None:
         await websocket.close(code=4001, reason="Invalid token")
         return None
-    return result
+    return result, app.state.auth.decode_token(token).get("jti")
 
 
 # Exceptions raised by a *handler* that mean the connection itself is
@@ -192,14 +197,15 @@ async def _run_websocket_session(conn, safe_ws, user: dict, app) -> None:
 async def handle_websocket(websocket: WebSocket, app) -> None:
     """Main WebSocket handler."""
     # Authenticate via query param
-    user = await ws_authenticate(websocket, app)
-    if user is None:
+    authed = await ws_authenticate(websocket, app)
+    if authed is None:
         return
+    user, jti = authed
 
     await websocket.accept()
     safe_ws = SafeWebSocket(websocket)
     safe_ws.start_sender()
-    conn = Connection(safe_ws, user, app)
+    conn = Connection(safe_ws, user, app, jti=jti)
     app.state.sockets.connections[safe_ws] = conn
     # Everything from here on is inside the try so a failure in the
     # connect-time work below still runs the ``finally`` cleanup — the

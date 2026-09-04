@@ -51,6 +51,7 @@ from klangk.wshandler import (
     disconnect_all_websockets,
     send_error,
     handle_websocket,
+    ws_authenticate,
     reset_workspace_state,
     log_ws_msg,
     SEND_QUEUE_SIZE,
@@ -2809,6 +2810,41 @@ class TestHandleWebsocketDispatch:
             await handle_websocket(websocket, app_state)  # must not raise
         assert app_state.state.sockets.connections == {}
         assert "Connection cleanup failed" in caplog.text
+
+    async def test_connection_records_authenticating_jti(self, user):
+        """#3152: the Connection built by handle_websocket records the
+        JTI of the token it authenticated with, so a later hard revocation
+        can close exactly this connection."""
+        from klangk.wshandler import dispatch as dispatch_mod
+
+        app_state = _make_app_state()
+        token = _auth().create_token(user["id"], user["email"])
+        jti = _auth().decode_token(token)["jti"]
+        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket.receive_text = AsyncMock(side_effect=[WebSocketDisconnect()])
+        seen: list = []
+
+        class RecordingConnection(Connection):
+            def __init__(self, ws, u, app, jti=None):
+                super().__init__(ws, u, app, jti=jti)
+                seen.append(jti)
+
+        with patch.object(dispatch_mod, "Connection", RecordingConnection):
+            await handle_websocket(websocket, app_state)
+        assert seen == [jti]
+
+    async def test_ws_authenticate_returns_user_and_jti(self, user):
+        """#3152: ws_authenticate hands the caller the authenticated user
+        plus the token's JTI."""
+        app_state = _make_app_state()
+        token = _auth().create_token(user["id"], user["email"])
+        websocket = _mock_raw_sock(query_params={"token": token})
+        result = await ws_authenticate(websocket, app_state)
+        assert isinstance(result, tuple)
+        authed_user, jti = result
+        assert authed_user["id"] == user["id"]
+        assert jti == _auth().decode_token(token)["jti"]
+        websocket.close.assert_not_awaited()
 
     async def test_dispatch_terminal_input(self, user):
         websocket = await self._run_commands(

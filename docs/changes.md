@@ -292,6 +292,14 @@ operators or integrators to act when upgrading.
 
 ### Security
 
+- **WebSocket connections are closed on token revocation (#3152).**
+  Logging out, or being evicted by the per-user session limit, now
+  immediately closes the live WebSocket connections the revoked token
+  authenticated (close code 4001, so clients log out instead of
+  reconnect-looping). Previously an established socket kept full
+  data-plane access until the next reconnect. Refresh rotation is
+  unaffected — a refreshed session keeps its socket.
+
 - **Bounded rate-limit state for the email cooldowns (#3113).** The
   per-address cooldown dicts behind
   `POST /api/v1/auth/forgot-password` and

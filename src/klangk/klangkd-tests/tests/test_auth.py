@@ -1457,6 +1457,95 @@ class TestSessionLimit:
         assert len(rows) == 1
 
 
+class TestRevocationKicksSockets:
+    """#3152: hard revocation (logout, session-limit eviction) closes the
+    live WS connections the revoked token authenticated; refresh rotation
+    (which blocklists the old JTI via _swap_token) must NOT kick — the
+    session lives on under the new token."""
+
+    def _auth_with_sockets(self, env=None):
+        """An Auth whose app_state wires a real WebSocketState, plus that
+        state — fake connections can be planted in ``sockets.connections``."""
+        from klangk.wshandler.session import WebSocketState
+
+        a = _auth(env)
+        sockets = WebSocketState(a.app)
+        a.app.state.sockets = sockets
+        return a, sockets
+
+    @staticmethod
+    def _fake_conn(user, jti):
+        return _types.SimpleNamespace(
+            user={"id": user["id"], "email": user["email"]}, jti=jti
+        )
+
+    async def _login(self, a):
+        result = await a.login(
+            auth.LoginRequest(
+                identifier="testuser@example.com", password="testpass"
+            )
+        )
+        return result.access_token
+
+    async def test_logout_closes_socket_for_that_jti(self, user, app_state):
+        a, sockets = self._auth_with_sockets()
+        token = await self._login(a)
+        jti = a.decode_token(token)["jti"]
+        closed: list[tuple[int, str]] = []
+
+        class FakeSock:
+            async def close(self, code=1000, reason=""):
+                closed.append((code, reason))
+
+        sockets.connections[FakeSock()] = self._fake_conn(user, jti)
+        sockets.connections[FakeSock()] = self._fake_conn(user, "other-jti")
+        await a.logout(token)
+        # Only the connection the revoked token authenticated is closed.
+        assert closed == [(4001, "Token revoked")]
+        sockets.connections.clear()
+
+    async def test_session_limit_eviction_closes_evicted_sockets(
+        self, user, app_state
+    ):
+        env = {"KLANGKD_MAX_SESSIONS_PER_USER": "1"}
+        a, sockets = self._auth_with_sockets(env)
+        first = await self._login(a)
+        first_jti = a.decode_token(first)["jti"]
+        closed: list[tuple[int, str]] = []
+
+        class FakeSock:
+            async def close(self, code=1000, reason=""):
+                closed.append((code, reason))
+
+        sockets.connections[FakeSock()] = self._fake_conn(user, first_jti)
+        # The second login evicts the first session past the cap of 1.
+        second = await self._login(a)
+        assert closed == [(4001, "Token revoked")]
+        # The surviving session's token still works.
+        assert await a.get_user_from_token(second) is not None
+        sockets.connections.clear()
+
+    async def test_refresh_rotation_does_not_close_socket(
+        self, user, app_state
+    ):
+        """A refresh blocklists the old JTI (idempotent rotation cache)
+        but keeps the session — the socket opened with the old token must
+        stay connected."""
+        a, sockets = self._auth_with_sockets()
+        token = await self._login(a)
+        jti = a.decode_token(token)["jti"]
+        closed: list[tuple[int, str]] = []
+
+        class FakeSock:
+            async def close(self, code=1000, reason=""):
+                closed.append((code, reason))
+
+        sockets.connections[FakeSock()] = self._fake_conn(user, jti)
+        await a.refresh_token(token)
+        assert closed == []
+        sockets.connections.clear()
+
+
 class TestConcurrentLogonAudit:
     """Audit records for concurrent logons from different workstations
     (#2586). A workstation is the effective client IP a session was
