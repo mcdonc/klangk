@@ -336,7 +336,10 @@ shared code somewhere both can import without crossing the boundary.
 ## Changelog (`docs/changes.md`)
 
 `docs/changes.md` is the single source of truth for human-authored release notes,
-formatted as [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). It has two
+formatted as [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
+headings escape the opening bracket (`## \[Unreleased]`, `## \[v1.2.3] - date`)
+so the docs build does not parse them as Markdown link references (#3142); they
+render as plain `## [Unreleased]`-style headings. The file has two
 rendering surfaces:
 
 - **Docs site** — the whole file renders as one page at `/changes/`, sidebar entry
@@ -348,7 +351,7 @@ rendering surfaces:
 
 ### When to add an entry
 
-Add a bullet under `## [Unreleased]` **in the same PR that introduces the change**
+Add a bullet under `## \[Unreleased]` **in the same PR that introduces the change**
 (not as an afterthought, not after merge). Use the matching subsection:
 
 - **Added** — new feature, config var, CLI flag, endpoint.
@@ -389,11 +392,14 @@ create noise — do not add changelog entries for them.
 
 Right before pushing the tag — do this as its own commit on `main`:
 
-1. Rename `## [Unreleased]` → `## [vX.Y.Z] - YYYY-MM-DD`
+1. Rename `## \[Unreleased]` → `## \[vX.Y.Z] - YYYY-MM-DD`
    (today's date). The `v` prefix and bracket form **must match the tag exactly**;
-   the `- YYYY-MM-DD` date suffix is optional but conventional. The workflow matches the section
-   heading as a prefix, so `## [v1.0.5] - 2026-07-07` matches tag `v1.0.5`.
-2. Insert a fresh, empty `## [Unreleased]` heading directly above it.
+   the `- YYYY-MM-DD` date suffix is optional but conventional. Escape the
+   opening bracket (`\[`) as shown — it keeps the docs build warning-free
+   (#3142). The workflow matches the section heading as a prefix and strips
+   backslashes first, so `## \[v1.0.5] - 2026-07-07` matches tag `v1.0.5` (a
+   bare `## [v1.0.5]` would still match, but don't write it that way).
+2. Insert a fresh, empty `## \[Unreleased]` heading directly above it.
 3. Commit, e.g. `chore(changelog): cut vX.Y.Z`.
 4. Tag and push: `devenv --quiet -O dotenv.enable:bool false shell -- git tag vX.Y.Z && devenv --quiet -O dotenv.enable:bool false shell -- git push origin vX.Y.Z`.
 
