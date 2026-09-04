@@ -280,9 +280,10 @@ class TestWsAuthenticateJti:
         )
         authed = await ws_authenticate(ws, app_state)
         assert authed is not None
-        authed_user, jti = authed
+        authed_user, jti, token_exp = authed
         assert authed_user["id"] == user["id"]
         assert jti == a.decode_token(token)["jti"]
+        assert token_exp == a.decode_token(token)["exp"]
 
     async def test_invalid_token_still_refused(self, user, app_state):
         from unittest.mock import AsyncMock
