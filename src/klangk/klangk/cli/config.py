@@ -252,8 +252,7 @@ def ensure_config() -> None:
         "# See docs/features/ssh-agent-forwarding.md.\n"
         "forward-agent: true\n\n"
     )
-    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    CONFIG_PATH.write_text(header + "servers: {}\n")
+    _write_config_text(header + "servers: {}\n")
 
 
 def seed_config(server_url: str, user: str | None = None) -> None:
@@ -280,8 +279,7 @@ def seed_config(server_url: str, user: str | None = None) -> None:
         "# See docs/features/ssh-agent-forwarding.md.\n"
         "forward-agent: true\n\n"
     )
-    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    CONFIG_PATH.write_text(header + servers_yaml)
+    _write_config_text(header + servers_yaml)
 
 
 def load_yaml_config() -> dict:
@@ -292,33 +290,68 @@ def load_yaml_config() -> dict:
     command with ``AttributeError`` — it degrades to an empty config
     (#3094), the same degrade-not-crash rule as a bad
     ``terminal-open-cmd`` (#2685). An *unparseable* document (YAML
-    syntax error) degrades the same way, with a one-line warning so the
-    user learns the file was ignored (#3111).
+    syntax error, non-UTF-8 bytes) degrades the same way, with a
+    one-line warning so the user learns the file was ignored (#3111).
+    """
+    data, _ok = _load_config_doc()
+    return data
+
+
+def _load_config_doc() -> tuple[dict, bool]:
+    """The parsed klangk.yaml plus whether the on-disk file was usable.
+
+    The bool is False only when the file exists but could not be parsed
+    (syntax error, non-UTF-8 bytes). Read-only callers ignore it and
+    degrade to ``{}``; the config *writers* use it to refuse rewriting
+    a file whose content may still be hand-repairable — a ``{}`` read
+    followed by a write would discard it silently (#3111). A document
+    that parses but is not a mapping carries no recoverable content,
+    so writers may normalize it by rewriting (#3094).
     """
     if not CONFIG_PATH.exists():
-        return {}
+        return {}, True
     data = _safe_load_yaml(CONFIG_PATH)
-    return data if isinstance(data, dict) else {}
+    if data is None:
+        return {}, False
+    if isinstance(data, dict):
+        return data, True
+    _warn_corrupt(CONFIG_PATH, "document is not a mapping")
+    return {}, True
+
+
+_CORRUPT_WARNED: set[Path] = set()
+
+
+def _warn_corrupt(path: Path, reason: str) -> None:
+    """One flattened warning line, once per file per process.
+
+    Routed through the logging last-resort handler (stderr; the CLI
+    never configures logging). Once-per-process because the TUI
+    reloads klangk.yaml on every ``cfg()`` call — per-call warnings
+    would spam the terminal (#3111).
+    """
+    if path in _CORRUPT_WARNED:
+        return
+    _CORRUPT_WARNED.add(path)
+    logging.getLogger(__name__).warning(
+        "%s: %s — treating as empty", path.name, reason
+    )
 
 
 def _safe_load_yaml(path: Path):
-    """``yaml.safe_load`` for a user-facing file (None on parse error).
+    """``yaml.safe_load`` for a user-facing file (None on parse failure).
 
-    A YAML syntax error must not crash every CLI command with a raw
-    ``yaml.YAMLError`` traceback (#3111) — it degrades to an empty
-    document (None, which the callers coerce to ``{}``), with a
-    one-line warning routed through the logging last-resort handler
-    (stderr) so the user learns the file was ignored.
+    Any parse failure must not crash every CLI command with a raw
+    traceback (#3111) — a YAML syntax error *or* bytes that are not
+    UTF-8 (a torn multi-byte sequence where an interrupted write
+    truncated the file). It degrades to an empty document (None, which
+    the callers coerce to ``{}``) with a one-line warning.
     """
     try:
         return yaml.safe_load(path.read_text())
-    except yaml.YAMLError as exc:
+    except (yaml.YAMLError, UnicodeDecodeError) as exc:
         detail = " ".join(str(exc).split())
-        logging.getLogger(__name__).warning(
-            "%s: YAML parse error ignored, treating as empty: %s",
-            path.name,
-            detail,
-        )
+        _warn_corrupt(path, f"parse error ignored ({detail})")
         return None
 
 
@@ -333,11 +366,18 @@ def add_server_to_config(
     remains user-owned; this is the one managed write, used only by the
     TUI's add-server flow.
 
-    Raises ``AliasConflictError`` if *alias* already exists — callers
-    must catch the error and surface it to the user (#1763).
+    Raises ``AliasConflictError`` if *alias* already exists, and
+    ``ConfigUnreadableError`` when klangk.yaml exists but can't be
+    parsed — rewriting from the degraded empty config would discard
+    the (potentially hand-repairable) file. Callers must catch both
+    and surface the error to the user (#1763, #3111).
     """
-    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    data = load_yaml_config()
+    data, ok = _load_config_doc()
+    if not ok:
+        raise ConfigUnreadableError(
+            "klangk.yaml is unreadable (corrupt or not valid YAML) — "
+            "fix or remove it, then retry."
+        )
     servers = data.get("servers") or {}
     if alias in servers:
         raise AliasConflictError(f"Alias '{alias}' already exists.")
@@ -346,11 +386,20 @@ def add_server_to_config(
         entry["user"] = user
     servers[alias] = entry
     data["servers"] = servers
-    CONFIG_PATH.write_text(yaml.dump(data, default_flow_style=False))
+    _write_config_text(yaml.dump(data, default_flow_style=False))
 
 
 class AliasConflictError(Exception):
     """Raised when renaming a server alias to one that already exists."""
+
+
+class ConfigUnreadableError(Exception):
+    """Raised when klangk.yaml exists but cannot be parsed into a mapping.
+
+    Managed writes refuse to proceed in that case: the file's content
+    may be hand-repairable, and rewriting from the degraded empty
+    config would silently discard it (#3111).
+    """
 
 
 def check_alias_renaming(
@@ -380,13 +429,15 @@ def update_server_in_config(
     """Update an existing server entry in klangk.yaml.
 
     If *old_alias* differs from *new_alias* the entry is renamed.
-    Returns True if the alias was found and updated, False otherwise.
+    Returns True if the alias was found and updated, False otherwise
+    (also when klangk.yaml can't be parsed — an unreadable file is
+    left untouched rather than rewritten from an empty config, #3111).
     Raises ``AliasConflictError`` if *new_alias* already exists under
     a different key.
     """
-    if not CONFIG_PATH.exists():
+    data, ok = _load_config_doc()
+    if not ok:
         return False
-    data = load_yaml_config()
     servers = data.get("servers") or {}
     if old_alias not in servers:
         return False
@@ -396,25 +447,28 @@ def update_server_in_config(
         del servers[old_alias]
     servers[new_alias] = entry
     data["servers"] = servers
-    CONFIG_PATH.write_text(yaml.dump(data, default_flow_style=False))
+    _write_config_text(yaml.dump(data, default_flow_style=False))
     return True
 
 
 def remove_server_from_config(alias: str) -> bool:
     """Remove a named server entry from klangk.yaml.
 
-    Returns True if the alias was present and removed, False otherwise.
-    The counterpart to ``add_server_to_config`` (TUI delete-server flow).
+    Returns True if the alias was present and removed, False otherwise
+    (also when klangk.yaml can't be parsed — an unreadable file is
+    left untouched rather than rewritten from an empty config, #3111).
+    The counterpart to ``add_server_to_config`` (TUI delete-server
+    flow).
     """
-    if not CONFIG_PATH.exists():
+    data, ok = _load_config_doc()
+    if not ok:
         return False
-    data = load_yaml_config()
     servers = data.get("servers") or {}
     if alias not in servers:
         return False
     del servers[alias]
     data["servers"] = servers
-    CONFIG_PATH.write_text(yaml.dump(data, default_flow_style=False))
+    _write_config_text(yaml.dump(data, default_flow_style=False))
     return True
 
 
@@ -424,34 +478,62 @@ def load_yaml_state() -> dict:
     klangk-state.yaml is written by ``CLIState.save()`` and never
     hand-edited — but corruption is realistic (an interrupted write, a
     stray edit): a document that is valid YAML but not a mapping, or
-    not valid YAML at all, must not crash every CLI command — it
-    degrades to an empty state so commands run unauthenticated and
-    ``klangk login`` works as the repair flow (#3111).
+    not parseable at all (syntax error, non-UTF-8 bytes), must not
+    crash every CLI command — it degrades to an empty state so
+    commands run unauthenticated and ``klangk login`` works as the
+    repair flow (#3111).
     """
     if not STATE_PATH.exists():
         return {}
     data = _safe_load_yaml(STATE_PATH)
-    return data if isinstance(data, dict) else {}
+    if data is None:
+        return {}
+    if isinstance(data, dict):
+        return data
+    _warn_corrupt(STATE_PATH, "document is not a mapping")
+    return {}
 
 
-def _atomic_write(path: Path, content: str) -> None:
-    """Atomically replace *path* with *content* (mode 0600).
+def _atomic_write(path: Path, content: str, mode: int) -> None:
+    """Atomically replace *path* with *content* (permission *mode*).
 
     Writes to a temp file in the same directory, then ``os.replace`` —
-    an interrupted write (crash, kill, full disk) can only lose the
-    temp file, never leave a truncated state file behind (#3111).
+    an interrupted write (process crash, kill, full disk) can only lose
+    the temp file, never leave a truncated target behind (#3111).
     """
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=path.name)
     try:
         with os.fdopen(fd, "w") as out:
             out.write(content)
-        os.chmod(tmp, 0o600)
+        os.chmod(tmp, mode)
         os.replace(tmp, path)
     except BaseException:
         with contextlib.suppress(OSError):
             os.unlink(tmp)
         raise
+
+
+def _existing_mode(path: Path, default: int) -> int:
+    """The file's permission bits, or *default* when it doesn't exist.
+
+    klangk.yaml is user-owned: a managed write preserves whatever mode
+    the user chose instead of forcing one (#3111 review).
+    """
+    try:
+        return path.stat().st_mode & 0o777
+    except OSError:
+        return default
+
+
+def _write_config_text(text: str) -> None:
+    """Atomically write klangk.yaml, preserving an existing file's mode.
+
+    The config-file counterpart of ``CLIState.save()``'s atomic write:
+    an interrupted managed write must not truncate the user's config
+    (#3111 review).
+    """
+    _atomic_write(CONFIG_PATH, text, _existing_mode(CONFIG_PATH, 0o644))
 
 
 @dataclass
@@ -531,7 +613,11 @@ class CLIState:
             server_data = server_state_data(ss)
             if server_data:
                 data[url] = server_data
-        _atomic_write(STATE_PATH, yaml.dump(data, default_flow_style=False))
+        _atomic_write(
+            STATE_PATH,
+            yaml.dump(data, default_flow_style=False),
+            0o600,
+        )
 
     def get_token(self, server_url: str) -> str | None:
         """Return the token for the active user on a server."""

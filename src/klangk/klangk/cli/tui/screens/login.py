@@ -21,7 +21,7 @@ from textual.widgets import (
 )
 
 from ..state import LoginError
-from ...config import AliasConflictError
+from ...config import AliasConflictError, ConfigUnreadableError
 from ...transport import is_valid_server_spec
 from .base import (
     ConfirmScreen,
@@ -227,7 +227,7 @@ class LoginScreen(SpatialNavScreen, StatusScreen):
                         alias,
                         raw,
                     )
-                except AliasConflictError as exc:
+                except (AliasConflictError, ConfigUnreadableError) as exc:
                     self._set_message(str(exc), error=True)
                     return
         else:

@@ -49,6 +49,7 @@ from klangk.cli.config import (
     AliasConflictError,
     CLIConfig,
     CLIState,
+    ConfigUnreadableError,
     ServerEntry,
     add_server_to_config,
     remove_server_from_config,
@@ -379,6 +380,37 @@ def test_config_flows_survive_non_mapping_file(redirect_xdg):
     assert update_server_in_config("a", "a", "https://a.example") is False
     add_server_to_config("a", "https://a.example")
     assert CLIConfig.load().servers["a"].url == "https://a.example"
+
+
+def test_add_server_refuses_unparseable_config(redirect_xdg):
+    """An unparseable klangk.yaml may hold hand-repairable content —
+    add must refuse instead of rewriting the whole file from the
+    degraded empty config (#3111)."""
+    cpath, _ = redirect_xdg
+    cpath.write_text("servers: [unclosed\n")
+    with pytest.raises(ConfigUnreadableError, match="unreadable"):
+        add_server_to_config("a", "https://a.example")
+    assert cpath.read_text() == "servers: [unclosed\n"
+
+
+def test_update_remove_noop_on_unparseable_config(redirect_xdg):
+    """update/remove on an unparseable klangk.yaml leave the file
+    untouched (False), not rewritten from an empty config (#3111)."""
+    cpath, _ = redirect_xdg
+    cpath.write_bytes(b"servers: [x, \xff\n")
+    assert update_server_in_config("a", "a", "https://a.example") is False
+    assert remove_server_from_config("a") is False
+    assert cpath.read_bytes() == b"servers: [x, \xff\n"
+
+
+def test_managed_config_write_preserves_mode(redirect_xdg):
+    """A managed klangk.yaml write keeps the file's existing mode
+    instead of forcing one (#3111 review)."""
+    cpath, _ = redirect_xdg
+    add_server_to_config("a", "https://a.example")
+    cpath.chmod(0o600)
+    assert update_server_in_config("a", "a", "https://a2.example") is True
+    assert oct(cpath.stat().st_mode & 0o777) == oct(0o600)
 
 
 def test_update_server_in_config(redirect_xdg):
@@ -11477,6 +11509,38 @@ async def test_login_choose_server_duplicate_alias(monkeypatch):
         assert "already exists" in rendered
 
 
+async def test_login_choose_server_unreadable_config(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+
+    def _raise_unreadable(alias, url, user=None):
+        raise ConfigUnreadableError(
+            "klangk.yaml is unreadable (corrupt or not valid YAML) — "
+            "fix or remove it, then retry."
+        )
+
+    st = _st(
+        current_url=lambda: None,
+        known_servers=lambda: [],
+        default_uds=lambda: None,
+        cfg=lambda: CLIConfig(),
+        auth_mode=lambda: "password",
+        email=lambda: None,
+        token=lambda: None,
+        is_authenticated=lambda: False,
+        add_server=_raise_unreadable,
+    )
+    app = KlangkApp(st)
+    async with app.run_test() as _pilot:
+        login = app.screen
+        login._choose_server("https://dup.example")
+        await app.workers.wait_for_complete()
+        rendered = str(login.query_one("#message").render()).lower()
+        assert "unreadable" in rendered
+
+
 async def test_login_url_switches_to_existing_alias(monkeypatch):
     """Entering a URL whose derived alias already exists switches to it (#1849)."""
 
@@ -11589,6 +11653,33 @@ async def test_add_server_rejects_duplicate_alias_screen(monkeypatch):
         await app.workers.wait_for_complete()
         rendered = str(s.query_one("#add_msg").render()).lower()
         assert "already exists" in rendered
+
+
+async def test_add_server_unreadable_config_screen(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+
+    def _raise_unreadable(alias, url, user=None):
+        raise ConfigUnreadableError(
+            "klangk.yaml is unreadable (corrupt or not valid YAML) — "
+            "fix or remove it, then retry."
+        )
+
+    st = _authed_state(add_server=_raise_unreadable)
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(AddServerScreen())
+        await pilot.pause()
+        s = app.screen
+        s.query_one("#alias", Input).value = "prod"
+        s.query_one("#url", Input).value = "https://prod.example"
+        s._add()
+        await app.workers.wait_for_complete()
+        rendered = str(s.query_one("#add_msg").render()).lower()
+        assert "unreadable" in rendered
+        assert "fix or remove" in rendered
 
 
 async def test_confirm_screen(monkeypatch):

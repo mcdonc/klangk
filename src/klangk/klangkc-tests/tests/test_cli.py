@@ -162,6 +162,21 @@ class TestCLIConfig:
         assert cfg.forward_agent is None
         assert "parse error" in caplog.text
 
+    def test_load_non_utf8_yaml_degrades_to_empty(
+        self, tmp_path, monkeypatch, caplog
+    ):
+        """Non-UTF-8 bytes (a torn multi-byte sequence where an
+        interrupted write truncated the file) must not crash every CLI
+        command with a raw UnicodeDecodeError traceback either (#3111)."""
+        config_path = tmp_path / "klangk.yaml"
+        config_path.write_bytes(b"forward-agent: \xff\xfe\ntok")
+        monkeypatch.setattr("klangk.cli.config.CONFIG_PATH", config_path)
+        with caplog.at_level("WARNING"):
+            cfg = CLIConfig.load()
+        assert cfg.servers == {}
+        assert cfg.forward_agent is None
+        assert "parse error" in caplog.text
+
     def test_resolve_server_alias(self):
         cfg = CLIConfig(
             servers={
@@ -510,6 +525,21 @@ class TestCLIState:
         assert state.servers == {}
         assert "parse error" in caplog.text
 
+    def test_load_non_utf8_state_degrades_to_empty(
+        self, tmp_path, monkeypatch, caplog
+    ):
+        """Non-UTF-8 bytes in the state file must not brick the CLI with
+        a raw UnicodeDecodeError traceback — it degrades to an empty
+        state so klangk login works as the repair flow (#3111)."""
+        state_path = tmp_path / "klangk-state.yaml"
+        state_path.write_bytes(b"active-server: http://\xff\xfe\n")
+        monkeypatch.setattr("klangk.cli.config.STATE_PATH", state_path)
+        with caplog.at_level("WARNING"):
+            state = CLIState.load()
+        assert state.active_server is None
+        assert state.servers == {}
+        assert "parse error" in caplog.text
+
     def test_load_skips_non_dict_values(self, tmp_path, monkeypatch):
         state_path = tmp_path / "klangk-state.yaml"
         state_path.write_text(
@@ -739,9 +769,9 @@ class TestAuth:
 
     def test_login_recovers_from_corrupt_state(self, tmp_path, monkeypatch):
         """klangk login is the repair flow for a corrupt klangk-state.yaml
-        — it must not crash with AttributeError/YAMLError on a non-mapping
-        or unparseable document, and must overwrite it with valid state
-        (#3111)."""
+        — it must not crash with AttributeError/YAMLError/
+        UnicodeDecodeError on a non-mapping, unparseable, or non-UTF-8
+        document, and must overwrite it with valid state (#3111)."""
         state_path = tmp_path / "klangk-state.yaml"
         monkeypatch.setattr("klangk.cli.config.STATE_PATH", state_path)
         mock_resp = MagicMock()
@@ -749,8 +779,16 @@ class TestAuth:
         mock_resp.json.return_value = {"access_token": "jwt-fixed"}
         from klangk.cli import auth
 
-        for bad in ("- oops\n", "active-server: [unclosed\n"):
-            state_path.write_text(bad)
+        corruptions = (
+            "- oops\n",
+            "active-server: [unclosed\n",
+            b"active-server: http://\xff\xfe\n",
+        )
+        for bad in corruptions:
+            if isinstance(bad, bytes):
+                state_path.write_bytes(bad)
+            else:
+                state_path.write_text(bad)
             with patch(
                 "klangk.cli.transport.httpx.request", return_value=mock_resp
             ):
