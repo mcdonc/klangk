@@ -14,6 +14,7 @@ on:
     paths:
       - "src/containers/workspace/**"
       - "scripts/build-workspace-image.sh"
+      - "scripts/_podman_common.sh"
       - ".github/workflows/image-workspace.yml"
 
 # Literal group prefix: in a workflow_call the `github` context is the

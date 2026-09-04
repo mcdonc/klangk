@@ -178,16 +178,18 @@ PODMAN_RETRY_SLEEP="${KLANGKBUILD_PODMAN_RETRY_SLEEP:-5}"
 
 # klangk::reexec_diagnostics — probes named in #3168 (podman info rc,
 # "podman unshare true" rc) plus the standard userns checklist (sysctls,
-# subid ranges). Best-effort: nothing here may fail the caller.
+# subid ranges). Best-effort: nothing here may fail the caller. Probes run
+# under timeout(1): a probe contending a storage flock held by the sibling
+# build must degrade to a "FAILED rc=124" line, not stall the retry.
 klangk::reexec_diagnostics() {
   local podman_bin="${KLANGKD_PODMAN_BIN:-podman}" f
   echo "--- podman reexec diagnostics (#3168) ---" >&2
-  if "$podman_bin" info >/dev/null 2>&1; then
+  if timeout 30 "$podman_bin" info >/dev/null 2>&1; then
     echo "podman info: ok" >&2
   else
     echo "podman info: FAILED rc=$?" >&2
   fi
-  if "$podman_bin" unshare true >/dev/null 2>&1; then
+  if timeout 30 "$podman_bin" unshare true >/dev/null 2>&1; then
     echo "podman unshare true: ok (userns creatable)" >&2
   else
     echo "podman unshare true: FAILED rc=$?" >&2

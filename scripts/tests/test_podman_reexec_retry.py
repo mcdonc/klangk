@@ -64,6 +64,14 @@ _UNRELATED = _FAKE_TEMPLATE.format(
 exit 42"""
 )
 
+# Diagnostics-probe failure: the info probe exits 3, unshare exits 5 — the
+# FAILED branches must report those rcs without failing the wrapper itself
+# (the wrapped command still fails once with the signature, then succeeds).
+_PROBES_FAIL = _FAIL_ONCE.replace(
+    "  info | unshare) exit 0 ;;",
+    "  info) exit 3 ;;\n  unshare) exit 5 ;;",
+)
+
 
 def _run_with_fake(fake_body: str) -> subprocess.CompletedProcess[str]:
     """Source the helper and run klangk::run_podman against a fake podman.
@@ -195,3 +203,12 @@ def test_persistent_reexec_fails_loudly_after_retry():
     assert "RC=1" in proc.stdout, proc.stderr
     assert "CALLS=2" in proc.stdout, proc.stderr
     assert "::error::" in proc.stderr
+
+
+def test_failing_diagnostics_probes_do_not_break_wrapper():
+    """FAILED probes report their rc; the retry still runs and succeeds."""
+    proc = _run_with_fake(_PROBES_FAIL)
+    assert "podman info: FAILED rc=3" in proc.stderr
+    assert "podman unshare true: FAILED rc=5" in proc.stderr
+    assert "RC=0" in proc.stdout, proc.stderr
+    assert "CALLS=2" in proc.stdout, proc.stderr
