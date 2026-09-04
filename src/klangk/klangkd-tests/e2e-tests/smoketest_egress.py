@@ -1427,10 +1427,11 @@ class SmokeTest:
     async def _new_workspace(self, *args, **kwargs) -> str:
         """Create a workspace the acting identity can use.
 
-        Creation always runs as the bootstrap (admin) identity --
-        `create-workspace` is admin-gated (#2569) -- and under --as-member
-        the workspace is then shared to the member's coders role so the
-        member's decider/terminal connections on it are authorized.
+        Creation always runs as the bootstrap (admin) identity
+        (deterministic ownership for the share-based --as-member
+        wiring) -- and under --as-member the workspace is then shared
+        to the member's coders role so the member's decider/terminal
+        connections on it are authorized.
         """
         ws_id = await asyncio.to_thread(
             self._create_workspace,

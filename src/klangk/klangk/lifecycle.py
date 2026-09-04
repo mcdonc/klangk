@@ -196,7 +196,9 @@ class Lifecycle:
         self._pending_agent_reseed = False
         await self.seed_agent_user()
 
-    async def seed_default_acls(self, admin_group_id: str) -> None:
+    async def seed_default_acls(
+        self, admin_group_id: str, members_group_id: str
+    ) -> None:
         """Seed default ACL entries if none exist yet."""
         existing = await self.app.state.model.acl.get_acl_tree_summary()
         if existing:
@@ -218,7 +220,10 @@ class Lifecycle:
             PRINCIPAL_SYSTEM,
             system_principal=SYSTEM_EVERYONE,
         )
-        # /workspaces: only admins can create (#2569)
+        # /workspaces: admins always; members too since #3137 —
+        # self-service creation is the stock posture (bounded by the
+        # admission/quota controls; an explicit Deny restores
+        # admin-only, first-match-wins).
         await self.app.state.model.acl.add_acl_entry(
             "/workspaces",
             0,
@@ -226,6 +231,14 @@ class Lifecycle:
             "create-workspace",
             PRINCIPAL_GROUP,
             group_id=admin_group_id,
+        )
+        await self.app.state.model.acl.add_acl_entry(
+            "/workspaces",
+            1,
+            ACTION_ALLOW,
+            "create-workspace",
+            PRINCIPAL_GROUP,
+            group_id=members_group_id,
         )
         # First-class resources (#2944): each governed surface is a
         # top-level tree with one flat manage-* permission — Allow for
@@ -350,10 +363,11 @@ class Lifecycle:
         """Ensure the 'members' group exists (#2569). Returns the group ID.
 
         New users (registration, invitation, OIDC first login, admin
-        create) are added to this group automatically. It gets no
-        default permissions — the ``/workspaces`` ``create`` seed goes to
-        the admin group (#2569); deployers who want all members to
-        create workspaces grant it to this group via the ACL editor.
+        create) are added to this group automatically. It holds the
+        default ``create-workspace`` grant on ``/workspaces`` (#3137) —
+        self-service creation out of the box; a deploy that wants the
+        pre-#3137 admin-only posture stages an explicit Deny (ordered
+        first-match-wins) ahead of the seeded Allow.
         """
         group = await self.app.state.model.users.get_group_by_name("members")
         if group is None:
@@ -385,7 +399,7 @@ class Lifecycle:
         admin_group_id = await self.ensure_admin_group()
         members_group_id = await self.ensure_members_group()
         self.app.state.members_group_id = members_group_id
-        await self.seed_default_acls(admin_group_id)
+        await self.seed_default_acls(admin_group_id, members_group_id)
 
         # Once an admin exists, startup must not touch users (#1622). The
         # gate is group membership, not a row id: "admins" is a group, and a

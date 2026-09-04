@@ -35,6 +35,7 @@ Klangk uses an Access Control List (ACL) system to manage permissions. Instead o
 | `/`            | Allow  | Authenticated | `view`                   |
 | `/`            | Deny   | Everyone      | `*`                      |
 | `/workspaces`  | Allow  | group:admins  | `create-workspace`       |
+| `/workspaces`  | Allow  | group:members | `create-workspace`       |
 | `/users`       | Allow  | group:admins  | `manage-users`           |
 | `/users`       | Allow  | Authenticated | `search-users`           |
 | `/users`       | Deny   | Everyone      | `*`                      |
@@ -53,10 +54,11 @@ Klangk uses an Access Control List (ACL) system to manage permissions. Instead o
 | `/images`      | Allow  | Authenticated | `view-images`            |
 | `/images`      | Deny   | Everyone      | `*`                      |
 
-These defaults mean: any logged-in user can view pages; only members of
-the `admins` group can create workspaces or hold a `manage-*`
-permission; unauthenticated users are denied everything. There is no
-`/admin` resource — it is neither seeded nor checked by any
+These defaults mean: any logged-in user can view pages; every
+member of the `members` group (i.e. every user — see below) can
+create workspaces (#3137); only members of the `admins` group hold a
+`manage-*` permission; unauthenticated users are denied everything.
+There is no `/admin` resource — it is neither seeded nor checked by any
 endpoint; instance-admin status derives from `admins`-group membership,
 surfaced as the `is_admin` flag on `/api/v1/my-permissions`. The
 `admins` group itself cannot be renamed or deleted.
@@ -86,31 +88,42 @@ volumes back grant `manage-volumes` to `Authenticated` or a group via
 the ACL editor. No trailing Deny Everyone row is seeded on `/volumes` either,
 for the same reason.
 
-### Granting workspace creation to non-admin users
+### Workspace creation: default self-service, deny to restrict
 
-By default only administrators can create workspaces. To allow
-other users or groups to create workspaces, add an ACL entry on the
-`/workspaces` collection resource via the web UI:
+By default every authenticated member can create workspaces (#3137):
+the `members` group — which every new user joins automatically — holds
+the seeded `create-workspace` Allow on `/workspaces`. Member footprint
+is bounded by the admission and quota controls (admission memory
+margin, `max_running_workspaces_per_user`, `volume_quota_per_user`),
+and what a member-created workspace can run is constrained by
+`allowed_images` / `allowed_mount_roots` / egress filtering.
+
+A deployment that wants the pre-#3137 admin-only posture adds one
+explicit Deny via the ACL editor (first-match-wins: position it ahead
+of the members Allow):
 
 1. Navigate to **Admin → ACL** (or the Advanced ACL editor).
 2. Select the `/workspaces` resource.
-3. Add an **Allow** entry for the `create-workspace` permission, targeting either:
-   - A specific **group** (e.g., a "developers" group you've created) — all
-     members of that group can then create workspaces.
-   - The **Authenticated** system principal — restores the previous
-     behavior where any logged-in user can create workspaces.
-4. Ensure the new entry's position is lower than any Deny entry on the
-   same resource (lower position = checked first).
+3. Add a **Deny** entry for the `create-workspace` permission, targeting
+   the **`members`** group (or the **Authenticated** system principal —
+   this also covers users created outside the group), at a position
+   **lower than** the members Allow row (lower position = checked
+   first).
 
-The create button in the web UI automatically appears/disappears based
-on the user's effective `create-workspace` permission on `/workspaces`.
+Alternatively grant creation to a narrower set: delete the members
+Allow row, then add an **Allow** entry for `create-workspace` targeting
+a specific **group** (e.g. a "developers" group you've created) or the
+**Authenticated** system principal, positioned ahead of any Deny. The
+create and import buttons in the web UI automatically appear/disappear
+based on the user's effective `create-workspace` permission on
+`/workspaces`.
 
 ## Groups
 
 Groups replace the old role system. A group is a named collection of users. Two built-in groups are created automatically on first startup:
 
 - **`admins`** — the default admin user is added to it; members can create workspaces and access admin functions.
-- **`members`** — every new user (registration, invitation, OIDC first login, admin-created) is added automatically. Has no permissions by default, but deployers can grant `create-workspace` on `/workspaces` to this group to let all members create workspaces.
+- **`members`** — every new user (registration, invitation, OIDC first login, admin-created) is added automatically. Holds the seeded `create-workspace` Allow on `/workspaces` (#3137); a deploy that wants admin-only creation stages an explicit Deny ahead of it (see above).
 
 **Admin UI**: Admin > Groups tab — create/delete groups, add/remove members.
 
@@ -249,7 +262,11 @@ authenticated-user reads (pickers, share dialogs).
 
 Upgrading from an older deployment: migration 0021 inserts the six
 Allow/Deny pairs for the admins group. If you had pre-staged rows on
-one of those resources, the migration leaves it untouched.
+one of those resources, the migration leaves it untouched. Migration
+0029 appends the #3137 members `create-workspace` Allow after any
+existing `/workspaces` rows — a staged Deny keeps first-match-wins
+priority, so an admin-only deployment keeps its posture across the
+upgrade (and gains one inert Allow row).
 
 ## WebSocket gates
 

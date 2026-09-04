@@ -102,11 +102,9 @@ async def _seed_resource_acls(app_state):
     """
     from klangk.model.acl import (
         ACTION_ALLOW,
-        ACTION_DENY,
         PRINCIPAL_GROUP,
         PRINCIPAL_SYSTEM,
         SYSTEM_AUTHENTICATED,
-        SYSTEM_EVERYONE,
     )
 
     acl = app_state.state.model.acl
@@ -256,6 +254,9 @@ async def admin_group(app_state):
         PRINCIPAL_GROUP,
         group_id=group["id"],
     )
+    # #3137: members get create-workspace too (self-service default;
+    # inserted after the members group exists below — position 1,
+    # the fresh-seed layout).
     # First-class resource seeds (#2944), mirroring seed_default_acls.
     # /users manage-users for admins; the Deny lands at a high position
     # so _seed_resource_acls's search-users insert (position 1,
@@ -308,6 +309,16 @@ async def admin_group(app_state):
         "members", description="All regular users"
     )
     app_state.state.members_group_id = members["id"]
+    # #3137: the members group's seeded create-workspace grant
+    # (position 1, right after the admins row — the fresh-seed shape).
+    await acl.add_acl_entry(
+        "/workspaces",
+        1,
+        ACTION_ALLOW,
+        "create-workspace",
+        PRINCIPAL_GROUP,
+        group_id=members["id"],
+    )
     return group
 
 
