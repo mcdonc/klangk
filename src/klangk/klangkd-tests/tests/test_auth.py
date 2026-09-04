@@ -2757,7 +2757,7 @@ class TestSessionActivityStamping:
         assert (
             await app_state.state.model.sessions.get_last_seen(jti) == second
         )  # inside the interval: no write
-        a.session_stamps[jti] -= auth.ACTIVITY_STAMP_INTERVAL
+        a.session_stamps[f"jti:{jti}"] -= auth.ACTIVITY_STAMP_INTERVAL
         await a.record_session_activity(jti)
         assert (
             await app_state.state.model.sessions.get_last_seen(jti) != second
@@ -2770,10 +2770,10 @@ class TestSessionActivityStamping:
         monkeypatch.setattr(auth, "SESSION_STAMP_MAX_ENTRIES", 3)
         a = self._armed()
         for i in range(3):
-            a.session_stamps[f"jti-{i}"] = 1.0  # stale, insertion-ordered
+            a.session_stamps[f"jti:stale-{i}"] = 1.0  # insertion-ordered
         await a.record_session_activity("jti-new")
-        assert "jti-0" not in a.session_stamps  # stalest evicted
-        assert "jti-new" in a.session_stamps
+        assert "jti:stale-0" not in a.session_stamps  # stalest evicted
+        assert "jti:jti-new" in a.session_stamps
 
     async def test_unarmed_stamp_is_noop(self, user, db):
         """With the window off, stamping costs nothing (not even the
@@ -2821,3 +2821,85 @@ class TestSessionActivityStamping:
         await a.refresh_token(token)
         rows = await app_state.state.model.sessions.list_sessions(user["id"])
         assert rows[0]["last_seen_at"] == before
+
+
+class TestSessionIdleReview3151:
+    """Regressions from the adversarial review of #3151: the naive
+    migration backfill must terminate (not 500) the refresh seam, and
+    WebSocket activity must keep a session alive across token
+    rotations."""
+
+    def _armed(self):
+        return _auth({"KLANGKD_SESSION_IDLE_TIMEOUT_MINUTES": "15"})
+
+    async def test_naive_backfilled_stamp_terminates_not_500s(
+        self, user, app_state
+    ):
+        """A pre-migration row's last_seen (SQLite datetime('now') form,
+        timezone-naive) is judged as UTC — the refresh is refused, not
+        crashed with an aware-minus-naive TypeError."""
+        a = self._armed()
+        token = await a.issue_token(user["id"], user["email"])
+        jti = a.decode_token(token)["jti"]
+        async with a.app.state.db.transaction() as tx:
+            await tx.execute(
+                "UPDATE user_sessions SET last_seen_at = ? WHERE jti = ?",
+                (
+                    (
+                        datetime.now(timezone.utc) - timedelta(minutes=30)
+                    ).strftime("%Y-%m-%d %H:%M:%S"),
+                    jti,
+                ),
+            )
+        with pytest.raises(HTTPException) as exc_info:
+            await a.refresh_token(token)
+        assert exc_info.value.status_code == 401
+        assert "inactivity" in exc_info.value.detail
+
+    async def test_ws_activity_survives_token_rotation(self, user, app_state):
+        """The blocker: a terminal-only user's WS stamps went to the
+        connect-time JTI, which the first refresh rekeyed away — every
+        later stamp silently no-oped and the session idled out despite
+        continuous use. Frames now stamp by the stable session_id, so
+        the row's last_seen tracks the frames, not the frozen JTI."""
+        a = self._armed()
+        token = await a.issue_token(user["id"], user["email"])
+        jti = a.decode_token(token)["jti"]
+        session_id = await app_state.state.model.sessions.get_session_id(jti)
+        assert session_id is not None
+
+        # Backdate, then a refresh (HTTP) rekeys the row.
+        old = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
+        async with a.app.state.db.transaction() as tx:
+            await tx.execute(
+                "UPDATE user_sessions SET last_seen_at = ? WHERE jti = ?",
+                (old, jti),
+            )
+        refreshed = await a.refresh_token(token)
+        new_jti = a.decode_token(refreshed.access_token)["jti"]
+        assert new_jti != jti
+        # The connect-time JTI no longer keys a row — the stale-stamp
+        # trap the review demonstrated.
+        assert await app_state.state.model.sessions.get_last_seen(jti) is None
+
+        # A frame through the pinned session_id stamps the live row.
+        a2 = self._armed()
+        await a2.record_ws_session_activity(session_id)
+        live = await app_state.state.model.sessions.get_last_seen(new_jti)
+        assert live is not None
+        assert datetime.fromisoformat(live) > datetime.fromisoformat(old)
+        # And the row's id is still the same session across the rekey.
+        assert (
+            await app_state.state.model.sessions.get_session_id(new_jti)
+            == session_id
+        )
+
+    async def test_ws_session_activity_throttled_by_sid(self, user, db):
+        a = self._armed()
+        token = await a.issue_token(user["id"], user["email"])
+        jti = a.decode_token(token)["jti"]
+        sid = await a.app.state.model.sessions.get_session_id(jti)
+        await a.record_ws_session_activity(sid)
+        first = await a.app.state.model.sessions.get_last_seen(jti)
+        await a.record_ws_session_activity(sid)  # throttled: no write
+        assert await a.app.state.model.sessions.get_last_seen(jti) == first

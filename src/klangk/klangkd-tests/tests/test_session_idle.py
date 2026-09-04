@@ -12,6 +12,8 @@ import types
 
 from unittest.mock import AsyncMock
 
+from fastapi import WebSocketDisconnect
+
 from klangk import session_idle
 from klangk.wshandler.connection import Connection
 from klangk.wshandler.session import WebSocketState
@@ -31,10 +33,13 @@ def _app(*, minutes=15):
 
 
 def _conn(app, *, idle_secs=0.0):
-    """A Connection whose idle clock reads *idle_secs* seconds ago."""
+    """A Connection-like whose idle clock reads *idle_secs* seconds ago,
+    carrying its own record-keeping socket."""
+    sock = _Sock()
     conn = types.SimpleNamespace(
         user={"id": "u1", "email": "idle@example.com"},
         last_seen_monotonic=time.monotonic() - idle_secs,
+        sock=sock,
     )
     return conn
 
@@ -55,25 +60,25 @@ class TestCloseIdleConnections:
         window is closed 4001 (client logout, no reconnect loop)."""
         app = _app()
         state = WebSocketState(app)
-        sock = _Sock()
-        state.connections[sock] = _conn(app, idle_secs=16 * 60)
+        conn = _conn(app, idle_secs=16 * 60)
+        state.connections[conn.sock] = conn
         closed = await state.close_idle_connections(
             app.state.auth.idle_window_minutes_for_user
         )
         assert closed == 1
-        assert sock.closed_with == (4001, "Session idle timeout")
+        assert conn.sock.closed_with == (4001, "Session idle timeout")
 
     async def test_active_socket_untouched(self):
         """A connection that sent a frame recently stays open."""
         app = _app()
         state = WebSocketState(app)
-        sock = _Sock()
-        state.connections[sock] = _conn(app, idle_secs=5 * 60)
+        conn = _conn(app, idle_secs=5 * 60)
+        state.connections[conn.sock] = conn
         closed = await state.close_idle_connections(
             app.state.auth.idle_window_minutes_for_user
         )
         assert closed == 0
-        assert sock.closed_with is None
+        assert conn.sock.closed_with is None
 
     async def test_window_resolved_per_user(self):
         """Suspects get their own (admin-aware) window: an admin at 11
@@ -84,8 +89,8 @@ class TestCloseIdleConnections:
             return_value=10
         )
         state = WebSocketState(app)
-        sock = _Sock()
-        state.connections[sock] = _conn(app, idle_secs=11 * 60)
+        conn = _conn(app, idle_secs=11 * 60)
+        state.connections[conn.sock] = conn
         closed = await state.close_idle_connections(
             app.state.auth.idle_window_minutes_for_user
         )
@@ -101,24 +106,64 @@ class TestCloseIdleConnections:
         app = _app()
         app.state.auth.idle_window_minutes_for_user = AsyncMock(return_value=0)
         state = WebSocketState(app)
-        sock = _Sock()
-        state.connections[sock] = _conn(app, idle_secs=60 * 60)
+        conn = _conn(app, idle_secs=60 * 60)
+        state.connections[conn.sock] = conn
         closed = await state.close_idle_connections(
             app.state.auth.idle_window_minutes_for_user
         )
         assert closed == 0
-        assert sock.closed_with is None
+        assert conn.sock.closed_with is None
 
     async def test_pre_filter_skips_non_suspects(self):
         """Connections idle less than the shortest possible window never
         reach the window resolver — the common sweep costs no DB reads."""
         app = _app()
         state = WebSocketState(app)
-        state.connections[_Sock()] = _conn(app, idle_secs=9 * 60)
+        conn = _conn(app, idle_secs=9 * 60)
+        state.connections[conn.sock] = conn
         await state.close_idle_connections(
             app.state.auth.idle_window_minutes_for_user
         )
         app.state.auth.idle_window_minutes_for_user.assert_not_awaited()
+
+    async def test_window_resolved_once_per_user_per_sweep(self):
+        """Two suspect connections for one user cost one window
+        resolution (the per-sweep dedupe, #3151 review)."""
+        app = _app()
+        state = WebSocketState(app)
+        for idle in (20 * 60, 25 * 60):
+            conn = _conn(app, idle_secs=idle)
+            state.connections[conn.sock] = conn
+        closed = await state.close_idle_connections(
+            app.state.auth.idle_window_minutes_for_user
+        )
+        assert closed == 2
+        app.state.auth.idle_window_minutes_for_user.assert_awaited_once_with(
+            "u1"
+        )
+
+    async def test_bad_socket_does_not_abort_the_sweep(self):
+        """A close that raises (socket already torn down) is logged and
+        skipped — the remaining idle sockets still close (the
+        ``disconnect_user`` posture)."""
+        app = _app()
+        state = WebSocketState(app)
+        bad = _Sock()
+
+        async def explode(code=1000, reason=None):
+            raise RuntimeError("already closed")
+
+        bad.close = explode
+        bad_conn = _conn(app, idle_secs=20 * 60)
+        bad_conn.sock = bad
+        state.connections[bad] = bad_conn
+        good_conn = _conn(app, idle_secs=25 * 60)
+        state.connections[good_conn.sock] = good_conn
+        closed = await state.close_idle_connections(
+            app.state.auth.idle_window_minutes_for_user
+        )
+        assert closed == 1
+        assert good_conn.sock.closed_with == (4001, "Session idle timeout")
 
 
 class TestSessionIdleMonitor:
@@ -190,14 +235,14 @@ class TestConnectionFrameActivity:
     """Every inbound frame resets the connection's idle clock and
     stamps the session row (throttled)."""
 
-    def _conn(self, *, jti="jti-1"):
+    def _conn(self, *, session_id="sid-1"):
         app = _app()
         app.state.auth = types.SimpleNamespace(
-            record_session_activity=AsyncMock()
+            record_ws_session_activity=AsyncMock()
         )
         conn = Connection.__new__(Connection)
         conn.app = app
-        conn.jti = jti
+        conn.session_id = session_id
         conn.last_seen_monotonic = 0.0
         return conn
 
@@ -206,18 +251,18 @@ class TestConnectionFrameActivity:
         before = conn.last_seen_monotonic
         await conn.mark_frame_activity()
         assert conn.last_seen_monotonic > before
-        conn.app.state.auth.record_session_activity.assert_awaited_once_with(
-            "jti-1"
+        conn.app.state.auth.record_ws_session_activity.assert_awaited_once_with(
+            "sid-1"
         )
 
-    async def test_frame_without_jti_skips_stamp(self):
-        """A connection that never carried a JTI (defensive) still
-        bumps its clock."""
-        conn = self._conn(jti=None)
+    async def test_frame_without_session_id_skips_stamp(self):
+        """A connection that never resolved a session id (defensive:
+        pre-#2585 token) still bumps its clock."""
+        conn = self._conn(session_id=None)
         before = conn.last_seen_monotonic
         await conn.mark_frame_activity()
         assert conn.last_seen_monotonic > before
-        conn.app.state.auth.record_session_activity.assert_not_awaited()
+        conn.app.state.auth.record_ws_session_activity.assert_not_awaited()
 
 
 class TestWsAuthenticateJti:
@@ -249,3 +294,114 @@ class TestWsAuthenticateJti:
         )
         assert await ws_authenticate(ws, app_state) is None
         ws.close.assert_awaited_once_with(code=4001, reason="Invalid token")
+
+
+class TestDeciderFrameStamping:
+    """Decider sockets authenticate with a user session JWT, so their
+    frames keep that session's idle clock alive (#3151 review: they
+    were the one WS surface that escaped the timeout)."""
+
+    def _loop_app(self):
+        app = _app()
+        app.state.auth = types.SimpleNamespace(
+            record_ws_session_activity=AsyncMock()
+        )
+        return app
+
+    @staticmethod
+    def _safe_ws_with(*frames):
+        """A receive_text popping JSON frames, ending the loop on the
+        last one by raising WebSocketDisconnect."""
+        import json as _json
+
+        queue = list(frames)
+
+        async def receive_text():
+            if not queue:
+                raise WebSocketDisconnect(code=1000)
+            return _json.dumps(queue.pop(0))
+
+        return types.SimpleNamespace(
+            receive_text=receive_text, send_json=lambda _msg: None
+        )
+
+    async def test_receive_loop_stamps_per_frame(self):
+        from klangk.wshandler import decider
+
+        app = self._loop_app()
+        registry = types.SimpleNamespace(touch=lambda _id: None)
+        user = {"id": "u1", "email": "d@example.com"}
+        # One ping frame, then the socket drops (queue exhausts).
+        await decider._decider_receive_loop(
+            app,
+            registry,
+            self._safe_ws_with({"type": "ping"}),
+            "ws-1",
+            user,
+            "decider-1",
+            session_id="sid-1",
+        )
+        app.state.auth.record_ws_session_activity.assert_awaited_once_with(
+            "sid-1"
+        )
+
+    async def test_receive_loop_without_session_id_skips(self):
+        from klangk.wshandler import decider
+
+        app = self._loop_app()
+        registry = types.SimpleNamespace(touch=lambda _id: None)
+        await decider._decider_receive_loop(
+            app,
+            registry,
+            self._safe_ws_with({"type": "ping"}),
+            "ws-1",
+            {"id": "u1"},
+            "decider-1",
+        )
+        app.state.auth.record_ws_session_activity.assert_not_awaited()
+
+
+class TestUnarmedWsStamp:
+    async def test_ws_stamp_unarmed_is_noop(self):
+        """With the window off, the WS stamp path costs nothing (not
+        even the throttle dict entry)."""
+        app = _app(minutes=0)
+        app.state.model = types.SimpleNamespace(
+            sessions=types.SimpleNamespace(touch_session_by_sid=AsyncMock())
+        )
+        from klangk.auth import Auth
+
+        unarmed = Auth(app)
+        await unarmed.record_ws_session_activity("sid-1")
+        app.state.model.sessions.touch_session_by_sid.assert_not_awaited()
+        assert unarmed.session_stamps == {}
+
+
+class TestDeciderSessionIdResolution:
+    async def test_resolves_through_jti(self):
+        from klangk.wshandler import decider
+
+        app = _app()
+        app.state.auth = types.SimpleNamespace(
+            decode_token=lambda _t: {"jti": "jti-1"}
+        )
+        app.state.model = types.SimpleNamespace(
+            sessions=types.SimpleNamespace(
+                get_session_id=AsyncMock(return_value="sid-1")
+            )
+        )
+        ws = types.SimpleNamespace(query_params={"token": "tok"})
+        assert await decider._decider_session_id(ws, app) == "sid-1"
+        app.state.model.sessions.get_session_id.assert_awaited_once_with(
+            "jti-1"
+        )
+
+    async def test_no_token_or_no_jti_returns_none(self):
+        from klangk.wshandler import decider
+
+        app = _app()
+        app.state.auth = types.SimpleNamespace(decode_token=lambda _t: {})
+        ws = types.SimpleNamespace(query_params={})
+        assert await decider._decider_session_id(ws, app) is None
+        ws2 = types.SimpleNamespace(query_params={"token": "tok"})
+        assert await decider._decider_session_id(ws2, app) is None

@@ -102,6 +102,14 @@ class SafeWebSocket:
         return await self._sock.receive_text()
 
     async def close(self, code: int = 1000, reason: str | None = None) -> None:
+        """Close the underlying socket, optionally carrying a reason.
+
+        *reason* is forwarded to the close frame (starlette supports it
+        from ASGI spec 2.3); it is what a logged-out client surfaces
+        (#3151, #2588 — passing it to a close that didn't accept the
+        kwarg used to raise TypeError before any close happened, so the
+        intended kick silently never fired).
+        """
         await self._sock.close(code=code, reason=reason)
 
     @property

@@ -10,10 +10,14 @@ token's ``exp`` has passed — so ``user_sessions`` never tracks a token
 that is already dead. Each row also records the workstation the
 session was established from (effective client IP + user agent), so
 concurrent sessions from different workstations can be detected at
-login and audited later, plus ``last_seen_at`` — the per-session
-activity clock checked at the refresh seam (#3151).
+login and audited later, plus the idle-timeout clock (#3151):
+``last_seen_at`` (stamped by real traffic, never by refresh) and
+``session_id`` — a stable identity that survives the per-refresh JTI
+rekeying, so a WebSocket pinned at connect time keeps stamping the
+live row across token rotations.
 """
 
+import uuid
 from datetime import datetime, timezone
 
 from .base import Submodel
@@ -44,14 +48,16 @@ class SessionsModel(Submodel):
         the session was established from (#2586); ``None`` means
         unknown (never reported as a *different* workstation).
         ``last_seen_at`` starts at issuance (#3151) — a fresh login is
-        activity by definition.
+        activity by definition — and the row gets a fresh ``session_id``
+        (stable across the per-refresh JTI rekeying, so WebSocket frames
+        can keep stamping the live row).
         """
         async with self.app.state.db.transaction() as db:
             await db.execute(
                 "INSERT OR REPLACE INTO user_sessions"
                 " (jti, user_id, expires_at, source_ip, user_agent,"
-                " last_seen_at)"
-                " VALUES (?, ?, ?, ?, ?, ?)",
+                " last_seen_at, session_id)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (
                     jti,
                     user_id,
@@ -59,7 +65,39 @@ class SessionsModel(Submodel):
                     source_ip,
                     user_agent,
                     datetime.now(timezone.utc).isoformat(),
+                    str(uuid.uuid4()),
                 ),
+            )
+
+    async def get_session_id(self, jti: str) -> str | None:
+        """The stable ``session_id`` of the row currently keyed by *jti*
+        (#3151), or ``None`` when no such row exists.
+
+        Resolved once per WebSocket connect and pinned on the
+        Connection; because ``session_id`` survives the refresh rekey,
+        later frame stamps keep reaching the row after the connect-time
+        JTI is rotated away.
+        """
+        row = await self.app.state.db.fetchone(
+            "SELECT session_id FROM user_sessions WHERE jti = ?",
+            (jti,),
+        )
+        return row[0] if row is not None else None
+
+    async def touch_session_by_sid(self, session_id: str) -> None:
+        """Stamp the session's ``last_seen_at`` to now, by stable id
+        (#3151) — the WebSocket frame path.
+
+        Keyed by ``session_id`` rather than ``jti`` so a long-lived
+        socket keeps stamping the live row across token rotations. An
+        unknown id (row deleted by logout/revocation) is a silent
+        no-op, same as the jti form.
+        """
+        async with self.app.state.db.transaction() as db:
+            await db.execute(
+                "UPDATE user_sessions SET last_seen_at = ?"
+                " WHERE session_id = ?",
+                (datetime.now(timezone.utc).isoformat(), session_id),
             )
 
     async def touch_session(self, jti: str) -> None:
@@ -103,12 +141,14 @@ class SessionsModel(Submodel):
 
         A refresh is the *same* session continuing under a new token, so
         the row is UPDATEd in place — the new JTI inherits the row (slot,
-        and its original ``created_at``, so a session that keeps
-        refreshing stays the "oldest" for eviction) and the user's
-        session count does not grow on refresh. ``last_seen_at`` is
-        deliberately carried over untouched (#3151): a refresh is not
-        session activity. When *old_jti* has no row (a token issued
-        before #2585 landed), the new JTI is simply inserted.
+        ``session_id``, and its original ``created_at``, so a session
+        that keeps refreshing stays the "oldest" for eviction) and the
+        user's session count does not grow on refresh.
+        ``last_seen_at`` is deliberately carried over untouched (#3151):
+        a refresh is not session activity. When *old_jti* has no row (a
+        token issued before #2585 landed), the new JTI is simply
+        inserted — with a fresh ``session_id`` and ``last_seen_at``
+        (issuance is activity), never a permanently unjudgeable NULL.
         """
         async with self.app.state.db.transaction() as db:
             cursor = await db.execute(
@@ -119,8 +159,15 @@ class SessionsModel(Submodel):
             if cursor.rowcount == 0:
                 await db.execute(
                     "INSERT OR REPLACE INTO user_sessions"
-                    " (jti, user_id, expires_at) VALUES (?, ?, ?)",
-                    (new_jti, user_id, expires_at),
+                    " (jti, user_id, expires_at, last_seen_at, session_id)"
+                    " VALUES (?, ?, ?, ?, ?)",
+                    (
+                        new_jti,
+                        user_id,
+                        expires_at,
+                        datetime.now(timezone.utc).isoformat(),
+                        str(uuid.uuid4()),
+                    ),
                 )
 
     async def remove_session(self, jti: str) -> None:

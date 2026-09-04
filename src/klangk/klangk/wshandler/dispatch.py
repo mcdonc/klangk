@@ -243,6 +243,12 @@ async def handle_websocket(websocket: WebSocket, app) -> None:
     safe_ws = SafeWebSocket(websocket)
     safe_ws.start_sender()
     conn = Connection(safe_ws, user, app, jti=jti, token_exp=token_exp)
+    # Resolve the stable session identity once (#3151): the row's JTI
+    # is rekeyed on every token refresh, so frame stamps must go
+    # through a key that survives the rotation. A missing row
+    # (pre-#2585 token) leaves None — this connection simply doesn't
+    # stamp until it reconnects with a tracked token (fail-open).
+    conn.session_id = await app.state.model.sessions.get_session_id(jti)
     app.state.sockets.connections[safe_ws] = conn
     conn.schedule_token_expiry()
     # Everything from here on is inside the try so a failure in the

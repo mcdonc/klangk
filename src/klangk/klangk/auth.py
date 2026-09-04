@@ -70,11 +70,12 @@ ACTIVITY_STAMP_INTERVAL = 60.0
 # 15 min for regular users and 10 for admins-group members.
 PRIVILEGED_SESSION_IDLE_MINUTES = 10
 
-# Ceiling on the per-JTI stamp-throttle dict (#3151): sessions churn
-# (every refresh mints a new JTI), so the dict is length-capped the
-# same way the rate-limit dicts are — under a monotonic clock,
-# insertion order tracks stamp order, so the head is always the
-# stalest entry.
+# Ceiling on the per-JTI/per-session stamp-throttle dict (#3151):
+# sessions churn (every refresh mints a new JTI), so the dict is
+# length-capped the same way the rate-limit dicts are — insertion order
+# under a monotonic clock tracks first-stamp order, so the head is a
+# reasonable eviction victim (it may occasionally be a hot live entry
+# whose key never moved; the cost is one redundant DB write later).
 SESSION_STAMP_MAX_ENTRIES = 10_000
 # Sanity ceiling on the iteration count read back from a stored hash, so
 # a corrupt or tampered row cannot stall a login indefinitely.
@@ -868,27 +869,52 @@ class Auth:
         window_secs = self.session_idle_timeout_minutes * 60
         return min(ACTIVITY_STAMP_INTERVAL, window_secs / 4)
 
-    async def record_session_activity(self, jti: str) -> None:
-        """Stamp ``user_sessions.last_seen_at`` (throttled) (#3151).
+    def _stamp_throttle_due(self, key: str) -> bool:
+        """Record a stamp attempt for *key*; True when a DB write is due.
 
-        Called from the token-auth choke points (the HTTP dependencies
-        and the WebSocket connect/frame paths) — real traffic only:
-        the refresh endpoint deliberately does NOT call this (it is the
-        enforcement seam, not activity, or an idle client that only
-        refreshes would survive forever). No-op unless the window is
-        armed. The per-JTI clock bounds the dict; dead JTIs are popped
-        on logout/swap and the length cap is the backstop.
+        The shared per-key clock for both stamp paths (#3151): keys are
+        prefixed (``jti:``/``sid:``) so the two namespaces cannot
+        collide in one dict.
+        """
+        now = time.monotonic()
+        last = self.session_stamps.get(key)
+        if last is not None and now - last < self._session_stamp_interval():
+            return False
+        while len(self.session_stamps) >= SESSION_STAMP_MAX_ENTRIES:
+            del self.session_stamps[next(iter(self.session_stamps))]
+        self.session_stamps[key] = now
+        return True
+
+    async def record_session_activity(self, jti: str) -> None:
+        """Stamp ``user_sessions.last_seen_at`` (throttled) by the
+        presented JTI (#3151) — the HTTP request / WS connect path.
+
+        The presented token's JTI always keys the live row (a rotated
+        token's old JTI is blocklisted, so requests carrying it never
+        get this far). No-op unless the window is armed.
         """
         if self.session_idle_timeout_minutes <= 0:
             return
-        now = time.monotonic()
-        last = self.session_stamps.get(jti)
-        if last is not None and now - last < self._session_stamp_interval():
+        if not self._stamp_throttle_due(f"jti:{jti}"):
             return
-        while len(self.session_stamps) >= SESSION_STAMP_MAX_ENTRIES:
-            del self.session_stamps[next(iter(self.session_stamps))]
-        self.session_stamps[jti] = now
         await self.app.state.model.sessions.touch_session(jti)
+
+    async def record_ws_session_activity(self, session_id: str) -> None:
+        """Stamp ``user_sessions.last_seen_at`` (throttled) by the
+        stable session id (#3151) — the WebSocket frame path.
+
+        Frames stamp by ``session_id``, not the connect-time JTI: the
+        row is rekeyed on every token refresh, and a socket pinned to
+        the old JTI would stamp a row that no longer exists — its
+        activity would silently vanish and an actively-used terminal
+        session would idle out (~2× the window). No-op unless armed or
+        the id no longer resolves (the session was logged out).
+        """
+        if self.session_idle_timeout_minutes <= 0:
+            return
+        if not self._stamp_throttle_due(f"sid:{session_id}"):
+            return
+        await self.app.state.model.sessions.touch_session_by_sid(session_id)
 
     def create_token(
         self, user_id: str, email: str, expire_hours: float | None = None
@@ -1484,7 +1510,7 @@ class Auth:
         self._retarget_refreshed_sockets(jti, new_payload["jti"])
         # The old JTI is dead — drop its stamp-throttle entry (#3151)
         # so the dict tracks live sessions, not history.
-        self.session_stamps.pop(jti, None)
+        self.session_stamps.pop(f"jti:{jti}", None)
 
     def _retarget_refreshed_sockets(self, old_jti: str, new_jti: str) -> None:
         """Move live WS connections onto the refreshed token's JTI (#3152).
@@ -1526,6 +1552,12 @@ class Auth:
             last = datetime.fromisoformat(last_seen)
         except ValueError:
             return None
+        if last.tzinfo is None:
+            # The m0030 backfill copied SQLite's datetime('now') — naive
+            # UTC in the space-separated form. Assume UTC rather than
+            # crashing the subtraction (an aware-minus-naive TypeError
+            # would 500 the refresh seam it is meant to guard).
+            last = last.replace(tzinfo=timezone.utc)
         return (datetime.now(timezone.utc) - last).total_seconds()
 
     async def _revoke_idle_session(self, jti: str, exp) -> None:
@@ -1693,7 +1725,7 @@ class Auth:
                 )
                 await self.app.state.model.sessions.remove_session(jti)
                 await self._kick_revoked_sockets(jti)
-                self.session_stamps.pop(jti, None)
+                self.session_stamps.pop(f"jti:{jti}", None)
         except JWTError:
             pass
 

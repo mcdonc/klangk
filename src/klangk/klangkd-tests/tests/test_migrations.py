@@ -3383,7 +3383,7 @@ class TestM0033UserSessionsLastSeen:
         await db.commit()
         return db
 
-    async def test_adds_column_and_backfills(self, tmp_path):
+    async def test_adds_columns_and_backfills(self, tmp_path):
         db = await self._old_shape_db(tmp_path)
         try:
             from klangk.model.migrations import m0033_user_sessions_last_seen
@@ -3391,12 +3391,18 @@ class TestM0033UserSessionsLastSeen:
             await m0033_user_sessions_last_seen.migration.apply(db)
             info = await db.execute("PRAGMA table_info(user_sessions)")
             cols = {r[1] for r in await info.fetchall()}
-            assert "last_seen_at" in cols
+            assert {"last_seen_at", "session_id"} <= cols
             cursor = await db.execute(
-                "SELECT last_seen_at FROM user_sessions WHERE jti = 'jti-a'"
+                "SELECT last_seen_at, session_id FROM user_sessions"
+                " WHERE jti = 'jti-a'"
             )
-            # Backfilled from created_at (space-separated SQLite form —
-            # parseable by datetime.fromisoformat, like the ISO form).
-            assert await cursor.fetchone() == ("2026-01-01 10:00:00",)
+            # last_seen backfilled from created_at (space-separated
+            # naive SQLite form — judged as UTC at read time, see
+            # Auth._session_idle_seconds), session_id from the row's
+            # own (pre-rotation) jti.
+            assert await cursor.fetchone() == (
+                "2026-01-01 10:00:00",
+                "jti-a",
+            )
         finally:
             await db.__aexit__(None, None, None)
