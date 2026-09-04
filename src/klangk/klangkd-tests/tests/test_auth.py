@@ -1644,6 +1644,16 @@ class TestRevocationKicksSockets:
         finally:
             sockets.connections.clear()
 
+    async def test_revoke_all_user_sessions_no_sessions_is_noop(
+        self, user, app_state
+    ):
+        """A user with no sessions (rows empty) skips the kick loop and
+        the remove_sessions call entirely."""
+        a, sockets = self._auth_with_sockets()
+        await a.revoke_all_user_sessions(user["id"])
+        assert not sockets.connections
+        assert await a.app.state.model.sessions.list_sessions(user["id"]) == []
+
 
 class TestConcurrentLogonAudit:
     """Audit records for concurrent logons from different workstations
