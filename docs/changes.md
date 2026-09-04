@@ -2031,6 +2031,17 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Parallel image-build tasks tolerate transient rootless-podman failures
+  (#3168).** `klangk:build-workspace-image` and `klangk:build-network-sidecar`
+  run in parallel and are a fresh machine's first rootless podman invocations;
+  the concurrent first-time user-namespace initialization intermittently
+  aborted one of them with `failed to reexec: Permission denied` before any
+  test ran, reding the whole CI job. Their podman calls now go through a
+  retry helper that retries exactly that failure signature once — printing
+  `podman info` / `podman unshare` diagnostics first so a persistent
+  occurrence stays attributable — and passes every other failure through
+  untouched.
+
 - **`build-host-image` / `build_wheel.sh` (#3143).** The release wheel is
   now built with `uv build`, which resolves hatchling/hatch-vcs into its own
   isolated build environment instead of transiently installing `build` into

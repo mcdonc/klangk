@@ -148,3 +148,90 @@ klangk::prune_old_tags() {
     esac
   done
 }
+
+# --- Rootless reexec retry guard (#3168) ----------------------------------
+#
+# "devenv tasks run klangk:build-workspace-image klangk:build-network-sidecar"
+# runs both tasks in parallel, and on a fresh machine (stock CI runners, first
+# "devenv up") those are the machine's first two rootless podman invocations.
+# Concurrent first-time user-namespace/storage initialization intermittently
+# kills one of them ~1.4s in with
+#
+#     failed to reexec: Permission denied
+#
+# before any test runs, reding the whole job (run 33888969754). The failure is
+# environmental and transient: by the time a retry runs, the sibling build has
+# finished initializing podman's state. klangk::run_podman wraps a podman
+# invocation so that exactly this signature is retried once (after capturing
+# diagnostics, so a persistent occurrence is attributable); every other
+# failure passes through untouched with its original exit code — the same
+# policy as scripts/retry-on-invalid-path.sh for the devenv eval UAF (#2775).
+
+# Fixed-string signature (grep -F): any "failed to reexec:" is the rootless
+# bootstrap (userns reexec) failing, which is runner-environment level — never
+# a klangk code path or a Dockerfile problem.
+REEXEC_SIGNATURE="failed to reexec:"
+
+# Seconds to let the sibling podman's first-time initialization finish before
+# the retry attempt. KLANGKBUILD_PODMAN_RETRY_SLEEP overrides (tests zero it).
+PODMAN_RETRY_SLEEP="${KLANGKBUILD_PODMAN_RETRY_SLEEP:-5}"
+
+# klangk::reexec_diagnostics — probes named in #3168 (podman info rc,
+# "podman unshare true" rc) plus the standard userns checklist (sysctls,
+# subid ranges). Best-effort: nothing here may fail the caller. Probes run
+# under timeout(1): a probe contending a storage flock held by the sibling
+# build must degrade to a "FAILED rc=124" line, not stall the retry.
+klangk::reexec_diagnostics() {
+  local podman_bin="${KLANGKD_PODMAN_BIN:-podman}" f
+  echo "--- podman reexec diagnostics (#3168) ---" >&2
+  if timeout 30 "$podman_bin" info >/dev/null 2>&1; then
+    echo "podman info: ok" >&2
+  else
+    echo "podman info: FAILED rc=$?" >&2
+  fi
+  if timeout 30 "$podman_bin" unshare true >/dev/null 2>&1; then
+    echo "podman unshare true: ok (userns creatable)" >&2
+  else
+    echo "podman unshare true: FAILED rc=$?" >&2
+  fi
+  for f in /proc/sys/user/max_user_namespaces \
+    /proc/sys/kernel/unprivileged_userns_clone; do
+    [ -r "$f" ] || continue
+    echo "$f = $(cat "$f")" >&2
+  done
+  echo "subuid: $(grep "^$(id -un):" /etc/subuid 2>/dev/null || echo '<none>')" >&2
+  echo "subgid: $(grep "^$(id -un):" /etc/subgid 2>/dev/null || echo '<none>')" >&2
+  echo "------------------------------------------" >&2
+}
+
+# klangk::run_podman <args...> — run "${KLANGKD_PODMAN_BIN:-podman}" "$@"
+# with the #3168 reexec retry. The command's combined output streams live on
+# stderr (and into a temp log for the signature match); stdout stays clean so
+# callers may capture it. Returns the podman exit status: after one retry when
+# the reexec signature was seen, immediately otherwise.
+klangk::run_podman() {
+  local errlog attempt rc
+  for attempt in 1 2; do
+    rc=0
+    errlog="$(mktemp "${TMPDIR:-/tmp}/klangk-podman-XXXXXX")"
+    "${KLANGKD_PODMAN_BIN:-podman}" "$@" 2>&1 | tee "$errlog" >&2 ||
+      rc=${PIPESTATUS[0]}
+    if [ "$rc" -eq 0 ]; then
+      rm -f "$errlog"
+      return 0
+    fi
+    if grep -Fq "$REEXEC_SIGNATURE" "$errlog"; then
+      rm -f "$errlog"
+      klangk::reexec_diagnostics
+      if [ "$attempt" -eq 1 ]; then
+        echo "::warning::podman rootless reexec failure (attempt 1/2) — retrying once (#3168)" >&2
+        sleep "$PODMAN_RETRY_SLEEP"
+        continue
+      fi
+      echo "::error::podman rootless reexec failure persisted after retry (#3168)" >&2
+    else
+      rm -f "$errlog"
+    fi
+    return "$rc"
+  done
+}

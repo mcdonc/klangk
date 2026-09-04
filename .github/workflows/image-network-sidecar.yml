@@ -31,6 +31,7 @@ on:
     paths:
       - "src/containers/network/**"
       - "scripts/build-network-sidecar.sh"
+      - "scripts/_podman_common.sh"
       - "src/klangksidecar/klangksidecar/**"
       - "src/klangksidecar/pyproject.toml"
       - ".github/workflows/image-network-sidecar.yml"
