@@ -294,12 +294,13 @@ operators or integrators to act when upgrading.
 
 - **Consent-decider sockets are closed on token revocation (#3162).**
   The `/ws/consent-decider` connection now shares the #3152 revocation
-  story: logging out, or being evicted by the per-user session limit,
-  immediately closes the decider sockets the revoked token
-  authenticated (close code 4001) and drops their registrations, so
-  egress-consent authority (verdicts, revokes, pause) ends with the
-  credential. Previously the decider socket — which lives in its own
-  registry — kept that authority indefinitely after logout. Refresh
+  story: logging out, being evicted by the per-user session limit, or
+  having the account disabled (admin action or the inactivity sweep)
+  immediately closes the decider sockets that credential authenticated
+  (close code 4001) and drops their registrations, so egress-consent
+  authority (verdicts, revokes, pause) ends with the credential.
+  Previously the decider socket — which lives in its own registry —
+  kept that authority indefinitely after logout or disable. Refresh
   rotation retargets the decider onto the new token instead of closing
   it.
 

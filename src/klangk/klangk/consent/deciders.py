@@ -26,10 +26,12 @@ Owns only ``app`` (the app-ownership rule); the timeout is read live via
 property so a SIGHUP reload propagates.
 
 #3162: entries carry the JTI of the user JWT that authenticated the
-decider handshake, so a hard token revocation (logout, session-limit
-eviction) can close the decider sockets that token opened — the same
-kick the main ``/ws`` registry got in #3152. Refresh rotation
-retargets the entry onto the new JTI instead of closing it.
+decider handshake and the user id, so both a hard token revocation
+(logout, session-limit eviction — by JTI) and an account disable (admin
+route, inactivity sweep — by user) can close the decider sockets that
+credential opened — the same kicks the main ``/ws`` registry got in
+#3152/#2588. Refresh rotation retargets the entry onto the new JTI
+instead of closing it.
 """
 
 from __future__ import annotations
@@ -61,7 +63,7 @@ class ConsentDeciderRegistry:
         self.app = app
         # decider_id -> {"ws": workspace_id, "seen": monotonic,
         #                 "email": str, "sock": SafeWebSocket,
-        #                 "jti": str | None}
+        #                 "jti": str | None, "user_id": str | None}
         self._deciders: dict[str, dict] = {}
         self._reaper: asyncio.Task | None = None
 
@@ -79,6 +81,7 @@ class ConsentDeciderRegistry:
         email: str | None,
         sock,
         jti: str | None = None,
+        user_id: str | None = None,
     ) -> None:
         """Register a live decider (connect). Idempotent on decider_id.
 
@@ -86,8 +89,9 @@ class ConsentDeciderRegistry:
         lifecycle (start/stop sender) -- the registry holds only a reference for
         :meth:`broadcast` fanout. ``jti`` is the ID of the user JWT that
         authenticated the handshake (#3162) so a later hard revocation can
-        close exactly this decider; ``None`` on registrations built without
-        one (tests) -- never kicked by JTI.
+        close exactly this decider; ``user_id`` lets an account disable do
+        the same for every decider of the user. Both are ``None`` on
+        registrations built without them (tests) -- never kicked.
         """
         self._deciders[decider_id] = {
             "ws": workspace_id,
@@ -95,6 +99,7 @@ class ConsentDeciderRegistry:
             "email": email,
             "sock": sock,
             "jti": jti,
+            "user_id": user_id,
         }
         logger.info(
             "consent decider registered: scope=%s decider=%s",
@@ -159,6 +164,24 @@ class ConsentDeciderRegistry:
             self._deciders.pop(did, None)
         return delivered
 
+    async def _close_and_drop(
+        self, victims: list, code: int, reason: str
+    ) -> int:
+        """Close each victim decider's socket and drop its registration.
+
+        Shared sweep body of the two kick selectors; a socket already gone
+        must not abort the sweep over the rest.
+        """
+        for did, entry in victims:
+            self._deciders.pop(did, None)
+            try:
+                await entry["sock"].close(code=code, reason=reason)
+            except Exception:  # noqa: BLE001
+                logger.debug(
+                    "Error closing decider socket for %s", entry["email"]
+                )
+        return len(victims)
+
     async def disconnect_by_jti(
         self, jti: str, *, code: int = 4001, reason: str = ""
     ) -> int:
@@ -180,13 +203,26 @@ class ConsentDeciderRegistry:
             for did, entry in self._deciders.items()
             if entry["jti"] == jti
         ]
-        for did, entry in victims:
-            self._deciders.pop(did, None)
-            try:
-                await entry["sock"].close(code=code, reason=reason)
-            except Exception:  # noqa: BLE001
-                logger.debug("Error closing decider socket for jti %s", jti)
-        return len(victims)
+        return await self._close_and_drop(victims, code, reason)
+
+    async def disconnect_by_user(
+        self, user_id: str, *, code: int = 4001, reason: str = ""
+    ) -> int:
+        """Close every live decider registered by *user_id* (#3162).
+
+        Account disable (admin route, inactivity sweep) must cut the
+        user's decider sockets too — the per-user analogue of the #2588
+        ``disconnect_user`` kick, for a surface that holds
+        egress-consent authority. Same close/drop semantics as
+        :meth:`disconnect_by_jti`. Returns how many deciders were
+        closed.
+        """
+        victims = [
+            (did, entry)
+            for did, entry in self._deciders.items()
+            if entry["user_id"] == user_id
+        ]
+        return await self._close_and_drop(victims, code, reason)
 
     def reattach_jti(self, old_jti: str, new_jti: str) -> int:
         """Move live deciders from *old_jti* onto *new_jti* (#3162).

@@ -956,11 +956,22 @@ class TestConsentDeciderWSJti:
 
         class RecordingRegistry(ConsentDeciderRegistry):
             def register(
-                self, decider_id, workspace_id, email, sock, jti=None
+                self,
+                decider_id,
+                workspace_id,
+                email,
+                sock,
+                jti=None,
+                user_id=None,
             ):
-                recorded.append(jti)
+                recorded.append((jti, user_id))
                 super().register(
-                    decider_id, workspace_id, email, sock, jti=jti
+                    decider_id,
+                    workspace_id,
+                    email,
+                    sock,
+                    jti=jti,
+                    user_id=user_id,
                 )
 
         app.state.consent_deciders = RecordingRegistry(app)
@@ -968,7 +979,7 @@ class TestConsentDeciderWSJti:
             {"token": "tok", "workspace": WS}, [WebSocketDisconnect()]
         )
         await handle_consent_decider(ws, app)
-        assert recorded == ["jti-decoded"]
+        assert recorded == [("jti-decoded", "u1")]
 
 
 class TestConsentDeciderRegistryJti:
@@ -980,11 +991,13 @@ class TestConsentDeciderRegistryJti:
     review)."""
 
     @staticmethod
-    def _real_decider(reg, jti, decider_id="d1"):
+    def _real_decider(reg, jti, decider_id="d1", user_id=None):
         """Register a decider backed by a real SafeWebSocket over a mock
         raw socket; return the raw socket for close-assertions."""
         raw = _mock_raw_sock()
-        reg.register(decider_id, WS, "a@x", SafeWebSocket(raw), jti=jti)
+        reg.register(
+            decider_id, WS, "a@x", SafeWebSocket(raw), jti=jti, user_id=user_id
+        )
         return raw
 
     async def test_register_records_jti(self):
@@ -1031,6 +1044,35 @@ class TestConsentDeciderRegistryJti:
         reg.register("d1", WS, "a@x", SafeWebSocket(raw), jti="jti-x")
         assert await reg.disconnect_by_jti("jti-x") == 1
         assert reg._deciders == {}
+
+    async def test_register_records_user_id(self):
+        reg = ConsentDeciderRegistry(_app())
+        reg.register("d1", WS, "a@x", _FakeSock(), user_id="u1")
+        assert reg._deciders["d1"]["user_id"] == "u1"
+
+    async def test_disconnect_by_user_closes_real_safe_websocket(self):
+        reg = ConsentDeciderRegistry(_app())
+        raw = self._real_decider(reg, "jti-x", "d1", user_id="u-victim")
+        kicked = await reg.disconnect_by_user(
+            "u-victim", reason="Account disabled"
+        )
+        assert kicked == 1
+        raw.close.assert_awaited_once_with(
+            code=4001, reason="Account disabled"
+        )
+        assert reg._deciders == {}
+
+    async def test_disconnect_by_user_spares_other_users(self):
+        reg = ConsentDeciderRegistry(_app())
+        raw_victim = self._real_decider(reg, "j1", "d1", user_id="u1")
+        raw_other = self._real_decider(reg, "j2", "d2", user_id="u2")
+        kicked = await reg.disconnect_by_user("u1", reason="Account disabled")
+        assert kicked == 1
+        raw_victim.close.assert_awaited_once_with(
+            code=4001, reason="Account disabled"
+        )
+        raw_other.close.assert_not_awaited()
+        assert set(reg._deciders) == {"d2"}
 
     async def test_reattach_jti_moves_decider_entries(self):
         reg = ConsentDeciderRegistry(_app())

@@ -155,6 +155,37 @@ class TestInactivitySweeper:
             "u1", code=4001, reason="Account disabled"
         )
 
+    async def test_disabled_users_deciders_are_kicked(self):
+        """#3162: the sweep also closes the disabled user's live
+        consent-decider sockets — a decider holds egress-consent
+        authority and must not outlive the disable. The decider is a
+        REAL SafeWebSocket (fakes masked the reason-kwarg no-op class
+        of bug, #3160 review)."""
+        from klangk.consent.deciders import ConsentDeciderRegistry
+        from klangk.wshandler.safe_websocket import SafeWebSocket
+
+        app = _app(
+            disable_inactive=AsyncMock(
+                return_value=[{"id": "u1", "email": "gone@example.com"}]
+            )
+        )
+        app.state.consent_deciders = ConsentDeciderRegistry(app)
+        raw = AsyncMock()
+        raw.close = AsyncMock()
+        app.state.consent_deciders.register(
+            "d1",
+            "ws-1",
+            "gone@example.com",
+            SafeWebSocket(raw),
+            jti="j1",
+            user_id="u1",
+        )
+        await inactivity.InactivitySweeper(app).sweep()
+        raw.close.assert_awaited_once_with(
+            code=4001, reason="Account disabled"
+        )
+        assert app.state.consent_deciders._deciders == {}
+
 
 def await_count(mock) -> int:
     return mock.await_count if hasattr(mock, "await_count") else 0

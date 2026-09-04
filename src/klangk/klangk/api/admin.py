@@ -468,6 +468,11 @@ async def _update_user_disabled(
         kicked = await wshandler.disconnect_user(
             app.state.sockets, user_id, reason="Account disabled"
         )
+        # #3162: the consent-decider surface must not outlive the
+        # disable either — it holds egress-consent authority.
+        kicked += await wshandler.disconnect_deciders_by_user(
+            app, user_id, reason="Account disabled"
+        )
         if kicked:
             logger.info(
                 "admin: disabled user %s; closed %d live connection(s)",

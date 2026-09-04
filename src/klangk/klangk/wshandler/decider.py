@@ -35,8 +35,10 @@ pause. Auth mirrors the main ``/ws`` handler: a user JWT in the ``token``
 query param — including its revocation story (#3162): the handshake
 records the token's JTI on the registry entry, and a hard revocation
 (logout, session-limit eviction) closes the decider socket with 4001,
-just like the main handler's connections (#3152). Refresh rotation
-retargets the entry onto the new JTI instead of closing it.
+just like the main handler's connections (#3152), and an account
+disable closes every decider of the user (#3162, mirroring the #2588
+per-user kick). Refresh rotation retargets the entry onto the new JTI
+instead of closing it.
 
 Outbound writes go through :class:`SafeWebSocket` (bounded queue +
 ``SlowClientError``) like the main ``/ws`` handler.
@@ -364,7 +366,9 @@ async def handle_consent_decider(websocket: WebSocket, app) -> None:
     decider_id = str(uuid.uuid4())
     email = user.get("email")
     try:
-        registry.register(decider_id, workspace, email, safe_ws, jti=jti)
+        registry.register(
+            decider_id, workspace, email, safe_ws, jti=jti, user_id=user["id"]
+        )
         # Register BEFORE reading the snapshot: a hold created between the two
         # is then delivered twice (once live via fanout, once from the
         # snapshot). That duplicate is benign -- the second verdict no-ops

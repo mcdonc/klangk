@@ -140,6 +140,22 @@ async def disconnect_by_jti(
     return await sockets.disconnect_by_jti(jti, code=code, reason=reason)
 
 
+async def disconnect_deciders_by_user(
+    app, user_id: str, *, code: int = 4001, reason: str = ""
+) -> int:
+    """Close the user's live consent-decider sockets (#3162).
+
+    Account-disable kicks (admin route, inactivity sweep) must cut the
+    decider surface too — a decider holds egress-consent authority.
+    Minimal app states (tests) may not wire ``consent_deciders`` — then
+    there is nothing to close (returns 0).
+    """
+    deciders = getattr(app.state, "consent_deciders", None)
+    if deciders is None:
+        return 0
+    return await deciders.disconnect_by_user(user_id, code=code, reason=reason)
+
+
 async def refresh_user_handle(
     sockets: WebSocketState, user_id: str, new_handle: str
 ) -> None:
