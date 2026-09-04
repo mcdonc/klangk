@@ -255,6 +255,36 @@ class TestEgressConsentHmac:
             {"id": row["id"], "workspace_id": workspace["id"]}
         ]
 
+    async def test_expire_pending_restamps_hmac(
+        self, app_state, db, workspace
+    ):
+        """expire_pending mutates decision/decided_at — the HMAC must
+        be recomputed so the row still verifies."""
+        ec = app_state.state.model.egress_consent
+        row = await ec.create_request(workspace["id"], "expire.com", 443)
+        original_hmac = row["hmac"]
+        assert await ec.expire_pending(row["id"]) is True
+        result = await ec.verify_integrity()
+        assert result["verified"] == 1
+        assert result["tampered"] == []
+        # The tag must have changed (different decision + decided_at).
+        refreshed = await ec.get_request(row["id"])
+        assert refreshed["hmac"] != original_hmac
+
+    async def test_expire_all_pending_restamps_hmac(
+        self, app_state, db, workspace
+    ):
+        """expire_all_pending is a bulk path — every expired row must
+        carry a valid HMAC afterwards."""
+        ec = app_state.state.model.egress_consent
+        ws_id = workspace["id"]
+        await ec.create_request(ws_id, "a.com", 80)
+        await ec.create_request(ws_id, "b.com", 443)
+        assert await ec.expire_all_pending() == 2
+        result = await ec.verify_integrity()
+        assert result["verified"] == 2
+        assert result["tampered"] == []
+
 
 class TestMigration:
     async def test_hmac_column_exists(self, app_state, db):

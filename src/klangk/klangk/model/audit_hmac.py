@@ -43,6 +43,12 @@ def _canonical_pairs(table: str, row: dict, columns: list[str]) -> bytes:
     ``str(value)``.  The column order is the caller's ``columns`` list
     (which must match the table's canonical column order, excluding the
     ``hmac`` column itself).
+
+    **Delimiter safety assumption:** the covered columns are all
+    system-generated values (UUIDs, timestamps, enum constants, integer
+    ids) — no user-supplied free-text.  The ``\\0`` / ``=`` delimiters
+    are therefore unambiguous.  If a future column carries arbitrary
+    user input, length-prefix or escape the values first.
     """
     parts = [table]
     for col in columns:
