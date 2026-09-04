@@ -343,8 +343,14 @@ class TestVerifyProcessFips:
             fips.verify_process_fips(self._settings(False))
         assert not caplog.records
 
+    def _jose_ok(self):
+        return patch.object(
+            fips, "verify_jose_backend", return_value=(True, "jose ok")
+        )
+
     def test_on_verified(self, caplog):
         with (
+            self._jose_ok(),
             patch.object(fips, "probe_process", return_value=(True, "x")),
             patch.object(fips, "running_in_container", return_value=False),
         ):
@@ -355,6 +361,7 @@ class TestVerifyProcessFips:
     def test_on_verified_in_container(self, caplog):
         """A passing probe boots fine inside a container too (#2628)."""
         with (
+            self._jose_ok(),
             patch.object(fips, "probe_process", return_value=(True, "x")),
             patch.object(fips, "running_in_container", return_value=True),
         ):
@@ -365,6 +372,7 @@ class TestVerifyProcessFips:
     def test_on_not_verified_warns_on_control_host(self, caplog):
         """Not containerized → warn-only posture (the operator's host)."""
         with (
+            self._jose_ok(),
             patch.object(
                 fips, "probe_process", return_value=(False, "md5 not rejected")
             ),
@@ -382,6 +390,7 @@ class TestVerifyProcessFips:
         an image we ship — the boot must abort, not warn.
         """
         with (
+            self._jose_ok(),
             patch.object(
                 fips, "probe_process", return_value=(False, "md5 not rejected")
             ),
@@ -476,6 +485,69 @@ class TestRegistryFipsFailClosed:
             await reg._fips_gate("ws-fips", "cid-fips")
         remove.assert_not_awaited()
         assert reg.states["ws-fips"].container_id == "cid-fips"
+
+
+class TestVerifyJoseBackend:
+    """Verify that the jose HS256 backend probe detects the right module."""
+
+    def test_cryptography_backend(self):
+        ok, detail = fips.verify_jose_backend()
+        assert ok is True
+        assert "cryptography_backend" in detail
+
+    def test_native_fallback_rejected(self):
+        with patch.dict(
+            "sys.modules",
+            {
+                "jose.backends": types.SimpleNamespace(
+                    HMACKey=type(
+                        "HMACKey", (), {"__module__": "jose.backends.native"}
+                    )
+                )
+            },
+        ):
+            ok, detail = fips.verify_jose_backend()
+        assert ok is False
+        assert "native" in detail
+
+    def test_import_failure(self):
+        with patch.dict("sys.modules", {"jose.backends": None}):
+            ok, detail = fips.verify_jose_backend()
+        assert ok is False
+        assert "not importable" in detail
+
+
+class TestVerifyProcessFipsJoseGate:
+    """The jose backend check gates boot under FIPS mode (#3175)."""
+
+    def _settings(self, on):
+        return types.SimpleNamespace(fips_mode=on)
+
+    def test_jose_failure_aborts_boot(self):
+        with patch.object(
+            fips,
+            "verify_jose_backend",
+            return_value=(False, "wrong backend"),
+        ):
+            with pytest.raises(ConfigurationError, match="wrong backend"):
+                fips.verify_process_fips(self._settings(True))
+
+    def test_jose_passes_then_process_probe_runs(self, caplog):
+        with (
+            patch.object(
+                fips,
+                "verify_jose_backend",
+                return_value=(True, "jose ok"),
+            ),
+            patch.object(fips, "probe_process", return_value=(True, "ok")),
+            patch.object(fips, "running_in_container", return_value=False),
+        ):
+            with caplog.at_level(logging.INFO):
+                fips.verify_process_fips(self._settings(True))
+        assert any(
+            "jose backend verified" in r.message for r in caplog.records
+        )
+        assert any("FIPS mode enabled" in r.message for r in caplog.records)
 
 
 class TestProbeScriptSyntax:

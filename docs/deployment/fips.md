@@ -199,12 +199,63 @@ and `src/containers/host/Dockerfile.fips`. The activation steps are
 unchanged. Always re-run the build-time proof and the runtime probes
 above before rolling out.
 
-## Relation to password hashing
+## FIPS posture decision (V-222555)
 
-FIPS posture also depends on the algorithms klangkd itself uses for
-password storage. bcrypt bundles its own crypto and is not
-FIPS-approvable; it has been replaced with PBKDF2-HMAC-SHA512 via
-`hashlib`, which routes through the validated provider.
+STIG V-222555 requires cryptographic modules to be FIPS 140-2/3
+validated and used in FIPS mode. Klangk ships FIPS as an **opt-in
+deployment posture** — the operator enables it with
+`KLANGKD_FIPS_MODE=true` and uses the FIPS images — rather than
+making it the default. Rationale:
+
+- **Not every deployment requires FIPS.** Development, evaluation, and
+  non-federal deployments should not pay the operational overhead
+  (separate image, restricted algorithm set, provider enforcement) when
+  they have no compliance requirement.
+- **Opt-in is explicit and auditable.** The gate (`KLANGKD_FIPS_MODE`)
+  makes the posture a deliberate deployment decision, recorded in the
+  environment configuration — never an accident of image selection.
+  When the mode is on, enforcement is comprehensive: the boot gate
+  verifies the process's OpenSSL provider, every workspace container is
+  probed at start and adoption, and the JWT backend is checked at
+  startup.
+- **Default-off does not weaken FIPS deployments.** The FIPS images
+  carry the validated module and activate it unconditionally. The gate
+  adds runtime verification — it does not install the module. A FIPS
+  deployment uses the FIPS image _and_ the gate; a non-FIPS deployment
+  uses the stock image with no gate.
+
+Organizations subject to V-222555 deploy with the FIPS host image
+(`klangk-host-fips`) and `KLANGKD_FIPS_MODE=true`. The STIG reviewer
+should confirm both are present in the deployment configuration.
+
+## Cryptographic inventory
+
+Complete list of cryptographic operations klangkd performs, the module
+each routes through, and the FIPS validation status under the FIPS
+image:
+
+| Operation                    | Algorithm                            | Code path                                                                                       | Module                                                 | FIPS-validated?                                 |
+| ---------------------------- | ------------------------------------ | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------ | ----------------------------------------------- |
+| Password hashing             | PBKDF2-HMAC-SHA512 (600k iterations) | `hashlib.pbkdf2_hmac` (`auth.py`)                                                               | OpenSSL `_hashlib` → libcrypto → FIPS provider         | Yes (CMVP #4985)                                |
+| JWT signing/verification     | HMAC-SHA256 (HS256)                  | `python-jose` → `cryptography` backend → `cryptography.hazmat.primitives.hmac.HMAC` (`auth.py`) | OpenSSL via `cryptography` → libcrypto → FIPS provider | Yes (CMVP #4985)                                |
+| Outbound TLS                 | TLS 1.2/1.3                          | `ssl` module / `httpx` (LLM proxy, OIDC, SMTP)                                                  | OpenSSL `_ssl` → libcrypto → FIPS provider             | Yes (CMVP #4985)                                |
+| Password timing equalization | HMAC comparison                      | `hmac.compare_digest` (`auth.py`)                                                               | C-level constant-time compare (no crypto module)       | N/A (comparison only)                           |
+| Token identifiers            | UUID4                                | `uuid.uuid4` / `secrets.token_bytes`                                                            | OS `urandom`                                           | N/A (randomness source, not a crypto algorithm) |
+
+**JWT backend verification (#3175):** at startup under
+`KLANGKD_FIPS_MODE`, klangkd verifies that `python-jose`'s `HMACKey`
+class comes from the `cryptography_backend` module — the only backend
+that routes HMAC-SHA256 through the validated OpenSSL. If `python-jose`
+falls back to the native stdlib backend (which uses `hashlib` directly
+and can bypass the provider via PEP 452's `_sha2` fallback), the boot
+aborts with a `ConfigurationError`. This closes the gap where a
+dependency change or packaging error could silently route JWT signing
+through a non-validated implementation.
+
+**Algorithms not used:** bcrypt (removed in #2576, bundles non-FIPS
+crypto), MD5, DES, RC4, or any non-approved digest. The FIPS provider
+activation config disables the `default` OpenSSL provider, so
+non-approved algorithms fail closed even if called accidentally.
 
 ## Why the container meets FIPS requirements
 

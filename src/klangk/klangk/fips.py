@@ -375,6 +375,35 @@ def running_in_container() -> bool:
     )
 
 
+def verify_jose_backend() -> tuple[bool, str]:
+    """Verify that python-jose's HS256 path uses the ``cryptography`` backend.
+
+    python-jose probes multiple backends at import time
+    (``cryptography`` → ``pycryptodome``/``ecdsa`` → native stdlib).
+    Only the ``cryptography`` route reaches the FIPS-validated OpenSSL
+    via ``cryptography.hazmat.primitives.hmac.HMAC``.  The native
+    fallback (``jose.backends.native.HMACKey``) uses stdlib ``hmac``
+    which goes through ``hashlib`` — and ``hashlib.new("sha256")`` can
+    fall back to CPython's built-in ``_sha2`` (PEP 452), bypassing the
+    provider entirely.
+
+    Returns ``(ok, detail)``.  Called once at startup under
+    ``KLANGKD_FIPS_MODE`` to prove the JWT code path is covered.
+    """
+    try:
+        from jose.backends import HMACKey  # allow-deferred-import
+    except ImportError:
+        return False, "jose.backends.HMACKey not importable"
+    module = getattr(HMACKey, "__module__", "")
+    if "cryptography_backend" in module:
+        return True, f"jose HMACKey backend: {module}"
+    return (
+        False,
+        f"jose HMACKey backend is {module!r}, not the cryptography "
+        "backend — HS256 may not route through the validated OpenSSL",
+    )
+
+
 def verify_process_fips(settings) -> None:
     """Startup check for ``KLANGKD_FIPS_MODE`` (#2570 Part 2, #2628).
 
@@ -401,6 +430,15 @@ def verify_process_fips(settings) -> None:
     """
     if not getattr(settings, "fips_mode", False):
         return
+    # Verify the JWT signing path before anything else — this is a
+    # code-level invariant (wrong backend = wrong crypto boundary),
+    # not a deployment-dependent OpenSSL posture, so it aborts
+    # unconditionally (#3175 Gap 2).
+    jose_ok, jose_detail = verify_jose_backend()
+    if jose_ok:
+        logger.info("FIPS jose backend verified: %s", jose_detail)
+    else:
+        raise ConfigurationError(f"KLANGKD_FIPS_MODE: {jose_detail}")
     version = ssl.OPENSSL_VERSION
     ok, detail = probe_process()
     if ok:
