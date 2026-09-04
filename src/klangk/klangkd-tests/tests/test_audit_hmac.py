@@ -18,7 +18,10 @@ from klangk.model.audit_hmac import (
     verify_hmac,
 )
 from klangk.model.container_events import EVENT_START, EVENT_STOP, CAUSE_STOP
-from klangk.model.egress_consent import DECISION_ALLOWED
+from klangk.model.egress_consent import (
+    DECISION_ALLOWED,
+    _restamp,
+)
 
 
 class TestKeyDerivation:
@@ -254,6 +257,28 @@ class TestEgressConsentHmac:
         assert result["tampered"] == [
             {"id": row["id"], "workspace_id": workspace["id"]}
         ]
+
+    async def test_restamp_missing_row_returns_none(self, app_state, db):
+        """The re-stamp helper's miss path: a row that no longer
+        exists surfaces as None instead of raising."""
+        async with app_state.state.db.transaction() as conn:
+            row = await _restamp(conn, app_state.state.settings, "no-such-id")
+        assert row is None
+
+    async def test_verify_integrity_null_hmac_is_no_hmac(
+        self, app_state, db, workspace
+    ):
+        """Rows without an HMAC (pre-migration) are counted as no_hmac."""
+        ec = app_state.state.model.egress_consent
+        row = await ec.create_request(workspace["id"], "a.com", 80)
+        async with app_state.state.db.transaction() as conn:
+            await conn.execute(
+                "UPDATE egress_consent SET hmac = NULL WHERE id = ?",
+                (row["id"],),
+            )
+        result = await ec.verify_integrity()
+        assert result["no_hmac"] == 1
+        assert result["tampered"] == []
 
     async def test_expire_pending_restamps_hmac(
         self, app_state, db, workspace

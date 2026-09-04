@@ -123,10 +123,7 @@ class EgressConsentModel(Submodel):
             )
             if cursor.rowcount == 0:
                 return None
-            row = await _select_row(db, request_id)
-            if row is not None:
-                await _stamp_hmac(db, self.app.state.settings, row)
-            return row
+            return await _restamp(db, self.app.state.settings, request_id)
 
     async def record_static_denial(
         self,
@@ -201,10 +198,7 @@ class EgressConsentModel(Submodel):
             )
             if cursor.rowcount == 0:
                 return None
-            row = await _select_row(db, request_id)
-            if row is not None:
-                await _stamp_hmac(db, self.app.state.settings, row)
-            return row
+            return await _restamp(db, self.app.state.settings, request_id)
 
     async def get_request(self, request_id: str) -> dict | None:
         """Get a single consent request by ID."""
@@ -447,10 +441,7 @@ class EgressConsentModel(Submodel):
                 return None
             # Re-read inside the same transaction so the result is
             # consistent even if the row is deleted concurrently.
-            row = await _select_row(db, request_id)
-            if row is not None:
-                await _stamp_hmac(db, self.app.state.settings, row)
-            return row
+            return await _restamp(db, self.app.state.settings, request_id)
 
     async def revoke(self, request_id: str, revoked_by: str) -> dict | None:
         """Mark a prior allow/deny verdict revoked (#2339).
@@ -478,10 +469,7 @@ class EgressConsentModel(Submodel):
             )
             if cursor.rowcount == 0:
                 return None
-            row = await _select_row(db, request_id)
-            if row is not None:
-                await _stamp_hmac(db, self.app.state.settings, row)
-            return row
+            return await _restamp(db, self.app.state.settings, request_id)
 
     async def expire_pending(
         self,
@@ -509,9 +497,7 @@ class EgressConsentModel(Submodel):
                 ),
             )
             if cursor.rowcount > 0:
-                row = await _select_row(db, request_id)
-                if row is not None:
-                    await _stamp_hmac(db, self.app.state.settings, row)
+                await _restamp(db, self.app.state.settings, request_id)
                 return True
             return False
 
@@ -542,9 +528,7 @@ class EgressConsentModel(Submodel):
             )
             settings = self.app.state.settings
             for row_id in ids:
-                row = await _select_row(db, row_id)
-                if row is not None:
-                    await _stamp_hmac(db, settings, row)
+                await _restamp(db, settings, row_id)
             return len(ids)
 
     async def clear_tilrestart_duration(self, workspace_id: str) -> int:
@@ -781,6 +765,16 @@ async def _select_row(db, request_id: str) -> dict | None:
     )
     row = await cursor.fetchone()
     return _row_to_dict(row) if row else None
+
+
+async def _restamp(db, settings, request_id: str) -> dict | None:
+    """Re-read a just-mutated row and (re)stamp its HMAC in the same
+    transaction (#3174). Returns None when the row no longer exists
+    (a ``_select_row`` miss) so callers surface it as "not found"."""
+    row = await _select_row(db, request_id)
+    if row is not None:
+        await _stamp_hmac(db, settings, row)
+    return row
 
 
 def _row_to_dict(row) -> dict:
