@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+import posixpath
 import shlex
 import sys
 from pathlib import Path
@@ -52,9 +53,12 @@ async def copy_sandbox_files(ws, config, sandbox_root, handle) -> None:
             )
             continue
         context.err.print(f"  [dim]copy:[/dim] {host_path} → {container_dest}")
-        parent = str(Path(container_dest).parent)
-        # #3093: quote the paths — a copy destination containing
-        # spaces must round-trip into the sh -c string intact.
+        # #3117: derive the parent POSIX-style — the destination is a
+        # container path, and the host ``Path`` flavor (WindowsPath on
+        # a Windows CLI host) mangles POSIX paths. #3093: quote the
+        # paths — a copy destination containing spaces must round-trip
+        # into the sh -c string intact.
+        parent = posixpath.dirname(container_dest)
         stdout_buf = io.BytesIO()
         exit_code = await exec_on_ws(
             ws,
