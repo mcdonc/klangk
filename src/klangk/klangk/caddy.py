@@ -79,13 +79,38 @@ def _split_sources(raw: str) -> list[str]:
     return [s.strip() for s in raw.split(",") if s.strip()]
 
 
+def _caddy_parseable_cidr(token: str) -> bool:
+    """True when *token* parses the way Caddy's provisioner parses IPs
+    and CIDRs (Go ``netip``): an IP, or ``IP/<prefix-length>`` with an
+    ASCII-decimal prefix length.
+
+    Python's :func:`ipaddress.ip_network` additionally accepts
+    dotted-quad netmask/hostmask notation (``10.0.0.0/255.255.0.0``),
+    which Go's ``netip.ParsePrefix`` rejects — and Caddy's *adapt*
+    step passes those through, so the failure lands at ``POST /load``
+    provision time (the exact kill/respawn wedge this validator
+    exists to prevent; nginx accepts netmask notation, so a
+    copy-pasted ``allow`` line hits it). The suffix check is
+    ASCII-only because ``str.isdigit()`` admits non-ASCII decimal
+    digits that Go's ``strconv.ParseUint`` rejects.
+    """
+    try:
+        ipaddress.ip_network(token, strict=False)
+    except ValueError:
+        return False
+    if "/" not in token:
+        return True
+    suffix = token.split("/", 1)[1]
+    return suffix.isascii() and suffix.isdigit()
+
+
 def _valid_cidr_tokens(tokens: list[str]) -> list[str]:
-    """The tokens that parse as an IP address or CIDR.
+    """The tokens Caddy can consume as an IP address or CIDR.
 
     An invalid entry is warned and skipped: garbage would otherwise
     flow into the Caddyfile (a ``remote_ip`` matcher or
     ``trusted_proxies static`` argument), where Caddy rejects it at
-    adapt time — the ``POST /load`` fails and the watchdog's
+    provision time — the ``POST /load`` fails and the watchdog's
     kill/respawn loop wedges the whole proxy on a typo'd setting.
     Skipping fails toward *less* access (narrower egress allowlist /
     narrower XFF trust), never more. The warning deliberately does not
@@ -96,16 +121,14 @@ def _valid_cidr_tokens(tokens: list[str]) -> list[str]:
     """
     valid: list[str] = []
     for token in tokens:
-        try:
-            ipaddress.ip_network(token, strict=False)
-        except ValueError:
+        if _caddy_parseable_cidr(token):
+            valid.append(token)
+        else:
             logger.warning(
                 "ignoring an invalid IP/CIDR entry — entries must be"
                 " IPs or CIDRs (KLANGKD_TRUSTED_PROXY_CIDRS /"
                 " KLANGKD_CONTAINER_SUBNETS)"
             )
-        else:
-            valid.append(token)
     return valid
 
 

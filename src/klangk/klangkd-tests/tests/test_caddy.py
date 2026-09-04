@@ -28,6 +28,7 @@ from klangk.caddy import (
 )
 from klangk.caddy import (
     CADDYFILE_CONTENT_TYPE,
+    _caddy_parseable_cidr,
     post_load,
     tcp_upstream,
     uds_upstream,
@@ -286,6 +287,41 @@ class TestContainerSourceLists:
         with caplog.at_level("WARNING"):
             cidrs = _renderer(s)._trusted_proxy_cidrs()
         assert cidrs == ["127.0.0.1", "::1"]
+        assert "invalid IP/CIDR entry" in caplog.text
+
+    @pytest.mark.parametrize(
+        "entry",
+        [
+            "10.0.0.0/255.255.0.0",  # dotted-quad netmask: python yes, netip no
+            "10.0.0.0/0.0.255.255",  # hostmask form: same mismatch
+            "10.0.0.0/\u0661\u0662",  # Arabic-Indic digits: isdigit() yes, ParseUint no
+        ],
+    )
+    def test_python_only_cidr_forms_rejected(self, entry, caplog):
+        """The accept boundary must match Caddy's provisioner (Go netip),
+        not Python's ipaddress: netmask/hostmask notation and non-ASCII
+        digit suffixes parse in Python but fail at POST /load provision
+        time — the kill/respawn wedge this validator exists to prevent
+        (nginx accepts netmask notation, so copy-pasted lines hit it)."""
+        assert _caddy_parseable_cidr(entry) is False
+        s = make_settings(
+            {"KLANGKD_CONTAINER_SUBNETS": f"{entry},192.168.0.0/16"}
+        )
+        with caplog.at_level("WARNING"):
+            acl, _deny = _renderer(s)._container_source_entries()
+        assert entry not in acl
+        assert "192.168.0.0/16" in acl
+        assert "invalid IP/CIDR entry" in caplog.text
+
+    def test_host_bits_cidr_still_accepted(self):
+        """Go netip.ParsePrefix accepts host-bits-set prefixes (masking
+        them), so 10.0.0.1/24 must stay valid — do not over-reject."""
+        assert _caddy_parseable_cidr("10.0.0.1/24") is True
+        assert _caddy_parseable_cidr("10.0.0.0/8") is True
+        assert _caddy_parseable_cidr("127.0.0.1") is True
+        assert _caddy_parseable_cidr("::1") is True
+        assert _caddy_parseable_cidr("fe80::/10") is True
+        assert _caddy_parseable_cidr("notacidr") is False
 
 
 # ---------------------------------------------------------------------------
