@@ -613,6 +613,14 @@ sync` report a clear permission-denied error.
   WARNING), and the Logfire SDK's project-URL print is suppressed so it
   cannot inject a non-JSON line into the stream. See
   [Environment Variables](reference/environment.md).
+- **`KLANGKD_PASSWORD_MIN_CHANGED` (#3173).** Minimum number of
+  characters (edit distance) a self-service password change must alter
+  from the current password (STIG V-222541; set `8` for compliance).
+  Enforced on `POST /auth/change-password`; forgot-password resets and
+  admin-set passwords are exempt (no old plaintext is presented).
+  `0` (the default) disables the gate. Reloadable on SIGHUP; advertised
+  via `/api/v1/config` so the web and CLI change-password forms
+  pre-check inline.
 - **All five container images now publish on a release tag (#3140).**
   Pushing `vX.Y.Z` publishes `klangk-host`, `klangk-host-fips`,
   `klangk-workspace`, `klangk-workspace-fips`, and the newly pullable

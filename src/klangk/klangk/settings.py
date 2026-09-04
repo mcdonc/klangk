@@ -849,6 +849,17 @@ class KlangkSettings(BaseSettings):
     # disables reuse checking and history recording entirely. Capped
     # at 24 (each retired hash costs a PBKDF2 verify per set).
     password_history_count: int = 0
+    # Minimum character change on self-service password change (#3173,
+    # STIG V-222541 "at least eight of the total number of characters
+    # must change"): the edit distance between the current and new
+    # password must be >= this many characters, or the change is
+    # rejected with 400. Only enforced where the old plaintext is
+    # presented (``POST /auth/change-password``); reset and admin-set
+    # flows see only hashes and stay exempt (password-history reuse
+    # still applies there). 0 (the default) disables the gate; set 8
+    # for STIG compliance. Reloadable on SIGHUP (read live at change
+    # time).
+    password_min_changed: int = 0
     login_lockout_failures: int | None = 5
     login_lockout_duration: int | None = 900
     login_lockout_window: int | None = 300
@@ -1671,6 +1682,7 @@ class KlangkSettings(BaseSettings):
         "max_sessions_per_user",
         "invite_expire_hours",
         "password_history_count",
+        "password_min_changed",
         "inactivity_disable_days",
         "port_range_start",
         "websocket_msg_size_max",
@@ -1711,6 +1723,7 @@ class KlangkSettings(BaseSettings):
             "max_sessions_per_user",
             "hosted_ports_per_workspace",
             "password_history_count",
+            "password_min_changed",
             "inactivity_disable_days",
             # Disables the per-user running-workspace cap (#2525).
             "max_running_workspaces_per_user",

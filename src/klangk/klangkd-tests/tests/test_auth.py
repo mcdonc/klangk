@@ -1307,6 +1307,76 @@ class TestValidatePasswordNotReused:
         await a.validate_password_not_reused(user["id"], "firstpass")
 
 
+class TestPasswordEditDistance:
+    """Levenshtein distance over code points (STIG V-222541, #3173)."""
+
+    def test_zero_for_identical(self):
+        assert auth.password_edit_distance("same-pass", "same-pass") == 0
+
+    def test_counts_substitutions(self):
+        assert auth.password_edit_distance("Password1", "Password9") == 1
+
+    def test_insertions_and_deletions_count(self):
+        # The positional-diff workaround: prepending shifts every
+        # position, yet the edit distance is a single insertion.
+        assert auth.password_edit_distance("Password1", "xPassword1") == 1
+        assert auth.password_edit_distance("Password1!", "Password1") == 1
+
+    def test_mixed_edits(self):
+        # 3 substitutions + 1 deletion ("test"->"new", drop the tail "1")
+        assert auth.password_edit_distance("testpass", "newpass1") == 4
+
+    def test_empty_sides(self):
+        assert auth.password_edit_distance("", "abc") == 3
+        assert auth.password_edit_distance("abc", "") == 3
+        assert auth.password_edit_distance("", "") == 0
+
+    def test_counts_code_points_not_bytes(self):
+        # 4 emoji code points vs 1: distance 3 in code points, not the
+        # UTF-16 code-unit or UTF-8 byte counts.
+        assert auth.password_edit_distance("\U0001f600" * 4, "\U0001f600") == 3
+
+
+class TestValidatePasswordChangedEnough:
+    """The >= N changed-characters gate on self-service changes (#3173)."""
+
+    def _auth_with(self, minimum):
+        return _auth({"KLANGKD_PASSWORD_MIN_CHANGED": str(minimum)})
+
+    def test_disabled_when_zero(self):
+        a = self._auth_with(0)
+        assert a.password_min_changed == 0
+        # A one-character change (even no change) is fine when disarmed.
+        a.validate_password_changed_enough("testpass", "testpass")
+
+    def test_reads_setting_live(self):
+        # Settings-derived values must not be snapshotted at construction
+        # (#1608 pattern): a monkeypatched reload changes the gate.
+        a = self._auth_with(0)
+        a.app.state.settings.password_min_changed = 8
+        assert a.password_min_changed == 8
+
+    def test_rejects_too_similar(self):
+        a = self._auth_with(8)
+        with pytest.raises(HTTPException) as exc_info:
+            a.validate_password_changed_enough("testpass", "testpas9")
+        assert exc_info.value.status_code == 400
+        assert "change at least 8 characters" in exc_info.value.detail
+
+    def test_boundary_accepts_exactly_minimum(self):
+        # distance("testpass", "Qwerty!234") == 8 — right at the line.
+        self._auth_with(8).validate_password_changed_enough(
+            "testpass", "Qwerty!234"
+        )
+
+    def test_rejects_one_below_minimum(self):
+        a = self._auth_with(4)
+        # distance("testpass", "newpass1") == 4 passes; 3 does not.
+        a.validate_password_changed_enough("testpass", "newpass1")
+        with pytest.raises(HTTPException):
+            a.validate_password_changed_enough("testpass", "newpass")
+
+
 class TestSessionLimit:
     """Concurrent-session limiting via KLANGKD_MAX_SESSIONS_PER_USER (#2585).
 

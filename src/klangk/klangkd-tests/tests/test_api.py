@@ -596,6 +596,26 @@ class TestConfig:
         assert resp.status_code == 200
         assert resp.json()["password_history_count"] == 5
 
+    async def test_get_config_advertises_password_min_changed(
+        self, client, app, monkeypatch
+    ):
+        # #3173: the min-changed rule is public config so change-password
+        # forms can pre-check inline (they hold both passwords).
+        monkeypatch.setattr(
+            app.state.settings,
+            "password_min_changed",
+            8,
+            raising=False,
+        )
+        resp = await client.get("/api/v1/config")
+        assert resp.status_code == 200
+        assert resp.json()["password_min_changed"] == 8
+
+    async def test_get_config_password_min_changed_defaults_zero(self, client):
+        resp = await client.get("/api/v1/config")
+        assert resp.status_code == 200
+        assert resp.json()["password_min_changed"] == 0
+
     async def test_get_config_logo_url_defaults_empty(self, client, app):
         # No KLANGKD_LOGO_URL set -> empty string (UI renders default widget).
         resp = await client.get("/api/v1/config")
@@ -2012,6 +2032,24 @@ class TestResetPassword:
         )
         assert resp.status_code == 200
 
+    async def test_reset_exempt_from_min_changed(
+        self, client, db, app, monkeypatch
+    ):
+        """#3173: reset presents no old plaintext, so the changed-character
+        rule cannot apply — a near-identical reset password succeeds even
+        with the gate armed (password-history reuse still applies)."""
+        monkeypatch.setattr(
+            app.state.settings, "password_min_changed", 8, raising=False
+        )
+        user = await self._create_user_with(app, "oldpass12")
+        token = _auth().create_password_reset_token(user["id"])
+        # distance("oldpass12", "oldpass13") == 1 — far under the floor.
+        resp = await client.post(
+            "/api/v1/auth/reset-password",
+            json={"token": token, "password": "oldpass13"},
+        )
+        assert resp.status_code == 200
+
 
 class TestChangePassword:
     async def test_change_password_success(self, client, user):
@@ -2136,6 +2174,69 @@ class TestChangePassword:
             },
         )
         assert resp.status_code == 401
+
+    async def test_change_password_too_similar_rejected(
+        self, client, user, app, monkeypatch
+    ):
+        """#3173 / STIG V-222541: under the changed-character floor -> 400."""
+        monkeypatch.setattr(
+            app.state.settings, "password_min_changed", 8, raising=False
+        )
+        headers = await _auth_headers(client)
+        # One inserted character — the positional-diff workaround that a
+        # naive per-position diff would score as a full overwrite.
+        resp = await client.post(
+            "/api/v1/auth/change-password",
+            json={
+                "current_password": "testpass",
+                "new_password": "xtestpass",
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 400
+        assert "change at least 8 characters" in resp.json()["detail"]
+
+    async def test_change_password_enough_change_succeeds(
+        self, client, user, app, monkeypatch
+    ):
+        """#3173: distance == the floor passes; the password really changes."""
+        monkeypatch.setattr(
+            app.state.settings, "password_min_changed", 8, raising=False
+        )
+        headers = await _auth_headers(client)
+        # distance("testpass", "Qwerty!234") == 8 — exactly at the floor.
+        resp = await client.post(
+            "/api/v1/auth/change-password",
+            json={
+                "current_password": "testpass",
+                "new_password": "Qwerty!234",
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        resp2 = await client.post(
+            "/api/v1/auth/login",
+            json={
+                "identifier": "testuser@example.com",
+                "password": "Qwerty!234",
+            },
+        )
+        assert resp2.status_code == 200
+
+    async def test_change_password_min_changed_disabled_by_default(
+        self, client, user
+    ):
+        """#3173: 0 (the default) keeps today's small-change behavior."""
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/auth/change-password",
+            json={
+                "current_password": "testpass",
+                "new_password": "xtestpass",
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 200
 
     async def test_change_password_oidc_only_user(self, client, db, app_state):
         """OIDC-only users have no password; must 403, not 500 (#890)."""

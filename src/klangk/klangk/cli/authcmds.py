@@ -214,6 +214,15 @@ def _fmt_last_login(iso: str | None) -> str | None:
         return None
 
 
+def _check_changed(
+    policy: account.PasswordPolicy, current: str, new: str
+) -> None:
+    changed_error = policy.changed_error(current, new)
+    if changed_error:
+        context.err.print(f"[red]{changed_error}[/red]")
+        raise typer.Exit(code=1)
+
+
 @account_app.command("passwd")
 def account_passwd() -> None:
     """Change your password."""
@@ -236,6 +245,7 @@ def account_passwd() -> None:
     if complexity_error:
         context.err.print(f"[red]{complexity_error}[/red]")
         raise typer.Exit(code=1)
+    _check_changed(policy, current, new)
     try:
         client.change_password(current, new)
     except httpx.HTTPStatusError as exc:

@@ -603,6 +603,9 @@ async def change_password(
         incorrect_detail="Current password is incorrect",
     )
     request.app.state.auth.validate_password(req.new_password)
+    request.app.state.auth.validate_password_changed_enough(
+        req.current_password, req.new_password
+    )
     await request.app.state.auth.validate_password_not_reused(
         user["id"], req.new_password
     )

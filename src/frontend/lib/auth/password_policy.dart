@@ -1,9 +1,10 @@
-/// Server-advertised password policy helpers (#2581).
+/// Server-advertised password policy helpers (#2581, #3173).
 ///
 /// Mirrors the server's ``validate_password`` (length floor +
 /// character-class counts from ``/api/v1/config``'s
-/// ``password_requirements``). The server enforces authoritatively; this
-/// is inline client-side feedback only.
+/// ``password_requirements``) and the min-changed-character rule
+/// (``password_min_changed``, STIG V-222541). The server enforces
+/// authoritatively; this is inline client-side feedback only.
 class PasswordPolicy {
   /// Minimum password length advertised by the server.
   final int minLength;
@@ -15,12 +16,20 @@ class PasswordPolicy {
   final int requireDigit;
   final int requireSpecial;
 
+  /// Minimum character edit distance a self-service password change
+  /// must reach (STIG V-222541, server ``KLANGKD_PASSWORD_MIN_CHANGED``).
+  /// ``0`` (the default) disables the rule; it only applies where both
+  /// passwords are in hand (the settings-page change form), never to
+  /// registration — which has no current password to differ from.
+  final int minChanged;
+
   const PasswordPolicy({
     this.minLength = 8,
     this.requireUpper = 0,
     this.requireLower = 0,
     this.requireDigit = 0,
     this.requireSpecial = 0,
+    this.minChanged = 0,
   });
 
   /// Parse from ``/api/v1/config`` fields. Missing/unparseable values fall
@@ -36,12 +45,14 @@ class PasswordPolicy {
     }
 
     final min = config['min_password_length'];
+    final changed = config['password_min_changed'];
     return PasswordPolicy(
       minLength: min is num ? min.toInt() : 8,
       requireUpper: req('upper'),
       requireLower: req('lower'),
       requireDigit: req('digit'),
       requireSpecial: req('special'),
+      minChanged: changed is num ? changed.toInt() : 0,
     );
   }
 
@@ -95,6 +106,42 @@ class PasswordPolicy {
     ];
     if (unmet.isNotEmpty) return 'Needs at least ${unmet.join(', ')}';
     return null;
+  }
+
+  /// Returns a human-readable error when the edit distance between
+  /// [current] and [newPassword] is below [minChanged] (the settings-page
+  /// change form pre-checks this; the server enforces authoritatively on
+  /// ``POST /auth/change-password``), or null when the rule is satisfied
+  /// or disabled.
+  String? changedError(String current, String newPassword) {
+    if (minChanged <= 0) return null;
+    if (_editDistance(current.runes.toList(), newPassword.runes.toList()) <
+        minChanged) {
+      return 'Must change at least $minChanged characters from the '
+          'current password';
+    }
+    return null;
+  }
+
+  /// Levenshtein distance over code points — mirrors the server's
+  /// ``password_edit_distance`` (#3173). Substitutions, insertions, and
+  /// deletions each count as one changed character, so prefixing or
+  /// appending to the old password cannot dodge the rule.
+  static int _editDistance(List<int> old, List neu) {
+    var prev = List<int>.generate(neu.length + 1, (j) => j);
+    for (var i = 1; i <= old.length; i++) {
+      final cur = List<int>.filled(neu.length + 1, 0);
+      cur[0] = i;
+      for (var j = 1; j <= neu.length; j++) {
+        cur[j] = [
+          prev[j] + 1,
+          cur[j - 1] + 1,
+          prev[j - 1] + (old[i - 1] != neu[j - 1] ? 1 : 0),
+        ].reduce((a, b) => a < b ? a : b);
+      }
+      prev = cur;
+    }
+    return prev[neu.length];
   }
 
   // Rune-class helpers (ASCII-oriented; matches the server's str methods
