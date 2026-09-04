@@ -2,7 +2,6 @@
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "${DEVENV_ROOT:-$SCRIPT_DIR/..}"
-PODMAN="${KLANGKD_PODMAN_BIN:-podman}"
 # shellcheck source=_podman_common.sh disable=SC1091
 source "$SCRIPT_DIR/_podman_common.sh"
 
@@ -32,8 +31,12 @@ CURRENT_HASH=$(find \
 # and the feature trees) covers every file that affects the image, so a
 # matching stamp means the image is up to date.
 klangk::parse_build_flags "$@"
+# podman calls go through klangk::run_podman: this task runs in parallel
+# with klangk:build-network-sidecar, and the concurrent first-time rootless
+# podman init race needs the #3168 reexec retry + diagnostics (stderr stays
+# visible — "podman image exists" is silent on its normal rc-1 path).
 if ! $FORCE_BUILD &&
-  "$PODMAN" image exists "${KLANGKD_IMAGE_NAME}" 2>/dev/null &&
+  klangk::run_podman image exists "${KLANGKD_IMAGE_NAME}" &&
   klangk::stamp_matches "$STAMP" "$CURRENT_HASH"; then
   echo "Image ${KLANGKD_IMAGE_NAME} is up to date, skipping build."
   exit 0
@@ -49,7 +52,7 @@ trap 'rm -rf "$FEATURES_PAYLOAD_DIR"' EXIT
 # by the backend at runtime) and a deterministic version tag (date +
 # commit hash), pruning stale version tags from previous builds.
 klangk::prune_old_tags "${KLANGKD_IMAGE_NAME}"
-"$PODMAN" build \
+klangk::run_podman build \
   "${SIG_POLICY_ARGS[@]}" \
   "${BUILD_SECURITY_ARGS[@]}" \
   --pull=newer \

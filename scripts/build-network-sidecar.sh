@@ -2,7 +2,6 @@
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "${DEVENV_ROOT:-$SCRIPT_DIR/..}"
-PODMAN="${KLANGKD_PODMAN_BIN:-podman}"
 # shellcheck source=_podman_common.sh disable=SC1091
 source "$SCRIPT_DIR/_podman_common.sh"
 
@@ -17,7 +16,10 @@ trap 'rm -rf "$STAGING"' EXIT
 uv build --package klangksidecar --wheel --out-dir "$STAGING"
 
 echo "Building network sidecar image ..."
-"$PODMAN" build -t klangk-network-sidecar \
+# Through klangk::run_podman: this task runs in parallel with
+# klangk:build-workspace-image, and the concurrent first-time rootless
+# podman init race needs the #3168 reexec retry + diagnostics.
+klangk::run_podman build -t klangk-network-sidecar \
   "${SIG_POLICY_ARGS[@]}" \
   "${BUILD_SECURITY_ARGS[@]}" \
   --build-context sidecar="$STAGING" \
