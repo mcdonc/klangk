@@ -2001,6 +2001,13 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **`build-host-image` / `build_wheel.sh` (#3143).** The release wheel is
+  now built with `uv build`, which resolves hatchling/hatch-vcs into its own
+  isolated build environment instead of transiently installing `build` into
+  the shared devenv venv. Previously a concurrent `uv-sync` from another
+  devenv shell entry could wipe `pyproject-hooks` mid-build, failing the
+  wheel build with `can't open ... _in_process.py: [Errno 2]`.
+
 - **Workspace settings panel name validation (#3130).** Clearing the
   _Name_ field and tapping _Save_ used to fail the whole panel update
   with an opaque `Failed: Error: 422`, blocking every other field from

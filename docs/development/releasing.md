@@ -43,9 +43,10 @@ authenticated purely via OIDC attestation. `skip-existing: true` makes the
 upload idempotent on re-runs of the same tag (PyPI refuses re-upload of the
 same filename).
 
-The wheel is built by `scripts/build_wheel.sh`, which installs
-`python-build` transiently (it's not a declared dependency of the runtime
-venv) and runs `python3 -m build --wheel` from `src/klangk/`. The hatch
+The wheel is built by `scripts/build_wheel.sh`, which runs `uv build
+--package klangk --wheel` — uv resolves hatchling/hatch-vcs into its own
+cached, isolated build environment, so the shared devenv venv is never
+touched (#3143). The hatch
 build hook (`src/klangk/hatch_build_package_data.py`) includes the Flutter
 web build at `klangk/frontend/` and **requires** it for non-editable wheel
 builds — so the `build-wheel` job runs `klangk:flutter-build` first (which
