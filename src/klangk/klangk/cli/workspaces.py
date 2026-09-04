@@ -241,15 +241,17 @@ def ensure_autostart_allowed(client, requested) -> None:
     ``--no-auto-start``) returns without a config round trip. A
     config-fetch failure degrades to "allowed": the request itself
     reports the real error, and the server enforces the ceiling
-    regardless (``_check_autostart`` in ``api/workspaces.py``).
+    regardless (``_check_autostart`` in ``api/workspaces.py``). A
+    200 body that is not a JSON object is treated as "not allowed",
+    the same posture as the TUI's ``allow_autostart`` probe.
     """
     if not requested:
         return
     try:
-        allowed = client.config().get("allow_autostart") is True
+        cfg = client.config()
     except (httpx.HTTPError, AuthError, ValueError):
         return
-    if not allowed:
+    if not isinstance(cfg, dict) or cfg.get("allow_autostart") is not True:
         context.err.print(
             "[red]Auto-start is not enabled on this server"
             " (set KLANGKD_ALLOW_AUTOSTART=1)[/red]"
@@ -349,13 +351,14 @@ def create(
     """Create a new workspace."""
     context.require_auth()
     validate_create_specs(mount, allow, reject)
-    ensure_autostart_allowed(context.client(), auto_start)
+    client = context.client()
+    ensure_autostart_allowed(client, auto_start)
     env_dict = parse_env_list(env) if isinstance(env, list) else None
     settings = build_settings(
         idle_timeout, cpu_limit, memory_limit, pids_limit, allow_sudo
     )
     ws = create_workspace_or_exit(
-        context.client(),
+        client,
         name,
         image=image,
         command=command,

@@ -3203,6 +3203,26 @@ class TestMainCLI:
         assert result.exit_code == 0
         client.create_workspace.assert_called_once()
 
+    def test_create_auto_start_refused_on_non_dict_config(
+        self, logged_in_cfg, monkeypatch
+    ):
+        """#3184: a 200 body that isn't a JSON object can't prove the
+        ceiling is off, so it is treated as not allowed — the same
+        posture as the TUI's allow_autostart probe."""
+        from klangk.cli import main
+
+        client = MagicMock()
+        client.config.return_value = "not-a-config-object"
+        monkeypatch.setattr(context_mod, "client", lambda: client)
+
+        from typer.testing import CliRunner
+
+        runner = CliRunner()
+        result = runner.invoke(main.app, ["create", "ws", "--auto-start"])
+        assert result.exit_code == 1
+        assert "Auto-start is not enabled" in result.output
+        client.create_workspace.assert_not_called()
+
     def test_create_with_reject_cidr_rejected(
         self, logged_in_cfg, monkeypatch
     ):

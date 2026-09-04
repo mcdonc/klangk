@@ -44,7 +44,9 @@ klangk edit my-service --no-auto-start
 
 On a server without `KLANGKD_ALLOW_AUTOSTART`, `--auto-start` is
 refused up front (before any request is sent) with a message naming
-the setting; `--no-auto-start` always works.
+the setting; `--no-auto-start` always works. The sandbox config's
+`auto-start: true` needs the server flag too — without it the sandbox
+create fails with the server's auto-start error.
 
 ### Sandbox config
 
