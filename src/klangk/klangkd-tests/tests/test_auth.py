@@ -2172,7 +2172,7 @@ class TestRefreshTokenNoCover2910:
 
 
 class TestPasswordMinAge:
-    """Minimum password age enforcement (STIG V-222544, #3177)."""
+    """Minimum password age enforcement (#3177)."""
 
     def _auth_with_min_age(self, app_state, monkeypatch, hours=24):
         monkeypatch.setattr(
@@ -2279,7 +2279,7 @@ class TestPasswordMinAge:
 
 
 class TestPasswordExpiry:
-    """Maximum password age / expiry enforcement (STIG V-222545, #3177)."""
+    """Maximum password age / expiry enforcement (#3177)."""
 
     def _auth_with_max_age(self, app_state, monkeypatch, days=60):
         monkeypatch.setattr(

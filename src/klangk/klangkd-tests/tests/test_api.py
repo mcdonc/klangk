@@ -781,7 +781,7 @@ class TestAuthRoutes:
         self, client, app, db, app_state, monkeypatch
     ):
         """POST /auth/change-expired-password rotates an expired password
-        and auto-logins (#3177) — the HTTP surface of the V-222545 flow."""
+        and auto-logins (#3177) — the HTTP surface of the expiry flow."""
         from datetime import datetime, timedelta, timezone
 
         monkeypatch.setattr(app.state.settings, "password_max_age_days", 60)
@@ -1625,7 +1625,7 @@ class TestResendVerificationLockout:
 
 
 class TestPasswordAgeRoutes:
-    """Route-level password-age enforcement (V-222544/V-222545, #3177)."""
+    """Route-level password-age enforcement (#3177)."""
 
     async def _fresh_user(self, app_state, email, password="testpass"):
         return await app_state.state.model.users.create_user(
@@ -1655,7 +1655,7 @@ class TestPasswordAgeRoutes:
         self, client, app, db, app_state, monkeypatch
     ):
         """A self-service change inside the minimum-age window is a 400
-        at the route level (V-222544) — not just in the service layer."""
+        at the route level — not just in the service layer."""
         monkeypatch.setattr(app.state.settings, "password_min_age_hours", 24)
         await self._fresh_user(app_state, "minage@example.com")
         headers = await self._login_token(client, "minage@example.com")
@@ -1674,7 +1674,7 @@ class TestPasswordAgeRoutes:
         self, client, app, db, app_state, monkeypatch
     ):
         """A forgot-password reset inside the window is refused the same
-        way — only admin-forced resets bypass (V-222544)."""
+        way — only admin-forced resets bypass."""
         monkeypatch.setattr(app.state.settings, "password_min_age_hours", 24)
         user = await self._fresh_user(app_state, "minreset@example.com")
         token = _auth().create_password_reset_token(user["id"])
@@ -1688,7 +1688,7 @@ class TestPasswordAgeRoutes:
     async def test_admin_reset_bypasses_min_age(
         self, client, app, db, app_state, admin_user, monkeypatch
     ):
-        """Admin-forced resets ignore the minimum age — the STIG's
+        """Admin-forced resets ignore the minimum age — the
         emergency-reset exemption is deliberate and stays testable."""
         monkeypatch.setattr(app.state.settings, "password_min_age_hours", 24)
         user = await self._fresh_user(app_state, "adminset@example.com")
@@ -1706,8 +1706,8 @@ class TestPasswordAgeRoutes:
         self, client, app, db, app_state, monkeypatch
     ):
         """A password that expires mid-session fails the next
-        authenticated request with the machine-readable expiry detail
-        (V-222545) — same posture as a disabled account (#2588)."""
+        authenticated request with the machine-readable expiry detail —
+        same posture as a disabled account (#2588)."""
         monkeypatch.setattr(app.state.settings, "password_max_age_days", 60)
         user = await self._fresh_user(app_state, "midsession@example.com")
         headers = await self._login_token(client, "midsession@example.com")

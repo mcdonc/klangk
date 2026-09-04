@@ -1,6 +1,6 @@
 """Migration 0031: users.password_set_at (#3177).
 
-The password-age policy (STIG V-222544 minimum / V-222545 maximum)
+The password-age policy (minimum and maximum password age)
 needs to know when the current password was set. ``update_password``
 stamps the column on every password write; rows whose password predates
 the migration keep ``NULL`` and the age predicates fall back to

@@ -1153,8 +1153,8 @@ Change the current user's password. Requires the current password.
 
 ### POST `/api/v1/auth/change-expired-password`
 
-Replace an expired password (maximum password age reached, STIG
-V-222545, #3177) and auto-login. Takes the identifier (email or
+Replace an expired password (maximum password age reached, #3177)
+and auto-login. Takes the identifier (email or
 handle), the current — expired — password as the ownership proof, and
 the new password. Lockout-accounted like login; rejected with `400`
 when the password has **not** expired (so it cannot serve as a general

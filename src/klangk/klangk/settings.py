@@ -872,22 +872,22 @@ class KlangkSettings(BaseSettings):
     # byte-length ceiling on passwords). Reloadable on SIGHUP (read
     # live at change time).
     password_min_changed: int = 0
-    # Minimum password age (STIG V-222544): how long a password must be
-    # kept before it may be changed again, in hours. Self-service
-    # password changes and forgot-password resets made inside the
-    # window are rejected (400); admin-forced resets bypass it. 0 (the
-    # default) disables the check. 24 is the documented STIG value.
-    # Capped at 8760 (365 days) — a longer floor only bricks password
+    # Minimum password age: how long a password must be kept before it
+    # may be changed again, in hours. Self-service password changes and
+    # forgot-password resets made inside the window are rejected (400);
+    # admin-forced resets bypass it. 0 (the default) disables the
+    # check; 24 hours is the recommended hardening value. Capped at
+    # 8760 (365 days) — a longer floor only bricks password
     # changes. Reloadable on SIGHUP.
     password_min_age_hours: int = 0
-    # Maximum password age (STIG V-222545): how many days a password may
-    # live before login, token refresh, and — like a disabled account
-    # (#2588) — the next authenticated request / WS connect refuse a
-    # session until the password is changed (a machine-readable
-    # "password expired" error; local password accounts only — OIDC
-    # users have no klangk password). 0 (the default) disables expiry. 60 is the documented
-    # STIG value. Capped at 3650 (10 years) to keep a typo'd value from
-    # meaning "never". Reloadable on SIGHUP.
+    # Maximum password age: how many days a password may live before
+    # login, token refresh, and — like a disabled account (#2588) — the
+    # next authenticated request / WS connect refuse a session until
+    # the password is changed (a machine-readable "password expired"
+    # error; local password accounts only — OIDC users have no klangk
+    # password). 0 (the default) disables expiry; 60 days is the
+    # recommended hardening value. Capped at 3650 (10 years) to keep a
+    # typo'd value from meaning "never". Reloadable on SIGHUP.
     password_max_age_days: int = 0
     login_lockout_failures: int | None = 5
     login_lockout_duration: int | None = 900

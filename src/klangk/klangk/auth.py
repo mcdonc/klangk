@@ -429,8 +429,10 @@ class Auth:
     def password_min_changed(self) -> int:
         """Min character edit distance for self-service changes (#3173)."""
         return self.app.state.settings.password_min_changed
+
+    @property
     def password_min_age_hours(self) -> int:
-        """Minimum password age in hours (STIG V-222544, #3177).
+        """Minimum password age in hours (#3177).
 
         0 (default) disables the check. Read live off settings so a
         SIGHUP reload applies without a restart.
@@ -439,7 +441,7 @@ class Auth:
 
     @property
     def password_max_age_days(self) -> int:
-        """Maximum password age in days (STIG V-222545, #3177).
+        """Maximum password age in days (#3177).
 
         0 (default) disables expiry. Read live off settings so a SIGHUP
         reload applies without a restart.
@@ -637,7 +639,7 @@ class Auth:
                 ),
             )
 
-    # --- password age (STIG V-222544 minimum / V-222545 maximum; #3177) ---
+    # --- password age (minimum / maximum; #3177) ---
 
     def _password_set_at(self, user: dict) -> datetime | None:
         """When *user*'s current password was set, or None when unknown.
@@ -653,10 +655,10 @@ class Auth:
         return ts
 
     def validate_password_min_age(self, user: dict) -> None:
-        """Reject a self-service change inside the minimum age (V-222544).
+        """Reject a self-service change inside the minimum age.
 
         No-op when the knob is 0 (disabled) or the set time is unknown.
-        Admin-forced resets never call this — the STIG's emergency-reset
+        Admin-forced resets never call this — the emergency-reset
         exemption.
         """
         hours = self.password_min_age_hours
@@ -679,7 +681,7 @@ class Auth:
             )
 
     def password_expired(self, user: dict) -> bool:
-        """True when *user*'s password is past the maximum age (V-222545).
+        """True when *user*'s password is past the maximum age.
 
         Local password accounts only — no ``password_hash`` (OIDC,
         passwordless) means nothing to age. An unknown set time (NULL
@@ -1149,7 +1151,7 @@ class Auth:
     ) -> TokenResponse:
         """Replace an expired password and mint the session (#3177).
 
-        The minimum age (V-222544) is still validated below, but that
+        The minimum age is still validated below, but that
         is free for any sane config: when min ≤ max, an expired
         password is necessarily past the minimum too, so the check
         never fires — it only stops a min > max misconfig from turning
@@ -1266,7 +1268,7 @@ class Auth:
         ensure_not_disabled(user)
 
         await self.clear_login_failures(lockout_key)
-        # Expired passwords (V-222545) stop here: the credentials are
+        # Expired passwords stop here: the credentials are
         # valid (failures cleared above), but no session is minted until
         # the password is changed through the expired-password flow.
         if self.password_expired(user):

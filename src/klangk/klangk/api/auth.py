@@ -456,7 +456,7 @@ async def reset_password(req: ResetPasswordRequest, request: Request):
         # live user (the row is only gone if deleted mid-flight)
         raise HTTPException(status_code=404, detail="User not found")
     auth.ensure_not_disabled(user)
-    # Self-service resets respect the minimum age (V-222544, #3177) —
+    # Self-service resets respect the minimum age (#3177) —
     # only admin-forced resets bypass it.
     request.app.state.auth.validate_password_min_age(user)
     await request.app.state.auth.validate_password_not_reused(
@@ -605,7 +605,7 @@ async def change_password(
         req.current_password,
         incorrect_detail="Current password is incorrect",
     )
-    # Self-service changes respect the minimum age (V-222544, #3177).
+    # Self-service changes respect the minimum age (#3177).
     request.app.state.auth.validate_password_min_age(user)
     request.app.state.auth.validate_password(req.new_password)
     request.app.state.auth.validate_password_changed_enough(
@@ -631,7 +631,7 @@ async def change_expired_password(
     req: auth.ChangeExpiredPasswordRequest,
     request: Request,
 ):
-    """Replace an expired password (V-222545) and auto-login (#3177).
+    """Replace an expired password and auto-login (#3177).
 
     Takes the identifier, the current (expired) password, and the new
     one; mints a session on success so clients complete the flow in
