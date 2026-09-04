@@ -85,13 +85,21 @@ def broadcast_container_status(
 
 
 # Settings that a SIGHUP reload re-resolves and validates but CANNOT apply
-# without a full process restart: the HTTP listener is bound for the life of
-# the process, and the DB engine + on-disk state dir are already open/written.
-# A change here is logged at warning level (so the operator knows it didn't
-# take effect) rather than silently ignored (#1587).
+# without a full process restart: the HTTP listener and backend/admin UDS
+# sockets are bound for the life of the process, and the DB engine +
+# on-disk state dir are already open/written. The UDS entries matter for
+# the Caddy supervision: the child's bootstrap config, its CADDY_ADMIN
+# env, and uvicorn's own bind all pin the startup paths — a reloaded
+# value desyncs the watchdog (its httpx client polls the new admin path
+# the child never binds) and the renderer (caddy dials a backend socket
+# that no longer exists). A change here is logged at warning level (so
+# the operator knows it didn't take effect) rather than silently
+# ignored (#1587).
 _NON_RELOADABLE_SETTINGS: tuple[tuple[str, str], ...] = (
     ("port", "the HTTP listener is already bound"),
     ("listen", "the HTTP listener is already bound"),
+    ("socket", "the backend UDS listener is already bound"),
+    ("caddy_admin_socket", "the Caddy admin UDS is already bound"),
     ("data_dir", "the DB engine is already open"),
     ("state_dir", "instance state is already on disk"),
 )

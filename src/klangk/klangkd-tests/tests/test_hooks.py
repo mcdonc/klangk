@@ -867,6 +867,41 @@ class TestFireWorkspaceCreated:
         )
         assert any(e["permission"] == "*" for e in entries)
 
+    @pytest.mark.parametrize(
+        "field, value",
+        [
+            ("allowed_domains", [123]),  # non-str entry -> AttributeError
+            ("rejected_domains", [123]),  # non-str entry -> AttributeError
+            ("allowed_domains", 5),  # non-iterable -> TypeError
+            ("mounts", 5),  # non-iterable -> TypeError
+        ],
+    )
+    async def test_mistyped_change_rejected_not_fatal(
+        self, app_state, user, caplog, field, value
+    ):
+        """A mistyped (not merely invalid) value must not break the
+        log-and-continue contract: the validator raising instead of
+        returning an error string still leaves the workspace unchanged
+        and the create un-failed."""
+        await app_state.state.model.init_db()
+        hooks = await self._wire(app_state)
+
+        def hook(workspace, actor):
+            workspace[field] = value
+
+        hooks.workspace_created_hook = hook
+        hooks.workspace_created_hook_is_async = False
+        hooks.workspace_created_hook_source = "test-mistyped"
+        ws = await self._seed(app_state, user)
+        with caplog.at_level(logging.WARNING, logger="klangk.hooks"):
+            out = await hooks.fire_workspace_created(ws, user)
+        assert out is ws
+        assert any(
+            "could not be validated" in r.message for r in caplog.records
+        )
+        row = await app_state.state.model.workspaces.get_workspace(ws["id"])
+        assert row[field] is None
+
 
 class TestHooksBranchGaps2834:
     """#2834 branch gate: hook-field diff and created_at carry-over

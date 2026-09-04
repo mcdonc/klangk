@@ -131,12 +131,13 @@ class TestInstallHint:
         """The ip binary ships as `iproute` on Red Hat family and `iproute2`
         elsewhere (#2921) — the binary name alone names a nonexistent
         package on every major manager."""
+        assert install_hint("pacman", "pacman") == "sudo pacman -S pacman"
         assert install_hint("ip", "dnf") == "sudo dnf install iproute"
         assert install_hint("ip", "yum") == "sudo yum install iproute"
         assert install_hint("ip", "apt") == "sudo apt install iproute2"
         assert install_hint("ip", "zypper") == "sudo zypper install iproute2"
         assert install_hint("ip", "apk") == "sudo apk install iproute2"
-        assert install_hint("ip", "pacman") == "sudo pacman install iproute2"
+        assert install_hint("ip", "pacman") == "sudo pacman -S iproute2"
         assert install_hint("ip", "brew") == "brew install iproute2"
 
 

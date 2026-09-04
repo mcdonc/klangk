@@ -183,6 +183,9 @@ def install_hint(binary: str, manager: str | None) -> str:
         return f"brew install {pkg}"
     if manager == "apt":
         return f"sudo apt install {pkg}"
+    if manager == "pacman":
+        # pacman has no "install" subcommand — the package action is -S.
+        return f"sudo pacman -S {pkg}"
     return f"sudo {manager} install {pkg}"
 
 

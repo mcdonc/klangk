@@ -28,6 +28,7 @@ from klangk.caddy import (
 )
 from klangk.caddy import (
     CADDYFILE_CONTENT_TYPE,
+    _caddy_parseable_cidr,
     post_load,
     tcp_upstream,
     uds_upstream,
@@ -249,6 +250,78 @@ class TestContainerSourceLists:
         lst = _renderer(s)._browser_deny_remote_ip_list()
         assert "172.16.0.0/12" in lst
         assert "10.0.0.0/8" in lst
+
+    def test_invalid_container_subnet_skipped(self, caplog):
+        """A typo'd CIDR is warned and skipped, not rendered into the
+        Caddyfile (Caddy would reject the config at adapt time and wedge
+        the proxy in a kill/respawn loop)."""
+        s = make_settings(
+            {"KLANGKD_CONTAINER_SUBNETS": "notacidr,10.89.0.0/24"}
+        )
+        with caplog.at_level("WARNING"):
+            acl, deny = _renderer(s)._container_source_entries()
+        assert "10.89.0.0/24" in acl
+        assert "notacidr" not in acl
+        assert "notacidr" not in deny
+        assert "invalid IP/CIDR entry" in caplog.text
+
+    def test_all_invalid_container_subnets_fail_closed(self, caplog):
+        """Every entry invalid -> warn + deny-all (the blank-setting
+        semantic), not a wedged proxy and not a silent widening to
+        auto-detected sources."""
+        s = make_settings({"KLANGKD_CONTAINER_SUBNETS": "garbage"})
+        with caplog.at_level("WARNING"):
+            lst = _renderer(s)._egress_remote_ip_list()
+        assert lst == ""
+        assert "invalid entry" in caplog.text
+
+    def test_invalid_trusted_proxy_cidr_skipped(self, caplog):
+        s = make_settings({"KLANGKD_TRUSTED_PROXY_CIDRS": "oops,10.0.0.0/8"})
+        with caplog.at_level("WARNING"):
+            cidrs = _renderer(s)._trusted_proxy_cidrs()
+        assert cidrs == ["10.0.0.0/8"]
+        assert "invalid IP/CIDR entry" in caplog.text
+
+    def test_all_invalid_trusted_proxy_cidrs_loopback(self, caplog):
+        s = make_settings({"KLANGKD_TRUSTED_PROXY_CIDRS": "oops"})
+        with caplog.at_level("WARNING"):
+            cidrs = _renderer(s)._trusted_proxy_cidrs()
+        assert cidrs == ["127.0.0.1", "::1"]
+        assert "invalid IP/CIDR entry" in caplog.text
+
+    @pytest.mark.parametrize(
+        "entry",
+        [
+            "10.0.0.0/255.255.0.0",  # dotted-quad netmask: python yes, netip no
+            "10.0.0.0/0.0.255.255",  # hostmask form: same mismatch
+            "10.0.0.0/\u0661\u0662",  # Arabic-Indic digits: isdigit() yes, ParseUint no
+        ],
+    )
+    def test_python_only_cidr_forms_rejected(self, entry, caplog):
+        """The accept boundary must match Caddy's provisioner (Go netip),
+        not Python's ipaddress: netmask/hostmask notation and non-ASCII
+        digit suffixes parse in Python but fail at POST /load provision
+        time — the kill/respawn wedge this validator exists to prevent
+        (nginx accepts netmask notation, so copy-pasted lines hit it)."""
+        assert _caddy_parseable_cidr(entry) is False
+        s = make_settings(
+            {"KLANGKD_CONTAINER_SUBNETS": f"{entry},192.168.0.0/16"}
+        )
+        with caplog.at_level("WARNING"):
+            acl, _deny = _renderer(s)._container_source_entries()
+        assert entry not in acl
+        assert "192.168.0.0/16" in acl
+        assert "invalid IP/CIDR entry" in caplog.text
+
+    def test_host_bits_cidr_still_accepted(self):
+        """Go netip.ParsePrefix accepts host-bits-set prefixes (masking
+        them), so 10.0.0.1/24 must stay valid — do not over-reject."""
+        assert _caddy_parseable_cidr("10.0.0.1/24") is True
+        assert _caddy_parseable_cidr("10.0.0.0/8") is True
+        assert _caddy_parseable_cidr("127.0.0.1") is True
+        assert _caddy_parseable_cidr("::1") is True
+        assert _caddy_parseable_cidr("fe80::/10") is True
+        assert _caddy_parseable_cidr("notacidr") is False
 
 
 # ---------------------------------------------------------------------------
@@ -851,6 +924,29 @@ class TestWaitForAdmin:
         # Small timeout → a couple of 0.2s polls then give up.
         assert await wd._wait_for_admin(timeout=0.001) is False
         assert slept  # the retry path slept at least once
+
+    @pytest.mark.asyncio
+    async def test_transport_timeout_retried_not_fatal(self, monkeypatch):
+        """A stalled admin peer (accepts, never answers -> ReadTimeout) is
+        a not-yet-up poll, not an exception that kills the watchdog task
+        and leaves a blank-config Caddy unsupervised (#3123)."""
+        import klangk.caddy as caddy_mod
+
+        async def _fake_sleep(s):
+            pass
+
+        monkeypatch.setattr(caddy_mod.asyncio, "sleep", _fake_sleep)
+
+        class _Stalled(_FakeAsyncClient):
+            async def get(self, url):
+                raise httpx.ReadTimeout("stalled")
+
+        monkeypatch.setattr(
+            caddy_mod.httpx, "AsyncHTTPTransport", lambda uds: None
+        )
+        monkeypatch.setattr(caddy_mod.httpx, "AsyncClient", _Stalled)
+        wd = _wd(make_settings({}))
+        assert await wd._wait_for_admin(timeout=0.001) is False
 
 
 class TestWatchdogStart:

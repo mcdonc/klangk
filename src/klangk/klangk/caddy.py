@@ -79,6 +79,59 @@ def _split_sources(raw: str) -> list[str]:
     return [s.strip() for s in raw.split(",") if s.strip()]
 
 
+def _caddy_parseable_cidr(token: str) -> bool:
+    """True when *token* parses the way Caddy's provisioner parses IPs
+    and CIDRs (Go ``netip``): an IP, or ``IP/<prefix-length>`` with an
+    ASCII-decimal prefix length.
+
+    Python's :func:`ipaddress.ip_network` additionally accepts
+    dotted-quad netmask/hostmask notation (``10.0.0.0/255.255.0.0``),
+    which Go's ``netip.ParsePrefix`` rejects — and Caddy's *adapt*
+    step passes those through, so the failure lands at ``POST /load``
+    provision time (the exact kill/respawn wedge this validator
+    exists to prevent; nginx accepts netmask notation, so a
+    copy-pasted ``allow`` line hits it). The suffix check is
+    ASCII-only because ``str.isdigit()`` admits non-ASCII decimal
+    digits that Go's ``strconv.ParseUint`` rejects.
+    """
+    try:
+        ipaddress.ip_network(token, strict=False)
+    except ValueError:
+        return False
+    if "/" not in token:
+        return True
+    suffix = token.split("/", 1)[1]
+    return suffix.isascii() and suffix.isdigit()
+
+
+def _valid_cidr_tokens(tokens: list[str]) -> list[str]:
+    """The tokens Caddy can consume as an IP address or CIDR.
+
+    An invalid entry is warned and skipped: garbage would otherwise
+    flow into the Caddyfile (a ``remote_ip`` matcher or
+    ``trusted_proxies static`` argument), where Caddy rejects it at
+    provision time — the ``POST /load`` fails and the watchdog's
+    kill/respawn loop wedges the whole proxy on a typo'd setting.
+    Skipping fails toward *less* access (narrower egress allowlist /
+    narrower XFF trust), never more. The warning deliberately does not
+    echo the entry value: the fields are env-sourced, and clear-text
+    logging them is flagged by CodeQL
+    (py/clear-text-logging-sensitive-data) — the operator re-reads
+    their own short config list to spot the offender.
+    """
+    valid: list[str] = []
+    for token in tokens:
+        if _caddy_parseable_cidr(token):
+            valid.append(token)
+        else:
+            logger.warning(
+                "ignoring an invalid IP/CIDR entry — entries must be"
+                " IPs or CIDRs (KLANGKD_TRUSTED_PROXY_CIDRS /"
+                " KLANGKD_CONTAINER_SUBNETS)"
+            )
+    return valid
+
+
 def _non_loopback(entries: list[str]) -> list[str]:
     """The non-loopback subset (loopback keeps full browser UI/API access)."""
     return [s for s in entries if not _is_loopback(s)]
@@ -96,9 +149,11 @@ def _warned_non_loopback(entries: list[str]) -> list[str]:
     return deny_entries
 
 
-def _explicit_source_entries(raw: str) -> tuple[list[str], list[str]]:
-    """(acl, deny) from the explicit KLANGKD_CONTAINER_SUBNETS setting."""
-    entries = _split_sources(raw)
+def _explicit_source_entries(
+    entries: list[str],
+) -> tuple[list[str], list[str]]:
+    """(acl, deny) from the explicit (pre-validated)
+    KLANGKD_CONTAINER_SUBNETS entries."""
     return entries, _warned_non_loopback(entries)
 
 
@@ -302,7 +357,15 @@ class CaddyRenderer:
         """
         explicit = self.app.state.settings.container_subnets
         if explicit:
-            return _explicit_source_entries(str(explicit))
+            tokens = _split_sources(str(explicit))
+            entries = _valid_cidr_tokens(tokens)
+            if len(entries) != len(tokens):
+                logger.warning(
+                    "KLANGKD_CONTAINER_SUBNETS: skipped %d invalid"
+                    " entry/entries (the valid ones remain in effect)",
+                    len(tokens) - len(entries),
+                )
+            return _explicit_source_entries(entries)
         addrs = detect_host_ipv4s()
         if addrs:
             return addrs, _non_loopback(addrs)
@@ -357,16 +420,10 @@ class CaddyRenderer:
 
     def _trusted_proxy_cidrs(self) -> list[str]:
         """Validated KLANGKD_TRUSTED_PROXY_CIDRS entries (loopback if empty/invalid)."""
-        raw = self.app.state.settings.trusted_proxy_cidrs
-        entries: list[str] = []
-        for token in (raw or "").split(","):
-            token = token.strip()
-            if not token:
-                continue
-            entries.append(token)
-        if not entries:
-            entries = ["127.0.0.1", "::1"]
-        return entries
+        entries = _valid_cidr_tokens(
+            _split_sources(self.app.state.settings.trusted_proxy_cidrs or "")
+        )
+        return entries or ["127.0.0.1", "::1"]
 
     # -- global options ----------------------------------------------------
 
@@ -898,9 +955,13 @@ class CaddyWatchdog:
         """Poll the admin UDS until Caddy accepts a connection (or timeout).
 
         Any HTTP response (any status) counts as "up" — the admin endpoint is
-        listening. A connection failure (missing socket / refused — raised by
-        httpx as :class:`~httpx.ConnectError`) means not-up yet: sleep and
-        retry until the deadline, then return ``False``.
+        listening. A transport-level failure (missing socket / refused —
+        raised by httpx as :class:`~httpx.ConnectError`, but also a stalled
+        peer raising a read *timeout* or protocol error) means not-up yet:
+        every :class:`~httpx.HTTPError` is retried, not just the connect
+        flavor — an uncaught one would kill the whole supervision task and
+        leave a blank-config Caddy running unsupervised. Sleep and retry
+        until the deadline, then return ``False``.
         """
         deadline = asyncio.get_running_loop().time() + timeout
         loop = asyncio.get_running_loop()
@@ -926,7 +987,7 @@ class CaddyWatchdog:
                     # real socket — don't let it mask the successful connect.
                     pass
                 return True
-            except (httpx.ConnectError, OSError):
+            except (httpx.HTTPError, OSError):
                 await asyncio.sleep(0.2)
         return False
 

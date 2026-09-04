@@ -56,8 +56,10 @@ def validate_path(path: str) -> str:
     * null bytes
     * non-absolute paths
     * path components exceeding NAME_MAX
-    * paths that still contain ``..`` after normalization (defense-in-depth;
-      normpath should collapse them, but we reject them anyway)
+
+    ``..`` segments cannot survive: for an absolute path
+    :func:`posixpath.normpath` collapses every ``..`` away, so the
+    normalized result is always a pure ``/a/b`` form.
     """
     if "\0" in path:
         raise ValueError("Null byte in path")

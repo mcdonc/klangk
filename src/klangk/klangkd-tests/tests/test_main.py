@@ -2749,6 +2749,24 @@ class TestMainEntryCallback2910:
         assert "port" in caplog.text
         assert "full process restart" in caplog.text
 
+    @pytest.mark.parametrize(
+        "env_key",
+        ["KLANGKD_SOCKET", "KLANGKD_CADDY_ADMIN_SOCKET"],
+    )
+    def test_warn_non_reloadable_covers_bound_sockets(
+        self, app_state, caplog, env_key
+    ):
+        """The backend/admin UDS paths are bound for the process lifetime;
+        a SIGHUP change must warn like port/listen (#3123)."""
+        app_state = _make_app_state()
+        lc = app_state.state.lifecycle
+        old = app_state.state.settings
+        new = make_settings({env_key: "/tmp/changed.sock"})
+        with caplog.at_level("WARNING"):
+            lc._warn_non_reloadable(old, new)
+        assert env_key.removeprefix("KLANGKD_").lower() in caplog.text
+        assert "full process restart" in caplog.text
+
     async def test_apply_pending_reseed_noop_without_flag(self, app_state):
         """apply_pending_reseed is a no-op when reconfigure hasn't been called."""
         app_state = _make_app_state()

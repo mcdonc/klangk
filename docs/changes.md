@@ -2023,6 +2023,33 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   `klangk-setup-home` failure used to stay bare forever (no
   `.profile`/`.bashrc`); an empty user directory now re-triggers the
   copy, matching the shared-home behavior.
+- **A mistyped workspace-created-hook change no longer fails the
+  create (#3123).** A hook assigning a mistyped value (e.g.
+  `allowed_domains = [123]` or a non-iterable `mounts`) crashed the
+  validation step and 500'd the workspace create/import/duplicate
+  request. Per the documented failure semantics the change is now
+  logged as invalid and the workspace is returned exactly as created.
+
+- **`KLANGKD_SOCKET` / `KLANGKD_CADDY_ADMIN_SOCKET` changes on SIGHUP
+  now warn (#3123).** Both sockets are bound for the life of the
+  process (uvicorn's listener, the Caddy child's admin UDS); a reloaded
+  value never applied and silently desynced the proxy supervision. The
+  reload now logs the same "requires a full process restart" warning
+  as `KLANGKD_PORT`/`KLANGKD_LISTEN`.
+
+- **Typo'd CIDR settings no longer wedge the proxy (#3123).** An
+  invalid entry in `KLANGKD_TRUSTED_PROXY_CIDRS` or
+  `KLANGKD_CONTAINER_SUBNETS` flowed into the Caddyfile, where Caddy
+  rejects it at adapt time — the config push failed and the watchdog
+  kill/respawn loop left the whole proxy down on a typo. Invalid
+  entries are now skipped with a warning (fail-closed: narrower
+  egress allowlist / loopback-only proxy trust, and an all-invalid
+  container-subnet list denies container egress like a blank one).
+
+- **`klangkd doctor` pacman hints use `-S` (#3123).** The install hint
+  for an arch-family host emitted `sudo pacman install <pkg>`; pacman
+  has no `install` subcommand, so the hint failed verbatim. It now
+  emits `sudo pacman -S <pkg>`.
 
 - **Non-mapping `klangk.yaml` no longer crashes every CLI command
   (#3094).** A config file holding valid YAML that is not a mapping
