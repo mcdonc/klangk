@@ -73,9 +73,11 @@ same recipe as
 On first startup, Klangk seeds these defaults:
 
 - Any logged-in user can view pages
-- Any logged-in user can create workspaces (#3137 — every user joins
-  the `members` group, which holds the seeded `create-workspace`
-  Allow on `/workspaces`)
+- Any logged-in user can create workspaces (#3137 — every user
+  created since #2569 joins the `members` group, which holds the
+  seeded `create-workspace` Allow on `/workspaces`; users created
+  before #2569 on an upgraded deployment never joined retroactively —
+  grant `Authenticated` instead of `members` to cover them)
 - Only members of the `admins` group can create groups or access
   admin functions
 - Unauthenticated users are denied everything

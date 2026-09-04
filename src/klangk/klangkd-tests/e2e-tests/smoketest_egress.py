@@ -1320,9 +1320,11 @@ class SmokeTest:
     def _ensure_member(server: dict, admin: dict) -> None:
         """Create the plain member user for --as-member (idempotent).
 
-        The member is deliberately NOT added to any instance group: no
-        admins membership, no manage-* grants -- consent authority must
-        come from the workspace ACL alone (#2976). A 400 "already
+        The member gets no admin membership and no manage-* grants --
+        consent authority must come from the workspace ACL alone
+        (#2976). Since #2569 registration auto-joins the ``members``
+        group (instance-role, no permissions beyond the #3137
+        create-workspace seed). A 400 "already
         registered" (a rerun against the same server) is tolerated.
         """
         client = httpx.Client(

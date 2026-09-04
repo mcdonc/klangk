@@ -14,7 +14,7 @@ This migration brings existing deployments to the new seed shape: an
 Allow ``create-workspace`` row for the ``members`` group is **appended**
 after any existing rows on ``/workspaces``. Appending — never inserting
 at a seed position — keeps every operator-staged row ahead of the new
-grant: an explicit Deny (the documented old-posture recipe) keeps
+grant: an explicit Deny (the recommended old-posture recipe) keeps
 answering first, so no deployment's posture silently loosens beyond
 what the seed itself granted. On the stock shape (Allow admins @0,
 nothing else) the append lands at position 1 — exactly the fresh-seed
@@ -25,6 +25,12 @@ that never rebooted on a #2569+ build): the boot's
 ``ensure_members_group`` would create it moments later anyway, but the
 ACL row needs a group id now. Shape matches ``ensure_members_group``
 (name ``members``, description ``All regular users``, default source).
+
+Edge shape: a database whose ``/workspaces`` rows were deleted
+entirely (a deliberate deny-all posture) gets the Allow at position 0
+as the resource's only row — members gain creation while admins not
+in ``members`` do not. Defensible outcome of the deliberate flip on a
+pathological shape; stage a Deny to restore any stricter posture.
 
 A fresh database (entirely empty ``acl_entries``) is a no-op — the
 boot seeds own it (the m0021/m0023 precedent).

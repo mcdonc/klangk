@@ -3165,7 +3165,8 @@ class TestM0029MembersCreateWorkspace:
 
     async def _seed_stock(self, db, admins_id="g-a", members_id="g-m"):
         """The stock #2569 shape: Allow create-workspace admins @0 on
-        /workspaces plus the root pair."""
+        /workspaces plus the root pair. ``members_id=None`` skips the
+        members group row (pre-#2569 database)."""
         await db.execute(
             "INSERT INTO acl_entries"
             " (resource, position, action, principal_type, group_id,"
@@ -3176,10 +3177,14 @@ class TestM0029MembersCreateWorkspace:
             (admins_id,),
         )
         await db.execute(
-            "INSERT INTO groups (id, name) VALUES (?, 'admins'),"
-            " (?, 'members')",
-            (admins_id, members_id),
+            "INSERT INTO groups (id, name) VALUES (?, 'admins')",
+            (admins_id,),
         )
+        if members_id is not None:
+            await db.execute(
+                "INSERT INTO groups (id, name) VALUES (?, 'members')",
+                (members_id,),
+            )
 
     async def test_upgraded_db_gets_the_members_grant(self, tmp_path):
         from klangk.model.migrations import m0029_members_create_workspace
@@ -3236,8 +3241,6 @@ class TestM0029MembersCreateWorkspace:
         db = await self._db(tmp_path)
         try:
             await self._seed_stock(db, members_id=None)
-            # Drop the members group the stock seed inserted.
-            await db.execute("DELETE FROM groups WHERE name = 'members'")
             await db.commit()
             await m0029_members_create_workspace.migration.apply(db)
 

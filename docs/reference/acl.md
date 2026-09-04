@@ -264,9 +264,10 @@ Upgrading from an older deployment: migration 0021 inserts the six
 Allow/Deny pairs for the admins group. If you had pre-staged rows on
 one of those resources, the migration leaves it untouched. Migration
 0029 appends the #3137 members `create-workspace` Allow after any
-existing `/workspaces` rows — a staged Deny keeps first-match-wins
-priority, so an admin-only deployment keeps its posture across the
-upgrade (and gains one inert Allow row).
+existing `/workspaces` rows — a **stock deployment (admins Allow
+only) flips to self-service on upgrade**; a deployment with a staged
+Deny keeps first-match-wins priority, so its admin-only posture
+survives (the appended row is inert).
 
 ## WebSocket gates
 
