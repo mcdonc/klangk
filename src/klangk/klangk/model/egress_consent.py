@@ -508,7 +508,12 @@ class EgressConsentModel(Submodel):
                     DECISION_PENDING,
                 ),
             )
-            return cursor.rowcount > 0
+            if cursor.rowcount > 0:
+                row = await _select_row(db, request_id)
+                if row is not None:
+                    await _stamp_hmac(db, self.app.state.settings, row)
+                return True
+            return False
 
     async def expire_all_pending(self) -> int:
         """Expire EVERY pending request (startup reaping).
@@ -521,13 +526,26 @@ class EgressConsentModel(Submodel):
         """
         decided_at = time.time()
         async with self.app.state.db.transaction() as db:
+            # Collect ids before the UPDATE so we can re-stamp each row.
             cursor = await db.execute(
+                "SELECT id FROM egress_consent WHERE decision = ?",
+                (DECISION_PENDING,),
+            )
+            ids = [r[0] for r in await cursor.fetchall()]
+            if not ids:
+                return 0
+            await db.execute(
                 "UPDATE egress_consent"
                 " SET decision = ?, decided_at = ?"
                 " WHERE decision = ?",
                 (DECISION_EXPIRED, decided_at, DECISION_PENDING),
             )
-            return cursor.rowcount
+            settings = self.app.state.settings
+            for row_id in ids:
+                row = await _select_row(db, row_id)
+                if row is not None:
+                    await _stamp_hmac(db, settings, row)
+            return len(ids)
 
     async def clear_tilrestart_duration(self, workspace_id: str) -> int:
         """Delete decided ``tilrestart``-duration verdicts for a workspace (#2346).
