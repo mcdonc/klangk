@@ -135,6 +135,7 @@ from .shellcmd import (  # noqa: F401
 )
 from .monitor import (  # noqa: F401
     dispatch_monitor_event,
+    HookCommandError,
     monitor_backoff,
     monitor_connection,
     monitor,
