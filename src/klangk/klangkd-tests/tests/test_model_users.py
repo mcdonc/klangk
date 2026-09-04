@@ -641,3 +641,17 @@ class TestUsersBranchGaps2834:
             user["email"]
         )
         assert refreshed["handle"] == handle_before
+
+
+class TestClearMustChangePassword:
+    """#3172: clear_must_change_password branch coverage."""
+
+    async def test_agent_user_rejected(self, users):
+        with pytest.raises(AgentPrincipalError):
+            await users.clear_must_change_password(AGENT_USER_ID, "hash")
+
+    async def test_deleted_user_is_noop(self, users, user):
+        await users.delete_user(user["id"])
+        # Must not raise — a deleted user is a silent no-op, same as
+        # update_password.
+        await users.clear_must_change_password(user["id"], "hash")
