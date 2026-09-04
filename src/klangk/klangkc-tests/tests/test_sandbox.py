@@ -340,3 +340,27 @@ class TestCopySandboxFiles:
 
         sh_cmd = commands[0][2]
         assert "mkdir -p /opt && cat > /opt/file.txt" in sh_cmd
+
+    async def test_parent_of_relative_dest_is_dot(self, tmp_path):
+        """A bare relative dest passes through build_copy_pairs
+        unexpanded (expand_container_path gets no mount_at there), so
+        its parent must be ``.`` — an empty parent makes mkdir fail
+        and the && chain silently skip the copy (#3117 review)."""
+        from klangk.cli import sandboxcmd
+
+        src = tmp_path / "file.txt"
+        src.write_text("data")
+        config = SandboxConfig(copy=[f"{src}:file.txt"])
+        commands = []
+
+        async def fake_exec_on_ws(ws, cmd, **kwargs):
+            commands.append(cmd)
+            return 0
+
+        with patch.object(sandboxcmd, "exec_on_ws", fake_exec_on_ws):
+            await sandboxcmd.copy_sandbox_files(
+                None, config, tmp_path, "admin"
+            )
+
+        sh_cmd = commands[0][2]
+        assert "mkdir -p . && cat > file.txt" in sh_cmd
