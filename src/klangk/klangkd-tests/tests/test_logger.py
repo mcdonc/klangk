@@ -12,6 +12,7 @@ Logging is configured by two module-level functions in :mod:`klangk.logger`
 
 import json
 import logging
+import logging.handlers
 
 import pytest
 
@@ -526,6 +527,29 @@ class TestLogFileSink:
         assert _klangk_file_handlers(clean_root) == []
         assert len(_klangk_handlers(clean_root)) == 1  # console still up
         assert any("KLANGKD_LOG_FILE" in r.message for r in caplog.records)
+
+    def test_recursion_error_still_propagates(self, tmp_path, monkeypatch):
+        """RecursionError is the one exception the stdlib emit contract
+        re-raises; the suspension arm must not swallow it (silencing it
+        would just move the loop) and must not trip the broken flag."""
+        target = tmp_path / "k.jsonl"
+        handler = logger_mod.RotationSafeFileHandler(target, encoding="utf-8")
+        record = logging.LogRecord(
+            "klangk.test", logging.INFO, __file__, 1, "m", (), None
+        )
+
+        def raise_recursion(self, record):
+            raise RecursionError("too deep")
+
+        monkeypatch.setattr(
+            logging.handlers.WatchedFileHandler, "emit", raise_recursion
+        )
+        try:
+            with pytest.raises(RecursionError):
+                handler.emit(record)
+        finally:
+            handler.close()
+        assert handler._sink_broken is False
 
 
 class TestConfigureFormat:
