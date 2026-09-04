@@ -1624,6 +1624,149 @@ class TestResendVerificationLockout:
         assert info["attempt_count"] == 1
 
 
+class TestPasswordAgeRoutes:
+    """Route-level password-age enforcement (V-222544/V-222545, #3177)."""
+
+    async def _fresh_user(self, app_state, email, password="testpass"):
+        return await app_state.state.model.users.create_user(
+            email, auth_mod.hash_password(password), verified=True
+        )
+
+    async def _login_token(self, client, email, password="testpass"):
+        resp = await client.post(
+            "/api/v1/auth/login",
+            json={"identifier": email, "password": password},
+        )
+        assert resp.status_code == 200
+        return {"Authorization": f"Bearer {resp.json()['access_token']}"}
+
+    async def _backdate_password(self, app_state, user_id, days):
+        from datetime import datetime, timedelta, timezone
+
+        old = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        async with app_state.state.db.transaction() as raw_db:
+            await raw_db.execute(
+                "UPDATE users SET password_set_at = ?, created_at = ?"
+                " WHERE id = ?",
+                (old, old, user_id),
+            )
+
+    async def test_change_password_min_age_refused(
+        self, client, app, db, app_state, monkeypatch
+    ):
+        """A self-service change inside the minimum-age window is a 400
+        at the route level (V-222544) — not just in the service layer."""
+        monkeypatch.setattr(app.state.settings, "password_min_age_hours", 24)
+        await self._fresh_user(app_state, "minage@example.com")
+        headers = await self._login_token(client, "minage@example.com")
+        resp = await client.post(
+            "/api/v1/auth/change-password",
+            json={
+                "current_password": "testpass",
+                "new_password": "freshpass1",
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 400
+        assert "must be kept" in resp.json()["detail"]
+
+    async def test_reset_password_min_age_refused(
+        self, client, app, db, app_state, monkeypatch
+    ):
+        """A forgot-password reset inside the window is refused the same
+        way — only admin-forced resets bypass (V-222544)."""
+        monkeypatch.setattr(app.state.settings, "password_min_age_hours", 24)
+        user = await self._fresh_user(app_state, "minreset@example.com")
+        token = _auth().create_password_reset_token(user["id"])
+        resp = await client.post(
+            "/api/v1/auth/reset-password",
+            json={"token": token, "password": "freshpass1"},
+        )
+        assert resp.status_code == 400
+        assert "must be kept" in resp.json()["detail"]
+
+    async def test_admin_reset_bypasses_min_age(
+        self, client, app, db, app_state, admin_user, monkeypatch
+    ):
+        """Admin-forced resets ignore the minimum age — the STIG's
+        emergency-reset exemption is deliberate and stays testable."""
+        monkeypatch.setattr(app.state.settings, "password_min_age_hours", 24)
+        user = await self._fresh_user(app_state, "adminset@example.com")
+        headers = await _admin_login(client)
+        resp = await client.patch(
+            f"/api/v1/users/{user['id']}",
+            json={"password": "adminset1"},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        # The admin-set password logs in immediately despite the window.
+        await self._login_token(client, "adminset@example.com", "adminset1")
+
+    async def test_expired_session_refused(
+        self, client, app, db, app_state, monkeypatch
+    ):
+        """A password that expires mid-session fails the next
+        authenticated request with the machine-readable expiry detail
+        (V-222545) — same posture as a disabled account (#2588)."""
+        monkeypatch.setattr(app.state.settings, "password_max_age_days", 60)
+        user = await self._fresh_user(app_state, "midsession@example.com")
+        headers = await self._login_token(client, "midsession@example.com")
+        me = await client.get("/api/v1/auth/me", headers=headers)
+        assert me.status_code == 200
+        await self._backdate_password(app_state, user["id"], days=61)
+        resp = await client.get("/api/v1/auth/me", headers=headers)
+        assert resp.status_code == 403
+        assert resp.json()["detail"]["error"] == "password_expired"
+
+    async def test_expired_session_refused_on_config(
+        self, client, app, db, app_state, monkeypatch
+    ):
+        """The optional-auth gate signals expiry too — /config must not
+        silently degrade an expired session to the anonymous view."""
+        monkeypatch.setattr(app.state.settings, "password_max_age_days", 60)
+        user = await self._fresh_user(app_state, "midcfg@example.com")
+        headers = await self._login_token(client, "midcfg@example.com")
+        await self._backdate_password(app_state, user["id"], days=61)
+        resp = await client.get("/api/v1/config", headers=headers)
+        assert resp.status_code == 403
+        assert resp.json()["detail"]["error"] == "password_expired"
+
+    async def test_change_expired_password_lockout(
+        self, client, app, db, app_state
+    ):
+        """Repeated wrong current-passwords on the rotation endpoint
+        trip the same lockout as /auth/login (shared counter)."""
+        await self._fresh_user(app_state, "lockrot@example.com", "oldpass")
+        failures = app_state.state.settings.login_lockout_failures
+        for i in range(failures):
+            resp = await client.post(
+                "/api/v1/auth/change-expired-password",
+                json={
+                    "identifier": "lockrot@example.com",
+                    "current_password": "wrong",
+                    "new_password": "freshpass1",
+                },
+            )
+            assert resp.status_code == (401 if i < failures - 1 else 429)
+
+    async def test_change_expired_password_disabled_in_oidc_mode(
+        self, client, app, db, monkeypatch
+    ):
+        """The rotation endpoint is a password login — refused when
+        password auth is off (oidc-only deploy)."""
+        monkeypatch.setattr(app.state.oidc, "auth_modes", lambda: "oidc")
+        resp = await client.post(
+            "/api/v1/auth/change-expired-password",
+            json={
+                "identifier": "anyone@example.com",
+                "current_password": "whatever1",
+                "new_password": "freshpass1",
+            },
+        )
+        assert resp.status_code == 403
+        assert resp.json()["detail"] == "Password login is disabled"
+
+
 class TestForgotPassword:
     async def _create_user(self, app_state):
         password_hash = auth_mod.hash_password("oldpass")

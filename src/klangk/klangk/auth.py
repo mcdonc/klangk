@@ -667,6 +667,8 @@ class Auth:
             return
         remaining = timedelta(hours=hours) - (datetime.now(timezone.utc) - ts)
         if remaining > timedelta(0):
+            # Ceiling division: the wait reads "in about N hour(s)",
+            # and a 25-minute remainder is still an hour of waiting.
             wait = max(1, -(-int(remaining.total_seconds()) // 3600))
             raise HTTPException(
                 status_code=400,
@@ -1147,14 +1149,16 @@ class Auth:
     ) -> TokenResponse:
         """Replace an expired password and mint the session (#3177).
 
-        Deliberately exempt from the minimum age (V-222544): an expired
-        password (V-222545) must be changeable the moment it expires —
-        the expiry check in :meth:`_authenticated_expired_user` is what
-        keeps that exemption from widening into a bypass. Auto-logins
-        on success (same posture as reset-password) so clients finish
-        in one round trip.
+        The minimum age (V-222544) is still validated below, but that
+        is free for any sane config: when min ≤ max, an expired
+        password is necessarily past the minimum too, so the check
+        never fires — it only stops a min > max misconfig from turning
+        the expiry flow into a change-password/history-cycling bypass.
+        Auto-logins on success (same posture as reset-password) so
+        clients finish in one round trip.
         """
         user = await self._authenticated_expired_user(req)
+        self.validate_password_min_age(user)
         self.validate_password(req.new_password)
         await self.validate_password_not_reused(user["id"], req.new_password)
         password_hash = await asyncio.to_thread(
@@ -1419,16 +1423,26 @@ class Auth:
         user = await self.app.state.model.users.get_user_by_id(user_id)
         if user is None:
             return None
-        # Disabled accounts keep their WS connections shut (#2588):
-        # returning None rejects the connect like any dead token.
-        if user.get("disabled"):
+        # Disabled (#2588) and password-expired (#3177) accounts keep
+        # their WS connections shut: returning None rejects the connect
+        # like any dead token, and the client logs out on the 4001 close.
+        reason = self._ws_token_reject_reason(user)
+        if reason is not None:
             logger.info(
-                "token reject: ACCOUNT DISABLED -> WS will close 4001"
-                " -> client logout"
+                "token reject: %s -> WS will close 4001 -> client logout",
+                reason,
             )
             return None
         await self.record_activity(user_id)
         return user
+
+    def _ws_token_reject_reason(self, user: dict) -> str | None:
+        """Why a WS auth must reject *user*; ``None`` when acceptable."""
+        if user.get("disabled"):
+            return "ACCOUNT DISABLED"
+        if self.password_expired(user):
+            return "PASSWORD EXPIRED"
+        return None
 
     async def get_user_from_token(self, token: str) -> dict | str | None:
         """Validate a token string (used for WebSocket auth).
@@ -1517,6 +1531,11 @@ async def get_current_user(
         # A disabled account fails every authenticated request (#2588);
         # 403 (not 401) so clients don't loop on refresh/relogin.
         ensure_not_disabled(user)
+        # So does an expired password (#3177) — same posture as disabled,
+        # with the machine-readable expiry detail so clients can route
+        # to the set-new-password flow instead of looping on refresh.
+        if auth.password_expired(user):
+            raise password_expired_error()
         await auth.record_activity(user["id"])
         return user
     except JWTError:
@@ -1542,8 +1561,11 @@ async def get_current_user_optional(
             return None
         # Valid credentials on a disabled account still 403 (#2588) —
         # returning None here would silently degrade /config to the
-        # anonymous view and hide the reason from the client.
+        # anonymous view and hide the reason from the client. An
+        # expired password (#3177) signals the same way.
         ensure_not_disabled(user)
+        if auth.password_expired(user):
+            raise password_expired_error()
         await auth.record_activity(user["id"])
         return user
     except JWTError:

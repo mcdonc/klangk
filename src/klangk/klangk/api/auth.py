@@ -638,6 +638,10 @@ async def change_expired_password(
     one round trip. The *login* endpoint signals expiry (403 with
     ``detail.error = "password_expired"``); this endpoint resolves it.
     """
+    if not request.app.state.oidc.password_login_allowed():
+        raise HTTPException(
+            status_code=403, detail="Password login is disabled"
+        )
     source_ip, user_agent = workstation(request)
     return await request.app.state.auth.change_expired_password(
         req, source_ip=source_ip, user_agent=user_agent

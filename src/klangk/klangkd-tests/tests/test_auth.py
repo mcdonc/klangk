@@ -853,6 +853,33 @@ class TestTokenValidation:
         assert result is not None
         assert result["id"] == user["id"]
 
+    async def test_expired_password_rejected_on_ws(
+        self, app_state, db, monkeypatch
+    ):
+        """An expired password rejects WS auth like a dead token (#3177),
+        mirroring the disabled-account treatment (#2588)."""
+        monkeypatch.setattr(
+            app_state.state.settings,
+            "password_max_age_days",
+            60,
+            raising=False,
+        )
+        a = Auth(app_state)
+        pw_hash = auth.hash_password("testpass")
+        user = await app_state.state.model.users.create_user(
+            "ws-exp@example.com", pw_hash, verified=True
+        )
+        token = a.create_token(user["id"], user["email"])
+        assert await a.get_user_from_token(token) is not None
+        old = (datetime.now(timezone.utc) - timedelta(days=61)).isoformat()
+        async with app_state.state.db.transaction() as raw_db:
+            await raw_db.execute(
+                "UPDATE users SET password_set_at = ?, created_at = ?"
+                " WHERE id = ?",
+                (old, old, user["id"]),
+            )
+        assert await a.get_user_from_token(token) is None
+
     async def test_get_user_from_invalid_token(self, db):
         result = await _auth().get_user_from_token("invalid.token.here")
         assert result is None
@@ -2471,6 +2498,37 @@ class TestChangeExpiredPassword:
             )
         assert exc_info.value.status_code == 403
         assert "not verified" in exc_info.value.detail
+
+    async def test_rejects_rotation_when_min_age_exceeds_max(
+        self, app_state, db, monkeypatch
+    ):
+        """A min > max misconfig cannot turn the expiry flow into a
+        change-password / history-cycling bypass — the rotation still
+        validates the minimum age."""
+        monkeypatch.setattr(
+            app_state.state.settings,
+            "password_max_age_days",
+            1,
+            raising=False,
+        )
+        monkeypatch.setattr(
+            app_state.state.settings,
+            "password_min_age_hours",
+            720,
+            raising=False,
+        )
+        a = Auth(app_state)
+        await self._expired_user(app_state, days_ago=2)
+        with pytest.raises(HTTPException) as exc_info:
+            await a.change_expired_password(
+                auth.ChangeExpiredPasswordRequest(
+                    identifier="rotate@example.com",
+                    current_password="oldpass",
+                    new_password="freshpass1",
+                )
+            )
+        assert exc_info.value.status_code == 400
+        assert "hour" in exc_info.value.detail
 
     async def test_password_set_at_stamped_after_rotation(
         self, app_state, db, monkeypatch

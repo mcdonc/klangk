@@ -881,10 +881,11 @@ class KlangkSettings(BaseSettings):
     # changes. Reloadable on SIGHUP.
     password_min_age_hours: int = 0
     # Maximum password age (STIG V-222545): how many days a password may
-    # live before login and token refresh refuse a session until the
-    # password is changed (a machine-readable "password expired" error;
-    # local password accounts only — OIDC users have no klangk
-    # password). 0 (the default) disables expiry. 60 is the documented
+    # live before login, token refresh, and — like a disabled account
+    # (#2588) — the next authenticated request / WS connect refuse a
+    # session until the password is changed (a machine-readable
+    # "password expired" error; local password accounts only — OIDC
+    # users have no klangk password). 0 (the default) disables expiry. 60 is the documented
     # STIG value. Capped at 3650 (10 years) to keep a typo'd value from
     # meaning "never". Reloadable on SIGHUP.
     password_max_age_days: int = 0

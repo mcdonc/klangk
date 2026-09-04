@@ -1158,8 +1158,13 @@ V-222545, #3177) and auto-login. Takes the identifier (email or
 handle), the current — expired — password as the ownership proof, and
 the new password. Lockout-accounted like login; rejected with `400`
 when the password has **not** expired (so it cannot serve as a general
-change-password bypass). Local password accounts only — OIDC logins
-are unaffected by password expiry.
+change-password bypass). Refused with `403` when password login is
+disabled (`oidc`-only mode), like `/auth/login`. Local password
+accounts only — OIDC logins are unaffected by password expiry. An
+expired password also fails the next authenticated request and
+WebSocket connect on any already-minted token (same posture as a
+disabled account), so expiry takes effect mid-session, not just at
+the next refresh.
 
 **Auth:** None.
 

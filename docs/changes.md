@@ -655,9 +655,11 @@ sync` report a clear permission-denied error.
   Password age policy closing ASD STIG V-222544/V-222545: how many hours a
   password must be kept before a self-service change or forgot-password
   reset (admin resets bypass), and how many days before it expires. An
-  expired password is refused at login and token refresh with a
-  machine-readable `403`; the CLI and TUI login flows then prompt for a
-  new password (`POST /auth/change-expired-password`, which auto-logins).
+  expired password is refused at login, token refresh, and — like a
+  disabled account — on the next authenticated request and WebSocket
+  connect, with a machine-readable `403`; the CLI and TUI login flows
+  then prompt for a new password (`POST /auth/change-expired-password`,
+  which auto-logins and is refused when password login is disabled).
   Local password accounts only — OIDC logins are unaffected. Both default
   to `0` (disabled); the STIG values are `24` hours / `60` days. Reloadable
   on SIGHUP; passwords set before the upgrade age from account creation.
