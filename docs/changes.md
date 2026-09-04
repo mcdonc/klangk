@@ -25,11 +25,11 @@ A `Breaking` subsection may appear under any version for changes that require
 operators or integrators to act when upgrading.
 
 <!-- The release workflow prepends each released version's section to its GitHub
-     Release body. Keep one `## [<version>]` section per release; unreleased
-     changes accumulate under `## [Unreleased]`. The opening bracket in these
-     headings is escaped (`## \[...]`) so the docs build does not parse them
-     as Markdown link references (#3142); they render as plain `[...]` text
-     and the release workflow matches both the escaped and bare forms. -->
+     Release body. Keep one `## \[<version>]` section per release; unreleased
+     changes accumulate under `## \[Unreleased]`. The opening bracket in these
+     headings is escaped so the docs build does not parse them as Markdown
+     link references (#3142); they render as plain `[...]` text and the
+     release workflow matches both the escaped and bare forms. -->
 
 ## \[Unreleased]
 
