@@ -32,6 +32,19 @@ operators or integrators to act when upgrading.
 
 ### Breaking
 
+- **Members can create workspaces by default (#3137).** The seeded
+  `create-workspace` Allow on `/workspaces` now targets the `members`
+  group (which every new user joins) in addition to `admins`, so a
+  stock multi-user deploy is self-service out of the box — bounded by
+  the admission/quota controls (`KLANGKD_ADMISSION_*`,
+  `max_running_workspaces_per_user`, `volume_quota_per_user`) and
+  `allowed_images` / `allowed_mount_roots`. **On upgrade, migration
+  m0029 appends the grant after any existing `/workspaces` rows**, so
+  existing deployments flip too; a deploy that wants the old
+  admin-only posture adds one explicit Deny for `members` (or
+  `Authenticated`) ahead of the Allow in the ACL editor. See
+  [ACL System](https://klangk.github.io/klangk/reference/acl/).
+
 - **Per-workspace sudo is now opt-in (#3046, #3047).** `KLANGKD_ALLOW_SUDO`
   no longer grants passwordless sudo by itself — it is now only the
   ceiling that permits a workspace to opt in. Sudo is on for a workspace

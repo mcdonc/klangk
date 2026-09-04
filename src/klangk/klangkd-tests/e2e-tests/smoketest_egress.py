@@ -1320,9 +1320,11 @@ class SmokeTest:
     def _ensure_member(server: dict, admin: dict) -> None:
         """Create the plain member user for --as-member (idempotent).
 
-        The member is deliberately NOT added to any instance group: no
-        admins membership, no manage-* grants -- consent authority must
-        come from the workspace ACL alone (#2976). A 400 "already
+        The member gets no admin membership and no manage-* grants --
+        consent authority must come from the workspace ACL alone
+        (#2976). Since #2569 registration auto-joins the ``members``
+        group (instance-role, no permissions beyond the #3137
+        create-workspace seed). A 400 "already
         registered" (a rerun against the same server) is tolerated.
         """
         client = httpx.Client(
@@ -1427,10 +1429,11 @@ class SmokeTest:
     async def _new_workspace(self, *args, **kwargs) -> str:
         """Create a workspace the acting identity can use.
 
-        Creation always runs as the bootstrap (admin) identity --
-        `create-workspace` is admin-gated (#2569) -- and under --as-member
-        the workspace is then shared to the member's coders role so the
-        member's decider/terminal connections on it are authorized.
+        Creation always runs as the bootstrap (admin) identity
+        (deterministic ownership for the share-based --as-member
+        wiring) -- and under --as-member the workspace is then shared
+        to the member's coders role so the member's decider/terminal
+        connections on it are authorized.
         """
         ws_id = await asyncio.to_thread(
             self._create_workspace,

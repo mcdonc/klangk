@@ -66,30 +66,39 @@ Groups tab (create, edit, delete, member management) is gated by
 **Allow** entry for the `manage-groups` permission on the `/groups`
 resource targeting the group of your choice via the ACL editor — the
 same recipe as
-[workspace creation](#granting-workspace-creation-to-non-admin-users).
+[workspace creation](#restricting-workspace-creation).
 
 ## Default access rules
 
 On first startup, Klangk seeds these defaults:
 
 - Any logged-in user can view pages
-- Only members of the `admins` group can create workspaces, create
-  groups, or access admin functions
+- Any logged-in user can create workspaces (#3137 — every user
+  created since #2569 joins the `members` group, which holds the
+  seeded `create-workspace` Allow on `/workspaces`; users created
+  before #2569 on an upgraded deployment never joined retroactively —
+  grant `Authenticated` instead of `members` to cover them)
+- Only members of the `admins` group can create groups or access
+  admin functions
 - Unauthenticated users are denied everything
 
-## Granting workspace creation to non-admin users
+## Restricting workspace creation
 
-To let members (or another group) create workspaces:
+Workspace creation is self-service by default. To restore the
+pre-#3137 admin-only posture (or scope creation to a narrower group):
 
 1. Open the **Admin** panel and navigate to the **ACL** editor.
 2. Select the `/workspaces` resource.
-3. Add an **Allow** entry for the `create-workspace` permission, targeting the
-   `members` group (or any other group).
-4. Ensure the new entry's position is lower (checked first) than any
-   Deny entry on the same resource.
+3. Add a **Deny** entry for the `create-workspace` permission, targeting
+   the `members` group (or the **Authenticated** system principal),
+   positioned ahead of the seeded members Allow row — the ACL walk is
+   first-match-wins. To allow a narrower set instead, delete the
+   members Allow row and add an **Allow** entry targeting the group of
+   your choice.
 
 The create and import buttons in the web UI will automatically appear
-for users who gain the `create-workspace` permission.
+or disappear for users as their effective `create-workspace`
+permission changes.
 
 ## Learn more
 

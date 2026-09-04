@@ -2182,8 +2182,10 @@ class TestChangeEmail:
 class TestWorkspaceRoutes:
     @pytest.fixture(autouse=True)
     async def _make_user_admin(self, ws_admin):
-        """#2569: workspace creation requires admin; make the standard
-        test user an admin so existing tests keep working."""
+        """#2569 heritage: make the standard test user an admin so the
+        class's admin-surface tests (ACL editor reads/writes, member
+        management, ...) keep working. Creation itself no longer needs
+        it (#3137)."""
 
     async def test_list_empty(self, client, user):
         headers = await _auth_headers(client)
@@ -2379,10 +2381,12 @@ class TestWorkspaceRoutes:
         assert data["name"] == "test-ws"
         assert "id" in data
 
-    async def test_create_workspace_non_admin_denied(
+    async def test_create_workspace_member_allowed_by_default(
         self, client, user, app_state
     ):
-        """#2569: non-admin users cannot create workspaces."""
+        """#3137: a plain member (non-admin) can create workspaces on a
+        stock deploy — the members group holds the seeded
+        create-workspace grant."""
         from klangk.auth import hash_password
 
         pw_hash = hash_password("testpass")
@@ -2393,6 +2397,56 @@ class TestWorkspaceRoutes:
             "/api/v1/auth/login",
             json={
                 "identifier": "nonadmin@example.com",
+                "password": "testpass",
+            },
+        )
+        token = resp.json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+        resp = await client.post(
+            "/api/v1/workspaces", headers=headers, json={"name": "member-ws"}
+        )
+        assert resp.status_code == 200
+        assert resp.json()["name"] == "member-ws"
+
+    async def test_create_workspace_explicit_deny_restores_admin_only(
+        self, client, user, app_state
+    ):
+        """#3137: an explicit Deny for the members group ahead of the
+        seeded Allow restores the pre-#3137 admin-only posture
+        (ordered ACL, first-match-wins)."""
+        from klangk.auth import hash_password
+        from klangk.model import (
+            ACTION_DENY,
+            PRINCIPAL_GROUP,
+        )
+
+        members = await app_state.state.model.users.get_group_by_name(
+            "members"
+        )
+        # Stage the Deny at position 1 (ahead of the seeded Allow,
+        # which shifts to position 2).
+        async with app_state.state.db.transaction() as tx:
+            await tx.execute(
+                "UPDATE acl_entries SET position = position + 1"
+                " WHERE resource = '/workspaces' AND position >= 1"
+            )
+        await app_state.state.model.acl.add_acl_entry(
+            "/workspaces",
+            1,
+            ACTION_DENY,
+            "create-workspace",
+            PRINCIPAL_GROUP,
+            group_id=members["id"],
+        )
+
+        pw_hash = hash_password("testpass")
+        await app_state.state.model.users.create_user(
+            "denied-member@example.com", pw_hash, verified=True
+        )
+        resp = await client.post(
+            "/api/v1/auth/login",
+            json={
+                "identifier": "denied-member@example.com",
                 "password": "testpass",
             },
         )

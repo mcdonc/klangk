@@ -89,6 +89,7 @@ class TestRunner:
             (26, "0026_volumes_admin_surface"),
             (27, "0027_retire_admin_marker"),
             (28, "0028_invitations_pending_unique"),
+            (29, "0029_members_create_workspace"),
         ]
         async with aiosqlite.connect(str(app_state.state.db.db_path)) as db:
             assert await _recorded(db) == expected
@@ -183,6 +184,7 @@ class TestRunner:
                 (26, "0026_volumes_admin_surface"),
                 (27, "0027_retire_admin_marker"),
                 (28, "0028_invitations_pending_unique"),
+                (29, "0029_members_create_workspace"),
             ]
 
     async def test_m0008_agent_identity_and_human_collision(
@@ -3124,6 +3126,221 @@ class TestM0028InvitationsPendingUnique:
             await m0028_invitations_pending_unique.migration.apply(db)
             assert await self._statuses(db, "c@b.com") == [
                 ("solo", "accepted")
+            ]
+        finally:
+            await db.__aexit__(None, None, None)
+
+
+class TestM0029MembersCreateWorkspace:
+    """m0029 appends the #3137 members create-workspace grant on
+    existing deployments (Allow group:members create-workspace at the
+    end of /workspaces), creating the group when missing."""
+
+    async def _db(self, tmp_path):
+        db = aiosqlite.connect(str(tmp_path / "m0029.db"))
+        db = await db.__aenter__()
+        await db.execute(
+            "CREATE TABLE acl_entries ("
+            " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            " resource TEXT, position INTEGER, action INTEGER,"
+            " principal_type INTEGER, user_id TEXT, group_id TEXT,"
+            " system_principal INTEGER, permission TEXT,"
+            " UNIQUE(resource, position))"
+        )
+        await db.execute(
+            "CREATE TABLE groups ("
+            " id TEXT PRIMARY KEY, name TEXT UNIQUE,"
+            " description TEXT, source TEXT, created_at TEXT)"
+        )
+        return db
+
+    async def _rows(self, db, resource) -> list[tuple]:
+        cursor = await db.execute(
+            "SELECT position, action, principal_type, group_id,"
+            " system_principal, permission"
+            " FROM acl_entries WHERE resource = ? ORDER BY position",
+            (resource,),
+        )
+        return list(await cursor.fetchall())
+
+    async def _seed_stock(self, db, admins_id="g-a", members_id="g-m"):
+        """The stock #2569 shape: Allow create-workspace admins @0 on
+        /workspaces plus the root pair. ``members_id=None`` skips the
+        members group row (pre-#2569 database)."""
+        await db.execute(
+            "INSERT INTO acl_entries"
+            " (resource, position, action, principal_type, group_id,"
+            "  permission)"
+            " VALUES ('/workspaces', 0, 1, 2, ?, 'create-workspace'),"
+            "        ('/', 0, 1, 0, NULL, 'view'),"
+            "        ('/', 1, 0, 0, NULL, '*')",
+            (admins_id,),
+        )
+        await db.execute(
+            "INSERT INTO groups (id, name) VALUES (?, 'admins')",
+            (admins_id,),
+        )
+        if members_id is not None:
+            await db.execute(
+                "INSERT INTO groups (id, name) VALUES (?, 'members')",
+                (members_id,),
+            )
+
+    async def test_upgraded_db_gets_the_members_grant(self, tmp_path):
+        from klangk.model.migrations import m0029_members_create_workspace
+
+        db = await self._db(tmp_path)
+        try:
+            await self._seed_stock(db)
+            await db.commit()
+            await m0029_members_create_workspace.migration.apply(db)
+
+            # The grant lands at position 1 — the fresh-seed layout.
+            assert await self._rows(db, "/workspaces") == [
+                (
+                    0,
+                    ACTION_ALLOW,
+                    PRINCIPAL_GROUP,
+                    "g-a",
+                    None,
+                    "create-workspace",
+                ),
+                (
+                    1,
+                    ACTION_ALLOW,
+                    PRINCIPAL_GROUP,
+                    "g-m",
+                    None,
+                    "create-workspace",
+                ),
+            ]
+            # Idempotent: a re-run inserts nothing.
+            await m0029_members_create_workspace.migration.apply(db)
+            assert len(await self._rows(db, "/workspaces")) == 2
+        finally:
+            await db.__aexit__(None, None, None)
+
+    async def test_fresh_db_is_noop(self, tmp_path):
+        """An empty acl_entries table belongs to the boot seeds."""
+        from klangk.model.migrations import m0029_members_create_workspace
+
+        db = await self._db(tmp_path)
+        try:
+            await m0029_members_create_workspace.migration.apply(db)
+            cursor = await db.execute("SELECT COUNT(*) FROM acl_entries")
+            assert (await cursor.fetchone())[0] == 0
+            cursor = await db.execute("SELECT COUNT(*) FROM groups")
+            assert (await cursor.fetchone())[0] == 0
+        finally:
+            await db.__aexit__(None, None, None)
+
+    async def test_creates_missing_members_group(self, tmp_path):
+        """A pre-#2569 database with no members row gets the group."""
+        from klangk.model.migrations import m0029_members_create_workspace
+
+        db = await self._db(tmp_path)
+        try:
+            await self._seed_stock(db, members_id=None)
+            await db.commit()
+            await m0029_members_create_workspace.migration.apply(db)
+
+            cursor = await db.execute(
+                "SELECT description FROM groups WHERE name = 'members'"
+            )
+            assert await cursor.fetchone() == ("All regular users",)
+            rows = await self._rows(db, "/workspaces")
+            assert len(rows) == 2
+            assert rows[1][5] == "create-workspace"
+            # The new row points at the group that was created.
+            cursor = await db.execute(
+                "SELECT 1 FROM acl_entries e JOIN groups g"
+                " ON e.group_id = g.id WHERE g.name = 'members'"
+                " AND e.permission = 'create-workspace'"
+            )
+            assert await cursor.fetchone() is not None
+        finally:
+            await db.__aexit__(None, None, None)
+
+    async def test_operator_grant_not_duplicated(self, tmp_path):
+        """An operator who already granted members create-workspace
+        (or a re-run after a partial apply) inserts nothing."""
+        from klangk.model.migrations import m0029_members_create_workspace
+
+        db = await self._db(tmp_path)
+        try:
+            await self._seed_stock(db)
+            await db.execute(
+                "INSERT INTO acl_entries"
+                " (resource, position, action, principal_type, group_id,"
+                "  permission)"
+                " VALUES ('/workspaces', 1, 1, 2, 'g-m',"
+                "         'create-workspace')"
+            )
+            await db.commit()
+            await m0029_members_create_workspace.migration.apply(db)
+            assert len(await self._rows(db, "/workspaces")) == 2
+        finally:
+            await db.__aexit__(None, None, None)
+
+    async def test_operator_deny_stays_ahead(self, tmp_path):
+        """A staged Deny keeps first-match-wins priority: the grant
+        appends after it, never between it and the admins row."""
+        from klangk.model.migrations import m0029_members_create_workspace
+
+        db = await self._db(tmp_path)
+        try:
+            await self._seed_stock(db)
+            # The documented old-posture recipe: Deny create-workspace
+            # for members (action 0), plus a scoped Allow for another
+            # group at position 2.
+            await db.execute(
+                "INSERT INTO acl_entries"
+                " (resource, position, action, principal_type, group_id,"
+                "  permission)"
+                " VALUES ('/workspaces', 1, 0, 2, 'g-m',"
+                "         'create-workspace'),"
+                "        ('/workspaces', 2, 1, 2, 'g-x',"
+                "         'create-workspace')",
+            )
+            await db.execute(
+                "INSERT INTO groups (id, name) VALUES ('g-x', 'devs')"
+            )
+            await db.commit()
+            await m0029_members_create_workspace.migration.apply(db)
+
+            assert await self._rows(db, "/workspaces") == [
+                (
+                    0,
+                    ACTION_ALLOW,
+                    PRINCIPAL_GROUP,
+                    "g-a",
+                    None,
+                    "create-workspace",
+                ),
+                (
+                    1,
+                    ACTION_DENY,
+                    PRINCIPAL_GROUP,
+                    "g-m",
+                    None,
+                    "create-workspace",
+                ),
+                (
+                    2,
+                    ACTION_ALLOW,
+                    PRINCIPAL_GROUP,
+                    "g-x",
+                    None,
+                    "create-workspace",
+                ),
+                (
+                    3,
+                    ACTION_ALLOW,
+                    PRINCIPAL_GROUP,
+                    "g-m",
+                    None,
+                    "create-workspace",
+                ),
             ]
         finally:
             await db.__aexit__(None, None, None)

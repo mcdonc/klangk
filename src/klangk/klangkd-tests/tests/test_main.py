@@ -241,7 +241,21 @@ class TestSeedDefaultAcls:
         Deny everyone; #2995: no /admin marker tree is seeded."""
         lifecycle = _lifecycle(make_settings({}))
         admin_group_id = await lifecycle.ensure_admin_group()
-        await lifecycle.seed_default_acls(admin_group_id)
+        members_group_id = await lifecycle.ensure_members_group()
+        await lifecycle.seed_default_acls(admin_group_id, members_group_id)
+
+        # #3137: /workspaces seeds Allow create-workspace for admins
+        # @0 AND members @1 (self-service default).
+        workspaces = await app_state.state.model.acl.get_acl_entries(
+            "/workspaces"
+        )
+        assert [
+            (e["position"], e["permission"], e["group_id"], e["action"])
+            for e in workspaces
+        ] == [
+            (0, "create-workspace", admin_group_id, model.ACTION_ALLOW),
+            (1, "create-workspace", members_group_id, model.ACTION_ALLOW),
+        ]
 
         for resource, permission in (
             # NB: /users is checked separately below — it carries the
