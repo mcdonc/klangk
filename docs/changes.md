@@ -1978,6 +1978,14 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Workspace settings panel name validation (#3130).** Clearing the
+  _Name_ field and tapping _Save_ used to fail the whole panel update
+  with an opaque `Failed: Error: 422`, blocking every other field from
+  saving until a name was re-entered. The blank name is now rejected
+  inline on the field (same message as the server's rule, #3110), and
+  validation-style API errors render their actual message instead of a
+  bare status code.
+
 - **Sandbox `copy` specs with extra colon segments are rejected (#3119).**
   A `.klangk-sandbox.yaml` `copy:` entry like `notes.txt:~/notes.txt:ro`
   used to silently drop the trailing `:ro` and copy anyway; it now fails

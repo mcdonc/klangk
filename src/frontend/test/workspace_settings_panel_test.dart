@@ -59,7 +59,7 @@ const _workspace = {
 /// the defaults serve the workspace list, images, and a 200 PUT on save.
 http.Client _client({
   Map<String, dynamic>? workspace,
-  Map<String, String>? saveResponse,
+  Map<String, dynamic>? saveResponse,
   int saveStatus = 200,
   int exportStatus = 200,
   bool imagesFail = false,
@@ -1365,6 +1365,116 @@ void main() {
       expect(find.textContaining('Failed'), findsOneWidget);
       expect(find.textContaining('bad mounts'), findsOneWidget);
       // Drain the 2s auto-clear timer (see save-success test).
+      await tester.pumpAndSettle();
+    });
+
+    testWidgets(
+        'a cleared Name blocks the save inline and sends no PUT (#3130)',
+        (tester) async {
+      var puts = 0;
+      testAuthHttpClientOverride = MockClient((request) async {
+        final p = request.url.path;
+        if (p == '/api/v1/config') {
+          return http.Response(jsonEncode({}), 200);
+        }
+        if (p == '/api/v1/workspaces') {
+          return http.Response(jsonEncode([_workspace]), 200);
+        }
+        if (p == '/api/v1/workspaces/shared') {
+          return http.Response(jsonEncode([]), 200);
+        }
+        if (p == '/api/v1/images') {
+          return http.Response(
+            jsonEncode({
+              'default': 'klangk-pi',
+              'allowed': ['klangk-pi'],
+            }),
+            200,
+          );
+        }
+        if (p == '/api/v1/workspaces/$_wsId' && request.method == 'PUT') {
+          puts++;
+          return http.Response(jsonEncode({'status': 'updated'}), 200);
+        }
+        return http.Response('not found', 404);
+      });
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      // Clear the Name field and try to save.
+      final nameField = find.byWidgetPredicate(
+        (w) => w is TextField && w.decoration?.labelText == 'Name',
+      );
+      await tester.enterText(nameField, '');
+      // Unfocus so the focused field's keep-visible doesn't fight the
+      // scroll-to-Save below (settle its animated scroll fully).
+      FocusManager.instance.primaryFocus?.unfocus();
+      await tester.pumpAndSettle();
+      await _scrollToAndTap(tester, find.text('Save'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // The guard fired: inline validation on the field, no PUT sent, no
+      // blanket failure banner.
+      expect(
+        tester.widget<TextField>(nameField).decoration?.errorText,
+        'Workspace name cannot be empty or only whitespace',
+      );
+      expect(puts, 0);
+      expect(find.textContaining('Failed'), findsNothing);
+
+      // Typing a name clears the error; the save then goes through.
+      await tester.enterText(nameField, 'renamed-ws');
+      FocusManager.instance.primaryFocus?.unfocus();
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<TextField>(nameField).decoration?.errorText,
+        isNull,
+      );
+      await _scrollToAndTap(tester, find.text('Save'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(puts, 1);
+      expect(find.text('Settings saved'), findsOneWidget);
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pumpAndSettle();
+    });
+
+    testWidgets(
+        'save failure renders a 422 detail list instead of a bare code '
+        '(#3130)', (tester) async {
+      // FastAPI/Pydantic validation errors put a list of error objects
+      // under detail — the message must surface the first msg (minus
+      // Pydantic's "Value error, " prefix), not degrade to "Error: 422".
+      testAuthHttpClientOverride = _client(
+        saveStatus: 422,
+        saveResponse: <String, dynamic>{
+          'detail': [
+            {
+              'type': 'value_error',
+              'loc': ['body', 'name'],
+              'msg': 'Value error, Workspace name cannot be empty or only '
+                  'whitespace',
+              'input': '',
+            }
+          ]
+        },
+      );
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      await _scrollToAndTap(tester, find.text('Save'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.textContaining('Failed'), findsOneWidget);
+      expect(
+        find.textContaining('Workspace name cannot be empty'),
+        findsOneWidget,
+      );
+      // The raw Pydantic prefix is stripped.
+      expect(find.textContaining('Value error'), findsNothing);
       await tester.pumpAndSettle();
     });
 
