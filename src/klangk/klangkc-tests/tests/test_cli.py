@@ -4463,10 +4463,16 @@ class TestMonitor:
         assert env["KLANGK_HEALTH_SEQ"] == "7"
 
     @pytest.mark.asyncio
-    async def test_command_not_found_propagates(self, monkeypatch):
-        # A missing command binary propagates FileNotFoundError out of
-        # the single-connection loop (the runner turns it into an exit).
-        from klangk.cli.main import monitor_connection
+    @pytest.mark.parametrize(
+        "spawn_error", [FileNotFoundError, PermissionError]
+    )
+    async def test_command_spawn_failure_raises_hook_error(
+        self, monkeypatch, spawn_error
+    ):
+        # A hook command that cannot be spawned raises HookCommandError
+        # (not a bare OSError) out of the single-connection loop, so the
+        # reconnect handler treats it as fatal (#3092).
+        from klangk.cli.main import HookCommandError, monitor_connection
 
         event = {
             "type": "service_health",
@@ -4480,9 +4486,9 @@ class TestMonitor:
         ):
             monkeypatch.setattr(
                 "klangk.cli.main.subprocess.run",
-                MagicMock(side_effect=FileNotFoundError()),
+                MagicMock(side_effect=spawn_error()),
             )
-            with pytest.raises(FileNotFoundError):
+            with pytest.raises(HookCommandError) as exc_info:
                 await monitor_connection(
                     "http://x",
                     "tok",
@@ -4491,6 +4497,41 @@ class TestMonitor:
                     types=[],
                     workspaces=[],
                 )
+        assert isinstance(exc_info.value.__cause__, spawn_error)
+        assert "nope" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_hook_error_ends_reconnect_loop(self):
+        # A spawn failure is not a network error: monitor_run must let
+        # HookCommandError fly out instead of reconnecting forever (#3092).
+        from klangk.cli import main as main_mod
+        from klangk.cli.main import HookCommandError
+
+        calls = {"conn": 0}
+
+        async def fake_conn(*args, **kwargs):
+            calls["conn"] += 1
+            raise HookCommandError("cannot run hook command 'nope'")
+
+        async def fake_sleep(delay):
+            pytest.fail("a broken hook command must not trigger backoff")
+
+        with (
+            patch.object(klangk.cli.monitor, "monitor_connection", fake_conn),
+            patch.object(main_mod.asyncio, "sleep", fake_sleep),
+        ):
+            with pytest.raises(HookCommandError):
+                await main_mod.monitor_run(
+                    "http://x",
+                    "tok",
+                    1024,
+                    command=["nope"],
+                    types=[],
+                    workspaces=[],
+                    max_reconnects=None,
+                    max_delay=1.0,
+                )
+        assert calls["conn"] == 1
 
     @pytest.mark.asyncio
     async def test_reconnects_after_disconnect(self):

@@ -6318,6 +6318,26 @@ class TestMonitorCommand:
             assert result.exit_code == 1
             assert "Connection rejected" in result.output
 
+    def test_monitor_hook_command_error_exits(self, logged_in_cfg):
+        from klangk.cli import main
+        from klangk.cli.monitor import HookCommandError
+
+        async def _hook_err(*a, **kw):
+            raise HookCommandError(
+                "cannot run hook command 'nonexistent-hook':"
+                " [Errno 2] No such file or directory: 'nonexistent-hook'"
+            )
+
+        with patch.object(klangk.cli.monitor, "monitor_run", new=_hook_err):
+            from typer.testing import CliRunner
+
+            runner = CliRunner()
+            result = runner.invoke(
+                main.app, ["monitor", "--", "nonexistent-hook"]
+            )
+            assert result.exit_code == 1
+            assert "cannot run hook command" in result.output
+
     def test_monitor_keyboard_interrupt_stops_cleanly(self, logged_in_cfg):
         from klangk.cli import main
 

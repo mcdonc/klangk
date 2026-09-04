@@ -54,6 +54,17 @@ def health_event_env(msg: dict) -> dict[str, str]:
     return env
 
 
+class HookCommandError(Exception):
+    """The hook command could not be spawned (missing binary, etc.).
+
+    Deliberately not an ``OSError`` subclass: the monitor's reconnect
+    handler treats ``OSError`` as a transient network failure, which
+    would make a permanently broken hook command retry forever (#3092).
+    Socket-level ``OSError`` — including a missing UDS socket file while
+    the server restarts — keeps reconnecting as before.
+    """
+
+
 def dispatch_monitor_event(msg: dict, command: list[str]) -> None:
     """Act on one server event.
 
@@ -78,8 +89,15 @@ def dispatch_monitor_event(msg: dict, command: list[str]) -> None:
         env["KLANGK_WORKSPACE_ID"] = str(wid)
     if msg.get("type") == "service_health":
         env.update(health_event_env(msg))
-    # FileNotFoundError (missing binary) propagates to the caller.
-    subprocess.run(command, input=payload.encode(), env=env, check=False)
+    # Spawn failures are permanent configuration errors, not transient
+    # network trouble — wrap them so the reconnect loop lets them end
+    # the run instead of retrying forever (#3092).
+    try:
+        subprocess.run(command, input=payload.encode(), env=env, check=False)
+    except (FileNotFoundError, PermissionError) as exc:
+        raise HookCommandError(
+            f"cannot run hook command {command[0]!r}: {exc}"
+        ) from exc
 
 
 async def monitor_connection(
@@ -214,6 +232,10 @@ async def monitor_run(
     to refresh the JWT via the server's refresh endpoint before
     reconnecting; if refresh fails it keeps retrying with the current
     token so the monitor self-heals once the server/token recovers.
+
+    A hook command that cannot be spawned raises
+    :class:`HookCommandError`, which propagates out of this loop
+    (retrying a permanently broken command would loop forever).
     """
     current_token = token
     context.err.print(
@@ -343,7 +365,9 @@ def monitor(
     The monitor reconnects automatically (by default forever, with
     capped exponential backoff) and refreshes its JWT on auth failures,
     so it survives server restarts and token expiry. Use
-    ``--max-reconnects`` or ``--no-reconnect`` to bound it.
+    ``--max-reconnects`` or ``--no-reconnect`` to bound it. A hook
+    command that cannot be spawned (missing binary, not executable) is
+    fatal: the monitor exits nonzero instead of retrying forever.
 
     \b
     Examples:
@@ -385,6 +409,11 @@ def monitor(
         # A rejection during the very first connect (before the loop's
         # reconnect path is established).
         context.err.print(f"[red]Connection rejected: {e}[/red]")
+        raise typer.Exit(code=1) from None
+    except HookCommandError as e:
+        # A hook command that cannot start is a permanent configuration
+        # error — surface it and stop (#3092).
+        context.err.print(f"[red]{e}[/red]")
         raise typer.Exit(code=1) from None
     except KeyboardInterrupt:
         context.err.print("[dim]Stopped.[/dim]")
