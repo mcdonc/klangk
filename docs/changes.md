@@ -256,6 +256,15 @@ operators or integrators to act when upgrading.
 
 ### Security
 
+- **Bounded rate-limit state for the email cooldowns (#3113).** The
+  per-address cooldown dicts behind
+  `POST /api/v1/auth/forgot-password` and
+  `POST /api/v1/auth/resend-verification` are now capped at 10,000
+  hashed keys, shed oldest-first, and sweep expired entries only when
+  recording. An unauthenticated flood of unique addresses can no longer
+  grow process memory or per-request CPU without bound, and no raw
+  email strings are retained.
+
 - **Forgot-password no longer leaks account existence via SMTP
   failures or response timing (#3114).** `POST
 /api/v1/auth/forgot-password` now answers `"sent"` immediately and

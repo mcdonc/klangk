@@ -1,6 +1,7 @@
 """Authentication routes: register/verify/login/logout, password and email/handle changes, resend-verification, forgot/reset-password, refresh, accept-invite, the proxy auth_request workspace-token validator, and the OIDC login/callback flows (merged from the former oidc_auth submodule)."""
 
 import asyncio
+import hashlib
 import json
 import logging
 import secrets
@@ -214,16 +215,52 @@ def prune_timestamps(
 ) -> None:
     """Evict rate-limit entries older than their cooldown window.
 
-    The resend/reset rate-limit dicts are keyed by email and gain an
-    entry on every request. Without eviction they grow without bound
-    and retain raw email addresses (PII) for the process lifetime,
-    long past the short cooldown window they're needed for. Opportunistically
-    sweeping expired entries on each access bounds both size and retention.
+    The resend/reset rate-limit dicts gain an entry on every recording
+    request, each stamped with the then-current monotonic clock, so
+    insertion order tracks timestamp order (a monotonic clock never
+    steps backwards) and expired entries form a prefix of
+    the dict. Evicting from the head costs O(entries dropped) instead
+    of the O(size) full scan the unauthenticated forgot-password path
+    used to pay on every request (#3113) — a flood of unique fresh
+    addresses could not be bounded by a full scan anyway. Keys are
+    hashes (see :func:`rate_limit_key`), so nothing retained past the
+    window is raw email (PII).
     """
     cutoff = now - cooldown_seconds
-    expired = [email for email, ts in timestamps.items() if ts < cutoff]
-    for email in expired:
-        del timestamps[email]
+    while timestamps:
+        oldest = next(iter(timestamps))
+        if timestamps[oldest] >= cutoff:
+            break
+        del timestamps[oldest]
+
+
+# Upper bound on tracked rate-limit keys per dict. Legitimate traffic
+# stays far below it (distinct addresses within one cooldown window);
+# a flood of unique submitted strings stops growing the dict at the
+# cap, degrading the window to the most recent entries instead of
+# exhausting memory and CPU (#3113).
+RATE_LIMIT_MAX_ENTRIES = 10_000
+
+
+# Per-process random key for rate_limit_key: the dicts are process-local
+# and never persisted, so the key needs no stability beyond the process.
+_RATE_LIMIT_HASH_KEY = secrets.token_bytes(32)
+
+
+def rate_limit_key(email: str) -> str:
+    """Fixed-width rate-limit key for *email*.
+
+    The forgot-password path accepts any submitted string without
+    validation (unknown addresses must behave identically to known
+    ones, #3100), so raw keys would retain attacker-chosen,
+    effectively unbounded-length email strings for the cooldown
+    window. The keyed hash bounds per-entry bytes, is not invertible
+    by dictionary/rainbow attack over a known-user domain, and cannot
+    be correlated across process restarts (#3113).
+    """
+    return hashlib.blake2b(
+        email.encode("utf-8"), key=_RATE_LIMIT_HASH_KEY, digest_size=16
+    ).hexdigest()
 
 
 resend_timestamps: dict[str, float] = {}
@@ -232,14 +269,21 @@ RESEND_COOLDOWN_SECONDS = 60
 
 def _rate_limited(timestamps: dict, cooldown: float, email: str) -> bool:
     """True when *email* hit its per-address cooldown window; otherwise
-    records this attempt. Bounds both size and retention of the window
-    (stale entries are pruned on each call)."""
-    now = time.time()
-    prune_timestamps(timestamps, cooldown, now)
-    last = timestamps.get(email, 0)
+    records this attempt. Bounded regardless of request rate (#3113):
+    the check is one dict hit, expired entries are swept only when
+    recording, and a full dict sheds its oldest entry before inserting
+    — under a unique-address flood the window degrades to the most
+    recent ``RATE_LIMIT_MAX_ENTRIES`` addresses instead of growing
+    without bound."""
+    now = time.monotonic()
+    key = rate_limit_key(email)
+    last = timestamps.get(key, 0)
     if now - last < cooldown:
         return True
-    timestamps[email] = now
+    prune_timestamps(timestamps, cooldown, now)
+    while len(timestamps) >= RATE_LIMIT_MAX_ENTRIES:
+        del timestamps[next(iter(timestamps))]
+    timestamps[key] = now
     return False
 
 

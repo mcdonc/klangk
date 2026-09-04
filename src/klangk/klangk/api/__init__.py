@@ -66,9 +66,11 @@ from . import (
     workspaces as _workspace_routes,
 )
 from .auth import (
+    RATE_LIMIT_MAX_ENTRIES,
     RESET_COOLDOWN_SECONDS,
     RESEND_COOLDOWN_SECONDS,
     prune_timestamps,
+    rate_limit_key,
     reset_timestamps,
     resend_timestamps,
 )
@@ -390,8 +392,10 @@ __all__ = (
     "wshandler",
     # auth rate-limit state (see test_api.py)
     "prune_timestamps",
+    "rate_limit_key",
     "resend_timestamps",
     "reset_timestamps",
     "RESEND_COOLDOWN_SECONDS",
     "RESET_COOLDOWN_SECONDS",
+    "RATE_LIMIT_MAX_ENTRIES",
 )

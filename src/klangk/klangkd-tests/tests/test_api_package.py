@@ -164,8 +164,10 @@ class TestPackagePublicSurface:
             "resend_timestamps",
             "reset_timestamps",
             "prune_timestamps",
+            "rate_limit_key",
             "RESEND_COOLDOWN_SECONDS",
             "RESET_COOLDOWN_SECONDS",
+            "RATE_LIMIT_MAX_ENTRIES",
         ],
     )
     def test_auth_rate_limit_globals_reexported(self, attr):
