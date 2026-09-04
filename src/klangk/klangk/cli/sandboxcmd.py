@@ -13,7 +13,7 @@ import io
 import json
 import shlex
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import typer
 import websockets
@@ -52,9 +52,16 @@ async def copy_sandbox_files(ws, config, sandbox_root, handle) -> None:
             )
             continue
         context.err.print(f"  [dim]copy:[/dim] {host_path} → {container_dest}")
-        parent = str(Path(container_dest).parent)
-        # #3093: quote the paths — a copy destination containing
-        # spaces must round-trip into the sh -c string intact.
+        # #3117: derive the parent with PurePosixPath — the destination
+        # is a container path, and the host ``Path`` flavor
+        # (WindowsPath on a Windows CLI host) mangles POSIX paths.
+        # PurePosixPath (not posixpath.dirname) so a bare relative
+        # dest still yields ``.`` (mkdir -p .) instead of an empty
+        # string that makes mkdir fail and the && chain skip the
+        # copy. #3093: quote the paths — a copy destination
+        # containing spaces must round-trip into the sh -c string
+        # intact.
+        parent = str(PurePosixPath(container_dest).parent)
         stdout_buf = io.BytesIO()
         exit_code = await exec_on_ws(
             ws,

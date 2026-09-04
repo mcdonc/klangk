@@ -1,5 +1,7 @@
 """Tests for klangk sandbox config loading and path resolution."""
 
+from unittest.mock import patch
+
 import pytest
 import yaml
 
@@ -285,3 +287,80 @@ class TestResolveSetupCommand:
         config = SandboxConfig(mount_at="~/project", setup="setup.sh")
         result = resolve_setup_command(config, "admin")
         assert result == "/home/admin/project/setup.sh"
+
+
+class TestCopySandboxFiles:
+    """copy_sandbox_files derives container parents POSIX-style (#3117).
+
+    The destination is a container (POSIX) path; the host ``Path``
+    flavor must never touch it — on a Windows CLI host
+    ``WindowsPath('/home/admin/sub dir').parent`` yields
+    backslash-flavored parents and drive-letter semantics.
+    """
+
+    async def test_parent_is_posix_with_spaces(self, tmp_path):
+        from klangk.cli import sandboxcmd
+
+        src = tmp_path / "file.txt"
+        src.write_text("data")
+        config = SandboxConfig(copy=[f"{src}:~/sub dir/file.txt"])
+        commands = []
+
+        async def fake_exec_on_ws(ws, cmd, **kwargs):
+            commands.append(cmd)
+            return 0
+
+        with patch.object(sandboxcmd, "exec_on_ws", fake_exec_on_ws):
+            await sandboxcmd.copy_sandbox_files(
+                None, config, tmp_path, "admin"
+            )
+
+        assert len(commands) == 1
+        sh_cmd = commands[0][2]
+        # Parent derived POSIX-style and both paths quoted (#3093).
+        assert "mkdir -p '/home/admin/sub dir'" in sh_cmd
+        assert "cat > '/home/admin/sub dir/file.txt'" in sh_cmd
+
+    async def test_parent_of_root_level_dest(self, tmp_path):
+        from klangk.cli import sandboxcmd
+
+        src = tmp_path / "file.txt"
+        src.write_text("data")
+        config = SandboxConfig(copy=[f"{src}:/opt/file.txt"])
+        commands = []
+
+        async def fake_exec_on_ws(ws, cmd, **kwargs):
+            commands.append(cmd)
+            return 0
+
+        with patch.object(sandboxcmd, "exec_on_ws", fake_exec_on_ws):
+            await sandboxcmd.copy_sandbox_files(
+                None, config, tmp_path, "admin"
+            )
+
+        sh_cmd = commands[0][2]
+        assert "mkdir -p /opt && cat > /opt/file.txt" in sh_cmd
+
+    async def test_parent_of_relative_dest_is_dot(self, tmp_path):
+        """A bare relative dest passes through build_copy_pairs
+        unexpanded (expand_container_path gets no mount_at there), so
+        its parent must be ``.`` — an empty parent makes mkdir fail
+        and the && chain silently skip the copy (#3117 review)."""
+        from klangk.cli import sandboxcmd
+
+        src = tmp_path / "file.txt"
+        src.write_text("data")
+        config = SandboxConfig(copy=[f"{src}:file.txt"])
+        commands = []
+
+        async def fake_exec_on_ws(ws, cmd, **kwargs):
+            commands.append(cmd)
+            return 0
+
+        with patch.object(sandboxcmd, "exec_on_ws", fake_exec_on_ws):
+            await sandboxcmd.copy_sandbox_files(
+                None, config, tmp_path, "admin"
+            )
+
+        sh_cmd = commands[0][2]
+        assert "mkdir -p . && cat > file.txt" in sh_cmd

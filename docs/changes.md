@@ -1985,6 +1985,13 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   strictly `source:dest` — no mount-style `:options` segment, both
   halves non-empty, string entries only.
 
+- **`klangk sandbox` copy destinations are now resolved POSIX-style
+  (#3117).** The `mkdir -p` parent for a `copy:` destination was derived
+  with the CLI host's path flavor, so on a Windows host a container path
+  like `/home/admin/sub dir` came out backslash-mangled and the copy
+  landed in the wrong directory inside the container. The parent is now
+  computed with POSIX semantics regardless of host platform.
+
 - **`klangk monitor` hook spawn failures are now fatal (#3092).** A
   `--` command that could not be spawned (missing binary, bad path
   component, not executable) used to be misclassified as a network
