@@ -24,6 +24,11 @@ name: FIPS Host Image Check
 
 on:
   workflow_dispatch:
+    inputs:
+      publish:
+        description: "Push the built image to GHCR (leave false for a dry run)"
+        type: boolean
+        default: true
   push:
     branches: [main]
     paths:
@@ -149,8 +154,12 @@ jobs:
           echo STOCK-REFUSAL-OK
 
       # Publish (same tag convention as klangk-workspace-fips). GITHUB_TOKEN
-      # is tied to this run; the tag links the package to the repo.
+      # is tied to this run; the tag links the package to the repo. Dispatch
+      # with publish=false for a full build + proof dry run; push and
+      # schedule triggers leave inputs.publish unset (≠ false), so they
+      # publish as before.
       - name: Push FIPS host image to GHCR
+        if: inputs.publish != false
         run: |
           . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
           echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
