@@ -591,12 +591,28 @@ class TestWorkspaceScopedVolumes:
 
 
 class TestRuntimeMountAudit:
-    # Inspects the containers the earlier tests started (`podman ps -a`
-    # also catches stopped ones; only the fixture teardown removes
-    # them) — order-dependence is why this class runs last.
+    # Self-sufficient: starts (or adopts) each container via the API
+    # before inspecting. Under `-n 2 --dist=loadscope` the module's
+    # classes can split across xdist workers (the class is the
+    # distribution unit), each with its own module fixtures — so this
+    # test must not rely on TestHomeIsolation having run in the same
+    # worker (CI run 33886832062: "No container found").
+    @pytest.mark.timeout(600)
     def test_no_cross_workspace_mount_sources(self, server, users, workspaces):
         """podman inspect: every workspaces-root mount source belongs to
         its own workspace's subtree, and the sets are disjoint."""
+        api = server["client"]
+        for key, owner in (
+            ("alice1", "alice"),
+            ("alice2", "alice"),
+            ("bob", "bob"),
+        ):
+            resp = api.post(
+                f"/api/v1/workspaces/{workspaces[key]}/start",
+                headers=users[owner],
+                timeout=120,
+            )
+            assert resp.status_code == 200, f"{key} start: {resp.text}"
         root = f"{server['data_dir']}/workspaces"
         for key, owner in (
             ("alice1", "alice"),
