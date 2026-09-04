@@ -981,8 +981,23 @@ class Lifecycle:
             logger.info("%s: drained %d workspace(s)", name, stopped)
         except Exception as exc:  # noqa: BLE001 — never block the exit
             logger.warning(
-                "%s: drain failed (proceeding with exit): %s", name, exc
+                "%s: drain failed (%s); attempting forced backstop",
+                name,
+                exc,
             )
+            # V-222585: a graceful drain failure must not leave
+            # unsupervised containers — escalate to the forced
+            # shutdown path (podman stop + rm -f per container).
+            try:
+                await registry.shutdown()
+                logger.warning("%s: forced backstop completed", name)
+            except Exception:  # noqa: BLE001
+                logger.critical(
+                    "%s: forced backstop also failed; unsupervised "
+                    "containers may remain",
+                    name,
+                    exc_info=True,
+                )
         logger.info("%s: handing off to server exit", name)
 
     def on_sighup(self) -> None:
@@ -1069,12 +1084,18 @@ class Lifecycle:
             await self.startup()
         except Exception as exc:  # noqa: BLE001
             logger.critical(
-                "SIGHUP: restart recovery failed (%s); exiting for a "
-                "process restart",
+                "SIGHUP: restart recovery failed (%s); sending SIGTERM "
+                "for a clean shutdown",
                 exc,
                 exc_info=exc,
             )
-            os._exit(1)
+            # V-222585: instead of os._exit(1) (which skips lifespan
+            # teardown and orphans the proxy child), send ourselves
+            # SIGTERM — the GracefulExitServer hook runs the hardened
+            # teardown (proxy stop, container cleanup, DB dispose)
+            # before the process exits.
+            os.kill(os.getpid(), signal.SIGTERM)
+            return  # SIGTERM handler takes over
         logger.error(
             "SIGHUP: recycle failed but runtime recovered; "
             "configuration may be stale"
@@ -1274,7 +1295,18 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         loop.remove_signal_handler(signal.SIGHUP)
-        await stop_background_workers(app)
-        await app.state.lifecycle.runtime_shutdown()
-        await app.state.lifecycle.process_shutdown()
+        # Each teardown step is wrapped so one failure cannot skip the
+        # rest — all steps always attempted, each failure logged
+        # (V-222585: fail to a secure state on shutdown failure).
+        for step_name, step_coro in (
+            ("stop_background_workers", stop_background_workers(app)),
+            ("runtime_shutdown", app.state.lifecycle.runtime_shutdown()),
+            ("process_shutdown", app.state.lifecycle.process_shutdown()),
+        ):
+            try:
+                await step_coro
+            except Exception:  # noqa: BLE001
+                logger.error(
+                    "Teardown step %s failed", step_name, exc_info=True
+                )
         logger.info("Klangk backend stopped")

@@ -44,13 +44,15 @@ Workspaces go away; on the next start, `auto_start` brings back any
 that are configured for it. For a config reload with the same drain
 treatment while keeping the listener up, use SIGHUP (below).
 
-A drain failure is logged and never blocks the exit — the process always
-terminates. Budget the quiesce + drain inside your service manager's
-stop deadline (`TimeoutStopSec` under systemd): up to
-`KLANGKD_QUIESCE_TIMEOUT` seconds (default 15) of request quiesce, plus
-one per-workspace stop grace (5s; stops run concurrently across
-workspaces). Raising `KLANGKD_QUIESCE_TIMEOUT` past ~85s blows the
-default 90s `TimeoutStopSec`.
+If the graceful drain fails, a forced backstop runs (`podman stop` +
+`rm -f` per container). If the backstop also fails, a `CRITICAL` log
+warns that unsupervised containers may remain — the process still
+terminates so the service manager can restart it. Budget the quiesce +
+drain inside your service manager's stop deadline (`TimeoutStopSec`
+under systemd): up to `KLANGKD_QUIESCE_TIMEOUT` seconds (default 15)
+of request quiesce, plus one per-workspace stop grace (5s; stops run
+concurrently across workspaces). Raising `KLANGKD_QUIESCE_TIMEOUT`
+past ~85s blows the default 90s `TimeoutStopSec`.
 
 ## SIGHUP — graceful runtime recycle
 
@@ -114,9 +116,10 @@ authenticated WebSocket clients receive a `server_recycle` event with a
 
 If any step fails, the failure is logged, a recovery pass re-runs the
 startup sequence, and `host_started` is broadcast on recovery; if the
-recovery itself fails the process exits (code 1) so the service manager
-restarts it — the node never lingers half-restarted while its HTTP
-listener keeps serving.
+recovery itself fails the process sends itself SIGTERM, triggering the
+graceful-stop teardown (proxy child stop, container cleanup, DB dispose)
+before the service manager restarts it — the node never lingers
+half-restarted while its HTTP listener keeps serving.
 
 ### When to use it
 
@@ -209,3 +212,18 @@ RestartPreventExitStatus=78
 A bad password then stops the unit in a single failed attempt instead of
 burning CPU in a restart loop; `journalctl -u <unit>` shows the
 `ConfigurationError` naming the setting to fix.
+
+## Accepted residual risks (V-222585)
+
+Two startup checks intentionally log a warning and continue rather than
+aborting boot:
+
+- **FIPS process self-check** (`KLANGKD_FIPS_MODE=1`): if the klangkd
+  host's OpenSSL is not FIPS-enforcing, boot continues with a warning.
+  This is legitimate for control-host deployments where the klangkd
+  process itself runs on a non-FIPS host while workspace containers
+  (the fail-closed gate) enforce FIPS.
+- **Podman pre-warm**: if the throwaway `podman create`/`rm` fails
+  (storage locked, stale container name), boot continues with a
+  warning. The failure means the first real workspace start pays the
+  cold-start latency; it does not affect security posture.

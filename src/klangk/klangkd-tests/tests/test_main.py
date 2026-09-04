@@ -1432,9 +1432,11 @@ class TestGracefulShutdown:
         assert not any("drain failed" in r.message for r in caplog.records)
         mock_drain.assert_awaited_once_with(reason="host shutdown")
 
-    async def test_drain_failure_does_not_block_exit(self, app_state, caplog):
-        """A drain exception is logged and the hook completes — the
-        process must still exit (never a wedged live server)."""
+    async def test_drain_failure_triggers_forced_backstop(
+        self, app_state, caplog
+    ):
+        """A drain exception triggers the forced backstop
+        (registry.shutdown) before exiting (V-222585)."""
         import signal as signal_mod
 
         app_state = _make_app_state()
@@ -1448,6 +1450,11 @@ class TestGracefulShutdown:
                 side_effect=RuntimeError("podman exploded"),
             ),
             patch.object(
+                registry,
+                "shutdown",
+                new_callable=AsyncMock,
+            ) as mock_shutdown,
+            patch.object(
                 app_state.state.sockets, "notify_host_shutdown"
             ) as mock_notify,
             caplog.at_level("WARNING"),
@@ -1455,6 +1462,43 @@ class TestGracefulShutdown:
             await lc.graceful_shutdown(signal_num=signal_mod.SIGINT)
         mock_notify.assert_called_once()
         assert any("drain failed" in r.message for r in caplog.records)
+        mock_shutdown.assert_awaited_once()
+        assert any(
+            "forced backstop completed" in r.message for r in caplog.records
+        )
+
+    async def test_drain_failure_backstop_also_fails_logs_critical(
+        self, app_state, caplog
+    ):
+        """When both the drain and the forced backstop fail, a CRITICAL
+        message warns operators of unsupervised containers (V-222585)."""
+        import signal as signal_mod
+
+        app_state = _make_app_state()
+        lc = app_state.state.lifecycle
+        registry = app_state.state.container_registry
+        with (
+            patch.object(
+                registry,
+                "drain_all_containers",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("drain exploded"),
+            ),
+            patch.object(
+                registry,
+                "shutdown",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("shutdown also exploded"),
+            ),
+            patch.object(app_state.state.sockets, "notify_host_shutdown"),
+            caplog.at_level("CRITICAL"),
+        ):
+            await lc.graceful_shutdown(signal_num=signal_mod.SIGTERM)
+        assert any(
+            "forced backstop also failed" in r.message
+            and r.levelname == "CRITICAL"
+            for r in caplog.records
+        )
 
     async def test_sighup_ignored_during_shutdown(self, app_state):
         """A HUP racing the shutdown is dropped, not scheduled —
@@ -2137,6 +2181,74 @@ class TestMainEntryCallback2910:
             await app_state.state.lifecycle.process_shutdown()
         mock_remove.assert_called_once()
         app_state.state.db.dispose_engine.assert_awaited_once()
+
+    async def test_teardown_step_failure_does_not_skip_remaining(
+        self, db, app_state
+    ):
+        """An exception in one lifespan teardown step does not prevent
+        the remaining steps from running (V-222585)."""
+        app = FastAPI()
+        app_state = _make_app_state()
+        app.state.container_registry = app_state.state.container_registry
+        app.state.sockets = app_state.state.sockets
+        app.state.settings = app_state.state.settings
+        app.state.ssl_trust = app_state.state.ssl_trust
+        app.state.db = app_state.state.db
+        app.state.model = app_state.state.model
+        app.state.proxy_watchdog = caddy_mod.CaddyWatchdog(app)
+        app.state.consent_sweeper = consent.EgressConsentSweeper(app)
+        app.state.inactivity_sweeper = inactivity.InactivitySweeper(app)
+        app.state.memory_evictor = container.eviction.MemoryPressureEvictor(
+            app
+        )
+        app.state.consent_deciders = consent.ConsentDeciderRegistry(app)
+        app.state.consent_coordinator = consent.ConsentCoordinator(app)
+        app.state.sidecar_connections = sidecar_connections.SidecarConnections(
+            app
+        )
+        app.state.oidc = oidc.OIDC(app)
+        app.state.features = features.Features(app)
+        app.state.hooks = app_state.state.hooks
+        app.state.workspaces = workspaces.Workspaces(app)
+        app.state.email = emailsvc_mod.EmailService(app)
+        app.state.util = util_mod.Util(app)
+        app.state.auth = auth_mod.Auth(app)
+        app.state.lifecycle = app_state.state.lifecycle
+        scheduler_stub = types.SimpleNamespace(
+            start=MagicMock(), stop=AsyncMock()
+        )
+        app.state.server_scheduler = scheduler_stub
+        registry = app_state.state.container_registry
+        with (
+            patch.object(
+                registry,
+                "reap_instance_containers",
+                new_callable=AsyncMock,
+            ),
+            patch.object(
+                registry,
+                "reap_dead_owner_containers",
+                new_callable=AsyncMock,
+            ),
+            patch.object(registry, "start_cleanup_loop"),
+            patch.object(
+                registry, "shutdown", new_callable=AsyncMock
+            ) as mock_shutdown,
+            patch.object(util_mod.Util, "check_pid_file", return_value=None),
+            patch.object(util_mod.Util, "write_pid_file"),
+            patch.object(util_mod.Util, "remove_pid_file") as mock_remove,
+            # Make stop_background_workers blow up — runtime_shutdown
+            # and process_shutdown must still run.
+            patch(
+                "klangk.lifecycle.stop_background_workers",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("sweeper exploded"),
+            ),
+        ):
+            async with main.lifespan(app):
+                pass
+        mock_shutdown.assert_awaited_once()
+        mock_remove.assert_called_once()
 
     async def test_recycle_runtime_runs_shutdown_then_startup(self, app_state):
         app_state = _make_app_state()
@@ -2964,9 +3076,10 @@ class TestMainEntryCallback2910:
         assert any("recycle failed" in r.message for r in caplog.records)
         assert lc._recycle_tasks == set()
 
-    async def test_failed_recovery_exits_process(self, app_state, caplog):
-        """Recovery that also fails exits the process (code 1) so the
-        service manager restarts us instead of a live zombie."""
+    async def test_failed_recovery_sends_sigterm(self, app_state, caplog):
+        """Recovery that also fails sends SIGTERM to self (not
+        os._exit) so the GracefulExitServer runs the hardened lifespan
+        teardown before the process exits (V-222585)."""
         app_state = _make_app_state()
         lc = app_state.state.lifecycle
         with (
@@ -2982,13 +3095,13 @@ class TestMainEntryCallback2910:
                 new_callable=AsyncMock,
                 side_effect=RuntimeError("startup also exploded"),
             ),
-            patch("klangk.lifecycle.os._exit") as mock_exit,
+            patch("os.kill") as mock_kill,
             caplog.at_level("CRITICAL"),
         ):
             lc.on_sighup()
-            for _ in range(6):
+            for _ in range(10):
                 await asyncio.sleep(0)
-        mock_exit.assert_called_once_with(1)
+        mock_kill.assert_called_once_with(os.getpid(), signal.SIGTERM)
         assert any("recovery failed" in r.message for r in caplog.records)
 
     async def test_cancelled_restart_task_logs_quietly(self, app_state):
