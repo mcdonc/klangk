@@ -7,33 +7,35 @@
 # this as the "Build wheel" step with klangk:flutter-build as the devenv
 # build-task, which runs flutterbuildweb.sh first.
 #
-# The ``build`` package isn't a declared dependency of the klangk venv (the
-# venv is the app's runtime, not a build env). uv-sync runs at devenv shell
-# entry and would wipe a transiently-installed build on the next shell, so
-# this script installs it and builds in the same shell invocation.
+# The wheel is built with `uv build` (#3143): uv resolves hatchling/hatch-vcs
+# into its own cached, isolated build environment and never touches the
+# shared devenv venv. The pre-#3143 approach (`uv pip install build` +
+# `python -m build`) transiently polluted .devenv/state/venv, which raced
+# with a concurrent uv-sync at another devenv shell entry — the sync wiped
+# pyproject-hooks mid-build and the backend died with "can't open ...
+# _in_process.py". `--no-isolation` variants have the same problem (they
+# would require installing the build deps into the shared venv); `uv build`
+# avoids the shared venv entirely, same as scripts/build-network-sidecar.sh
+# (#2450).
 #
 # Usage: devenv shell -- bash scripts/build_wheel.sh
 #   (or directly, inside a devenv shell)
 # Produces: src/klangk/dist/klangk-<version>-py3-none-any.whl
 set -euo pipefail
-# shellcheck disable=SC1091 # sourced sibling helper
-source "$(dirname "${BASH_SOURCE[0]}")/_python_common.sh"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-# Install the PEP 517 build frontend transiently. uv-sync has already run by
-# the time we're inside the shell; this install persists for this process.
-uv pip install build
+# Build the klangk workspace member's wheel from the repo root (the hatch
+# build hook resolves the frontend artifact via absolute paths, so CWD
+# doesn't matter; --out-dir keeps the wheel where the Dockerfile glob and
+# release.yml's pypi-publish step expect it).
+cd "$REPO_ROOT"
+uv build --package klangk --wheel --out-dir src/klangk/dist
 
-# Build the wheel from src/klangk (where pyproject.toml + the build hook live).
-cd "$REPO_ROOT/src/klangk"
-"${KLANGK_PYTHON}" -m build --wheel
-
-# Report what we produced. The script cd'd into src/klangk before building,
-# so dist/ is relative to that dir, not the caller's CWD — print absolute
-# paths so the wheel can be located from anywhere.
+# Report what we produced, with absolute paths so the wheel can be located
+# from anywhere.
 echo "=== built wheels ==="
-ls -lh dist/*.whl
-for whl in dist/*.whl; do
+ls -lh src/klangk/dist/*.whl
+for whl in src/klangk/dist/*.whl; do
   echo "$(cd "$(dirname "$whl")" && pwd)/$(basename "$whl")"
 done

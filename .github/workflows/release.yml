@@ -123,11 +123,11 @@ jobs:
       - name: Build wheel
         run: |
           . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
-          # scripts/build_wheel.sh installs python-build transiently (uv-sync
-          # at shell entry would wipe it; the script installs + builds in one
-          # process). Requires the frontend artifact from klangk:flutter-build
-          # above — the hatch build hook force-includes it and requires it for
-          # non-editable wheel builds (#1600).
+          # scripts/build_wheel.sh builds via `uv build` in its own isolated
+          # env — the shared devenv venv is never touched (#3143). Requires
+          # the frontend artifact from klangk:flutter-build above — the hatch
+          # build hook force-includes it and requires it for non-editable
+          # wheel builds (#1600).
           devenv shell -- bash scripts/build_wheel.sh
 
       - name: Publish to PyPI

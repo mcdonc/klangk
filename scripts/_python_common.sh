@@ -1,7 +1,7 @@
 # shellcheck shell=bash
 # Shared helper: resolve the Python interpreter for scripts that need the
 # project's dependencies. Sourced (not executed) by:
-#   flutterbuildweb.sh, build_wheel.sh, test-push.sh, _podman_common.sh
+#   flutterbuildweb.sh, test-push.sh, _podman_common.sh
 #
 # Task and process exec environments (devenv tasks run / processes up) do
 # NOT put the uv-managed venv (.devenv/state/venv) on PATH — ambient

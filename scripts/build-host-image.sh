@@ -16,8 +16,7 @@ bash "$SCRIPT_DIR/flutterbuildweb.sh"
 # Build the klangk wheel locally (#1603). flutterbuildweb.sh populated
 # src/frontend/build/web, which the hatch build hook bundles into the wheel
 # at klangk/frontend (#1600). Clean dist/ first so the Dockerfile's wheel
-# glob matches exactly one file. Run in the devenv shell (build_wheel.sh
-# transiently installs the PEP 517 `build` frontend).
+# glob matches exactly one file.
 rm -rf src/klangk/dist
 bash "$SCRIPT_DIR/build_wheel.sh"
 
