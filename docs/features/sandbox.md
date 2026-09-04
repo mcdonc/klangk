@@ -121,10 +121,13 @@ copy:
   - ~/.zshrc:~/.zshrc
 ```
 
-Files copied from the host into the container home directory. Uses the
-same `source:destination` format as mounts. Tilde on the left expands
-to the host user's home; tilde on the right expands to the container
-user's home (`/home/{handle}` — see the `~` note above).
+Files copied from the host into the container home directory. Uses
+`source:destination`, but — unlike `mounts` — takes **no options
+segment**: exactly one colon. A spec like `notes.txt:~/notes.txt:ro`
+is a config error (the load fails with `Invalid sandbox config`),
+not a read-only copy. Tilde on the left expands to the host user's
+home; tilde on the right expands to the container user's home
+(`/home/{handle}` — see the `~` note above).
 
 Copies happen once during workspace creation, after the default home
 skeleton is populated but before the setup script runs. The copied

@@ -1978,6 +1978,12 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Sandbox `copy` specs with extra colon segments are rejected (#3119).**
+  A `.klangk-sandbox.yaml` `copy:` entry like `notes.txt:~/notes.txt:ro`
+  used to silently drop the trailing `:ro` and copy anyway; it now fails
+  config load with an `Invalid sandbox config` error. Copy specs are
+  strictly `source:dest` — they take no mount-style `:options` segment.
+
 - **`klangk monitor` hook spawn failures are now fatal (#3092).** A
   `--` command that could not be spawned (missing binary, bad path
   component, not executable) used to be misclassified as a network
