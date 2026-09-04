@@ -78,6 +78,7 @@ from klangk.model.migrations import m0027_retire_admin_marker
 from klangk.model.migrations import m0028_invitations_pending_unique
 from klangk.model.migrations import m0029_members_create_workspace
 from klangk.model.migrations import m0030_audit_hmac
+from klangk.model.migrations import m0031_password_age
 from klangk.model.migrations.base import Migration
 
 __all__ = ["MIGRATIONS", "Migration", "run_migrations"]
@@ -116,6 +117,7 @@ MIGRATIONS: list[Migration] = [
     m0028_invitations_pending_unique.migration,
     m0029_members_create_workspace.migration,
     m0030_audit_hmac.migration,
+    m0031_password_age.migration,
 ]
 
 

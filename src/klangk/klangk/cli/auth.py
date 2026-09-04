@@ -52,6 +52,22 @@ def login_failure_detail(resp) -> str:
         return f"HTTP {resp.status_code}"
 
 
+def password_expired_message(resp) -> str | None:
+    """The expired-password message, or None when the response doesn't
+    signal expiry (#3177).
+
+    The server marks the state machine-readably: HTTP 403 with
+    ``detail = {"error": "password_expired", "message": ...}``.
+    """
+    try:
+        detail = resp.json().get("detail")
+    except Exception:
+        return None
+    if isinstance(detail, dict) and detail.get("error") == "password_expired":
+        return detail.get("message", "Password has expired")
+    return None
+
+
 def local_login(server_url: str) -> tuple[str, str]:
     """No-auth single-user mode: fetch a free token for the seeded default
     user via POST /api/v1/auth/local (#1374).
@@ -299,7 +315,8 @@ def print_login_failure(resp) -> None:
 
 def password_login(server_url, email, password, state) -> None:
     """Prompt for credentials (accepts an email or a handle, #616), POST
-    them, and persist the returned token."""
+    them, and persist the returned token. An expired password (#3177)
+    routes into the set-new-password flow instead of failing."""
     email = email or Prompt.ask("[bold]Email or handle[/bold]")
     password = password or Prompt.ask("[bold]Password[/bold]", password=True)
 
@@ -311,14 +328,61 @@ def password_login(server_url, email, password, state) -> None:
         timeout=15.0,
     )
     if resp.status_code != 200:
+        expired = password_expired_message(resp)
+        if expired is not None:
+            token = expired_password_rotation(
+                server_url, email, password, notice=expired
+            )
+            persist_login(state, server_url, email, token)
+            return
         print_login_failure(resp)
 
     token = resp.json()["access_token"]
 
+    persist_login(state, server_url, email, token)
+
+
+def persist_login(state, server_url, email, token) -> None:
+    """Store the token for a completed login and announce it."""
     state.set_credentials(server_url, email, token)
     state.save()
     seed_config(server_url, email)
     _out.print(f"Logged in as [bold]{email}[/bold]")
+
+
+def expired_password_rotation(
+    server_url, identifier, current_password, notice: str
+) -> str:
+    """Prompt for a replacement password and rotate the expired one
+    (#3177). Returns the minted access token; exits on failure."""
+    _out.print(f"[yellow]{notice}[/yellow]")
+    new_password = prompt_new_password()
+    resp = http_request(
+        server_url,
+        "POST",
+        "/api/v1/auth/change-expired-password",
+        json={
+            "identifier": identifier,
+            "current_password": current_password,
+            "new_password": new_password,
+        },
+        timeout=15.0,
+    )
+    if resp.status_code != 200:
+        print_login_failure(resp)
+    return resp.json()["access_token"]
+
+
+def prompt_new_password() -> str:
+    """Ask for a new password twice; re-ask until the entries match."""
+    while True:
+        first = Prompt.ask("[bold]New password[/bold]", password=True)
+        confirm = Prompt.ask(
+            "[bold]Confirm new password[/bold]", password=True
+        )
+        if first == confirm:
+            return first
+        _err.print("[red]Passwords do not match; try again.[/red]")
 
 
 def none_mode_login(server_url, state) -> None:

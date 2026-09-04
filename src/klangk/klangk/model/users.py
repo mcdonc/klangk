@@ -267,7 +267,7 @@ ADMIN_USER_SORT_COLUMNS = {
 # new columns from drifting between lookups.
 _USER_COLUMNS = (
     "SELECT id, email, password_hash, verified, provider, external_id,"
-    " handle, disabled, last_activity_at"
+    " handle, disabled, last_activity_at, created_at, password_set_at"
 )
 
 
@@ -282,6 +282,8 @@ def _user_row_to_dict(row) -> dict:
         "handle": row["handle"],
         "disabled": bool(row["disabled"]),
         "last_activity_at": row["last_activity_at"],
+        "created_at": row["created_at"],
+        "password_set_at": row["password_set_at"],
     }
 
 
@@ -1043,7 +1045,9 @@ class UsersModel(Submodel):
 
         The **old** hash moves into the password history inside the same
         transaction (the current hash lives in ``users``; history holds
-        previous passwords only). Raises ``AgentPrincipalError`` if the
+        previous passwords only), and ``password_set_at`` is stamped now
+        (#3177) — the password-age policy reads it for both the minimum
+        and maximum lifetime. Raises ``AgentPrincipalError`` if the
         target is the system agent. A missing user is a silent no-op —
         callers translate (reset/change 404 via their own lookups) — and
         crucially records nothing, so a reset token for a since-deleted
@@ -1062,8 +1066,13 @@ class UsersModel(Submodel):
             if row is None:  # deleted user: nothing to update or retire
                 return
             await db.execute(
-                "UPDATE users SET password_hash = ? WHERE id = ?",
-                (password_hash, user_id),
+                "UPDATE users SET password_hash = ?, password_set_at = ?"
+                " WHERE id = ?",
+                (
+                    password_hash,
+                    datetime.now(timezone.utc).isoformat(),
+                    user_id,
+                ),
             )
             if count > 0 and row["password_hash"] is not None:
                 await self._retire_password(
@@ -1220,7 +1229,9 @@ class UsersModel(Submodel):
     async def get_user_by_id(self, user_id: str) -> dict | None:
         row = await self.app.state.db.fetchone(
             "SELECT id, email, handle, last_login_at, disabled,"
-            " last_activity_at FROM users WHERE id = ?",
+            " last_activity_at, created_at, password_set_at,"
+            " password_hash"
+            " FROM users WHERE id = ?",
             (user_id,),
         )
         if row is None:
@@ -1232,6 +1243,9 @@ class UsersModel(Submodel):
             "last_login_at": row["last_login_at"],
             "disabled": bool(row["disabled"]),
             "last_activity_at": row["last_activity_at"],
+            "created_at": row["created_at"],
+            "password_set_at": row["password_set_at"],
+            "password_hash": row["password_hash"],
         }
 
     async def search_users(self, query: str, limit: int = 10) -> list[dict]:

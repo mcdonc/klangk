@@ -2410,6 +2410,19 @@ class TestUsersBackstopBranches:
         )
         assert fetched["password_hash"] == "newhash"
 
+    async def test_update_password_stamps_password_set_at(
+        self, user, app_state
+    ):
+        """#3177: update_password records when the password was set."""
+        await app_state.state.model.users.update_password(
+            user["id"], "newhash"
+        )
+        row = await app_state.state.db.fetchone(
+            "SELECT password_set_at FROM users WHERE id = ?",
+            (user["id"],),
+        )
+        assert row["password_set_at"] is not None
+
 
 class TestAclBackstopBranches:
     """Cover backstop branches not reached by app code (#1574).

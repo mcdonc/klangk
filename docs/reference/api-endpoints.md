@@ -1151,6 +1151,32 @@ Change the current user's password. Requires the current password.
 
 ---
 
+### POST `/api/v1/auth/change-expired-password`
+
+Replace an expired password (maximum password age reached, STIG
+V-222545, #3177) and auto-login. Takes the identifier (email or
+handle), the current — expired — password as the ownership proof, and
+the new password. Lockout-accounted like login; rejected with `400`
+when the password has **not** expired (so it cannot serve as a general
+change-password bypass). Local password accounts only — OIDC logins
+are unaffected by password expiry.
+
+**Auth:** None.
+
+```json
+{
+  "identifier": "user@example.com",
+  "current_password": "expiredpass",
+  "new_password": "newpass1"
+}
+```
+
+```json
+{ "access_token": "jwt-string", "token_type": "bearer" }
+```
+
+---
+
 ### POST `/api/v1/auth/forgot-password`
 
 Request a password reset email. Always returns success even if the email

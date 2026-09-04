@@ -134,6 +134,10 @@ password_require_digit: 1
 password_require_special: 1
 password_history_count: 5
 password_min_changed: 8
+# STIG V-222544/V-222545 posture (#3177): keep a password 24h
+# before it may be changed again; expire it after 60 days.
+password_min_age_hours: 24
+password_max_age_days: 60
 
 # --- Server / network ---
 listen: "127.0.0.1"
@@ -268,6 +272,8 @@ port: 8997
 | `password_require_digit`      | `0`                          | `KLANGKD_PASSWORD_REQUIRE_DIGIT`      |
 | `password_require_special`    | `0`                          | `KLANGKD_PASSWORD_REQUIRE_SPECIAL`    |
 | `password_history_count`      | `0`                          | `KLANGKD_PASSWORD_HISTORY_COUNT`      |
+| `password_min_age_hours`      | `0`                      | `KLANGKD_PASSWORD_MIN_AGE_HOURS`      |
+| `password_max_age_days`       | `0`                      | `KLANGKD_PASSWORD_MAX_AGE_DAYS`       |
 | `login_lockout_failures`      | `5`                          | `KLANGKD_LOGIN_LOCKOUT_FAILURES`      |
 | `login_lockout_duration`      | `900`                        | `KLANGKD_LOGIN_LOCKOUT_DURATION`      |
 | `login_lockout_window`        | `300`                        | `KLANGKD_LOGIN_LOCKOUT_WINDOW`        |

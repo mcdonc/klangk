@@ -27,6 +27,7 @@ from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError as SAIntegrityError
 
 from .exceptions import ConfigurationError
+from .model.users import parse_user_ts
 from .settings import INSECURE_DEFAULT_SECRET
 
 logger = logging.getLogger(__name__)
@@ -72,6 +73,25 @@ PASSWORD_CLASSES = (
     ("digit", "digit"),
     ("special", "special character"),
 )
+
+
+def password_expired_error() -> HTTPException:
+    """The machine-readable "password expired" 403 (#3177).
+
+    Clients (CLI / TUI) detect the state via ``detail["error"] ==
+    "password_expired"`` and route to the set-new-password flow instead
+    of showing a bare failure.
+    """
+    return HTTPException(
+        status_code=403,
+        detail={
+            "error": "password_expired",
+            "message": (
+                "Password has expired and must be changed before you"
+                " can sign in"
+            ),
+        },
+    )
 
 
 def _count_class(password: str, lo: str, hi: str) -> int:
@@ -282,6 +302,16 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class ChangeExpiredPasswordRequest(BaseModel):
+    """Expired-password rotation: the current (expired) password plus
+    its replacement (#3177). The current password is the ownership
+    proof, exactly as at login."""
+
+    identifier: str
+    current_password: str
+    new_password: str
+
+
 class EmailRequest(BaseModel):
     email: str
     password: str
@@ -399,6 +429,22 @@ class Auth:
     def password_min_changed(self) -> int:
         """Min character edit distance for self-service changes (#3173)."""
         return self.app.state.settings.password_min_changed
+    def password_min_age_hours(self) -> int:
+        """Minimum password age in hours (STIG V-222544, #3177).
+
+        0 (default) disables the check. Read live off settings so a
+        SIGHUP reload applies without a restart.
+        """
+        return self.app.state.settings.password_min_age_hours
+
+    @property
+    def password_max_age_days(self) -> int:
+        """Maximum password age in days (STIG V-222545, #3177).
+
+        0 (default) disables expiry. Read live off settings so a SIGHUP
+        reload applies without a restart.
+        """
+        return self.app.state.settings.password_max_age_days
 
     @property
     def password_requirements(self) -> dict:
@@ -590,6 +636,61 @@ class Auth:
                     "characters from the current password"
                 ),
             )
+
+    # --- password age (STIG V-222544 minimum / V-222545 maximum; #3177) ---
+
+    def _password_set_at(self, user: dict) -> datetime | None:
+        """When *user*'s current password was set, or None when unknown.
+
+        ``users.password_set_at`` is stamped by ``update_password``;
+        rows whose password predates the column fall back to
+        ``created_at`` — the password is as old as the account, the
+        honest upper bound for an age policy enabled after the fact.
+        """
+        ts = parse_user_ts(user.get("password_set_at"))
+        if ts is None:
+            ts = parse_user_ts(user.get("created_at"))
+        return ts
+
+    def validate_password_min_age(self, user: dict) -> None:
+        """Reject a self-service change inside the minimum age (V-222544).
+
+        No-op when the knob is 0 (disabled) or the set time is unknown.
+        Admin-forced resets never call this — the STIG's emergency-reset
+        exemption.
+        """
+        hours = self.password_min_age_hours
+        if hours <= 0:
+            return
+        ts = self._password_set_at(user)
+        if ts is None:
+            return
+        remaining = timedelta(hours=hours) - (datetime.now(timezone.utc) - ts)
+        if remaining > timedelta(0):
+            wait = max(1, -(-int(remaining.total_seconds()) // 3600))
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Password must be kept for at least {hours} hour(s);"
+                    f" try again in about {wait} hour(s)"
+                ),
+            )
+
+    def password_expired(self, user: dict) -> bool:
+        """True when *user*'s password is past the maximum age (V-222545).
+
+        Local password accounts only — no ``password_hash`` (OIDC,
+        passwordless) means nothing to age. An unknown set time (NULL
+        with no ``created_at`` fallback, or unparseable) means "cannot
+        judge" → not expired, so a malformed row cannot brick logins.
+        """
+        if self.password_max_age_days <= 0 or not user.get("password_hash"):
+            return False
+        ts = self._password_set_at(user)
+        return ts is not None and (
+            datetime.now(timezone.utc) - ts
+            >= timedelta(days=self.password_max_age_days)
+        )
 
     # --- lockout predicates (read lockout config) ---
 
@@ -1003,6 +1104,74 @@ class Auth:
 
     # --- registration / login flows ---
 
+    async def _authenticated_expired_user(
+        self, req: ChangeExpiredPasswordRequest
+    ) -> dict:
+        """Resolve and gate a change-expired-password caller.
+
+        The same lockout / credential / verified / disabled gates as
+        :meth:`login` (the current password is the ownership proof),
+        plus the expiry requirement that makes this endpoint a safe
+        minimum-age exemption: it can never act as a general
+        change-password bypass because ``password_expired`` is
+        re-checked server-side.
+        """
+        user = await self.app.state.model.users.get_user_by_identifier(
+            req.identifier
+        )
+        lockout_key = user["email"] if user else req.identifier
+        attempt_info = await self.check_login_lockout(lockout_key)
+        await self._reject_bad_credentials(
+            user, req.current_password, lockout_key, attempt_info
+        )
+        if not user.get("verified"):
+            raise HTTPException(
+                status_code=403,
+                detail="Account not verified. Check your email.",
+            )
+        ensure_not_disabled(user)
+        await self.clear_login_failures(lockout_key)
+        if not self.password_expired(user):
+            raise HTTPException(
+                status_code=400,
+                detail="Password has not expired; use change-password",
+            )
+        return user
+
+    async def change_expired_password(
+        self,
+        req: ChangeExpiredPasswordRequest,
+        *,
+        source_ip: str | None = None,
+        user_agent: str | None = None,
+    ) -> TokenResponse:
+        """Replace an expired password and mint the session (#3177).
+
+        Deliberately exempt from the minimum age (V-222544): an expired
+        password (V-222545) must be changeable the moment it expires —
+        the expiry check in :meth:`_authenticated_expired_user` is what
+        keeps that exemption from widening into a bypass. Auto-logins
+        on success (same posture as reset-password) so clients finish
+        in one round trip.
+        """
+        user = await self._authenticated_expired_user(req)
+        self.validate_password(req.new_password)
+        await self.validate_password_not_reused(user["id"], req.new_password)
+        password_hash = await asyncio.to_thread(
+            hash_password, req.new_password
+        )
+        await self.app.state.model.users.update_password(
+            user["id"], password_hash
+        )
+        token = await self.issue_token(
+            user["id"],
+            user["email"],
+            source_ip=source_ip,
+            user_agent=user_agent,
+        )
+        await self.app.state.model.users.record_login(user["id"])
+        return TokenResponse(access_token=token)
+
     async def register(
         self,
         req: RegisterRequest,
@@ -1093,6 +1262,11 @@ class Auth:
         ensure_not_disabled(user)
 
         await self.clear_login_failures(lockout_key)
+        # Expired passwords (V-222545) stop here: the credentials are
+        # valid (failures cleared above), but no session is minted until
+        # the password is changed through the expired-password flow.
+        if self.password_expired(user):
+            raise password_expired_error()
         token = await self.issue_token(
             user["id"],
             user["email"],
@@ -1120,11 +1294,15 @@ class Auth:
     async def _require_active_user(self, user_id: str) -> dict:
         """The user row for a token rotation; 401 when the user is gone
         and 403 when disabled (a disabled account cannot rotate its way
-        back in, #2588)."""
+        back in, #2588) or the password has expired (#3177 — refresh
+        keeps an expired password from stretching a session past the
+        maximum age)."""
         user = await self.app.state.model.users.get_user_by_id(user_id)
         if user is None:
             raise HTTPException(status_code=401, detail="User not found")
         ensure_not_disabled(user)
+        if self.password_expired(user):
+            raise password_expired_error()
         return user
 
     async def _swap_token(

@@ -20,10 +20,11 @@ from textual.widgets import (
     Static,
 )
 
-from ..state import LoginError
+from ..state import LoginError, PasswordExpiredError
 from ...config import AliasConflictError, ConfigUnreadableError
 from ...transport import is_valid_server_spec
 from .base import (
+    ButtonRowModalScreen,
     ConfirmScreen,
     ServerListView,
     SpatialNavScreen,
@@ -77,6 +78,105 @@ def uds_row_label(uds: str) -> Text:
 def should_offer_uds(uds, current, known_urls) -> bool:
     """Offer the default UDS only when no alias already covers it."""
     return bool(uds and uds != current and uds not in known_urls)
+
+
+class ExpiredPasswordScreen(SpatialNavScreen, ButtonRowModalScreen):
+    """Set-new-password dialog for an expired password (#3177).
+
+    Pushed by the login screen when the server answers 403
+    ``password_expired``. Reuses the credentials the user just typed
+    (the current password is the ownership proof), asks for the
+    replacement twice, and hands the result to
+    ``tui_state.change_expired_password`` — success lands in
+    ``login_succeeded`` like any login.
+    """
+
+    _BUTTONS = ["cancel", "rotate"]
+    _INPUT = "confirm_password"
+    SPATIAL_CHAIN = ["new_password", "confirm_password", "cancel", "rotate"]
+
+    DEFAULT_CSS = """
+    ExpiredPasswordScreen { align: center middle; }
+    ExpiredPasswordScreen > Vertical {
+        width: 64;
+        max-width: 90%;
+        height: auto;
+        padding: 0 2;
+        border: round $primary;
+        background: $panel;
+    }
+    ExpiredPasswordScreen Input {
+        margin: 0 0 1 0;
+    }
+    ExpiredPasswordScreen Horizontal {
+        align-horizontal: right;
+        height: auto;
+    }
+    """
+
+    def __init__(self, exc: PasswordExpiredError) -> None:
+        super().__init__()
+        self._exc = exc
+
+    def compose(self) -> ComposeResult:
+        yield Vertical(
+            Static(Text(self._exc.args[0] if self._exc.args else "")),
+            Input(
+                placeholder="New password",
+                id="new_password",
+                password=True,
+            ),
+            Input(
+                placeholder="Confirm new password",
+                id="confirm_password",
+                password=True,
+            ),
+            Static("", id="expired_message"),
+            Horizontal(
+                Button("Cancel", id="cancel"),
+                Button("Set new password", id="rotate", variant="primary"),
+            ),
+        )
+
+    def on_mount(self) -> None:
+        self.query_one("#new_password", Input).focus()
+
+    def _set_message(self, text: str, *, error: bool = False) -> None:
+        self.query_one("#expired_message", Static).update(
+            Text(text, style="red" if error else "")
+        )
+
+    def _commit(self) -> None:
+        """The rotate action (Enter in the confirm input or the button)."""
+        new = self.query_one("#new_password", Input).value
+        confirm = self.query_one("#confirm_password", Input).value
+        if not new or new != confirm:
+            self._set_message(
+                "Enter the new password twice (entries must match).",
+                error=True,
+            )
+            return
+        self.run_worker(self._do_rotate(new), exit_on_error=False)
+
+    async def _do_rotate(self, new_password: str) -> None:
+        try:
+            await asyncio.to_thread(
+                self.app.tui_state.change_expired_password,
+                self._exc.identifier,
+                self._exc.password,
+                new_password,
+            )
+        except LoginError as exc:
+            self._set_message(f"Could not set password: {exc}", error=True)
+            return
+        self.dismiss(None)
+        self.app.login_succeeded()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "rotate":
+            self._commit()
+        else:
+            self._dismiss_cancel()
 
 
 class LoginScreen(SpatialNavScreen, StatusScreen):
@@ -369,6 +469,9 @@ class LoginScreen(SpatialNavScreen, StatusScreen):
             await asyncio.to_thread(
                 self.app.tui_state.login_password, identifier, password
             )
+        except PasswordExpiredError as exc:
+            self.app.push_screen(ExpiredPasswordScreen(exc))
+            return
         except LoginError as exc:
             self._set_message(f"Login failed: {exc}", error=True)
             return

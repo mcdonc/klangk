@@ -24,6 +24,7 @@ from ..auth import (
     oidc_browser_login,
     fetch_config,
     local_login,
+    password_expired_message,
 )
 from ..client import KlangkClient, Workspace
 from ..config import (
@@ -55,6 +56,20 @@ def _file_stamp(path: Path) -> tuple[int, int] | None:
 
 class LoginError(Exception):
     """Raised when an in-TUI login attempt fails."""
+
+
+class PasswordExpiredError(LoginError):
+    """Login refused because the password is expired (#3177).
+
+    Carries the submitted identifier and password so the
+    expired-password screen can rotate without re-prompting for the
+    current password the user just typed.
+    """
+
+    def __init__(self, message: str, identifier: str, password: str):
+        super().__init__(message)
+        self.identifier = identifier
+        self.password = password
 
 
 @dataclass(frozen=True)
@@ -109,6 +124,10 @@ def login_failure_error(resp) -> LoginError:
         detail = resp.json().get("detail", detail)
     except Exception:
         pass
+    if isinstance(detail, dict):
+        # Structured detail (e.g. the expired-password 403, #3177) —
+        # surface its human message.
+        detail = detail.get("message") or str(detail)
     return LoginError(detail)
 
 
@@ -551,6 +570,20 @@ class TuiState:
 
     # --- login arms ---
 
+    def _persist_token(self, url: str, identifier: str, token: str) -> None:
+        """Store a freshly minted token for *identifier* at *url*."""
+        with self._state_lock:
+            state = self.state()
+            state.set_credentials(url, identifier, token)
+            self._save_state(state)
+
+    def _require_token(self, resp) -> str:
+        """Extract the access token from a successful response."""
+        token = resp.json().get("access_token")
+        if not token:
+            raise LoginError("server returned no access token")
+        return token
+
     def login_password(self, identifier: str, password: str) -> str:
         url = self.current_url()
         if url is None:
@@ -566,14 +599,41 @@ class TuiState:
         except httpx.HTTPError as exc:
             raise LoginError(f"could not reach server: {exc}") from None
         if resp.status_code != 200:
+            expired = password_expired_message(resp)
+            if expired is not None:
+                raise PasswordExpiredError(expired, identifier, password)
             raise login_failure_error(resp)
-        token = resp.json().get("access_token")
-        if not token:
-            raise LoginError("server returned no access token")
-        with self._state_lock:
-            state = self.state()
-            state.set_credentials(url, identifier, token)
-            self._save_state(state)
+        self._persist_token(url, identifier, self._require_token(resp))
+        return identifier
+
+    def change_expired_password(
+        self, identifier: str, current_password: str, new_password: str
+    ) -> str:
+        """Rotate an expired password and store the minted session (#3177).
+
+        Mirrors :meth:`login_password`: same persistence, same error
+        surface (``LoginError``), returns the identifier.
+        """
+        url = self.current_url()
+        if url is None:
+            raise LoginError("No server configured")
+        try:
+            resp = http_request(
+                url,
+                "POST",
+                "/api/v1/auth/change-expired-password",
+                json={
+                    "identifier": identifier,
+                    "current_password": current_password,
+                    "new_password": new_password,
+                },
+                timeout=15.0,
+            )
+        except httpx.HTTPError as exc:
+            raise LoginError(f"could not reach server: {exc}") from None
+        if resp.status_code != 200:
+            raise login_failure_error(resp)
+        self._persist_token(url, identifier, self._require_token(resp))
         return identifier
 
     def login_none(self) -> str:

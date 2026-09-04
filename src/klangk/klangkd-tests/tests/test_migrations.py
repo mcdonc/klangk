@@ -91,6 +91,7 @@ class TestRunner:
             (28, "0028_invitations_pending_unique"),
             (29, "0029_members_create_workspace"),
             (30, "0030_audit_hmac"),
+            (31, "0031_password_age"),
         ]
         async with aiosqlite.connect(str(app_state.state.db.db_path)) as db:
             assert await _recorded(db) == expected
@@ -122,6 +123,10 @@ class TestRunner:
             info = await db.execute("PRAGMA table_info(groups)")
             cols = {r[1] for r in await info.fetchall()}
             assert "source" in cols
+            # Migration 0031 added the password-age timestamp (#3177).
+            info = await db.execute("PRAGMA table_info(users)")
+            cols = {r[1] for r in await info.fetchall()}
+            assert "password_set_at" in cols
 
             # Migration 0008: no agent row exists on a fresh DB before
             # seeding (UPDATE is a no-op); recorded above.
@@ -187,6 +192,7 @@ class TestRunner:
                 (28, "0028_invitations_pending_unique"),
                 (29, "0029_members_create_workspace"),
                 (30, "0030_audit_hmac"),
+                (31, "0031_password_age"),
             ]
 
     async def test_m0008_agent_identity_and_human_collision(

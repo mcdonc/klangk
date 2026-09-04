@@ -872,6 +872,22 @@ class KlangkSettings(BaseSettings):
     # byte-length ceiling on passwords). Reloadable on SIGHUP (read
     # live at change time).
     password_min_changed: int = 0
+    # Minimum password age (STIG V-222544): how long a password must be
+    # kept before it may be changed again, in hours. Self-service
+    # password changes and forgot-password resets made inside the
+    # window are rejected (400); admin-forced resets bypass it. 0 (the
+    # default) disables the check. 24 is the documented STIG value.
+    # Capped at 8760 (365 days) — a longer floor only bricks password
+    # changes. Reloadable on SIGHUP.
+    password_min_age_hours: int = 0
+    # Maximum password age (STIG V-222545): how many days a password may
+    # live before login and token refresh refuse a session until the
+    # password is changed (a machine-readable "password expired" error;
+    # local password accounts only — OIDC users have no klangk
+    # password). 0 (the default) disables expiry. 60 is the documented
+    # STIG value. Capped at 3650 (10 years) to keep a typo'd value from
+    # meaning "never". Reloadable on SIGHUP.
+    password_max_age_days: int = 0
     login_lockout_failures: int | None = 5
     login_lockout_duration: int | None = 900
     login_lockout_window: int | None = 300
@@ -1706,6 +1722,8 @@ class KlangkSettings(BaseSettings):
         "invite_expire_hours",
         "password_history_count",
         "password_min_changed",
+        "password_min_age_hours",
+        "password_max_age_days",
         "inactivity_disable_days",
         "port_range_start",
         "websocket_msg_size_max",
@@ -1736,8 +1754,10 @@ class KlangkSettings(BaseSettings):
         # trio, guarded by ``> 0`` in auth.py), disables the session cap
         # (max_sessions_per_user), disables hosted ports
         # (hosted_ports_per_workspace), disables password-reuse checking
-        # (password_history_count), disables the dormant-account sweep
-        # (inactivity_disable_days, #2588). Elsewhere 0 is nonsense (port
+        # (password_history_count), disables both password-age knobs
+        # (password_min_age_hours / password_max_age_days), disables the
+        # dormant-account sweep (inactivity_disable_days, #2588).
+        # Elsewhere 0 is nonsense (port
         # 0, zero-byte uploads, empty port range) and is rejected.
         _ZERO_MEANINGFUL = {
             "min_password_length",
@@ -1748,6 +1768,8 @@ class KlangkSettings(BaseSettings):
             "hosted_ports_per_workspace",
             "password_history_count",
             "password_min_changed",
+            "password_min_age_hours",
+            "password_max_age_days",
             "inactivity_disable_days",
             # Disables the per-user running-workspace cap (#2525).
             "max_running_workspaces_per_user",
@@ -1814,6 +1836,36 @@ class KlangkSettings(BaseSettings):
                 f"password_min_changed={v} must be <= "
                 f"{_PASSWORD_MIN_CHANGED_MAX} — the maximum possible "
                 "edit distance between two legal passwords."
+            )
+        return v
+
+    @field_validator("password_min_age_hours", mode="after")
+    @classmethod
+    def _cap_password_min_age(cls, v):
+        """Reject a minimum password age above 8760h (365 days).
+
+        A longer floor only bricks password changes (nobody can wait
+        years between rotations); the ceiling catches unit confusion
+        (hours typed as days) rather than limiting any real policy.
+        """
+        if v > 8760:
+            raise ValueError(
+                f"password_min_age_hours={v} must be <= 8760 (365 days)"
+            )
+        return v
+
+    @field_validator("password_max_age_days", mode="after")
+    @classmethod
+    def _cap_password_max_age(cls, v):
+        """Reject a maximum password age above 3650 days (10 years).
+
+        Beyond that the knob effectively means "never" — a typo (days
+        typed as something larger) should fail at startup, not silently
+        disable expiry.
+        """
+        if v > 3650:
+            raise ValueError(
+                f"password_max_age_days={v} must be <= 3650 (10 years)"
             )
         return v
 

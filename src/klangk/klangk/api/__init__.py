@@ -272,6 +272,12 @@ async def get_config(
         # reach (#3173); 0 = no constraint. Clients with
         # both passwords in hand (change-password forms) pre-check it.
         "password_min_changed": app.state.auth.password_min_changed,
+        # Password-age policy (#3177): hours a password must be kept
+        # before a self-service change (V-222544) and days before it
+        # expires (V-222545); 0 disables either. Exposed so clients can
+        # warn before expiry / explain refusals inline.
+        "password_min_age_hours": app.state.auth.password_min_age_hours,
+        "password_max_age_days": app.state.auth.password_max_age_days,
         # Deployer logo override (KLANGKD_LOGO_URL). Empty when unset, in
         # which case the frontend renders the default KlangkLogo widget.
         # Supports file:/cmd: resolution like other secrets. See #1152.
