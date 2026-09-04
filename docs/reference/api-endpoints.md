@@ -1355,28 +1355,32 @@ Returns `StreamingResponse` (`application/x-ndjson`).
 
 ### POST `/api/v1/volumes`
 
-Create a new podman volume labeled with the current user's ID (the
-label is provenance; the admin Volumes tab offers no create surface —
-this endpoint serves the CLI's volume commands).
+Create a new podman volume owned by a workspace (#3153): labeled
+with the instance and the workspace's id, never a user. The volume is
+mountable by that workspace alone — volumes cannot be shared between
+workspaces. The admin Volumes tab offers no create surface; this
+endpoint serves the CLI's volume commands.
 
 **Auth:** JWT required. User must have the `manage-volumes` permission
 on `/volumes` (seeded Allow for the `admins` group).
 
-**Quota:** when `KLANGKD_VOLUME_QUOTA_PER_USER` is set
-(nonzero), a create that would take the caller past the cap is refused
-with `429` and a "delete a volume first" message naming the setting;
-the count is the caller's instance-managed volumes (`GET
-/api/v1/volumes`), and a per-user lock makes the cap exact under
-concurrent creates. The same cap also gates the workspace-start
-auto-create of mounted named volumes. `0` (the default) = unlimited.
+**Quota:** when `KLANGKD_VOLUME_QUOTA_PER_WORKSPACE` is set
+(nonzero), a create that would take the workspace past the cap is
+refused with `429` and a "delete a volume first" message naming the
+setting; the count is the workspace's instance-managed volumes, and a
+per-workspace lock makes the cap exact under concurrent creates. The
+same cap also gates the workspace-start auto-create of mounted named
+volumes. `0` (the default) = unlimited.
 
 `name` must be podman-safe: start with an alphanumeric
 character, continue with `a-zA-Z0-9_.-` only, and be at most 64
 characters; violations return HTTP 422.
 
 ```json
-{ "name": "my-volume" }
+{ "name": "my-volume", "workspace": "<workspace-id>" }
 ```
+
+`workspace` is the owning workspace's id; an unknown id returns `404`.
 
 ```json
 { "name": "my-volume", "created": "2026-06-21T00:00:00Z" }

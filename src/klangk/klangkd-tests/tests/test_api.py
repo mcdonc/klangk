@@ -62,7 +62,11 @@ _ALGORITHM = "HS256"
 
 # Mock Podman instance wired onto app.state.podman by the app fixture;
 # files/volume-API tests patch its methods via patch.object (#1468).
+# The volume-sweep/cascade paths await list_volumes/remove_volume on
+# every workspace delete (#3153), so those two defaults must be async.
 _mock_pod = MagicMock()
+_mock_pod.list_volumes = AsyncMock(return_value=[])
+_mock_pod.remove_volume = AsyncMock()
 
 
 @pytest.fixture
@@ -7324,6 +7328,17 @@ def _managed_volume(user_id="test-user"):
     }
 
 
+def _managed_ws_volume(workspace_id="test-ws"):
+    """An inspect_volume result owned by this instance and workspace."""
+    return {
+        "Labels": {
+            "klangk.managed": "true",
+            "klangk.instance": _instance_id(),
+            "klangk.workspace-id": workspace_id,
+        }
+    }
+
+
 class TestVolumeRoutes:
     """Volume endpoints (#2993): GET needs view-volumes, POST/DELETE
     need manage-volumes — admins hold both by seed. Functional tests
@@ -7356,6 +7371,12 @@ class TestVolumeRoutes:
             ("my-vol", user["id"], user["handle"], ["aaa-ws", "ws-uses-vol"]),
             ("my-vol-2", user["id"], user["handle"], []),
         ]
+
+    async def _owning_ws(self, app_state, user):
+        """A workspace row to own created volumes (#3153)."""
+        return await app_state.state.model.workspaces.create_workspace(
+            user["id"], "vol-owner-ws"
+        )
 
     async def _seed_volume_world(self, app_state, user, admin_user):
         """The shared listing world: two workspaces mounting my-vol,
@@ -7529,8 +7550,9 @@ class TestVolumeRoutes:
             resp = await client.delete("/api/v1/volumes/mine", headers=headers)
         assert resp.status_code == 403
 
-    async def test_create_volume(self, client, admin_user):
+    async def test_create_volume(self, client, admin_user, user, app_state):
         headers = await _admin_login(client)
+        ws = await self._owning_ws(app_state, user)
         mock_create = AsyncMock(
             return_value={"Name": "new-vol", "CreatedAt": "2026-01-01"}
         )
@@ -7542,21 +7564,36 @@ class TestVolumeRoutes:
         ):
             resp = await client.post(
                 "/api/v1/volumes",
-                json={"name": "new-vol"},
+                json={"name": "new-vol", "workspace": ws["id"]},
                 headers=headers,
             )
         assert resp.status_code == 200
         assert resp.json()["name"] == "new-vol"
+        assert resp.json()["workspace"] == ws["id"]
         _, labels = mock_create.call_args.args
-        # The creator label stays on created volumes (provenance).
-        assert labels["klangk.user-id"] == admin_user["id"]
+        # #3153: workspace-owned — the workspace label is stamped, and
+        # no user label exists at all.
+        assert labels["klangk.workspace-id"] == ws["id"]
+        assert "klangk.user-id" not in labels
+
+    async def test_create_volume_unknown_workspace_404(
+        self, client, admin_user
+    ):
+        headers = await _admin_login(client)
+        resp = await client.post(
+            "/api/v1/volumes",
+            json={"name": "new-vol", "workspace": "no-such-ws"},
+            headers=headers,
+        )
+        assert resp.status_code == 404
 
     async def test_create_volume_accepts_full_charset(
-        self, client, admin_user
+        self, client, admin_user, user, app_state
     ):
         """#2971: every character the pattern allows is accepted
         together in one name."""
         headers = await _admin_login(client)
+        ws = await self._owning_ws(app_state, user)
         with (
             patch.object(
                 _mock_pod, "inspect_volume", AsyncMock(return_value=None)
@@ -7569,14 +7606,15 @@ class TestVolumeRoutes:
         ):
             resp = await client.post(
                 "/api/v1/volumes",
-                json={"name": "a-b_c.d"},
+                json={"name": "a-b_c.d", "workspace": ws["id"]},
                 headers=headers,
             )
         assert resp.status_code == 200
 
     async def test_create_volume_rejects_leading_dash(
-        self, client, admin_user
+        self, client, admin_user, user, app_state
     ):
+        ws = await self._owning_ws(app_state, user)
         """#2971: a name starting with "-" would be parsed as a flag by
         the podman CLI — rejected with 422 before podman is called."""
         headers = await _admin_login(client)
@@ -7588,7 +7626,7 @@ class TestVolumeRoutes:
         ):
             resp = await client.post(
                 "/api/v1/volumes",
-                json={"name": "-flag"},
+                json={"name": "-flag", "workspace": ws["id"]},
                 headers=headers,
             )
         assert resp.status_code == 422
@@ -7596,8 +7634,9 @@ class TestVolumeRoutes:
         assert mock_create.await_count == 0
 
     async def test_create_volume_rejects_overlong_name(
-        self, client, admin_user
+        self, client, admin_user, user, app_state
     ):
+        ws = await self._owning_ws(app_state, user)
         """#2971: names past the 64-char cap are rejected with 422 (the
         64-char boundary itself is still accepted)."""
         headers = await _admin_login(client)
@@ -7612,22 +7651,25 @@ class TestVolumeRoutes:
         ):
             boundary = await client.post(
                 "/api/v1/volumes",
-                json={"name": "a" * 64},
+                json={"name": "a" * 64, "workspace": ws["id"]},
                 headers=headers,
             )
             overlong = await client.post(
                 "/api/v1/volumes",
-                json={"name": "a" * 65},
+                json={"name": "a" * 65, "workspace": ws["id"]},
                 headers=headers,
             )
         assert boundary.status_code == 200
         assert overlong.status_code == 422
         assert mock_create.await_count == 1
 
-    async def test_create_volume_rejects_bad_charset(self, client, admin_user):
+    async def test_create_volume_rejects_bad_charset(
+        self, client, admin_user, user, app_state
+    ):
         """#2971: names outside [a-zA-Z0-9_.-] (after an alphanumeric
         first char) are rejected with 422."""
         headers = await _admin_login(client)
+        ws = await self._owning_ws(app_state, user)
         mock_inspect = AsyncMock()
         mock_create = AsyncMock()
         with (
@@ -7645,39 +7687,46 @@ class TestVolumeRoutes:
             ):
                 resp = await client.post(
                     "/api/v1/volumes",
-                    json={"name": name},
+                    json={"name": name, "workspace": ws["id"]},
                     headers=headers,
                 )
                 assert resp.status_code == 422, name
         assert mock_inspect.await_count == 0
         assert mock_create.await_count == 0
 
-    async def test_create_volume_requires_manage_volumes(self, client, user):
+    async def test_create_volume_requires_manage_volumes(
+        self, client, user, app_state
+    ):
+        ws = await self._owning_ws(app_state, user)
         headers = await _auth_headers(client)
         resp = await client.post(
             "/api/v1/volumes",
-            json={"name": "nope-vol"},
+            json={"name": "nope-vol", "workspace": ws["id"]},
             headers=headers,
         )
         assert resp.status_code == 403
 
-    async def test_create_duplicate_volume(self, client, admin_user):
+    async def test_create_duplicate_volume(
+        self, client, admin_user, user, app_state
+    ):
         headers = await _admin_login(client)
+        ws = await self._owning_ws(app_state, user)
         with patch.object(
             _mock_pod,
             "inspect_volume",
-            AsyncMock(return_value=_managed_volume(admin_user["id"])),
+            AsyncMock(return_value=_managed_ws_volume(ws["id"])),
         ):
             resp = await client.post(
                 "/api/v1/volumes",
-                json={"name": "dup-vol"},
+                json={"name": "dup-vol", "workspace": ws["id"]},
                 headers=headers,
             )
         assert resp.status_code == 409
 
     async def test_create_volume_foreign_instance_not_enumerable(
-        self, app, admin_user
+        self, app, admin_user, user, app_state
     ):
+        ws = await self._owning_ws(app_state, user)
         """#2973: a volume owned by another instance must not confirm its
         existence via 409 — the create falls through to podman, and the
         client sees a bare 500 whose body carries no probed name
@@ -7707,15 +7756,18 @@ class TestVolumeRoutes:
                 headers = await _admin_login(c)
                 resp = await c.post(
                     "/api/v1/volumes",
-                    json={"name": "foreign-vol"},
+                    json={"name": "foreign-vol", "workspace": ws["id"]},
                     headers=headers,
                 )
         assert mock_create.await_count == 1
         assert resp.status_code == 500
         assert "foreign-vol" not in resp.text
 
-    async def test_create_volume_error_propagates(self, client, admin_user):
+    async def test_create_volume_error_propagates(
+        self, client, admin_user, user, app_state
+    ):
         headers = await _admin_login(client)
+        ws = await self._owning_ws(app_state, user)
         with (
             patch.object(
                 _mock_pod, "inspect_volume", AsyncMock(return_value=None)
@@ -7729,98 +7781,105 @@ class TestVolumeRoutes:
         ):
             await client.post(
                 "/api/v1/volumes",
-                json={"name": "err-vol"},
+                json={"name": "err-vol", "workspace": ws["id"]},
                 headers=headers,
             )
 
-    # --- Per-user volume quota (#2972) ---
+    # --- Per-workspace volume quota (#3153) ---
 
-    # The endpoint delegates counting to podman.count_user_volumes
+    # The endpoint delegates counting to podman.count_workspace_volumes
     # (label filtering is unit-tested in test_podman.py); tests here
     # stub the count and assert the route's quota decision, its call
     # args, and that the refusal never reaches podman.create_volume.
 
-    async def test_create_volume_under_quota(self, app, client, admin_user):
+    async def test_create_volume_under_quota(
+        self, app, client, admin_user, user, app_state
+    ):
         headers = await _admin_login(client)
+        ws = await self._owning_ws(app_state, user)
         mock_create = AsyncMock(
             return_value={"Name": "new-vol", "CreatedAt": "2026-01-01"}
         )
         mock_count = AsyncMock(return_value=1)
         with (
-            patch.object(app.state.settings, "volume_quota_per_user", 2),
+            patch.object(app.state.settings, "volume_quota_per_workspace", 2),
             patch.object(
                 _mock_pod, "inspect_volume", AsyncMock(return_value=None)
             ),
-            patch.object(_mock_pod, "count_user_volumes", mock_count),
+            patch.object(_mock_pod, "count_workspace_volumes", mock_count),
             patch.object(_mock_pod, "create_volume", mock_create),
         ):
             resp = await client.post(
                 "/api/v1/volumes",
-                json={"name": "new-vol"},
+                json={"name": "new-vol", "workspace": ws["id"]},
                 headers=headers,
             )
         assert resp.status_code == 200
         assert mock_create.await_count == 1
-        # The count is scoped to this instance and the caller's id.
-        assert mock_count.await_args.args[1] == admin_user["id"]
+        # The count is scoped to this instance and the workspace.
+        assert mock_count.await_args.args[1] == ws["id"]
 
     async def test_create_volume_at_quota_refused_429(
-        self, app, client, admin_user
+        self, app, client, admin_user, user, app_state
     ):
         headers = await _admin_login(client)
+        ws = await self._owning_ws(app_state, user)
         mock_create = AsyncMock(
             return_value={"Name": "nope", "CreatedAt": "2026-01-01"}
         )
         with (
-            patch.object(app.state.settings, "volume_quota_per_user", 2),
+            patch.object(app.state.settings, "volume_quota_per_workspace", 2),
             patch.object(
                 _mock_pod, "inspect_volume", AsyncMock(return_value=None)
             ),
             patch.object(
-                _mock_pod, "count_user_volumes", AsyncMock(return_value=2)
+                _mock_pod,
+                "count_workspace_volumes",
+                AsyncMock(return_value=2),
             ),
             patch.object(_mock_pod, "create_volume", mock_create),
         ):
             resp = await client.post(
                 "/api/v1/volumes",
-                json={"name": "v3"},
+                json={"name": "v3", "workspace": ws["id"]},
                 headers=headers,
             )
         assert resp.status_code == 429
         detail = resp.json()["detail"]
         assert "2" in detail
-        assert "KLANGKD_VOLUME_QUOTA_PER_USER" in detail
+        assert "KLANGKD_VOLUME_QUOTA_PER_WORKSPACE" in detail
         assert "Delete a volume first" in detail
         mock_create.assert_not_awaited()
 
     async def test_create_volume_duplicate_at_quota_reports_409(
-        self, app, client, admin_user
+        self, app, client, admin_user, user, app_state
     ):
         """The in-instance duplicate conflict probe deliberately wins over
         the quota check — a duplicate name reports 409 even at quota,
         and the count never runs (the name is enumerable by the caller
         either way)."""
         headers = await _admin_login(client)
+        ws = await self._owning_ws(app_state, user)
         mock_count = AsyncMock(return_value=99)
         with (
-            patch.object(app.state.settings, "volume_quota_per_user", 1),
+            patch.object(app.state.settings, "volume_quota_per_workspace", 1),
             patch.object(
                 _mock_pod,
                 "inspect_volume",
-                AsyncMock(return_value=_managed_volume(admin_user["id"])),
+                AsyncMock(return_value=_managed_ws_volume(ws["id"])),
             ),
-            patch.object(_mock_pod, "count_user_volumes", mock_count),
+            patch.object(_mock_pod, "count_workspace_volumes", mock_count),
         ):
             resp = await client.post(
                 "/api/v1/volumes",
-                json={"name": "dup-vol"},
+                json={"name": "dup-vol", "workspace": ws["id"]},
                 headers=headers,
             )
         assert resp.status_code == 409
         mock_count.assert_not_awaited()
 
     async def test_concurrent_creates_respect_quota(
-        self, app, client, admin_user
+        self, app, client, admin_user, user, app_state
     ):
         """The per-user lock spans count+create: two overlapping creates
         cannot each count the same pre-create total and both pass a cap
@@ -7839,9 +7898,10 @@ class TestVolumeRoutes:
         from klangk.api import resources
         from klangk.api.resources import CreateVolumeRequest
 
+        ws = await self._owning_ws(app_state, user)
         created: list[str] = []
 
-        async def fake_count(instance, uid):
+        async def fake_count(instance, workspace_id):
             await asyncio.sleep(0)
             return len(created)
 
@@ -7852,22 +7912,26 @@ class TestVolumeRoutes:
 
         real_lock = asyncio.Lock()
         with (
-            patch.object(app.state.settings, "volume_quota_per_user", 1),
+            patch.object(app.state.settings, "volume_quota_per_workspace", 1),
             patch.object(
                 _mock_pod, "inspect_volume", AsyncMock(return_value=None)
             ),
             patch.object(
-                _mock_pod, "volume_create_lock", lambda uid: real_lock
+                _mock_pod, "volume_create_lock", lambda key: real_lock
             ),
-            patch.object(_mock_pod, "count_user_volumes", fake_count),
+            patch.object(_mock_pod, "count_workspace_volumes", fake_count),
             patch.object(_mock_pod, "create_volume", fake_create),
         ):
             results = await asyncio.gather(
                 resources.create_volume(
-                    CreateVolumeRequest(name="v-a"), admin_user, app
+                    CreateVolumeRequest(name="v-a", workspace=ws["id"]),
+                    admin_user,
+                    app,
                 ),
                 resources.create_volume(
-                    CreateVolumeRequest(name="v-b"), admin_user, app
+                    CreateVolumeRequest(name="v-b", workspace=ws["id"]),
+                    admin_user,
+                    app,
                 ),
                 return_exceptions=True,
             )
@@ -7878,31 +7942,32 @@ class TestVolumeRoutes:
         successes = [r for r in results if not isinstance(r, Exception)]
         assert len(errors) == 1
         assert errors[0].status_code == 429
-        assert "KLANGKD_VOLUME_QUOTA_PER_USER" in errors[0].detail
+        assert "KLANGKD_VOLUME_QUOTA_PER_WORKSPACE" in errors[0].detail
         assert len(successes) == 1
         assert successes[0]["name"] == created[0]
 
     async def test_create_volume_quota_disabled_by_default(
-        self, app, client, admin_user
+        self, app, client, admin_user, user, app_state
     ):
-        """quota 0 (the shipped default) keeps the pre-#2972 create path:
-        no volume enumeration, no refusal regardless of count."""
+        """quota 0 (the shipped default) keeps the lock-free create
+        path: no volume enumeration, no refusal regardless of count."""
         headers = await _admin_login(client)
+        ws = await self._owning_ws(app_state, user)
         mock_count = AsyncMock(return_value=0)
         mock_create = AsyncMock(
             return_value={"Name": "new-vol", "CreatedAt": "2026-01-01"}
         )
         with (
-            patch.object(app.state.settings, "volume_quota_per_user", 0),
+            patch.object(app.state.settings, "volume_quota_per_workspace", 0),
             patch.object(
                 _mock_pod, "inspect_volume", AsyncMock(return_value=None)
             ),
-            patch.object(_mock_pod, "count_user_volumes", mock_count),
+            patch.object(_mock_pod, "count_workspace_volumes", mock_count),
             patch.object(_mock_pod, "create_volume", mock_create),
         ):
             resp = await client.post(
                 "/api/v1/volumes",
-                json={"name": "new-vol"},
+                json={"name": "new-vol", "workspace": ws["id"]},
                 headers=headers,
             )
         assert resp.status_code == 200

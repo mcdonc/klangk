@@ -404,108 +404,82 @@ def build_mounts(
 
 
 async def _ensure_named_volume(
-    app, workspace_id: str, user_id: str | None, podman, source: str
+    app, workspace_id: str, podman, source: str
 ) -> None:
-    """Create a missing named volume (instance-labelled, workspace-
-    and owner-tagged) or validate an existing one is claimable by this
-    start (#3153)."""
+    """Create a missing named volume (instance-labelled, owned by the
+    workspace being started) or validate an existing one is this
+    workspace's (#3153 — volumes are workspace-owned, never shared)."""
     info = await podman.inspect_volume(source)
     if info is None:
-        await _create_named_volume(app, workspace_id, user_id, podman, source)
+        await _create_named_volume(app, workspace_id, podman, source)
         return
-    _validate_volume_ownership(app, workspace_id, user_id, source, info)
+    _validate_volume_ownership(app, workspace_id, source, info)
 
 
 async def _create_named_volume(
-    app, workspace_id: str, user_id: str | None, podman, source: str
+    app, workspace_id: str, podman, source: str
 ) -> None:
-    """Create a named volume, instance-labelled and tagged with the
-    workspace it was created for plus its creating user (#3153)."""
+    """Create a named volume owned by *workspace_id* (#3153): stamped
+    with the instance and the workspace, never a user — the starter's
+    identity is irrelevant to a workspace-owned volume."""
     labels = {
         "klangk.managed": "true",
         "klangk.instance": app.state.util.instance_id(),
         "klangk.workspace-id": workspace_id,
     }
-    if user_id:
-        labels["klangk.user-id"] = user_id
-        quota = app.state.settings.volume_quota_per_user
-        if quota > 0:
-            await _create_volume_under_quota(
-                app, user_id, podman, source, labels, quota
-            )
-            return
+    quota = app.state.settings.volume_quota_per_workspace
+    if quota > 0:
+        await _create_volume_under_quota(
+            app, workspace_id, podman, source, labels, quota
+        )
+        return
     await podman.create_volume(source, labels)
 
 
 async def _create_volume_under_quota(
-    app, user_id, podman, source: str, labels: dict, quota: int
+    app, workspace_id: str, podman, source: str, labels: dict, quota: int
 ) -> None:
-    """Create one volume under the per-user lock, refusing at the cap.
+    """Create one volume under the per-workspace lock, refusing at the
+    cap.
 
-    Per-user volume quota (#2972): this start-path auto-create is the
-    second door that mints user-owned volumes (the POST /volumes route
-    is the first) — a user at quota must not bypass the cap by adding
-    mounts to a workspace. Same per-user lock as the route, so a
-    concurrent API create and this start cannot each pass a cap they
-    jointly exceed. The ValueError surfaces as a clear start error
-    (registry.start_container maps it).
+    Per-workspace volume quota: both doors that mint volumes (the
+    POST /volumes route and this start-path auto-create) count the
+    workspace's volumes and create under the same lock, so concurrent
+    creates cannot jointly exceed the cap. The ValueError surfaces as
+    a clear start error (registry.start_container maps it).
     """
-    async with podman.volume_create_lock(user_id):
-        count = await podman.count_user_volumes(
-            app.state.util.instance_id(), user_id
+    async with podman.volume_create_lock(workspace_id):
+        count = await podman.count_workspace_volumes(
+            app.state.util.instance_id(), workspace_id
         )
         if count >= quota:
             raise ValueError(
                 f"volume quota reached: {count} of this "
-                "user's volumes already exist and the server "
+                "workspace's volumes already exist and the server "
                 f"caps it at {quota} "
-                "(KLANGKD_VOLUME_QUOTA_PER_USER); remove a "
+                "(KLANGKD_VOLUME_QUOTA_PER_WORKSPACE); remove a "
                 "volume mount or delete a volume first"
             )
         await podman.create_volume(source, labels)
 
 
-def _foreign_volume_owner(vol_owner: str | None, user_id: str | None) -> bool:
-    """True when the volume is tagged to a different user than the
-    starter (both must be known to compare)."""
-    return bool(vol_owner) and bool(user_id) and vol_owner != user_id
-
-
-def volume_claimed_by(
-    vol_labels: dict, workspace_id: str, user_id: str | None
-) -> bool:
-    """True when the volume's recorded origin matches this start (#3153).
-
-    A volume created by a workspace start carries that workspace's id;
-    matching it lets any legitimate starter of THAT workspace use the
-    volume (a member cold-connecting a shared workspace, the owner
-    restarting after a member created it). Otherwise the creating user
-    must match the starting user — same-user sharing across that user's
-    own workspaces. A missing label side never matches; legacy volumes
-    without a workspace label fall back to the user check alone.
-    """
-    if vol_labels.get("klangk.workspace-id") == workspace_id:
-        return True
-    return not _foreign_volume_owner(vol_labels.get("klangk.user-id"), user_id)
-
-
 def _validate_volume_ownership(
-    app, workspace_id: str, user_id: str | None, source: str, info: dict
+    app, workspace_id: str, source: str, info: dict
 ) -> None:
-    """An existing volume must belong to this instance, and to this
-    start: its workspace or creator label must match (#3153)."""
+    """An existing volume must belong to this instance and to the
+    workspace being started (#3153 — workspace ownership, no user
+    dimension: whoever starts the workspace is irrelevant)."""
     vol_labels = info.get("Labels") or {}
     if vol_labels.get("klangk.instance") != app.state.util.instance_id():
         raise ValueError(
             f"Volume {source!r} is not managed by this klangk instance"
         )
-    if volume_claimed_by(vol_labels, workspace_id, user_id):
-        return
-    raise ValueError(f"Volume {source!r} belongs to another user or workspace")
+    if vol_labels.get("klangk.workspace-id") != workspace_id:
+        raise ValueError(f"Volume {source!r} belongs to another workspace")
 
 
 async def _ensure_one_volume(
-    app, workspace_id: str, user_id: str | None, podman, mount_spec: str
+    app, workspace_id: str, podman, mount_spec: str
 ) -> None:
     """Create/validate the source of one extra mount."""
     source = mount_spec.split(":")[0]
@@ -521,7 +495,7 @@ async def _ensure_one_volume(
                 "(must start alphanumeric, contain only "
                 "[a-zA-Z0-9_.-], and be at most 64 chars)"
             )
-        await _ensure_named_volume(app, workspace_id, user_id, podman, source)
+        await _ensure_named_volume(app, workspace_id, podman, source)
     elif not os.path.exists(source):
         raise ValueError(f"Bind mount source does not exist: {source}")
 
@@ -530,16 +504,13 @@ async def ensure_volumes(
     app,
     extra_mounts: list[str] | None,
     workspace_id: str,
-    user_id: str | None,
     podman,
 ) -> None:
     """Create named volumes and validate bind-mount sources."""
     if not extra_mounts:
         return
     for mount_spec in extra_mounts:
-        await _ensure_one_volume(
-            app, workspace_id, user_id, podman, mount_spec
-        )
+        await _ensure_one_volume(app, workspace_id, podman, mount_spec)
 
 
 async def nix_binds(

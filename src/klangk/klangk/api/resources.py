@@ -419,6 +419,10 @@ async def list_volumes(
 
 class CreateVolumeRequest(BaseModel):
     name: str = Field(pattern=VOLUME_NAME_PATTERN)
+    # The owning workspace (#3153): volumes are workspace-owned and
+    # never shared, so creation must name the one workspace that may
+    # mount the volume.
+    workspace: str
 
 
 async def _reject_in_instance_duplicate(app, name: str) -> None:
@@ -444,27 +448,27 @@ async def _reject_in_instance_duplicate(app, name: str) -> None:
 
 
 def _volume_quota_error(count: int, quota: int) -> HTTPException:
-    """The 429 raised when a create would pass the per-user volume cap
-    (#2972) — capacity, not authorization (not 403), and not
+    """The 429 raised when a create would pass the per-workspace
+    volume cap — capacity, not authorization (not 403), and not
     auto-retried (not 503, which the CLI's request_with_retry
     re-drives)."""
     return HTTPException(
         status_code=429,
         detail=(
-            f"volume quota reached: {count} of this user's "
+            f"volume quota reached: {count} of this workspace's "
             f"volumes already exist and the server caps it at "
-            f"{quota} (KLANGKD_VOLUME_QUOTA_PER_USER). Delete "
+            f"{quota} (KLANGKD_VOLUME_QUOTA_PER_WORKSPACE). Delete "
             "a volume first, or ask the operator to raise the cap."
         ),
     )
 
 
 async def _create_volume_checked(
-    app, user: dict, name: str, labels: dict
+    app, workspace_id: str, name: str, labels: dict
 ) -> dict:
-    """Create the volume under the per-user quota (#2972).
+    """Create the volume under the per-workspace quota.
 
-    The per-user lock spans count+create: without it, N concurrent
+    The per-workspace lock spans count+create: without it, N concurrent
     creates each count the same pre-create total and all pass a cap
     they jointly exceed. The workspace-start auto-create door
     (container/spec.py ensure_volumes) shares the same lock and quota
@@ -472,11 +476,11 @@ async def _create_volume_checked(
     0 keeps the create path exactly as before, with no extra podman
     call.
     """
-    quota = app.state.settings.volume_quota_per_user
+    quota = app.state.settings.volume_quota_per_workspace
     if quota > 0:
-        async with app.state.podman.volume_create_lock(user["id"]):
-            count = await app.state.podman.count_user_volumes(
-                app.state.util.instance_id(), user["id"]
+        async with app.state.podman.volume_create_lock(workspace_id):
+            count = await app.state.podman.count_workspace_volumes(
+                app.state.util.instance_id(), workspace_id
             )
             if count >= quota:
                 raise _volume_quota_error(count, quota)
@@ -490,14 +494,30 @@ async def create_volume(
     user: dict = Depends(acl.has_permission("manage-volumes")),
     app=Depends(get_app_dep),
 ):
+    """Pre-create a volume owned by a workspace (#3153).
+
+    Volumes are workspace-owned and never shared between workspaces,
+    so a volume must name its owning workspace at creation — it is
+    mountable by that workspace alone. There is deliberately no
+    user-id stamp: whoever creates it is irrelevant.
+    """
+    workspace = await app.state.model.workspaces.get_workspace(body.workspace)
+    if workspace is None:
+        raise HTTPException(status_code=404, detail="Workspace not found")
     await _reject_in_instance_duplicate(app, body.name)
     labels = {
         "klangk.managed": "true",
         "klangk.instance": app.state.util.instance_id(),
-        "klangk.user-id": user["id"],
+        "klangk.workspace-id": workspace["id"],
     }
-    info = await _create_volume_checked(app, user, body.name, labels)
-    return {"name": info["Name"], "created": info.get("CreatedAt", "")}
+    info = await _create_volume_checked(
+        app, workspace["id"], body.name, labels
+    )
+    return {
+        "name": info["Name"],
+        "created": info.get("CreatedAt", ""),
+        "workspace": workspace["id"],
+    }
 
 
 async def _require_managed_volume(app, name: str) -> dict:

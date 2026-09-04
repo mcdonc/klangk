@@ -64,6 +64,7 @@ class IdleMonitor:
     async def cleanup_idle_containers(self) -> None:
         registry = self.app.state.container_registry
         last_token_sweep = 0.0
+        last_volume_sweep = 0.0
         while True:
             wake = self.get_cleanup_wake()
             wake.clear()
@@ -82,6 +83,12 @@ class IdleMonitor:
             # most every ORPHAN_TOKEN_SWEEP_INTERVAL.
             last_token_sweep = await self._sweep_tokens_if_due(
                 registry, last_token_sweep, now
+            )
+            # Same cadence for orphaned workspace-owned volumes (#3153):
+            # a volume whose workspace row is gone can never be mounted
+            # again, so the sweep reclaims what a crashed delete leaves.
+            last_volume_sweep = await self._sweep_volumes_if_due(
+                registry, last_volume_sweep, now
             )
 
     async def _stop_idle_workspace(self, registry, cid: str, wid: str) -> None:
@@ -108,6 +115,20 @@ class IdleMonitor:
                 await registry.sweep_orphaned_sidecar_tokens()
             except Exception as e:
                 logger.warning("Orphan sidecar-token sweep failed: %s", e)
+            return now
+        return last_sweep
+
+    async def _sweep_volumes_if_due(
+        self, registry, last_sweep: float, now: float
+    ) -> float:
+        """Run the orphan volume sweep when due; returns the (possibly
+        advanced) last-sweep timestamp. A failing sweep still advances
+        it."""
+        if now - last_sweep >= ORPHAN_TOKEN_SWEEP_INTERVAL:
+            try:
+                await registry.sweep_orphaned_volumes()
+            except Exception as e:
+                logger.warning("Orphan volume sweep failed: %s", e)
             return now
         return last_sweep
 

@@ -636,6 +636,13 @@ class Workspaces:
             # #2201: drop the per-workspace nix clone if nix is enabled
             # (no-op otherwise).
             await self.app.state.nix.destroy_workspace_nix(workspace_id)
+            # #3153: volumes are workspace-owned — a volume whose
+            # workspace is gone can never be mounted again, so the
+            # delete cascade reclaims them (best-effort; the periodic
+            # orphan sweep catches stragglers).
+            await self.app.state.container_registry.remove_workspace_volumes(
+                workspace_id
+            )
             ws_dir = self.safe_path(workspace_id)
             await async_rmtree(ws_dir, f"workspace {workspace_id}")
         return deleted
