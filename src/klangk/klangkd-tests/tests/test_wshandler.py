@@ -11844,7 +11844,13 @@ class TestTokenRenewal:
             ):
                 expiry = datetime.now(timezone.utc) + timedelta(seconds=0.1)
                 session.start_token_renewal(expiry)
-                await original_sleep(0.5)
+                # Poll for the retry instead of a fixed sleep budget: a
+                # busy CI runner (xdist + SQLite migrations) can starve
+                # the renewal task's loop turns well past 0.5s, which
+                # flaked this test on the macOS backend matrix.
+                deadline = time.monotonic() + 5.0
+                while call_count < 2 and time.monotonic() < deadline:
+                    await original_sleep(0.01)
                 session._token_renewal_task.cancel()
                 try:
                     await session._token_renewal_task
