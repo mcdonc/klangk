@@ -66,3 +66,21 @@ class WorkspaceCapacityError(RuntimeError):
     start failure (bounded retries) — capacity may recover on its own
     (the memory-pressure evictor frees idle workspaces, #2526).
     """
+
+
+class AuditWriteError(RuntimeError):
+    """A ``container_events`` audit row could not be written (#3154).
+
+    Security finding V-222486 asked for fail-closed auditing; the
+    honest scope is the *interactive* API lifecycle paths only. Raised
+    by :meth:`ContainerRegistry.prewrite_audit_event` when
+    ``KLANGKD_AUDIT_FAIL_CLOSED`` is on and the audit-before-act row
+    for a POST start/stop/restart (or create's eager start, or delete's
+    stop) cannot be written: the transition is refused before any side
+    effect, and the API layer translates this to a 503.
+
+    Autonomous lifecycle paths (idle timeout, eviction, drain, shutdown
+    sweep, crash teardown, boot reaps, logout) never raise it — refusing
+    those would keep containers running *and* lose the record, so they
+    stay best-effort (logged, counted in ``/health``).
+    """
