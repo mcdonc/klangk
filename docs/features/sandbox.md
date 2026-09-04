@@ -108,10 +108,12 @@ enabled on the server (the ceiling).
 
 > **`~` and the home layout:** In `mount-at`, `copy` destinations,
 > and `mounts` destinations, `~` always expands to `/home/{handle}` —
-> your home under the per-handle layout. On a **shared-home**
-> workspace (the default) your `$HOME` is `/home/klangk`, so a `~`
-> destination mounts outside your home; use an explicit absolute
-> path (e.g. `mount-at: /home/klangk/work`) there.
+> your home under the per-handle layout — and only a leading `~` is
+> special: `~user`-style tildes and `$VAR` references are never
+> expanded anywhere. On a **shared-home** workspace (the default)
+> your `$HOME` is `/home/klangk`, so a `~` destination mounts outside
+> your home; use an explicit absolute path (e.g.
+> `mount-at: /home/klangk/work`) there.
 
 ### `copy`
 
@@ -132,9 +134,12 @@ home; tilde on the right expands to the container user's home
 
 Destinations are **literal** container paths: apart from the leading
 `~` above, nothing is shell-expanded. A destination like `~other/file`
-or `$HOME/file` is written as a file literally named `~other/file` /
-`$HOME/file` — `$HOME` refers to neither the container's nor the host's
-home directory. Spell out the path you want instead.
+or `$HOME/file` is taken literally — the copy lands in a directory
+with that literal name, not in another user's home or the container's
+`$HOME`. A relative destination (no `~` or `/` prefix) is resolved by
+the container's shell against the exec working directory — the
+container user's home — **not** against `mount-at` (unlike `mounts`
+destinations). Spell out the path you want.
 
 Copies happen once during workspace creation, after the default home
 skeleton is populated but before the setup script runs. The copied

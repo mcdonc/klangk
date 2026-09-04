@@ -113,9 +113,9 @@ def expand_container_path(
 
     #3118: only the leading ``~`` is special. Any other shell-like
     syntax — ``~user`` tildes, ``$VAR`` references — passes through
-    literally, and callers quote the result (#3093), so no
-    container-side expansion happens either: sandbox destinations
-    are literal container paths by design.
+    literally; the copy path quotes the result (#3093), so no
+    container-side expansion happens there either: sandbox copy
+    destinations are literal container paths by design.
     """
     if path.startswith("~/"):
         return f"/home/{handle}/{path[2:]}"
@@ -231,7 +231,10 @@ def build_copy_pairs(
     #3118: destinations are literal container paths — only a leading
     ``~`` expands (via expand_container_path). A ``~user`` or ``$VAR``
     destination passes through literally; copy_sandbox_files quotes it
-    (#3093), so the container writes it as a literal filename.
+    (#3093), so the container writes it as a literal filename. A
+    relative destination likewise passes through unresolved — the
+    container's shell runs it against the exec working directory (the
+    container user's home), not against ``mount_at``.
     """
     pairs = []
     for spec in config.copy:
