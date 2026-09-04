@@ -94,7 +94,7 @@ By default every authenticated member can create workspaces (#3137):
 the `members` group — which every new user joins automatically — holds
 the seeded `create-workspace` Allow on `/workspaces`. Member footprint
 is bounded by the admission and quota controls (admission memory
-margin, `max_running_workspaces_per_user`, `volume_quota_per_user`),
+margin, `max_running_workspaces_per_user`, `volume_quota_per_workspace`),
 and what a member-created workspace can run is constrained by
 `allowed_images` / `allowed_mount_roots` / egress filtering.
 

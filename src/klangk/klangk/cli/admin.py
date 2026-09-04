@@ -269,11 +269,16 @@ def volumes_list(
 @vol_app.command("create")
 def volumes_create(
     name: str = typer.Argument(..., help="Volume name"),
+    workspace: str = typer.Option(
+        ..., "--workspace", help="Owning workspace id (#3153)"
+    ),
 ) -> None:
-    """Create a named container volume."""
+    """Create a named container volume owned by a workspace."""
     context.require_auth()
     client = context.client()
-    resp = client.post("/api/v1/volumes", json={"name": name})
+    resp = client.post(
+        "/api/v1/volumes", json={"name": name, "workspace": workspace}
+    )
     client.check_auth(resp)
     if resp.status_code == 409:
         context.err.print(f"[red]Volume already exists:[/red] {name}")

@@ -1289,6 +1289,23 @@ class TestWorkspacesServiceBranchGaps2834:
         assert ws["id"] not in registry._workspace_locks
         assert ws["id"] not in registry.stop_epoch
 
+    async def test_delete_workspace_removes_owned_volumes(
+        self, user, app_state, monkeypatch
+    ):
+        """#3153: volumes are workspace-owned -- the delete cascade
+        removes the workspace's volumes so none are left unmountable."""
+        wsvc = app_state.state.workspaces
+        ws = await wsvc.create_workspace(user["id"], "vols-die")
+        registry = app_state.state.container_registry
+        removed = []
+        monkeypatch.setattr(
+            registry,
+            "remove_workspace_volumes",
+            AsyncMock(side_effect=lambda wid: removed.append(wid) or 0),
+        )
+        assert await wsvc.delete_workspace(ws["id"], user["id"]) is True
+        assert removed == [ws["id"]]
+
     async def test_delete_workspace_prunes_before_teardown_failures(
         self, user, app_state, monkeypatch
     ):

@@ -1022,6 +1022,11 @@ class KlangkSettings(BaseSettings):
     image_name: str | None = "klangk-workspace"
     image_pull_policy: str | None = "never"
     allowed_images: str | None = None
+    # allowed_mount_roots: comma-separated host path roots user bind
+    # mounts may source from (#3153). UNSET (the default) disables user
+    # bind mounts entirely — only named volumes may be mounted; the
+    # mounts klangkd builds itself (home, config, SSL, nix) are
+    # internal and never pass the gate. Reloadable on SIGHUP.
     allowed_mount_roots: str | None = None
     allow_autostart: str = ""
     # allow_sudo: passwordless sudo for the klangk user inside workspace
@@ -1264,24 +1269,22 @@ class KlangkSettings(BaseSettings):
     # per-workspace operation lock), which closes the concurrent-start
     # race. Read live (SIGHUP reload-safe).
     max_running_workspaces_per_user: int = 0
-    # volume_quota_per_user: deploy-wide cap on instance-managed named
-    # volumes per user (#2972), enforced at both doors that mint
-    # user-owned volumes: the POST /volumes route and the
-    # workspace-start auto-create of mounted named volumes
-    # (container/spec.py ensure_volumes). Each volume is a directory
-    # tree on the host's storage, so without a cap any user granted
-    # manage-volumes (seeded to the admins group only since #2997;
-    # operators may grant it further) can consume unbounded disk —
-    # including by adding mounts to a
-    # workspace. A create past the cap fails with 429 (start path: a
-    # clear start error) naming this setting; the count is the user's
-    # volumes carrying this instance's klangk.instance label and their
-    # klangk.user-id label, and count+create hold the per-user lock
-    # (podman.volume_create_lock) so concurrent creates cannot jointly
-    # exceed the cap. 0 (the default) = unlimited (the pre-#2972
-    # behavior, and no extra podman call on the create path). Read
-    # live (SIGHUP reload-safe).
-    volume_quota_per_user: int = 0
+    # volume_quota_per_workspace: deploy-wide cap on instance-managed
+    # named volumes per workspace (#3153 — volumes are workspace-
+    # owned), enforced at both doors that mint volumes: the POST
+    # /volumes route and the workspace-start auto-create of mounted
+    # named volumes (container/spec.py ensure_volumes). Each volume
+    # is a directory tree on the host's storage, so without a cap any
+    # editor of a workspace can consume unbounded disk by adding
+    # mounts. A create past the cap fails with 429 (start path: a
+    # clear start error) naming this setting; the count is the
+    # workspace's volumes carrying this instance's klangk.instance
+    # label and its klangk.workspace-id label, and count+create hold
+    # the per-workspace lock (podman.volume_create_lock) so
+    # concurrent creates cannot jointly exceed the cap. 0 (the
+    # default) = unlimited (no extra podman call on the create path).
+    # Read live (SIGHUP reload-safe).
+    volume_quota_per_workspace: int = 0
     # #2378: per-workspace /tmp tmpfs size (``--tmpfs /tmp:...,size=<n>``).
     # Default ``2g`` preserves the pre-#2378 hardcoded mount size; a
     # workspace may override it via its settings bag (``settings.tmp_size``).
@@ -1633,7 +1636,7 @@ class KlangkSettings(BaseSettings):
         "hosted_ports_per_workspace",
         "memory_eviction_sustain_polls",
         "max_running_workspaces_per_user",
-        "volume_quota_per_user",
+        "volume_quota_per_workspace",
         mode="before",
     )
     @classmethod
@@ -1669,8 +1672,8 @@ class KlangkSettings(BaseSettings):
             "inactivity_disable_days",
             # Disables the per-user running-workspace cap (#2525).
             "max_running_workspaces_per_user",
-            # Disables the per-user volume quota (#2972).
-            "volume_quota_per_user",
+            # Disables the per-workspace volume quota (#3153).
+            "volume_quota_per_workspace",
         }
         minimum = 0 if info.field_name in _ZERO_MEANINGFUL else 1
         return _coerce_setting_int(

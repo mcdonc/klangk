@@ -735,6 +735,18 @@ class WorkspacesModel(Submodel):
         )
         return [{"name": r["name"], "mounts": r["mounts"]} for r in rows]
 
+    async def workspace_name_map(self) -> dict[str, str]:
+        """Every workspace's ``id -> name``.
+
+        The admin volume listing resolves each volume's owning
+        workspace label to a display name with this (#3153 — volumes
+        are workspace-owned; the label carries the id).
+        """
+        rows = await self.app.state.db.fetchall(
+            "SELECT id, name FROM workspaces"
+        )
+        return {r["id"]: r["name"] for r in rows}
+
     async def list_workspaces(
         self,
         user_id: str,

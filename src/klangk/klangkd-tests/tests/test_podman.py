@@ -1118,8 +1118,9 @@ class TestListVolumes:
             assert await _p.list_volumes("k=v") == []
 
 
-class TestCountUserVolumes:
-    """The #2972 quota count: own instance-managed volumes only."""
+class TestCountWorkspaceVolumes:
+    """The quota count (#3153 workspace ownership): this workspace's
+    instance-managed volumes only."""
 
     async def test_counts_only_own_instance_volumes(self):
         payload = json.dumps(
@@ -1128,24 +1129,24 @@ class TestCountUserVolumes:
                     "Name": "mine",
                     "Labels": {
                         "klangk.instance": "inst",
-                        "klangk.user-id": "u1",
+                        "klangk.workspace-id": "ws1",
                     },
                 },
-                # Another user's volume — same instance.
+                # Another workspace's volume — same instance.
                 {
                     "Name": "theirs",
                     "Labels": {
                         "klangk.instance": "inst",
-                        "klangk.user-id": "u2",
+                        "klangk.workspace-id": "ws2",
                     },
                 },
-                # Stray out-of-band volume carrying our user-id but a
-                # foreign instance label — must not consume quota.
+                # Stray out-of-band volume carrying our workspace-id but
+                # a foreign instance label — must not consume quota.
                 {
                     "Name": "foreign",
                     "Labels": {
                         "klangk.instance": "other",
-                        "klangk.user-id": "u1",
+                        "klangk.workspace-id": "ws1",
                     },
                 },
                 # Unlabeled volumes (podman emits "Labels": null).
@@ -1154,7 +1155,7 @@ class TestCountUserVolumes:
             ]
         )
         with patch(EXEC, _exec((payload, "", 0))) as m:
-            assert await _p.count_user_volumes("inst", "u1") == 1
+            assert await _p.count_workspace_volumes("inst", "ws1") == 1
         # The podman-side filter is the instance label.
         assert _args(m, 0) == [
             "volume",

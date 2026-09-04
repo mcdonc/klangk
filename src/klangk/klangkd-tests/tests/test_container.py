@@ -4028,16 +4028,31 @@ class TestValidateMountSpec:
         app_state = _make_app_state()
         self.registry = app_state.state.container_registry
 
-    def test_valid_bind_mount(self):
+    def test_valid_bind_mount(self, monkeypatch):
+        monkeypatch.setattr(
+            self.registry.app.state.settings,
+            "allowed_mount_roots",
+            "/host",
+        )
         assert self.registry.validate_mount_spec("/host:/container") is None
 
     def test_valid_volume_mount(self):
         assert self.registry.validate_mount_spec("vol-name:/data") is None
 
-    def test_valid_with_options(self):
+    def test_valid_with_options(self, monkeypatch):
+        monkeypatch.setattr(
+            self.registry.app.state.settings,
+            "allowed_mount_roots",
+            "/host",
+        )
         assert self.registry.validate_mount_spec("/host:/container:ro") is None
 
-    def test_valid_with_multiple_options(self):
+    def test_valid_with_multiple_options(self, monkeypatch):
+        monkeypatch.setattr(
+            self.registry.app.state.settings,
+            "allowed_mount_roots",
+            "/host",
+        )
         assert (
             self.registry.validate_mount_spec("/host:/container:ro,nocopy")
             is None
@@ -4093,16 +4108,32 @@ class TestValidateMountSpec:
         assert err is not None
         assert "podman-safe" in err.lower()
 
-    def test_bind_sources_unaffected_by_volume_rule(self):
+    def test_bind_sources_unaffected_by_volume_rule(self, monkeypatch):
         """#3018: absolute paths and '.'-prefixed (bind) sources never hit
-        the volume-name rule — they keep the protected/allowed-root path."""
+        the volume-name rule — they keep the protected/allowed-root
+        (or disabled, #3153) path."""
+        monkeypatch.setattr(
+            self.registry.app.state.settings,
+            "allowed_mount_roots",
+            "/host",
+        )
         assert self.registry.validate_mount_spec("/host:/container") is None
-        assert self.registry.validate_mount_spec("./cache:/data") is None
+        # A relative bind source is NOT rejected by the volume-name
+        # rule — it flows the bind path (allowed-root denial here).
+        err = self.registry.validate_mount_spec("./cache:/data")
+        assert err is not None
+        assert "allowed root" in err.lower()
 
-    def test_validate_mounts_list(self):
+    def test_validate_mounts_list(self, monkeypatch):
+        monkeypatch.setattr(
+            self.registry.app.state.settings, "allowed_mount_roots", "/a"
+        )
         assert self.registry.validate_mounts(["/a:/b", "vol:/c"]) is None
 
-    def test_validate_mounts_list_with_error(self):
+    def test_validate_mounts_list_with_error(self, monkeypatch):
+        monkeypatch.setattr(
+            self.registry.app.state.settings, "allowed_mount_roots", "/a"
+        )
         err = self.registry.validate_mounts(["/a:/b", "bad"])
         assert err is not None
 
@@ -4152,13 +4183,25 @@ class TestAllowedMountRoots:
         )
         assert self.registry.validate_mount_spec("my-volume:/data") is None
 
-    def test_no_restriction_when_empty(self, monkeypatch):
+    def test_bind_mounts_disabled_when_unset(self, monkeypatch):
+        """#3153 deny-by-default: with no roots configured, ANY host-path
+        bind source is rejected — only named volumes may be mounted."""
         monkeypatch.setattr(
             self.registry.app.state.settings, "allowed_mount_roots", ""
         )
-        assert (
-            self.registry.validate_mount_spec("/etc/shadow:/secrets") is None
+        err = self.registry.validate_mount_spec("/etc/shadow:/secrets")
+        assert err is not None
+        assert "bind mounts are disabled" in err
+        err = self.registry.validate_mount_spec("/home/user/src:/work")
+        assert err is not None
+        assert "KLANGKD_ALLOWED_MOUNT_ROOTS" in err
+
+    def test_named_volume_ok_when_unset(self, monkeypatch):
+        """Named volumes are unaffected by the bind-mount gate."""
+        monkeypatch.setattr(
+            self.registry.app.state.settings, "allowed_mount_roots", ""
         )
+        assert self.registry.validate_mount_spec("my-volume:/data") is None
 
     def test_multiple_roots(self, monkeypatch):
         monkeypatch.setattr(
@@ -4292,11 +4335,13 @@ class TestExtraMountsVolumeCreation:
         name, labels = p.create_volume.call_args.args
         assert name == "nix-store"
         assert labels["klangk.managed"] == "true"
+        assert labels["klangk.workspace-id"] == workspace["id"]
         assert (
             labels["klangk.instance"]
             == self.registry.app.state.util.instance_id()
         )
-        assert labels["klangk.user-id"] == "user-123"
+        # #3153: workspace-owned — no user stamp at all.
+        assert "klangk.user-id" not in labels
 
     async def test_unsafe_volume_name_rejected_at_start(self, workspace):
         """#3018 defense in depth: a row that slipped past the API gate
@@ -4321,7 +4366,7 @@ class TestExtraMountsVolumeCreation:
         assert mock_create.await_count == 0
 
     async def test_existing_volume_not_recreated(self, workspace, app_state):
-        """Existing volumes owned by this instance and user are used as-is."""
+        """This workspace's existing volume is used as-is, not recreated."""
         with patch_podman(
             self.registry,
             inspect_volume=AsyncMock(
@@ -4329,7 +4374,7 @@ class TestExtraMountsVolumeCreation:
                     "Name": "existing",
                     "Labels": {
                         "klangk.instance": self.registry.app.state.util.instance_id(),
-                        "klangk.user-id": "user-123",
+                        "klangk.workspace-id": workspace["id"],
                     },
                 }
             ),
@@ -4379,8 +4424,9 @@ class TestExtraMountsVolumeCreation:
                     )
                 )
 
-    async def test_cross_user_volume_rejected(self, workspace, app_state):
-        """A volume owned by another user is refused."""
+    async def test_cross_workspace_volume_rejected(self, workspace, app_state):
+        """A volume owned by another workspace is refused (#3153) —
+        volumes cannot be shared between workspaces, whoever starts."""
         with patch_podman(
             self.registry,
             inspect_volume=AsyncMock(
@@ -4388,12 +4434,14 @@ class TestExtraMountsVolumeCreation:
                     "Name": "private",
                     "Labels": {
                         "klangk.instance": self.registry.app.state.util.instance_id(),
-                        "klangk.user-id": "user-other",
+                        "klangk.workspace-id": "ws-other",
                     },
                 }
             ),
         ):
-            with pytest.raises(ValueError, match="belongs to another user"):
+            with pytest.raises(
+                ValueError, match="belongs to another workspace"
+            ):
                 await self.registry.start_container(
                     container.ContainerStartSpec(
                         workspace["id"],
@@ -4403,15 +4451,45 @@ class TestExtraMountsVolumeCreation:
                     )
                 )
 
+    async def test_workspace_volume_usable_by_any_starter(
+        self, workspace, app_state
+    ):
+        """#3153: ownership has no user dimension — the same start
+        succeeds with no user attributed at all (autonomous restart
+        shape) and with any user attributed; only the workspace label
+        is consulted."""
+        for spec_user in (None, "user-a", "user-b"):
+            with patch_podman(
+                self.registry,
+                inspect_volume=AsyncMock(
+                    return_value={
+                        "Name": "shared",
+                        "Labels": {
+                            "klangk.instance": self.registry.app.state.util.instance_id(),
+                            "klangk.workspace-id": workspace["id"],
+                        },
+                    }
+                ),
+            ) as p:
+                await self.registry.start_container(
+                    container.ContainerStartSpec(
+                        workspace["id"],
+                        "/tmp/home",
+                        extra_mounts=["shared:/data"],
+                        user_id=spec_user,
+                    )
+                )
+            p.create_volume.assert_not_awaited()
+
     async def test_auto_create_refused_at_quota(self, workspace, app_state):
-        """#2972: the start-path auto-create door honors the per-user
-        volume quota — a user at quota cannot mint volumes by adding
-        mounts to a workspace."""
-        self.registry.app.state.settings.volume_quota_per_user = 1
+        """The start-path auto-create door honors the per-workspace
+        volume quota — a workspace at quota cannot mint volumes by
+        adding mounts."""
+        self.registry.app.state.settings.volume_quota_per_workspace = 1
         try:
             with patch_podman(
                 self.registry,
-                count_user_volumes=AsyncMock(return_value=1),
+                count_workspace_volumes=AsyncMock(return_value=1),
             ) as p:
                 with pytest.raises(ValueError, match="volume quota reached"):
                     await self.registry.start_container(
@@ -4424,33 +4502,36 @@ class TestExtraMountsVolumeCreation:
                     )
             p.create_volume.assert_not_awaited()
         finally:
-            self.registry.app.state.settings.volume_quota_per_user = 0
+            self.registry.app.state.settings.volume_quota_per_workspace = 0
 
     async def test_auto_create_under_quota(self, workspace, app_state):
         """A start-path create below the cap proceeds."""
-        self.registry.app.state.settings.volume_quota_per_user = 2
+        self.registry.app.state.settings.volume_quota_per_workspace = 2
         try:
             with patch_podman(
                 self.registry,
-                count_user_volumes=AsyncMock(return_value=1),
+                count_workspace_volumes=AsyncMock(return_value=1),
             ) as p:
                 await self.registry.start_container(
                     container.ContainerStartSpec(
                         workspace["id"],
                         "/tmp/home",
                         extra_mounts=["v1:/data"],
-                        user_id="user-123",
                     )
                 )
             p.create_volume.assert_awaited_once()
-            assert p.count_user_volumes.await_args.args[1] == "user-123"
+            # The count keys on the WORKSPACE, never a user (#3153).
+            assert (
+                p.count_workspace_volumes.await_args.args[1] == workspace["id"]
+            )
         finally:
-            self.registry.app.state.settings.volume_quota_per_user = 0
+            self.registry.app.state.settings.volume_quota_per_workspace = 0
 
-    async def test_volume_without_user_label_allowed(
+    async def test_volume_without_workspace_label_rejected(
         self, workspace, app_state
     ):
-        """A volume with no user-id label (pre-existing) is allowed."""
+        """A managed volume with no workspace label cannot belong to
+        this workspace — refused (#3153: no user fallback exists)."""
         with patch_podman(
             self.registry,
             inspect_volume=AsyncMock(
@@ -4458,19 +4539,22 @@ class TestExtraMountsVolumeCreation:
                     "Name": "legacy",
                     "Labels": {
                         "klangk.instance": self.registry.app.state.util.instance_id(),
+                        "klangk.user-id": "user-123",
                     },
                 }
             ),
-        ) as p:
-            await self.registry.start_container(
-                container.ContainerStartSpec(
-                    workspace["id"],
-                    "/tmp/home",
-                    extra_mounts=["legacy:/data"],
-                    user_id="user-123",
+        ):
+            with pytest.raises(
+                ValueError, match="belongs to another workspace"
+            ):
+                await self.registry.start_container(
+                    container.ContainerStartSpec(
+                        workspace["id"],
+                        "/tmp/home",
+                        extra_mounts=["legacy:/data"],
+                        user_id="user-123",
+                    )
                 )
-            )
-        p.create_volume.assert_not_awaited()
 
     async def test_bind_mount_not_treated_as_volume(
         self, workspace, monkeypatch
@@ -5302,6 +5386,179 @@ class TestCleanupIdleContainers:
         assert (token_dir / "gone-ws.tmp").exists()
         # non-file entries (subdirs) are left untouched
         assert (token_dir / "subdir").is_dir()
+
+    async def test_sweep_orphaned_volumes_removes_only_orphans(
+        self, app_state, monkeypatch
+    ):
+        """#3153: volumes whose klangk.workspace-id label names a
+        workspace with no row are removed; live workspaces' volumes,
+        label-less volumes, and foreign-instance volumes stay."""
+        monkeypatch.setattr(
+            self.registry.app.state.workspaces,
+            "existing_workspace_ids",
+            AsyncMock(return_value={"live-ws"}),
+        )
+        volumes = [
+            {
+                "Name": "live-vol",
+                "Labels": {
+                    "klangk.instance": (
+                        self.registry.app.state.util.instance_id()
+                    ),
+                    "klangk.workspace-id": "live-ws",
+                },
+            },
+            {
+                "Name": "orphan-vol",
+                "Labels": {
+                    "klangk.instance": (
+                        self.registry.app.state.util.instance_id()
+                    ),
+                    "klangk.workspace-id": "gone-ws",
+                },
+            },
+            # No workspace label: not ours to judge.
+            {
+                "Name": "bare",
+                "Labels": {
+                    "klangk.instance": (
+                        self.registry.app.state.util.instance_id()
+                    ),
+                },
+            },
+            {"Name": "null-labels", "Labels": None},
+        ]
+        removed = []
+        monkeypatch.setattr(
+            self.registry.app.state.podman,
+            "list_volumes",
+            AsyncMock(return_value=volumes),
+        )
+
+        async def fake_rm(name):
+            removed.append(name)
+
+        monkeypatch.setattr(
+            self.registry.app.state.podman, "remove_volume", fake_rm
+        )
+        assert await self.registry.sweep_orphaned_volumes() == 1
+        assert removed == ["orphan-vol"]
+
+    async def test_sweep_orphaned_volumes_skips_on_error(
+        self, app_state, monkeypatch
+    ):
+        """A failing list or id lookup skips the sweep (returns 0)
+        instead of raising — the idle loop treats it as best-effort."""
+        monkeypatch.setattr(
+            self.registry.app.state.podman,
+            "list_volumes",
+            AsyncMock(side_effect=OSError("podman down")),
+        )
+        assert await self.registry.sweep_orphaned_volumes() == 0
+
+    async def test_sweep_orphaned_volumes_survives_rm_failure(
+        self, app_state, monkeypatch
+    ):
+        """One failing removal is logged and skipped; the count reflects
+        only successful removals."""
+        monkeypatch.setattr(
+            self.registry.app.state.workspaces,
+            "existing_workspace_ids",
+            AsyncMock(return_value=set()),
+        )
+        volumes = [
+            {
+                "Name": "stuck",
+                "Labels": {
+                    "klangk.instance": (
+                        self.registry.app.state.util.instance_id()
+                    ),
+                    "klangk.workspace-id": "gone-ws",
+                },
+            },
+            {
+                "Name": "fine",
+                "Labels": {
+                    "klangk.instance": (
+                        self.registry.app.state.util.instance_id()
+                    ),
+                    "klangk.workspace-id": "gone-ws",
+                },
+            },
+        ]
+        monkeypatch.setattr(
+            self.registry.app.state.podman,
+            "list_volumes",
+            AsyncMock(return_value=volumes),
+        )
+        calls = []
+
+        async def fake_rm(name):
+            calls.append(name)
+            if name == "stuck":
+                raise podman.PodmanError(409, "volume in use")
+
+        monkeypatch.setattr(
+            self.registry.app.state.podman, "remove_volume", fake_rm
+        )
+        assert await self.registry.sweep_orphaned_volumes() == 1
+        assert sorted(calls) == ["fine", "stuck"]
+
+    async def test_remove_workspace_volumes(self, app_state, monkeypatch):
+        """The delete cascade removes exactly the workspace's labeled
+        volumes; a refused removal is logged, not raised."""
+        volumes = [
+            {
+                "Name": "mine",
+                "Labels": {
+                    "klangk.instance": (
+                        self.registry.app.state.util.instance_id()
+                    ),
+                    "klangk.workspace-id": "ws-1",
+                },
+            },
+            {
+                "Name": "other",
+                "Labels": {
+                    "klangk.instance": (
+                        self.registry.app.state.util.instance_id()
+                    ),
+                    "klangk.workspace-id": "ws-2",
+                },
+            },
+        ]
+        monkeypatch.setattr(
+            self.registry.app.state.podman,
+            "list_volumes",
+            AsyncMock(return_value=volumes),
+        )
+
+        async def fake_rm(name):
+            if name == "mine":
+                raise podman.PodmanError(409, "in use")
+
+        monkeypatch.setattr(
+            self.registry.app.state.podman, "remove_volume", fake_rm
+        )
+        assert await self.registry.remove_workspace_volumes("ws-1") == 0
+        assert await self.registry.remove_workspace_volumes("ws-2") == 1
+
+    async def test_remove_workspace_volumes_list_failure_is_noop(
+        self, app_state, monkeypatch
+    ):
+        """A failing volume list logs and returns 0 — the delete
+        cascade is best-effort; the orphan sweep retries later."""
+        monkeypatch.setattr(
+            self.registry.app.state.podman,
+            "list_volumes",
+            AsyncMock(side_effect=podman.PodmanError(500, "podman gone")),
+        )
+        rm = AsyncMock()
+        monkeypatch.setattr(
+            self.registry.app.state.podman, "remove_volume", rm
+        )
+        assert await self.registry.remove_workspace_volumes("ws-1") == 0
+        rm.assert_not_awaited()
 
     async def test_sweep_noop_without_token_dir(self, tmp_path, monkeypatch):
         # No ws-tokens/ dir (no filtered workspace ever started) -> 0, and
@@ -7197,6 +7454,28 @@ class TestContainerBranchGaps2834:
         # it, but its container was still stopped.
         assert callbacks == []
         assert p.remove_container.await_count >= 2
+
+    async def test_idle_loop_survives_volume_sweep_error(self, monkeypatch):
+        # A raising orphan-volume sweep is swallowed by the loop's
+        # due-wrapper (best-effort, #3153) — the cleanup task itself
+        # stays alive.
+        async def boom():
+            raise RuntimeError("podman gone")
+
+        monkeypatch.setattr(self.registry, "sweep_orphaned_volumes", boom)
+        monkeypatch.setattr(
+            type(self.registry.idle),
+            "_cleanup_interval",
+            lambda self: 0.01,
+            raising=True,
+        )
+        task = asyncio.create_task(self.registry.cleanup_idle_containers())
+        await asyncio.sleep(0.05)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass  # survived: a RuntimeError would propagate instead
 
     async def test_orphan_token_sweep_throttles_to_interval(self, monkeypatch):
         # Two loop passes within ORPHAN_TOKEN_SWEEP_INTERVAL: the sweep

@@ -4837,7 +4837,10 @@ class TestVolumes:
         from typer.testing import CliRunner
 
         runner = CliRunner()
-        result = runner.invoke(main.app, ["volumes", "create", "new-vol"])
+        result = runner.invoke(
+            main.app,
+            ["volumes", "create", "new-vol", "--workspace", "ws-1"],
+        )
         assert result.exit_code == 0
         assert "Created" in result.stdout
 
@@ -4851,7 +4854,10 @@ class TestVolumes:
         from typer.testing import CliRunner
 
         runner = CliRunner()
-        result = runner.invoke(main.app, ["volumes", "create", "dup-vol"])
+        result = runner.invoke(
+            main.app,
+            ["volumes", "create", "dup-vol", "--workspace", "ws-1"],
+        )
         assert result.exit_code == 1
 
     def test_volumes_create_quota_refused(self, logged_in_cfg, monkeypatch):
@@ -4862,8 +4868,8 @@ class TestVolumes:
         client = MagicMock()
         resp = MagicMock(status_code=429)
         resp.json.return_value = {
-            "detail": "volume quota reached: 2 of this user's volumes "
-            "already exist (KLANGKD_VOLUME_QUOTA_PER_USER)"
+            "detail": "volume quota reached: 2 of this workspace's volumes "
+            "already exist (KLANGKD_VOLUME_QUOTA_PER_WORKSPACE)"
         }
         client.post.return_value = resp
         monkeypatch.setattr(context_mod, "client", lambda: client)
@@ -4871,10 +4877,13 @@ class TestVolumes:
         from typer.testing import CliRunner
 
         runner = CliRunner()
-        result = runner.invoke(main.app, ["volumes", "create", "v3"])
+        result = runner.invoke(
+            main.app,
+            ["volumes", "create", "v3", "--workspace", "ws-1"],
+        )
         assert result.exit_code == 1
         assert "Volume quota exceeded" in result.output
-        assert "KLANGKD_VOLUME_QUOTA_PER_USER" in result.output
+        assert "KLANGKD_VOLUME_QUOTA_PER_WORKSPACE" in result.output
 
     def test_volumes_create_quota_refused_no_body(
         self, logged_in_cfg, monkeypatch
@@ -4892,7 +4901,10 @@ class TestVolumes:
         from typer.testing import CliRunner
 
         runner = CliRunner()
-        result = runner.invoke(main.app, ["volumes", "create", "v3"])
+        result = runner.invoke(
+            main.app,
+            ["volumes", "create", "v3", "--workspace", "ws-1"],
+        )
         assert result.exit_code == 1
         assert "Volume quota exceeded" in result.output
 

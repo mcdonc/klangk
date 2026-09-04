@@ -586,11 +586,11 @@ List every podman volume this klangk instance manages.
 
 **Auth:** JWT required. User must have the `view-volumes` permission
 on `/volumes` (seeded Allow for the `admins` group — the admin
-Volumes tab's listing gate). The creator label is surfaced as
-provenance, not used as an access filter. `created_by` is the
-creator's handle (null when the creator no longer exists or the
-volume was created without a label); `workspaces` lists the workspace
-names whose extra mounts reference the volume.
+Volumes tab's listing gate). Volumes are workspace-owned (#3153):
+`workspace_id` is the owning workspace's id (from the podman label),
+`workspace` its resolved name (null when the workspace row is gone),
+and `workspaces` lists the workspace names whose extra mounts
+reference the volume.
 
 No request body.
 
@@ -604,8 +604,8 @@ No request body.
 | `order`     | string | `desc`    | `asc` \| `desc`                      |
 | `q`         | string | (none)    | substring match, case-insensitive    |
 
-`q` matches the volume name, the creator's handle, or any workspace
-name using the volume.
+`q` matches the volume name, the owning workspace's name, or any
+workspace name using the volume.
 
 ```json
 {
@@ -613,8 +613,8 @@ name using the volume.
     {
       "name": "my-volume",
       "created": "2025-01-01T12:00:00Z",
-      "user_id": "<creator user id>",
-      "created_by": "alice",
+      "workspace_id": "<owning workspace id>",
+      "workspace": "my-workspace",
       "workspaces": ["my-workspace"]
     }
   ],
@@ -1355,28 +1355,32 @@ Returns `StreamingResponse` (`application/x-ndjson`).
 
 ### POST `/api/v1/volumes`
 
-Create a new podman volume labeled with the current user's ID (the
-label is provenance; the admin Volumes tab offers no create surface —
-this endpoint serves the CLI's volume commands).
+Create a new podman volume owned by a workspace (#3153): labeled
+with the instance and the workspace's id, never a user. The volume is
+mountable by that workspace alone — volumes cannot be shared between
+workspaces. The admin Volumes tab offers no create surface; this
+endpoint serves the CLI's volume commands.
 
 **Auth:** JWT required. User must have the `manage-volumes` permission
 on `/volumes` (seeded Allow for the `admins` group).
 
-**Quota:** when `KLANGKD_VOLUME_QUOTA_PER_USER` is set
-(nonzero), a create that would take the caller past the cap is refused
-with `429` and a "delete a volume first" message naming the setting;
-the count is the caller's instance-managed volumes (`GET
-/api/v1/volumes`), and a per-user lock makes the cap exact under
-concurrent creates. The same cap also gates the workspace-start
-auto-create of mounted named volumes. `0` (the default) = unlimited.
+**Quota:** when `KLANGKD_VOLUME_QUOTA_PER_WORKSPACE` is set
+(nonzero), a create that would take the workspace past the cap is
+refused with `429` and a "delete a volume first" message naming the
+setting; the count is the workspace's instance-managed volumes, and a
+per-workspace lock makes the cap exact under concurrent creates. The
+same cap also gates the workspace-start auto-create of mounted named
+volumes. `0` (the default) = unlimited.
 
 `name` must be podman-safe: start with an alphanumeric
 character, continue with `a-zA-Z0-9_.-` only, and be at most 64
 characters; violations return HTTP 422.
 
 ```json
-{ "name": "my-volume" }
+{ "name": "my-volume", "workspace": "<workspace-id>" }
 ```
+
+`workspace` is the owning workspace's id; an unknown id returns `404`.
 
 ```json
 { "name": "my-volume", "created": "2026-06-21T00:00:00Z" }

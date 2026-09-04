@@ -863,18 +863,23 @@ class Podman:
             ["volume", "ls", "--filter", f"label={label}", "--format", "json"]
         )
 
-    async def count_user_volumes(self, instance: str, user_id: str) -> int:
-        """Count *user_id*'s instance-managed volumes (#2972 quota).
+    async def count_workspace_volumes(
+        self, instance: str, workspace_id: str
+    ) -> int:
+        """Count *workspace_id*'s instance-managed volumes (quota).
 
-        The same label rule ``GET /volumes`` uses to build the user's
-        list: instance-label-filtered ``volume ls`` (podman filters),
-        then the ``klangk.user-id`` label match in Python. The instance
-        label is re-checked defensively — a stray out-of-band volume
-        must not consume quota — so the count can only ever be a
-        subset of what GET returns, never more.
+        Volumes are workspace-owned (#3153): the label rule is the
+        instance label (podman-filtered, re-checked defensively — a
+        stray out-of-band volume must not consume quota) plus the
+        ``klangk.workspace-id`` label. Replaces the pre-#3153 per-user
+        count now that volumes carry no user stamp.
         """
         volumes = await self.list_volumes(f"klangk.instance={instance}")
-        return sum(1 for v in volumes if _is_user_volume(v, instance, user_id))
+        return sum(
+            1
+            for v in volumes
+            if _is_workspace_volume(v, instance, workspace_id)
+        )
 
     async def remove_volume(self, name: str) -> None:
         """Remove a volume.
@@ -890,14 +895,14 @@ class Podman:
 # --- Exec sessions ---
 
 
-def _is_user_volume(v: dict, instance: str, user_id: str) -> bool:
+def _is_workspace_volume(v: dict, instance: str, workspace_id: str) -> bool:
     """The quota-matching label rule: the instance label is re-checked
     defensively — a stray out-of-band volume must not consume quota —
-    plus the user-id label (#2972)."""
+    plus the workspace-id label (volumes are workspace-owned, #3153)."""
     labels = v.get("Labels") or {}
     return (
         labels.get("klangk.instance") == instance
-        and labels.get("klangk.user-id") == user_id
+        and labels.get("klangk.workspace-id") == workspace_id
     )
 
 

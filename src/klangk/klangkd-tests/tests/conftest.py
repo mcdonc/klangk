@@ -376,6 +376,16 @@ async def app_state(temp_data_dir):
     state.util = Util(app)
     # #2201: Workspaces.delete_workspace reaches state.nix (no-op when disabled).
     state.nix = Nix(app)
+    # #3153: the workspace-delete volume cascade reaches state.podman
+    # (list/remove volumes); a no-op stub keeps the minimal app valid
+    # for the delete paths. Tests that exercise podman behavior patch
+    # these methods (patch_podman or explicit patch.object).
+    from unittest.mock import AsyncMock
+
+    state.podman = types.SimpleNamespace(
+        list_volumes=AsyncMock(return_value=[]),
+        remove_volume=AsyncMock(),
+    )
     # Wire DB + Model so every domain reached via
     # app.state.model.* resolves the per-test DB (#1578). With the
     # _current_db ContextVar gone, app.state.db is the single owner.

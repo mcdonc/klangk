@@ -1586,20 +1586,20 @@ void main() {
   });
 
   group('AdminUsersPage volumes tab', () {
-    /// A volume row as `GET /api/v1/volumes` serves it (#2993): name,
-    /// created, the creator label as provenance, the creator's handle,
-    /// and the workspaces mounting it.
+    /// A volume row as `GET /api/v1/volumes` serves it (#2993/#3153):
+    /// name, created, the owning workspace (id + resolved name), and
+    /// the workspaces mounting it.
     Map<String, dynamic> _volume(
       String name,
-      String userId, {
-      String? createdBy,
+      String workspaceId, {
+      String? workspace,
       List<String> workspaces = const [],
     }) =>
         {
           'name': name,
           'created': '2026-01-02T03:04:05Z',
-          'user_id': userId,
-          'created_by': createdBy,
+          'workspace_id': workspaceId,
+          'workspace': workspace,
           'workspaces': workspaces,
         };
 
@@ -1638,16 +1638,17 @@ void main() {
         }
         if (request.url.path == '/api/v1/volumes' && request.method == 'GET') {
           // The paged envelope (#2993), honoring q/page/page_size the
-          // way the backend does (q matches name, handle, workspace).
+          // way the backend does (q matches name, owning workspace,
+          // using workspace).
           final q = (request.url.queryParameters['q'] ?? '').toLowerCase();
           final page = int.parse(request.url.queryParameters['page'] ?? '1');
           final pageSize =
               int.parse(request.url.queryParameters['page_size'] ?? '10');
           bool matches(Map<String, dynamic> v) {
-            final handle = (v['created_by'] as String?) ?? '';
+            final workspace = (v['workspace'] as String?) ?? '';
             final workspaces = (v['workspaces'] as List).cast<String>();
             return (v['name'] as String).toLowerCase().contains(q) ||
-                handle.toLowerCase().contains(q) ||
+                workspace.toLowerCase().contains(q) ||
                 workspaces.any((w) => w.toLowerCase().contains(q));
           }
 
@@ -1693,13 +1694,13 @@ void main() {
           matching: inner,
         );
 
-    testWidgets('lists the inventory with creator and usage', (tester) async {
+    testWidgets('lists the inventory with owner and usage', (tester) async {
       final deletes = <String>[];
       serveVolumes([
         _volume(
           'ws-cache',
           'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
-          createdBy: 'alice',
+          workspace: 'alpha-ws',
           workspaces: ['ws-one', 'ws-two'],
         ),
         _volume('extra-mount', '11111111-2222-3333-4444-555555555555'),
@@ -1719,10 +1720,10 @@ void main() {
       expect(inVolumesToolbar(find.byType(TextField)), findsOneWidget);
       expect(find.text('ws-cache'), findsOneWidget);
       expect(find.text('extra-mount'), findsOneWidget);
-      // The creator's handle shows (@alice); a volume with no resolvable
-      // creator falls back to the raw label's leading characters.
-      expect(find.textContaining('by @alice'), findsOneWidget);
-      expect(find.textContaining('by 11111111'), findsOneWidget);
+      // The owning workspace's name shows; a volume whose workspace
+      // row is gone falls back to the label id's leading characters.
+      expect(find.textContaining('workspace alpha-ws'), findsOneWidget);
+      expect(find.textContaining('11111111'), findsOneWidget);
       // Workspace usage: named per volume, 'Unused' when none mount it.
       expect(find.text('Used by ws-one, ws-two'), findsOneWidget);
       expect(find.text('Unused'), findsOneWidget);
@@ -1733,8 +1734,8 @@ void main() {
     testWidgets('search filters the listing server-side', (tester) async {
       final deletes = <String>[];
       serveVolumes([
-        _volume('ws-cache', 'aaaaaaaa', createdBy: 'alice'),
-        _volume('extra-mount', '11111111', createdBy: 'bob'),
+        _volume('ws-cache', 'aaaaaaaa', workspace: 'alpha-ws'),
+        _volume('extra-mount', '11111111', workspace: 'beta-ws'),
       ], deletes);
 
       await pumpPage(tester);

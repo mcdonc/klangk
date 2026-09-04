@@ -35,6 +35,22 @@ operators or integrators to act when upgrading.
 
 ### Breaking
 
+- **User bind mounts disabled by default (#3153).** With
+  `KLANGKD_ALLOWED_MOUNT_ROOTS` unset (previously: any non-protected
+  host path was allowed), workspace mount entries with a host-path
+  source are now rejected at create/edit — only named volumes may be
+  mounted. Set `KLANGKD_ALLOWED_MOUNT_ROOTS` to a comma-separated
+  list of roots to allow bind mounts under them. klangkd's own
+  mounts (workspace home, config, SSL trust, per-workspace nix) are
+  internal and unaffected.
+
+- **Volume ownership + quota rename (#3153).** Named volumes are
+  workspace-owned and cannot be shared across workspaces; volumes
+  created before this change (user-id labeled, no workspace label) are
+  no longer mountable — remove and recreate their mounts. The
+  per-user quota `KLANGKD_VOLUME_QUOTA_PER_USER` is now the
+  per-workspace `KLANGKD_VOLUME_QUOTA_PER_WORKSPACE`
+  (`volume_quota_per_workspace`).
 - **Members can create workspaces by default (#3137).** The seeded
   `create-workspace` Allow on `/workspaces` now targets the `members`
   group (which every new user joins) in addition to `admins`, so a
@@ -1657,6 +1673,17 @@ stop)`) and a `server: stop at 23:00 (in 1h 12m)` status line in the
   `KLANGKD_ALLOW_INSECURE_NO_AUTH`.
 
 ### Changed
+
+- **Workspace-owned named volumes (#3153).** Named volumes are owned
+  by the workspace whose start created them: stamped with a
+  `klangk.workspace-id` podman label (never a user), mountable only by
+  that workspace, refused otherwise (start fails 400 "belongs to
+  another workspace"). Whoever starts the workspace — owner, member,
+  or an autonomous restart — is irrelevant, and volumes cannot be
+  shared between workspaces, not even by the same user. `POST
+/api/v1/volumes` now requires the owning `workspace` field; the CLI
+  create command takes `--workspace`. Deleting a workspace removes its
+  volumes (an orphan sweep reclaims stragglers).
 
 - **`klangk sandbox` `copy:` destinations are literal container paths
   (#3118).** Only a leading `~` is special (it expands to

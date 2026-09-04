@@ -25,9 +25,11 @@ optionally configure:
   container to verify the service is actually healthy (exit 0 =
   healthy). See [Health Check](health-check.md).
 - **Bind mounts** — mount host directories into the container.
-  If `KLANGKD_ALLOWED_MOUNT_ROOTS` is set (comma-separated list of
-  paths), only directories under those roots can be bind-mounted.
-  Protected paths like the Docker/Podman socket are always blocked.
+  **Disabled by default (#3153):** with `KLANGKD_ALLOWED_MOUNT_ROOTS`
+  unset, host-path mount sources are rejected — only named volumes
+  may be mounted. Setting it (comma-separated list of paths) allows
+  directories under those roots. Protected paths like the Docker/
+  Podman socket are always blocked.
 - **Environment variables** — set custom env vars for the container
 - **Allowed egress domains** — restrict outbound network access to a
   list of hosts (e.g., `github.com:443`, `pypi.org`). See
@@ -158,13 +160,15 @@ even if they fall under an allowed root:
   user's workspace home and the database
 
 **Volume isolation** — named volumes (e.g., `nix-store:/nix`) are
-labelled with `klangk.instance` and `klangk.user-id` at creation
-time. A workspace cannot mount a volume created by a different
-klangk instance or a different user. This prevents both
-cross-tenant and cross-user data access on shared hosts. Operators
-can cap how many volumes a user may create with
-`KLANGKD_VOLUME_QUOTA_PER_USER` (default `0` = unlimited). The cap
-is enforced at both creation paths — the volumes API and the
+workspace-owned (#3153): stamped with `klangk.instance` and the
+owning workspace's id at creation, never a user. A workspace can
+mount a volume only if the volume's workspace label matches it —
+volumes cannot be shared between workspaces, not even by the same
+user or the workspace's own members in another workspace. Deleting
+a workspace removes its volumes (an orphan sweep reclaims
+stragglers). Operators can cap volumes per workspace with
+`KLANGKD_VOLUME_QUOTA_PER_WORKSPACE` (default `0` = unlimited),
+enforced at both creation paths — the volumes API and the
 workspace-start auto-create of mounted named volumes: an
 API create past the cap fails with a clear 429, a workspace start
 past it fails with a clear start error.

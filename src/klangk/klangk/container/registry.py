@@ -439,16 +439,24 @@ class ContainerRegistry(NetworkSidecarMixin):
         )
 
     def _validate_bind_source(self, spec: str, source: str) -> str | None:
-        """A non-named-volume source must not be a protected host path and
-        (when allowed roots are configured) must live under one."""
+        """A bind source must not be a protected host path, and —
+        deny-by-default (#3153) — must live under a configured
+        `KLANGKD_ALLOWED_MOUNT_ROOTS` root. With no roots configured,
+        user bind mounts are disabled entirely; only named volumes
+        may be mounted."""
         if self._is_protected(source):
             return f"Invalid mount {spec!r}: source is a protected host path"
-        if not self.allowed_mount_roots:
-            return None
+        roots = self.allowed_mount_roots
+        if not roots:
+            return (
+                f"Invalid mount {spec!r}: bind mounts are disabled on "
+                "this deploy (KLANGKD_ALLOWED_MOUNT_ROOTS is unset); "
+                "only named volumes may be mounted"
+            )
         resolved = os.path.realpath(source)
-        if _resolved_under_root(resolved, self.allowed_mount_roots):
+        if _resolved_under_root(resolved, roots):
             return None
-        allowed = ", ".join(self.allowed_mount_roots)
+        allowed = ", ".join(roots)
         return (
             f"Invalid mount {spec!r}: bind mount source must be "
             f"under an allowed root ({allowed})"
@@ -584,6 +592,84 @@ class ContainerRegistry(NetworkSidecarMixin):
         """
         lock = self._workspace_locks.get(workspace_id)
         return lock is not None and lock.locked()
+
+    async def _instance_volumes(self) -> list[dict]:
+        """This instance's managed volumes; [] when the list fails
+        (best-effort callers log-and-continue)."""
+        try:
+            return await self.app.state.podman.list_volumes(
+                f"klangk.instance={self.app.state.util.instance_id()}"
+            )
+        except (podman.PodmanError, OSError) as e:
+            logger.warning("volume list failed: %s", e)
+            return []
+
+    async def _try_remove_volume(self, name: str, context: str) -> bool:
+        """Best-effort remove; a refusal is logged (the orphan sweep
+        retries later), never raised."""
+        try:
+            await self.app.state.podman.remove_volume(name)
+            return True
+        except podman.PodmanError as e:
+            logger.warning(
+                "%s: removing volume %s failed: %s", context, name, e
+            )
+            return False
+
+    async def remove_workspace_volumes(self, workspace_id: str) -> int:
+        """Remove every volume owned by *workspace_id* (best-effort).
+
+        Volumes are workspace-owned (#3153), so the workspace delete
+        cascade calls this: a volume whose workspace is gone can never
+        be mounted again. A removal that fails (e.g. the volume is
+        briefly still attached to a dying container) is logged and
+        skipped — the periodic orphan sweep reclaims stragglers.
+        Returns the number of volumes removed.
+        """
+        removed = 0
+        for volume in await self._instance_volumes():
+            labels = volume.get("Labels") or {}
+            if labels.get("klangk.workspace-id") != workspace_id:
+                continue
+            if await self._try_remove_volume(
+                volume["Name"], f"volume cleanup for workspace {workspace_id}"
+            ):
+                removed += 1
+        return removed
+
+    def _orphan_ws_id(self, volume: dict, existing: set[str]) -> str | None:
+        """The volume's workspace id when it names a workspace with no
+        row; None when the volume is live or has no workspace label
+        (label-less volumes are not ours to judge)."""
+        ws_id = (volume.get("Labels") or {}).get("klangk.workspace-id")
+        if ws_id and ws_id not in existing:
+            return ws_id
+        return None
+
+    async def sweep_orphaned_volumes(self) -> int:
+        """Remove managed volumes whose workspace no longer exists.
+
+        The delete-time cascade is best-effort, so a crash mid-delete
+        (or a removal refused by an attached container) can strand a
+        workspace-owned volume that — by design — no other workspace
+        can ever mount. This sweep reclaims them (#3153).
+        Returns the number of volumes removed.
+        """
+        volumes = await self._instance_volumes()
+        try:
+            existing = await self.app.state.workspaces.existing_workspace_ids()
+        except Exception as e:
+            logger.warning("Orphan volume sweep skipped: %s", e)
+            return 0
+        removed = 0
+        for volume in volumes:
+            if self._orphan_ws_id(volume, existing) is None:
+                continue
+            if await self._try_remove_volume(
+                volume["Name"], "Orphan volume sweep"
+            ):
+                removed += 1
+        return removed
 
     def prune_workspace_registry_entries(self, workspace_id: str) -> None:
         """Drop the per-workspace lock and stop-epoch entries (#2912).
@@ -1600,7 +1686,10 @@ class ContainerRegistry(NetworkSidecarMixin):
             ssl_dir,
         )
         await ensure_volumes(
-            self.app, spec.extra_mounts, spec.user_id, self.app.state.podman
+            self.app,
+            spec.extra_mounts,
+            spec.workspace_id,
+            self.app.state.podman,
         )
         binds = build_mounts(
             spec.home_path, spec.config_path, spec.extra_mounts, ssl_dir
