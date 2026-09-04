@@ -15399,6 +15399,51 @@ class TestInactivityDisable:
         assert closed[-1] == (4001, "Account disabled")
         app.state.sockets.connections.clear()
 
+    async def test_admin_disable_kicks_decider_sockets(
+        self, client, app, admin_user, user
+    ):
+        """#3162: disabling an account also closes its live
+        consent-decider sockets (4001) — a decider holds egress-consent
+        authority and must not outlive the disable. The decider is a
+        REAL SafeWebSocket over a mock raw socket (fakes masked the
+        reason-kwarg no-op class of bug, #3160 review)."""
+        from klangk.consent.deciders import ConsentDeciderRegistry
+        from klangk.wshandler.safe_websocket import SafeWebSocket
+
+        app.state.consent_deciders = ConsentDeciderRegistry(app)
+        victim_raw = AsyncMock()
+        victim_raw.close = AsyncMock()
+        other_raw = AsyncMock()
+        other_raw.close = AsyncMock()
+        app.state.consent_deciders.register(
+            "d-victim",
+            "ws-1",
+            user["email"],
+            SafeWebSocket(victim_raw),
+            jti="j-victim",
+            user_id=user["id"],
+        )
+        app.state.consent_deciders.register(
+            "d-other",
+            "ws-2",
+            "other@example.com",
+            SafeWebSocket(other_raw),
+            jti="j-other",
+            user_id="someone-else",
+        )
+        headers = await _admin_login(client)
+        resp = await client.patch(
+            f"/api/v1/users/{user['id']}",
+            headers=headers,
+            json={"disabled": True},
+        )
+        assert resp.status_code == 200
+        victim_raw.close.assert_awaited_once_with(
+            code=4001, reason="Account disabled"
+        )
+        other_raw.close.assert_not_awaited()
+        assert set(app.state.consent_deciders._deciders) == {"d-other"}
+
 
 class TestAdminServerSchedule:
     """#2661: schedule/list/cancel a server stop or recycle."""

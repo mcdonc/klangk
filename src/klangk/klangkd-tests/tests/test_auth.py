@@ -889,6 +889,22 @@ class TestTokenValidation:
         token = _auth().create_token("nonexistent-id", "ghost@example.com")
         assert await _auth().get_user_from_token(token) is None
 
+    async def test_get_user_from_token_expired(self, db):
+        """A valid-signature but expired token returns TOKEN_EXPIRED."""
+        expired = datetime.now(timezone.utc) - timedelta(hours=1)
+        token = jwt.encode(
+            {
+                "sub": "uid",
+                "email": "x",
+                "jti": "j1",
+                "exp": expired,
+            },
+            _auth().secret,
+            algorithm=_auth().algorithm,
+        )
+        result = await _auth().get_user_from_token(token)
+        assert result is _auth().TOKEN_EXPIRED
+
 
 class TestGetCurrentUser:
     async def test_valid_credentials(self, user):
@@ -1653,6 +1669,117 @@ class TestRevocationKicksSockets:
         await a.revoke_all_user_sessions(user["id"])
         assert not sockets.connections
         assert await a.app.state.model.sessions.list_sessions(user["id"]) == []
+
+
+class TestRevocationKicksDeciders:
+    """#3162: the consent-decider socket had the same revocation
+    survival as the main /ws socket (#3152) — it lives in its own
+    registry, so the logout/eviction kick must reach that registry too.
+    Refresh rotation retargets (not closes), exactly like the main
+    registry. Entries are REAL SafeWebSockets over mock raw sockets
+    (#3160 review: fakes masked the reason-kwarg no-op)."""
+
+    def _auth_with_deciders(self, env=None):
+        from klangk.consent.deciders import ConsentDeciderRegistry
+
+        a = _auth(env)
+        a.app.state.consent_deciders = ConsentDeciderRegistry(a.app)
+        return a
+
+    @staticmethod
+    def _decider_raw(a, jti, decider_id="d1"):
+        """A real SafeWebSocket over a mock raw socket, registered as a
+        live decider under *jti*; returns the raw socket."""
+        from unittest.mock import AsyncMock
+
+        from klangk.wshandler.safe_websocket import SafeWebSocket
+
+        raw = AsyncMock()
+        raw.close = AsyncMock()
+        a.app.state.consent_deciders.register(
+            decider_id, "ws-1", "d@x", SafeWebSocket(raw), jti=jti
+        )
+        return raw
+
+    async def _login(self, a):
+        result = await a.login(
+            auth.LoginRequest(
+                identifier="testuser@example.com", password="testpass"
+            )
+        )
+        return result.access_token
+
+    async def test_logout_closes_decider_for_that_jti(self, user, app_state):
+        a = self._auth_with_deciders()
+        token = await self._login(a)
+        jti = a.decode_token(token)["jti"]
+        victim = self._decider_raw(a, jti)
+        other = self._decider_raw(a, "other-jti", "d2")
+        await a.logout(token)
+        victim.close.assert_awaited_once_with(
+            code=4001, reason="Token revoked"
+        )
+        other.close.assert_not_awaited()
+        # The kicked decider's registration is gone (authority ends at
+        # revocation); the spared one stays live.
+        deciders = a.app.state.consent_deciders
+        assert set(deciders._deciders) == {"d2"}
+
+    async def test_session_limit_eviction_closes_evicted_decider(
+        self, user, app_state
+    ):
+        env = {"KLANGKD_MAX_SESSIONS_PER_USER": "1"}
+        a = self._auth_with_deciders(env)
+        first = await self._login(a)
+        victim = self._decider_raw(a, a.decode_token(first)["jti"])
+        # The second login evicts the first session past the cap of 1.
+        second = await self._login(a)
+        victim.close.assert_awaited_once_with(
+            code=4001, reason="Token revoked"
+        )
+        assert await a.get_user_from_token(second) is not None
+
+    async def test_refresh_rotation_retargets_decider_not_closed(
+        self, user, app_state
+    ):
+        a = self._auth_with_deciders()
+        token = await self._login(a)
+        raw = self._decider_raw(a, a.decode_token(token)["jti"])
+        refreshed = await a.refresh_token(token)
+        raw.close.assert_not_awaited()
+        # Retargeted onto the refreshed token's JTI, so a later hard
+        # revocation still finds the decider.
+        new_jti = a.decode_token(refreshed.access_token)["jti"]
+        deciders = a.app.state.consent_deciders
+        assert deciders._deciders["d1"]["jti"] == new_jti
+
+    async def test_logout_after_refresh_closes_retargeted_decider(
+        self, user, app_state
+    ):
+        a = self._auth_with_deciders()
+        token = await self._login(a)
+        raw = self._decider_raw(a, a.decode_token(token)["jti"])
+        refreshed = await a.refresh_token(token)
+        await a.logout(refreshed.access_token)
+        raw.close.assert_awaited_once_with(code=4001, reason="Token revoked")
+
+    async def test_eviction_after_refresh_closes_retargeted_decider(
+        self, user, app_state
+    ):
+        """The typical eviction victim is a long-refreshing session
+        (replace_session keeps its original created_at, so it stays
+        oldest) — its decider must still be kickable after rotation."""
+        env = {"KLANGKD_MAX_SESSIONS_PER_USER": "1"}
+        a = self._auth_with_deciders(env)
+        first = await self._login(a)
+        raw = self._decider_raw(a, a.decode_token(first)["jti"])
+        refreshed = await a.refresh_token(first)
+        # The second login evicts the refreshed (still-oldest) session
+        # past the cap of 1.
+        second = await self._login(a)
+        raw.close.assert_awaited_once_with(code=4001, reason="Token revoked")
+        assert await a.get_user_from_token(second) is not None
+        assert await a.get_user_from_token(refreshed.access_token) is None
 
 
 class TestConcurrentLogonAudit:

@@ -5,13 +5,18 @@ from __future__ import annotations
 import asyncio
 import json
 import types
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 from klangk.consent.deciders import ConsentDeciderRegistry
 from klangk.model.workspaces import EGRESS_MODE_INTERACTIVE
+from klangk.wshandler.safe_websocket import SafeWebSocket
 
 WS = "ws-aaaa1111-2222-3333-4444-555566667777"
 WS2 = "ws-bbbb2222-3333-4444-5555-666677778888"
+
+# _ws_app sentinel: decode_token succeeds but _user_from_valid_payload
+# returns None (revoked/missing user) — the post-decode None-user arm.
+_DECODED_NO_USER = object()
 
 
 def _app(timeout: float = 45.0):
@@ -32,6 +37,16 @@ class _FakeSock:
         if self._raising:
             raise RuntimeError("dead socket")
         self.sent.append(msg)
+
+
+def _mock_raw_sock():
+    """A mock raw FastAPI WebSocket for real-SafeWebSocket kick tests."""
+    raw = AsyncMock()
+    raw.close = AsyncMock()
+    raw.send_json = AsyncMock()
+    raw.receive_text = AsyncMock()
+    raw.accept = AsyncMock()
+    return raw
 
 
 class TestConsentDeciderRegistry:
@@ -217,8 +232,33 @@ def _ws_app(
         ),
     )
     app.state.consent_deciders = ConsentDeciderRegistry(app)
+    # _decider_authenticate decodes the token once, then validates
+    # via _user_from_valid_payload.  The mock must raise the right
+    # exception for the expired-token path and return None for invalid.
+    from jose import ExpiredSignatureError, JWTError
+    from klangk import auth as auth_mod
+
+    if token_result is auth_mod.Auth.TOKEN_EXPIRED:
+        decode_side = ExpiredSignatureError("expired")
+        payload_result = None
+    elif token_result is None:
+        decode_side = JWTError("bad")
+        payload_result = None
+    else:
+        decode_side = None
+        payload_result = (
+            None if token_result is _DECODED_NO_USER else token_result
+        )
+
+    decode_mock = (
+        MagicMock(side_effect=decode_side)
+        if decode_side
+        else MagicMock(return_value={"jti": "jti-decoded", "sub": "u1"})
+    )
     app.state.auth = types.SimpleNamespace(
-        get_user_from_token=AsyncMock(return_value=token_result)
+        get_user_from_token=AsyncMock(return_value=token_result),
+        decode_token=decode_mock,
+        _user_from_valid_payload=AsyncMock(return_value=payload_result),
     )
     app.state.acl = types.SimpleNamespace(
         get_principals=AsyncMock(
@@ -301,6 +341,15 @@ class TestConsentDeciderWS:
         ws = _FakeWS({"token": "stale"}, [])
         await handle_consent_decider(ws, app)
         assert ws.closed == (4002, "Token expired")
+
+    async def test_unknown_user_is_rejected(self):
+        # Valid signature, but the user no longer exists: 4001 refusal.
+        from klangk.wshandler.decider import handle_consent_decider
+
+        app = _ws_app(_DECODED_NO_USER)
+        ws = _FakeWS({"token": "tok", "workspace": WS}, [])
+        await handle_consent_decider(ws, app)
+        assert ws.closed == (4001, "Invalid token")
 
     async def test_non_member_workspace_scoped_is_forbidden(self):
         from klangk.wshandler.decider import handle_consent_decider
@@ -917,6 +966,159 @@ class TestConsentDeciderWS:
         )
         await handle_consent_decider(ws, app)
         assert app.state.consent_deciders.has_decider(WS) is False
+
+
+class TestConsentDeciderWSJti:
+    """#3162: the decider handshake records the token's JTI on the
+    registration, mirroring the main /ws handler (#3152)."""
+
+    async def test_decider_authenticate_returns_user_and_jti(self):
+        from klangk.wshandler.decider import _decider_authenticate
+
+        app = _ws_app({"id": "u1", "email": "a@x"})
+        ws = _FakeWS({"token": "tok"}, [])
+        result = await _decider_authenticate(ws, app, lambda label: None)
+        authed_user, jti = result
+        assert authed_user["id"] == "u1"
+        assert jti == "jti-decoded"
+        assert ws.closed is None  # authenticated, not refused
+
+    async def test_connection_records_authenticating_jti(self):
+        from fastapi import WebSocketDisconnect
+
+        from klangk.wshandler.decider import handle_consent_decider
+
+        app = _ws_app({"id": "u1", "email": "a@x"})
+        recorded: list = []
+
+        class RecordingRegistry(ConsentDeciderRegistry):
+            def register(
+                self,
+                decider_id,
+                workspace_id,
+                email,
+                sock,
+                jti=None,
+                user_id=None,
+            ):
+                recorded.append((jti, user_id))
+                super().register(
+                    decider_id,
+                    workspace_id,
+                    email,
+                    sock,
+                    jti=jti,
+                    user_id=user_id,
+                )
+
+        app.state.consent_deciders = RecordingRegistry(app)
+        ws = _FakeWS(
+            {"token": "tok", "workspace": WS}, [WebSocketDisconnect()]
+        )
+        await handle_consent_decider(ws, app)
+        assert recorded == [("jti-decoded", "u1")]
+
+
+class TestConsentDeciderRegistryJti:
+    """#3162: registrations carry the authenticating JWT's JTI; hard
+    revocation closes them (4001, like the main /ws registry in #3152)
+    and refresh rotation retargets them. Kick tests plant REAL
+    SafeWebSocket entries — fakes whose close() happens to accept
+    ``reason`` masked the reason-kwarg no-op class of bug (#3160
+    review)."""
+
+    @staticmethod
+    def _real_decider(reg, jti, decider_id="d1", user_id=None):
+        """Register a decider backed by a real SafeWebSocket over a mock
+        raw socket; return the raw socket for close-assertions."""
+        raw = _mock_raw_sock()
+        reg.register(
+            decider_id, WS, "a@x", SafeWebSocket(raw), jti=jti, user_id=user_id
+        )
+        return raw
+
+    async def test_register_records_jti(self):
+        reg = ConsentDeciderRegistry(_app())
+        reg.register("d1", WS, "a@x", _FakeSock(), jti="jti-1")
+        assert reg._deciders["d1"]["jti"] == "jti-1"
+
+    async def test_register_without_jti_defaults_to_none(self):
+        reg = ConsentDeciderRegistry(_app())
+        reg.register("d1", WS, "a@x", _FakeSock())
+        assert reg._deciders["d1"]["jti"] is None
+
+    async def test_disconnect_by_jti_closes_real_safe_websocket(self):
+        reg = ConsentDeciderRegistry(_app())
+        raw = self._real_decider(reg, "jti-victim")
+        kicked = await reg.disconnect_by_jti(
+            "jti-victim", reason="Token revoked"
+        )
+        assert kicked == 1
+        raw.close.assert_awaited_once_with(code=4001, reason="Token revoked")
+        # The entry is dropped at kick time: consent authority ends at
+        # revocation, not when the receive loop notices the closed socket.
+        assert reg._deciders == {}
+
+    async def test_disconnect_by_jti_spares_other_jtis(self):
+        reg = ConsentDeciderRegistry(_app())
+        raw_victim = self._real_decider(reg, "jti-victim", "d1")
+        raw_other = self._real_decider(reg, "jti-other", "d2")
+        kicked = await reg.disconnect_by_jti(
+            "jti-victim", reason="Token revoked"
+        )
+        assert kicked == 1
+        raw_victim.close.assert_awaited_once_with(
+            code=4001, reason="Token revoked"
+        )
+        raw_other.close.assert_not_awaited()
+        assert set(reg._deciders) == {"d2"}
+
+    async def test_disconnect_by_jti_survives_close_error(self):
+        # A socket already gone must not abort the sweep over the rest.
+        reg = ConsentDeciderRegistry(_app())
+        raw = _mock_raw_sock()
+        raw.close = AsyncMock(side_effect=RuntimeError("already gone"))
+        reg.register("d1", WS, "a@x", SafeWebSocket(raw), jti="jti-x")
+        assert await reg.disconnect_by_jti("jti-x") == 1
+        assert reg._deciders == {}
+
+    async def test_register_records_user_id(self):
+        reg = ConsentDeciderRegistry(_app())
+        reg.register("d1", WS, "a@x", _FakeSock(), user_id="u1")
+        assert reg._deciders["d1"]["user_id"] == "u1"
+
+    async def test_disconnect_by_user_closes_real_safe_websocket(self):
+        reg = ConsentDeciderRegistry(_app())
+        raw = self._real_decider(reg, "jti-x", "d1", user_id="u-victim")
+        kicked = await reg.disconnect_by_user(
+            "u-victim", reason="Account disabled"
+        )
+        assert kicked == 1
+        raw.close.assert_awaited_once_with(
+            code=4001, reason="Account disabled"
+        )
+        assert reg._deciders == {}
+
+    async def test_disconnect_by_user_spares_other_users(self):
+        reg = ConsentDeciderRegistry(_app())
+        raw_victim = self._real_decider(reg, "j1", "d1", user_id="u1")
+        raw_other = self._real_decider(reg, "j2", "d2", user_id="u2")
+        kicked = await reg.disconnect_by_user("u1", reason="Account disabled")
+        assert kicked == 1
+        raw_victim.close.assert_awaited_once_with(
+            code=4001, reason="Account disabled"
+        )
+        raw_other.close.assert_not_awaited()
+        assert set(reg._deciders) == {"d2"}
+
+    async def test_reattach_jti_moves_decider_entries(self):
+        reg = ConsentDeciderRegistry(_app())
+        self._real_decider(reg, "old-jti", "d1")
+        self._real_decider(reg, "unrelated", "d2")
+        moved = reg.reattach_jti("old-jti", "new-jti")
+        assert moved == 1
+        assert reg._deciders["d1"]["jti"] == "new-jti"
+        assert reg._deciders["d2"]["jti"] == "unrelated"
 
 
 class TestConsentDeciderRegistryReconfigure:
