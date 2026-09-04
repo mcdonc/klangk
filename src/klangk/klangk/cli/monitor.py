@@ -90,11 +90,14 @@ def dispatch_monitor_event(msg: dict, command: list[str]) -> None:
     if msg.get("type") == "service_health":
         env.update(health_event_env(msg))
     # Spawn failures are permanent configuration errors, not transient
-    # network trouble — wrap them so the reconnect loop lets them end
-    # the run instead of retrying forever (#3092).
+    # network trouble — wrap every OSError from the run so the reconnect
+    # loop lets it end the run instead of retrying forever (#3092).
+    # CPython already swallows BrokenPipeError on the input write, so
+    # what reaches here is a failed spawn (missing binary, bad path
+    # component, not executable).
     try:
         subprocess.run(command, input=payload.encode(), env=env, check=False)
-    except (FileNotFoundError, PermissionError) as exc:
+    except OSError as exc:
         raise HookCommandError(
             f"cannot run hook command {command[0]!r}: {exc}"
         ) from exc
@@ -366,8 +369,9 @@ def monitor(
     capped exponential backoff) and refreshes its JWT on auth failures,
     so it survives server restarts and token expiry. Use
     ``--max-reconnects`` or ``--no-reconnect`` to bound it. A hook
-    command that cannot be spawned (missing binary, not executable) is
-    fatal: the monitor exits nonzero instead of retrying forever.
+    command that cannot be spawned (missing binary, bad path
+    component, not executable) is fatal: the monitor exits nonzero
+    instead of retrying forever.
 
     \b
     Examples:

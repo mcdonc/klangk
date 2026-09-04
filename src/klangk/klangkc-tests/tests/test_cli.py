@@ -4464,7 +4464,8 @@ class TestMonitor:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        "spawn_error", [FileNotFoundError, PermissionError]
+        "spawn_error",
+        [FileNotFoundError, PermissionError, NotADirectoryError],
     )
     async def test_command_spawn_failure_raises_hook_error(
         self, monkeypatch, spawn_error
@@ -4532,6 +4533,46 @@ class TestMonitor:
                     max_delay=1.0,
                 )
         assert calls["conn"] == 1
+
+    @pytest.mark.asyncio
+    async def test_spawn_failure_is_fatal_end_to_end(self, monkeypatch):
+        # Real dispatch chain, no monitor_connection stub: a spawn
+        # failure inside dispatch_monitor_event must fly out of
+        # monitor_run's reconnect loop without a retry or backoff sleep
+        # (#3092) — pins the wrap and the loop's except tuple together.
+        from klangk.cli import main as main_mod
+        from klangk.cli.main import HookCommandError
+
+        event = json.dumps({"type": "service_health", "healthy": True})
+        conn = _FakeMonitorConn([event])
+
+        async def fake_sleep(delay):
+            pytest.fail("a broken hook command must not trigger backoff")
+
+        with (
+            patch(
+                "klangk.cli.main.websockets.connect",
+                return_value=_FakeMonitorCM(conn),
+            ),
+            patch.object(main_mod.asyncio, "sleep", fake_sleep),
+        ):
+            monkeypatch.setattr(
+                "klangk.cli.main.subprocess.run",
+                MagicMock(
+                    side_effect=NotADirectoryError(20, "Not a directory")
+                ),
+            )
+            with pytest.raises(HookCommandError):
+                await main_mod.monitor_run(
+                    "http://x",
+                    "tok",
+                    1024,
+                    command=["/etc/passwd/nope"],
+                    types=[],
+                    workspaces=[],
+                    max_reconnects=None,
+                    max_delay=1.0,
+                )
 
     @pytest.mark.asyncio
     async def test_reconnects_after_disconnect(self):

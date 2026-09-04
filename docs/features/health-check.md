@@ -213,8 +213,9 @@ exponential backoff — and refreshes its login token on auth failures,
 so it survives server restarts and token expiry as a long-running
 daemon. Bound it with `--max-reconnects N`, or disable reconnect with
 `--no-reconnect`. A `--` command that cannot be spawned (missing
-binary, not executable) is not retried: the monitor prints the spawn
-error and exits nonzero. See `klangk monitor --help`.
+binary, bad path component, not executable) is not retried: the
+monitor prints the spawn error and exits nonzero. See `klangk
+monitor --help`.
 
 ## Setting the health check
 

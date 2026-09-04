@@ -1979,11 +1979,11 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 ### Fixed
 
 - **`klangk monitor` hook spawn failures are now fatal (#3092).** A
-  `--` command whose binary could not be spawned (missing or not
-  executable) used to be misclassified as a network error, making the
-  monitor reconnect with backoff forever. It now prints the spawn
-  error and exits nonzero; socket-level errors still reconnect as
-  before.
+  `--` command that could not be spawned (missing binary, bad path
+  component, not executable) used to be misclassified as a network
+  error, making the monitor reconnect with backoff forever. It now
+  prints the spawn error and exits nonzero; socket-level errors still
+  reconnect as before.
 
 - **Workspace name minimum length is enforced (#3110).** The API now
   rejects empty and whitespace-only workspace names on create, rename,
