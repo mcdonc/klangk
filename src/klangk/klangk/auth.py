@@ -1402,7 +1402,7 @@ class Auth:
             if cached is not None:
                 return cached
 
-            await self._require_active_user(user_id)
+            user = await self._require_active_user(user_id)
             # A refresh is authenticated API use (#2588 review): stamp so
             # a headless client that only refreshes (no other API calls)
             # still counts as active.
@@ -1414,7 +1414,10 @@ class Auth:
             # so the cap holds on every path that adds a session row,
             # not just logins (#2585 review).
             await self._enforce_session_limit(user_id)
-            return TokenResponse(access_token=new_token)
+            return TokenResponse(
+                access_token=new_token,
+                must_change_password=user.get("must_change_password", False),
+            )
 
         except ExpiredSignatureError:
             # Token expired — check if it was previously refreshed

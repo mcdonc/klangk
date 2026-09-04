@@ -313,39 +313,53 @@ def print_login_failure(resp) -> None:
     raise SystemExit(1)
 
 
+_FORCED_CHANGE_MAX_ATTEMPTS = 5
+
+
+def _try_change_password(
+    server_url: str, token: str, current_password: str
+) -> bool:
+    """Prompt once and POST; True on success, False on failure."""
+    new_password = Prompt.ask("[bold]New password[/bold]", password=True)
+    confirm = Prompt.ask("[bold]Confirm new password[/bold]", password=True)
+    if new_password != confirm:
+        _err.print("[red]Passwords do not match.[/red]")
+        return False
+    resp = http_request(
+        server_url,
+        "POST",
+        "/api/v1/auth/change-password",
+        json={
+            "current_password": current_password,
+            "new_password": new_password,
+        },
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=15.0,
+    )
+    if resp.status_code == 200:
+        _out.print("[green]Password changed.[/green]")
+        return True
+    _err.print(
+        f"[red]Password change failed:[/red] {login_failure_detail(resp)}"
+    )
+    return False
+
+
 def _forced_password_change(
     server_url: str, token: str, current_password: str
 ) -> str:
     """Prompt for a new password and POST it. Returns the same token
-    (the server clears the flag server-side). Exits on failure."""
+    (the server clears the flag server-side). Exits after
+    ``_FORCED_CHANGE_MAX_ATTEMPTS`` failed attempts."""
     _out.print(
         "\n[yellow]Your password was set by an administrator."
         " You must change it now.[/yellow]\n"
     )
-    while True:
-        new_password = Prompt.ask("[bold]New password[/bold]", password=True)
-        confirm = Prompt.ask(
-            "[bold]Confirm new password[/bold]", password=True
-        )
-        if new_password != confirm:
-            _err.print("[red]Passwords do not match.[/red]")
-            continue
-        resp = http_request(
-            server_url,
-            "POST",
-            "/api/v1/auth/change-password",
-            json={
-                "current_password": current_password,
-                "new_password": new_password,
-            },
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=15.0,
-        )
-        if resp.status_code == 200:
-            _out.print("[green]Password changed.[/green]")
+    for _ in range(_FORCED_CHANGE_MAX_ATTEMPTS):
+        if _try_change_password(server_url, token, current_password):
             return token
-        detail = login_failure_detail(resp)
-        _err.print(f"[red]Password change failed:[/red] {detail}")
+    _err.print("[red]Too many failed attempts. Login aborted.[/red]")
+    raise SystemExit(1)
 
 
 def password_login(server_url, email, password, state) -> None:

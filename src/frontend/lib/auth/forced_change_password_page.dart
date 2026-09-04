@@ -56,6 +56,7 @@ class _ForcedChangePasswordPageState extends State<ForcedChangePasswordPage> {
       );
       if (!mounted) return;
       if (resp.statusCode == 200) {
+        setState(() => _changing = false);
         auth.clearMustChangePassword();
         if (mounted) context.go('/workspaces');
       } else {
