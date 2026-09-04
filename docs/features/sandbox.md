@@ -123,9 +123,10 @@ copy:
 
 Files copied from the host into the container home directory. Uses
 `source:destination`, but — unlike `mounts` — takes **no options
-segment**: exactly one colon. A spec like `notes.txt:~/notes.txt:ro`
-is a config error (the load fails with `Invalid sandbox config`),
-not a read-only copy. Tilde on the left expands to the host user's
+segment**: exactly one colon, and both halves must be non-empty. A
+spec like `notes.txt:~/notes.txt:ro` is a config error (the load
+fails with `Invalid sandbox config`), not a read-only copy. Tilde on
+the left expands to the host user's
 home; tilde on the right expands to the container user's home
 (`/home/{handle}` — see the `~` note above).
 

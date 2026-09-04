@@ -12,6 +12,7 @@ from klangk.cli.sandbox import (
     load_sandbox_config,
     parse_copy_spec,
     resolve_setup_command,
+    validate_copy_specs,
 )
 
 
@@ -120,6 +121,19 @@ class TestLoadSandboxConfig:
         with pytest.raises(ValueError, match="Invalid copy spec"):
             load_sandbox_config(sandbox_root)
 
+    def test_copy_spec_empty_source_rejected_at_load(self, sandbox_root):
+        """An empty source resolves to the sandbox root dir (#3119)."""
+        _write_config(sandbox_root, {"copy": [":~/notes.txt"]})
+        with pytest.raises(ValueError, match="Invalid copy spec"):
+            load_sandbox_config(sandbox_root)
+
+    def test_copy_spec_non_string_rejected_at_load(self, sandbox_root):
+        """A YAML int/null entry must fail as a config error, not a
+        traceback (fresh-eyes review of #3119)."""
+        _write_config(sandbox_root, {"copy": [42]})
+        with pytest.raises(ValueError, match="Invalid copy spec"):
+            load_sandbox_config(sandbox_root)
+
 
 class TestExpandHostPath:
     def test_absolute(self, tmp_path):
@@ -200,6 +214,27 @@ class TestParseCopySpec:
     def test_extra_segment_raises(self):
         with pytest.raises(ValueError, match="Invalid copy spec"):
             parse_copy_spec("a.txt:b.txt:ro")
+
+    def test_empty_source_raises(self):
+        with pytest.raises(ValueError, match="non-empty"):
+            parse_copy_spec(":dest")
+
+    def test_empty_dest_raises(self):
+        with pytest.raises(ValueError, match="non-empty"):
+            parse_copy_spec("src:")
+
+    def test_both_empty_raises(self):
+        with pytest.raises(ValueError, match="non-empty"):
+            parse_copy_spec(":")
+
+
+class TestValidateCopySpecs:
+    def test_non_string_raises(self):
+        with pytest.raises(ValueError, match="must be a string"):
+            validate_copy_specs([42])
+
+    def test_valid_specs_pass(self):
+        validate_copy_specs(["a:b", "~/.gitconfig:~/.gitconfig"])
 
 
 class TestBuildCopyPairs:
