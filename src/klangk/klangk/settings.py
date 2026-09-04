@@ -828,6 +828,12 @@ class KlangkSettings(BaseSettings):
     auth_modes: str | None = None
     jwt_secret: str | None = INSECURE_DEFAULT_SECRET
     prevent_insecure_jwt_secret: str = ""
+    # audit_hmac_key (#3174): the HMAC-SHA256 key used to tag audit rows
+    # (container_events, egress_consent) at insert time. When unset (the
+    # default), the key is derived from jwt_secret via a domain-separated
+    # HMAC so integrity is on by default with no extra configuration.
+    # Reloadable on SIGHUP (read live by the model at each insert).
+    audit_hmac_key: str | None = None
     default_user: str | None = None
     default_password: str | None = None
     # Numeric settings are typed int/float and accept every source form —

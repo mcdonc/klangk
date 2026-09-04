@@ -9,6 +9,7 @@ reach while in ``egress_mode='interactive'``.
 import time
 import uuid
 
+from .audit_hmac import compute_egress_consent_hmac, verify_hmac
 from .base import Submodel, resolve_prune_now
 
 
@@ -72,7 +73,7 @@ DURATION_DEFAULT = DURATION_TILRESTART
 _EC_COLUMNS = (
     "id, workspace_id, dest_host, dest_port, pid, process_name,"
     " decision, duration, requested_at, decided_at, decided_by,"
-    " revoked_at, revoked_by"
+    " revoked_at, revoked_by, hmac"
 )
 
 
@@ -122,7 +123,10 @@ class EgressConsentModel(Submodel):
             )
             if cursor.rowcount == 0:
                 return None
-            return await _select_row(db, request_id)
+            row = await _select_row(db, request_id)
+            if row is not None:
+                await _stamp_hmac(db, self.app.state.settings, row)
+            return row
 
     async def record_static_denial(
         self,
@@ -197,7 +201,10 @@ class EgressConsentModel(Submodel):
             )
             if cursor.rowcount == 0:
                 return None
-            return await _select_row(db, request_id)
+            row = await _select_row(db, request_id)
+            if row is not None:
+                await _stamp_hmac(db, self.app.state.settings, row)
+            return row
 
     async def get_request(self, request_id: str) -> dict | None:
         """Get a single consent request by ID."""
@@ -440,12 +447,10 @@ class EgressConsentModel(Submodel):
                 return None
             # Re-read inside the same transaction so the result is
             # consistent even if the row is deleted concurrently.
-            cursor = await db.execute(
-                f"SELECT {_EC_COLUMNS} FROM egress_consent WHERE id = ?",
-                (request_id,),
-            )
-            row = await cursor.fetchone()
-            return _row_to_dict(row) if row else None
+            row = await _select_row(db, request_id)
+            if row is not None:
+                await _stamp_hmac(db, self.app.state.settings, row)
+            return row
 
     async def revoke(self, request_id: str, revoked_by: str) -> dict | None:
         """Mark a prior allow/deny verdict revoked (#2339).
@@ -473,12 +478,10 @@ class EgressConsentModel(Submodel):
             )
             if cursor.rowcount == 0:
                 return None
-            cursor = await db.execute(
-                f"SELECT {_EC_COLUMNS} FROM egress_consent WHERE id = ?",
-                (request_id,),
-            )
-            row = await cursor.fetchone()
-            return _row_to_dict(row) if row else None
+            row = await _select_row(db, request_id)
+            if row is not None:
+                await _stamp_hmac(db, self.app.state.settings, row)
+            return row
 
     async def expire_pending(
         self,
@@ -585,6 +588,44 @@ class EgressConsentModel(Submodel):
         return not self._duration_in_effect(
             row["duration"], row["decided_at"], now
         )
+
+    async def verify_integrity(self) -> dict:
+        """Re-compute every row's HMAC and report mismatches (#3174).
+
+        Returns ``{"total": N, "verified": N, "no_hmac": N,
+        "tampered": [...]}`` where ``tampered`` lists the first rows
+        whose stored tag does not match the recomputed one.
+        """
+        rows = await self.app.state.db.fetchall(
+            f"SELECT {_EC_COLUMNS} FROM egress_consent ORDER BY rowid"
+        )
+        total = len(rows)
+        verified = 0
+        no_hmac = 0
+        tampered: list[dict] = []
+        settings = self.app.state.settings
+        for row in rows:
+            d = _row_to_dict(row)
+            stored = d.get("hmac")
+            if stored is None:
+                no_hmac += 1
+                continue
+            expected = compute_egress_consent_hmac(settings, d)
+            if verify_hmac(stored, expected):
+                verified += 1
+            else:
+                tampered.append(
+                    {
+                        "id": d["id"],
+                        "workspace_id": d["workspace_id"],
+                    }
+                )
+        return {
+            "total": total,
+            "verified": verified,
+            "no_hmac": no_hmac,
+            "tampered": tampered,
+        }
 
     async def prune(self, now: float | None = None) -> int:
         """Bound the table: delete rows past retention / over the per-workspace
@@ -739,4 +780,15 @@ def _row_to_dict(row) -> dict:
         "decided_by": row["decided_by"],
         "revoked_at": row["revoked_at"],
         "revoked_by": row["revoked_by"],
+        "hmac": row["hmac"],
     }
+
+
+async def _stamp_hmac(db, settings, row: dict) -> None:
+    """Compute and persist the HMAC tag for a just-written row (#3174)."""
+    tag = compute_egress_consent_hmac(settings, row)
+    await db.execute(
+        "UPDATE egress_consent SET hmac = ? WHERE id = ?",
+        (tag, row["id"]),
+    )
+    row["hmac"] = tag
