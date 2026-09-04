@@ -16,7 +16,10 @@ containers' mount tables:
    another workspace's home is rejected the same way.
 4. Foreign-volume attack — a named volume owned by another user
    (auto-created via their workspace start) cannot be mounted: the
-   start fails 400 ("belongs to another user").
+   start fails 400 ("belongs to another user or workspace") unless
+   the volume's workspace or creator matches this start (#3153
+   follow-up: volumes are workspace-scoped — see
+   TestWorkspaceScopedVolumes for the positive side).
 5. Runtime audit — ``podman inspect`` on every workspace container:
    each mount source under the workspaces root belongs to that
    workspace's own subtree, and the sets are pairwise disjoint.
@@ -61,25 +64,71 @@ def server():
 
 
 def register(api, email, password="testpass"):
-    """Register a user (test mode) and return auth headers."""
+    """Register a user (test mode); return (headers, user_id)."""
     resp = api.post(
         "/api/v1/auth/register",
         json={"email": email, "password": password},
         timeout=30,
     )
     assert resp.status_code == 200, f"Register failed: {resp.text}"
-    token = resp.json().get("access_token")
+    data = resp.json()
+    token = data.get("access_token")
     assert token, f"No token in register response: {resp.text}"
+    return {"Authorization": f"Bearer {token}"}, data.get("user_id")
+
+
+def login(api, email, password):
+    """Login and return auth headers."""
+    resp = api.post(
+        "/api/v1/auth/login",
+        json={"identifier": email, "password": password},
+        timeout=30,
+    )
+    assert resp.status_code == 200, f"Login failed: {resp.text}"
+    token = resp.json()["access_token"]
     return {"Authorization": f"Bearer {token}"}
+
+
+def group_id_by_name(api, headers, name):
+    """Find a workspace-role group's id by exact name."""
+    resp = api.get(
+        "/api/v1/groups",
+        headers=headers,
+        params={"source": "workspace-role", "page_size": 200},
+        timeout=10,
+    )
+    assert resp.status_code == 200, resp.text
+    for group in resp.json().get("groups", []):
+        if group.get("name") == name:
+            return group["id"]
+    raise AssertionError(f"group {name!r} not found")
+
+
+def add_group_member(api, headers, group_name, user_id):
+    """Add a user to a group by group name."""
+    group_id = group_id_by_name(api, headers, group_name)
+    resp = api.post(
+        f"/api/v1/groups/{group_id}/members",
+        headers=headers,
+        json={"user_id": user_id},
+        timeout=10,
+    )
+    assert resp.status_code in (200, 201), resp.text
 
 
 @pytest.fixture(scope="module")
 def users(server):
     """Two plain (non-admin) member users: alice and bob."""
     api = server["client"]
+    alice_headers, alice_id = register(api, "alice@example.com")
+    bob_headers, bob_id = register(api, "bob@example.com")
+    admin = login(api, "admin@example.com", "adminpass")
     return {
-        "alice": register(api, "alice@example.com"),
-        "bob": register(api, "bob@example.com"),
+        "alice": alice_headers,
+        "bob": bob_headers,
+        "alice_id": alice_id,
+        "bob_id": bob_id,
+        "admin": admin,
     }
 
 
@@ -437,6 +486,93 @@ class TestMountAttacks:
             subprocess.run(
                 ["podman", "volume", "rm", volume],
                 capture_output=True,
+            )
+
+
+class TestWorkspaceScopedVolumes:
+    # #3153: volumes created at workspace start are tagged with the
+    # workspace, so ANY legitimate starter of that workspace can use
+    # them. Two bringups (member cold connect, owner restart + connect).
+    @pytest.mark.timeout(600)
+    @pytest.mark.asyncio
+    async def test_member_created_volume_restartable_by_owner(
+        self, server, users
+    ):
+        """A volume created by a member's cold connect (stamped with
+        HIS user id) is still startable by the OWNER afterwards — the
+        workspace label matches where the creating user does not."""
+        api = server["client"]
+        volume = f"klangke2ews{uuid.uuid4().hex[:10]}"
+        ws = create_workspace(
+            api,
+            users["alice"],
+            f"voliso-ws-{uuid.uuid4().hex[:6]}",
+            mounts=[f"{volume}:/mnt/vol"],
+        )
+        try:
+            # bob joins the workspace as a collaborator, then his cold
+            # connect auto-creates the volume under HIS user id
+            add_group_member(
+                api, users["admin"], f"collaborators-{ws}", users["bob_id"]
+            )
+            ws_bob = await ws_connect(server, users["bob"], ws)
+            try:
+                out = (
+                    await exec_command(
+                        ws_bob,
+                        [
+                            "bash",
+                            "-c",
+                            "echo bob-data > /mnt/vol/marker "
+                            "&& cat /mnt/vol/marker",
+                        ],
+                    )
+                ).strip()
+                assert "bob-data" in out
+            finally:
+                await ws_bob.close()
+
+            # the podman volume is stamped with the workspace AND bob
+            inspected = subprocess.run(
+                ["podman", "volume", "inspect", volume],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            labels = json.loads(inspected.stdout)[0].get("Labels") or {}
+            assert labels.get("klangk.workspace") == ws
+            assert labels.get("klangk.user-id") == users["bob_id"]
+
+            # owner stop + restart: allowed only via the workspace match
+            resp = api.post(
+                f"/api/v1/workspaces/{ws}/stop",
+                headers=users["alice"],
+                timeout=60,
+            )
+            assert resp.status_code == 200, resp.text
+            resp = api.post(
+                f"/api/v1/workspaces/{ws}/start",
+                headers=users["alice"],
+                timeout=60,
+            )
+            assert resp.status_code == 200, resp.text
+
+            # the owner's container sees bob's marker — same volume,
+            # not recreated
+            ws_alice = await ws_connect(server, users["alice"], ws)
+            try:
+                out = (
+                    await exec_command(
+                        ws_alice, ["bash", "-c", "cat /mnt/vol/marker"]
+                    )
+                ).strip()
+                assert "bob-data" in out
+            finally:
+                await ws_alice.close()
+        finally:
+            delete_workspace(api, users["alice"], ws)
+            subprocess.run(
+                ["podman", "volume", "rm", volume], capture_output=True
             )
 
 

@@ -403,21 +403,28 @@ def build_mounts(
     return binds
 
 
-async def _ensure_named_volume(app, user_id, podman, source: str) -> None:
-    """Create a missing named volume (instance-labelled, owner-tagged) or
-    validate an existing one belongs to this instance and user."""
+async def _ensure_named_volume(
+    app, workspace_id: str, user_id: str | None, podman, source: str
+) -> None:
+    """Create a missing named volume (instance-labelled, workspace-
+    and owner-tagged) or validate an existing one is claimable by this
+    start (#3153)."""
     info = await podman.inspect_volume(source)
     if info is None:
-        await _create_named_volume(app, user_id, podman, source)
+        await _create_named_volume(app, workspace_id, user_id, podman, source)
         return
-    _validate_volume_ownership(app, user_id, source, info)
+    _validate_volume_ownership(app, workspace_id, user_id, source, info)
 
 
-async def _create_named_volume(app, user_id, podman, source: str) -> None:
-    """Create a named volume, instance-labelled and owner-tagged."""
+async def _create_named_volume(
+    app, workspace_id: str, user_id: str | None, podman, source: str
+) -> None:
+    """Create a named volume, instance-labelled and tagged with the
+    workspace it was created for plus its creating user (#3153)."""
     labels = {
         "klangk.managed": "true",
         "klangk.instance": app.state.util.instance_id(),
+        "klangk.workspace": workspace_id,
     }
     if user_id:
         labels["klangk.user-id"] = user_id
@@ -464,22 +471,41 @@ def _foreign_volume_owner(vol_owner: str | None, user_id: str | None) -> bool:
     return bool(vol_owner) and bool(user_id) and vol_owner != user_id
 
 
+def _volume_claimed_by(
+    vol_labels: dict, workspace_id: str | None, user_id: str | None
+) -> bool:
+    """True when the volume's recorded origin matches this start (#3153).
+
+    A volume created by a workspace start carries that workspace's id;
+    matching it lets any legitimate starter of THAT workspace use the
+    volume (a member cold-connecting a shared workspace, the owner
+    restarting after a member created it). Otherwise the creating user
+    must match the starting user — same-user sharing across that user's
+    own workspaces. A missing label side never matches; legacy volumes
+    without a workspace label fall back to the user check alone.
+    """
+    if workspace_id and vol_labels.get("klangk.workspace") == workspace_id:
+        return True
+    return not _foreign_volume_owner(vol_labels.get("klangk.user-id"), user_id)
+
+
 def _validate_volume_ownership(
-    app, user_id: str | None, source: str, info: dict
+    app, workspace_id: str | None, user_id: str | None, source: str, info: dict
 ) -> None:
-    """An existing volume must belong to this instance and user."""
+    """An existing volume must belong to this instance, and to this
+    start: its workspace or creator label must match (#3153)."""
     vol_labels = info.get("Labels") or {}
     if vol_labels.get("klangk.instance") != app.state.util.instance_id():
         raise ValueError(
             f"Volume {source!r} is not managed by this klangk instance"
         )
-    vol_owner = vol_labels.get("klangk.user-id")
-    if _foreign_volume_owner(vol_owner, user_id):
-        raise ValueError(f"Volume {source!r} belongs to another user")
+    if _volume_claimed_by(vol_labels, workspace_id, user_id):
+        return
+    raise ValueError(f"Volume {source!r} belongs to another user or workspace")
 
 
 async def _ensure_one_volume(
-    app, user_id: str | None, podman, mount_spec: str
+    app, workspace_id: str, user_id: str | None, podman, mount_spec: str
 ) -> None:
     """Create/validate the source of one extra mount."""
     source = mount_spec.split(":")[0]
@@ -495,7 +521,7 @@ async def _ensure_one_volume(
                 "(must start alphanumeric, contain only "
                 "[a-zA-Z0-9_.-], and be at most 64 chars)"
             )
-        await _ensure_named_volume(app, user_id, podman, source)
+        await _ensure_named_volume(app, workspace_id, user_id, podman, source)
     elif not os.path.exists(source):
         raise ValueError(f"Bind mount source does not exist: {source}")
 
@@ -503,6 +529,7 @@ async def _ensure_one_volume(
 async def ensure_volumes(
     app,
     extra_mounts: list[str] | None,
+    workspace_id: str,
     user_id: str | None,
     podman,
 ) -> None:
@@ -510,7 +537,9 @@ async def ensure_volumes(
     if not extra_mounts:
         return
     for mount_spec in extra_mounts:
-        await _ensure_one_volume(app, user_id, podman, mount_spec)
+        await _ensure_one_volume(
+            app, workspace_id, user_id, podman, mount_spec
+        )
 
 
 async def nix_binds(

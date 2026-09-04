@@ -1600,7 +1600,11 @@ class ContainerRegistry(NetworkSidecarMixin):
             ssl_dir,
         )
         await ensure_volumes(
-            self.app, spec.extra_mounts, spec.user_id, self.app.state.podman
+            self.app,
+            spec.extra_mounts,
+            spec.workspace_id,
+            spec.user_id,
+            self.app.state.podman,
         )
         binds = build_mounts(
             spec.home_path, spec.config_path, spec.extra_mounts, ssl_dir

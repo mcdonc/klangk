@@ -4292,6 +4292,7 @@ class TestExtraMountsVolumeCreation:
         name, labels = p.create_volume.call_args.args
         assert name == "nix-store"
         assert labels["klangk.managed"] == "true"
+        assert labels["klangk.workspace"] == workspace["id"]
         assert (
             labels["klangk.instance"]
             == self.registry.app.state.util.instance_id()
@@ -4399,6 +4400,66 @@ class TestExtraMountsVolumeCreation:
                         workspace["id"],
                         "/tmp/home",
                         extra_mounts=["private:/data"],
+                        user_id="user-me",
+                    )
+                )
+
+    async def test_workspace_volume_usable_by_any_starter(
+        self, workspace, app_state
+    ):
+        """#3153: a volume tagged with THIS workspace's id is claimable
+        by any legitimate starter of it — the owner restarting after a
+        member's cold-connect created the volume, or the member
+        themselves — even though the creating user differs."""
+        with patch_podman(
+            self.registry,
+            inspect_volume=AsyncMock(
+                return_value={
+                    "Name": "shared",
+                    "Labels": {
+                        "klangk.instance": self.registry.app.state.util.instance_id(),
+                        "klangk.workspace": workspace["id"],
+                        "klangk.user-id": "user-member",
+                    },
+                }
+            ),
+        ) as p:
+            await self.registry.start_container(
+                container.ContainerStartSpec(
+                    workspace["id"],
+                    "/tmp/home",
+                    extra_mounts=["shared:/data"],
+                    user_id="user-owner",
+                )
+            )
+        p.create_volume.assert_not_awaited()
+
+    async def test_foreign_workspace_volume_rejected(
+        self, workspace, app_state
+    ):
+        """#3153: a volume tagged to ANOTHER workspace and another user
+        is refused for this start — neither origin matches."""
+        with patch_podman(
+            self.registry,
+            inspect_volume=AsyncMock(
+                return_value={
+                    "Name": "elsewhere",
+                    "Labels": {
+                        "klangk.instance": self.registry.app.state.util.instance_id(),
+                        "klangk.workspace": "ws-other",
+                        "klangk.user-id": "user-other",
+                    },
+                }
+            ),
+        ):
+            with pytest.raises(
+                ValueError, match="belongs to another user or workspace"
+            ):
+                await self.registry.start_container(
+                    container.ContainerStartSpec(
+                        workspace["id"],
+                        "/tmp/home",
+                        extra_mounts=["elsewhere:/data"],
                         user_id="user-me",
                     )
                 )
