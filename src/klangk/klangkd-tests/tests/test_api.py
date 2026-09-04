@@ -2366,10 +2366,21 @@ class TestChangePassword:
         headers = await _auth_headers(client)
         # One inserted character — the positional-diff workaround that a
         # naive per-position diff would score as a full overwrite.
+
+    async def test_change_password_garbage_token(self, client, db):
+        """#3172: change-password uses its own dependency (flagged sessions
+        allowed), so its invalid-token arm needs its own test."""
         resp = await client.post(
             "/api/v1/auth/change-password",
             json={
                 "current_password": "testpass",
+                "new_password": "newpass1",
+            },
+            headers={"Authorization": "Bearer garbage"},
+        )
+        assert resp.status_code == 401
+        assert resp.json()["detail"] == "Invalid token"
+
                 "new_password": "xtestpass",
             },
             headers=headers,
