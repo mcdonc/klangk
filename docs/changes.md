@@ -1615,6 +1615,16 @@ stop)`) and a `server: stop at 23:00 (in 1h 12m)` status line in the
 
 ### Changed
 
+- **`klangk sandbox` `copy:` destinations are literal container paths
+  (#3118).** Only a leading `~` is special (it expands to
+  `/home/{handle}`); no other shell expansion happens — a destination
+  like `~other/file` or `$HOME/file` is written as a literal filename,
+  and a relative destination resolves against the container user's
+  home, not `mount-at`. Previously such destinations were expanded by
+  accident (unquoted interpolation let the container's `sh` interpret
+  them); spell out the destination path you want. See
+  [Sandbox](https://mcdonc.github.io/klangk/features/sandbox/).
+
 - **`KLANGKD_EGRESS_CONSENT_RATE_LIMIT=0`** now means unlimited (#3083).
   Previously `0` denied every interactive consent hold (the pending cap
   compared `>= 0`); it now disables the per-workspace pending cap, matching

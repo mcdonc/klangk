@@ -6133,6 +6133,45 @@ class TestSandboxSetupOnly:
         assert proc.returncode == 0, proc.stderr
         assert dest.read_bytes() == b"data"
 
+    async def test_copy_dest_shell_syntax_is_literal(self, tmp_path):
+        """#3118: a `~user`/`$VAR` copy destination is written literally
+        — proven by executing the generated command under a real sh and
+        checking where the file lands. (Before #3093 the unquoted
+        interpolation let the container's sh expand such destinations.)"""
+        import subprocess
+        from pathlib import Path
+
+        from klangk.cli.main import sandbox_setup
+        from klangk.cli.sandbox import SandboxConfig
+
+        (tmp_path / "cfg.txt").write_text("data")
+        config = SandboxConfig(copy=["cfg.txt:$HOME/klangk-3118-lit"])
+
+        ws = AsyncMock()
+        exec_calls = []
+
+        async def fake_exec(ws, cmd, stdin=None, stdout=None, timeout=None):
+            exec_calls.append((cmd, stdin))
+            return 0
+
+        with patch("klangk.cli.sandboxcmd.exec_on_ws", fake_exec):
+            await sandbox_setup(ws, config, tmp_path, "admin")
+
+        ((cmd, stdin),) = exec_calls
+        assert cmd[:2] == ["sh", "-c"]
+        proc = subprocess.run(
+            cmd,
+            input=stdin.getvalue(),
+            capture_output=True,
+            timeout=30,
+            cwd=tmp_path,
+        )
+        assert proc.returncode == 0, proc.stderr
+        # The copy lands under a directory literally named "$HOME" in
+        # the exec working directory — not under the real $HOME.
+        assert (tmp_path / "$HOME" / "klangk-3118-lit").read_bytes() == b"data"
+        assert not (Path.home() / "klangk-3118-lit").exists()
+
     async def test_setup_quotes_mount_and_script(self, tmp_path):
         """#3093: mount-at and setup paths containing spaces or single
         quotes must round-trip — proven by executing the generated
