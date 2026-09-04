@@ -215,12 +215,15 @@ logger = logging.getLogger(__name__)
 
 #: The Content-Security-Policy served on the browser listener's frontend
 #: paths. Locked to first-party resources: the SPA's scripts, styles,
-#: images, fonts, and workers all ship inside the frontend dir, so every
-#: fetch directive is ``'self'`` (plus the scheme tokens the Flutter web
+#: images, fonts, workers, and WebSocket connections all stay same-origin,
+#: so every fetch directive is ``'self'`` (plus the tokens the Flutter web
 #: build genuinely needs — ``'unsafe-inline'`` for index.html's inline
 #: <script> blocks and Flutter's runtime-injected styles, ``wasm-unsafe-eval``
 #: for CanvasKit/skwasm's ``WebAssembly`` compile, ``data:``/``blob:``
-#: images, and ``ws:``/``wss:`` for the workspace WebSocket). No
+#: images). Same-origin ``ws:``/``wss:`` upgrades of the page origin are
+#: covered by ``'self'`` (CSP3), so the workspace WebSocket needs no bare
+#: scheme-source — and a bare ``ws:``/``wss:`` would permit a compromised
+#: script to open websockets to any host on the internet. No
 #: ``unsafe-eval`` (the beep/boingball features no longer JS-``eval``),
 #: no third-party origins (Roboto Mono is self-hosted, so fonts.gstatic.com
 #: is gone). ``frame-ancestors 'none'`` + X-Frame-Options DENY is the
@@ -231,7 +234,7 @@ CSP_POLICY = (
     "style-src 'self' 'unsafe-inline'; "
     "img-src 'self' data: blob:; "
     "font-src 'self'; "
-    "connect-src 'self' ws: wss:; "
+    "connect-src 'self'; "
     "worker-src 'self'; "
     "object-src 'none'; "
     "base-uri 'self'; "
@@ -241,7 +244,7 @@ CSP_POLICY = (
 #: Browser-listener paths the hardening headers must NOT touch: the API,
 #: the WebSocket endpoints, and the hosted-ports proxy (deployer-controlled
 #: apps behind /hosted/ — a CSP imposed there could break them).
-_CSP_EXCLUDED_PATHS = "/api /api/* /ws* /hosted /hosted/*"
+_CSP_EXCLUDED_PATHS = "/api /api/* /ws /ws/* /hosted /hosted/*"
 
 
 def csp_block() -> str:

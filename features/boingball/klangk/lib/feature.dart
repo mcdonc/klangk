@@ -117,14 +117,23 @@ void _playBoingSound({required double panX, bool isFloor = true}) {
     ((web.Event _) {
       final data = reader.result;
       if (data == null) return;
-      ctx.decodeAudioData(data as JSArrayBuffer).toDart.then((audio) {
-        _boingBuf = audio;
-        play(audio);
-      });
+      ctx
+          .decodeAudioData(data as JSArrayBuffer)
+          .toDart
+          .then((audio) {
+            _boingBuf = audio;
+            play(audio);
+          })
+          .catchError(_ignoreDecodeFailure);
     }).toJS,
   );
   reader.readAsArrayBuffer(web.Blob([bytes.toJS].toJS));
 }
+
+// Swallow a failed decode (corrupt sample, unsupported codec): keeps parity
+// with the old JS (which also retried per bounce) but avoids an unhandled
+// promise rejection on every bounce after a decode error.
+void _ignoreDecodeFailure(Object _) {}
 
 // ---------- overlay ----------
 

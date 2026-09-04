@@ -580,14 +580,20 @@ class TestCspBlock:
 
     def test_block_shape(self):
         b = csp_block()
-        assert "@frontend not path /api /api/* /ws* /hosted /hosted/*" in b
+        assert (
+            "@frontend not path /api /api/* /ws /ws/* /hosted /hosted/*" in b
+        )
         assert f'header @frontend Content-Security-Policy "{CSP_POLICY}"' in b
         assert 'header @frontend X-Frame-Options "DENY"' in b
 
     def test_policy_is_first_party(self):
-        # No third-party origins and no script eval: fonts are self-hosted
-        # (#3149 additional scope) and no shipped feature JS-evals.
+        # No third-party origins, no scheme-source widening, and no script
+        # eval: fonts are self-hosted (#3149 additional scope), same-origin
+        # ws/wss is covered by 'self' (CSP3), and no shipped feature
+        # JS-evals.
         assert "https://" not in CSP_POLICY
+        assert "ws:" not in CSP_POLICY
+        assert "wss:" not in CSP_POLICY
         assert "unsafe-eval;" not in CSP_POLICY  # wasm-unsafe-eval only
         assert "fonts.gstatic.com" not in CSP_POLICY
         # The clickjacking posture.
