@@ -47,6 +47,7 @@ from __future__ import annotations
 
 import json
 import logging
+import logging.handlers
 from datetime import UTC, datetime
 
 __all__ = ["configure", "configure_defaults"]
@@ -197,15 +198,20 @@ def install_file_handler(
     The file is the machine-ingestion artifact (rsyslog ``imfile`` / fluent-bit
     tail it into a SIEM), so it is **always** :class:`JsonFormatter` — the
     console keeps ``KLANGKD_LOG_FORMAT`` and may stay human-readable while the
-    file carries JSON. An open failure is logged at warning and skipped (the
-    console stream stays live) instead of raising: construction-time settings
-    validation has already fail-fasted unwritable paths, so this arm only
-    guards a path that broke between validation and a SIGHUP reconfigure.
+    file carries JSON. ``WatchedFileHandler`` (not plain ``FileHandler``)
+    reopens the file when the inode changes, so external log rotation
+    (logrotate copytruncate / rsyslog) works without a SIGHUP. An open
+    failure is logged at warning and skipped (the console stream stays live)
+    instead of raising: construction-time settings validation has already
+    fail-fasted unwritable paths, so this arm only guards a path that broke
+    between validation and a SIGHUP reconfigure.
     """
     if not log_file:
         return
     try:
-        handler = logging.FileHandler(log_file, encoding="utf-8")
+        handler = logging.handlers.WatchedFileHandler(
+            log_file, encoding="utf-8"
+        )
     except OSError as exc:
         logging.getLogger(__name__).warning(
             "KLANGKD_LOG_FILE=%s unavailable (%s); file logging disabled",

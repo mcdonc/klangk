@@ -12,6 +12,7 @@ Logging is configured by two module-level functions in :mod:`klangk.logger`
 
 import json
 import logging
+import logging.handlers
 
 import pytest
 
@@ -451,7 +452,7 @@ class TestLogFileSink:
         def boom(*args, **kwargs):
             raise OSError("gone")
 
-        monkeypatch.setattr(logging, "FileHandler", boom)
+        monkeypatch.setattr(logging.handlers, "WatchedFileHandler", boom)
         with caplog.at_level(logging.WARNING, logger="klangk.logger"):
             logger_mod.configure(settings)
         assert _klangk_file_handlers(clean_root) == []

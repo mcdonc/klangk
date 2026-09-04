@@ -554,8 +554,9 @@ sync` report a clear permission-denied error.
   while the file feeds rsyslog `imfile`/fluent-bit. uvicorn's startup/error/
   access records now flow through the same handler (previously they rode
   uvicorn's own text handlers), so the whole stream shares the format. Both
-  are reloadable on SIGHUP; malformed values abort startup. See
-  [Environment Variables](reference/environment.md).
+  are reloadable on SIGHUP; malformed values abort startup. uvicorn access
+  logs are now visible at the default INFO level (previously suppressed at
+  WARNING). See [Environment Variables](reference/environment.md).
 - **All five container images now publish on a release tag (#3140).**
   Pushing `vX.Y.Z` publishes `klangk-host`, `klangk-host-fips`,
   `klangk-workspace`, `klangk-workspace-fips`, and the newly pullable
