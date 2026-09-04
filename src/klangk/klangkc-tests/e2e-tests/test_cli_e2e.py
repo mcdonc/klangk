@@ -59,6 +59,10 @@ def _start_server(data_dir, port=None, extra_env=None):
         "KLANGKD_DEFAULT_PASSWORD": "testpass",
         "KLANGKD_TEST_MODE": "1",
         "KLANGKD_IDLE_TIMEOUT_SECONDS": "300",
+        # #3153: user bind mounts are deny-by-default; the CLI tests'
+        # bind mounts (and the sandbox recipes' workspaces) live under
+        # /tmp, so allow that root.
+        "KLANGKD_ALLOWED_MOUNT_ROOTS": "/tmp",
         "LOGFIRE_TOKEN": "",
     }
     if port is not None:
@@ -74,6 +78,27 @@ def _start_server(data_dir, port=None, extra_env=None):
 def _stop_server(server, data_dir=None):
     """Stop a server started by ``_start_server``."""
     stop_server(server)
+
+
+def _workspace_id(base_url, name):
+    """The full workspace id for *name*, via the admin API login
+    (#3153: `volumes create` needs the owning workspace's id)."""
+    import httpx
+
+    token = httpx.post(
+        f"{base_url}/api/v1/auth/login",
+        json={"identifier": "test@example.com", "password": "testpass"},
+        timeout=10,
+    ).json()["access_token"]
+    resp = httpx.get(
+        f"{base_url}/api/v1/workspaces",
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=10,
+    )
+    for ws in resp.json():
+        if ws.get("name") == name:
+            return ws["id"]
+    raise AssertionError(f"workspace {name!r} not found")
 
 
 @pytest.fixture(scope="session")
@@ -1052,9 +1077,21 @@ class TestVolumes:
     def test_volumes_lifecycle(self, cli_config):
         env = cli_config["env"]
         TestVolumes._login(cli_config)
+        run(["klangk", "create", "e2e-vol-ws"], env=env)
+        ws_id = _workspace_id(cli_config["server_url"], "e2e-vol-ws")
 
-        # Create
-        result = run(["klangk", "volumes", "create", "e2e-vol"], env=env)
+        # Create (owned by the workspace, #3153)
+        result = run(
+            [
+                "klangk",
+                "volumes",
+                "create",
+                "e2e-vol",
+                "--workspace",
+                ws_id,
+            ],
+            env=env,
+        )
         assert result.returncode == 0
         assert "Created" in result.stdout
 
@@ -1064,7 +1101,17 @@ class TestVolumes:
         assert "e2e-vol" in result.stdout
 
         # Create duplicate fails
-        result = run(["klangk", "volumes", "create", "e2e-vol"], env=env)
+        result = run(
+            [
+                "klangk",
+                "volumes",
+                "create",
+                "e2e-vol",
+                "--workspace",
+                ws_id,
+            ],
+            env=env,
+        )
         assert result.returncode != 0
 
         # Remove
@@ -1075,6 +1122,7 @@ class TestVolumes:
         # List after delete
         result = run(["klangk", "volumes", "ls", "--plain"], env=env)
         assert "e2e-vol" not in result.stdout
+        run(["klangk", "rm", "e2e-vol-ws"], env=env)
 
     def test_volumes_rm_nonexistent(self, cli_config):
         env = cli_config["env"]
@@ -1719,7 +1767,17 @@ class TestVolumeUserIsolation:
         exit."""
         env_b = self._env_b
 
-        result = run(["klangk", "volumes", "create", "vol-b"], env=env_b)
+        result = run(
+            [
+                "klangk",
+                "volumes",
+                "create",
+                "vol-b",
+                "--workspace",
+                "any-ws",
+            ],
+            env=env_b,
+        )
         assert result.returncode != 0
         assert "403" in result.stderr or "denied" in result.stderr.lower()
 
@@ -1738,8 +1796,20 @@ class TestVolumeUserIsolation:
         while a non-admin is refused on the same name (#2993)."""
         env_a = self._env_a
         env_b = self._env_b
+        run(["klangk", "create", "e2e-vol-iso-ws"], env=env_a)
+        ws_id = _workspace_id(self._base_url, "e2e-vol-iso-ws")
 
-        result = run(["klangk", "volumes", "create", "vol-a"], env=env_a)
+        result = run(
+            [
+                "klangk",
+                "volumes",
+                "create",
+                "vol-a",
+                "--workspace",
+                ws_id,
+            ],
+            env=env_a,
+        )
         assert result.returncode == 0
         try:
             # The non-admin cannot delete what the admin created.
@@ -1753,6 +1823,7 @@ class TestVolumeUserIsolation:
             assert "vol-a" in result.stdout
         finally:
             run(["klangk", "volumes", "rm", "vol-a"], env=env_a)
+            run(["klangk", "rm", "e2e-vol-iso-ws"], env=env_a)
 
         result = run(["klangk", "volumes", "ls", "--plain"], env=env_a)
         assert result.returncode == 0
