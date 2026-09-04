@@ -878,6 +878,14 @@ class KlangkSettings(BaseSettings):
     # (fail-fast) so a typo'd level aborts boot rather than silently leaving
     # logging at the wrong verbosity.
     log_level: str = "INFO"
+    # log_format: root logger output format — ``text`` (the colored console
+    # format; default) or ``json`` (one JSON object per line: ISO-8601 UTC
+    # timestamp, level, logger, message, plus exc_info when present) for
+    # SIEM ingestion (#3156, ASD-STIG V-222481/482). Like log_level, applied
+    # by ``klangk.logger.configure(settings)`` in build_app and re-applied on
+    # every SIGHUP reload; the validator below rejects anything but
+    # text/json (fail-fast) at construction.
+    log_format: str = "text"
 
     # --- Server / network ---
     # listen: the proxy's **browser** interface/address (e.g. ``127.0.0.1``,
@@ -1849,6 +1857,24 @@ class KlangkSettings(BaseSettings):
             "Must be a level name (DEBUG/INFO/WARNING/ERROR/CRITICAL) "
             "or a numeric value."
         )
+
+    @field_validator("log_format")
+    @classmethod
+    def _validate_log_format(cls, v: str) -> str:
+        """Normalize/reject the log output format at construction (#3156).
+
+        Accepts ``text`` or ``json`` (case-insensitive), normalized to
+        lowercase. ``None``/empty defaults to ``text``. Anything else aborts
+        boot — the same fail-fast posture as ``log_level`` above.
+        """
+        if _is_unset(v):
+            return "text"
+        lower = v.strip().lower()
+        if lower not in ("text", "json"):
+            raise ValueError(
+                f"KLANGKD_LOG_FORMAT={v!r} is invalid. Must be text or json."
+            )
+        return lower
 
     @field_validator("auth_modes")
     @classmethod

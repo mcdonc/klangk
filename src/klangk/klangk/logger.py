@@ -22,11 +22,13 @@ module-level functions (no state object):
   indirection resolver log).
 - :func:`configure` — called once settings are finalized (in
   :func:`klangk.main.build_app`) to re-apply the level from
-  ``settings.log_level`` (``KLANGKD_LOG_LEVEL``), overriding the import-time
-  defaults. Idempotent, so it is also the **SIGHUP reconfigure** path:
-  :func:`klangk.main.Lifecycle.apply_reloaded_settings` calls it right after
-  the settings swap (before the subsystem loop, so warnings the loop emits use
-  the new level).
+  ``settings.log_level`` (``KLANGKD_LOG_LEVEL``) *and the output format* from
+  ``settings.log_format`` (``KLANGKD_LOG_FORMAT``: ``text`` — the colored
+  console format — or ``json`` — one JSON object per line for SIEM ingestion,
+  #3156), overriding the import-time defaults. Idempotent, so it is also the
+  **SIGHUP reconfigure** path: :func:`klangk.main.Lifecycle.apply_reloaded_settings`
+  calls it right after the settings swap (before the subsystem loop, so warnings
+  the loop emits use the new level/format).
 
 Both reach the same private :func:`_apply`, which removes any prior
 klangk-tagged handler before adding the new one — so repeated calls (fresh
@@ -42,7 +44,9 @@ the *configuration* is what the composition-root refactor (#1426) calls for.
 
 from __future__ import annotations
 
+import json
 import logging
+from datetime import UTC, datetime
 
 __all__ = ["configure", "configure_defaults"]
 
@@ -79,6 +83,49 @@ _DATEFMT = "%H:%M:%S"
 # are constructed.
 DEFAULT_LEVEL = logging.INFO
 
+# The format applied by ``configure_defaults()`` (the pre-settings phase).
+# ``configure(settings)`` overrides it with ``settings.log_format`` once
+# settings are constructed. Pre-settings output is always human-readable
+# text: the JSON choice lives in settings, which do not exist yet at import.
+DEFAULT_FORMAT = "text"
+
+
+def format_is_json(value: str | None) -> bool:
+    """Whether a ``KLANGKD_LOG_FORMAT`` value selects JSON output.
+
+    The :class:`~klangk.settings.KlangkSettings` ``log_format`` validator
+    normalizes to ``text``/``json`` and rejects garbage at construction, so
+    this loose comparison only defends a misconfigured live reload (same
+    posture as :func:`level_to_int`'s INFO fallback).
+    """
+    return (value or "").strip().lower() == "json"
+
+
+class JsonFormatter(logging.Formatter):
+    """One JSON object per line, for SIEM ingestion (#3156).
+
+    Hand-rolled (no ``python-json-logger`` dependency): emits ``timestamp``
+    (ISO-8601 UTC), ``level``, ``logger``, and ``message`` — plus ``exc_info``
+    when the record carries an exception. Covers everything that reaches the
+    root handler, klangk's own loggers and third-party ones alike, so the
+    whole stream is uniform and free of ANSI color codes.
+    """
+
+    def format(self, record: logging.LogRecord) -> str:
+        created = datetime.fromtimestamp(record.created, tz=UTC)
+        payload = {
+            "timestamp": created.isoformat(timespec="milliseconds").replace(
+                "+00:00", "Z"
+            ),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+        }
+        if record.exc_info:
+            payload["exc_info"] = self.formatException(record.exc_info)
+        return json.dumps(payload)
+
+
 # Third-party loggers managed centrally (logger name -> level). These are
 # libraries klangk depends on that log at their own verbosity by default and
 # would drown klangk's own INFO output. Levels are re-applied on every
@@ -103,7 +150,18 @@ _THIRD_PARTY_LEVELS: dict[str, int | str] = {
 }
 
 
-def _apply(level: int) -> None:
+def make_formatter(log_format: str) -> logging.Formatter:
+    """Build the root-handler formatter for a ``KLANGKD_LOG_FORMAT`` value.
+
+    ``json`` (and its case variants) gets :class:`JsonFormatter`; anything
+    else — the default ``text`` included — gets the colored console format.
+    """
+    if format_is_json(log_format):
+        return JsonFormatter()
+    return logging.Formatter(_FORMAT, datefmt=_DATEFMT)
+
+
+def _apply(level: int, log_format: str = DEFAULT_FORMAT) -> None:
     """Install/replace the klangk root handler at ``level`` + silence 3rd-party.
 
     Shared by :func:`configure_defaults` (pre-settings, default level) and
@@ -124,7 +182,7 @@ def _apply(level: int) -> None:
     handler = logging.StreamHandler()
     # Private tag for cross-call dedup (see the loop above).
     handler._klangk_log_handler = True  # type: ignore[attr-defined]
-    handler.setFormatter(logging.Formatter(_FORMAT, datefmt=_DATEFMT))
+    handler.setFormatter(make_formatter(log_format))
     handler.setLevel(level)
     root.addHandler(handler)
 
@@ -147,9 +205,9 @@ def configure_defaults() -> None:
     logging is formatted from the very first log call — including during
     ``KlangkSettings`` construction, which runs before any ``app`` exists.
     Idempotent. :func:`configure` later overrides the level from
-    ``KLANGKD_LOG_LEVEL``.
+    ``KLANGKD_LOG_LEVEL`` and the format from ``KLANGKD_LOG_FORMAT``.
     """
-    _apply(DEFAULT_LEVEL)
+    _apply(DEFAULT_LEVEL, DEFAULT_FORMAT)
 
 
 def configure(settings) -> None:
@@ -157,10 +215,11 @@ def configure(settings) -> None:
 
     Called in :func:`klangk.main.build_app` (once settings are constructed) and
     again on every SIGHUP reload (after the settings swap, before the subsystem
-    reconfigure loop) so ``KLANGKD_LOG_LEVEL`` takes effect without a process
-    restart (#1587). Reads ``settings.log_level`` live; idempotent.
+    reconfigure loop) so ``KLANGKD_LOG_LEVEL`` and ``KLANGKD_LOG_FORMAT`` take
+    effect without a process restart (#1587). Reads ``settings.log_level`` and
+    ``settings.log_format`` live; idempotent.
     """
-    _apply(level_to_int(settings.log_level))
+    _apply(level_to_int(settings.log_level), settings.log_format)
 
 
 # Configure sensible defaults at import so logging is formatted from the very

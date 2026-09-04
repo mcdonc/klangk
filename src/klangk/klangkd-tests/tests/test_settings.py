@@ -1167,6 +1167,50 @@ class TestLogLevelValidator:
         assert "DEBUG" in msg  # valid levels listed in the message
 
 
+class TestLogFormatValidator:
+    """KLANGKD_LOG_FORMAT must be text or json, or fail fast at boot
+    (#3156) — the same fail-fast posture as the log_level validator."""
+
+    def test_defaults_to_text(self):
+        s = make_settings({})
+        assert s.log_format == "text"
+
+    @pytest.mark.parametrize(
+        "raw,expected",
+        [
+            ("text", "text"),
+            ("json", "json"),
+            ("JSON", "json"),
+            ("Json", "json"),
+            ("TEXT", "text"),
+            (" json ", "json"),
+        ],
+    )
+    def test_valid_values_normalized_to_lower(self, raw, expected):
+        s = make_settings({"KLANGKD_LOG_FORMAT": raw})
+        assert s.log_format == expected
+
+    def test_empty_string_defaults_to_text(self):
+        s = make_settings({"KLANGKD_LOG_FORMAT": ""})
+        assert s.log_format == "text"
+
+    @pytest.mark.parametrize("bad", ["syslog", "xml", "jsonl", "pretty"])
+    def test_garbage_rejected_at_construction(self, bad):
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            make_settings({"KLANGKD_LOG_FORMAT": bad})
+
+    def test_error_message_names_valid_formats(self):
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError) as exc_info:
+            make_settings({"KLANGKD_LOG_FORMAT": "syslog"})
+        msg = str(exc_info.value)
+        assert "syslog" in msg
+        assert "json" in msg  # valid formats listed in the message
+
+
 class TestResolveIndirectionsValidator:
     """The ``_resolve_indirections`` model validator runs once at construction
     (#1461): every string field with a ``file:``/``cmd:`` prefix is resolved

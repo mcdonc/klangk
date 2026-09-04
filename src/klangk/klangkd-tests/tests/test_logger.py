@@ -6,9 +6,11 @@ Logging is configured by two module-level functions in :mod:`klangk.logger`
 - ``configure_defaults()`` — applied at import; INFO level, colored format,
   third-party silencing. Active before any ``app``/settings exists.
 - ``configure(settings)`` — re-applies the level from ``settings.log_level``
-  once settings are finalized (build_app), and again on every SIGHUP reload.
+  and the format from ``settings.log_format`` once settings are finalized
+  (build_app), and again on every SIGHUP reload.
 """
 
+import json
 import logging
 
 import pytest
@@ -42,10 +44,12 @@ def _klangk_handlers(root):
     ]
 
 
-def _make_settings(level=None):
+def _make_settings(level=None, log_format=None):
     env = {}
     if level is not None:
         env["KLANGKD_LOG_LEVEL"] = level
+    if log_format is not None:
+        env["KLANGKD_LOG_FORMAT"] = log_format
     return make_settings(env)
 
 
@@ -81,6 +85,76 @@ class TestLevelToInt:
         # Settings validator rejects garbage at construction; this fallback
         # only defends a misconfigured live reload.
         assert logger_mod.level_to_int("verbose") == logging.INFO
+
+
+class TestFormatIsJson:
+    """The private format-string discriminator (#3156)."""
+
+    def test_json_in_any_case(self):
+        assert logger_mod.format_is_json("json")
+        assert logger_mod.format_is_json("JSON")
+        assert logger_mod.format_is_json(" Json ")
+
+    def test_text_or_garbage_is_not_json(self):
+        assert not logger_mod.format_is_json("text")
+        assert not logger_mod.format_is_json("syslog")
+        assert not logger_mod.format_is_json("")
+        assert not logger_mod.format_is_json(None)
+
+
+class TestJsonFormatter:
+    """The one-object-per-line JSON formatter for SIEM ingestion (#3156)."""
+
+    def _format_record(self, record):
+        return json.loads(logger_mod.JsonFormatter().format(record))
+
+    def test_payload_fields(self):
+        record = logging.LogRecord(
+            "klangk.test",
+            logging.WARNING,
+            __file__,
+            1,
+            "watch %s",
+            ("out",),
+            None,
+        )
+        payload = self._format_record(record)
+        assert set(payload) == {"timestamp", "level", "logger", "message"}
+        assert payload["level"] == "WARNING"
+        assert payload["logger"] == "klangk.test"
+        assert payload["message"] == "watch out"
+
+    def test_timestamp_is_iso8601_utc(self):
+        record = logging.LogRecord(
+            "klangk.test", logging.INFO, __file__, 1, "m", (), None
+        )
+        ts = self._format_record(record)["timestamp"]
+        assert ts.endswith("Z")
+        assert "T" in ts
+
+    def test_exc_info_included_when_present(self):
+        try:
+            raise RuntimeError("boom")
+        except RuntimeError:
+            import sys
+
+            record = logging.LogRecord(
+                "klangk.test",
+                logging.ERROR,
+                __file__,
+                1,
+                "failed",
+                (),
+                sys.exc_info(),
+            )
+        payload = self._format_record(record)
+        assert "RuntimeError: boom" in payload["exc_info"]
+
+    def test_no_exc_info_key_without_exception(self):
+        record = logging.LogRecord(
+            "klangk.test", logging.INFO, __file__, 1, "m", (), None
+        )
+        assert "exc_info" not in self._format_record(record)
 
 
 class TestConfigureDefaults:
@@ -204,3 +278,50 @@ class TestConfigure:
         logger_mod.configure(_make_settings("INFO"))
         logger_mod.configure(_make_settings("WARNING"))
         assert logging.getLogger("httpx").level == logging.WARNING
+
+
+class TestConfigureFormat:
+    """The settings-driven format switch: KLANGKD_LOG_FORMAT selects the
+    colored console format or JSON output (#3156), reloadable like the
+    level (SIGHUP goes through the same configure(settings) seam)."""
+
+    def test_json_settings_install_json_formatter(self, clean_root):
+        logger_mod.configure(_make_settings(log_format="json"))
+        handler = _klangk_handlers(clean_root)[0]
+        assert isinstance(handler.formatter, logger_mod.JsonFormatter)
+
+    def test_text_settings_install_colored_formatter(self, clean_root):
+        logger_mod.configure(_make_settings(log_format="text"))
+        handler = _klangk_handlers(clean_root)[0]
+        assert "\033[94m" in handler.formatter._fmt  # _LIGHT_BLUE
+
+    def test_json_output_is_one_object_per_line_no_ansi(
+        self, clean_root, capsys
+    ):
+        """End-to-end: a record from a named (propagating) logger comes out
+        of stderr as a single parseable JSON line, free of ANSI codes."""
+        logger_mod.configure(_make_settings(log_format="json"))
+        logging.getLogger("klangk.sink.test").warning("siem %s", "ready")
+        line = capsys.readouterr().err.strip().splitlines()[-1]
+        payload = json.loads(line)
+        assert payload["level"] == "WARNING"
+        assert payload["logger"] == "klangk.sink.test"
+        assert payload["message"] == "siem ready"
+        assert "\033" not in line
+
+    def test_switch_is_idempotent_no_stacking(self, clean_root):
+        # text → json → text, like a SIGHUP format flip: one handler, with
+        # the formatter of the last-applied settings.
+        logger_mod.configure(_make_settings(log_format="text"))
+        logger_mod.configure(_make_settings(log_format="json"))
+        logger_mod.configure(_make_settings(log_format="text"))
+        handlers = _klangk_handlers(clean_root)
+        assert len(handlers) == 1
+        assert "\033[94m" in handlers[0].formatter._fmt
+
+    def test_defaults_stay_text(self, clean_root):
+        # The pre-settings phase has no settings to read; text is the
+        # documented conservative default (see DEFAULT_FORMAT).
+        logger_mod.configure_defaults()
+        handler = _klangk_handlers(clean_root)[0]
+        assert "\033[94m" in handler.formatter._fmt

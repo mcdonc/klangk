@@ -299,6 +299,7 @@ port: 8997
 | `bridge_timeout_seconds` |                                  | `KLANGKD_BRIDGE_TIMEOUT_SECONDS` |
 | `idle_timeout_seconds`   | `3600`                           | `KLANGKD_IDLE_TIMEOUT_SECONDS`   |
 | `log_level`              | `INFO`                           | `KLANGKD_LOG_LEVEL`              |
+| `log_format`             | `text`                           | `KLANGKD_LOG_FORMAT`             |
 | `proxy_bin`              | _(auto-discovered)_              | `KLANGKD_PROXY_BIN`              |
 | `websocket_msg_size_max` | `16777216`                       | `KLANGKD_WEBSOCKET_MSG_SIZE_MAX` |
 

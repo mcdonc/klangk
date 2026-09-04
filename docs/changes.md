@@ -545,6 +545,14 @@ sync` report a clear permission-denied error.
 
 ### Added
 
+- **`KLANGKD_LOG_FORMAT` (#3156).** New setting selecting the klangkd root
+  log output format: `text` (default, the colored console format) or `json`
+  — one JSON object per line (`timestamp`, `level`, `logger`, `message`,
+  `exc_info` when present) for SIEM/central-log ingestion (ASD-STIG
+  V-222481/482). Applies to the whole log stream, klangk and third-party
+  records alike, with no ANSI codes. Reloadable on SIGHUP; a malformed value
+  aborts startup. See
+  [Environment Variables](reference/environment.md).
 - **All five container images now publish on a release tag (#3140).**
   Pushing `vX.Y.Z` publishes `klangk-host`, `klangk-host-fips`,
   `klangk-workspace`, `klangk-workspace-fips`, and the newly pullable
