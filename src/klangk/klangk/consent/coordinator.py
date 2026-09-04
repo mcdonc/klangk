@@ -1178,11 +1178,15 @@ class ConsentCoordinator:
 
     @staticmethod
     def _request_frame(request: dict) -> dict:
-        """Build an ``egress_request`` frame from a consent-request row."""
+        """Build an ``egress_request`` frame from a consent-request row.
+
+        The raw ``hmac`` tag is verification-internal (#3174) and is
+        dropped before the row crosses into a workspace.
+        """
         return {
             "type": "egress_request",
             "workspace_id": request["workspace_id"],
-            "request": request,
+            "request": {k: v for k, v in request.items() if k != "hmac"},
         }
 
     def _broadcast_resolved(

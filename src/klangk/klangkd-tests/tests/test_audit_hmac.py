@@ -12,6 +12,8 @@ import hashlib
 
 
 from klangk.model.audit_hmac import (
+    TAMPER_REPORT_CAP,
+    _canonical_pairs,
     _resolve_key,
     compute_container_event_hmac,
     compute_egress_consent_hmac,
@@ -55,6 +57,37 @@ class TestKeyDerivation:
         assert key == expected
 
 
+class TestCanonicalSerialization:
+    """The encoding must be injective: distinct field values must
+    never serialize identically (fresh-eyes review of #3174 — a NULL
+    sentinel or delimiter collision would be an undetectable tamper
+    class)."""
+
+    def test_none_is_distinct_from_the_literal_marker(self):
+        cols = ["process_name", "dest_host"]
+        null_row = {"process_name": None, "dest_host": "x"}
+        marker_row = {"process_name": "n", "dest_host": "x"}
+        assert _canonical_pairs("t", null_row, cols) != _canonical_pairs(
+            "t", marker_row, cols
+        )
+
+    def test_none_is_distinct_from_nil_literal(self):
+        cols = ["process_name"]
+        assert _canonical_pairs("t", {"process_name": None}, cols) != (
+            _canonical_pairs("t", {"process_name": "<nil>"}, cols)
+        )
+
+    def test_delimiter_characters_cannot_splice_fields(self):
+        cols = ["a", "b"]
+        # A crafted value containing the separators must not deserialize
+        # into the same payload as a different honest split.
+        crafted = {"a": "x=5\0b=y", "b": None}
+        honest = {"a": "x", "b": "5\0b=y"}
+        assert _canonical_pairs("t", crafted, cols) != _canonical_pairs(
+            "t", honest, cols
+        )
+
+
 class TestVerifyHmac:
     def test_matching_tags(self):
         assert verify_hmac("abc123", "abc123") is True
@@ -64,6 +97,17 @@ class TestVerifyHmac:
 
     def test_none_stored_always_fails(self):
         assert verify_hmac(None, "abc123") is False
+
+    def test_blob_stored_fails_instead_of_raising(self):
+        # A tamperer writing a BLOB into the TEXT column must not crash
+        # the verifier (hmac.compare_digest would TypeError).
+        assert verify_hmac(b"\x00", "abc123") is False
+
+    def test_non_ascii_stored_fails_instead_of_raising(self):
+        assert verify_hmac("caf\u00e9", "abc123") is False
+
+    def test_int_stored_fails(self):
+        assert verify_hmac(5, "abc123") is False
 
 
 class TestComputeContainerEventHmac:
@@ -144,6 +188,8 @@ class TestContainerEventsHmac:
     async def test_verify_integrity_detects_tamper(self, app_state, db):
         events = app_state.state.model.container_events
         await events.record("ws-a", EVENT_START, "api", container_id="c1")
+        rows = await events.list_events()
+        row_id = rows[0]["id"]
         # Tamper with the row
         async with app_state.state.db.transaction() as conn:
             await conn.execute(
@@ -153,9 +199,37 @@ class TestContainerEventsHmac:
         result = await events.verify_integrity()
         assert result["total"] == 1
         assert result["verified"] == 0
-        assert result["tampered"] == [
-            {"id": result["tampered"][0]["id"], "workspace_id": "ws-a"}
-        ]
+        assert result["tampered_total"] == 1
+        assert result["tampered"] == [{"id": row_id, "workspace_id": "ws-a"}]
+
+    async def test_blob_hmac_is_tampered_not_crash(self, app_state, db):
+        """A tamperer writing a BLOB into the hmac column must be
+        reported, not crash the whole verification pass."""
+        events = app_state.state.model.container_events
+        await events.record("ws-a", EVENT_START, "api", container_id="c1")
+        async with app_state.state.db.transaction() as conn:
+            await conn.execute(
+                "UPDATE container_events SET hmac = x'00'"
+                " WHERE container_id = 'c1'"
+            )
+        result = await events.verify_integrity()
+        assert result["tampered_total"] == 1
+        assert result["no_hmac"] == 0
+
+    async def test_tampered_list_is_capped(self, app_state, db):
+        """The tampered id list truncates at TAMPER_REPORT_CAP; the
+        full count still travels in tampered_total."""
+        events = app_state.state.model.container_events
+        for i in range(TAMPER_REPORT_CAP + 5):
+            await events.record(
+                "ws-a", EVENT_START, "api", container_id=f"c{i}"
+            )
+        async with app_state.state.db.transaction() as conn:
+            await conn.execute("UPDATE container_events SET cause = 'hacked'")
+        result = await events.verify_integrity()
+        assert result["tampered_total"] == TAMPER_REPORT_CAP + 5
+        assert len(result["tampered"]) == TAMPER_REPORT_CAP
+        assert result["tampered_truncated"] is True
 
     async def test_verify_integrity_null_hmac_is_no_hmac(self, app_state, db):
         """Rows without an HMAC (pre-migration) are counted as no_hmac."""
@@ -254,6 +328,26 @@ class TestEgressConsentHmac:
                 (row["id"],),
             )
         result = await ec.verify_integrity()
+        assert result["tampered"] == [
+            {"id": row["id"], "workspace_id": workspace["id"]}
+        ]
+
+    async def test_verify_integrity_null_marker_impersonation_detected(
+        self, app_state, db, workspace
+    ):
+        """Flipping a NULL column to the serialization's marker value
+        must not verify clean (fresh-eyes review of #3174: a NULL
+        sentinel collision would be an undetectable tamper class)."""
+        ec = app_state.state.model.egress_consent
+        row = await ec.create_request(workspace["id"], "a.com", 80)
+        assert row["process_name"] is None
+        async with app_state.state.db.transaction() as conn:
+            await conn.execute(
+                "UPDATE egress_consent SET process_name = 'n' WHERE id = ?",
+                (row["id"],),
+            )
+        result = await ec.verify_integrity()
+        assert result["tampered_total"] == 1
         assert result["tampered"] == [
             {"id": row["id"], "workspace_id": workspace["id"]}
         ]

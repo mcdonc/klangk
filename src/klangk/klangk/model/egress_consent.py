@@ -9,7 +9,10 @@ reach while in ``egress_mode='interactive'``.
 import time
 import uuid
 
-from .audit_hmac import compute_egress_consent_hmac, verify_hmac
+from .audit_hmac import (
+    compute_egress_consent_hmac,
+    integrity_report,
+)
 from .base import Submodel, resolve_prune_now
 
 
@@ -512,13 +515,15 @@ class EgressConsentModel(Submodel):
         """
         decided_at = time.time()
         async with self.app.state.db.transaction() as db:
-            # Collect ids before the UPDATE so we can re-stamp each row.
+            # Read the full rows once up front: after the bulk UPDATE the
+            # only mutated columns are decision/decided_at (both known),
+            # so each tag can be re-stamped without a re-read per row.
             cursor = await db.execute(
-                "SELECT id FROM egress_consent WHERE decision = ?",
+                f"SELECT {_EC_COLUMNS} FROM egress_consent WHERE decision = ?",  # noqa: S608
                 (DECISION_PENDING,),
             )
-            ids = [r[0] for r in await cursor.fetchall()]
-            if not ids:
+            rows = await cursor.fetchall()
+            if not rows:
                 return 0
             await db.execute(
                 "UPDATE egress_consent"
@@ -527,9 +532,12 @@ class EgressConsentModel(Submodel):
                 (DECISION_EXPIRED, decided_at, DECISION_PENDING),
             )
             settings = self.app.state.settings
-            for row_id in ids:
-                await _restamp(db, settings, row_id)
-            return len(ids)
+            for row in rows:
+                d = _row_to_dict(row)
+                d["decision"] = DECISION_EXPIRED
+                d["decided_at"] = decided_at
+                await _stamp_hmac(db, settings, d)
+            return len(rows)
 
     async def clear_tilrestart_duration(self, workspace_id: str) -> int:
         """Delete decided ``tilrestart``-duration verdicts for a workspace (#2346).
@@ -594,40 +602,20 @@ class EgressConsentModel(Submodel):
     async def verify_integrity(self) -> dict:
         """Re-compute every row's HMAC and report mismatches (#3174).
 
-        Returns ``{"total": N, "verified": N, "no_hmac": N,
-        "tampered": [...]}`` where ``tampered`` lists the first rows
-        whose stored tag does not match the recomputed one.
+        Rows written before the HMAC migration carry no tag and are
+        counted as ``no_hmac``, not ``tampered``.  The ``tampered`` id
+        list is capped at :data:`audit_hmac.TAMPER_REPORT_CAP`; the
+        full count travels in ``tampered_total``.
         """
         rows = await self.app.state.db.fetchall(
-            f"SELECT {_EC_COLUMNS} FROM egress_consent ORDER BY rowid"
+            f"SELECT {_EC_COLUMNS} FROM egress_consent ORDER BY id"
         )
-        total = len(rows)
-        verified = 0
-        no_hmac = 0
-        tampered: list[dict] = []
-        settings = self.app.state.settings
-        for row in rows:
-            d = _row_to_dict(row)
-            stored = d.get("hmac")
-            if stored is None:
-                no_hmac += 1
-                continue
-            expected = compute_egress_consent_hmac(settings, d)
-            if verify_hmac(stored, expected):
-                verified += 1
-            else:
-                tampered.append(
-                    {
-                        "id": d["id"],
-                        "workspace_id": d["workspace_id"],
-                    }
-                )
-        return {
-            "total": total,
-            "verified": verified,
-            "no_hmac": no_hmac,
-            "tampered": tampered,
-        }
+        return integrity_report(
+            self.app.state.settings,
+            rows,
+            _row_to_dict,
+            compute_egress_consent_hmac,
+        )
 
     async def prune(self, now: float | None = None) -> int:
         """Bound the table: delete rows past retention / over the per-workspace

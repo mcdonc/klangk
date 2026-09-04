@@ -20,7 +20,10 @@ keeping the newest. An admin-facing paged view is tracked separately.
 import logging
 import time
 
-from .audit_hmac import compute_container_event_hmac, verify_hmac
+from .audit_hmac import (
+    compute_container_event_hmac,
+    integrity_report,
+)
 from .base import Submodel, resolve_prune_now
 from .users import AGENT_USER_ID
 
@@ -209,39 +212,20 @@ class ContainerEventsModel(Submodel):
     async def verify_integrity(self) -> dict:
         """Re-compute every row's HMAC and report mismatches (#3174).
 
-        Returns ``{"total": N, "verified": N, "no_hmac": N,
-        "tampered": [...]}`` where ``tampered`` lists the first rows
-        whose stored tag does not match the recomputed one.  Rows
-        written before the migration (NULL hmac) are counted as
-        ``no_hmac``, not ``tampered``.
+        Rows written before the HMAC migration carry no tag and are
+        counted as ``no_hmac``, not ``tampered``.  The ``tampered`` id
+        list is capped at :data:`audit_hmac.TAMPER_REPORT_CAP`; the
+        full count travels in ``tampered_total``.
         """
         rows = await self.app.state.db.fetchall(
             f"SELECT {_EVENT_COLUMNS} FROM container_events ORDER BY id"
         )
-        total = len(rows)
-        verified = 0
-        no_hmac = 0
-        tampered: list[dict] = []
-        settings = self.app.state.settings
-        for row in rows:
-            d = row_to_dict(row)
-            stored = d.get("hmac")
-            if stored is None:
-                no_hmac += 1
-                continue
-            expected = compute_container_event_hmac(settings, d)
-            if verify_hmac(stored, expected):
-                verified += 1
-            else:
-                tampered.append(
-                    {"id": d["id"], "workspace_id": d["workspace_id"]}
-                )
-        return {
-            "total": total,
-            "verified": verified,
-            "no_hmac": no_hmac,
-            "tampered": tampered,
-        }
+        return integrity_report(
+            self.app.state.settings,
+            rows,
+            row_to_dict,
+            compute_container_event_hmac,
+        )
 
     async def prune(self, now: float | None = None) -> int:
         """Bound the table: delete rows past retention / over the row cap

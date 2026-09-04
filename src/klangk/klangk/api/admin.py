@@ -887,7 +887,9 @@ async def _annotate_events(app, rows: list[dict]) -> list[dict]:
     emails = await _actor_emails(app, rows)
     return [
         {
-            **row,
+            # The raw hmac tag is verification-internal (#3174); the
+            # admin list view never needs it on the wire.
+            **{k: v for k, v in row.items() if k != "hmac"},
             "workspace_name": names.get(row["workspace_id"]),
             "actor_email": emails.get(row["actor_id"]),
         }
@@ -944,12 +946,14 @@ async def verify_audit_integrity(
     Re-computes the HMAC for every ``container_events`` and
     ``egress_consent`` row and reports mismatches.  Rows written before
     the HMAC migration carry no tag and are reported as ``no_hmac``
-    (not ``tampered``).
+    (not ``tampered``).  Each ``tampered`` id list is capped at the
+    first 100 rows; the full count travels in ``tampered_total`` and
+    ``tampered_truncated`` flags the cut.
     """
     app = request.app
     ce = await app.state.model.container_events.verify_integrity()
     ec = await app.state.model.egress_consent.verify_integrity()
-    ok = not ce["tampered"] and not ec["tampered"]
+    ok = ce["tampered_total"] == 0 and ec["tampered_total"] == 0
     return {
         "ok": ok,
         "container_events": ce,

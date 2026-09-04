@@ -27,7 +27,7 @@ _DERIVE_DOMAIN = b"klangk-audit-hmac-v1"
 
 def _resolve_key(settings) -> bytes:
     """Return the HMAC key bytes, derived or explicit."""
-    explicit = getattr(settings, "audit_hmac_key", None)
+    explicit = settings.audit_hmac_key
     if explicit:
         return explicit.encode()
     jwt_secret = settings.jwt_secret or ""
@@ -37,23 +37,28 @@ def _resolve_key(settings) -> bytes:
 
 
 def _canonical_pairs(table: str, row: dict, columns: list[str]) -> bytes:
-    """Deterministic serialization: ``table\\0col=val\\0col=val\\0...``
+    """Deterministic serialization: ``table\\0col=len:value\\0col=n\\0...``
 
-    None is encoded as the literal string ``<nil>``; everything else is
-    ``str(value)``.  The column order is the caller's ``columns`` list
-    (which must match the table's canonical column order, excluding the
-    ``hmac`` column itself).
-
-    **Delimiter safety assumption:** the covered columns are all
-    system-generated values (UUIDs, timestamps, enum constants, integer
-    ids) — no user-supplied free-text.  The ``\\0`` / ``=`` delimiters
-    are therefore unambiguous.  If a future column carries arbitrary
-    user input, length-prefix or escape the values first.
+    ``None`` is encoded as the bare marker ``n``; every other value is
+    ``<len(str(v))>:<str(v)>`` — length-prefixed.  The length prefix
+    makes the encoding prefix-free and injective for ANY column
+    content, including the attacker-influenced values that come from
+    inside untrusted workspaces (``dest_host``, ``process_name``):
+    two rows with different field values can never serialize
+    identically, so no value — not even a literal ``"n"``, ``\\0``, or
+    ``=`` — can impersonate another column's NULL or splice fields.
+    The column order is the caller's ``columns`` list (which must match
+    the table's canonical column order, excluding the ``hmac`` column
+    itself).
     """
     parts = [table]
     for col in columns:
         val = row.get(col)
-        parts.append(f"{col}={'<nil>' if val is None else val}")
+        if val is None:
+            parts.append(f"{col}=n")
+        else:
+            sv = str(val)
+            parts.append(f"{col}={len(sv)}:{sv}")
     return "\0".join(parts).encode()
 
 
@@ -107,7 +112,53 @@ def compute_egress_consent_hmac(settings, row: dict) -> str:
 
 
 def verify_hmac(expected: str | None, computed: str) -> bool:
-    """Constant-time comparison; a missing (NULL) stored tag always fails."""
-    if expected is None:
+    """Constant-time comparison; a missing or malformed stored tag
+    (NULL, a BLOB, or non-ASCII text — all tampered-column shapes)
+    always fails instead of raising (``hmac.compare_digest`` would
+    TypeError on those and take down the whole verification pass)."""
+    if not isinstance(expected, str) or not expected.isascii():
         return False
     return hmac.compare_digest(expected, computed)
+
+
+# How many tampered row ids the verification report lists before
+# truncating (the full count travels in ``tampered_total``); bounds the
+# verify endpoint's response regardless of table size (#3174).
+TAMPER_REPORT_CAP = 100
+
+
+def integrity_report(settings, rows, row_to_dict, compute_hmac) -> dict:
+    """Fold audited rows into the verification report (#3174).
+
+    Shared by ``container_events.verify_integrity`` and
+    ``egress_consent.verify_integrity``: counts verified / ``no_hmac``
+    (NULL tag — pre-migration rows) / tampered rows, and returns the
+    first ``TAMPER_REPORT_CAP`` tampered ids plus the full
+    ``tampered_total`` and a ``tampered_truncated`` flag, so a large
+    corruption cannot blow up the response or the verifier's memory.
+    """
+    verified = 0
+    no_hmac = 0
+    tampered_total = 0
+    tampered: list[dict] = []
+    for row in rows:
+        d = row_to_dict(row)
+        stored = d.get("hmac")
+        if stored is None:
+            no_hmac += 1
+        elif verify_hmac(stored, compute_hmac(settings, d)):
+            verified += 1
+        else:
+            tampered_total += 1
+            if len(tampered) < TAMPER_REPORT_CAP:
+                tampered.append(
+                    {"id": d["id"], "workspace_id": d["workspace_id"]}
+                )
+    return {
+        "total": len(rows),
+        "verified": verified,
+        "no_hmac": no_hmac,
+        "tampered": tampered,
+        "tampered_total": tampered_total,
+        "tampered_truncated": tampered_total > len(tampered),
+    }
