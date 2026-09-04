@@ -16,8 +16,13 @@ on:
       - "scripts/build-workspace-image.sh"
       - ".github/workflows/image-workspace.yml"
 
+# Literal group prefix: in a workflow_call the `github` context is the
+# CALLER's, so `github.workflow` would be "Release" for every callee on a
+# tag push — all four release.yml fan-out jobs would land in one group and
+# cancel each other (#3140). The per-file literal keeps the group unique
+# regardless of who calls this workflow.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: image-workspace-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:

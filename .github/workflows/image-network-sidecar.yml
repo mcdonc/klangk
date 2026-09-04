@@ -35,8 +35,13 @@ on:
       - "src/klangksidecar/pyproject.toml"
       - ".github/workflows/image-network-sidecar.yml"
 
+# Literal group prefix (not github.workflow): in a workflow_call the
+# `github` context is the CALLER's, so `github.workflow` would be "Release"
+# for every callee on a tag push — all four release.yml fan-out jobs would
+# land in one group and cancel each other (#3140). The per-file literal
+# keeps the group unique regardless of who calls this workflow.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: image-network-sidecar-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:

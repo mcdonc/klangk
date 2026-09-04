@@ -529,9 +529,8 @@ sync` report a clear permission-denied error.
   Pushing `vX.Y.Z` publishes `klangk-host`, `klangk-host-fips`,
   `klangk-workspace`, `klangk-workspace-fips`, and the newly pullable
   `klangk-network-sidecar` to GHCR under that tag, built from the tagged
-  commit — `release.yml` now drives the image workflows via `workflow_call`
-  instead of building inline. Versioned tags only: the floating `:latest`
-  stays owned by the continuous builds. See
+  commit. Versioned tags only: the floating `:latest` stays owned by the
+  continuous builds. See
   [Building Images](development/building-images.md).
 - **`/health` now reports the instance id (#3057).** The health endpoint
   returns `{"status": "ok", "instance": "<id>"}` so a caller can confirm
