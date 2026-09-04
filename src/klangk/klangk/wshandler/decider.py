@@ -52,8 +52,8 @@ import time
 import uuid
 
 from fastapi import WebSocket, WebSocketDisconnect
+from jose import ExpiredSignatureError, JWTError
 
-from .. import auth
 from .safe_websocket import SafeWebSocket, SlowClientError
 from ..model.egress_consent import (
     DECISION_ALLOWED,
@@ -241,15 +241,21 @@ async def _decider_authenticate(websocket: WebSocket, app, _hs_mark):
     if not token:
         await _refuse(websocket, 4001, "Missing token")
         return None
-    result = await app.state.auth.get_user_from_token(token)
-    _hs_mark("token")
-    if result is auth.Auth.TOKEN_EXPIRED:
+    a = app.state.auth
+    try:
+        payload = a.decode_token(token)
+    except ExpiredSignatureError:
         await _refuse(websocket, 4002, "Token expired")
         return None
-    if result is None:
+    except JWTError:
         await _refuse(websocket, 4001, "Invalid token")
         return None
-    return result, app.state.auth.decode_token(token).get("jti")
+    user = await a._user_from_valid_payload(payload)
+    _hs_mark("token")
+    if user is None:
+        await _refuse(websocket, 4001, "Invalid token")
+        return None
+    return user, payload.get("jti")
 
 
 _FRAME_DISCONNECTED = object()

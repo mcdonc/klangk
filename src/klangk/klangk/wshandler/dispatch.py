@@ -4,8 +4,8 @@ import json
 import logging
 
 from fastapi import WebSocket, WebSocketDisconnect
+from jose import ExpiredSignatureError, JWTError
 
-from .. import auth
 from .safe_websocket import SafeWebSocket, SlowClientError
 from .support import send_error, log_ws_msg
 from .connection import Connection
@@ -75,15 +75,20 @@ async def ws_authenticate(websocket: WebSocket, app):
         await websocket.close(code=4001, reason="Missing token")
         return None
 
-    result = await app.state.auth.get_user_from_token(token)
-    if result is auth.Auth.TOKEN_EXPIRED:
+    a = app.state.auth
+    try:
+        payload = a.decode_token(token)
+    except ExpiredSignatureError:
         await websocket.close(code=4002, reason="Token expired")
         return None
-    if result is None:
+    except JWTError:
         await websocket.close(code=4001, reason="Invalid token")
         return None
-    payload = app.state.auth.decode_token(token)
-    return result, payload.get("jti"), payload.get("exp")
+    user = await a._user_from_valid_payload(payload)
+    if user is None:
+        await websocket.close(code=4001, reason="Invalid token")
+        return None
+    return user, payload.get("jti"), payload.get("exp")
 
 
 # Exceptions raised by a *handler* that mean the connection itself is

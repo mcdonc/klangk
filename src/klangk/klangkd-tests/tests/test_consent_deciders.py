@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import types
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 from klangk.consent.deciders import ConsentDeciderRegistry
 from klangk.model.workspaces import EGRESS_MODE_INTERACTIVE
@@ -228,9 +228,31 @@ def _ws_app(
         ),
     )
     app.state.consent_deciders = ConsentDeciderRegistry(app)
+    # _decider_authenticate decodes the token once, then validates
+    # via _user_from_valid_payload.  The mock must raise the right
+    # exception for the expired-token path and return None for invalid.
+    from jose import ExpiredSignatureError, JWTError
+    from klangk import auth as auth_mod
+
+    if token_result is auth_mod.Auth.TOKEN_EXPIRED:
+        decode_side = ExpiredSignatureError("expired")
+        payload_result = None
+    elif token_result is None:
+        decode_side = JWTError("bad")
+        payload_result = None
+    else:
+        decode_side = None
+        payload_result = token_result
+
+    decode_mock = (
+        MagicMock(side_effect=decode_side)
+        if decode_side
+        else MagicMock(return_value={"jti": "jti-decoded", "sub": "u1"})
+    )
     app.state.auth = types.SimpleNamespace(
         get_user_from_token=AsyncMock(return_value=token_result),
-        decode_token=lambda token: {"jti": "jti-decoded"},
+        decode_token=decode_mock,
+        _user_from_valid_payload=AsyncMock(return_value=payload_result),
     )
     app.state.acl = types.SimpleNamespace(
         get_principals=AsyncMock(
