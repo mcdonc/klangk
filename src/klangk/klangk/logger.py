@@ -109,7 +109,31 @@ class JsonFormatter(logging.Formatter):
     when the record carries an exception. Covers everything that reaches the
     root handler, klangk's own loggers and third-party ones alike, so the
     whole stream is uniform and free of ANSI color codes.
+
+    Formatting never raises: a record whose ``%``-args don't match its format
+    string would make ``getMessage()`` raise, and the stdlib ``handleError``
+    fallback would dump a raw traceback line into the stream — one more line
+    a SIEM parser cannot ingest. The helpers below degrade to a best-effort
+    message so every emitted line stays a parseable JSON object (#3156).
     """
+
+    def safe_message(self, record: logging.LogRecord) -> str:
+        """``getMessage()``, degrading to the raw msg on a bad %-format."""
+        try:
+            return record.getMessage()
+        except Exception:
+            return str(record.msg)
+
+    def has_exception(self, record: logging.LogRecord) -> bool:
+        """Whether the record carries a real exception (not ``(None,)*3``)."""
+        return bool(record.exc_info) and record.exc_info[0] is not None
+
+    def safe_exception(self, record: logging.LogRecord) -> str:
+        """``formatException()``, degrading to ``repr(value)`` on failure."""
+        try:
+            return self.formatException(record.exc_info)
+        except Exception:
+            return repr(record.exc_info[1])
 
     def format(self, record: logging.LogRecord) -> str:
         created = datetime.fromtimestamp(record.created, tz=UTC)
@@ -119,10 +143,10 @@ class JsonFormatter(logging.Formatter):
             ),
             "level": record.levelname,
             "logger": record.name,
-            "message": record.getMessage(),
+            "message": self.safe_message(record),
         }
-        if record.exc_info:
-            payload["exc_info"] = self.formatException(record.exc_info)
+        if self.has_exception(record):
+            payload["exc_info"] = self.safe_exception(record)
         return json.dumps(payload)
 
 

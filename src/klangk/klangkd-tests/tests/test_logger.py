@@ -156,6 +156,60 @@ class TestJsonFormatter:
         )
         assert "exc_info" not in self._format_record(record)
 
+    def test_none_exc_info_tuple_is_not_an_exception(self):
+        # ``exc_info=True`` outside an except block yields (None, None, None);
+        # that must not emit an ``exc_info`` field.
+        record = logging.LogRecord(
+            "klangk.test",
+            logging.INFO,
+            __file__,
+            1,
+            "m",
+            (),
+            (None, None, None),
+        )
+        assert "exc_info" not in self._format_record(record)
+
+    def test_bad_percent_format_still_emits_valid_json(self):
+        # ``getMessage()`` raises on mismatched %-args; the formatter must
+        # degrade to the raw msg so every line stays a parseable object
+        # (the SIEM contract, #3156) instead of a handleError traceback line.
+        record = logging.LogRecord(
+            "klangk.test", logging.INFO, __file__, 1, "n=%d", ("x",), None
+        )
+        payload = self._format_record(record)
+        assert payload["message"] == "n=%d"
+
+    def test_newlines_in_message_do_not_break_one_line_contract(self):
+        record = logging.LogRecord(
+            "klangk.test", logging.INFO, __file__, 1, "a\nb", (), None
+        )
+        line = logger_mod.JsonFormatter().format(record)
+        assert "\n" not in line
+        assert json.loads(line)["message"] == "a\nb"
+
+    def test_safe_exception_fallback_when_formatexception_raises(self):
+        # formatException() itself never raises on a real exc_info; sabotage
+        # it to prove safe_exception still returns a string (repr of the
+        # exception value) instead of propagating.
+        try:
+            raise ValueError("nope")
+        except ValueError:
+            import sys
+
+            record = logging.LogRecord(
+                "klangk.test",
+                logging.ERROR,
+                __file__,
+                1,
+                "failed",
+                (),
+                sys.exc_info(),
+            )
+            fmt = logger_mod.JsonFormatter()
+            fmt.formatException = lambda exc_info: 1 / 0
+            assert fmt.safe_exception(record) == repr(record.exc_info[1])
+
 
 class TestConfigureDefaults:
     """The pre-settings phase: logging is configured with defaults before any
