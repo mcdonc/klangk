@@ -777,6 +777,44 @@ class TestAuthRoutes:
         assert user is not None
         assert user["handle"] == "handleme"  # derived, not NULL
 
+    async def test_change_expired_password_route(
+        self, client, app, db, app_state, monkeypatch
+    ):
+        """POST /auth/change-expired-password rotates an expired password
+        and auto-logins (#3177) — the HTTP surface of the V-222545 flow."""
+        from datetime import datetime, timedelta, timezone
+
+        monkeypatch.setattr(app.state.settings, "password_max_age_days", 60)
+        user = await app_state.state.model.users.create_user(
+            "expired-route@example.com",
+            auth_mod.hash_password("oldpass"),
+            verified=True,
+        )
+        old = (datetime.now(timezone.utc) - timedelta(days=61)).isoformat()
+        async with app_state.state.db.transaction() as raw_db:
+            await raw_db.execute(
+                "UPDATE users SET password_set_at = ?, created_at = ?"
+                " WHERE id = ?",
+                (old, old, user["id"]),
+            )
+        resp = await client.post(
+            "/api/v1/auth/change-expired-password",
+            json={
+                "identifier": "expired-route@example.com",
+                "current_password": "oldpass",
+                "new_password": "freshpass1",
+            },
+        )
+        assert resp.status_code == 200
+        token = resp.json()["access_token"]
+        # The minted session is usable: /auth/me answers for the user.
+        me = await client.get(
+            "/api/v1/auth/me",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert me.status_code == 200
+        assert me.json()["email"] == "expired-route@example.com"
+
     async def test_register_test_mode(self, client, app, db, monkeypatch):
         """In test mode, unauthenticated registration is allowed and auto-verified."""
         monkeypatch.setattr(app.state.settings, "test_mode", "1")

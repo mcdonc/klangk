@@ -2211,6 +2211,26 @@ class TestPasswordMinAge:
         )
         a.validate_password_min_age(row)  # should not raise
 
+    async def test_unknown_set_time_is_allowed(
+        self, app_state, db, monkeypatch
+    ):
+        """No parseable password_set_at and no parseable created_at means
+        the age cannot be judged — the check must not brick the account."""
+        a = self._auth_with_min_age(app_state, monkeypatch, hours=24)
+        user = await self._fresh_user(app_state)
+        # created_at is NOT NULL, but it can hold an unparseable value —
+        # parse_user_ts("garbage") is None, same as NULL password_set_at.
+        async with app_state.state.db.transaction() as raw_db:
+            await raw_db.execute(
+                "UPDATE users SET password_set_at = NULL,"
+                " created_at = 'garbage' WHERE id = ?",
+                (user["id"],),
+            )
+        row = await a.app.state.model.users.get_user_by_identifier(
+            user["email"]
+        )
+        a.validate_password_min_age(row)  # should not raise
+
     async def test_falls_back_to_created_at(self, app_state, db, monkeypatch):
         """When password_set_at is NULL, created_at is the fallback.
         A recently created account is inside the min-age window."""
@@ -2285,6 +2305,27 @@ class TestPasswordExpiry:
         )
         assert a.password_expired(row)
 
+    async def test_unknown_set_time_not_expired(
+        self, app_state, db, monkeypatch
+    ):
+        """A local account whose timestamps cannot be parsed is never
+        expired — a malformed row must not brick logins."""
+        a = self._auth_with_max_age(app_state, monkeypatch, days=60)
+        pw_hash = auth.hash_password("testpass")
+        user = await app_state.state.model.users.create_user(
+            "unknown-ts@example.com", pw_hash, verified=True
+        )
+        async with app_state.state.db.transaction() as raw_db:
+            await raw_db.execute(
+                "UPDATE users SET password_set_at = NULL,"
+                " created_at = 'garbage' WHERE id = ?",
+                (user["id"],),
+            )
+        row = await a.app.state.model.users.get_user_by_identifier(
+            user["email"]
+        )
+        assert not a.password_expired(row)
+
     async def test_oidc_user_never_expires(self, app_state, db, monkeypatch):
         """OIDC users have no klangk password — nothing to age."""
         a = self._auth_with_max_age(app_state, monkeypatch, days=1)
@@ -2352,10 +2393,10 @@ class TestChangeExpiredPassword:
         )
         return Auth(app_state)
 
-    async def _expired_user(self, app_state, days_ago=61):
+    async def _expired_user(self, app_state, days_ago=61, verified=True):
         pw_hash = auth.hash_password("oldpass")
         user = await app_state.state.model.users.create_user(
-            "rotate@example.com", pw_hash, verified=True
+            "rotate@example.com", pw_hash, verified=verified
         )
         old = (
             datetime.now(timezone.utc) - timedelta(days=days_ago)
@@ -2414,6 +2455,22 @@ class TestChangeExpiredPassword:
                 )
             )
         assert exc_info.value.status_code == 401
+
+    async def test_rejects_unverified_user(self, app_state, db, monkeypatch):
+        """An unverified account cannot rotate through this endpoint
+        (same gate as login)."""
+        a = self._auth_with_expiry(app_state, monkeypatch)
+        await self._expired_user(app_state, verified=False)
+        with pytest.raises(HTTPException) as exc_info:
+            await a.change_expired_password(
+                auth.ChangeExpiredPasswordRequest(
+                    identifier="rotate@example.com",
+                    current_password="oldpass",
+                    new_password="freshpass1",
+                )
+            )
+        assert exc_info.value.status_code == 403
+        assert "not verified" in exc_info.value.detail
 
     async def test_password_set_at_stamped_after_rotation(
         self, app_state, db, monkeypatch

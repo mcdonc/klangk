@@ -844,6 +844,122 @@ class TestAuth:
         assert state.get_token("http://localhost:8995") == "jwt789"
         assert state.get_email("http://localhost:8995") == "pw@test.com"
 
+    def test_password_expired_message(self):
+        """The expired-password detector reads the structured 403 detail
+        (#3177): dict with error=password_expired → its message, anything
+        else → None."""
+        from klangk.cli import auth
+
+        class Resp:
+            def __init__(self, payload):
+                self.status_code = 403
+                self._payload = payload
+
+            def json(self):
+                return self._payload
+
+        expired = Resp(
+            {
+                "detail": {
+                    "error": "password_expired",
+                    "message": "Password has expired",
+                }
+            }
+        )
+        assert auth.password_expired_message(expired) == "Password has expired"
+        # Missing message falls back to the default; non-dict detail is
+        # not an expiry signal.
+        bare = Resp({"detail": {"error": "password_expired"}})
+        assert auth.password_expired_message(bare) == "Password has expired"
+        assert auth.password_expired_message(Resp({"detail": "nope"})) is None
+        assert auth.password_expired_message(Resp({})) is None
+
+    def test_login_expired_password_rotates(self, tmp_path, monkeypatch):
+        """A login refused with password_expired routes into the
+        set-new-password flow; the minted token is persisted (#3177)."""
+        state_path = tmp_path / "klangk-state.yaml"
+        monkeypatch.setattr("klangk.cli.config.STATE_PATH", state_path)
+        expired_resp = MagicMock()
+        expired_resp.status_code = 403
+        expired_resp.json.return_value = {
+            "detail": {
+                "error": "password_expired",
+                "message": "Password has expired",
+            }
+        }
+        rotated_resp = MagicMock()
+        rotated_resp.status_code = 200
+        rotated_resp.json.return_value = {"access_token": "jwt-rotated"}
+        requests = []
+
+        def fake_request(*args, **kwargs):
+            requests.append(kwargs.get("json"))
+            return [expired_resp, rotated_resp][len(requests) - 1]
+
+        with patch(
+            "klangk.cli.transport.httpx.request", side_effect=fake_request
+        ):
+            # One mismatched pair, then a matching pair.
+            with patch(
+                "klangk.cli.auth.Prompt.ask",
+                side_effect=["new1", "other", "newpass1", "newpass1"],
+            ):
+                from klangk.cli import auth
+
+                auth.login(
+                    "http://localhost:8995",
+                    email="cli@test.com",
+                    password="oldpass",
+                )
+        state = CLIState.load()
+        assert state.get_token("http://localhost:8995") == "jwt-rotated"
+        assert state.get_email("http://localhost:8995") == "cli@test.com"
+        # The rotation POST carries the old credentials plus the new one.
+        assert requests[1] == {
+            "identifier": "cli@test.com",
+            "current_password": "oldpass",
+            "new_password": "newpass1",
+        }
+
+    def test_login_expired_password_rotation_fails(
+        self, tmp_path, monkeypatch
+    ):
+        """A failed rotation POST explains itself and exits — no token is
+        persisted (#3177)."""
+        state_path = tmp_path / "klangk-state.yaml"
+        monkeypatch.setattr("klangk.cli.config.STATE_PATH", state_path)
+        expired_resp = MagicMock()
+        expired_resp.status_code = 403
+        expired_resp.json.return_value = {
+            "detail": {
+                "error": "password_expired",
+                "message": "Password has expired",
+            }
+        }
+        rejected_resp = MagicMock()
+        rejected_resp.status_code = 400
+        rejected_resp.json.return_value = {
+            "detail": "Password was used recently"
+        }
+        with patch(
+            "klangk.cli.transport.httpx.request",
+            side_effect=[expired_resp, rejected_resp],
+        ):
+            with patch(
+                "klangk.cli.auth.Prompt.ask",
+                side_effect=["newpass1", "newpass1"],
+            ):
+                from klangk.cli import auth
+
+                with pytest.raises(SystemExit):
+                    auth.login(
+                        "http://localhost:8995",
+                        email="cli@test.com",
+                        password="oldpass",
+                    )
+        state = CLIState.load()
+        assert state.get_token("http://localhost:8995") is None
+
     def test_login_reuses_valid_token(self, tmp_path, monkeypatch):
         state_path = tmp_path / "klangk-state.yaml"
         monkeypatch.setattr("klangk.cli.config.STATE_PATH", state_path)

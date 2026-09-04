@@ -39,6 +39,7 @@ from klangk.cli import config as cfgmod
 from klangk.cli.tui import app as tui_pkg
 from klangk.cli.client import AuthError, Workspace, WorkspaceNotFoundError
 from klangk.cli.tui import screens as scr
+from klangk.cli.tui.screens import login as scr_login
 from klangk.cli.tui.screens import main as scr_main
 from klangk.cli.tui.screens import workspace_detail as scr_detail
 from klangk.cli.tui import state as tui_state_mod
@@ -1067,6 +1068,85 @@ def test_login_password_failures(monkeypatch, redirect_xdg):
         t.login_password("a", "b")
 
 
+def test_login_password_expired_raises(monkeypatch, redirect_xdg):
+    """The expired-password 403 surfaces as PasswordExpiredError carrying
+    the submitted credentials (#3177)."""
+    monkeypatch.setattr(
+        tui_state_mod,
+        "http_request",
+        lambda *a, **k: FakeResp(
+            403,
+            {
+                "detail": {
+                    "error": "password_expired",
+                    "message": "Password has expired",
+                }
+            },
+        ),
+    )
+    with pytest.raises(tui_state_mod.PasswordExpiredError) as exc_info:
+        TuiState("https://x.example").login_password("me@x", "pw")
+    assert str(exc_info.value) == "Password has expired"
+    assert exc_info.value.identifier == "me@x"
+    assert exc_info.value.password == "pw"
+
+
+def test_change_expired_password_success(monkeypatch, redirect_xdg):
+    captured = {}
+
+    def fake_http(url, method, path, **kwargs):
+        captured["path"] = path
+        captured["sent"] = kwargs["json"]
+        return FakeResp(200, {"access_token": "rot"})
+
+    monkeypatch.setattr(tui_state_mod, "http_request", fake_http)
+    t = TuiState("https://x.example")
+    assert t.change_expired_password("me@x", "pw", "new") == "me@x"
+    assert captured["path"] == "/api/v1/auth/change-expired-password"
+    assert captured["sent"] == {
+        "identifier": "me@x",
+        "current_password": "pw",
+        "new_password": "new",
+    }
+    assert t.token() == "rot"
+
+
+def test_change_expired_password_failures(monkeypatch, redirect_xdg):
+    with pytest.raises(LoginError, match="No server configured"):
+        TuiState().change_expired_password("a", "b", "c")
+
+    t = TuiState("https://x.example")
+
+    def boom(url, method, path, **kwargs):
+        raise httpx.ConnectError("nope")
+
+    monkeypatch.setattr(tui_state_mod, "http_request", boom)
+    with pytest.raises(LoginError, match="could not reach server"):
+        t.change_expired_password("a", "b", "c")
+
+    monkeypatch.setattr(
+        tui_state_mod,
+        "http_request",
+        lambda *a, **k: FakeResp(
+            403,
+            {
+                "detail": {
+                    "error": "password_expired",
+                    "message": "still expired",
+                }
+            },
+        ),
+    )
+    with pytest.raises(LoginError, match="still expired"):
+        t.change_expired_password("a", "b", "c")
+
+    monkeypatch.setattr(
+        tui_state_mod, "http_request", lambda *a, **k: FakeResp(200, {})
+    )
+    with pytest.raises(LoginError, match="no access token"):
+        t.change_expired_password("a", "b", "c")
+
+
 def test_login_none(monkeypatch, redirect_xdg):
     # no server (empty state) -> LoginError
     with pytest.raises(LoginError):
@@ -2062,6 +2142,124 @@ async def test_login_password_flow_empty_and_fail():
         login._attempt_password()
         await app.workers.wait_for_complete()
         assert "bad creds" in str(login.query_one("#message").render())
+        assert isinstance(app.screen, LoginScreen)
+
+
+async def test_login_expired_password_flow(monkeypatch):
+    """An expired password pushes ExpiredPasswordScreen; a matching pair
+    rotates and lands on MainScreen (#3177)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+
+    def fake_login(identifier, password):
+        raise tui_state_mod.PasswordExpiredError(
+            "Password has expired", identifier, password
+        )
+
+    rotated = {}
+
+    def fake_rotate(identifier, current_password, new_password):
+        rotated.update(
+            identifier=identifier,
+            current=current_password,
+            new=new_password,
+        )
+        st.is_authenticated = lambda: True
+        st.email = lambda: identifier
+        st.token = lambda: "tok"
+        return identifier
+
+    st = _st(
+        is_authenticated=lambda: False,
+        auth_mode=lambda: "password",
+        current_url=lambda: "https://x.example",
+        email=lambda: None,
+        token=lambda: None,
+        known_servers=lambda: [],
+        login_password=fake_login,
+    )
+    st.change_expired_password = fake_rotate
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        login = app.screen
+        login.query_one("#identifier", Input).value = "me@x"
+        login.query_one("#password", Input).value = "pw"
+        login._attempt_password()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        expired = app.screen
+        assert isinstance(expired, scr_login.ExpiredPasswordScreen)
+        assert isinstance(expired.focused, Input)
+        assert expired.focused.id == "new_password"
+
+        # Mismatched entries: inline error, screen stays.
+        expired.query_one("#new_password", Input).value = "newpass1"
+        expired.query_one("#confirm_password", Input).value = "different"
+        expired._commit()
+        await pilot.pause()
+        message = str(expired.query_one("#expired_message").render())
+        assert "must match" in message
+        assert app.screen is expired
+
+        # Matching entries via the rotate button rotate and log in.
+        expired.query_one("#confirm_password", Input).value = "newpass1"
+        expired.on_button_pressed(FakeBtnPress("rotate"))
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert rotated == {
+            "identifier": "me@x",
+            "current": "pw",
+            "new": "newpass1",
+        }
+        assert isinstance(app.screen, MainScreen)
+
+
+async def test_expired_password_rotation_failure_and_cancel():
+    """A failed rotation shows the error inline; Cancel returns to the
+    login screen (#3177)."""
+
+    def fake_login(identifier, password):
+        raise tui_state_mod.PasswordExpiredError(
+            "Password has expired", identifier, password
+        )
+
+    def fake_rotate(identifier, current_password, new_password):
+        raise LoginError("rotation rejected")
+
+    st = _st(
+        is_authenticated=lambda: False,
+        auth_mode=lambda: "password",
+        current_url=lambda: "https://x.example",
+        email=lambda: None,
+        token=lambda: None,
+        login_password=fake_login,
+    )
+    st.change_expired_password = fake_rotate
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        login = app.screen
+        login.query_one("#identifier", Input).value = "me@x"
+        login.query_one("#password", Input).value = "pw"
+        login._attempt_password()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        expired = app.screen
+        assert isinstance(expired, scr_login.ExpiredPasswordScreen)
+
+        expired.query_one("#new_password", Input).value = "newpass1"
+        expired.query_one("#confirm_password", Input).value = "newpass1"
+        expired._commit()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        message = str(expired.query_one("#expired_message").render())
+        assert "rotation rejected" in message
+        assert app.screen is expired
+
+        expired.on_button_pressed(FakeBtnPress("cancel"))
+        await pilot.pause()
         assert isinstance(app.screen, LoginScreen)
 
 
