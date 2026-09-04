@@ -3056,6 +3056,17 @@ class TestHandleWebsocket:
             code=4002, reason="Token expired"
         )
 
+    async def test_unknown_user_token_rejected(self, db, app_state):
+        # Valid signature, but the user no longer exists: the connect is
+        # refused with 4001 (the post-decode None-user arm).
+        app_state = _make_app_state()
+        token = _auth().create_token("nonexistent-id", "ghost@example.com")
+        websocket = _mock_raw_sock(query_params={"token": token})
+        await handle_websocket(websocket, app_state)
+        websocket.close.assert_awaited_once_with(
+            code=4001, reason="Invalid token"
+        )
+
     async def test_valid_token_then_disconnect(self, user, app_state):
         app_state = _make_app_state()
 

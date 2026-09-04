@@ -889,6 +889,22 @@ class TestTokenValidation:
         token = _auth().create_token("nonexistent-id", "ghost@example.com")
         assert await _auth().get_user_from_token(token) is None
 
+    async def test_get_user_from_token_expired(self, db):
+        """A valid-signature but expired token returns TOKEN_EXPIRED."""
+        expired = datetime.now(timezone.utc) - timedelta(hours=1)
+        token = jwt.encode(
+            {
+                "sub": "uid",
+                "email": "x",
+                "jti": "j1",
+                "exp": expired,
+            },
+            _auth().secret,
+            algorithm=_auth().algorithm,
+        )
+        result = await _auth().get_user_from_token(token)
+        assert result is _auth().TOKEN_EXPIRED
+
 
 class TestGetCurrentUser:
     async def test_valid_credentials(self, user):

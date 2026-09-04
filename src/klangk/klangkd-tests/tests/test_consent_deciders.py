@@ -14,6 +14,10 @@ from klangk.wshandler.safe_websocket import SafeWebSocket
 WS = "ws-aaaa1111-2222-3333-4444-555566667777"
 WS2 = "ws-bbbb2222-3333-4444-5555-666677778888"
 
+# _ws_app sentinel: decode_token succeeds but _user_from_valid_payload
+# returns None (revoked/missing user) — the post-decode None-user arm.
+_DECODED_NO_USER = object()
+
 
 def _app(timeout: float = 45.0):
     app = types.SimpleNamespace()
@@ -242,7 +246,9 @@ def _ws_app(
         payload_result = None
     else:
         decode_side = None
-        payload_result = token_result
+        payload_result = (
+            None if token_result is _DECODED_NO_USER else token_result
+        )
 
     decode_mock = (
         MagicMock(side_effect=decode_side)
@@ -335,6 +341,15 @@ class TestConsentDeciderWS:
         ws = _FakeWS({"token": "stale"}, [])
         await handle_consent_decider(ws, app)
         assert ws.closed == (4002, "Token expired")
+
+    async def test_unknown_user_is_rejected(self):
+        # Valid signature, but the user no longer exists: 4001 refusal.
+        from klangk.wshandler.decider import handle_consent_decider
+
+        app = _ws_app(_DECODED_NO_USER)
+        ws = _FakeWS({"token": "tok", "workspace": WS}, [])
+        await handle_consent_decider(ws, app)
+        assert ws.closed == (4001, "Invalid token")
 
     async def test_non_member_workspace_scoped_is_forbidden(self):
         from klangk.wshandler.decider import handle_consent_decider
