@@ -60,7 +60,8 @@ devenv shell -- podman build \
 ```
 
 To build on a published image instead, override the base tag — the
-registry carries `<calver>-<commit>` tags only, never `:latest`:
+registry carries `<calver>-<commit>` tags plus the immutable `vX.Y.Z`
+release tags, never `:latest`:
 
 ```bash
 podman build \
@@ -104,9 +105,13 @@ CLI/python MD5 are rejected, and the real auth KDF
 
 CI builds and publishes this image on every change to its inputs
 (`image-host-fips.yml`): `ghcr.io/mcdonc/klangk/klangk-host-fips`,
-tagged `:<calver>-<commit>` plus a floating `:latest`. The workflow's
-runtime spot-check runs klangkd's actual boot gate both ways — it must
-pass inside the FIPS image and refuse to boot inside the stock one.
+tagged `:<calver>-<commit>` plus a floating `:latest`. A `v*` tag push
+publishes the same image — and the FIPS workspace image — under the
+immutable `vX.Y.Z` tag as well: `release.yml` calls the same image
+workflows, so a release pins an auditable host/workspace combination
+(#3140). The workflow's runtime spot-check runs klangkd's actual boot
+gate both ways — it must pass inside the FIPS image and refuse to boot
+inside the stock one.
 
 **Enforcement posture inside a container:** with
 `KLANGKD_FIPS_MODE` on, klangkd detects it is containerized (the

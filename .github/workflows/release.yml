@@ -10,38 +10,71 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build-and-release:
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
+  # --- Container images (#3140) ------------------------------------------
+  #
+  # All five images publish from the tagged commit under the immutable
+  # `vX.Y.Z` tag: klangk-workspace, klangk-workspace-fips,
+  # klangk-network-sidecar, klangk-host, klangk-host-fips. release.yml
+  # owns no build steps of its own — it calls the image workflows via
+  # workflow_call with push-tag pinned to the tag, and each callee builds
+  # and publishes exactly the way its continuous runs do (host pair via
+  # docker, workspace + sidecar via podman). The four calls run in
+  # parallel on separate runners; image-host-fips.yml builds the stock
+  # host + FIPS host in one job, so the workspace + sidecar tars embedded
+  # in the host image are that job's own builds, and the FIPS host layers
+  # that same job's FIPS workspace — the auditable combination a release
+  # tag is meant to pin.
+  #
+  # Versioned tags only — the release path never retags :latest; the
+  # floating :latest tags stay owned by the continuous workflows.
+
+  sidecar-image:
     permissions:
+      contents: read
       packages: write
+    uses: ./.github/workflows/image-network-sidecar.yml
+    with:
+      push-tag: ${{ github.ref_name }}
+    secrets: inherit
+
+  workspace-image:
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/image-workspace.yml
+    with:
+      push-tag: ${{ github.ref_name }}
+    secrets: inherit
+
+  workspace-fips-image:
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/image-workspace-fips.yml
+    with:
+      push-tag: ${{ github.ref_name }}
+    secrets: inherit
+
+  host-images:
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/image-host-fips.yml
+    with:
+      push-tag: ${{ github.ref_name }}
+    secrets: inherit
+
+  create-release:
+    # After all five images are published — a release tag pins the full
+    # auditable set, so the GitHub Release exists only once every image
+    # made it to GHCR.
+    needs: [sidecar-image, workspace-image, workspace-fips-image, host-images]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
       contents: write
     steps:
       - uses: actions/checkout@v7
-
-      - uses: ./.github/actions/devenv-setup
-
-      - name: Build host image
-        run: |
-          . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
-          devenv shell -- build-host-image
-
-      - name: Push images to GHCR
-        run: |
-          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-          . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
-          VERSION="${GITHUB_REF_NAME}"
-
-          # Push host image (versioned tag only, no :latest)
-          HOST_REPO="ghcr.io/${{ github.repository }}/klangk-host"
-          docker tag klangk-host "$HOST_REPO:$VERSION"
-          docker push "$HOST_REPO:$VERSION"
-
-          # Push workspace image (versioned tag only, no :latest)
-          WS_REPO="ghcr.io/${{ github.repository }}/klangk-workspace"
-          devenv shell -- podman login ghcr.io -u ${{ github.actor }} --password-stdin <<< "${{ secrets.GITHUB_TOKEN }}"
-          devenv shell -- podman tag klangk-workspace "$WS_REPO:$VERSION"
-          devenv shell -- podman push "$WS_REPO:$VERSION"
 
       - name: Create GitHub Release
         run: |
@@ -82,8 +115,9 @@ jobs:
 
   # Build + publish the klangk wheel to PyPI via trusted publishing (OIDC,
   # no API token — same shape as the deleted cli-publish.yml pre-#1606).
-  # Runs in parallel with build-and-release — the wheel doesn't need
-  # podman/docker, and pip/uv users (the #1607 / #1645 first-run audience)
+  # Runs in parallel with the image jobs and create-release — the wheel
+  # doesn't need podman/docker, and pip/uv users (the #1607 / #1645 first-run
+  # audience)
   # get an installable artifact via `pip install klangk==<tag>`. The
   # distribution name is ``klangk`` (one unified wheel ships the klangkd
   # server + klangk CLI, #1606); the tag is ``vX.Y.Z``; hatch-vcs derives

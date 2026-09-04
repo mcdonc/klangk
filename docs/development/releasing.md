@@ -7,19 +7,31 @@ devenv shell -- git tag v0.1.0
 devenv shell -- git push origin v0.1.0
 ```
 
-The workflow runs two jobs in parallel:
+The workflow runs these jobs:
 
-- **`build-and-release`** — builds the host image (including workspace and
-  Flutter web), pushes both `klangk-host` and `klangk-workspace` to GHCR
-  tagged with the version (e.g. `v0.1.0`), and creates a GitHub Release. The
-  release body is GitHub's auto-generated notes (PR list + compare link)
-  **with that version's section from [the changelog](../changes.md)
-  prepended**, when one exists. No `:latest` tag is pushed — all images are
+- **Image jobs (`sidecar-image`, `workspace-image`, `workspace-fips-image`,
+  `host-images`)** — call the image workflows (`image-network-sidecar.yml`,
+  `image-workspace.yml`, `image-workspace-fips.yml`, `image-host-fips.yml`)
+  via `workflow_call` with the tag pinned, so all **five** images publish
+  from the tagged commit under the version tag (`v0.1.0`): `klangk-host`,
+  `klangk-host-fips`, `klangk-workspace`, `klangk-workspace-fips`, and
+  `klangk-network-sidecar`. There are no inline build steps here — the
+  called workflows build and push exactly the way their continuous runs
+  do (host pair via docker, workspace + sidecar via podman). The host
+  pair is built in one job, so the tarballs embedded in the host image
+  are that job's own workspace + sidecar builds, and the FIPS host layers
+  that job's FIPS workspace — the auditable combination a release tag
+  pins. No `:latest` tag is pushed — the floating `:latest` tags stay
+  owned by the continuous workflows, and all release images are
   referenced by explicit version.
+- **`create-release`** — after all five images are published, creates the
+  GitHub Release. The release body is GitHub's auto-generated notes (PR
+  list + compare link) **with that version's section from
+  [the changelog](../changes.md) prepended**, when one exists.
 - **`build-wheel`** — builds the `klangk` wheel (with the default-feature-set
   frontend baked in) and publishes it to PyPI, so `pip install klangk==<tag>`
   yields a working `klangkd` with the UI served from the in-wheel
-  `klangk/frontend/`.
+  `klangk/frontend/`. Runs in parallel with the image jobs.
 
 For patch releases, increment the patch version: `v0.1.1`.
 
@@ -65,4 +77,11 @@ devenv shell -- bash scripts/build_wheel.sh
 
 ## CI
 
-The `release.yml` workflow builds and pushes the host image to GHCR + the wheel to PyPI, triggered by pushing a version tag matching `v[0-9]*`. The `image-workspace.yml` workflow builds and pushes the workspace image independently on push to `main` (when workspace container files change).
+The `release.yml` workflow publishes all five container images to GHCR (host,
+FIPS host, workspace, FIPS workspace, network sidecar — each under the
+version tag) plus the `klangk` wheel to PyPI, triggered by pushing a version
+tag matching `v[0-9]*`. The `image-workspace.yml`, `image-workspace-fips.yml`,
+`image-host-fips.yml`, and `image-network-sidecar.yml` workflows also build
+and push their images independently on push to `main` (when their inputs
+change), under `<calver>-<commit>` tags (plus a floating `:latest` on the
+FIPS images).

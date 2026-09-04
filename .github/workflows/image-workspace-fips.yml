@@ -21,6 +21,17 @@ name: FIPS Workspace Image Check
 
 on:
   workflow_dispatch:
+  # Release path (#3140): release.yml calls this with push-tag = the vX.Y.Z
+  # tag so the release publishes klangk-workspace-fips from the tagged
+  # commit under an immutable versioned tag (no :latest — the floating
+  # :latest stays owned by the continuous runs above).
+  workflow_call:
+    inputs:
+      push-tag:
+        description: "Versioned tag to publish (release path); empty = <calver>-<commit> + :latest"
+        required: false
+        default: ""
+        type: string
   push:
     branches: [main]
     paths:
@@ -101,17 +112,24 @@ jobs:
           echo FIPS-RUNTIME-OK
           EOS
 
-      # Publish for the e2e pull path (#2631). GITHUB_TOKEN is tied to this
-      # run; the tag links the package to the repo.
+      # Publish for the e2e pull path (#2631); the release path publishes
+      # the versioned tag only (#3140). GITHUB_TOKEN is tied to this run;
+      # the tag links the package to the repo.
       - name: Push FIPS image to GHCR
         run: |
           . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
           echo "${{ secrets.GITHUB_TOKEN }}" | devenv shell -- podman login ghcr.io -u ${{ github.actor }} --password-stdin
-          COMMIT=$(git rev-parse --short HEAD)
-          CALVER="$(date -u +%Y.%m.%d)"
-          VERSION="${CALVER}-${COMMIT}"
           REPO="ghcr.io/${{ github.repository }}/klangk-workspace-fips"
-          devenv shell -- podman tag klangk-workspace-fips:ci "$REPO:$VERSION"
-          devenv shell -- podman tag klangk-workspace-fips:ci "$REPO:latest"
-          devenv shell -- podman push "$REPO:$VERSION"
-          devenv shell -- podman push "$REPO:latest"
+          if [ -n "${{ inputs.push-tag }}" ]; then
+            VERSION="${{ inputs.push-tag }}"
+            devenv shell -- podman tag klangk-workspace-fips:ci "$REPO:$VERSION"
+            devenv shell -- podman push "$REPO:$VERSION"
+          else
+            COMMIT=$(git rev-parse --short HEAD)
+            CALVER="$(date -u +%Y.%m.%d)"
+            VERSION="${CALVER}-${COMMIT}"
+            devenv shell -- podman tag klangk-workspace-fips:ci "$REPO:$VERSION"
+            devenv shell -- podman tag klangk-workspace-fips:ci "$REPO:latest"
+            devenv shell -- podman push "$REPO:$VERSION"
+            devenv shell -- podman push "$REPO:latest"
+          fi

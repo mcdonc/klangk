@@ -24,6 +24,19 @@ name: FIPS Host Image Check
 
 on:
   workflow_dispatch:
+  # Release path (#3140): release.yml calls this with push-tag = the vX.Y.Z
+  # tag. There is no separate stock-host image workflow — this one builds
+  # the stock host as its layering base anyway, so the release publishes
+  # BOTH klangk-host and klangk-host-fips from here, under the immutable
+  # versioned tag only (no :latest — the floating :latest stays owned by
+  # the continuous runs above).
+  workflow_call:
+    inputs:
+      push-tag:
+        description: "Versioned tag to publish (release path); empty = <calver>-<commit> + :latest (host-fips only)"
+        required: false
+        default: ""
+        type: string
   push:
     branches: [main]
     paths:
@@ -149,16 +162,28 @@ jobs:
           echo STOCK-REFUSAL-OK
 
       # Publish (same tag convention as klangk-workspace-fips). GITHUB_TOKEN
-      # is tied to this run; the tag links the package to the repo.
-      - name: Push FIPS host image to GHCR
+      # is tied to this run; the tag links the package to the repo. The
+      # release path (#3140) publishes the stock host too (see the
+      # workflow_call note above).
+      - name: Push host images to GHCR
         run: |
           . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
           echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-          COMMIT=$(git rev-parse --short HEAD)
-          CALVER="$(date -u +%Y.%m.%d)"
-          VERSION="${CALVER}-${COMMIT}"
-          REPO="ghcr.io/${{ github.repository }}/klangk-host-fips"
-          docker tag klangk-host-fips:latest "$REPO:$VERSION"
-          docker tag klangk-host-fips:latest "$REPO:latest"
-          docker push "$REPO:$VERSION"
-          docker push "$REPO:latest"
+          if [ -n "${{ inputs.push-tag }}" ]; then
+            TAG="${{ inputs.push-tag }}"
+            HOST_REPO="ghcr.io/${{ github.repository }}/klangk-host"
+            docker tag klangk-host:latest "$HOST_REPO:$TAG"
+            docker push "$HOST_REPO:$TAG"
+            REPO="ghcr.io/${{ github.repository }}/klangk-host-fips"
+            docker tag klangk-host-fips:latest "$REPO:$TAG"
+            docker push "$REPO:$TAG"
+          else
+            COMMIT=$(git rev-parse --short HEAD)
+            CALVER="$(date -u +%Y.%m.%d)"
+            VERSION="${CALVER}-${COMMIT}"
+            REPO="ghcr.io/${{ github.repository }}/klangk-host-fips"
+            docker tag klangk-host-fips:latest "$REPO:$VERSION"
+            docker tag klangk-host-fips:latest "$REPO:latest"
+            docker push "$REPO:$VERSION"
+            docker push "$REPO:latest"
+          fi

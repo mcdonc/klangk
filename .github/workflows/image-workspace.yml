@@ -3,6 +3,12 @@ name: Build Workspace Image
 on:
   workflow_dispatch:
   workflow_call:
+    inputs:
+      push-tag:
+        description: "Versioned tag to publish (release path); empty = <calver>-<commit>"
+        required: false
+        default: ""
+        type: string
   push:
     branches: [main]
     paths:
@@ -32,9 +38,16 @@ jobs:
         run: |
           . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
           echo "${{ secrets.GITHUB_TOKEN }}" | devenv shell -- podman login ghcr.io -u ${{ github.actor }} --password-stdin
-          COMMIT=$(git rev-parse --short HEAD)
-          CALVER="$(date -u +%Y.%m.%d)"
-          VERSION="${CALVER}-${COMMIT}"
+          if [ -n "${{ inputs.push-tag }}" ]; then
+            # Release path (#3140): publish under the immutable versioned
+            # tag pinned by release.yml instead of the continuous
+            # <calver>-<commit> tag.
+            VERSION="${{ inputs.push-tag }}"
+          else
+            COMMIT=$(git rev-parse --short HEAD)
+            CALVER="$(date -u +%Y.%m.%d)"
+            VERSION="${CALVER}-${COMMIT}"
+          fi
           REPO="ghcr.io/${{ github.repository }}/klangk-workspace"
           devenv shell -- podman tag klangk-workspace "$REPO:$VERSION"
           devenv shell -- podman push "$REPO:$VERSION"
