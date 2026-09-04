@@ -130,6 +130,12 @@ the left expands to the host user's
 home; tilde on the right expands to the container user's home
 (`/home/{handle}` — see the `~` note above).
 
+Destinations are **literal** container paths: apart from the leading
+`~` above, nothing is shell-expanded. A destination like `~other/file`
+or `$HOME/file` is written as a file literally named `~other/file` /
+`$HOME/file` — `$HOME` refers to neither the container's nor the host's
+home directory. Spell out the path you want instead.
+
 Copies happen once during workspace creation, after the default home
 skeleton is populated but before the setup script runs. The copied
 files become independent of the host originals — changes inside the

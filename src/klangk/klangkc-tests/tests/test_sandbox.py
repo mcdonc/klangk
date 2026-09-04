@@ -172,6 +172,17 @@ class TestExpandContainerPath:
             == "/home/admin/project/subdir"
         )
 
+    def test_other_user_tilde_is_literal(self):
+        # #3118: only the leading ~/ is special — ~other is not
+        # expanded (neither host-side nor, since #3093 quotes the
+        # destination, container-side).
+        assert expand_container_path("~other/file", "admin") == "~other/file"
+
+    def test_env_var_is_literal(self):
+        # #3118: $HOME (or any $VAR) in a destination is a literal
+        # filename, not a container environment reference.
+        assert expand_container_path("$HOME/file", "admin") == "$HOME/file"
+
 
 class TestBuildAllMounts:
     def test_implicit_sandbox_root(self, sandbox_root):
@@ -257,6 +268,13 @@ class TestBuildCopyPairs:
         config = SandboxConfig(copy=["notes.txt:~/notes.txt:ro"])
         with pytest.raises(ValueError, match="Invalid copy spec"):
             build_copy_pairs(config, sandbox_root, "admin")
+
+    def test_dest_shell_syntax_is_literal(self, sandbox_root):
+        # #3118: the old accidental container-sh expansion of
+        # destinations (~other, $HOME) is gone — quoted and literal.
+        config = SandboxConfig(copy=["~/.gitconfig:$HOME/.gitconfig"])
+        pairs = build_copy_pairs(config, sandbox_root, "admin")
+        assert pairs[0][1] == "$HOME/.gitconfig"
 
 
 class TestExpandSpec:
