@@ -472,6 +472,104 @@ class TestConfigShapeValidation:
         with pytest.raises(ConfigurationError, match="duplicate OIDC"):
             _oidc(settings).load_config()
 
+    def test_unparsable_yaml_rejected(self, tmp_path):
+        """A syntactically broken file (the most likely malformed file)
+        raises ConfigurationError — never a raw yaml.ParserError that
+        crashes boot (#3124 review)."""
+        cfg = tmp_path / "oidc.yaml"
+        cfg.write_text("providers: [\n")
+        with pytest.raises(ConfigurationError, match="not valid YAML"):
+            _oidc(
+                make_settings({"KLANGKD_OIDC_CONFIG": str(cfg)})
+            ).load_config()
+
+    def test_yaml_error_message_carries_no_file_content(self, tmp_path):
+        """The error names the line/column mark only — the file holds
+        client secrets, so no content rides into logs."""
+        cfg = tmp_path / "oidc.yaml"
+        cfg.write_text("providers: [\n  - client-secret: supersecret\n")
+        with pytest.raises(ConfigurationError) as exc_info:
+            _oidc(
+                make_settings({"KLANGKD_OIDC_CONFIG": str(cfg)})
+            ).load_config()
+        assert "supersecret" not in str(exc_info.value)
+        assert "line " in str(exc_info.value)
+
+    def test_missing_id_rejected(self, tmp_path):
+        cfg = tmp_path / "oidc.yaml"
+        cfg.write_text(
+            yaml.dump(
+                [
+                    {
+                        "display-name": "X",
+                        "issuer": "https://x.example.com",
+                        "client-id": "klangk",
+                    }
+                ]
+            )
+        )
+        with pytest.raises(ConfigurationError, match="'id'"):
+            _oidc(
+                make_settings({"KLANGKD_OIDC_CONFIG": str(cfg)})
+            ).load_config()
+
+    def test_missing_issuer_rejected(self, tmp_path):
+        cfg = tmp_path / "oidc.yaml"
+        cfg.write_text(
+            yaml.dump(
+                [
+                    {
+                        "id": "x",
+                        "display-name": "X",
+                        "client-id": "klangk",
+                    }
+                ]
+            )
+        )
+        with pytest.raises(ConfigurationError, match="'issuer'"):
+            _oidc(
+                make_settings({"KLANGKD_OIDC_CONFIG": str(cfg)})
+            ).load_config()
+
+    def test_non_string_issuer_rejected(self, tmp_path):
+        """A typed-wrong field fails with ConfigurationError, not a raw
+        AttributeError from ``.rstrip()`` (#3124 review)."""
+        cfg = tmp_path / "oidc.yaml"
+        cfg.write_text(
+            yaml.dump(
+                [
+                    {
+                        "id": "x",
+                        "display-name": "X",
+                        "issuer": 42,
+                        "client-id": "klangk",
+                    }
+                ]
+            )
+        )
+        with pytest.raises(ConfigurationError, match="'issuer'"):
+            _oidc(
+                make_settings({"KLANGKD_OIDC_CONFIG": str(cfg)})
+            ).load_config()
+
+    def test_unreadable_file_rejected(self, tmp_path):
+        """An OSError while opening the file (e.g. permissions) is a
+        ConfigurationError naming the reason, not a crash (#3124)."""
+        cfg = tmp_path / "oidc.yaml"
+        cfg.write_text("[]")
+        with patch(
+            "builtins.open", side_effect=PermissionError("Permission denied")
+        ):
+            with pytest.raises(ConfigurationError, match="cannot be read"):
+                _oidc(
+                    make_settings({"KLANGKD_OIDC_CONFIG": str(cfg)})
+                ).load_config()
+
+    def test_yaml_error_without_mark_has_plain_message(self):
+        """A YAMLError carrying no problem_mark renders without the
+        line/column suffix instead of crashing on None."""
+        assert oidc._yaml_error_where(yaml.YAMLError("no mark")) == ""
+
 
 class TestProviderRegistry:
     def test_init_and_lookup(self, tmp_path):

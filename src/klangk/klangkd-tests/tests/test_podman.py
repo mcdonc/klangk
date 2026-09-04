@@ -277,6 +277,22 @@ class TestRunRawStdinFeeder:
         await podman.Podman._settle_stdin_task(task)
         assert task.cancelled()
 
+    async def test_settle_stdin_task_propagates_outer_cancellation(self):
+        """An outer cancellation of the run is not mistaken for the
+        feeder's own: it propagates out of the settle (and the feeder is
+        still cancelled on the way out, so nothing leaks)."""
+
+        async def hang():
+            await asyncio.Event().wait()
+
+        feeder = asyncio.create_task(hang())
+        settle = asyncio.create_task(podman.Podman._settle_stdin_task(feeder))
+        await asyncio.sleep(0)
+        settle.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await settle
+        assert feeder.cancelled()
+
 
 # --- containers ---
 

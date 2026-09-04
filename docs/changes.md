@@ -1978,19 +1978,27 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   timeout un-armed.
 
 - **Malformed `KLANGKD_OIDC_CONFIG` files fail boot with a configuration
-  error (#3124).** An empty file or a YAML mapping (e.g. a `providers:`
-  wrapper) used to crash startup with a raw TypeError/AttributeError;
-  both now raise a `ConfigurationError` naming the problem. Duplicate
-  provider ids are rejected too — the second provider used to be
-  silently shadowed at login while still showing its own button.
+  error (#3124).** An empty file, a YAML mapping (e.g. a `providers:`
+  wrapper), a syntactically broken file, or an entry with a missing or
+  non-string required field used to crash startup with a raw
+  TypeError/AttributeError/KeyError/ParserError; all now raise a
+  `ConfigurationError` naming the problem (the message carries only the
+  line/column mark — the file holds client secrets). Duplicate provider
+  ids are rejected too — the second provider used to be silently
+  shadowed at login while still showing its own button.
 
 - **`KLANGKD_PORT` / `KLANGKD_EGRESS_PORT` values are validated
-  (#3124).** A non-numeric, out-of-range, or explicitly emptied value
-  now fails settings construction with a named-setting error instead
-  of crashing the launcher with a raw `ValueError`; empty means unset
-  (headless browser port / the built-in egress default). An emptied
-  `KLANGKD_SMTP_USE_TLS=` likewise resolves to its default (TLS on)
-  rather than silently disabling TLS.
+  (#3124).** A non-numeric, out-of-range (including the previously
+  tolerated `0`), or explicitly emptied value now fails settings
+  construction with a named-setting error instead of crashing the
+  launcher with a raw `ValueError`; accepted values are stored
+  normalized (`" 30"` → `"30"`), so whitespace-prefixed forms can no
+  longer slip past the browser/egress port-separation check. Empty
+  means unset (headless browser port / the built-in egress default).
+  An emptied str-typed boolean setting likewise resolves to its field
+  default: `KLANGKD_SMTP_USE_TLS=` keeps TLS on rather than silently
+  disabling it, and `KLANGKD_ALLOW_SUDO=` resets the sudo ceiling to
+  its default (open) instead of closing it.
 
 - **A failed first-time home skeleton copy retries on the next connect
   (#3124).** A per-handle home left empty by a transient

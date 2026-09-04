@@ -868,6 +868,31 @@ class TestResolveSocketAndPorts:
         )
         assert s.port == "8997"
 
+    def test_port_whitespace_normalized(self):
+        """#3124 review: the validated port is returned normalized — a
+        whitespace/zero-padded form must not survive as a distinct value
+        (the egress≠browser check and the Caddyfile render consume the
+        raw string)."""
+        s = KlangkSettings(
+            env={"KLANGKD_STATE_DIR": "/tmp/state", "KLANGKD_PORT": " 30"}
+        )
+        assert s.port == "30"
+
+    def test_port_normalization_closes_equality_bypass(self):
+        """PORT=8997 + EGRESS=' 8997' used to pass the string-equality
+        firewall-separation check while binding the same numeric port;
+        both now normalize equal and are rejected."""
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            KlangkSettings(
+                env={
+                    "KLANGKD_STATE_DIR": "/tmp/state",
+                    "KLANGKD_PORT": "8997",
+                    "KLANGKD_EGRESS_PORT": " 8997",
+                }
+            )
+
     def test_socket_too_long_rejected(self):
         from pydantic import ValidationError
 
@@ -1954,6 +1979,13 @@ class TestBoolStringSettingCoercion:
         expected = None if default is None else str(default)
         assert getattr(s, field) == expected
 
+    def test_empty_allow_sudo_resolves_to_default_true(self):
+        """Pin the security-relevant empty remap independently of the
+        model_fields mirror above: the sudo *ceiling* resets to its
+        default (open), not to off (#3124 review)."""
+        s = make_settings({"KLANGKD_ALLOW_SUDO": ""})
+        assert s.allow_sudo == "true"
+
     def test_yaml_quoted_strings_unchanged(self, tmp_path):
         cfg = tmp_path / "config.yaml"
         cfg.write_text(
@@ -2021,13 +2053,15 @@ class TestIntStringSettingCoercion:
             (f, v)
             for f in FIELDS
             for v in (
-                ("8997", " 30")
+                ("8997",)
                 if f in PORT_STRING_FIELDS
                 else ("8997", "0", " 30", "")
             )
         ],
     )
     def test_env_strings_unchanged(self, field, value):
+        """Non-port values pass through unchanged; the port trio is
+        validated/normalized separately (see TestResolveSocketAndPorts)."""
         s = make_settings({f"KLANGKD_{field.upper()}": value})
         assert getattr(s, field) == value
 

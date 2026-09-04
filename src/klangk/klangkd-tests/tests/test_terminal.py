@@ -2377,6 +2377,34 @@ class TestShellProcessRealPty:
         os.close(shell._master_fd)  # fd dies underneath the session
         assert await asyncio.wait_for(shell.read(), 5) == b""
 
+    async def test_read_blocks_until_readable(self):
+        """Deterministic coverage of the non-blocking read's wait branch
+        (``read()``: ``BlockingIOError`` → clear + event wait). On a real
+        PTY the echo can beat the read under CI load — the branch went
+        uncovered in a CI run — so a pipe read-end with a delayed writer
+        pins the ordering."""
+        shell = self._shell()
+        r, w = os.pipe()
+        os.set_blocking(r, False)
+        shell._master_fd = r
+        shell._read_event = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        loop.add_reader(r, shell._read_event.set)
+
+        async def feed():
+            await asyncio.sleep(0.05)
+            os.write(w, b"late")
+
+        try:
+            feeder = asyncio.create_task(feed())
+            out = await asyncio.wait_for(shell.read(), 5)
+            await feeder
+            assert out == b"late"
+        finally:
+            loop.remove_reader(r)
+            os.close(r)
+            os.close(w)
+
     async def test_write_blocking_falls_back_to_executor(self):
         import klangk.terminal as term
 

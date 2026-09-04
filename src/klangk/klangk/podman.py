@@ -181,23 +181,27 @@ class Podman:
 
     @staticmethod
     async def _settle_stdin_task(stdin_task: asyncio.Task | None) -> None:
-        """Await (or cancel) the stdin feeder; never raises, never leaks.
+        """Wait for the stdin feeder, cancelling anything left behind.
 
-        Once ``_wait_podman`` returns the child has exited or been killed,
-        so the feeder completes promptly; one loop tick is granted first
-        (a mock-fast wait can return before a scheduled feeder ever
-        ran), then a still-pending feeder is cancelled — the child is
-        gone, so any unwritten remainder is moot.
+        ``asyncio.wait`` yields to the loop (a mock-fast process wait can
+        return before a scheduled feeder ever ran, so the feeder takes
+        its step here), never re-raises the feeder's own cancellation,
+        and — unlike awaiting the task directly — lets an *outer*
+        cancellation of the run propagate instead of mistaking it for
+        the feeder's. By the time this runs the child has exited or
+        been killed, so cancelling a still-pending feed (an orphaned
+        grandchild holding the pipe) loses nothing; ``cancel()`` on a
+        completed task is a no-op. The grace timeout bounds the settle
+        on both waits; the normal path (feeder long finished) is
+        instant.
         """
         if stdin_task is None:
             return
-        await asyncio.sleep(0)
-        if not stdin_task.done():
-            stdin_task.cancel()
         try:
-            await stdin_task
-        except (asyncio.CancelledError, OSError):
-            pass
+            await asyncio.wait([stdin_task], timeout=0.5)
+        finally:
+            stdin_task.cancel()
+            await asyncio.wait([stdin_task], timeout=0.5)
 
     @staticmethod
     async def _wait_podman(

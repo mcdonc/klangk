@@ -1546,8 +1546,11 @@ class KlangkSettings(BaseSettings):
 
     @classmethod
     def _validated_port(cls, env_var: str, value: str | None) -> str | None:
-        """One port setting: ``None``/``""`` → ``None``; else a numeric
-        string in 1-65535, validated and returned unchanged."""
+        """One port setting: ``None``/``""`` → ``None``; else validated
+        numeric 1-65535 and returned **normalized** (``str(int(v))``) —
+        the egress≠browser equality check and the Caddyfile render both
+        consume the raw string, so a whitespace/zero-padded form must
+        not survive as a distinct value (#3124)."""
         if value is None or value == "":
             return None
         try:
@@ -1556,7 +1559,7 @@ class KlangkSettings(BaseSettings):
             raise ValueError(_BAD_PORT_MSG.format(env_var, value)) from exc
         if not 1 <= port <= 65535:
             raise ValueError(_BAD_PORT_MSG.format(env_var, value))
-        return value
+        return str(port)
 
     def _fold_proxy_port(self) -> None:
         """Apply the ``KLANGKD_PROXY_PORT`` → ``egress_port`` deprecation
