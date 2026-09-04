@@ -14,8 +14,11 @@ user tokens, the server's is GB-scale DBs + UDS). See #1646.
 from __future__ import annotations
 
 
+import contextlib
+import logging
 import os
 import shlex
+import tempfile
 import yaml
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -288,12 +291,35 @@ def load_yaml_config() -> dict:
     mapping (a stray list, a bare string) must not crash every CLI
     command with ``AttributeError`` — it degrades to an empty config
     (#3094), the same degrade-not-crash rule as a bad
-    ``terminal-open-cmd`` (#2685).
+    ``terminal-open-cmd`` (#2685). An *unparseable* document (YAML
+    syntax error) degrades the same way, with a one-line warning so the
+    user learns the file was ignored (#3111).
     """
     if not CONFIG_PATH.exists():
         return {}
-    data = yaml.safe_load(CONFIG_PATH.read_text())
+    data = _safe_load_yaml(CONFIG_PATH)
     return data if isinstance(data, dict) else {}
+
+
+def _safe_load_yaml(path: Path):
+    """``yaml.safe_load`` for a user-facing file (None on parse error).
+
+    A YAML syntax error must not crash every CLI command with a raw
+    ``yaml.YAMLError`` traceback (#3111) — it degrades to an empty
+    document (None, which the callers coerce to ``{}``), with a
+    one-line warning routed through the logging last-resort handler
+    (stderr) so the user learns the file was ignored.
+    """
+    try:
+        return yaml.safe_load(path.read_text())
+    except yaml.YAMLError as exc:
+        detail = " ".join(str(exc).split())
+        logging.getLogger(__name__).warning(
+            "%s: YAML parse error ignored, treating as empty: %s",
+            path.name,
+            detail,
+        )
+        return None
 
 
 def add_server_to_config(
@@ -392,6 +418,42 @@ def remove_server_from_config(alias: str) -> bool:
     return True
 
 
+def load_yaml_state() -> dict:
+    """The parsed klangk-state.yaml (empty when absent or not a mapping).
+
+    klangk-state.yaml is written by ``CLIState.save()`` and never
+    hand-edited — but corruption is realistic (an interrupted write, a
+    stray edit): a document that is valid YAML but not a mapping, or
+    not valid YAML at all, must not crash every CLI command — it
+    degrades to an empty state so commands run unauthenticated and
+    ``klangk login`` works as the repair flow (#3111).
+    """
+    if not STATE_PATH.exists():
+        return {}
+    data = _safe_load_yaml(STATE_PATH)
+    return data if isinstance(data, dict) else {}
+
+
+def _atomic_write(path: Path, content: str) -> None:
+    """Atomically replace *path* with *content* (mode 0600).
+
+    Writes to a temp file in the same directory, then ``os.replace`` —
+    an interrupted write (crash, kill, full disk) can only lose the
+    temp file, never leave a truncated state file behind (#3111).
+    """
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=path.name)
+    try:
+        with os.fdopen(fd, "w") as out:
+            out.write(content)
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
+
+
 @dataclass
 class UserEntry:
     """Per-user credentials within a server in klangk-state.yaml."""
@@ -455,17 +517,13 @@ class CLIState:
 
     @classmethod
     def load(cls) -> CLIState:
-        if not STATE_PATH.exists():
-            return cls()
-        text = STATE_PATH.read_text()
-        data = yaml.safe_load(text) or {}
+        data = load_yaml_state()
         return cls(
             active_server=data.get("active-server"),
             servers=parse_server_states(data),
         )
 
     def save(self) -> None:
-        STATE_PATH.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         data: dict = {}
         if self.active_server is not None:
             data["active-server"] = self.active_server
@@ -473,9 +531,7 @@ class CLIState:
             server_data = server_state_data(ss)
             if server_data:
                 data[url] = server_data
-        content = yaml.dump(data, default_flow_style=False)
-        STATE_PATH.write_text(content)
-        os.chmod(STATE_PATH, 0o600)
+        _atomic_write(STATE_PATH, yaml.dump(data, default_flow_style=False))
 
     def get_token(self, server_url: str) -> str | None:
         """Return the token for the active user on a server."""

@@ -1985,6 +1985,15 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   prints the spawn error and exits nonzero; socket-level errors still
   reconnect as before.
 
+- **Corrupt `klangk-state.yaml` no longer bricks the CLI (#3111).** A
+  state file that is valid YAML but not a mapping, or not valid YAML at
+  all, is now treated as an empty state — commands run unauthenticated
+  and `klangk login` works as the repair flow instead of crashing with
+  `AttributeError`/`yaml.YAMLError`. An unparseable `klangk.yaml` gets
+  the same treatment (empty config + a one-line warning). The state
+  file is also written atomically now, so an interrupted save (crash,
+  kill, full disk) can no longer leave it truncated in the first place.
+
 - **Workspace name minimum length is enforced (#3110).** The API now
   rejects empty and whitespace-only workspace names on create, rename,
   duplicate, and import (422 on the JSON bodies, 400 on the import
