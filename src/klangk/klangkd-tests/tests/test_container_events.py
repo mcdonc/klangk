@@ -25,6 +25,7 @@ from klangk.model.container_events import (
     CAUSE_DRAIN,
     CAUSE_IDLE_TIMEOUT,
     CAUSE_LOGOUT,
+    CAUSE_RESTART,
     CAUSE_SHUTDOWN,
     CAUSE_STOP,
     CAUSE_WS_CONNECT,
@@ -597,6 +598,109 @@ class TestAuditFailClosedStop3154:
         mocks.remove_container.assert_awaited_once()
         assert registry.audit_write_failures == 1
 
+    async def test_stop_refusal_precedes_killed_callback_teardown(
+        self, app_state, db, registry, workspace
+    ):
+        """#3154 review B1: with the PRODUCTION on_workspace_killed
+        wiring (reset_workspace_state → remove_state — what
+        wire_registry_callbacks installs), a refused /stop must NOT
+        lose the registry's tracking of the still-running container:
+        the audit pre-write precedes notify_workspace_killed."""
+        from klangk import wshandler
+
+        app_state.state.sockets = wshandler.WebSocketState(app_state)
+
+        async def on_killed(ws_id, container_id=None):
+            await wshandler.reset_workspace_state(
+                app_state.state.sockets,
+                ws_id,
+                expected_container_id=container_id,
+            )
+
+        registry.set_on_workspace_killed(on_killed)
+        app_state.state.settings.audit_fail_closed = True
+        ws_id = workspace["id"]
+        registry.track_activity("cid-b1", ws_id)
+        with patch_podman(registry) as mocks:
+            with patch.object(
+                app_state.state.model.container_events,
+                "record",
+                AsyncMock(side_effect=RuntimeError("db gone")),
+            ):
+                with pytest.raises(AuditWriteError):
+                    # The /stop route's ordering: pre-write, THEN notify,
+                    # THEN stop.
+                    pending = await registry.prewrite_stop_event(
+                        ws_id,
+                        "cid-b1",
+                        cause=CAUSE_STOP,
+                        actor_id="u1",
+                    )
+                    await registry.notify_workspace_killed(
+                        ws_id, container_id="cid-b1"
+                    )
+                    await registry.stop_and_remove_container(
+                        "cid-b1",
+                        workspace_id=ws_id,
+                        cause=CAUSE_STOP,
+                        actor_id="u1",
+                        pending_event=pending,
+                    )
+        mocks.remove_container.assert_not_awaited()
+        # The tracking survived: the refusal happened before the
+        # killed callback could tear it down.
+        assert registry.states[ws_id].container_id == "cid-b1"
+
+    async def test_rebound_stop_retracts_prewritten_row(
+        self, app_state, db, registry, workspace
+    ):
+        """A stop whose target was re-bound away (stopped but not torn
+        down — result False) retracts the pre-written row: the stop of
+        THAT container did not complete (#3154)."""
+        app_state.state.settings.audit_fail_closed = True
+        ws_id = workspace["id"]
+        registry.track_activity("cid-new", ws_id)  # the re-bind
+        with patch_podman(registry):
+            ok = await registry.stop_and_remove_container(
+                "cid-old",  # the stale id the caller held
+                workspace_id=ws_id,
+                cause=CAUSE_STOP,
+                actor_id="u1",
+            )
+        assert ok is False
+        assert (
+            await app_state.state.model.container_events.count_events(ws_id)
+            == 0
+        )
+
+    async def test_route_prewrite_flows_through_pending_event(
+        self, app_state, db, registry, workspace
+    ):
+        """The /stop route's two-phase form (#3154 review B1):
+        prewrite_stop_event's id passed back as ``pending_event``
+        writes the row exactly once — the in-method pre-write is
+        skipped, not duplicated."""
+        app_state.state.settings.audit_fail_closed = True
+        ws_id = workspace["id"]
+        registry.track_activity("cid-pp", ws_id)
+        with patch_podman(registry):
+            pending = await registry.prewrite_stop_event(
+                ws_id, "cid-pp", cause=CAUSE_STOP, actor_id="u1"
+            )
+            assert pending is not None
+            ok = await registry.stop_and_remove_container(
+                "cid-pp",
+                workspace_id=ws_id,
+                cause=CAUSE_STOP,
+                actor_id="u1",
+                pending_event=pending,
+            )
+        assert ok is True
+        assert (
+            await app_state.state.model.container_events.count_events(ws_id)
+            == 1
+        )
+
     async def test_default_off_stays_best_effort(
         self, app_state, db, registry
     ):
@@ -743,6 +847,84 @@ class TestAuditFailClosedStart3154:
             await app_state.state.model.container_events.count_events("ws-r")
             == 1
         )
+
+    async def test_ws_connect_start_excluded_from_gate(
+        self, app_state, db, monkeypatch
+    ):
+        """The normal web-UI start path (WS connect) is user-initiated
+        but NOT an API POST — excluded from the gate per the issue's
+        scope; its audit failures stay counted-and-swallowed (#3154
+        review nit)."""
+        app_state.state.settings.audit_fail_closed = True
+        registry = app_state.state.container_registry
+        monkeypatch.setattr(
+            app_state.state.workspaces,
+            "ensure_shared_home_dir",
+            AsyncMock(),
+        )
+        with patch.object(
+            registry,
+            "start_container_inner",
+            AsyncMock(return_value=("cid-ws", "created")),
+        ):
+            with patch.object(
+                app_state.state.model.container_events,
+                "record",
+                AsyncMock(side_effect=RuntimeError("db gone")),
+            ):
+                cid, status = await registry.start_container(
+                    ContainerStartSpec(
+                        workspace_id="ws-wsc",
+                        home_path="/home/x",
+                        audit_cause=CAUSE_WS_CONNECT,
+                        audit_actor_id="u1",
+                    )
+                )
+        assert (cid, status) == ("cid-ws", "created")
+        assert registry.audit_write_failures == 1
+
+    async def test_restart_start_half_refusal_leaves_stopped(
+        self, app_state, db, registry, workspace
+    ):
+        """A /restart whose stop half succeeded (under its own audited
+        row) but whose start pre-write fails: AuditWriteError out of the
+        start, stop row stands, workspace left stopped for a retry —
+        the same shape as a mid-restart capacity refusal (#3154)."""
+        app_state.state.settings.audit_fail_closed = True
+        ws_id = workspace["id"]
+        registry.track_activity("cid-rs", ws_id)
+        calls = {"n": 0}
+
+        async def flaky_record(*args, **kwargs):
+            calls["n"] += 1
+            if calls["n"] > 1:
+                raise RuntimeError("db gone")
+            return await real_record(*args, **kwargs)
+
+        events = app_state.state.model.container_events
+        real_record = events.record
+        with patch_podman(registry):
+            with patch.object(events, "record", side_effect=flaky_record):
+                ok = await registry.stop_and_remove_container(
+                    "cid-rs",
+                    workspace_id=ws_id,
+                    cause=CAUSE_RESTART,
+                    actor_id="u1",
+                )
+                assert ok is True
+                with pytest.raises(AuditWriteError):
+                    await registry.start_container(
+                        ContainerStartSpec(
+                            workspace_id=ws_id,
+                            home_path="/tmp/home",
+                            audit_cause=CAUSE_RESTART,
+                            audit_actor_id="u1",
+                        )
+                    )
+        row = (await events.list_events(ws_id))[0]
+        assert row["event"] == EVENT_STOP
+        assert row["cause"] == CAUSE_RESTART
+        assert ws_id not in registry.states
 
     async def test_autonomous_start_never_refused(
         self, app_state, db, monkeypatch

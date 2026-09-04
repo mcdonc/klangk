@@ -886,26 +886,36 @@ async def _stop_and_broadcast(
     was stopped on purpose (re-homed from the retired WS
     ``shutdown_container`` handler).
 
-    #3154: under ``KLANGKD_AUDIT_FAIL_CLOSED`` an audit-write failure
-    refuses the stop with a 503 before any teardown. The terminal death
-    frames fire BEFORE the stop (they need the registry state the stop
-    tears down), so a refusal may follow a ``running=False`` frame;
-    clients re-sync from the next status poll and the container itself
-    is untouched.
+    #3154 review B1: the audit pre-write comes FIRST. Under
+    ``KLANGKD_AUDIT_FAIL_CLOSED`` a write failure must refuse the stop
+    before ``notify_workspace_killed`` fires — its production callback
+    (``wire_registry_callbacks`` → reset_workspace_state → remove_state)
+    tears down the registry's tracking of the container, and losing
+    idle/crash/health monitoring for a still-running container is far
+    worse than a refused request. The row id flows into the stop as
+    ``pending_event`` so it is written exactly once.
     """
-    await app.state.container_registry.notify_workspace_killed(
-        workspace_id, container_id=cid
-    )
+    registry = app.state.container_registry
     try:
-        await app.state.container_registry.stop_and_remove_container(
+        pending = await registry.prewrite_stop_event(
+            workspace_id,
+            cid,
+            cause=CAUSE_STOP,
+            actor_id=user_id,
+        )
+        await registry.notify_workspace_killed(workspace_id, container_id=cid)
+        await registry.stop_and_remove_container(
             cid,
             workspace_id=workspace_id,
             cause=CAUSE_STOP,
             actor_id=user_id,
+            pending_event=pending,
         )
     except AuditWriteError as exc:
         # Fail-closed audit refusal (#3154): the stop never started —
         # refuse the request, leave the container running for a retry.
+        # Unreachable with a ``pending`` id (the row is already written);
+        # kept for a caller that skipped the pre-write above.
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     # Notify live WS viewers that the container was stopped on purpose
     # so the UI shows "stopped" rather than "disconnected". Only when a

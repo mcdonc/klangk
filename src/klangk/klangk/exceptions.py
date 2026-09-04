@@ -75,9 +75,12 @@ class AuditWriteError(RuntimeError):
     honest scope is the *interactive* API lifecycle paths only. Raised
     by :meth:`ContainerRegistry.prewrite_audit_event` when
     ``KLANGKD_AUDIT_FAIL_CLOSED`` is on and the audit-before-act row
-    for a POST start/stop/restart (or create's eager start, or delete's
-    stop) cannot be written: the transition is refused before any side
-    effect, and the API layer translates this to a 503.
+    for a POST start/stop/restart or delete's stop cannot be written:
+    the transition is refused before any side effect, and the API layer
+    translates this to a 503. Create's eager start raises it into
+    ``_eager_start``'s existing refusal handling — the workspace row is
+    already committed, so the start is skipped with a warning (the same
+    shape as a drain/capacity refusal) rather than a 503.
 
     Autonomous lifecycle paths (idle timeout, eviction, drain, shutdown
     sweep, crash teardown, boot reaps, logout) never raise it — refusing

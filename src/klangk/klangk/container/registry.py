@@ -1133,10 +1133,16 @@ class ContainerRegistry(NetworkSidecarMixin):
     ) -> None:
         """Failed-start backstop (#2915 review): a tracked container is
         real, so its start row must exist — finalize the pre-written row
-        (#3154) or record one best-effort."""
+        (#3154, with the live netns owner for row-shape parity with the
+        best-effort path) or record one best-effort. "Tracked" means a
+        ``states`` entry created by THIS attempt (the guarded routes
+        never reach the start path with a pre-existing entry), so the
+        id belongs to a container this attempt made real."""
         if pending is not None:
             await self._finalize_prewritten_event(
-                pending, container_id=container_id
+                pending,
+                container_id=container_id,
+                network_namespace=self._ws_netns_owner.get(spec.workspace_id),
             )
             return
         await self.record_container_event(
@@ -2255,6 +2261,7 @@ class ContainerRegistry(NetworkSidecarMixin):
         *,
         cause: str,
         actor_id: str | None = None,
+        pending_event: int | None = None,
     ) -> bool:
         """Stop and remove a container.
 
@@ -2303,6 +2310,10 @@ class ContainerRegistry(NetworkSidecarMixin):
         restart, delete, idle_timeout, eviction, logout, drain, shutdown,
         crash_teardown). ``actor_id`` is the acting principal when a user
         (or the agent) fired the stop; None records a system actor.
+        ``pending_event`` (#3154) is a stop row already pre-written via
+        :meth:`prewrite_stop_event` — pass it so the row is written once
+        (the /stop route does this to put the audit refusal before its
+        terminal death frames).
         """
         ws_id = workspace_id or self._cid_to_wsid.get(container_id)
         # Netns owner captured before teardown pops it (#2915).
@@ -2310,9 +2321,18 @@ class ContainerRegistry(NetworkSidecarMixin):
         # Audit-before-act (#3154): on the interactive fail-closed paths
         # the stop row is written HERE — a write failure raises
         # AuditWriteError and the stop is refused before any teardown
-        # (before even the expected-stop bookkeeping below).
-        pending = await self._prewrite_stop_event(
-            ws_id, container_id, cause=cause, actor_id=actor_id, netns=netns
+        # (before even the expected-stop bookkeeping below). The /stop
+        # route pre-writes earlier still (via prewrite_stop_event) so the
+        # refusal also precedes notify_workspace_killed, whose production
+        # callback tears down registry state (#3154 review B1); it passes
+        # the row id back in as ``pending_event``.
+        pending = await self.prewrite_stop_event(
+            ws_id,
+            container_id,
+            cause=cause,
+            actor_id=actor_id,
+            netns=netns,
+            prewritten=pending_event,
         )
         if ws_id:
             self._begin_expected_stop(ws_id)
@@ -2362,10 +2382,13 @@ class ContainerRegistry(NetworkSidecarMixin):
         removal below, so the crash monitor's sweep cannot misread the
         in-flight removal as an unexpected death."""
         self.stopping.add(ws_id)
-        # Bumped synchronously at stop ENTRY, before any await: the
-        # crash monitor snapshots the epoch around its awaits and
-        # re-checks it before scheduling a restart, so a stop that
-        # begins at any point during death detection/handling
+        # Bumped synchronously at stop ENTRY, before any await — the
+        # fail-closed audit pre-write (#3154) may precede this method's
+        # caller, but a refusal raises before _begin_expected_stop runs
+        # at all, so the epoch invariant holds for every stop that
+        # actually begins. The crash monitor snapshots the epoch around
+        # its awaits and re-checks it before scheduling a restart, so a
+        # stop that begins at any point during death detection/handling
         # invalidates the restart — even if the stop fully completes
         # before the scheduler re-checks (#2524 review).
         self.stop_epoch[ws_id] = self.stop_epoch.get(ws_id, 0) + 1
@@ -2438,24 +2461,42 @@ class ContainerRegistry(NetworkSidecarMixin):
             return stopped
         return stopped and torn_down
 
-    async def _prewrite_stop_event(
+    def _stop_prewrite_gated(self, ws_id: str | None, cause: str) -> bool:
+        """True when the interactive fail-closed stop pre-write applies
+        (#3154)."""
+        return (
+            self.audit_fail_closed
+            and bool(ws_id)
+            and cause in INTERACTIVE_STOP_CAUSES
+        )
+
+    async def prewrite_stop_event(
         self,
         ws_id: str | None,
         container_id: str,
         *,
         cause: str,
         actor_id: str | None,
-        netns: str | None,
+        netns: str | None = None,
+        prewritten: int | None = None,
     ) -> int | None:
-        """Audit-before-act stop row (#3154) — None unless the
-        interactive fail-closed gate applies; raises
-        :class:`AuditWriteError` to refuse the stop before any teardown
-        when the row cannot be written."""
-        if (
-            not self.audit_fail_closed
-            or not ws_id
-            or cause not in INTERACTIVE_STOP_CAUSES
-        ):
+        """Audit-before-act stop row (#3154) — route-facing form.
+
+        Writes the row and returns its id so a caller that sequences
+        side effects around the stop (the /stop route's terminal death
+        frames) can put the refusal point FIRST:
+        ``notify_workspace_killed``'s production callback tears down
+        registry state, which a refused stop must not lose for a
+        still-running container (#3154 review B1). Pass the returned id
+        back via ``stop_and_remove_container(pending_event=...)`` so the
+        row is written exactly once. None unless the interactive
+        fail-closed gate applies; raises :class:`AuditWriteError` to
+        refuse the stop before any side effect when the row cannot be
+        written.
+        """
+        if prewritten is not None:
+            return prewritten
+        if not self._stop_prewrite_gated(ws_id, cause):
             return None
         return await self.prewrite_audit_event(
             ws_id,
@@ -2463,7 +2504,7 @@ class ContainerRegistry(NetworkSidecarMixin):
             EVENT_STOP,
             cause=cause,
             actor_id=actor_id,
-            network_namespace=netns,
+            network_namespace=netns or self._ws_netns_owner.get(ws_id),
         )
 
     async def _settle_stop_audit(

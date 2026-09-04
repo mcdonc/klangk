@@ -234,6 +234,20 @@ class TestAuditFailClosedApi3154:
     async def test_stop_refused_503_before_teardown(
         self, client, app, ws_admin, registry
     ):
+        """#3154 review B1: with the production on_workspace_killed
+        wiring (what wire_registry_callbacks installs), a refused /stop
+        leaves the registry's tracking of the running container intact
+        — the audit pre-write precedes the death frames."""
+        from klangk import wshandler
+
+        async def on_killed(ws_id, container_id=None):
+            await wshandler.reset_workspace_state(
+                app.state.sockets,
+                ws_id,
+                expected_container_id=container_id,
+            )
+
+        registry.set_on_workspace_killed(on_killed)
         headers = await _auth_headers(client)
         ws_id = await self._workspace_id(client, headers, "fc-stop")
         app.state.settings.audit_fail_closed = True
@@ -244,10 +258,34 @@ class TestAuditFailClosedApi3154:
             )
         assert resp.status_code == 503
         assert "audit" in resp.json()["detail"]
-        # Refused before any teardown: the container stays tracked.
+        # Refused before any teardown AND before the killed callback:
+        # the container stays tracked (idle/crash/health keep seeing it).
         assert registry.states[ws_id].container_id == "cid-fc-stop"
         assert registry.audit_write_failures == 1
         registry.states.pop(ws_id, None)
+
+    async def test_create_eager_start_skipped_not_503(
+        self, client, app, ws_admin, registry
+    ):
+        """#3154 review I1: the create itself already committed, so an
+        audit refusal on its eager start skips the start (workspace
+        created-not-started, warning logged) — the same shape as a
+        drain/capacity refusal there, never a 503 on the create."""
+        app.state.settings.audit_fail_closed = True
+        headers = await _auth_headers(client)
+        with patch.object(app.state.settings, "allow_autostart", "1"):
+            with self._broken_audit(app):
+                resp = await client.post(
+                    "/api/v1/workspaces",
+                    headers=headers,
+                    json={"name": "fc-create", "auto_start": True},
+                )
+        assert resp.status_code == 200
+        ws_id = resp.json()["id"]
+        ws = await app.state.model.workspaces.get_workspace(ws_id)
+        assert ws is not None
+        assert registry.get_state(ws_id) is None
+        assert registry.audit_write_failures == 1
 
     async def test_start_refused_503_before_container(
         self, client, app, ws_admin, registry, monkeypatch
@@ -3918,6 +3956,9 @@ class TestWorkspaceRoutes:
             workspace_id=ws_id,
             cause=CAUSE_STOP,
             actor_id=user["id"],
+            # None = the flag is off, so the route's audit pre-write
+            # (#3154) did not produce a pending row id.
+            pending_event=None,
         )
         # Re-homed from the retired WS shutdown_container handler: REST /stop
         # broadcasts container_stopped so live viewers show "stopped".
