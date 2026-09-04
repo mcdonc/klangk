@@ -12,6 +12,9 @@ that one workspace cannot mount another workspace's named volumes:
    asserted via podman inspect), so the owner can stop and restart the
    workspace afterwards and still see the member's data in the same
    volume.
+3. Bind-mount gate — with KLANGKD_ALLOWED_MOUNT_ROOTS unset (this
+   server's config), a user cannot save a host-path mount at all
+   (#3153 deny-by-default).
 
 Requires: podman available, klangk image built.
 
@@ -209,6 +212,28 @@ async def exec_command(ws, command):
     msgs = await recv_until(ws, is_exec_exit, timeout=15)
     outputs = [m for m in msgs if m.get("type") == "exec_output"]
     return b"".join(base64.b64decode(m["data"]) for m in outputs).decode()
+
+
+class TestBindMountGate:
+    @pytest.mark.timeout(300)
+    def test_bind_source_rejected_without_roots(self, server, users):
+        """#3153 deny-by-default: the E2E server configures no
+        KLANGKD_ALLOWED_MOUNT_ROOTS, so a user cannot save a mount with
+        a host-path source — only named volumes may be mounted."""
+        api = server["client"]
+        resp = api.post(
+            "/api/v1/workspaces",
+            headers=users["alice"],
+            json={
+                "name": f"voliso-bind-{uuid.uuid4().hex[:6]}",
+                "mounts": ["/tmp:/mnt/host"],
+            },
+            timeout=10,
+        )
+        assert resp.status_code == 400, resp.text
+        detail = resp.json().get("detail", "")
+        assert "bind mounts are disabled" in detail
+        assert "KLANGKD_ALLOWED_MOUNT_ROOTS" in detail
 
 
 class TestVolumeOwnership:

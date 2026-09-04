@@ -1022,6 +1022,11 @@ class KlangkSettings(BaseSettings):
     image_name: str | None = "klangk-workspace"
     image_pull_policy: str | None = "never"
     allowed_images: str | None = None
+    # allowed_mount_roots: comma-separated host path roots user bind
+    # mounts may source from (#3153). UNSET (the default) disables user
+    # bind mounts entirely — only named volumes may be mounted; the
+    # mounts klangkd builds itself (home, config, SSL, nix) are
+    # internal and never pass the gate. Reloadable on SIGHUP.
     allowed_mount_roots: str | None = None
     allow_autostart: str = ""
     # allow_sudo: passwordless sudo for the klangk user inside workspace

@@ -4028,16 +4028,31 @@ class TestValidateMountSpec:
         app_state = _make_app_state()
         self.registry = app_state.state.container_registry
 
-    def test_valid_bind_mount(self):
+    def test_valid_bind_mount(self, monkeypatch):
+        monkeypatch.setattr(
+            self.registry.app.state.settings,
+            "allowed_mount_roots",
+            "/host",
+        )
         assert self.registry.validate_mount_spec("/host:/container") is None
 
     def test_valid_volume_mount(self):
         assert self.registry.validate_mount_spec("vol-name:/data") is None
 
-    def test_valid_with_options(self):
+    def test_valid_with_options(self, monkeypatch):
+        monkeypatch.setattr(
+            self.registry.app.state.settings,
+            "allowed_mount_roots",
+            "/host",
+        )
         assert self.registry.validate_mount_spec("/host:/container:ro") is None
 
-    def test_valid_with_multiple_options(self):
+    def test_valid_with_multiple_options(self, monkeypatch):
+        monkeypatch.setattr(
+            self.registry.app.state.settings,
+            "allowed_mount_roots",
+            "/host",
+        )
         assert (
             self.registry.validate_mount_spec("/host:/container:ro,nocopy")
             is None
@@ -4093,16 +4108,32 @@ class TestValidateMountSpec:
         assert err is not None
         assert "podman-safe" in err.lower()
 
-    def test_bind_sources_unaffected_by_volume_rule(self):
+    def test_bind_sources_unaffected_by_volume_rule(self, monkeypatch):
         """#3018: absolute paths and '.'-prefixed (bind) sources never hit
-        the volume-name rule — they keep the protected/allowed-root path."""
+        the volume-name rule — they keep the protected/allowed-root
+        (or disabled, #3153) path."""
+        monkeypatch.setattr(
+            self.registry.app.state.settings,
+            "allowed_mount_roots",
+            "/host",
+        )
         assert self.registry.validate_mount_spec("/host:/container") is None
-        assert self.registry.validate_mount_spec("./cache:/data") is None
+        # A relative bind source is NOT rejected by the volume-name
+        # rule — it flows the bind path (allowed-root denial here).
+        err = self.registry.validate_mount_spec("./cache:/data")
+        assert err is not None
+        assert "allowed root" in err.lower()
 
-    def test_validate_mounts_list(self):
+    def test_validate_mounts_list(self, monkeypatch):
+        monkeypatch.setattr(
+            self.registry.app.state.settings, "allowed_mount_roots", "/a"
+        )
         assert self.registry.validate_mounts(["/a:/b", "vol:/c"]) is None
 
-    def test_validate_mounts_list_with_error(self):
+    def test_validate_mounts_list_with_error(self, monkeypatch):
+        monkeypatch.setattr(
+            self.registry.app.state.settings, "allowed_mount_roots", "/a"
+        )
         err = self.registry.validate_mounts(["/a:/b", "bad"])
         assert err is not None
 
@@ -4152,13 +4183,25 @@ class TestAllowedMountRoots:
         )
         assert self.registry.validate_mount_spec("my-volume:/data") is None
 
-    def test_no_restriction_when_empty(self, monkeypatch):
+    def test_bind_mounts_disabled_when_unset(self, monkeypatch):
+        """#3153 deny-by-default: with no roots configured, ANY host-path
+        bind source is rejected — only named volumes may be mounted."""
         monkeypatch.setattr(
             self.registry.app.state.settings, "allowed_mount_roots", ""
         )
-        assert (
-            self.registry.validate_mount_spec("/etc/shadow:/secrets") is None
+        err = self.registry.validate_mount_spec("/etc/shadow:/secrets")
+        assert err is not None
+        assert "bind mounts are disabled" in err
+        err = self.registry.validate_mount_spec("/home/user/src:/work")
+        assert err is not None
+        assert "KLANGKD_ALLOWED_MOUNT_ROOTS" in err
+
+    def test_named_volume_ok_when_unset(self, monkeypatch):
+        """Named volumes are unaffected by the bind-mount gate."""
+        monkeypatch.setattr(
+            self.registry.app.state.settings, "allowed_mount_roots", ""
         )
+        assert self.registry.validate_mount_spec("my-volume:/data") is None
 
     def test_multiple_roots(self, monkeypatch):
         monkeypatch.setattr(

@@ -1452,8 +1452,8 @@ class _VolumesTabState extends State<_VolumesTab> {
   String? _error;
 
   // Server-side pagination / sort / filter state (#2993), mirroring
-  // the sibling admin tabs (q matches volume name, creator handle,
-  // or a using workspace's name).
+  // the sibling admin tabs (q matches volume name, the owning
+  // workspace's name, or a using workspace's name).
   int _page = 1;
   final int _pageSize = 10;
   int _total = 0;
@@ -1615,15 +1615,13 @@ class _VolumesTabState extends State<_VolumesTab> {
         final createdRaw = volume['created'] as String? ?? '';
         final created =
             createdRaw.length >= 10 ? createdRaw.substring(0, 10) : createdRaw;
-        // Who created it (#2993): the creator's handle when the user
-        // still exists, else the raw label's leading characters as a
-        // fallback (deleted creator / runtime-created without a
-        // label → provenance only).
-        final handle = volume['created_by'] as String? ?? '';
-        final userId = volume['user_id'] as String? ?? '';
-        final owner = handle.isNotEmpty
-            ? '@$handle'
-            : (userId.length >= 8 ? userId.substring(0, 8) : userId);
+        // The owning workspace (#3153 — volumes are workspace-owned):
+        // its name when the row still exists, else the label's id.
+        final wsName = volume['workspace'] as String? ?? '';
+        final wsId = volume['workspace_id'] as String? ?? '';
+        final owner = wsName.isNotEmpty
+            ? wsName
+            : (wsId.length >= 8 ? wsId.substring(0, 8) : wsId);
         // Which workspaces mount this volume (#2993).
         final workspaces = (volume['workspaces'] as List? ?? []).cast<String>();
         return Card(
@@ -1640,7 +1638,7 @@ class _VolumesTabState extends State<_VolumesTab> {
                 Text(
                   owner.isEmpty
                       ? 'Created $created'
-                      : 'Created $created · by $owner',
+                      : 'Created $created · workspace $owner',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(color: KColors.textSecondary),

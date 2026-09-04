@@ -439,16 +439,24 @@ class ContainerRegistry(NetworkSidecarMixin):
         )
 
     def _validate_bind_source(self, spec: str, source: str) -> str | None:
-        """A non-named-volume source must not be a protected host path and
-        (when allowed roots are configured) must live under one."""
+        """A bind source must not be a protected host path, and —
+        deny-by-default (#3153) — must live under a configured
+        `KLANGKD_ALLOWED_MOUNT_ROOTS` root. With no roots configured,
+        user bind mounts are disabled entirely; only named volumes
+        may be mounted."""
         if self._is_protected(source):
             return f"Invalid mount {spec!r}: source is a protected host path"
-        if not self.allowed_mount_roots:
-            return None
+        roots = self.allowed_mount_roots
+        if not roots:
+            return (
+                f"Invalid mount {spec!r}: bind mounts are disabled on "
+                "this deploy (KLANGKD_ALLOWED_MOUNT_ROOTS is unset); "
+                "only named volumes may be mounted"
+            )
         resolved = os.path.realpath(source)
-        if _resolved_under_root(resolved, self.allowed_mount_roots):
+        if _resolved_under_root(resolved, roots):
             return None
-        allowed = ", ".join(self.allowed_mount_roots)
+        allowed = ", ".join(roots)
         return (
             f"Invalid mount {spec!r}: bind mount source must be "
             f"under an allowed root ({allowed})"

@@ -2950,13 +2950,15 @@ class TestWorkspaceRoutes:
         assert resp.status_code == 200
         assert resp.json()["auto_start"] is True
 
-    async def test_create_with_valid_mount(self, client, user):
+    async def test_create_with_valid_mount(self, client, user, app):
         headers = await _auth_headers(client)
-        resp = await client.post(
-            "/api/v1/workspaces",
-            headers=headers,
-            json={"name": "good-mount", "mounts": ["/tmp:/mnt/tmp"]},
-        )
+        # #3153: bind mounts need allowed roots configured.
+        with patch.object(app.state.settings, "allowed_mount_roots", "/tmp"):
+            resp = await client.post(
+                "/api/v1/workspaces",
+                headers=headers,
+                json={"name": "good-mount", "mounts": ["/tmp:/mnt/tmp"]},
+            )
         assert resp.status_code == 200
 
     async def test_list_images(self, client, user):
@@ -4798,22 +4800,25 @@ class TestWorkspaceRoutes:
         assert resp.status_code == 200
         assert "auto_start" in resp.json()
 
-    async def test_duplicate_workspace(self, client, user):
+    async def test_duplicate_workspace(self, client, user, app):
         headers = await _auth_headers(client)
-        resp = await client.post(
-            "/api/v1/workspaces",
-            json={
-                "name": "src-ws",
-                "image": "klangk-workspace",
-                "service_command": "pi",
-                "mounts": ["/tmp:/mnt/tmp"],
-                "env": {"FOO": "bar"},
-                # Explicit so the copy assertion below tests duplication,
-                # not the (now-shared) deploy default (#2723).
-                "per_handle_home": True,
-            },
-            headers=headers,
-        )
+        # #3153: bind mounts need allowed roots configured.
+        with patch.object(app.state.settings, "allowed_mount_roots", "/tmp"):
+            resp = await client.post(
+                "/api/v1/workspaces",
+                json={
+                    "name": "src-ws",
+                    "image": "klangk-workspace",
+                    "service_command": "pi",
+                    "mounts": ["/tmp:/mnt/tmp"],
+                    "env": {"FOO": "bar"},
+                    # Explicit so the copy assertion below tests
+                    # duplication, not the (now-shared) deploy default
+                    # (#2723).
+                    "per_handle_home": True,
+                },
+                headers=headers,
+            )
         ws_id = resp.json()["id"]
         resp = await client.post(
             f"/api/v1/workspaces/{ws_id}/duplicate",
@@ -7348,28 +7353,33 @@ class TestVolumeRoutes:
     async def test_list_volumes_shows_whole_inventory(
         self, client, admin_user, user, app_state
     ):
-        """An admin sees every instance volume with creator provenance
-        (no longer an access filter), the creator's handle, and the
-        workspaces mounting each volume (#2993)."""
-        await self._seed_volume_world(app_state, user, admin_user)
+        """An admin sees every instance volume with its owning
+        workspace (id + resolved name, #3153) and the workspaces
+        mounting each volume (#2993)."""
+        owner_ws = await self._seed_volume_world(app_state, user, admin_user)
         headers = await _admin_login(client)
         with patch.object(
             _mock_pod,
             "list_volumes",
-            AsyncMock(return_value=self._world_volumes(user)),
+            AsyncMock(return_value=self._world_volumes(owner_ws)),
         ):
             resp = await client.get("/api/v1/volumes", headers=headers)
         assert resp.status_code == 200
         data = resp.json()
         assert data["total"] == 4
         assert [
-            (v["name"], v["user_id"], v["created_by"], v["workspaces"])
+            (v["name"], v["workspace_id"], v["workspace"], v["workspaces"])
             for v in data["volumes"]
         ] == [
             ("system-vol", None, None, []),
-            ("orphan-vol", "ghost-user", None, []),
-            ("my-vol", user["id"], user["handle"], ["aaa-ws", "ws-uses-vol"]),
-            ("my-vol-2", user["id"], user["handle"], []),
+            ("orphan-vol", "gone-ws", None, []),
+            (
+                "my-vol",
+                owner_ws["id"],
+                "no-mounts-ws",
+                ["aaa-ws", "ws-uses-vol"],
+            ),
+            ("my-vol-2", owner_ws["id"], "no-mounts-ws", []),
         ]
 
     async def _owning_ws(self, app_state, user):
@@ -7391,19 +7401,21 @@ class TestVolumeRoutes:
             "aaa-ws",
             mounts=["my-vol:/x"],
         )
-        await app_state.state.model.workspaces.create_workspace(
+        return await app_state.state.model.workspaces.create_workspace(
             user["id"], "no-mounts-ws"
         )
 
-    def _world_volumes(self, user):
-        """The podman listing behind the shared world (four volumes)."""
+    def _world_volumes(self, owner_ws):
+        """The podman listing behind the shared world (four volumes):
+        my-vol/my-vol-2 owned by the seeded workspace, an orphan whose
+        workspace row is gone, and a label-less system volume."""
         return [
             {
                 "Name": "my-vol",
                 "CreatedAt": "2026-01-01T00:00:00Z",
                 "Labels": {
                     "klangk.instance": _instance_id(),
-                    "klangk.user-id": user["id"],
+                    "klangk.workspace-id": owner_ws["id"],
                 },
             },
             # No CreatedAt: the sort key's empty-date branch.
@@ -7411,7 +7423,7 @@ class TestVolumeRoutes:
                 "Name": "my-vol-2",
                 "Labels": {
                     "klangk.instance": _instance_id(),
-                    "klangk.user-id": user["id"],
+                    "klangk.workspace-id": owner_ws["id"],
                 },
             },
             {
@@ -7419,7 +7431,7 @@ class TestVolumeRoutes:
                 "CreatedAt": "2026-01-02T00:00:00Z",
                 "Labels": {
                     "klangk.instance": _instance_id(),
-                    "klangk.user-id": "ghost-user",
+                    "klangk.workspace-id": "gone-ws",
                 },
             },
             {
@@ -7432,14 +7444,15 @@ class TestVolumeRoutes:
     async def test_list_volumes_search_and_paging(
         self, client, admin_user, user, app_state
     ):
-        """q matches volume name, creator handle, and workspace name
-        (case-insensitive); the envelope paginates and sorts (#2993)."""
-        await self._seed_volume_world(app_state, user, admin_user)
+        """q matches volume name, owning workspace name, and using
+        workspace name (case-insensitive); the envelope paginates and
+        sorts (#2993)."""
+        owner_ws = await self._seed_volume_world(app_state, user, admin_user)
         headers = await _admin_login(client)
         with patch.object(
             _mock_pod,
             "list_volumes",
-            AsyncMock(return_value=self._world_volumes(user)),
+            AsyncMock(return_value=self._world_volumes(owner_ws)),
         ):
 
             async def listing(**params):
@@ -7458,8 +7471,8 @@ class TestVolumeRoutes:
                 "my-vol-2",
             ]
             assert data["total"] == 2
-            # By creator handle.
-            data = await listing(q=user["handle"])
+            # By owning workspace name.
+            data = await listing(q="no-mounts")
             assert [v["name"] for v in data["volumes"]] == [
                 "my-vol",
                 "my-vol-2",

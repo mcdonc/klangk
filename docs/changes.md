@@ -35,6 +35,15 @@ operators or integrators to act when upgrading.
 
 ### Breaking
 
+- **User bind mounts disabled by default (#3153).** With
+  `KLANGKD_ALLOWED_MOUNT_ROOTS` unset (previously: any non-protected
+  host path was allowed), workspace mount entries with a host-path
+  source are now rejected at create/edit — only named volumes may be
+  mounted. Set `KLANGKD_ALLOWED_MOUNT_ROOTS` to a comma-separated
+  list of roots to allow bind mounts under them. klangkd's own
+  mounts (workspace home, config, SSL trust, per-workspace nix) are
+  internal and unaffected.
+
 - **Volume ownership + quota rename (#3153).** Named volumes are
   workspace-owned and cannot be shared across workspaces; volumes
   created before this change (user-id labeled, no workspace label) are

@@ -25,9 +25,11 @@ optionally configure:
   container to verify the service is actually healthy (exit 0 =
   healthy). See [Health Check](health-check.md).
 - **Bind mounts** — mount host directories into the container.
-  If `KLANGKD_ALLOWED_MOUNT_ROOTS` is set (comma-separated list of
-  paths), only directories under those roots can be bind-mounted.
-  Protected paths like the Docker/Podman socket are always blocked.
+  **Disabled by default (#3153):** with `KLANGKD_ALLOWED_MOUNT_ROOTS`
+  unset, host-path mount sources are rejected — only named volumes
+  may be mounted. Setting it (comma-separated list of paths) allows
+  directories under those roots. Protected paths like the Docker/
+  Podman socket are always blocked.
 - **Environment variables** — set custom env vars for the container
 - **Allowed egress domains** — restrict outbound network access to a
   list of hosts (e.g., `github.com:443`, `pypi.org`). See

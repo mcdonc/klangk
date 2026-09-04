@@ -586,11 +586,11 @@ List every podman volume this klangk instance manages.
 
 **Auth:** JWT required. User must have the `view-volumes` permission
 on `/volumes` (seeded Allow for the `admins` group — the admin
-Volumes tab's listing gate). The creator label is surfaced as
-provenance, not used as an access filter. `created_by` is the
-creator's handle (null when the creator no longer exists or the
-volume was created without a label); `workspaces` lists the workspace
-names whose extra mounts reference the volume.
+Volumes tab's listing gate). Volumes are workspace-owned (#3153):
+`workspace_id` is the owning workspace's id (from the podman label),
+`workspace` its resolved name (null when the workspace row is gone),
+and `workspaces` lists the workspace names whose extra mounts
+reference the volume.
 
 No request body.
 
@@ -604,8 +604,8 @@ No request body.
 | `order`     | string | `desc`    | `asc` \| `desc`                      |
 | `q`         | string | (none)    | substring match, case-insensitive    |
 
-`q` matches the volume name, the creator's handle, or any workspace
-name using the volume.
+`q` matches the volume name, the owning workspace's name, or any
+workspace name using the volume.
 
 ```json
 {
@@ -613,8 +613,8 @@ name using the volume.
     {
       "name": "my-volume",
       "created": "2025-01-01T12:00:00Z",
-      "user_id": "<creator user id>",
-      "created_by": "alice",
+      "workspace_id": "<owning workspace id>",
+      "workspace": "my-workspace",
       "workspaces": ["my-workspace"]
     }
   ],
