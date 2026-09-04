@@ -40,7 +40,7 @@ from _e2e_server import start_server, stop_server, ws_connect as _ws_dial
 # Containers must outlive the module's individual tests (the runtime
 # audit needs them running), so the idle timeout is stretched far past
 # the suite default.
-_IDLE_TIMEOUT = "3600"
+IDLE_TIMEOUT = "3600"
 
 
 @pytest.fixture(scope="module")
@@ -52,7 +52,7 @@ def server():
         KLANGKD_DEFAULT_USER="admin@example.com",
         KLANGKD_DEFAULT_PASSWORD="adminpass",
         KLANGKD_TEST_MODE="1",
-        KLANGKD_IDLE_TIMEOUT_SECONDS=_IDLE_TIMEOUT,
+        KLANGKD_IDLE_TIMEOUT_SECONDS=IDLE_TIMEOUT,
         KLANGKD_PER_HANDLE_HOME="true",
         LOGFIRE_TOKEN="",
     )
@@ -95,6 +95,38 @@ def create_workspace(api, headers, name, mounts=None):
     return resp.json()["id"]
 
 
+def sweep_instance_volumes(server):
+    """Best-effort removal of this instance's named podman volumes.
+
+    Volumes live in podman storage, outside the data dir that
+    ``stop_server`` rmtree's — without this sweep a hard-killed worker
+    leaves ``klangke2e*`` volumes behind on the runner (matching the
+    container hygiene ``stop_server`` already applies).
+    """
+    try:
+        with open(f"{server['data_dir']}/instance-id") as fh:
+            instance = fh.read().strip()
+        listed = subprocess.run(
+            [
+                "podman",
+                "volume",
+                "ls",
+                "-q",
+                "--filter",
+                f"label=klangk.instance={instance}",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        if listed.stdout.split():
+            subprocess.run(
+                ["podman", "volume", "rm", *listed.stdout.split()],
+                capture_output=True,
+            )
+    except OSError:
+        pass
+
+
 def delete_workspace(api, headers, workspace_id):
     """Best-effort workspace delete (stops + removes the container)."""
     try:
@@ -124,6 +156,7 @@ def workspaces(server, users):
     delete_workspace(api, users["alice"], made["alice1"])
     delete_workspace(api, users["alice"], made["alice2"])
     delete_workspace(api, users["bob"], made["bob"])
+    sweep_instance_volumes(server)
 
 
 # --- WS exec helpers (same pattern as test_per_user_home.py) ---
@@ -230,6 +263,10 @@ def workspace_root_sources(server, workspace_id):
 
 
 class TestHomeIsolation:
+    # Three sequential container bringups (plus the module server's
+    # startup, billed to this first test) can outrun the conftest's
+    # 300s default on a contended runner — validated under 600s.
+    @pytest.mark.timeout(600)
     @pytest.mark.asyncio
     async def test_home_marker_not_shared_across_workspaces(
         self, server, users, workspaces
@@ -244,8 +281,19 @@ class TestHomeIsolation:
                 await exec_command(ws_a1, ["bash", "-c", "echo $HOME"])
             ).strip()
             assert home == "/home/alice", f"alice's HOME: {home!r}"
+            # Write AND read back: if the write silently failed, the
+            # ABSENT checks below would pass vacuously — a false green
+            # on exactly the invariant this test exists for.
             await exec_command(
                 ws_a1, ["bash", "-c", f"echo x > $HOME/{marker}"]
+            )
+            readback = (
+                await exec_command(
+                    ws_a1, ["bash", "-c", f"cat $HOME/{marker}"]
+                )
+            ).strip()
+            assert readback == "x", (
+                f"marker write in alice1 failed (readback {readback!r})"
             )
         finally:
             await ws_a1.close()
@@ -303,6 +351,23 @@ class TestMountAttacks:
                 "name": f"voliso-attack-{uuid.uuid4().hex[:6]}",
                 "mounts": [f"{victim}:/mnt/pwn"],
             },
+            timeout=10,
+        )
+        assert resp.status_code == 400, resp.text
+        assert "protected" in resp.json().get("detail", "")
+
+    def test_put_other_workspace_home_rejected(
+        self, server, users, workspaces
+    ):
+        """The PUT (update) path validates mounts through the same
+        gate as create — a protected source cannot be smuggled in by
+        editing an existing workspace."""
+        api = server["client"]
+        victim = f"{server['data_dir']}/workspaces/{workspaces['bob']}/home"
+        resp = api.put(
+            f"/api/v1/workspaces/{workspaces['alice2']}",
+            headers=users["alice"],
+            json={"mounts": [f"{victim}:/mnt/pwn"]},
             timeout=10,
         )
         assert resp.status_code == 400, resp.text
@@ -376,6 +441,9 @@ class TestMountAttacks:
 
 
 class TestRuntimeMountAudit:
+    # Adopts/starts all three containers if they are not already
+    # running — same bringup budget as the home-isolation test.
+    @pytest.mark.timeout(600)
     def test_no_cross_workspace_mount_sources(self, server, users, workspaces):
         """podman inspect: every workspaces-root mount source belongs to
         its own workspace's subtree, and the sets are disjoint."""
