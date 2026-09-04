@@ -39,13 +39,15 @@ FEATURES_JSON = os.path.join(ROOT, "src", "frontend", "build", "web", "features.
 # is unset (canonical activation — see #1655). This is the runtime default-on
 # list; the build-time fetch list is the checked-in ``features.yaml`` at the
 # repo root. The two are allowed to differ: a feature can ship dormant
-# (compiled in but not in defaults). Today ``word-count`` and ``soliplex``
-# (#1664, vendored local in #1686) are both compiled-in dormant local features
-# — neither surfaced unless an operator opts in via KLANGKD_FEATURES_ENABLE (#1700).
+# (compiled in but not in defaults). Today ``word-count``, ``soliplex``
+# (#1664, vendored local in #1686), and ``boingball`` (#3149: dropped from
+# the default set so the shipped CSP can omit script-src 'unsafe-eval';
+# opt in with KLANGKD_FEATURES_ENABLE) are compiled-in dormant local features
+# — none surfaced unless an operator opts in via KLANGKD_FEATURES_ENABLE
+# (#1700).
 DEFAULT_FEATURES = [
     "beep",
     "bobdobbs",
-    "boingball",
     "browser-fetch",
     "celebrate",
     "git-credential",

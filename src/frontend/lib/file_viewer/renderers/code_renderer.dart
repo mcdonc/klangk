@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_highlight/flutter_highlight.dart';
 import 'package:flutter_highlight/themes/atom-one-dark.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 
 /// Maps a (lowercased, no-dot) file extension to a `highlight` language id.
@@ -102,7 +101,7 @@ class _CodeViewState extends State<_CodeView> {
               theme: atomOneDarkTheme,
               padding: const EdgeInsets.all(12),
               textStyle: TextStyle(
-                fontFamily: GoogleFonts.robotoMono().fontFamily,
+                fontFamily: 'RobotoMono',
                 fontSize: 13,
               ),
             ),

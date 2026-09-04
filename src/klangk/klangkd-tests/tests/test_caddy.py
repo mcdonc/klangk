@@ -23,7 +23,9 @@ import pytest
 from klangk.caddy import (
     CaddyRenderer,
     CaddyWatchdog,
+    CSP_POLICY,
     classify_caddy_line,
+    csp_block,
     is_bind_error,
 )
 from klangk.caddy import (
@@ -569,6 +571,52 @@ class TestLlmBlockCaddyAdapt:
 # ---------------------------------------------------------------------------
 # CaddyRenderer — render_config (structure)
 # ---------------------------------------------------------------------------
+
+
+class TestCspBlock:
+    """The frontend hardening headers (#3149): CSP + X-Frame-Options on the
+    browser listener's frontend paths, excluded from API/WS/hosted, absent
+    from the egress listener."""
+
+    def test_block_shape(self):
+        b = csp_block()
+        assert "@frontend not path /api /api/* /ws* /hosted /hosted/*" in b
+        assert f'header @frontend Content-Security-Policy "{CSP_POLICY}"' in b
+        assert 'header @frontend X-Frame-Options "DENY"' in b
+
+    def test_policy_is_first_party(self):
+        # No third-party origins and no script eval: fonts are self-hosted
+        # (#3149 additional scope) and no shipped feature JS-evals.
+        assert "https://" not in CSP_POLICY
+        assert "unsafe-eval;" not in CSP_POLICY  # wasm-unsafe-eval only
+        assert "fonts.gstatic.com" not in CSP_POLICY
+        # The clickjacking posture.
+        assert "frame-ancestors 'none'" in CSP_POLICY
+
+    def test_browser_site_carries_headers(self):
+        s = make_settings(
+            {"KLANGKD_PORT": "8997", "KLANGKD_EGRESS_PORT": "8995"}
+        )
+        cf = _renderer(s).render_config("unix//s", "/d/a.sock")
+        browser = cf[cf.index("http://:8997 {") :]
+        assert "@frontend not path" in browser
+        assert CSP_POLICY in browser
+
+    def test_egress_site_has_no_headers(self):
+        s = make_settings(
+            {"KLANGKD_PORT": "8997", "KLANGKD_EGRESS_PORT": "8995"}
+        )
+        cf = _renderer(s).render_config("unix//s", "/d/a.sock")
+        egress = cf[cf.index("http://:8995 {") : cf.index("http://:8997 {")]
+        assert "Content-Security-Policy" not in egress
+        assert "X-Frame-Options" not in egress
+
+    def test_headless_render_has_no_headers(self):
+        # No KLANGKD_PORT -> headless (egress listener only, no browser
+        # listener) -> nothing serves documents -> no CSP anywhere.
+        s = make_settings({"KLANGKD_EGRESS_PORT": "8995"})
+        cf = _renderer(s).render_config("unix//s", "/d/a.sock")
+        assert "Content-Security-Policy" not in cf
 
 
 class TestRenderConfig:

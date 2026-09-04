@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 
 /// Always-available fallback renderer: shows the file's decoded text in a
@@ -62,7 +61,7 @@ class _RawTextViewState extends State<_RawTextView> {
             child: SelectableText(
               snapshot.data ?? '',
               style: TextStyle(
-                fontFamily: GoogleFonts.robotoMono().fontFamily,
+                fontFamily: 'RobotoMono',
                 fontSize: 14,
               ),
               textAlign: TextAlign.left,

@@ -56,6 +56,11 @@ DEMO_LISTEN="${KLANGKD_LISTEN:-127.0.0.1}"
 # demo-helpers.ts demoLogin). Override with KLANGKD_AUTH_MODES if you want a
 # different mode for a one-off run.
 DEMO_AUTH_MODES="${KLANGKD_AUTH_MODES:-both}"
+
+# The stock default-on set plus boingball (dormant since #3149; scene 8's
+# bouncing-ball beat needs it active). An explicit list replaces the defaults,
+# so this must be re-pinned deliberately when the stock set changes.
+DEMO_FEATURES_ENABLE="${KLANGKD_FEATURES_ENABLE:-beep,bobdobbs,boingball,browser-fetch,celebrate,git-credential}"
 # Short, stable state dir under /tmp. The demo runs klangkd --config=none (no
 # klangkd.yaml), so state_dir can't come from there; /tmp survives across runs
 # so the demo container images + DB stay warm for reuse. (AF_UNIX's 108-byte
@@ -120,6 +125,7 @@ _ensure_env() {
     grep -qF "KLANGKD_LLM_MODEL='$DEMO_LLM_MODEL'" .demo-env 2>/dev/null &&
     grep -qF "KLANGKD_HOSTING_HOSTNAME=localhost:$DEMO_PROXY_PORT" .demo-env 2>/dev/null &&
     grep -qF "KLANGKD_AUTH_MODES=$DEMO_AUTH_MODES" .demo-env 2>/dev/null &&
+    grep -qF "KLANGKD_FEATURES_ENABLE=$DEMO_FEATURES_ENABLE" .demo-env 2>/dev/null &&
     grep -qF "KLANGKD_ALLOW_AUTOSTART=1" .demo-env 2>/dev/null; then
     return 0
   fi
@@ -192,6 +198,9 @@ _ensure_env() {
     # Scene 3 (sandbox) needs auto-start so the workspace container boots
     # automatically when the sandbox config requests it.
     echo "KLANGKD_ALLOW_AUTOSTART=1"
+    # Scene 8 (features) needs the boingball overlay active — see
+    # DEMO_FEATURES_ENABLE above.
+    echo "KLANGKD_FEATURES_ENABLE=$DEMO_FEATURES_ENABLE"
     echo "$_ENV_BLOCK_END"
   } >>.demo-env
 }
