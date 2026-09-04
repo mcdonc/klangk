@@ -20,7 +20,7 @@ from textual.widgets import (
     Static,
 )
 
-from ...config import AliasConflictError
+from ...config import AliasConflictError, ConfigUnreadableError
 from ...transport import is_valid_server_spec
 from .base import (
     ConfirmScreen,
@@ -224,6 +224,10 @@ class AddServerScreen(StatusScreen):
                     style="red",
                 )
             )
+            return
+        except ConfigUnreadableError as exc:
+            msg = self.query_one("#add_msg", Static)
+            msg.update(Text(str(exc), style="red"))
             return
         self.app.server_changed()
 
