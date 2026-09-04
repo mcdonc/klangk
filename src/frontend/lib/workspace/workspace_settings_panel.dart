@@ -58,6 +58,13 @@ class WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
   // #2017: whether the deploy allows sudo at all (sudo_available on
   // /api/v1/config, #2974) — gates the settings form's lock-down toggle.
   bool _sudoAvailable = false;
+
+  // #3135: whether the deploy permits per-handle homes at all
+  // (per_handle_home_available on /api/v1/config) — gates the settings
+  // form's home-layout toggle. While false the stored column is inert
+  // (the server clamps every start/connect to the shared home), so the
+  // toggle is hidden and the field omitted from the PUT.
+  bool _perHandleHomeAvailable = false;
   bool _loading = true;
   String? _error;
   String? _saveMessage;
@@ -136,6 +143,7 @@ class WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
       // default-only; the toggles keep their config-derived values.
       _nixAvailable = auth.nixAvailable;
       _sudoAvailable = auth.sudoAvailable;
+      _perHandleHomeAvailable = auth.perHandleHomeAvailable;
       final imgResp = await auth.authGet('/api/v1/images');
       if (mounted && imgResp.statusCode == 200) {
         final imgData = jsonDecode(imgResp.body) as Map<String, dynamic>;
@@ -201,6 +209,7 @@ class WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
       defaultImage: _defaultImage,
       nixAvailable: _nixAvailable,
       sudoAvailable: _sudoAvailable,
+      perHandleHomeAvailable: _perHandleHomeAvailable,
       canExport: widget.canExport,
       allowAutostart:
           context.select<AuthService, bool>((a) => a.allowAutostart),
@@ -354,6 +363,12 @@ class _SettingsForm extends StatefulWidget {
   /// hidden when the deploy forbids sudo.
   final bool sudoAvailable;
 
+  /// #3135: whether the deploy permits per-handle homes at all. The
+  /// per-workspace toggle opts in below that ceiling, so it's hidden
+  /// when the deploy forbids per-handle homes (the stored column is
+  /// inert server-side; the PUT omits the field).
+  final bool perHandleHomeAvailable;
+
   /// #2707: whether the user holds ``export`` on this workspace — gates
   /// the Export card (the endpoint 403s without it).
   final bool canExport;
@@ -377,6 +392,7 @@ class _SettingsForm extends StatefulWidget {
     required this.defaultImage,
     required this.nixAvailable,
     this.sudoAvailable = false,
+    this.perHandleHomeAvailable = false,
     this.canExport = true,
     required this.allowAutostart,
     required this.saveMessage,
@@ -676,7 +692,10 @@ class _SettingsFormState extends State<_SettingsForm> {
         'rejected_domains':
             _rejectedDomains.isNotEmpty ? _rejectedDomains : null,
         'egress_mode': _egressMode,
-        'per_handle_home': _perHandleHome,
+        // #3135: sent only while the ceiling is on; hidden, the stored
+        // column is left untouched (it is inert while the ceiling is
+        // off — the sudo/nix toggle-gated keys follow the same rule).
+        if (widget.perHandleHomeAvailable) 'per_handle_home': _perHandleHome,
         // #2768: full-replace — an emptied field clears the override back
         // to the deploy default. Display-time only (no restart needed).
         'classification_banner': _classificationBannerCtrl.text.trim(),
@@ -1171,23 +1190,27 @@ class _SettingsFormState extends State<_SettingsForm> {
         ),
         // #2721: home layout. Mutable (#2719) — a flip applies from the
         // next connect/start, never to open sessions, so it is NOT a
-        // restart-needed field.
-        const SizedBox(height: 16),
-        Material(
-          type: MaterialType.transparency,
-          child: CheckboxListTile(
-            value: _perHandleHome,
-            onChanged: (v) => setState(() => _perHandleHome = v ?? true),
-            title: const Text('Per-handle home'),
-            subtitle: const Text(
-              'Each member gets a private /home/<handle>; '
-              'off = everyone shares /home/klangk (applies from the next '
-              'connect)',
+        // restart-needed field. #3135: hidden while the deploy ceiling
+        // is off — every workspace then gets the shared home regardless
+        // of the stored column (the PUT omits the field).
+        if (widget.perHandleHomeAvailable) ...[
+          const SizedBox(height: 16),
+          Material(
+            type: MaterialType.transparency,
+            child: CheckboxListTile(
+              value: _perHandleHome,
+              onChanged: (v) => setState(() => _perHandleHome = v ?? true),
+              title: const Text('Per-handle home'),
+              subtitle: const Text(
+                'Each member gets a private /home/<handle>; '
+                'off = everyone shares /home/klangk (applies from the next '
+                'connect)',
+              ),
+              controlAffinity: ListTileControlAffinity.trailing,
+              contentPadding: EdgeInsets.zero,
             ),
-            controlAffinity: ListTileControlAffinity.trailing,
-            contentPadding: EdgeInsets.zero,
           ),
-        ),
+        ],
       ],
     );
   }

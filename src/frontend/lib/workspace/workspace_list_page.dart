@@ -463,6 +463,7 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
         nixAvailable: nixAvailable,
         defaultPerHandleHome: _auth.perHandleHomeDefault,
         sudoAvailable: sudoAvailable,
+        perHandleHomeAvailable: _auth.perHandleHomeAvailable,
       ),
     );
 

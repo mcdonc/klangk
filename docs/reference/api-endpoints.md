@@ -450,10 +450,11 @@ and the branding / feature flags the pre-auth UI needs. An
 **authenticated** caller additionally receives the deploy-wide netfilter
 default + enabled flag (the egress perimeter is not exposed pre-auth)
 and the deploy-level capability toggles `nix_available` /
-`sudo_available` (moved off the images listing; whether the
-per-workspace nix mount can arm, and whether the deploy's sudo ceiling
-permits the per-workspace opt-in — sudo itself is off unless the
-workspace's settings store `allow_sudo: true`), plus any feature-declared frontend config keys and
+`sudo_available` / `per_handle_home_available` (moved off the images
+listing; whether the per-workspace nix mount can arm, whether the
+deploy's sudo ceiling permits the per-workspace opt-in — sudo itself
+is off unless the workspace's settings store `allow_sudo: true` — and
+whether per-handle homes are permitted at all), plus any feature-declared frontend config keys and
 `features_enable` when set.
 
 **Auth:** None (public payload; authenticated callers get a few extra
@@ -486,7 +487,8 @@ No request body.
   "support_url": "",
   "support_email": "",
   "nix_available": false,
-  "sudo_available": true
+  "sudo_available": true,
+  "per_handle_home_available": false
 }
 ```
 
@@ -1406,8 +1408,11 @@ are created automatically.
 All fields except `name` are optional. `per_handle_home` selects the
 [home layout](../features/workspaces.md#home-directory-layout): `true`
 gives each member a private `/home/<handle>`, `false` (the server
-default, `KLANGKD_PER_HANDLE_HOME`) shares one `/home/klangk`. Omit it
-to inherit the server default.
+default) shares one `/home/klangk`. Omit it to inherit the server
+default. The deploy-wide `KLANGKD_PER_HANDLE_HOME` is a **ceiling**:
+while it is `false`, a `per_handle_home: true` is stored but inert —
+every workspace gets the shared home (clamped at the next
+connect/start, no 400 — the same shape `allow_sudo` got in #3047).
 
 A `mounts` source with no `/` that doesn't start with `.` is a named
 volume and must be podman-safe: start with an alphanumeric
@@ -1762,7 +1767,9 @@ command, volume mounts, environment variables). All fields optional.
 
 `per_handle_home` may be flipped here too; the new layout applies from
 the workspace's next connect/start (open terminals keep their layout
-until they end).
+until they end). While the deploy ceiling (`KLANGKD_PER_HANDLE_HOME`)
+is `false`, a stored `true` is inert — the workspace resolves to the
+shared home on every connect/start (no DB rewrite, no 400).
 
 `mounts` named-volume sources are subject to the same podman-safe
 rule as on create; violations return HTTP 400.

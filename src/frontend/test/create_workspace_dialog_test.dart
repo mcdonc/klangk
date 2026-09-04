@@ -68,6 +68,7 @@ void main() {
     bool nixAvailable = false,
     bool? defaultPerHandleHome = true,
     bool sudoAvailable = false,
+    bool perHandleHomeAvailable = true,
   }) {
     final a = auth ?? AuthService();
     return MaterialApp(
@@ -88,6 +89,7 @@ void main() {
                   nixAvailable: nixAvailable,
                   defaultPerHandleHome: defaultPerHandleHome,
                   sudoAvailable: sudoAvailable,
+                  perHandleHomeAvailable: perHandleHomeAvailable,
                 ),
               );
             });
@@ -892,8 +894,9 @@ void main() {
       await tester.pump(); // dialog renders
 
       expect(find.text('Auto start'), findsNothing);
-      // The Per-handle home checkbox (#2721) is always shown — it is the
-      // only checkbox when auto-start is not allowed.
+      // The Per-handle home checkbox (#2721) shows under the deploy
+      // ceiling (#3135 — armed by the helper default) — it is the only
+      // checkbox when auto-start is not allowed.
       expect(find.text('Per-handle home'), findsOneWidget);
       expect(find.byType(Checkbox), findsOneWidget);
     });
@@ -919,8 +922,8 @@ void main() {
       expect(find.text('Auto start'), findsOneWidget);
       // Toggle the checkbox on, then submit (checkbox is at the bottom of
       // the dialog, so ensure it's visible before tapping). Scoped to the
-      // Auto start tile — the Per-handle home checkbox (#2721) is always
-      // present too.
+      // Auto start tile — the Per-handle home checkbox (#2721) is present
+      // too while the ceiling is on.
       final checkbox = find.descendant(
         of: find.widgetWithText(CheckboxListTile, 'Auto start'),
         matching: find.byType(Checkbox),
@@ -1036,6 +1039,39 @@ void main() {
         await tester.pump();
         expect(find.text('Per-handle home'), findsNothing);
         await tester.enterText(_nameField(), 'Unknown');
+        await tester.tap(find.text('Create'));
+        await tester.pump();
+        await tester.pump();
+        expect(postedBody!.containsKey('per_handle_home'), isFalse);
+      },
+    );
+
+    testWidgets(
+      'per-handle home checkbox hidden while the deploy ceiling is off (#3135)',
+      (tester) async {
+        Map<String, dynamic>? postedBody;
+        testAuthHttpClientOverride = mockClient((request) async {
+          if (request.method == 'POST') {
+            postedBody = jsonDecode(request.body) as Map<String, dynamic>;
+            return http.Response(
+              jsonEncode({'id': 'ws-1', 'name': 'x', 'created_at': ''}),
+              200,
+            );
+          }
+          return http.Response('Not found', 404);
+        });
+        // Ceiling off — even with a known true deploy default the tile is
+        // hidden and the field omitted: every workspace gets the shared
+        // home regardless (the server clamps a stored true at start).
+        await tester.pumpWidget(buildDialog(
+          defaultPerHandleHome: true,
+          perHandleHomeAvailable: false,
+        ));
+        await tester.pump(); // post-frame callback
+        await tester.pump(); // dialog renders
+
+        expect(find.text('Per-handle home'), findsNothing);
+        await tester.enterText(_nameField(), 'Clamped');
         await tester.tap(find.text('Create'));
         await tester.pump();
         await tester.pump();

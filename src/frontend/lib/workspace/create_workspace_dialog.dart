@@ -52,6 +52,12 @@ class CreateWorkspaceDialog extends StatefulWidget {
   /// so the server applies its own default (#2737 review).
   final bool? defaultPerHandleHome;
 
+  /// #3135: whether the deploy permits per-handle homes at all — the
+  /// ceiling (per_handle_home_available on /config). The toggle is
+  /// hidden and the field omitted when false: every workspace then
+  /// gets the shared /home/klangk regardless of the stored column.
+  final bool perHandleHomeAvailable;
+
   const CreateWorkspaceDialog({
     super.key,
     required this.auth,
@@ -63,6 +69,7 @@ class CreateWorkspaceDialog extends StatefulWidget {
     this.nixAvailable = false,
     this.defaultPerHandleHome,
     this.sudoAvailable = false,
+    this.perHandleHomeAvailable = false,
   });
 
   @override
@@ -267,7 +274,11 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
     // #2721: sent only when the deploy default was known — the toggle's
     // initial state IS that default, so an untouched form submits it
     // unchanged. Unknown: omitted, and the server applies its own.
-    if (_perHandleHome != null) body['per_handle_home'] = _perHandleHome!;
+    // #3135: also omitted when the ceiling is off (the layout is forced
+    // to shared server-side; the toggle is hidden).
+    if (widget.perHandleHomeAvailable && _perHandleHome != null) {
+      body['per_handle_home'] = _perHandleHome!;
+    }
     if (widget.allowAutostart && _autoStart) {
       body['auto_start'] = true;
     }
@@ -623,8 +634,11 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
                         // default when known; hidden (and the field
                         // omitted) when it couldn't be fetched — an
                         // offered choice we can't pre-reflect would pin a
-                        // possibly-wrong value.
-                        if (_perHandleHome != null) ...[
+                        // possibly-wrong value. #3135: also hidden while
+                        // the deploy ceiling is off — every workspace
+                        // then gets the shared home regardless.
+                        if (widget.perHandleHomeAvailable &&
+                            _perHandleHome != null) ...[
                           const SizedBox(height: 16),
                           Material(
                             type: MaterialType.transparency,

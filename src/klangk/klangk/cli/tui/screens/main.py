@@ -213,15 +213,16 @@ async def fetch_image_defaults(state) -> tuple[str, list[str]] | None:
     return data.get("default", "") or "", list(data.get("allowed") or [])
 
 
-async def fetch_deploy_toggles(state) -> tuple[bool, bool] | None:
-    """The deploy nix/sudo toggles; None on auth failure."""
+async def fetch_deploy_toggles(state) -> tuple[bool, bool, bool] | None:
+    """The deploy nix/sudo/per-handle-home toggles; None on auth
+    failure."""
     try:
         return await asyncio.to_thread(state.deploy_toggles)
     except AuthError:
         return None
     except (httpx.HTTPError, OSError, ValueError) as exc:
         logger.debug("Could not fetch deploy toggles: %s", exc)
-        return False, False
+        return False, False, False
 
 
 async def fetch_or_default(state_method, fallback, label: str):
@@ -967,12 +968,13 @@ class MainScreen(StatusScreen):
             return
         default, allowed = images
         # #2974: deploy-level nix/sudo toggles moved from the images
-        # payload to the authenticated-only /config fields.
+        # payload to the authenticated-only /config fields. #3135 adds
+        # the per-handle-home ceiling to the same tuple.
         toggles = await fetch_deploy_toggles(state)
         if toggles is None:
             self.app.session_expired()
             return
-        nix_available, sudo_available = toggles
+        nix_available, sudo_available, per_handle_home_available = toggles
         allow_autostart = await fetch_or_default(
             state.allow_autostart, False, "autostart config"
         )
@@ -995,6 +997,7 @@ class MainScreen(StatusScreen):
                 nix_available=nix_available,
                 default_per_handle_home=default_per_handle_home,
                 sudo_available=sudo_available,
+                per_handle_home_available=per_handle_home_available,
             ),
             self._on_created,
         )

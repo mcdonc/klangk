@@ -380,14 +380,15 @@ async def edit_images(state) -> tuple[str, list[str]] | None:
     return data.get("default", "") or "", list(data.get("allowed") or [])
 
 
-async def edit_toggles(state) -> tuple[bool, bool] | None:
-    """The deploy nix/sudo toggles; None on auth failure."""
+async def edit_toggles(state) -> tuple[bool, bool, bool] | None:
+    """The deploy nix/sudo/per-handle-home toggles; None on auth
+    failure."""
     try:
         return await asyncio.to_thread(state.deploy_toggles)
     except AuthError:
         return None
     except Exception:
-        return False, False
+        return False, False, False
 
 
 async def edit_autostart(state) -> bool | None:
@@ -415,12 +416,13 @@ async def open_edit_screen(screen, state, workspace, on_edited) -> None:
         return
     default, allowed = images
     # #2974: deploy-level nix/sudo toggles moved from the images
-    # payload to the authenticated-only /config fields.
+    # payload to the authenticated-only /config fields. #3135 adds the
+    # per-handle-home ceiling to the same tuple.
     toggles = await edit_toggles(state)
     if toggles is None:
         screen.app.session_expired()
         return
-    nix_available, sudo_available = toggles
+    nix_available, sudo_available, per_handle_home_available = toggles
     allow_autostart = await edit_autostart(state)
     if allow_autostart is None:
         screen.app.session_expired()
@@ -433,6 +435,7 @@ async def open_edit_screen(screen, state, workspace, on_edited) -> None:
             allow_autostart=allow_autostart,
             nix_available=nix_available,
             sudo_available=sudo_available,
+            per_handle_home_available=per_handle_home_available,
         ),
         on_edited,
     )
@@ -657,6 +660,14 @@ class WorkspaceFormMixin:
             )
         return Select(self._select_options, id="image")
 
+    def _apply_per_handle_home_visibility(self, shown: bool) -> None:
+        """Gate the home-layout checkbox (#3135): hidden + disabled when
+        the deploy ceiling is off (the stored value is inert — every
+        start/connect resolves to the shared home), so Tab skips it."""
+        cb = self.query_one("#per_handle_home", Checkbox)
+        cb.display = shown
+        cb.disabled = not shown
+
     def form_on_mount(self) -> None:
         """Shared on_mount: apply deploy-gated toggle visibility, seed
         the list editors, and focus Name (General is the entry tab).
@@ -878,6 +889,7 @@ class CreateWorkspaceScreen(WorkspaceFormMixin, TabSkipMixin, StatusScreen):
         nix_available: bool = False,
         default_per_handle_home: bool | None = None,
         sudo_available: bool = False,
+        per_handle_home_available: bool = False,
     ) -> None:
         super().__init__()
         self._allowed = list(allowed)
@@ -891,6 +903,9 @@ class CreateWorkspaceScreen(WorkspaceFormMixin, TabSkipMixin, StatusScreen):
         # the server allows sudo; hidden otherwise (sudo is off for every
         # workspace regardless of the checkbox).
         self._sudo_available = bool(sudo_available)
+        # #3135: the per-handle-home ceiling — hidden when the deploy
+        # forbids per-handle homes (a stored/checked true is inert).
+        self._per_handle_home_available = bool(per_handle_home_available)
         self._mounts: list[str] = []
         self._env: dict[str, str] = {}
         # Seed the Netfilter list with the deploy default
@@ -942,10 +957,13 @@ class CreateWorkspaceScreen(WorkspaceFormMixin, TabSkipMixin, StatusScreen):
         # The home-layout toggle is hidden when the deploy default is
         # unknown (fetch failure): an offered choice we can't pre-reflect
         # would pin a possibly-wrong value, so the field is omitted and
-        # the server applies its own default (#2737 review).
-        phh_cb = self.query_one("#per_handle_home", Checkbox)
-        phh_cb.display = self._default_per_handle_home is not None
-        phh_cb.disabled = self._default_per_handle_home is None
+        # the server applies its own default (#2737 review). #3135: also
+        # hidden when the deploy ceiling is off — every workspace gets
+        # the shared home regardless of the checkbox.
+        self._apply_per_handle_home_visibility(
+            self._default_per_handle_home is not None
+            and self._per_handle_home_available
+        )
 
     def msg(self, text: str, *, error: bool = False) -> None:
         self.query_one("#create_msg", Static).update(
@@ -1354,6 +1372,7 @@ class EditWorkspaceScreen(WorkspaceFormMixin, TabSkipMixin, StatusScreen):
         allow_autostart: bool,
         nix_available: bool = False,
         sudo_available: bool = False,
+        per_handle_home_available: bool = False,
     ) -> None:
         super().__init__()
         self._ws = workspace
@@ -1367,6 +1386,10 @@ class EditWorkspaceScreen(WorkspaceFormMixin, TabSkipMixin, StatusScreen):
         # locked-down, matching the create default). Hidden unless the
         # deploy allows sudo (the knob can only lock down below that).
         self._sudo_available = bool(sudo_available)
+        # #3135: the per-handle-home ceiling — hidden when the deploy
+        # forbids per-handle homes; the stored column stays as-is (inert)
+        # and the PUT omits the field.
+        self._per_handle_home_available = bool(per_handle_home_available)
         self._mounts: list[str]
         seeds = seeded_form_state(workspace)
         self._mounts = seeds["mounts"]
@@ -1434,6 +1457,11 @@ class EditWorkspaceScreen(WorkspaceFormMixin, TabSkipMixin, StatusScreen):
 
     def on_mount(self) -> None:
         self.form_on_mount()
+        # #3135: the home-layout toggle is hidden while the deploy
+        # ceiling is off — the stored column is inert (every connect
+        # resolves to the shared home), so offering the choice would
+        # show a no-op.
+        self._apply_per_handle_home_visibility(self._per_handle_home_available)
 
     def msg(self, text: str, *, error: bool = False) -> None:
         self.query_one("#edit_msg", Static).update(
@@ -1586,18 +1614,12 @@ class EditWorkspaceScreen(WorkspaceFormMixin, TabSkipMixin, StatusScreen):
     def _save_field_values(self) -> dict:
         """The scalar widget reads for the PUT body (empties -> None)."""
         image = self.query_one("#image", Select).value
-        return {
+        values = {
             "image": save_image_value(image),
             "service_command": cleared_text(self, "command"),
             "health_check": cleared_text(self, "health_check"),
             "auto_start": self._allow_autostart
             and self.query_one("#auto_start", Checkbox).value,
-            # #2721: home layout is mutable and applies from the next
-            # connect/start — never a restart-needed field (open sessions
-            # keep their layout until they end).
-            "per_handle_home": self.query_one(
-                "#per_handle_home", Checkbox
-            ).value,
             # #2768: classification marking. Always sent (full-replace like
             # the other PUT fields): an emptied field clears the override so
             # the workspace inherits the deploy default again. Display-time
@@ -1607,6 +1629,16 @@ class EditWorkspaceScreen(WorkspaceFormMixin, TabSkipMixin, StatusScreen):
             ),
             "egress_mode": self.query_one("#egress_mode", Select).value,
         }
+        # #2721: home layout is mutable and applies from the next
+        # connect/start — never a restart-needed field (open sessions
+        # keep their layout until they end). #3135: sent only while the
+        # deploy ceiling is on; hidden, the stored column is left
+        # untouched (it is inert while the ceiling is off — the sudo /
+        # nix toggle-gated keys follow the same omit-when-hidden rule).
+        phh_cb = self.query_one("#per_handle_home", Checkbox)
+        if phh_cb.display:
+            values["per_handle_home"] = phh_cb.value
+        return values
 
     def _merged_save_settings(self) -> dict:
         """The settings bag for the PUT body: collect_settings merged over

@@ -1042,7 +1042,7 @@ class ContainerRegistry(NetworkSidecarMixin):
         health_check: str | None = None,
         owner_id: str | None = None,
         setup_state: str | None = None,
-        per_handle_home: bool = True,
+        per_handle_home: bool = False,
     ) -> tuple[str, str] | None:
         """Check an existing container and reuse/remove it.
 
@@ -1129,7 +1129,7 @@ class ContainerRegistry(NetworkSidecarMixin):
         health_check: str | None = None,
         owner_id: str | None = None,
         setup_state: str | None = None,
-        per_handle_home: bool = True,
+        per_handle_home: bool = False,
     ) -> tuple[str, str] | None:
         """Adopt a live workspace container found by label (#2676).
 
@@ -1271,7 +1271,7 @@ class ContainerRegistry(NetworkSidecarMixin):
         health_check: str | None = None,
         owner_id: str | None = None,
         setup_state: str | None = None,
-        per_handle_home: bool = True,
+        per_handle_home: bool = False,
     ) -> str:
         """Create the container, persist it, start it, and configure it.
 

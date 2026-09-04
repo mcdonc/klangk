@@ -587,9 +587,11 @@ def edit(
         None,
         "--per-handle-home/--shared-home",
         help=(
-            "Home layout (applies from the next connect/start): "
-            "per-handle gives each member a private /home/<handle>; "
-            "shared puts everyone in /home/klangk"
+            "Home layout (server-permitting, applies from the next "
+            "connect/start): per-handle gives each member a private "
+            "/home/<handle>; shared puts everyone in /home/klangk. "
+            "Requires KLANGKD_PER_HANDLE_HOME=true on the server — "
+            "otherwise every workspace gets the shared home"
         ),
     ),
     health_check: str | None = typer.Option(

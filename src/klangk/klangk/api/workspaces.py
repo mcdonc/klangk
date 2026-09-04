@@ -329,9 +329,14 @@ class CreateWorkspaceRequest(WorkspaceBodyFields):
     egress_mode: Literal["static", "interactive", "allow"] = (
         EGRESS_MODE_DEFAULT
     )
-    # None = inherit the deploy default (KLANGKD_PER_HANDLE_HOME); the
-    # handler resolves it before the create. Editable afterwards via PUT
-    # (a flip applies to the layout realized on the next connect/start).
+    # None = store the deploy flag's value (KLANGKD_PER_HANDLE_HOME —
+    # which, with the ceiling on, is true, so an untouched create gets
+    # per-handle homes); the handler resolves it before the create.
+    # Editable afterwards via PUT (a flip applies to the layout realized
+    # on the next connect/start). #3135: the deploy flag is a ceiling —
+    # an explicit true is stored as-is but inert while the ceiling is
+    # off (resolve_per_handle_home clamps at start/connect, mirroring
+    # allow_sudo's #3047 choice of clamp over 400).
     per_handle_home: bool | None = None
     # Classification marking rendered as the persistent banner (#2768).
     # Free text, one line. None/empty = inherit the deploy default
@@ -475,6 +480,11 @@ def _validate_create_fields(body, app) -> dict:
             body.rejected_domains, app
         ),
         "settings": settings,
+        # #3135: an omitted field stores the deploy flag — which equals
+        # the ceiling, so this is true exactly when per-handle homes are
+        # permitted. An explicit value is stored verbatim; the ceiling
+        # clamps at start/connect, not here (no 400 — allow_sudo's
+        # #3047 clamp choice).
         "per_handle_home": (
             body.per_handle_home
             if body.per_handle_home is not None
@@ -534,6 +544,8 @@ class UpdateWorkspaceRequest(WorkspaceBodyFields):
     # connect/start, never on a live session (#2719). Note an explicit
     # null stores 0 (shared) via the truthy coercion — same as
     # auto_start; only POST's null means "inherit the deploy default".
+    # #3135: the deploy flag is a ceiling — a stored true is inert
+    # while the ceiling is off (clamped at start/connect, no 400).
     per_handle_home: bool | None = None
     # Classification marking (#2768): full-replace like the other PUT
     # fields. A present-but-empty/whitespace value CLEARS the override

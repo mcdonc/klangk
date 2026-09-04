@@ -102,6 +102,12 @@ async function globalSetup() {
         KLANGKD_AUTH_MODES: "password",
         KLANGKD_TEST_MODE: "1",
         KLANGKD_PORT_RANGE_START: "19200",
+        // #3135: KLANGKD_PER_HANDLE_HOME is a ceiling — the per-user-home
+        // specs opt their workspaces in via the create body, which only
+        // realizes per-handle homes while the ceiling is on. Other specs
+        // write to the always-present shared /home/klangk and are
+        // layout-agnostic.
+        KLANGKD_PER_HANDLE_HOME: "1",
         LOGFIRE_TOKEN: "", // Disable Logfire tracing during E2E tests
         KLANGKD_LOGIN_BANNER_TITLE: "", // No consent banner in E2E tests
         KLANGKD_LOGIN_BANNER: "",

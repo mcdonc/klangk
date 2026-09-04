@@ -48,6 +48,26 @@ operators or integrators to act when upgrading.
   `Authenticated`) ahead of the Allow in the ACL editor. See
   [ACL System](https://klangk.github.io/klangk/reference/acl/).
 
+- **`KLANGKD_PER_HANDLE_HOME` is now a ceiling, not a default (#3135).**
+  The flag no longer just pre-selects the home layout for new
+  workspaces — it gates whether per-handle homes are permitted at all
+  (the same shape `KLANGKD_ALLOW_SUDO` got in #3047). While it is
+  `false` (the default), **every** workspace gets the shared
+  `/home/klangk` regardless of its stored `per_handle_home` value: a
+  stored `true` (including the population migration 0009 backfilled
+  for pre-feature workspaces) is inert, clamped at the next
+  connect/start and never rewritten — no create/edit request is
+  rejected. Operators whose workspaces rely on per-handle homes must
+  set `KLANGKD_PER_HANDLE_HOME=true` on upgrade. With the ceiling on,
+  behavior is unchanged (workspaces choose either layout; an omitted
+  create field stores the flag's value). The _Per-handle home_ toggle
+  is hidden in the web dialog/settings panel and the TUI forms while
+  the ceiling is off (`per_handle_home_available` on `/config`), and
+  the CLI `--per-handle-home` flag cannot raise a workspace past the
+  ceiling. Reloadable on SIGHUP; applies to containers started after
+  the change. See
+  [Workspaces](https://klangk.github.io/klangk/features/workspaces/).
+
 - **Per-workspace sudo is now opt-in (#3046, #3047).** `KLANGKD_ALLOW_SUDO`
   no longer grants passwordless sudo by itself — it is now only the
   ceiling that permits a workspace to opt in. Sudo is on for a workspace

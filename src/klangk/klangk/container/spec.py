@@ -156,11 +156,14 @@ class ContainerStartSpec:
     # ``audit_actor_id`` None means an autonomous (system) cause.
     audit_cause: str = CAUSE_API
     audit_actor_id: str | None = None
-    # Home layout (#2169 chunk 2, #2720): True -> per-handle
-    # /home/{handle} symlinks; False -> the single shared /home/klangk.
-    # Traveled on the spec so ContainerState carries it for the health
-    # monitor (same pattern as health_check/owner_id/setup_state).
-    per_handle_home: bool = True
+    # Home layout (#2169 chunk 2, #2720; ceiling #3135): True ->
+    # per-handle /home/{handle} symlinks; False -> the single shared
+    # /home/klangk. Traveled on the spec so ContainerState carries it for
+    # the health monitor (same pattern as health_check/owner_id/setup_state).
+    # Defaults to the hardened direction (shared): every real start path
+    # passes the ceiling-resolved value explicitly, so a future caller
+    # that omits the kwarg must not silently realize per-handle homes.
+    per_handle_home: bool = False
 
 
 def image_pull_policy(app) -> str:
