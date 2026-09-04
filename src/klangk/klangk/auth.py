@@ -728,6 +728,29 @@ class Auth:
         if sockets is not None:
             await sockets.disconnect_by_jti(jti, reason="Token revoked")
 
+    async def revoke_all_user_sessions(self, user_id: str) -> None:
+        """Blocklist and delete every session for *user_id* (#3152).
+
+        Called after a password change: the old credential is invalid, so
+        every session minted with it must be forcibly ended — both the
+        HTTP side (blocklist → 401) and the WebSocket side (kick).
+        """
+        rows = await self.app.state.model.sessions.list_sessions(user_id)
+        for row in rows:
+            logger.info(
+                "password change: revoking session jti=%s (user %s)",
+                row["jti"],
+                user_id,
+            )
+            await self.app.state.model.tokens.blocklist_token(
+                row["jti"], row["expires_at"]
+            )
+            await self._kick_revoked_sockets(row["jti"])
+        if rows:
+            await self.app.state.model.sessions.remove_sessions(
+                [row["jti"] for row in rows]
+            )
+
     async def _revoke_sessions(
         self, user_id: str, rows: list[dict], limit: int
     ) -> None:

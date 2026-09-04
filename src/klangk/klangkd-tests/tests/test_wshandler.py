@@ -2830,8 +2830,8 @@ class TestHandleWebsocketDispatch:
         seen: list = []
 
         class RecordingConnection(Connection):
-            def __init__(self, ws, u, app, jti=None):
-                super().__init__(ws, u, app, jti=jti)
+            def __init__(self, ws, u, app, jti=None, token_exp=None):
+                super().__init__(ws, u, app, jti=jti, token_exp=token_exp)
                 seen.append(jti)
 
         with patch.object(dispatch_mod, "Connection", RecordingConnection):
@@ -2840,15 +2840,17 @@ class TestHandleWebsocketDispatch:
 
     async def test_ws_authenticate_returns_user_and_jti(self, user):
         """#3152: ws_authenticate hands the caller the authenticated user
-        plus the token's JTI."""
+        plus the token's JTI and exp."""
         app_state = _make_app_state()
         token = _auth().create_token(user["id"], user["email"])
+        payload = _auth().decode_token(token)
         websocket = _mock_raw_sock(query_params={"token": token})
         result = await ws_authenticate(websocket, app_state)
         assert isinstance(result, tuple)
-        authed_user, jti = result
+        authed_user, jti, exp = result
         assert authed_user["id"] == user["id"]
-        assert jti == _auth().decode_token(token)["jti"]
+        assert jti == payload["jti"]
+        assert exp == payload["exp"]
         websocket.close.assert_not_awaited()
 
     async def test_dispatch_terminal_input(self, user):
@@ -12758,3 +12760,40 @@ class TestNoCoverAudit2910Part3:
         await ctrl.handle_list_error(RuntimeError("listing broke"))
         sent = [c[0][0] for c in sock.send_json.call_args_list]
         assert any(m.get("type") == "error" for m in sent)
+
+
+class TestTokenExpiryTimer:
+    """#3152: the connection must close when the access token expires."""
+
+    async def test_socket_closes_when_token_expires(self):
+        """schedule_token_expiry closes the socket at exp time."""
+        sock = _mock_sock()
+        # token_exp in the past → immediate close
+        conn = _base_conn(ws=sock)
+        conn.token_exp = time.time() - 1
+        conn._expiry_task = None
+        conn.schedule_token_expiry()
+        assert conn._expiry_task is not None
+        await conn._expiry_task
+        sock.close.assert_awaited_once_with(code=4002, reason="Token expired")
+
+    async def test_no_timer_without_token_exp(self):
+        """No expiry task when token_exp is None (e.g. test connections)."""
+        conn = _base_conn()
+        conn.token_exp = None
+        conn._expiry_task = None
+        conn.schedule_token_expiry()
+        assert conn._expiry_task is None
+
+    async def test_cleanup_cancels_expiry_task(self):
+        """cleanup() cancels the pending expiry task."""
+        app_state = _make_app_state()
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock, app_state=app_state)
+        conn.token_exp = time.time() + 3600
+        conn._expiry_task = None
+        conn.schedule_token_expiry()
+        assert conn._expiry_task is not None
+        assert not conn._expiry_task.done()
+        await conn.cleanup()
+        assert conn._expiry_task is None

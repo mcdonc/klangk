@@ -1616,6 +1616,34 @@ class TestRevocationKicksSockets:
         finally:
             sockets.connections.clear()
 
+    async def test_revoke_all_user_sessions_closes_every_socket(
+        self, user, app_state
+    ):
+        """revoke_all_user_sessions (used by change-password) blocklists
+        and kicks every session, not just one."""
+        a, sockets = self._auth_with_sockets()
+        t1 = await self._login(a)
+        t2 = await self._login(a)
+        jti1 = a.decode_token(t1)["jti"]
+        jti2 = a.decode_token(t2)["jti"]
+        closed: list[tuple[int, str]] = []
+
+        class FakeSock:
+            async def close(self, code=1000, reason=""):
+                closed.append((code, reason))
+
+        sockets.connections[FakeSock()] = self._fake_conn(user, jti1)
+        sockets.connections[FakeSock()] = self._fake_conn(user, jti2)
+        try:
+            await a.revoke_all_user_sessions(user["id"])
+            assert len(closed) == 2
+            assert all(code == 4001 for code, _ in closed)
+            # Both tokens are now blocklisted.
+            assert await a.get_user_from_token(t1) is None
+            assert await a.get_user_from_token(t2) is None
+        finally:
+            sockets.connections.clear()
+
 
 class TestConcurrentLogonAudit:
     """Audit records for concurrent logons from different workstations

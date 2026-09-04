@@ -2066,7 +2066,15 @@ class TestChangePassword:
             3,
             raising=False,
         )
-        headers = await _auth_headers(client)
+
+        async def _login(pw):
+            r = await client.post(
+                "/api/v1/auth/login",
+                json={"identifier": "testuser@example.com", "password": pw},
+            )
+            return {"Authorization": f"Bearer {r.json()['access_token']}"}
+
+        headers = await _login("testpass")
         # Change away from the seed password once — this retires the
         # seed hash into history; the new hash is never recorded until
         # the user changes away from *it* (#2582).
@@ -2079,6 +2087,8 @@ class TestChangePassword:
             headers=headers,
         )
         assert resp.status_code == 200
+        # Re-login: change-password revokes the old token (#3152).
+        headers = await _login("midpass1")
         # To the current password.
         resp = await client.post(
             "/api/v1/auth/change-password",
@@ -2100,6 +2110,8 @@ class TestChangePassword:
             headers=headers,
         )
         assert resp.status_code == 200
+        # Re-login after the second change.
+        headers = await _login("newpass1")
         resp2 = await client.post(
             "/api/v1/auth/change-password",
             json={
@@ -2137,6 +2149,31 @@ class TestChangePassword:
             resp.json()["detail"]
             == "Account is managed by your identity provider"
         )
+
+
+class TestChangePasswordRevokesTokens:
+    """#3152: changing a password must revoke all existing sessions."""
+
+    async def test_old_token_rejected_after_password_change(
+        self, client, user
+    ):
+        headers = await _auth_headers(client)
+        old_token = headers["Authorization"].split()[-1]
+        resp = await client.post(
+            "/api/v1/auth/change-password",
+            json={
+                "current_password": "testpass",
+                "new_password": "newpass1",
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        # The old token is now blocklisted — a protected call should 401.
+        resp2 = await client.get(
+            "/api/v1/auth/me",
+            headers={"Authorization": f"Bearer {old_token}"},
+        )
+        assert resp2.status_code == 401
 
 
 class TestChangeEmail:

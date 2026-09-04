@@ -65,9 +65,10 @@ WS_STATE_COMMANDS: dict[str, str] = {
 async def ws_authenticate(websocket: WebSocket, app):
     """Validate the socket's token; close and return None on failure.
 
-    Success returns ``(user, jti)`` — the token's JTI rides along so
-    the connection can be targeted for closing when that token is
-    later hard-revoked (#3152).
+    Success returns ``(user, jti, exp)`` — the token's JTI rides along
+    so the connection can be targeted for closing when that token is
+    later hard-revoked (#3152), and ``exp`` (Unix epoch) lets the
+    connection schedule its own close when the token expires.
     """
     token = websocket.query_params.get("token")
     if not token:
@@ -81,7 +82,8 @@ async def ws_authenticate(websocket: WebSocket, app):
     if result is None:
         await websocket.close(code=4001, reason="Invalid token")
         return None
-    return result, app.state.auth.decode_token(token).get("jti")
+    payload = app.state.auth.decode_token(token)
+    return result, payload.get("jti"), payload.get("exp")
 
 
 # Exceptions raised by a *handler* that mean the connection itself is
@@ -200,13 +202,14 @@ async def handle_websocket(websocket: WebSocket, app) -> None:
     authed = await ws_authenticate(websocket, app)
     if authed is None:
         return
-    user, jti = authed
+    user, jti, token_exp = authed
 
     await websocket.accept()
     safe_ws = SafeWebSocket(websocket)
     safe_ws.start_sender()
-    conn = Connection(safe_ws, user, app, jti=jti)
+    conn = Connection(safe_ws, user, app, jti=jti, token_exp=token_exp)
     app.state.sockets.connections[safe_ws] = conn
+    conn.schedule_token_expiry()
     # Everything from here on is inside the try so a failure in the
     # connect-time work below still runs the ``finally`` cleanup — the
     # snapshot (#1714) awaits DB queries, and a raise there used to

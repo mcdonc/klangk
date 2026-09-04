@@ -301,6 +301,16 @@ operators or integrators to act when upgrading.
   unaffected — a refreshed session keeps its socket, retargeted onto
   the new token so a later revocation still closes it.
 
+- **WebSocket connections close on token expiry (#3152).** A socket
+  now schedules its own close (code 4002) at the access token's `exp`
+  time. Previously a socket established before the token expired would
+  stay open indefinitely until the client happened to reconnect.
+
+- **Password change revokes all sessions (#3152).** `POST
+/api/v1/auth/change-password` now blocklists every active session
+  token and closes their WebSocket connections, forcing re-login on
+  all devices.
+
 - **Bounded rate-limit state for the email cooldowns (#3113).** The
   per-address cooldown dicts behind
   `POST /api/v1/auth/forgot-password` and
