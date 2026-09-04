@@ -315,7 +315,12 @@ class TestSafeWebSocket:
         raw = AsyncMock()
         sw = SafeWebSocket(raw)
         await sw.close(code=4001)
-        raw.close.assert_awaited_once_with(code=4001)
+        raw.close.assert_awaited_once_with(code=4001, reason=None)
+        # #3152: the kick paths close with a reason; it must reach the
+        # transport (it used to be dropped here, making every
+        # reason-carrying kick a swallowed TypeError no-op).
+        await sw.close(code=4001, reason="Token revoked")
+        raw.close.assert_awaited_with(code=4001, reason="Token revoked")
 
     async def test_headers_delegates(self):
         raw = AsyncMock()
@@ -2954,6 +2959,57 @@ class TestHandleWebsocketDispatch:
             await handle_websocket(websocket, app_state)
 
         mock_stop.assert_not_awaited()
+
+
+def _planted_safe_socket(app_state, jti, user_id="uid"):
+    """A real SafeWebSocket over a mock raw socket, planted in the
+    registry under a fake connection with *jti* (#3152 review: fakes
+    whose close() happens to accept ``reason`` masked that
+    SafeWebSocket.close historically dropped it)."""
+    raw = _mock_raw_sock()
+    sock = SafeWebSocket(raw)
+    app_state.state.sockets.connections[sock] = types.SimpleNamespace(
+        user={"id": user_id, "email": f"{user_id}@example.com"}, jti=jti
+    )
+    return raw, sock
+
+
+class TestKicksCloseRealSockets:
+    """#3152 review: the kick paths must close REAL SafeWebSocket entries.
+    Both disconnect_by_jti and disconnect_user pass ``reason``; when
+    SafeWebSocket.close silently dropped the kwarg, every such kick was
+    a swallowed TypeError no-op — fake sockets with matching signatures
+    hid it, so these tests use the real writer class."""
+
+    async def test_disconnect_by_jti_closes_real_safe_websocket(self):
+        app_state = _make_app_state()
+        raw, _ = _planted_safe_socket(app_state, "jti-victim")
+        try:
+            kicked = await app_state.state.sockets.disconnect_by_jti(
+                "jti-victim", reason="Token revoked"
+            )
+            assert kicked == 1
+            raw.close.assert_awaited_once_with(
+                code=4001, reason="Token revoked"
+            )
+        finally:
+            app_state.state.sockets.connections.clear()
+
+    async def test_disconnect_user_closes_real_safe_websocket(self):
+        """Regression for the pre-existing latent no-op (#2588 kick):
+        account-disable / inactivity closes also carry ``reason``."""
+        app_state = _make_app_state()
+        raw, _ = _planted_safe_socket(app_state, "jti-x", "u1")
+        try:
+            kicked = await app_state.state.sockets.disconnect_user(
+                "u1", reason="Account disabled"
+            )
+            assert kicked == 1
+            raw.close.assert_awaited_once_with(
+                code=4001, reason="Account disabled"
+            )
+        finally:
+            app_state.state.sockets.connections.clear()
 
 
 # --- handle_restart_container additional coverage ---

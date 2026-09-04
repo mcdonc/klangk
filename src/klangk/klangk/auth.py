@@ -1066,6 +1066,19 @@ class Auth:
         await self.app.state.model.sessions.replace_session(
             jti, user_id, new_payload["jti"], new_expires_at
         )
+        self._retarget_refreshed_sockets(jti, new_payload["jti"])
+
+    def _retarget_refreshed_sockets(self, old_jti: str, new_jti: str) -> None:
+        """Move live WS connections onto the refreshed token's JTI (#3152).
+
+        Keeps ``conn.jti`` equal to the session row's current JTI so a
+        later hard revocation (logout, eviction) still finds the socket
+        the refreshed session is using. Minimal app states (tests) may
+        not wire ``sockets`` — then there is nothing to retarget.
+        """
+        sockets = getattr(self.app.state, "sockets", None)
+        if sockets is not None:
+            sockets.reattach_jti(old_jti, new_jti)
 
     async def _expired_token_response(self, token: str) -> TokenResponse:
         """A previously-refreshed expired token still returns its cached

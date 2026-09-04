@@ -1499,10 +1499,12 @@ class TestRevocationKicksSockets:
 
         sockets.connections[FakeSock()] = self._fake_conn(user, jti)
         sockets.connections[FakeSock()] = self._fake_conn(user, "other-jti")
-        await a.logout(token)
-        # Only the connection the revoked token authenticated is closed.
-        assert closed == [(4001, "Token revoked")]
-        sockets.connections.clear()
+        try:
+            await a.logout(token)
+            # Only the connection the revoked token authenticated is closed.
+            assert closed == [(4001, "Token revoked")]
+        finally:
+            sockets.connections.clear()
 
     async def test_session_limit_eviction_closes_evicted_sockets(
         self, user, app_state
@@ -1518,19 +1520,21 @@ class TestRevocationKicksSockets:
                 closed.append((code, reason))
 
         sockets.connections[FakeSock()] = self._fake_conn(user, first_jti)
-        # The second login evicts the first session past the cap of 1.
-        second = await self._login(a)
-        assert closed == [(4001, "Token revoked")]
-        # The surviving session's token still works.
-        assert await a.get_user_from_token(second) is not None
-        sockets.connections.clear()
+        try:
+            # The second login evicts the first session past the cap of 1.
+            second = await self._login(a)
+            assert closed == [(4001, "Token revoked")]
+            # The surviving session's token still works.
+            assert await a.get_user_from_token(second) is not None
+        finally:
+            sockets.connections.clear()
 
     async def test_refresh_rotation_does_not_close_socket(
         self, user, app_state
     ):
         """A refresh blocklists the old JTI (idempotent rotation cache)
         but keeps the session — the socket opened with the old token must
-        stay connected."""
+        stay connected, retargeted onto the new JTI."""
         a, sockets = self._auth_with_sockets()
         token = await self._login(a)
         jti = a.decode_token(token)["jti"]
@@ -1540,10 +1544,77 @@ class TestRevocationKicksSockets:
             async def close(self, code=1000, reason=""):
                 closed.append((code, reason))
 
-        sockets.connections[FakeSock()] = self._fake_conn(user, jti)
-        await a.refresh_token(token)
-        assert closed == []
-        sockets.connections.clear()
+        conn = self._fake_conn(user, jti)
+        bystander = self._fake_conn(user, "unrelated-jti")
+        sockets.connections[FakeSock()] = conn
+        sockets.connections[FakeSock()] = bystander
+        try:
+            refreshed = await a.refresh_token(token)
+            assert closed == []
+            # Retargeted (#3152 review): the live connection now carries
+            # the refreshed token's JTI; unrelated connections are left
+            # alone.
+            new_jti = a.decode_token(refreshed.access_token)["jti"]
+            assert conn.jti == new_jti
+            assert bystander.jti == "unrelated-jti"
+        finally:
+            sockets.connections.clear()
+
+    async def test_logout_after_refresh_closes_retargeted_socket(
+        self, user, app_state
+    ):
+        """#3152 review: the WS outlives the HTTP token refresh (it keeps
+        the old, rotated JTI), so logging out with the NEW token must
+        still close it — via the refresh-time retarget onto the new JTI."""
+        a, sockets = self._auth_with_sockets()
+        token = await self._login(a)
+        closed: list[tuple[int, str]] = []
+
+        class FakeSock:
+            async def close(self, code=1000, reason=""):
+                closed.append((code, reason))
+
+        # A connection opened with the pre-refresh token, planted BEFORE
+        # the refresh: the refresh retargets its JTI onto the new token.
+        conn = self._fake_conn(user, a.decode_token(token)["jti"])
+        sockets.connections[FakeSock()] = conn
+        try:
+            refreshed = await a.refresh_token(token)
+            await a.logout(refreshed.access_token)
+            assert closed == [(4001, "Token revoked")]
+        finally:
+            sockets.connections.clear()
+
+    async def test_eviction_after_refresh_closes_retargeted_socket(
+        self, user, app_state
+    ):
+        """#3152 review: the typical eviction victim is a long-refreshing
+        session (replace_session keeps its original created_at, so it
+        stays oldest) — its socket must still be kickable after rotation.
+        """
+        env = {"KLANGKD_MAX_SESSIONS_PER_USER": "1"}
+        a, sockets = self._auth_with_sockets(env)
+        first = await self._login(a)
+        closed: list[tuple[int, str]] = []
+
+        class FakeSock:
+            async def close(self, code=1000, reason=""):
+                closed.append((code, reason))
+
+        # The connection opened with the pre-refresh token, planted
+        # BEFORE the refresh so the rotation retargets it.
+        conn = self._fake_conn(user, a.decode_token(first)["jti"])
+        sockets.connections[FakeSock()] = conn
+        try:
+            refreshed = await a.refresh_token(first)
+            # The second login evicts the refreshed (still-oldest)
+            # session past the cap of 1.
+            second = await self._login(a)
+            assert closed == [(4001, "Token revoked")]
+            assert await a.get_user_from_token(second) is not None
+            assert await a.get_user_from_token(refreshed.access_token) is None
+        finally:
+            sockets.connections.clear()
 
 
 class TestConcurrentLogonAudit:

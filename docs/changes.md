@@ -298,7 +298,8 @@ operators or integrators to act when upgrading.
   authenticated (close code 4001, so clients log out instead of
   reconnect-looping). Previously an established socket kept full
   data-plane access until the next reconnect. Refresh rotation is
-  unaffected — a refreshed session keeps its socket.
+  unaffected — a refreshed session keeps its socket, retargeted onto
+  the new token so a later revocation still closes it.
 
 - **Bounded rate-limit state for the email cooldowns (#3113).** The
   per-address cooldown dicts behind
@@ -2049,6 +2050,14 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   `podman info` / `podman unshare` diagnostics first so a persistent
   occurrence stays attributable — and passes every other failure through
   untouched.
+
+- **Account-disable / inactivity socket kick was a no-op (#3152).**
+  `SafeWebSocket.close` dropped the `reason` argument, so the 4001
+  close that admin-disable and the inactivity sweep issue for a
+  disabled user's live connections raised a TypeError that was
+  swallowed — no socket was ever actually closed. `close` now forwards
+  `reason` to the transport, and the kick paths have regression tests
+  against the real `SafeWebSocket`.
 
 - **`build-host-image` / `build_wheel.sh` (#3143).** The release wheel is
   now built with `uv build`, which resolves hatchling/hatch-vcs into its own

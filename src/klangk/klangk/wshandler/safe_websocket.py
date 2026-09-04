@@ -101,8 +101,8 @@ class SafeWebSocket:
     async def receive_text(self) -> str:
         return await self._sock.receive_text()
 
-    async def close(self, code: int = 1000) -> None:
-        await self._sock.close(code=code)
+    async def close(self, code: int = 1000, reason: str | None = None) -> None:
+        await self._sock.close(code=code, reason=reason)
 
     @property
     def stopped(self) -> bool:

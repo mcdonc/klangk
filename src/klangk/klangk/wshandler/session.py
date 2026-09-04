@@ -1020,6 +1020,22 @@ class WebSocketState:
                 logger.debug("Error closing socket for jti %s", jti)
         return len(socks)
 
+    def reattach_jti(self, old_jti: str, new_jti: str) -> int:
+        """Move live connections from *old_jti* onto *new_jti* (#3152).
+
+        A token refresh keeps the session — and its socket — alive under
+        the new token; retargeting keeps ``conn.jti`` equal to the
+        session row's current JTI so a later hard revocation (logout,
+        session-limit eviction) still finds the socket. Returns how many
+        connections were moved.
+        """
+        moved = 0
+        for conn in self.connections.values():
+            if conn.jti == old_jti:
+                conn.jti = new_jti
+                moved += 1
+        return moved
+
     async def reset_workspace(
         self, workspace_id: str, *, expected_container_id: str | None = None
     ) -> None:
