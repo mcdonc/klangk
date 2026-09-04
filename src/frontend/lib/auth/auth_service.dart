@@ -62,6 +62,14 @@ class AuthService extends ChangeNotifier {
   /// toggles render.
   bool _nixAvailable = false;
   bool _sudoAvailable = false;
+
+  /// #3135: whether the deploy permits per-handle homes at all
+  /// (per_handle_home_available on the authenticated /config payload —
+  /// KLANGKD_PER_HANDLE_HOME is a ceiling, not a default). The create
+  /// dialog and settings panel hide the Per-handle home toggle when
+  /// this is false: every workspace then gets the shared /home/klangk
+  /// regardless of the stored column.
+  bool _perHandleHomeAvailable = false;
   Timer? _permissionTimer;
   Timer? _refreshTimer;
 
@@ -130,6 +138,11 @@ class AuthService extends ChangeNotifier {
   /// #2017: whether the deploy allows sudo at all — the ceiling the
   /// per-workspace lock-down toggle opts out below.
   bool get sudoAvailable => _sudoAvailable;
+
+  /// #3135: whether the deploy permits per-handle homes — the ceiling
+  /// the per-workspace home-layout toggle opts in below. False (also
+  /// pre-auth, where the field is absent) hides the toggle everywhere.
+  bool get perHandleHomeAvailable => _perHandleHomeAvailable;
 
   /// Decode the JWT payload.
   Map<String, dynamic>? get _payload {
@@ -234,6 +247,8 @@ class AuthService extends ChangeNotifier {
         _netfilterEnabled = (data['netfilter_enabled'] as bool?) ?? false;
         _nixAvailable = (data['nix_available'] as bool?) ?? false;
         _sudoAvailable = (data['sudo_available'] as bool?) ?? false;
+        _perHandleHomeAvailable =
+            (data['per_handle_home_available'] as bool?) ?? false;
         _passwordPolicy = PasswordPolicy.fromConfig(data);
         // White-label values — mirrored into the Branding helper so widgets
         // that don't have an AuthService context (e.g. the app-bar logo,

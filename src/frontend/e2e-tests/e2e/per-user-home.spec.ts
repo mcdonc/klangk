@@ -81,7 +81,8 @@ test.describe("per-user HOME directory", () => {
       request,
       "home-e2e",
       // This spec exercises the per-handle layout; the deploy default
-      // flipped to shared homes (#2723), so opt each workspace in.
+      // flipped to shared homes (#2723) and the flag became a ceiling
+      // (#3135 — the harness arms it), so opt each workspace in.
       { waitForTerminal: true, body: { per_handle_home: true } },
     );
     try {

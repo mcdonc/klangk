@@ -60,6 +60,7 @@ const _workspace = {
 http.Client _client({
   Map<String, dynamic>? workspace,
   Object? saveResponse,
+  List<Map<String, dynamic>>? saveRecorder,
   int saveStatus = 200,
   int exportStatus = 200,
   bool imagesFail = false,
@@ -69,6 +70,7 @@ http.Client _client({
   bool netfilterEnabled = false,
   bool nixAvailable = false,
   bool sudoAvailable = false,
+  bool perHandleHomeAvailable = true,
   List<String>? stopRecorder,
   int stopStatus = 200,
   bool stopThrows = false,
@@ -83,6 +85,7 @@ http.Client _client({
           'netfilter_enabled': netfilterEnabled,
           'nix_available': nixAvailable,
           'sudo_available': sudoAvailable,
+          'per_handle_home_available': perHandleHomeAvailable,
         }),
         200,
       );
@@ -105,6 +108,7 @@ http.Client _client({
     }
     if (p == '/api/v1/workspaces/$_wsId' && request.method == 'PUT') {
       putRecorder?.add(p);
+      saveRecorder?.add(jsonDecode(request.body) as Map<String, dynamic>);
       return http.Response(
         jsonEncode(saveResponse ?? {'status': 'updated'}),
         saveStatus,
@@ -1880,9 +1884,9 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Auto start'), findsNothing);
-      // The Per-handle home checkbox (#2721) is always shown in the
-      // settings form — it is the only checkbox when auto-start is not
-      // allowed.
+      // The Per-handle home checkbox (#2721) shows under the deploy
+      // ceiling (#3135 — armed by the default _client) — it is the only
+      // checkbox when auto-start is not allowed.
       expect(find.text('Per-handle home'), findsOneWidget);
       expect(find.byType(Checkbox), findsOneWidget);
     });
@@ -1960,7 +1964,7 @@ void main() {
         final p = request.url.path;
         if (p == '/api/v1/config') {
           return http.Response(
-            jsonEncode({}),
+            jsonEncode({'per_handle_home_available': true}),
             200,
           );
         }
@@ -2015,6 +2019,35 @@ void main() {
 
       expect(savedBody, isNotNull);
       expect(savedBody!['per_handle_home'], false);
+      // Drain the 2s auto-clear timer (see save-success test).
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pumpAndSettle();
+    });
+
+    testWidgets(
+        'per_handle_home hidden and omitted while the ceiling is off (#3135)',
+        (tester) async {
+      final savedBodies = <Map<String, dynamic>>[];
+      testAuthHttpClientOverride = _client(
+        perHandleHomeAvailable: false,
+        workspace: {..._workspace, 'per_handle_home': true},
+        saveRecorder: savedBodies,
+      );
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      // The stored column is true, but the deploy forbids per-handle
+      // homes — the toggle is hidden (it could only show a no-op).
+      expect(find.text('Per-handle home'), findsNothing);
+
+      await _scrollToAndTap(tester, find.text('Save'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // The PUT omits the field — the stored column is left untouched
+      // (inert server-side), like the sudo/nix gated toggles.
+      expect(savedBodies, isNotEmpty);
+      expect(savedBodies.single.containsKey('per_handle_home'), isFalse);
       // Drain the 2s auto-clear timer (see save-success test).
       await tester.pump(const Duration(seconds: 2));
       await tester.pumpAndSettle();

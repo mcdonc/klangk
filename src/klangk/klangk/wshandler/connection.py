@@ -11,6 +11,7 @@ from ..exceptions import NodeDrainingError, WorkspaceCapacityError
 from ..model.container_events import CAUSE_WS_CONNECT
 from ..terminal import TerminalSession
 from ..podman import ExecSession, PodmanError
+from ..workspace_settings import resolve_per_handle_home
 from .safe_websocket import SafeWebSocket, WS_ERRORS
 from .support import (
     broadcast_event,
@@ -241,9 +242,10 @@ class Connection:
             self.app.state.workspaces.get_config_host_path(workspace_id)
         )
 
-        # Home layout (#2169 chunk 2, #2720). Per-handle (the default):
-        # ensure the /home/{handle} -> .users/{user_id} symlink exists
-        # BEFORE starting the container, because mounts under
+        # Home layout (#2169 chunk 2, #2720; ceiling #3135). Per-handle
+        # (resolved = stored column AND the deploy ceiling): ensure the
+        # /home/{handle} -> .users/{user_id} symlink exists BEFORE
+        # starting the container, because mounts under
         # /home/{handle}/ need the symlink in place so podman doesn't
         # auto-create a real dir. Shared: every connection (and the
         # ``service`` session) uses the one shared /home/klangk — no
@@ -251,7 +253,10 @@ class Connection:
         # (``ensure_shared_home`` populates /home/klangk at every fresh
         # container create, under both layouts), and no handle lookup
         # (the handle is irrelevant on this path).
-        if workspace.get("per_handle_home", True):
+        per_handle_home = resolve_per_handle_home(
+            workspace, self.app.state.settings.per_handle_home
+        )
+        if per_handle_home:
             handle = await self.app.state.model.users.get_user_handle(
                 self.user["id"]
             )
@@ -302,7 +307,7 @@ class Connection:
                 ),
                 audit_cause=CAUSE_WS_CONNECT,
                 audit_actor_id=self.user["id"],
-                per_handle_home=workspace.get("per_handle_home", True),
+                per_handle_home=per_handle_home,
             )
         )
         self.container_status = container_status
@@ -727,9 +732,15 @@ class Connection:
         """Update the per-workspace symlink and home reference for a new
         handle (per-handle layout only; the shared layout has no per-user
         symlink and its home is the constant SHARED_HOME — nothing to
-        refresh, #2720)."""
+        refresh, #2720). Resolved under the deploy ceiling (#3135) — a
+        stored true is inert while the ceiling is off."""
         workspace = self.workspace
-        if not (workspace and workspace.get("per_handle_home", True)):
+        if not (
+            workspace
+            and resolve_per_handle_home(
+                workspace, self.app.state.settings.per_handle_home
+            )
+        ):
             return
         workspace_home = self.app.state.workspaces.home_path(self.workspace_id)
         (

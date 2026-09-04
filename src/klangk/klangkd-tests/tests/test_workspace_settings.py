@@ -132,6 +132,27 @@ def test_resolve_allow_sudo_ceiling():
     )
 
 
+def test_resolve_per_handle_home_ceiling():
+    # #3135: the column value is the sole layout source; the deploy
+    # KLANGKD_PER_HANDLE_HOME flag is only a ceiling — a stored true
+    # can never raise a workspace past a forbidding deploy (hardened
+    # deploys get the shared home everywhere), and the flag alone
+    # grants nothing (an absent column value — synthetic dicts only,
+    # the column is NOT NULL — resolves to shared).
+    assert ws.resolve_per_handle_home({}, True) is False
+    assert (
+        ws.resolve_per_handle_home({"per_handle_home": False}, True) is False
+    )
+    assert ws.resolve_per_handle_home(None, True) is False
+    # Per-handle wins only under the ceiling.
+    assert ws.resolve_per_handle_home({"per_handle_home": True}, True) is True
+    # A stored true (create-time opt-in, or m0009's backfill) clamps to
+    # shared while the ceiling is off — start-time clamp, no DB rewrite.
+    assert (
+        ws.resolve_per_handle_home({"per_handle_home": True}, False) is False
+    )
+
+
 def test_validate_settings_preserves_memory_string():
     out = ws.validate_settings({"memory_limit": "2g"})
     assert out == {"memory_limit": "2g"}

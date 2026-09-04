@@ -36,8 +36,12 @@ Add the entry via the workspace **Sharing → Advanced ACL** editor in the web U
 The workspace's **home layout** (per-handle vs shared, see
 [Workspaces](workspaces.md)) is preserved: `workspace.json` carries the
 exported layout, and the import honors it even when the server's default
-(`KLANGKD_PER_HANDLE_HOME`) differs. Archives exported before the layout
-feature imported as per-handle (the only layout at the time).
+differs. Archives exported before the layout
+feature imported as per-handle (the only layout at the time). Note the
+importing deploy's ceiling still applies: an archive carrying
+`per_handle_home: true` imports onto a `KLANGKD_PER_HANDLE_HOME=false`
+server as a stored-but-inert value — the workspace gets the shared
+home (clamped at every connect/start, like any other stored `true`).
 
 > **Same-instance only:** Archives include the exporting instance's unique ID. Import rejects archives that are missing an instance ID or whose instance ID does not match the importing server. This prevents foreign workspace imports from planting home directory symlinks that reference user IDs that don't exist on the destination instance.
 

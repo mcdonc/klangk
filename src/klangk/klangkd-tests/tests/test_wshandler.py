@@ -1796,8 +1796,14 @@ class TestHandleSetHandle:
         conn = _base_conn(
             user={"id": user["id"], "email": user["email"]}, ws=sock
         )
+        # #3135: the per-handle machinery needs the ceiling on — the
+        # deploy flag no longer defaults to per-handle homes.
+        conn.app.state.settings.per_handle_home = True
         conn.workspace_id = ws["id"]
-        conn.workspace = {"user_id": user["id"]}
+        conn.workspace = {
+            "user_id": user["id"],
+            "per_handle_home": True,
+        }
         conn.container_id = "cid"
 
         with patch(
@@ -1842,6 +1848,10 @@ class TestHandleSetHandle:
 
     async def test_handle_auto_created_on_connect(self, user, app_state):
         app_state = _make_app_state()
+        # #3135: arm the per-handle ceiling — the handle-derivation
+        # assertions below are per-handle-path only (under the default
+        # ceiling-off the connect clamps to the shared home).
+        app_state.state.settings.per_handle_home = True
         sockets = app_state.state.sockets
         registry = app_state.state.container_registry
         sock = _mock_sock(headers={"host": "localhost:8997"})
@@ -1864,7 +1874,8 @@ class TestHandleSetHandle:
         ):
             await conn.start_workspace_container(workspace["id"], workspace)
 
-        # Handle is derived from email at user creation time
+        # Handle is derived from email at user creation time (#3135: the
+        # ceiling armed above keeps this on the per-handle path)
         assert conn._user_home is not None
         assert conn._user_home.startswith("/home/")
 
@@ -2443,15 +2454,19 @@ class TestStartWorkspaceContainer:
         assert conn.workspace == workspace
         assert workspace["id"] in sockets.sessions
         assert conn._idle_cb is not None
-        # Handle auto-created from email on connect
-        assert conn._user_home is not None
-        assert conn._user_home.startswith("/home/")
+        # #3135: default deploy (ceiling off) clamps the stored-true column
+        # to the shared home — asserted explicitly so this stays a wiring
+        # pin rather than a vacuous startswith("/home/").
+        assert conn._user_home == container.SHARED_HOME
 
         sockets.sessions.pop(workspace["id"], None)
         registry.states.pop(workspace["id"], None)
 
     async def test_resolves_existing_handle(self, user, app_state):
         app_state = _make_app_state()
+        # #3135: arm the per-handle ceiling — the stored true column is
+        # inert while the deploy flag is off.
+        app_state.state.settings.per_handle_home = True
         sockets = app_state.state.sockets
         registry = app_state.state.container_registry
         sock = _mock_sock(headers={"host": "localhost:8997"})
@@ -2605,8 +2620,11 @@ class TestSharedHomeLayout:
     async def test_connect_per_handle_layout_keeps_symlink(
         self, user, app_state
     ):
-        # Explicit counterpart: the default layout is unchanged.
+        # Explicit counterpart: with the ceiling armed (#3135 — the
+        # deploy flag must be on for per-handle homes at all), the
+        # stored-true layout is unchanged.
         app_state = _make_app_state()
+        app_state.state.settings.per_handle_home = True
         sockets = app_state.state.sockets
         registry = app_state.state.container_registry
         sock = _mock_sock(headers={"host": "localhost:8997"})
@@ -2630,6 +2648,47 @@ class TestSharedHomeLayout:
         assert conn._user_home == f"/home/{user['handle']}"
         assert conn._home_created is True  # fresh user dir → skel populate
         assert captured["spec"].per_handle_home is True
+
+        sockets.sessions.pop(workspace["id"], None)
+        registry.states.pop(workspace["id"], None)
+
+    async def test_connect_stored_true_clamped_by_ceiling(
+        self, user, app_state
+    ):
+        """#3135: a workspace that stored per_handle_home=true (create-
+        time opt-in, or m0009's backfill) gets the shared layout while
+        the deploy ceiling is off — the stored column is clamped at
+        connect, never rewritten."""
+        app_state = _make_app_state()  # settings default: ceiling OFF
+        sockets = app_state.state.sockets
+        registry = app_state.state.container_registry
+        sock = _mock_sock(headers={"host": "localhost:8997"})
+        conn = _base_conn(user=user, ws=sock, app_state=app_state)
+        workspace = await app_state.state.workspaces.create_workspace(
+            user["id"], "clamped-ws", per_handle_home=True
+        )
+        captured = {}
+
+        async def fake_start(spec):
+            captured["spec"] = spec
+            registry.track_activity("cid-cl", workspace["id"])
+            return ("cid-cl", "created")
+
+        with (
+            patch.object(registry, "start_container", side_effect=fake_start),
+            patch("glob.glob", return_value=[]),
+            patch.object(
+                app_state.state.workspaces,
+                "ensure_home_symlink",
+                new_callable=AsyncMock,
+            ) as symlink_mock,
+        ):
+            await conn.start_workspace_container(workspace["id"], workspace)
+
+        symlink_mock.assert_not_awaited()  # no per-user machinery
+        assert conn._user_home == container.SHARED_HOME
+        assert conn._home_created is False
+        assert captured["spec"].per_handle_home is False
 
         sockets.sessions.pop(workspace["id"], None)
         registry.states.pop(workspace["id"], None)
@@ -12233,6 +12292,9 @@ class TestWshandlerBranchGaps2834:
         # A rename whose per-handle home already exists (created=False):
         # the skel exec is skipped -- only the symlink is refreshed.
         app_state = _make_app_state()
+        # #3135: arm the per-handle ceiling (the stored true column is
+        # inert while the deploy flag is off).
+        app_state.state.settings.per_handle_home = True
         sock = _mock_sock()
         conn = _base_conn(user=user, ws=sock, app_state=app_state)
         conn.workspace_id = "ws-skel"

@@ -235,10 +235,20 @@ async def get_config(
         # allow_autostart, not the authenticated-only netfilter fields.
         "browser_delegate_enabled": s.browser_delegate_enabled,
         # Home-layout default for NEW workspaces (KLANGKD_PER_HANDLE_HOME,
-        # #2169 chunk 3 / #2721). The create surfaces (web dialog, TUI form,
-        # `klangk create`) pre-reflect this so an untouched form submits the
-        # server's default. Not sensitive — the pre-auth payload carries it
-        # (the TUI reads /config before login like it does allow_autostart).
+        # #2169 chunk 3 / #2721, ceiling #3135). The create surfaces (web
+        # dialog, TUI form, `klangk create`) pre-reflect this so an
+        # untouched form submits the server's default. Since the flag
+        # became a ceiling, this value equals the ceiling: true whenever
+        # per-handle homes are permitted (so a shown checkbox starts
+        # checked), false otherwise (the checkbox is hidden via
+        # per_handle_home_available). Deliberately still public even
+        # though it now reveals the ceiling bit: it was public before
+        # #3135 with the same value (the old default WAS the flag), so
+        # gating it now would change no information — and unlike the
+        # netfilter/sudo fields (#1365 posture) the layout capability is
+        # not an egress or authorization perimeter. per_handle_home_available
+        # exists as the authenticated read for clients that key UI gating
+        # off the deploy toggles bundle.
         "default_per_handle_home": s.per_handle_home,
         # Deploy-wide default classification marking (#2768), free text.
         # Empty/unset = no deploy-wide marking: the web UI renders no
@@ -294,6 +304,12 @@ async def get_config(
         # lock-down toggle opts out below).
         config["nix_available"] = app.state.nix.available
         config["sudo_available"] = parse_bool_setting(s.allow_sudo)
+        # #3135: the per-handle-home ceiling (same posture as
+        # sudo_available above) — whether the create/edit UIs may offer
+        # the per-workspace Per-handle home toggle at all. False = every
+        # workspace gets the shared /home/klangk regardless of the
+        # stored column (resolve_per_handle_home clamps at start).
+        config["per_handle_home_available"] = bool(s.per_handle_home)
     config.update(app.state.features.frontend_config())
     # KLANGKD_FEATURES_ENABLE: the deploy's chosen active-feature list,
     # forwarded verbatim so the frontend can resolve the active set against

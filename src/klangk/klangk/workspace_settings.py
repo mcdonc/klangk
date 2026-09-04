@@ -475,6 +475,29 @@ def resolve_allow_sudo(workspace: dict | None, deploy_default: bool) -> bool:
     )
 
 
+def resolve_per_handle_home(
+    workspace: dict | None, deploy_ceiling: bool
+) -> bool:
+    """Resolve the effective home layout for a workspace (#3135).
+
+    Same ceiling shape as :func:`resolve_allow_sudo` (#3047): the
+    per-workspace ``per_handle_home`` column is the sole layout source,
+    and the deploy-wide ``KLANGKD_PER_HANDLE_HOME`` flag only gates
+    whether per-handle homes are permitted at all —
+    ``effective = workspace AND deploy``. With the ceiling off every
+    workspace gets the shared ``/home/klangk`` (a stored ``true`` is
+    inert, clamped here rather than rewritten), so hardened deploys can
+    guarantee a single auditable home. Read live off settings (the
+    app-ownership rule): applies to containers started after a SIGHUP
+    flip, never to live sessions. An absent column value (synthetic
+    dicts only — the column is NOT NULL) resolves to shared, the
+    hardened direction.
+    """
+    return bool((workspace or {}).get("per_handle_home", False)) and bool(
+        deploy_ceiling
+    )
+
+
 def _nix_echo(previous: dict[str, Any] | None) -> bool:
     """True when the stored bag already has ``nix=true`` — an echo of an
     existing opt-in, not a new one (the TUI and web panel PUT a

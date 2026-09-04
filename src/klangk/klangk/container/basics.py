@@ -93,9 +93,10 @@ class ContainerState:
         self.setup_state: str | None = None
         # Home layout (#2169 chunk 2, #2720): the health check resolves
         # the owner's per-handle HOME only when this is True; False means
-        # the shared /home/klangk. Default True (the pre-#2720 layout and
-        # the safe fallback if a start path forgets to set it).
-        self.per_handle_home: bool = True
+        # the shared /home/klangk. Default False — the hardened direction
+        # under the #3135 ceiling (per-handle requires an explicit,
+        # ceiling-resolved value from the start spec).
+        self.per_handle_home: bool = False
         # Anchor for the startup grace window
         # (HEALTH_CHECK_STARTUP_GRACE_SECONDS): the moment the monitored
         # service began starting.  Defaults to now (container-state

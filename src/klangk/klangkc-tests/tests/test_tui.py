@@ -153,7 +153,7 @@ def _st(**methods):
         "default_classification_banner": lambda: "",
         # #2974: deploy-level nix/sudo toggles (moved off list_images to
         # the /config fields) — off by default; tests override to arm.
-        "deploy_toggles": lambda: (False, False),
+        "deploy_toggles": lambda: (False, False, False),
     }
     for k, v in {**defaults, **methods}.items():
         setattr(st, k, v)
@@ -3525,7 +3525,7 @@ async def test_main_and_detail_edit_pass_sudo_available(monkeypatch):
         owned=[a],
         list_images=images,
         allow_autostart=lambda: True,
-        deploy_toggles=lambda: (False, True),
+        deploy_toggles=lambda: (False, True, False),
     )
     st.find_workspace = lambda n: a
     app = KlangkApp(st)
@@ -3543,7 +3543,7 @@ async def test_main_and_detail_edit_pass_sudo_available(monkeypatch):
         owned=[a],
         list_images=images,
         allow_autostart=lambda: True,
-        deploy_toggles=lambda: (False, True),
+        deploy_toggles=lambda: (False, True, False),
     )
     st2.find_workspace = lambda n: a
     app2 = KlangkApp(st2)
@@ -9031,7 +9031,11 @@ async def test_create_screen_per_handle_home_default_and_toggle(monkeypatch):
         return _wsobj(name)
 
     app = KlangkApp(
-        _create_state(create=create, default_per_handle_home=lambda: False)
+        _create_state(
+            create=create,
+            default_per_handle_home=lambda: False,
+            deploy_toggles=lambda: (False, False, True),
+        )
     )
     async with app.run_test(size=(140, 40)) as pilot:
         app.screen.action_create()
@@ -9046,7 +9050,11 @@ async def test_create_screen_per_handle_home_default_and_toggle(monkeypatch):
         assert captured["k"]["per_handle_home"] is False
 
     # Fresh app for the toggle case (the first form dismissed on create).
-    app2 = KlangkApp(_create_state(create=create))
+    app2 = KlangkApp(
+        _create_state(
+            create=create, deploy_toggles=lambda: (False, False, True)
+        )
+    )
     async with app2.run_test(size=(140, 40)) as pilot:
         app2.screen.action_create()
         await app2.workers.wait_for_complete()
@@ -9076,7 +9084,11 @@ async def test_create_screen_per_handle_home_unknown_omits(monkeypatch):
         return _wsobj(name)
 
     app = KlangkApp(
-        _create_state(create=create, default_per_handle_home=lambda: None)
+        _create_state(
+            create=create,
+            default_per_handle_home=lambda: None,
+            deploy_toggles=lambda: (False, False, True),
+        )
     )
     async with app.run_test(size=(140, 40)) as pilot:
         app.screen.action_create()
@@ -9091,6 +9103,41 @@ async def test_create_screen_per_handle_home_unknown_omits(monkeypatch):
         # None = omit: the client drops the key so the server default
         # applies (asserted at the client level in test_cli.py).
         assert captured["k"]["per_handle_home"] is None
+
+
+async def test_create_screen_per_handle_home_hidden_when_ceiling_off(
+    monkeypatch,
+):
+    """#3135: while the deploy ceiling is off the checkbox is hidden and
+    the field omitted — every workspace gets the shared home regardless
+    (the same hide rule the sudo toggle follows, #2017)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    captured = {}
+
+    def create(name, **k):
+        captured["k"] = k
+        return _wsobj(name)
+
+    # Availability False (default toggles) even though the deploy
+    # default itself is known/true — the ceiling wins.
+    app = KlangkApp(
+        _create_state(create=create, default_per_handle_home=lambda: True)
+    )
+    async with app.run_test(size=(140, 40)) as pilot:
+        app.screen.action_create()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        cs = app.screen
+        cb = cs.query_one("#per_handle_home", Checkbox)
+        assert cb.display is False  # ceiling off -> hidden
+        cs.query_one("#name").value = "ws"
+        cs._create()
+        await app.workers.wait_for_complete()
+        assert captured["k"]["per_handle_home"] is None  # omitted too
 
 
 async def test_create_screen_submit_custom_fields(monkeypatch):
@@ -9519,7 +9566,9 @@ async def test_create_screen_nix_hidden_when_not_available(monkeypatch):
         return None
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
-    app = KlangkApp(_create_state())  # deploy_toggles default (False, False)
+    app = KlangkApp(
+        _create_state()
+    )  # deploy_toggles default (False, False, False)
     async with app.run_test(size=(140, 40)) as pilot:
         app.screen.action_create()
         await app.workers.wait_for_complete()
@@ -9546,7 +9595,7 @@ async def test_create_screen_nix_shown_and_sent_when_checked(monkeypatch):
     app = KlangkApp(
         _create_state(
             create=create,
-            deploy_toggles=lambda: (True, False),
+            deploy_toggles=lambda: (True, False, False),
         )
     )
     async with app.run_test(size=(140, 40)) as pilot:
@@ -9571,7 +9620,9 @@ async def test_create_screen_sudo_hidden_when_not_available(monkeypatch):
         return None
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
-    app = KlangkApp(_create_state())  # deploy_toggles default (False, False)
+    app = KlangkApp(
+        _create_state()
+    )  # deploy_toggles default (False, False, False)
     async with app.run_test(size=(140, 40)) as pilot:
         app.screen.action_create()
         await app.workers.wait_for_complete()
@@ -9598,7 +9649,7 @@ async def test_create_screen_sudo_defaults_to_lockdown(monkeypatch):
     app = KlangkApp(
         _create_state(
             create=create,
-            deploy_toggles=lambda: (False, True),
+            deploy_toggles=lambda: (False, True, False),
         )
     )
     async with app.run_test(size=(140, 40)) as pilot:
@@ -9633,7 +9684,7 @@ async def test_create_screen_sudo_checked_sends_opt_in(monkeypatch):
     app = KlangkApp(
         _create_state(
             create=create,
-            deploy_toggles=lambda: (False, True),
+            deploy_toggles=lambda: (False, True, False),
         )
     )
     async with app.run_test(size=(140, 40)) as pilot:
@@ -9678,6 +9729,9 @@ def _edit_screen(app, ws, **kw):
             allow_autostart=kw.get("allow_autostart", True),
             nix_available=kw.get("nix_available", False),
             sudo_available=kw.get("sudo_available", False),
+            per_handle_home_available=kw.get(
+                "per_handle_home_available", False
+            ),
         )
     )
 
@@ -9828,7 +9882,7 @@ async def test_edit_screen_per_handle_home_pre_populates_and_saves(
     ws = _wsobj("alpha", image="base", per_handle_home=True, running=True)
     app = KlangkApp(_edit_state(ws, update=update))
     async with app.run_test() as pilot:
-        _edit_screen(app, ws)
+        _edit_screen(app, ws, per_handle_home_available=True)
         await pilot.pause()
         es = app.screen
         # Seeded from the workspace (per-handle).
@@ -9840,6 +9894,36 @@ async def test_edit_screen_per_handle_home_pre_populates_and_saves(
         # Running workspace, but a layout flip applies from the next
         # connect — never a restart-needed field.
         assert not isinstance(app.screen, ConfirmScreen)
+
+
+async def test_edit_screen_per_handle_home_hidden_when_ceiling_off(
+    monkeypatch,
+):
+    """#3135: while the deploy ceiling is off the edit form hides the
+    home-layout checkbox and OMITS the field from the PUT — the stored
+    column is inert server-side, so the save must not touch it (the
+    sudo/nix toggle-gated keys follow the same rule)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    captured = {}
+
+    def update(wid, **f):
+        captured["id"] = wid
+        captured.update(f)
+
+    ws = _wsobj("alpha", image="base", per_handle_home=True, running=True)
+    app = KlangkApp(_edit_state(ws, update=update))
+    async with app.run_test() as pilot:
+        _edit_screen(app, ws)  # availability defaults to False
+        await pilot.pause()
+        es = app.screen
+        assert es.query_one("#per_handle_home", Checkbox).display is False
+        es.save()
+        await app.workers.wait_for_complete()
+        assert "per_handle_home" not in captured  # omitted, not echoed
 
 
 async def test_edit_screen_restart_needed_when_egress_mode_changed(
@@ -15484,12 +15568,20 @@ def test_deploy_toggles(monkeypatch, redirect_xdg):
     t = TuiState("https://x.example")
     fake = MagicMock()
     monkeypatch.setattr(t, "client", lambda: fake)
-    fake.config.return_value = {"nix_available": True, "sudo_available": True}
-    assert t.deploy_toggles() == (True, True)
+    fake.config.return_value = {
+        "nix_available": True,
+        "sudo_available": True,
+        "per_handle_home_available": True,
+    }
+    assert t.deploy_toggles() == (True, True, True)
     fake.config.return_value = {}
-    assert t.deploy_toggles() == (False, False)
-    fake.config.return_value = {"nix_available": "false", "sudo_available": 1}
-    assert t.deploy_toggles() == (False, False)
+    assert t.deploy_toggles() == (False, False, False)
+    fake.config.return_value = {
+        "nix_available": "false",
+        "sudo_available": 1,
+        "per_handle_home_available": "true",
+    }
+    assert t.deploy_toggles() == (False, False, False)
 
 
 async def test_create_screen_deploy_toggles_failure(monkeypatch):
@@ -15517,6 +15609,7 @@ async def test_create_screen_deploy_toggles_failure(monkeypatch):
         assert isinstance(app.screen, CreateWorkspaceScreen)
         assert app.screen._nix_available is False
         assert app.screen._sudo_available is False
+        assert app.screen._per_handle_home_available is False
 
 
 async def test_create_screen_deploy_toggles_auth_error(monkeypatch):

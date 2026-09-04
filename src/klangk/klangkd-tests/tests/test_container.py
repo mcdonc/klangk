@@ -259,13 +259,14 @@ class TestActivityTracking:
         # (#2720) the same way health_check/owner_id/setup_state do, so
         # the health monitor can branch without a DB lookup per tick.
         self.registry.track_activity("cid-1", "ws-1")
-        assert self.registry.states["ws-1"].per_handle_home is True  # default
-        self.registry.track_activity("cid-1", "ws-1", per_handle_home=False)
+        # Default is the hardened direction (shared) — #3135.
         assert self.registry.states["ws-1"].per_handle_home is False
+        self.registry.track_activity("cid-1", "ws-1", per_handle_home=True)
+        assert self.registry.states["ws-1"].per_handle_home is True
         # Untouched when not passed (e.g. test harness call sites) — the
         # previous value survives, mirroring owner_id/setup_state.
         self.registry.track_activity("cid-1", "ws-1")
-        assert self.registry.states["ws-1"].per_handle_home is False
+        assert self.registry.states["ws-1"].per_handle_home is True
 
     def test_track_activity_fires_status_changed_on_new(self):
         calls = []
@@ -324,9 +325,9 @@ class TestActivityTracking:
         assert state.health_check == ("curl -sf http://localhost:8080/health")
         assert state.owner_id == "uid-owner"
         assert state.setup_state == "complete"
-        # The home layout rides along too (#2720); default True (the
-        # pre-#2720 layout) when a caller doesn't pass it.
-        assert state.per_handle_home is True
+        # The home layout rides along too (#2720); defaults to the
+        # hardened shared direction (#3135) when a caller doesn't pass it.
+        assert state.per_handle_home is False
 
 
 def _noop_callback(ws):
@@ -702,10 +703,21 @@ class TestStartContainer:
     async def test_spec_threads_per_handle_home_onto_state(self, workspace):
         # #2720: the layout rides the spec through every start path
         # (create / reuse / adopt) onto ContainerState, so the health
-        # monitor can branch without a DB lookup per poll. Default True.
+        # monitor can branch without a DB lookup per poll. Default is the
+        # hardened shared direction (#3135); an explicit per-handle value
+        # threads through untouched.
         with patch_podman(self.registry):
             await self.registry.start_container(
                 container.ContainerStartSpec(workspace["id"], "/tmp/home")
+            )
+        assert self.registry.states[workspace["id"]].per_handle_home is (False)
+        with patch_podman(self.registry):
+            await self.registry.start_container(
+                container.ContainerStartSpec(
+                    workspace["id"],
+                    "/tmp/home",
+                    per_handle_home=True,
+                )
             )
         assert self.registry.states[workspace["id"]].per_handle_home is True
         with patch_podman(self.registry):
@@ -5994,6 +6006,9 @@ def _health_state(
     st = container.ContainerState(workspace_id, container_id, app_state)
     st.health_check = health_check
     st.owner_id = owner_id
+    # The per-handle probe path (owner handle → symlink home); the shared
+    # tests flip it off explicitly (#3135 made shared the class default).
+    st.per_handle_home = True
     st.setup_state = setup_state
     st.health_status = health_status
     # 0.0 = epoch, comfortably outside any real grace window.
@@ -6230,7 +6245,8 @@ class TestHealthMonitorRunOne:
         exec_mock.assert_not_called()
 
     async def test_no_handle_is_unhealthy_with_reason(self, app_state):
-        # Owner exists in the state but has no handle resolved.
+        # Owner exists in the state but has no handle resolved — the
+        # per-handle branch's failure (_health_state arms the layout).
         monitor = _health_registry().health
         st = _health_state(owner_id="uid-owner")
         with (

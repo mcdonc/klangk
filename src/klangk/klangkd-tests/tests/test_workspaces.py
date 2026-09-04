@@ -56,6 +56,31 @@ class TestCreateWorkspace:
         fake.assert_awaited_once()
         assert fake.call_args.args[0].egress_mode == "interactive"
 
+    async def test_start_workspace_clamps_per_handle_home(
+        self, user, app_state, monkeypatch
+    ):
+        """#3135: start_workspace resolves the home layout under the deploy
+        ceiling — the wiring the wshandler connect test can't catch (it
+        builds its own spec). A regression that re-reads the raw column
+        here would silently realize per-handle homes on every restart /
+        auto-start / crash-restart with the ceiling off, with every other
+        test still green."""
+        # Stored true (the model default), ceiling off (default settings).
+        ws = await app_state.state.workspaces.create_workspace(
+            user["id"], "ws-clamped"
+        )
+        assert ws["per_handle_home"] is True
+        registry = app_state.state.container_registry
+        fake = AsyncMock(return_value=("cid", "created"))
+        monkeypatch.setattr(registry, "start_container", fake)
+        await app_state.state.workspaces.start_workspace(ws)
+        assert fake.call_args.args[0].per_handle_home is False
+
+        # Ceiling on: the stored true resolves through untouched.
+        monkeypatch.setattr(app_state.state.settings, "per_handle_home", True)
+        await app_state.state.workspaces.start_workspace(ws)
+        assert fake.call_args.args[0].per_handle_home is True
+
     async def test_allocates_ports(self, user, app_state):
         ws = await app_state.state.workspaces.create_workspace(
             user["id"], "ported"

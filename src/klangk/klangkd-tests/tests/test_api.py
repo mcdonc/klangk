@@ -2984,6 +2984,23 @@ class TestWorkspaceRoutes:
         assert "sudo_available" not in resp.json()
         assert "nix_available" not in resp.json()
 
+    async def test_config_per_handle_home_available(
+        self, client, app, user, monkeypatch
+    ):
+        """#3135: per_handle_home_available reports the deploy-wide
+        per-handle-home ceiling (authenticated-only /config field) so
+        create/edit UIs can gate the Per-handle home toggle."""
+        headers = await _auth_headers(client)
+        monkeypatch.setattr(app.state.settings, "per_handle_home", True)
+        resp = await client.get("/api/v1/config", headers=headers)
+        assert resp.json()["per_handle_home_available"] is True
+        monkeypatch.setattr(app.state.settings, "per_handle_home", False)
+        resp = await client.get("/api/v1/config", headers=headers)
+        assert resp.json()["per_handle_home_available"] is False
+        # #1365 posture: absent pre-auth (like sudo_available).
+        resp = await client.get("/api/v1/config")
+        assert "per_handle_home_available" not in resp.json()
+
     async def test_delete_workspace(self, client, user, registry):
         headers = await _auth_headers(client)
         create_resp = await client.post(

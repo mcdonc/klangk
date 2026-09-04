@@ -35,9 +35,11 @@ optionally configure:
 - **Per-handle home** — the home-directory layout. On: every member
   gets a private `/home/<handle>` (dotfiles, shell history, and agent
   configs are per-user). Off: everyone shares `/home/klangk`. The
-  checkbox starts on the server default (`KLANGKD_PER_HANDLE_HOME`);
-  if that default can't be fetched, the choice is left out and the
-  server default applies. See [The Shell](the-shell.md).
+  toggle only appears while the deploy permits per-handle homes at
+  all (`KLANGKD_PER_HANDLE_HOME=true`); the checkbox starts on the
+  server default, and if that default can't be fetched, the choice
+  is left out and the server default applies. See
+  [The Shell](the-shell.md).
 - **Classification banner** — a free-text classification marking
   (e.g. `UNCLASSIFIED`, `CUI`, `SECRET`) shown as a persistent banner
   at the top and bottom of the workspace page and as a status line in
@@ -52,7 +54,7 @@ You can change all of these later from the workspace **Settings** tab.
 
 Every workspace picks one of two home layouts:
 
-- **Shared home** (the default) — all members share the single
+- **Shared home** — all members share the single
   `/home/klangk`.
 - **Per-handle home** — each member gets a private `/home/<handle>`
   directory; see [The Shell](the-shell.md).
@@ -65,10 +67,19 @@ klangk create my-project --shared-home
 klangk edit my-project --per-handle-home
 ```
 
-The deploy-wide default for new workspaces is
-`KLANGKD_PER_HANDLE_HOME`. Changing an existing workspace's layout
-applies from the next connect/start — open terminals keep their
-layout until they end.
+The deploy-wide `KLANGKD_PER_HANDLE_HOME` is a **ceiling**, not just
+a default: while it is off, every workspace gets the shared home
+regardless of its stored choice — a stored `per_handle_home: true`
+(including the population migration 0009 backfilled for pre-feature
+workspaces) is inert and clamped at the next connect/start, never
+rewritten in the database. The toggle is hidden in the web UI and the
+TUI while the ceiling is off (the create/edit forms and settings
+panels read `per_handle_home_available` from `/config`); the CLI
+flags remain accepted but cannot raise a workspace past the ceiling.
+With the ceiling on, workspaces choose either layout (an omitted
+create field stores the flag's value — per-handle). Changing an
+existing workspace's layout applies from the next connect/start —
+open terminals keep their layout until they end.
 
 ## Auto-start
 

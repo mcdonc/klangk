@@ -1033,17 +1033,22 @@ class KlangkSettings(BaseSettings):
     # resolve_allow_sudo). Default "true"; reloadable on SIGHUP;
     # applies to containers started after the change.
     allow_sudo: str = "true"
-    # per_handle_home: home-layout default for NEW workspaces (#2169 chunk 1,
-    # #2719; default flipped to shared in chunk 5, #2723 — the Breaking
-    # ship moment). True = per-handle homes (each connecting user gets a
-    # private /home/.users/{id} dir + /home/{handle} symlink); False = a
-    # shared klangk home. Existing workspaces are unaffected (m0008
-    # backfilled `true`); operators wanting per-user everywhere set this
-    # config or pass the create flag. The API exposes a per-workspace
-    # override at create time (POST /workspaces ``per_handle_home``),
-    # editable afterwards via PUT. Read off live settings at create time:
-    # reloadable on SIGHUP (applies to workspaces created after the
-    # reload).
+    # per_handle_home: deploy-wide CEILING for per-handle homes (#2169
+    # chunk 1, #2719, #3135). #3047's ceiling shape: the flag gates
+    # whether a workspace may opt in to per-handle homes at all — it is
+    # no longer the default a workspace override flips in either
+    # direction. True = workspaces choose either layout (per_handle_home
+    # on POST/PUT; omitted on create still stores this flag's value, so
+    # an untouched create gets per-handle homes). False = every
+    # workspace shares /home/klangk: a stored true is inert
+    # (resolve_per_handle_home clamps at start/connect — m0009's
+    # backfilled `true` population is never rewritten), which is what
+    # hardened deploys (e.g. FIPS hosts needing one auditable home)
+    # require. Default false (the #2723 Breaking flip). Read live off
+    # settings at resolution time: reloadable on SIGHUP (applies to
+    # containers started after the reload). The /config fields are
+    # per_handle_home_available (the ceiling, authenticated-only) and
+    # default_per_handle_home (the create default, pre-auth).
     per_handle_home: bool = False
     # classification_banner: deploy-wide default classification marking
     # for workspaces (#2768), free text (e.g. UNCLASSIFIED, CUI, SECRET).

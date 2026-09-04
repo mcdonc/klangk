@@ -13,6 +13,7 @@ from . import container, model
 from .container.spec import SHARED_HOME, SHARED_HOME_NAME
 from .model.container_events import CAUSE_API, CAUSE_AUTO_START
 from .settings import parse_bool_setting
+from .workspace_settings import resolve_per_handle_home
 
 logger = logging.getLogger(__name__)
 
@@ -796,7 +797,15 @@ class Workspaces:
                 ),
                 audit_cause=cause,
                 audit_actor_id=actor_id,
-                per_handle_home=ws.get("per_handle_home", True),
+                # #3135: the deploy flag is a ceiling, not a default —
+                # resolve = stored column AND KLANGKD_PER_HANDLE_HOME,
+                # read live off settings so a SIGHUP flip applies to
+                # containers started after the change (a stored true is
+                # clamped to shared while the ceiling is off, never
+                # rewritten in the DB).
+                per_handle_home=resolve_per_handle_home(
+                    ws, self.app.state.settings.per_handle_home
+                ),
             )
         )
         return cid, status
