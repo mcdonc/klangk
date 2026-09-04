@@ -59,7 +59,7 @@ const _workspace = {
 /// the defaults serve the workspace list, images, and a 200 PUT on save.
 http.Client _client({
   Map<String, dynamic>? workspace,
-  Map<String, dynamic>? saveResponse,
+  Object? saveResponse,
   int saveStatus = 200,
   int exportStatus = 200,
   bool imagesFail = false,
@@ -72,6 +72,7 @@ http.Client _client({
   List<String>? stopRecorder,
   int stopStatus = 200,
   bool stopThrows = false,
+  List<String>? putRecorder,
 }) {
   final ws = (workspace ?? _workspace);
   return MockClient((request) async {
@@ -103,6 +104,7 @@ http.Client _client({
       );
     }
     if (p == '/api/v1/workspaces/$_wsId' && request.method == 'PUT') {
+      putRecorder?.add(p);
       return http.Response(
         jsonEncode(saveResponse ?? {'status': 'updated'}),
         saveStatus,
@@ -1371,33 +1373,8 @@ void main() {
     testWidgets(
         'a cleared Name blocks the save inline and sends no PUT (#3130)',
         (tester) async {
-      var puts = 0;
-      testAuthHttpClientOverride = MockClient((request) async {
-        final p = request.url.path;
-        if (p == '/api/v1/config') {
-          return http.Response(jsonEncode({}), 200);
-        }
-        if (p == '/api/v1/workspaces') {
-          return http.Response(jsonEncode([_workspace]), 200);
-        }
-        if (p == '/api/v1/workspaces/shared') {
-          return http.Response(jsonEncode([]), 200);
-        }
-        if (p == '/api/v1/images') {
-          return http.Response(
-            jsonEncode({
-              'default': 'klangk-pi',
-              'allowed': ['klangk-pi'],
-            }),
-            200,
-          );
-        }
-        if (p == '/api/v1/workspaces/$_wsId' && request.method == 'PUT') {
-          puts++;
-          return http.Response(jsonEncode({'status': 'updated'}), 200);
-        }
-        return http.Response('not found', 404);
-      });
+      final puts = <String>[];
+      testAuthHttpClientOverride = _client(putRecorder: puts);
       await tester.pumpWidget(_buildPanel());
       await tester.pumpAndSettle();
 
@@ -1420,7 +1397,7 @@ void main() {
         tester.widget<TextField>(nameField).decoration?.errorText,
         'Workspace name cannot be empty or only whitespace',
       );
-      expect(puts, 0);
+      expect(puts, isEmpty);
       expect(find.textContaining('Failed'), findsNothing);
 
       // Typing a name clears the error; the save then goes through.
@@ -1435,7 +1412,7 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 100));
 
-      expect(puts, 1);
+      expect(puts, hasLength(1));
       expect(find.text('Settings saved'), findsOneWidget);
       await tester.pump(const Duration(seconds: 2));
       await tester.pumpAndSettle();
@@ -1475,6 +1452,47 @@ void main() {
       );
       // The raw Pydantic prefix is stripped.
       expect(find.textContaining('Value error'), findsNothing);
+      await tester.pumpAndSettle();
+    });
+
+    testWidgets(
+        'a map body with an unusable detail falls back to the raw body '
+        '(#3130)', (tester) async {
+      // detail is neither a string nor a list of error objects — the
+      // banner shows the raw body instead of a bare status code.
+      testAuthHttpClientOverride = _client(
+        saveStatus: 400,
+        saveResponse: {'detail': 42},
+      );
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      await _scrollToAndTap(tester, find.text('Save'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.textContaining('Failed'), findsOneWidget);
+      expect(find.textContaining('{"detail":42}'), findsOneWidget);
+      await tester.pumpAndSettle();
+    });
+
+    testWidgets('a non-map JSON body falls back to the raw body (#3130)',
+        (tester) async {
+      // A JSON string root parses fine but carries no detail key — the
+      // banner shows the raw body.
+      testAuthHttpClientOverride = _client(
+        saveStatus: 502,
+        saveResponse: 'plain gateway error',
+      );
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      await _scrollToAndTap(tester, find.text('Save'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.textContaining('Failed'), findsOneWidget);
+      expect(find.textContaining('plain gateway error'), findsOneWidget);
       await tester.pumpAndSettle();
     });
 
@@ -2591,6 +2609,52 @@ void main() {
         find.textContaining('Transfer failed'),
         findsOneWidget,
       );
+    });
+
+    testWidgets('transfer failure with a list detail renders its msg (#3130)',
+        (tester) async {
+      // A Pydantic 422 detail list must render the message, not degrade
+      // to a bare status code off a string-cast TypeError.
+      testAuthHttpClientOverride = _client(
+        searchResults: [
+          {'id': 'u2', 'email': 'target@test.com', 'handle': 'target'},
+        ],
+        transferStatus: 422,
+        transferResponse: {
+          'detail': [
+            {
+              'type': 'value_error',
+              'loc': ['body', 'email'],
+              'msg': 'Value error, not a valid email',
+              'input': 'target',
+            }
+          ]
+        },
+      );
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      await _scrollToAndTap(
+        tester,
+        find.widgetWithText(OutlinedButton, 'Transfer Ownership'),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextField).last, 'target');
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('target@test.com'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Transfer'));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.textContaining('Transfer failed: not a valid email'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('Value error'), findsNothing);
     });
 
     testWidgets('transfer failure with non-JSON body shows status code',

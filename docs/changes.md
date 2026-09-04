@@ -1984,7 +1984,7 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   saving until a name was re-entered. The blank name is now rejected
   inline on the field (same message as the server's rule, #3110), and
   validation-style API errors render their actual message instead of a
-  bare status code.
+  bare status code (save banner and ownership-transfer snackbar).
 
 - **Sandbox `copy` specs with extra colon segments are rejected (#3119).**
   A `.klangk-sandbox.yaml` `copy:` entry like `notes.txt:~/notes.txt:ro`

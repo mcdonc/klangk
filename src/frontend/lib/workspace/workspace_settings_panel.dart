@@ -215,6 +215,14 @@ class WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
   }
 }
 
+/// Pydantic v2 renders an AfterValidator's message as
+/// ``"Value error, <original>"`` — strip that prefix so the banner shows
+/// the message the validator actually raised.
+String _stripPydanticPrefix(String msg) {
+  const prefix = 'Value error, ';
+  return msg.startsWith(prefix) ? msg.substring(prefix.length) : msg;
+}
+
 /// Extract a human-readable message from an API error body (#3130).
 ///
 /// Most error routes send ``{"detail": "<string>"}``, but FastAPI/
@@ -231,7 +239,7 @@ String _apiErrorDetail(http.Response resp) {
       if (detail is List && detail.isNotEmpty && detail.first is Map) {
         final msg = (detail.first as Map)['msg'];
         if (msg is String) {
-          return msg.replaceFirst('Value error, ', '');
+          return _stripPydanticPrefix(msg);
         }
       }
       return resp.body;
@@ -635,45 +643,50 @@ class _SettingsFormState extends State<_SettingsForm> {
       _saving = true;
       _nameError = null;
     });
-    final formSettings = _collectSettings();
-    // PUT settings is a full-replace bag, so seed from the existing bag
-    // unconditionally — API-only keys the form does not represent (e.g.
-    // bridge_timeout) and toggle-gated keys (nix, allow_sudo) whose
-    // toggles are hidden on this deploy must survive the save instead of
-    // being silently wiped (#2017 review).
-    final bag = (widget.workspace['settings'] as Map<String, dynamic>?) ??
-        const <String, dynamic>{};
-    final Map<String, dynamic> settings = {...bag, ...formSettings};
-    // #2233: emit an explicit nix value (true or false) whenever the
-    // toggle is shown — including false, to actually turn the mount off
-    // (omitting the key leaves the stale bag untouched).
-    if (widget.nixAvailable) settings['nix'] = _nixEnabled;
-    // #2017: same for the sudo posture — an explicit value whenever the
-    // toggle is shown, so a check-to-revert actually clears a stored
-    // lock-down. True follows the deploy posture (the server setting
-    // remains the ceiling).
-    if (widget.sudoAvailable) settings['allow_sudo'] = _sudoEnabled;
-    await widget.onSave({
-      'name': name,
-      'image': _selectedImage,
-      'service_command':
-          _cmdCtrl.text.trim().isEmpty ? null : _cmdCtrl.text.trim(),
-      'health_check': _healthCheckCtrl.text.trim().isEmpty
-          ? null
-          : _healthCheckCtrl.text.trim(),
-      'mounts': _mounts.isNotEmpty ? _mounts : null,
-      'env': _envVars.isNotEmpty ? _envVars : null,
-      'allowed_domains': _allowedDomains.isNotEmpty ? _allowedDomains : null,
-      'rejected_domains': _rejectedDomains.isNotEmpty ? _rejectedDomains : null,
-      'egress_mode': _egressMode,
-      'per_handle_home': _perHandleHome,
-      // #2768: full-replace — an emptied field clears the override back
-      // to the deploy default. Display-time only (no restart needed).
-      'classification_banner': _classificationBannerCtrl.text.trim(),
-      if (widget.allowAutostart) 'auto_start': _autoStart,
-      if (settings.isNotEmpty) 'settings': settings,
-    });
-    if (mounted) setState(() => _saving = false);
+    try {
+      final formSettings = _collectSettings();
+      // PUT settings is a full-replace bag, so seed from the existing bag
+      // unconditionally — API-only keys the form does not represent (e.g.
+      // bridge_timeout) and toggle-gated keys (nix, allow_sudo) whose
+      // toggles are hidden on this deploy must survive the save instead
+      // of being silently wiped (#2017 review).
+      final bag = (widget.workspace['settings'] as Map<String, dynamic>?) ??
+          const <String, dynamic>{};
+      final Map<String, dynamic> settings = {...bag, ...formSettings};
+      // #2233: emit an explicit nix value (true or false) whenever the
+      // toggle is shown — including false, to actually turn the mount off
+      // (omitting the key leaves the stale bag untouched).
+      if (widget.nixAvailable) settings['nix'] = _nixEnabled;
+      // #2017: same for the sudo posture — an explicit value whenever the
+      // toggle is shown, so a check-to-revert actually clears a stored
+      // lock-down. True follows the deploy posture (the server setting
+      // remains the ceiling).
+      if (widget.sudoAvailable) settings['allow_sudo'] = _sudoEnabled;
+      await widget.onSave({
+        'name': name,
+        'image': _selectedImage,
+        'service_command':
+            _cmdCtrl.text.trim().isEmpty ? null : _cmdCtrl.text.trim(),
+        'health_check': _healthCheckCtrl.text.trim().isEmpty
+            ? null
+            : _healthCheckCtrl.text.trim(),
+        'mounts': _mounts.isNotEmpty ? _mounts : null,
+        'env': _envVars.isNotEmpty ? _envVars : null,
+        'allowed_domains': _allowedDomains.isNotEmpty ? _allowedDomains : null,
+        'rejected_domains':
+            _rejectedDomains.isNotEmpty ? _rejectedDomains : null,
+        'egress_mode': _egressMode,
+        'per_handle_home': _perHandleHome,
+        // #2768: full-replace — an emptied field clears the override back
+        // to the deploy default. Display-time only (no restart needed).
+        'classification_banner': _classificationBannerCtrl.text.trim(),
+        if (widget.allowAutostart) 'auto_start': _autoStart,
+        if (settings.isNotEmpty) 'settings': settings,
+      });
+    } finally {
+      // A network exception must not leave Save permanently disabled.
+      if (mounted) setState(() => _saving = false);
+    }
   }
 
   void _tryAddMount() {
@@ -1614,15 +1627,11 @@ class _SettingsFormState extends State<_SettingsForm> {
         SnackBar(content: Text('Workspace transferred to $email')),
       );
     } else {
-      String detail;
-      try {
-        detail = (jsonDecode(resp.body) as Map)['detail'] ?? resp.body;
-      } catch (e) {
-        debugPrint('[WorkspaceSettingsPanel] parse transfer error: $e');
-        detail = 'Error: ${resp.statusCode}';
-      }
+      // #3130: reuse the list-aware parser — a Pydantic 422 detail is a
+      // list of error objects, which the old string cast turned into a
+      // bare "Error: <code>".
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Transfer failed: $detail')),
+        SnackBar(content: Text('Transfer failed: ${_apiErrorDetail(resp)}')),
       );
     }
   }
