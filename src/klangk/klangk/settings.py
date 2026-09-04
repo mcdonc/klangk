@@ -231,6 +231,13 @@ def _coerce_positive_int(v, name: str) -> int | None:
 # avoid an import cycle with klangk.auth.
 _PASSWORD_REQUIRE_MAX = 72
 
+# The KLANGKD_PORT / KLANGKD_EGRESS_PORT / KLANGKD_PROXY_PORT validation
+# message (#3124): a set port must be numeric 1-65535; empty means unset.
+_BAD_PORT_MSG = (
+    "{}={!r} is invalid. Must be a TCP port number (1-65535), or "
+    "unset/empty to use the default."
+)
+
 # Ceiling for KLANGKD_PASSWORD_HISTORY_COUNT (#2582): every remembered
 # hash costs one PBKDF2 verify per password set (in a worker thread, but
 # still real CPU), so an unbounded count is a self-inflicted DoS knob.
@@ -1483,6 +1490,7 @@ class KlangkSettings(BaseSettings):
           the egress port + a loud deprecation warning.
         - both set → ``egress_port`` wins, ``proxy_port`` ignored + a warning.
         """
+        self._normalize_port_fields()
         self._fold_proxy_port()
         if self.egress_port is None:
             self.egress_port = "8995"
@@ -1515,6 +1523,43 @@ class KlangkSettings(BaseSettings):
             max_socket_len,
         )
         return self
+
+    def _normalize_port_fields(self) -> None:
+        """Empty-string port settings mean unset; a set value must be
+        numeric 1-65535 (#3124).
+
+        ``KLANGKD_PORT=`` (an explicitly emptied env var) must mean
+        "unset" — headless for the browser port, the built-in default for
+        the egress port — never an empty string that crashes the
+        launcher's ``int()`` and renders a broken ``listen`` directive.
+        A non-numeric value must fail construction with the setting
+        named (the fail-fast posture every other numeric knob has), not
+        crash later in ``main._check_port_collisions``.
+        """
+        self.port = self._validated_port("KLANGKD_PORT", self.port)
+        self.egress_port = self._validated_port(
+            "KLANGKD_EGRESS_PORT", self.egress_port
+        )
+        self.proxy_port = self._validated_port(
+            "KLANGKD_PROXY_PORT", self.proxy_port
+        )
+
+    @classmethod
+    def _validated_port(cls, env_var: str, value: str | None) -> str | None:
+        """One port setting: ``None``/``""`` → ``None``; else validated
+        numeric 1-65535 and returned **normalized** (``str(int(v))``) —
+        the egress≠browser equality check and the Caddyfile render both
+        consume the raw string, so a whitespace/zero-padded form must
+        not survive as a distinct value (#3124)."""
+        if value is None or value == "":
+            return None
+        try:
+            port = int(value)
+        except ValueError as exc:
+            raise ValueError(_BAD_PORT_MSG.format(env_var, value)) from exc
+        if not 1 <= port <= 65535:
+            raise ValueError(_BAD_PORT_MSG.format(env_var, value))
+        return str(port)
 
     def _fold_proxy_port(self) -> None:
         """Apply the ``KLANGKD_PROXY_PORT`` → ``egress_port`` deprecation
@@ -1720,7 +1765,7 @@ class KlangkSettings(BaseSettings):
 
     @field_validator(*BOOL_STRING_FIELDS, mode="before")
     @classmethod
-    def _coerce_bool_string_fields(cls, v):
+    def _coerce_bool_string_fields(cls, v, info):
         """Accept a native YAML bool for the str-typed boolean settings
         (#2796, generalizing the #2603 ``smtp_use_tls`` one-off).
 
@@ -1731,12 +1776,18 @@ class KlangkSettings(BaseSettings):
         :func:`parse_bool_setting`) keep working — but a bare
         ``allow_sudo: true`` in YAML parses as a bool and used to fail
         validation. Translate the two bools to their canonical strings;
+        an explicitly emptied value (``""``) means *unset* → the field's
+        declared default, so ``KLANGKD_SMTP_USE_TLS=`` keeps TLS on
+        (unset ⇒ ``"true"``) instead of silently disabling it (#3124);
         everything else (strings, ``None``) passes through unchanged.
         """
         if v is True:
             return "true"
         if v is False:
             return "false"
+        if v == "":
+            default = cls.model_fields[info.field_name].default
+            return None if default is None else str(default)
         return v
 
     @field_validator(*INT_STRING_FIELDS, mode="before")

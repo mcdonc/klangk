@@ -88,26 +88,102 @@ def _parse_providers(
     """Parse a list of raw provider dicts into OIDCProvider objects.
 
     Shared by both inline (config-file ``oidc_providers:``) and external
-    (``KLANGKD_OIDC_CONFIG``) loading paths.
+    (``KLANGKD_OIDC_CONFIG``) loading paths. Raises
+    :class:`~klangk.exceptions.ConfigurationError` on a malformed shape
+    — a non-list document (an empty external file parses as ``None``; a
+    ``providers:`` wrapper parses as a mapping), a non-mapping entry, a
+    missing/non-string required field, or a duplicate provider id — so
+    a bad config fails boot with an actionable message instead of a raw
+    TypeError/AttributeError/KeyError, and two providers can never
+    silently shadow each other's login button or cross-poison the
+    id-keyed discovery/JWKS caches (#3124).
     """
-    providers = []
-    for entry in entries:
-        secret = resolve_file_value(get(entry, "client-secret", ""))
-        providers.append(
-            OIDCProvider(
-                id=entry["id"],
-                display_name=get(entry, "display-name"),
-                issuer=entry["issuer"].rstrip("/"),
-                client_id=get(entry, "client-id"),
-                client_secret=secret or "",
-                scopes=entry.get("scopes", "openid email profile"),
-                ca_cert=_resolve_ca_cert(entry, config_dir),
-                token_validation_pem=get(entry, "token-validation-pem", None),
-                logout_redirect=get(entry, "logout-redirect", False),
-                trust_email=get(entry, "trust-email", False),
-            )
+    if not isinstance(entries, list):
+        raise ConfigurationError(
+            "OIDC provider config must be a YAML list of provider entries"
         )
+    providers = []
+    seen: set = set()
+    for entry in entries:
+        if not isinstance(entry, dict):
+            raise ConfigurationError(
+                "OIDC provider entries must be mappings, got "
+                f"{type(entry).__name__}: {entry!r}"
+            )
+        provider = _provider_from_entry(entry, config_dir)
+        if provider.id in seen:
+            raise ConfigurationError(
+                f"duplicate OIDC provider id {provider.id!r} — provider ids "
+                "must be unique"
+            )
+        seen.add(provider.id)
+        providers.append(provider)
     return providers
+
+
+def _provider_from_entry(entry: dict, config_dir: str | None) -> OIDCProvider:
+    """One provider dict -> :class:`OIDCProvider`.
+
+    Required string fields are validated (present, a non-empty string)
+    so a missing/typed-wrong key fails with ``ConfigurationError``
+    instead of a raw KeyError/AttributeError (#3124).
+    """
+    secret = resolve_file_value(get(entry, "client-secret", ""))
+    return OIDCProvider(
+        id=_required_str(entry, "id"),
+        display_name=_required_str(entry, "display-name"),
+        issuer=_required_str(entry, "issuer").rstrip("/"),
+        client_id=_required_str(entry, "client-id"),
+        client_secret=secret or "",
+        scopes=entry.get("scopes", "openid email profile"),
+        ca_cert=_resolve_ca_cert(entry, config_dir),
+        token_validation_pem=get(entry, "token-validation-pem", None),
+        logout_redirect=get(entry, "logout-redirect", False),
+        trust_email=get(entry, "trust-email", False),
+    )
+
+
+def _required_str(entry: dict, key: str) -> str:
+    """A required provider field: present and a non-empty string."""
+    value = get(entry, key, None)
+    if not isinstance(value, str) or not value:
+        raise ConfigurationError(
+            f"OIDC provider entry is missing or has a non-string "
+            f"{key!r} field: {value!r}"
+        )
+    return value
+
+
+def _read_oidc_yaml(config_path: str):
+    """Parse the external OIDC config file.
+
+    ``ConfigurationError`` on an unreadable or unparsable file (#3124) —
+    a raw ``yaml.YAMLError``/``OSError`` would crash boot instead of
+    reaching the launcher's config-refusal path. The message carries
+    only the error's line/column mark, never file content — the file
+    holds client secrets.
+    """
+    try:
+        with open(config_path) as f:
+            return yaml.safe_load(f)
+    except OSError as exc:
+        raise ConfigurationError(
+            f"KLANGKD_OIDC_CONFIG={config_path!r} cannot be read: "
+            f"{exc.strerror or 'I/O error'}"
+        ) from exc
+    except yaml.YAMLError as exc:
+        raise ConfigurationError(
+            f"KLANGKD_OIDC_CONFIG={config_path!r} is not valid YAML"
+            f"{_yaml_error_where(exc)}"
+        ) from exc
+
+
+def _yaml_error_where(exc: Exception) -> str:
+    """The "line/column" suffix for a YAML error (no content)."""
+    mark = getattr(exc, "problem_mark", None)
+    if mark is None:
+        return ""
+    return f" at line {mark.line + 1}, column {mark.column + 1}"
 
 
 def parse_hook_value(raw: str) -> tuple[str, str]:
@@ -222,9 +298,9 @@ class OIDC:
                     " (use an absolute path)"
                 )
             config_dir = os.path.dirname(os.path.abspath(config_path))
-            with open(config_path) as f:
-                raw = yaml.safe_load(f)
-            return _parse_providers(raw, config_dir=config_dir)
+            return _parse_providers(
+                _read_oidc_yaml(config_path), config_dir=config_dir
+            )
 
         # 2. Inline providers from the config file
         if self.app.state.settings.oidc_providers:

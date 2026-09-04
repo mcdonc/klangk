@@ -153,6 +153,19 @@ def _replace_stale_symlink(symlink: Path, user_dir: Path) -> bool:
     return adopted
 
 
+def _needs_skel_populate(created: bool, user_dir: Path) -> bool:
+    """True when the /etc/skel copy should run for a per-handle home.
+
+    Mirrors the shared-home gate (#3124): freshly created OR
+    existing-but-empty — the populate exec's failure is swallowed (a
+    dead/racing container must not fail the connect), so emptiness is
+    the retry signal on the next connect. Without it, one transient
+    ``klangk-setup-home`` failure strands the user with a permanently
+    bare home. A dir with user content never re-populates.
+    """
+    return created or not any(user_dir.iterdir())
+
+
 def _ensure_home_symlink_sync(
     workspace_home: Path,
     handle: str,
@@ -164,6 +177,10 @@ def _ensure_home_symlink_sync(
     ``symlink_to``, ``Path.iterdir``, …) and must not run on the event
     loop — callers go through ``ensure_home_symlink``, which offloads
     this to a worker thread via ``asyncio.to_thread`` (#1262).
+
+    The second return element is the *populate-skel* signal, not bare
+    "was created": it is also True for an existing-but-empty user dir
+    (:func:`_needs_skel_populate`, #3124).
     """
     users_dir = workspace_home / ".users"
     users_dir.mkdir(parents=True, exist_ok=True)
@@ -182,7 +199,7 @@ def _ensure_home_symlink_sync(
     target = f".users/{user_id}"
 
     if symlink.is_symlink() and os.readlink(symlink) == target:
-        return f"/home/{handle}", created
+        return f"/home/{handle}", _needs_skel_populate(created, user_dir)
 
     # Remove any existing symlink for this user (handle rename).
     _unlink_stale_handle_symlink(workspace_home, target)
@@ -194,7 +211,7 @@ def _ensure_home_symlink_sync(
     if _replace_stale_symlink(symlink, user_dir):
         created = False  # content adopted, no skel needed
     symlink.symlink_to(target)
-    return f"/home/{handle}", created
+    return f"/home/{handle}", _needs_skel_populate(created, user_dir)
 
 
 async def populate_home_skel(
@@ -642,8 +659,10 @@ class Workspaces:
         stall the event loop on disk latency (#1262).
 
         Returns ``(container_home_path, created)`` where *created* is True
-        when a new user directory was created (caller should populate it
-        with skeleton files).
+        when the user directory was created **or exists but is empty** —
+        the caller should (re)populate it with skeleton files (#3124: a
+        failed populate on an earlier connect retries on the next one;
+        a dir with user content never re-populates).
         """
         return await asyncio.to_thread(
             _ensure_home_symlink_sync, workspace_home, handle, user_id

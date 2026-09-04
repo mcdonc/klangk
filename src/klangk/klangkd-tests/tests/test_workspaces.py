@@ -462,11 +462,49 @@ class TestEnsureHomeSymlink:
         await app_state.state.workspaces.ensure_home_symlink(
             home, "bob", "uid-1"
         )
+        # User content present -> no re-populate signal (#3124 gate).
+        (home / ".users" / "uid-1" / ".bashrc").write_text("# bob\n")
         result, created = await app_state.state.workspaces.ensure_home_symlink(
             home, "bob", "uid-1"
         )
         assert result == "/home/bob"
         assert created is False
+
+    async def test_empty_user_dir_retries_populate(self, user, app_state):
+        """#3124: an existing-but-empty .users/<uid> (a failed populate on
+        an earlier connect — the exec failure is swallowed) must
+        re-signal the skel copy on the next connect, mirroring the
+        shared-home gate."""
+        ws = await app_state.state.workspaces.create_workspace(
+            user["id"], "symlink-ws-empty"
+        )
+        home = app_state.state.workspaces.home_path(ws["id"])
+        users = home / ".users"
+        users.mkdir(parents=True, exist_ok=True)
+        (users / "uid-1").mkdir(exist_ok=True)  # empty
+        _, created = await app_state.state.workspaces.ensure_home_symlink(
+            home, "dana", "uid-1"
+        )
+        assert created is True
+
+    async def test_correct_symlink_empty_dir_retries_populate(
+        self, user, app_state
+    ):
+        """#3124: the fast-path return (symlink already correct) carries
+        the same emptiness gate — a second connect after a failed
+        populate retries instead of no-op'ing forever."""
+        ws = await app_state.state.workspaces.create_workspace(
+            user["id"], "symlink-ws-empty2"
+        )
+        home = app_state.state.workspaces.home_path(ws["id"])
+        await app_state.state.workspaces.ensure_home_symlink(
+            home, "erin", "uid-1"
+        )
+        # No content appeared (populate failed) -> retry signal.
+        _, created = await app_state.state.workspaces.ensure_home_symlink(
+            home, "erin", "uid-1"
+        )
+        assert created is True
 
     async def test_rename_removes_old_symlink(self, user, app_state):
         ws = await app_state.state.workspaces.create_workspace(
@@ -476,6 +514,9 @@ class TestEnsureHomeSymlink:
         await app_state.state.workspaces.ensure_home_symlink(
             home, "alice", "uid-1"
         )
+        # Content present -> the rename path reports no skel populate
+        # (#3124 gate is emptiness, not bare existence).
+        (home / ".users" / "uid-1" / ".bashrc").write_text("# alice\n")
         result, created = await app_state.state.workspaces.ensure_home_symlink(
             home, "alicia", "uid-1"
         )

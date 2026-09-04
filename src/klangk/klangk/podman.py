@@ -147,6 +147,63 @@ class Podman:
         return self._bin
 
     @staticmethod
+    def _start_stdin_task(
+        proc, stdin_data: bytes | None
+    ) -> asyncio.Task | None:
+        """A feeder task for *stdin_data*, or ``None`` when there is none.
+
+        The feed runs concurrently with the exit wait (never awaited
+        before it) so the *timeout* bounds the whole run: a payload larger
+        than the pipe buffer with a child that never reads must not block
+        ``drain()`` while the timeout sits un-armed (#3124).
+        """
+        if stdin_data is None:
+            return None
+        return asyncio.create_task(Podman._feed_stdin(proc, stdin_data))
+
+    @staticmethod
+    async def _feed_stdin(proc, stdin_data: bytes) -> None:
+        """Write *stdin_data* to the child's stdin and close it.
+
+        A broken/reset pipe — the child exited before consuming stdin,
+        e.g. a ``cat > file`` whose container died mid-write — ends the
+        feed silently: the child's exit status is the real result
+        (#3124); callers act on the returned rc instead of catching an
+        exception that escaped the wrapper.
+        """
+        try:
+            proc.stdin.write(stdin_data)
+            await proc.stdin.drain()
+        except OSError:
+            pass
+        finally:
+            proc.stdin.close()
+
+    @staticmethod
+    async def _settle_stdin_task(stdin_task: asyncio.Task | None) -> None:
+        """Wait for the stdin feeder, cancelling anything left behind.
+
+        ``asyncio.wait`` yields to the loop (a mock-fast process wait can
+        return before a scheduled feeder ever ran, so the feeder takes
+        its step here), never re-raises the feeder's own cancellation,
+        and — unlike awaiting the task directly — lets an *outer*
+        cancellation of the run propagate instead of mistaking it for
+        the feeder's. By the time this runs the child has exited or
+        been killed, so cancelling a still-pending feed (an orphaned
+        grandchild holding the pipe) loses nothing; ``cancel()`` on a
+        completed task is a no-op. The grace timeout bounds the settle
+        on both waits; the normal path (feeder long finished) is
+        instant.
+        """
+        if stdin_task is None:
+            return
+        try:
+            await asyncio.wait([stdin_task], timeout=0.5)
+        finally:
+            stdin_task.cancel()
+            await asyncio.wait([stdin_task], timeout=0.5)
+
+    @staticmethod
     async def _wait_podman(
         proc, timeout: float | None, cmd_label: str
     ) -> bool:
@@ -259,6 +316,15 @@ class Podman:
         spawn long-lived helpers (``pasta``) that inherit pipe fds, blocking
         ``communicate()`` forever.  Temp files avoid this.
 
+        *stdin_data* is fed by a concurrent task, not awaited inline: a
+        payload larger than the pipe buffer with a child that never reads
+        used to block ``drain()`` forever while the timeout sat un-armed
+        (#3124). With the feed running alongside the exit wait, *timeout*
+        bounds the whole run — feed + exit. A child that exits before
+        consuming all of stdin is not an error (its exit status is the
+        result; callers act on the rc — e.g. ``Files.write_file`` mapping
+        a dead ``cat`` to its clean ``OSError`` path).
+
         *timeout* caps how long we wait for the process (default 30 s).
         On timeout the process is killed and a :class:`PodmanTimeoutError`
         is raised (unless *check* is False, in which case rc=-1 is returned).
@@ -281,11 +347,11 @@ class Podman:
                 env=subprocess_env(),
             )
             t2 = time.monotonic()
-            if stdin_data is not None:
-                proc.stdin.write(stdin_data)
-                await proc.stdin.drain()
-                proc.stdin.close()
-            timed_out = await self._wait_podman(proc, timeout, cmd_label)
+            stdin_task = self._start_stdin_task(proc, stdin_data)
+            try:
+                timed_out = await self._wait_podman(proc, timeout, cmd_label)
+            finally:
+                await self._settle_stdin_task(stdin_task)
             t3 = time.monotonic()
             out_f.seek(0)
             err_f.seek(0)
