@@ -40,20 +40,21 @@ runners; the self-hosted NixOS runner is an opt-in via `workflow_dispatch`.
 
 ## Container images
 
-| Workflow                       | File                       | Description                             |
-| ------------------------------ | -------------------------- | --------------------------------------- |
-| **Build Workspace Base Image** | `image-workspace-base.yml` | Build and push the base workspace image |
-| **Build Workspace Image**      | `image-workspace.yml`      | Build and push the workspace image      |
-| **Build FIPS Workspace Image** | `image-workspace-fips.yml` | Build and push the FIPS workspace image |
-| **Build FIPS Host Image**      | `image-host-fips.yml`      | Build and push the FIPS host image      |
+| Workflow                        | File                        | Description                              |
+| ------------------------------- | --------------------------- | ---------------------------------------- |
+| **Build Workspace Base Image**  | `image-workspace-base.yml`  | Build and push the base workspace image  |
+| **Build Workspace Image**       | `image-workspace.yml`       | Build and push the workspace image       |
+| **Build FIPS Workspace Image**  | `image-workspace-fips.yml`  | Build and push the FIPS workspace image  |
+| **Build FIPS Host Image**       | `image-host-fips.yml`       | Build and push the FIPS host image       |
+| **Build Network Sidecar Image** | `image-network-sidecar.yml` | Build and push the network sidecar image |
 
 ## Release and publishing
 
-| Workflow        | File             | Trigger                 | Description                                                                              |
-| --------------- | ---------------- | ----------------------- | ---------------------------------------------------------------------------------------- |
-| **Release**     | `release.yml`    | Push a `v*` tag         | Build and publish host container **and** the `klangk` wheel to PyPI (trusted publishing) |
-| **Dist Smoke**  | `dist-smoke.yml` | Manual                  | Verify the to-be-published wheel serves a working login page before tagging              |
-| **Deploy Docs** | `docs.yml`       | Push a `v*` tag, manual | Deploy versioned docs to GitHub Pages via the gh-pages branch                            |
+| Workflow        | File             | Trigger                 | Description                                                                                                         |
+| --------------- | ---------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| **Release**     | `release.yml`    | Push a `v*` tag         | Publish **all five** container images under the version tag **and** the `klangk` wheel to PyPI (trusted publishing) |
+| **Dist Smoke**  | `dist-smoke.yml` | Manual                  | Verify the to-be-published wheel serves a working login page before tagging                                         |
+| **Deploy Docs** | `docs.yml`       | Push a `v*` tag, manual | Deploy versioned docs to GitHub Pages via the gh-pages branch                                                       |
 
 Releases are cut by pushing a `v*` tag; see
 [Releasing](releasing.md) for the full procedure.

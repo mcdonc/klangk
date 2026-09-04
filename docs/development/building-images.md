@@ -51,17 +51,46 @@ fails a run — so reviewers check the Actions tab rather than gating CI.
 
 ## Image Versioning
 
-**No `:latest` tags are pushed to the registry.** Every image (host,
-workspace, workspace base) is pushed only with an explicit version
-tag. This prevents confusion when stable branches would otherwise
-overwrite `:latest` with an older version. Consumers always reference
-a specific version (by checking out the tag in their fork) or build locally.
+**Stock images carry no `:latest` tag in the registry.** The host,
+workspace, workspace base, and network sidecar images are pushed only
+with an explicit version tag. This prevents confusion when stable
+branches would otherwise overwrite `:latest` with an older version.
+Consumers always reference a specific version (by checking out the tag
+in their fork) or build locally. The FIPS variants are the exception:
+their continuous workflows also maintain a floating `:latest` for the
+e2e pull path (#2631) — the release path never retags `:latest`.
 
 Locally, `build-workspace-image` tags `klangk-workspace:latest`
 (used by the backend at runtime with pull policy `never`) and a
 deterministic version tag (`YYYY.MM.DD-<commit>`). Stale version
 tags from previous builds are automatically removed so they don't
 accumulate. The local `:latest` tag is never pushed to GHCR.
+
+## Release Publishing
+
+Pushing a `v*` tag triggers `release.yml`, which publishes **all five**
+images to GHCR under the tag (`vX.Y.Z`), built from the tagged commit:
+
+| Image           | GHCR repo (under `ghcr.io/mcdonc/klangk/`) | Also built continuously by  |
+| --------------- | ------------------------------------------ | --------------------------- |
+| Host            | `klangk-host`                              | — (release-only)            |
+| FIPS host       | `klangk-host-fips`                         | `image-host-fips.yml`       |
+| Workspace       | `klangk-workspace`                         | `image-workspace.yml`       |
+| FIPS workspace  | `klangk-workspace-fips`                    | `image-workspace-fips.yml`  |
+| Network sidecar | `klangk-network-sidecar`                   | `image-network-sidecar.yml` |
+
+The release path owns no build steps: it calls those image workflows via
+`workflow_call` with the tag pinned, and each one builds and pushes the way
+its continuous runs do (host pair via docker, workspace + sidecar via
+podman). The host pair builds in one job, so the tarballs embedded in the
+host image come from that job's own workspace + sidecar builds, and the FIPS
+host layers that job's FIPS workspace — a release tag pins an auditable
+combination rather than a mix of floating tags.
+
+Release tags are immutable and versioned only: the release path never
+retags `:latest` (the floating `:latest` on the FIPS images stays owned by
+the continuous workflows). See [Releasing](releasing.md) for the full
+tag-push procedure.
 
 ## Workspace Base Image Pin
 

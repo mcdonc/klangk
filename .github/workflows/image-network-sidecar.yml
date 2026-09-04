@@ -1,0 +1,80 @@
+name: Build Network Sidecar Image
+
+# Build the klangk-network-sidecar container image (src/containers/network/
+# Dockerfile) and publish it to GHCR (#3140) — before this the sidecar was
+# never pullable; it existed only as the tar embedded in the host image by
+# build-host-image.sh.
+#
+# Two publish paths:
+#   - continuous (push to main / schedule-free): :<calver>-<commit>, the
+#     same tag convention as klangk-workspace.
+#   - release (workflow_call from release.yml with push-tag): the immutable
+#     :vX.Y.Z tag, built from the tagged commit.
+#
+# No :latest tag on either path (stock-image convention — see
+# building-images.md "Image Versioning"); podman-built and podman-pushed
+# like the workspace image. ONE-TIME setup: flip the new ghcr package's
+# visibility to public so anonymous pulls work (as klangk-workspace
+# already is).
+
+on:
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      push-tag:
+        description: "Versioned tag to publish (release path); empty = <calver>-<commit>"
+        required: false
+        default: ""
+        type: string
+  push:
+    branches: [main]
+    paths:
+      - "src/containers/network/**"
+      - "scripts/build-network-sidecar.sh"
+      - "src/klangksidecar/klangksidecar/**"
+      - "src/klangksidecar/pyproject.toml"
+      - ".github/workflows/image-network-sidecar.yml"
+
+# Literal group prefix (not github.workflow): in a workflow_call the
+# `github` context is the CALLER's, so `github.workflow` would be "Release"
+# for every callee on a tag push — all four release.yml fan-out jobs would
+# land in one group and cancel each other (#3140). The per-file literal
+# keeps the group unique regardless of who calls this workflow.
+concurrency:
+  group: image-network-sidecar-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      # The task builds the klangksidecar wheel first (git present → real
+      # hatch-vcs version) and hands it to the image build as a named
+      # context, tagging the result klangk-network-sidecar locally.
+      - name: Build network sidecar image
+        uses: ./.github/actions/devenv-setup
+        with:
+          build-tasks: klangk:build-network-sidecar
+
+      - name: Push network sidecar image to GHCR
+        run: |
+          . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
+          echo "${{ secrets.GITHUB_TOKEN }}" | devenv shell -- podman login ghcr.io -u ${{ github.actor }} --password-stdin
+          if [ -n "${{ inputs.push-tag }}" ]; then
+            # Release path (#3140): immutable versioned tag only.
+            VERSION="${{ inputs.push-tag }}"
+          else
+            COMMIT=$(git rev-parse --short HEAD)
+            CALVER="$(date -u +%Y.%m.%d)"
+            VERSION="${CALVER}-${COMMIT}"
+          fi
+          REPO="ghcr.io/${{ github.repository }}/klangk-network-sidecar"
+          devenv shell -- podman tag klangk-network-sidecar "$REPO:$VERSION"
+          devenv shell -- podman push "$REPO:$VERSION"
