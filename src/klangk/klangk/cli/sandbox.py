@@ -63,6 +63,12 @@ def load_sandbox_config(sandbox_root: Path) -> SandboxConfig:
     workspace = raw.get("workspace") or {}
     sandbox = raw.get("sandbox") or {}
 
+    copy_specs = list_field(raw, "copy")
+    # Reject malformed copy specs up front so they surface as config
+    # errors (via load_config_or_exit) instead of being silently
+    # mangled at setup time (#3119).
+    validate_copy_specs(copy_specs)
+
     return SandboxConfig(
         image=workspace.get("image"),
         service_command=workspace.get(
@@ -77,7 +83,7 @@ def load_sandbox_config(sandbox_root: Path) -> SandboxConfig:
         mount_at=sandbox.get("mount-at", sandbox.get("mount_at", "~/work")),
         setup=sandbox.get("setup"),
         setup_timeout=parse_setup_timeout(sandbox),
-        copy=list_field(raw, "copy"),
+        copy=copy_specs,
         mounts=list_field(raw, "mounts"),
         volumes=list_field(raw, "volumes"),
     )
@@ -176,6 +182,39 @@ def build_all_mounts(
     return mounts
 
 
+def parse_copy_spec(spec: str) -> tuple[str, str]:
+    """Split a copy spec into ``(source, dest)``.
+
+    Copy specs are strictly ``source:dest`` — exactly one colon,
+    both halves non-empty. A spec with no colon, with extra
+    colon-separated segments (a mount-style ``:ro`` option, say),
+    or with an empty half is rejected: copy specs take no options
+    segment, a path containing a colon cannot be expressed, and
+    silently dropping or defaulting the bad parts would hide the
+    mistake (#3119).
+    """
+    src, sep, dest = spec.partition(":")
+    if not sep or ":" in dest:
+        raise ValueError(
+            f"Invalid copy spec: {spec!r} (need source:dest with"
+            " exactly one colon; copy specs take no options)"
+        )
+    if not src or not dest:
+        raise ValueError(
+            f"Invalid copy spec: {spec!r} (source and destination"
+            " must both be non-empty)"
+        )
+    return src, dest
+
+
+def validate_copy_specs(specs: list[str]) -> None:
+    """Raise ``ValueError`` on any malformed copy spec (#3119)."""
+    for spec in specs:
+        if not isinstance(spec, str):
+            raise ValueError(f"Invalid copy spec: {spec!r} (must be a string)")
+        parse_copy_spec(spec)
+
+
 def build_copy_pairs(
     config: SandboxConfig,
     sandbox_root: Path,
@@ -184,11 +223,9 @@ def build_copy_pairs(
     """Return ``(host_path, container_path)`` pairs from the copy list."""
     pairs = []
     for spec in config.copy:
-        parts = spec.split(":")
-        if len(parts) < 2:
-            raise ValueError(f"Invalid copy spec: {spec!r} (need source:dest)")
-        src = expand_host_path(parts[0], sandbox_root)
-        dest = expand_container_path(parts[1], handle)
+        src_part, dest_part = parse_copy_spec(spec)
+        src = expand_host_path(src_part, sandbox_root)
+        dest = expand_container_path(dest_part, handle)
         pairs.append((src, dest))
     return pairs
 
