@@ -471,8 +471,8 @@ def _foreign_volume_owner(vol_owner: str | None, user_id: str | None) -> bool:
     return bool(vol_owner) and bool(user_id) and vol_owner != user_id
 
 
-def _volume_claimed_by(
-    vol_labels: dict, workspace_id: str | None, user_id: str | None
+def volume_claimed_by(
+    vol_labels: dict, workspace_id: str, user_id: str | None
 ) -> bool:
     """True when the volume's recorded origin matches this start (#3153).
 
@@ -484,13 +484,13 @@ def _volume_claimed_by(
     own workspaces. A missing label side never matches; legacy volumes
     without a workspace label fall back to the user check alone.
     """
-    if workspace_id and vol_labels.get("klangk.workspace") == workspace_id:
+    if vol_labels.get("klangk.workspace") == workspace_id:
         return True
     return not _foreign_volume_owner(vol_labels.get("klangk.user-id"), user_id)
 
 
 def _validate_volume_ownership(
-    app, workspace_id: str | None, user_id: str | None, source: str, info: dict
+    app, workspace_id: str, user_id: str | None, source: str, info: dict
 ) -> None:
     """An existing volume must belong to this instance, and to this
     start: its workspace or creator label must match (#3153)."""
@@ -499,7 +499,7 @@ def _validate_volume_ownership(
         raise ValueError(
             f"Volume {source!r} is not managed by this klangk instance"
         )
-    if _volume_claimed_by(vol_labels, workspace_id, user_id):
+    if volume_claimed_by(vol_labels, workspace_id, user_id):
         return
     raise ValueError(f"Volume {source!r} belongs to another user or workspace")
 

@@ -516,17 +516,6 @@ sync` report a clear permission-denied error.
   the window) on every set. `/api/v1/config` advertises the count as
   `password_history_count`.
 
-- **Workspace-scoped named volumes (#3153).** Named volumes
-  auto-created at workspace start now also carry a `klangk.workspace`
-  podman label. A volume may be mounted by a start whose workspace
-  matches that label or whose user matches the volume's creator;
-  otherwise the start is refused (400 "belongs to another user or
-  workspace"). This lets members cold-start shared workspaces that
-  mount the owner's volume and lets owners restart workspaces whose
-  volume a member first created; volumes from another user and another
-  workspace are still refused. Volumes created before this change
-  (no workspace label) keep the previous creator-only rule.
-
 - **WebSocket error responses (#1718).** Terminal- and shared-terminal
   failure frames sent over the workspace WebSocket no longer include raw
   exception text (which could leak backend paths, image names, or
@@ -1668,6 +1657,17 @@ stop)`) and a `server: stop at 23:00 (in 1h 12m)` status line in the
   `KLANGKD_ALLOW_INSECURE_NO_AUTH`.
 
 ### Changed
+
+- **Workspace-scoped named volumes (#3153).** Named volumes
+  auto-created at workspace start now also carry a `klangk.workspace`
+  podman label. A volume may be mounted by a start whose workspace
+  matches that label or whose user matches the volume's creator;
+  otherwise the start is refused (400 "belongs to another user or
+  workspace"). Members can now cold-start shared workspaces that
+  mount the owner's volume, and owners can restart workspaces whose
+  volume a member first created; volumes from another user and another
+  workspace are still refused. Volumes created before this change
+  (no workspace label) keep the previous creator-only rule.
 
 - **`klangk sandbox` `copy:` destinations are literal container paths
   (#3118).** Only a leading `~` is special (it expands to

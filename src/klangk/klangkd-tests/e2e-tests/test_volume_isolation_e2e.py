@@ -4,7 +4,7 @@ Runtime verification that one workspace container cannot reach another
 workspace's data through mounts — the end-to-end counterpart of the
 unit-tested validation layer (``test_container.py``'s mount validators).
 
-Covers the four attack surfaces plus a runtime audit of the real
+Covers the attack surfaces plus a runtime audit of the real
 containers' mount tables:
 
 1. Home isolation — a marker written in workspace A's home is invisible
@@ -33,6 +33,7 @@ import asyncio
 import base64
 import json
 import subprocess
+import time
 import uuid
 
 import httpx
@@ -182,7 +183,7 @@ def delete_workspace(api, headers, workspace_id):
         api.delete(
             f"/api/v1/workspaces/{workspace_id}", headers=headers, timeout=60
         )
-    except httpx.ReadTimeout:
+    except httpx.HTTPError:
         pass
 
 
@@ -240,6 +241,20 @@ async def recv_until(ws, predicate, timeout=30):
     return messages
 
 
+async def wait_for_message(ws, predicate, timeout=60, what="message"):
+    """Drain until ``predicate`` matches; raise on timeout (a silent
+    fall-through would surface later as a confusing exec failure
+    instead of "never became ready")."""
+    deadline = time.monotonic() + timeout
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise AssertionError(f"timed out waiting for {what}")
+        msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=remaining))
+        if predicate(msg):
+            return
+
+
 async def ws_connect(server, headers, workspace_id):
     """Open a WebSocket, connect to the workspace, wait until ready."""
     token = headers["Authorization"].removeprefix("Bearer ")
@@ -247,16 +262,15 @@ async def ws_connect(server, headers, workspace_id):
     await ws.send(
         json.dumps({"cmd": "workspace_connect", "workspaceId": workspace_id})
     )
-    deadline = asyncio.get_event_loop().time() + 60
-    while asyncio.get_event_loop().time() < deadline:
-        msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=60))
-        if msg.get("type") == "container_ready" or is_container_ready(msg):
-            break
+    await wait_for_message(
+        ws,
+        lambda m: m.get("type") == "container_ready" or is_container_ready(m),
+        what="initial container_ready",
+    )
     await ws.send(json.dumps({"cmd": "ui_ready"}))
-    while asyncio.get_event_loop().time() < deadline:
-        msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=60))
-        if is_container_ready(msg):
-            break
+    await wait_for_message(
+        ws, is_container_ready, what="container_ready after ui_ready"
+    )
     return ws
 
 
@@ -476,8 +490,8 @@ class TestMountAttacks:
                     timeout=60,
                 )
                 assert resp.status_code == 400, resp.text
-                assert "belongs to another user" in resp.json().get(
-                    "detail", ""
+                assert "belongs to another user or workspace" in (
+                    resp.json().get("detail", "")
                 )
             finally:
                 delete_workspace(api, users["alice"], alice_ws)
@@ -577,9 +591,9 @@ class TestWorkspaceScopedVolumes:
 
 
 class TestRuntimeMountAudit:
-    # Adopts/starts all three containers if they are not already
-    # running — same bringup budget as the home-isolation test.
-    @pytest.mark.timeout(600)
+    # Inspects the containers the earlier tests started (`podman ps -a`
+    # also catches stopped ones; only the fixture teardown removes
+    # them) — order-dependence is why this class runs last.
     def test_no_cross_workspace_mount_sources(self, server, users, workspaces):
         """podman inspect: every workspaces-root mount source belongs to
         its own workspace's subtree, and the sets are disjoint."""
