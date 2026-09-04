@@ -1684,6 +1684,14 @@ stop)`) and a `server: stop at 23:00 (in 1h 12m)` status line in the
 /api/v1/volumes` now requires the owning `workspace` field; the CLI
   create command takes `--workspace`. Deleting a workspace removes its
   volumes (an orphan sweep reclaims stragglers).
+- **CLI `--auto-start` respects the `KLANGKD_ALLOW_AUTOSTART` ceiling
+  (#3184).** `klangk create --auto-start` and `klangk edit --auto-start`
+  now fail fast with a clear error when the server does not allow
+  auto-start — before any create/edit request is sent — matching the web
+  UI and TUI, which hide the Auto start control on such deployments.
+  `--no-auto-start` is unaffected, and a failed config probe no longer
+  blocks the request (the server still enforces the ceiling). See
+  [Auto-start](https://klangk.github.io/klangk/features/auto-start/).
 
 - **`klangk sandbox` `copy:` destinations are literal container paths
   (#3118).** Only a leading `~` is special (it expands to

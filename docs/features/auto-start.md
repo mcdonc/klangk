@@ -42,6 +42,10 @@ klangk edit my-service --auto-start
 klangk edit my-service --no-auto-start
 ```
 
+On a server without `KLANGKD_ALLOW_AUTOSTART`, `--auto-start` is
+refused up front (before any request is sent) with a message naming
+the setting; `--no-auto-start` always works.
+
 ### Sandbox config
 
 In `.klangk-sandbox.yaml`:

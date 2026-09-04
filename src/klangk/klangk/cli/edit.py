@@ -23,7 +23,13 @@ from .options import (
     RejectOption,
     SudoOption,
 )
-from .workspaces import build_settings, parse_env_list, prompt, SENTINEL
+from .workspaces import (
+    build_settings,
+    ensure_autostart_allowed,
+    parse_env_list,
+    prompt,
+    SENTINEL,
+)
 from .mount import validate_allowed_domain_spec, validate_mount_spec
 
 # Body fields baked into the container at create time: changing one on a
@@ -581,7 +587,10 @@ def edit(
     auto_start: bool | None = typer.Option(
         None,
         "--auto-start/--no-auto-start",
-        help="Start container automatically on server boot",
+        help=(
+            "Start container automatically on server boot"
+            " (requires KLANGKD_ALLOW_AUTOSTART=1 on the server)"
+        ),
     ),
     per_handle_home: bool | None = typer.Option(
         None,
@@ -626,6 +635,9 @@ def edit(
         raise typer.Exit(code=1)
     context.require_auth()
     client = context.client()
+    # Only opting in is capped by the deploy ceiling; --no-auto-start
+    # is always below it (#3184).
+    ensure_autostart_allowed(client, auto_start)
     ws = context.resolve_or_exit(client, workspace)
 
     if has_any_flags(
