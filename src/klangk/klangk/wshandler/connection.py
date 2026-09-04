@@ -106,7 +106,7 @@ class Connection:
         token expires. Called once after the connection is registered."""
         if self.token_exp is None:
             return
-        self._expiry_task = asyncio.ensure_future(self._expire_when_due())
+        self._expiry_task = asyncio.create_task(self._expire_when_due())
 
     async def _expire_when_due(self) -> None:
         """Sleep until the token's ``exp`` claim, then close the socket."""
