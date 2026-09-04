@@ -148,9 +148,18 @@ test.describe("Password reuse gate (#2582)", () => {
     expect(await submitChange(page, TEST_PASSWORD, TEST_PASSWORD)).toBe(400);
     expect(await apiLoginStatus(request, email, TEST_PASSWORD)).toBe(200);
 
-    // 2. A novel password change succeeds through the UI.
+    // 2. A novel password change succeeds through the UI.  The server
+    //    revokes all sessions on password change (#3152), so the client
+    //    is kicked back to login — re-login and navigate to settings.
     expect(await submitChange(page, TEST_PASSWORD, newPassword)).toBe(200);
     expect(await apiLoginStatus(request, email, newPassword)).toBe(200);
+
+    await loginViaUI(page, email, newPassword);
+    await page.goto("/#/settings");
+    await expect(page).toHaveTitle(/Settings/i, { timeout: 10_000 });
+    await page.reload();
+    await waitForFlutter(page);
+    await enableSemantics(page);
 
     // 3. Changing back to the just-retired password is rejected — the
     //    new one is still current, the old one no longer works.

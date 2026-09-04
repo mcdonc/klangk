@@ -119,7 +119,7 @@ class Connection:
         )
         try:
             await self.sock.close(code=4002, reason="Token expired")
-        except Exception:  # noqa: BLE001
+        except Exception:  # pragma: no cover  # noqa: BLE001
             logger.debug("Error closing expired socket")
 
     # --- SSH agent forwarding (delegates to SshAgentForwarder) ---
