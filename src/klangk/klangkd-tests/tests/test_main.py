@@ -3273,6 +3273,42 @@ class TestSetupLogfire:
         app = FastAPI()
         assert main.setup_logfire(app) is False
 
+    def test_sdk_stdout_print_is_captured_not_leaked(
+        self, monkeypatch, capsys, caplog
+    ):
+        """The logfire SDK prints its project URL straight to stdout
+        ("Logfire project URL: ..."); setup_logfire must capture it and
+        re-emit through the logger so the log stream keeps one format —
+        no bare print lines next to JSON output (#3156)."""
+        import logging as logging_mod
+
+        monkeypatch.setenv("LOGFIRE_TOKEN", "test-token")
+        monkeypatch.delenv("LOGFIRE_BASE_URL", raising=False)
+        monkeypatch.delenv("LOGFIRE_ENVIRONMENT", raising=False)
+        url = "https://logfire-us.pydantic.dev/mcdonc/bark"
+        mock_logfire = MagicMock()
+
+        def fake_configure(**kwargs):
+            # Two content lines with a blank between: exercises both arms
+            # of log_captured_output's blank-line filter.
+            print(f"Logfire project URL: {url}")
+            print()
+            print("logfire: ready")
+
+        mock_logfire.configure.side_effect = fake_configure
+        with patch.dict("sys.modules", {"logfire": mock_logfire}):
+            app = FastAPI()
+            with caplog.at_level(logging_mod.INFO, logger="klangk.lifecycle"):
+                result = main.setup_logfire(app)
+        assert result is True
+        captured = capsys.readouterr()
+        assert captured.out == ""  # nothing leaked past the redirect
+        assert any(
+            f"Logfire project URL: {url}" in r.message
+            for r in caplog.records
+            if r.name == "klangk.lifecycle"
+        )
+
     def test_with_token_instruments_app(self, monkeypatch):
         monkeypatch.setenv("LOGFIRE_TOKEN", "test-token")
         monkeypatch.delenv("LOGFIRE_BASE_URL", raising=False)
