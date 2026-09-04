@@ -56,9 +56,14 @@ jobs:
             # Extract the body of the `## [<version>]` section. Matched as a
             # prefix so an optional trailing date (`## [v1.0.5] - 2026-07-07`)
             # still matches. Captured up to the next `## [` heading or EOF.
+            # Backslashes are stripped from each line before matching, so the
+            # escaped heading form used in docs/changes.md (`## \[v1.0.5]`,
+            # which keeps the docs build from parsing the heading as a link
+            # reference, #3142) and a bare `## [v1.0.5]` both match.
             SECTION="$(awk -v ver="$VERSION" '
-              $0 ~ "^## \\[" ver "]" { found=1; next }
-              found && /^## \[/ { exit }
+              { line = $0; gsub(/\\/, "", line) }
+              line ~ "^## \\[" ver "]" { found=1; next }
+              found && line ~ /^## \[/ { exit }
               found { print }
             ' docs/changes.md)"
           fi

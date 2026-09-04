@@ -60,7 +60,7 @@ devenv shell -- bash scripts/build_wheel.sh
 
 ## Gardening the changelog before a tag
 
-`docs/changes.md` is the source of truth for human-authored release notes. Right before tagging, rename the accumulated `## [Unreleased]` section to `## [vX.Y.Z] - YYYY-MM-DD` and add a fresh empty `## [Unreleased]` above it, in its own commit. The release workflow extracts the `## [vX.Y.Z]` section from the checkout at the tag, so the rename must land in (or before) the commit you tag. See `AGENTS.md` for the full maintenance rules (when to add entries, what qualifies).
+`docs/changes.md` is the source of truth for human-authored release notes. Right before tagging, rename the accumulated `## \[Unreleased]` section to `## \[vX.Y.Z] - YYYY-MM-DD` and add a fresh empty `## \[Unreleased]` above it, in its own commit. The opening bracket in version headings is escaped (`\[`) so the docs build does not parse them as Markdown link references — they render as plain `[...]` (#3142), and the release workflow matches both the escaped and bare forms. The release workflow extracts the `## [vX.Y.Z]` section from the checkout at the tag, so the rename must land in (or before) the commit you tag. See `AGENTS.md` for the full maintenance rules (when to add entries, what qualifies).
 
 ## CI
 
