@@ -2182,8 +2182,10 @@ class TestChangeEmail:
 class TestWorkspaceRoutes:
     @pytest.fixture(autouse=True)
     async def _make_user_admin(self, ws_admin):
-        """#2569: workspace creation requires admin; make the standard
-        test user an admin so existing tests keep working."""
+        """#2569 heritage: make the standard test user an admin so the
+        class's admin-surface tests (ACL editor reads/writes, member
+        management, ...) keep working. Creation itself no longer needs
+        it (#3137)."""
 
     async def test_list_empty(self, client, user):
         headers = await _auth_headers(client)

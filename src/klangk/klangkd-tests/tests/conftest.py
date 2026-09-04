@@ -199,10 +199,11 @@ async def user(app_state):
 
 @pytest.fixture
 async def ws_admin(user, admin_group, app_state):
-    """Make the standard test user an admin so it can create workspaces.
+    """Make the standard test user an admin.
 
-    Use this fixture (instead of plain ``user``) in test classes where
-    the test user needs workspace-creation permission (#2569).
+    Members can create workspaces since #3137, so plain ``user`` is
+    enough for creation; use this fixture where the test user needs
+    admin-only surfaces (manage-users, ACL editor, ...).
     """
     await app_state.state.model.users.add_user_to_group(
         user["id"], admin_group["id"]
