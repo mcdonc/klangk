@@ -1978,6 +1978,15 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Workspace name minimum length is enforced (#3110).** The API now
+  rejects empty and whitespace-only workspace names on create, rename,
+  duplicate, and import (422 on the JSON bodies, 400 on the import
+  archive/request name). Previously `"name": ""` was silently accepted
+  on create and rename; `klangk edit` already rejected blank `--name`
+  client-side (#3103), and this closes the remaining surfaces (web
+  frontend, TUI, direct API callers). Existing blank-named rows, if any,
+  are unaffected — renaming away from one remains possible.
+
 - **Exec-stdin failures surface as the command's exit status (#3124).** A
   container-side command that exits before consuming piped stdin (a file
   upload racing a dying container) no longer raises an unhandled

@@ -2483,6 +2483,20 @@ class TestWorkspaceRoutes:
         assert resp.status_code == 409
         assert "already exists" in resp.json()["detail"]
 
+    async def test_create_rejects_blank_name(self, client, user):
+        # #3110: the request models enforce the name minimum centrally —
+        # empty AND whitespace-only names are 422s on every surface, not
+        # just the CLI's client-side guard (PR #3103).
+        headers = await _auth_headers(client)
+        for bad in ("", "   "):
+            resp = await client.post(
+                "/api/v1/workspaces",
+                headers=headers,
+                json={"name": bad},
+            )
+            assert resp.status_code == 422
+            assert "cannot be empty" in str(resp.json()["detail"])
+
     async def test_create_with_disallowed_image(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(
@@ -3978,6 +3992,27 @@ class TestWorkspaceRoutes:
         assert resp.status_code == 400
         assert resp.json()["detail"] == "No fields to update"
 
+    async def test_rename_rejects_blank_name(self, client, user):
+        # #3110: PUT renames share the create-side name minimum.
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces",
+            json={"name": "blank-rename"},
+            headers=headers,
+        )
+        ws_id = resp.json()["id"]
+        for bad in ("", " \t "):
+            resp = await client.put(
+                f"/api/v1/workspaces/{ws_id}",
+                json={"name": bad},
+                headers=headers,
+            )
+            assert resp.status_code == 422
+        # The stored name is untouched.
+        resp = await client.get("/api/v1/workspaces", headers=headers)
+        by_name = {w["name"]: w for w in resp.json()}
+        assert "blank-rename" in by_name
+
     async def test_create_workspace_with_settings(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(
@@ -4805,6 +4840,24 @@ class TestWorkspaceRoutes:
         )
         assert resp.status_code == 409
         assert "already exists" in resp.json()["detail"]
+
+    async def test_duplicate_rejects_blank_name(self, client, user):
+        # #3110: the duplicate create shares the name minimum.
+        headers = await _auth_headers(client)
+        ws_id = (
+            await client.post(
+                "/api/v1/workspaces",
+                json={"name": "blank-dup-src"},
+                headers=headers,
+            )
+        ).json()["id"]
+        for bad in ("", "   "):
+            resp = await client.post(
+                f"/api/v1/workspaces/{ws_id}/duplicate",
+                json={"name": bad},
+                headers=headers,
+            )
+            assert resp.status_code == 422
 
     async def test_duplicate_workspace_creates_role_groups(
         self, client, user, app_state
@@ -11527,6 +11580,53 @@ class TestWorkspaceExportImport:
         assert resp.status_code == 200
         assert resp.json()["name"] == "from-archive"
 
+    async def test_import_rejects_blank_name(self, client, admin_user, user):
+        # #3110: the import choke point shares the name minimum — a blank
+        # request name (even over a good archive name) and a blank
+        # workspace.json name are both 400s. Name resolution precedes the
+        # provenance check, so no instance_id games needed.
+        import io
+        import json
+        import tarfile
+
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+            meta = json.dumps(self._meta(name="from-archive")).encode()
+            info = tarfile.TarInfo(name="workspace.json")
+            info.size = len(meta)
+            tar.addfile(info, io.BytesIO(meta))
+        archive = buf.getvalue()
+        headers = await self._user_headers(client)
+
+        # Blank explicit request name wins over the archive's good name.
+        resp = await client.post(
+            "/api/v1/workspaces/import",
+            headers=headers,
+            params={"name": "   "},
+            files={"file": ("archive.tar.gz", archive, "application/gzip")},
+        )
+        assert resp.status_code == 400
+        assert (
+            resp.json()["detail"]
+            == "No usable workspace name in archive or request"
+        )
+
+        # Blank archive name with no request override.
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+            meta = json.dumps(self._meta(name=" \t")).encode()
+            info = tarfile.TarInfo(name="workspace.json")
+            info.size = len(meta)
+            tar.addfile(info, io.BytesIO(meta))
+        resp = await client.post(
+            "/api/v1/workspaces/import",
+            headers=headers,
+            files={
+                "file": ("archive.tar.gz", buf.getvalue(), "application/gzip")
+            },
+        )
+        assert resp.status_code == 400
+
     async def test_import_follows_deploy_default(
         self, client, admin_user, user
     ):
@@ -12144,7 +12244,7 @@ class TestWorkspaceExportImport:
             },
         )
         assert resp.status_code == 400
-        assert "No workspace name" in resp.json()["detail"]
+        assert "No usable workspace name" in resp.json()["detail"]
 
     async def test_import_disallowed_image_falls_back(self, client, user):
         """Archive with disallowed image falls back to default."""

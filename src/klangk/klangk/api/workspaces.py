@@ -21,7 +21,7 @@ from fastapi import (
 from fastapi.responses import (
     StreamingResponse,
 )
-from pydantic import BaseModel
+from pydantic import AfterValidator, BaseModel
 from sqlalchemy.exc import IntegrityError as SAIntegrityError
 
 from .. import (
@@ -286,6 +286,22 @@ async def list_shared_workspaces(
     )
 
 
+def _validate_workspace_name(value: str) -> str:
+    """#3110: a workspace name must carry at least one
+    non-whitespace character.
+
+    ``min_length=1`` alone would accept ``" "``; this keeps every
+    surface (web frontend, TUI, API callers) consistent with the
+    `klangk edit` command's blank-``--name`` rejection (PR #3103).
+    """
+    if not value.strip():
+        raise ValueError("Workspace name cannot be empty or only whitespace")
+    return value
+
+
+WorkspaceName = Annotated[str, AfterValidator(_validate_workspace_name)]
+
+
 class WorkspaceBodyFields(BaseModel):
     """The optional workspace fields shared verbatim by the create
     (POST) and update (PUT) bodies.
@@ -308,7 +324,7 @@ class WorkspaceBodyFields(BaseModel):
 
 
 class CreateWorkspaceRequest(WorkspaceBodyFields):
-    name: str
+    name: WorkspaceName
     auto_start: bool = False
     egress_mode: Literal["static", "interactive", "allow"] = (
         EGRESS_MODE_DEFAULT
@@ -508,7 +524,7 @@ async def _eager_start(app, body, ws, actor_id: str | None) -> None:
 
 
 class UpdateWorkspaceRequest(WorkspaceBodyFields):
-    name: str | None = None
+    name: WorkspaceName | None = None
     auto_start: bool | None = None
     # egress_mode (like allowed_domains) is enforced by the network
     # sidecar at container start, so a change here takes effect on the
@@ -764,7 +780,7 @@ async def update_workspace_settings(
 
 
 class DuplicateWorkspaceRequest(BaseModel):
-    name: str
+    name: WorkspaceName
 
 
 @router.post("/workspaces/{workspace_id}/duplicate")
@@ -1334,12 +1350,13 @@ async def _read_archive_metadata(archive_path: str) -> dict:
 
 def _archive_ws_name(metadata: dict, name: str | None) -> str:
     """The workspace name: an explicit request name wins, else the
-    archive's."""
+    archive's. Empty, blank, or non-string candidates are a 400
+    (#3110)."""
     ws_name = name or metadata.get("name")
-    if not ws_name:
+    if not isinstance(ws_name, str) or not ws_name.strip():
         raise HTTPException(
             status_code=400,
-            detail="No workspace name in archive or request",
+            detail=("No usable workspace name in archive or request"),
         )
     return ws_name
 
