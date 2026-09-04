@@ -12,7 +12,6 @@ Logging is configured by two module-level functions in :mod:`klangk.logger`
 
 import json
 import logging
-import logging.handlers
 
 import pytest
 
@@ -193,6 +192,22 @@ class TestJsonFormatter:
         )
         payload = self._format_record(record)
         assert payload["message"] == "n=%d"
+
+    def test_str_raising_msg_falls_back_to_repr(self):
+        # ``getMessage()``'s first step is ``str(msg)``; a msg whose
+        # ``__str__`` raises defeats both it and the ``str(msg)`` fallback,
+        # so the nested ``repr(msg)`` arm is what keeps ``format()`` from
+        # ever raising (fresh-eyes review finding on #3156).
+        class Hostile:
+            def __str__(self):
+                raise RuntimeError("no str for you")
+
+        obj = Hostile()
+        record = logging.LogRecord(
+            "klangk.test", logging.INFO, __file__, 1, obj, (), None
+        )
+        payload = self._format_record(record)
+        assert payload["message"] == repr(obj)
 
     def test_newlines_in_message_do_not_break_one_line_contract(self):
         record = logging.LogRecord(
@@ -400,16 +415,69 @@ class TestLogFileSink:
         self, clean_root, tmp_path, capsys
     ):
         """SIGHUP changing KLANGKD_LOG_FILE: old file keeps its records, new
-        file gets the later ones, exactly one file handler stays attached."""
+        file gets the later ones, exactly one file handler stays attached,
+        and the old sink's stream is actually closed (no fd leak across
+        reloads)."""
         old = tmp_path / "old.jsonl"
         new = tmp_path / "new.jsonl"
         logger_mod.configure(_make_settings(log_file=str(old)))
         logging.getLogger("klangk.sink.flip").info("to old")
+        (old_handler,) = _klangk_file_handlers(clean_root)
+        # FileHandler.close() flushes, then nulls self.stream before closing
+        # it — hold the stream object itself to assert the fd was released.
+        old_stream = old_handler.stream
         logger_mod.configure(_make_settings(log_file=str(new)))
         logging.getLogger("klangk.sink.flip").info("to new")
         assert len(_klangk_file_handlers(clean_root)) == 1
+        assert old_stream.closed
+        assert old_handler not in clean_root.handlers
         assert json.loads(old.read_text())["message"] == "to old"
         assert json.loads(new.read_text())["message"] == "to new"
+
+    def test_external_rotation_reopens_new_file(self, clean_root, tmp_path):
+        """WatchedFileHandler semantics: a rename-style rotation changes the
+        inode, and the sink follows the new file at the configured path
+        without a SIGHUP (the reason for not using a plain FileHandler)."""
+        target = tmp_path / "k.jsonl"
+        rotated = tmp_path / "k.jsonl.1"
+        logger_mod.configure(_make_settings(log_file=str(target)))
+        logging.getLogger("klangk.sink.rotate").info("before")
+        target.replace(rotated)  # external rotation: rename
+        logging.getLogger("klangk.sink.rotate").info("after")
+        assert "before" in rotated.read_text()
+        assert "after" in target.read_text()  # sink recreated + followed it
+
+    def test_reopen_failure_suspends_sink_not_the_call_site(
+        self, clean_root, tmp_path, caplog
+    ):
+        """Hostile rotation — the path becomes a directory: the log call
+        must not raise (``WatchedFileHandler.emit`` runs the reopen outside
+        the stdlib try/except), exactly one warning is emitted, later
+        records are dropped from the file while the console stays live, and
+        a reconfigure to the same path (a SIGHUP) heals the sink."""
+        target = tmp_path / "k.jsonl"
+        settings = _make_settings(log_file=str(target))
+        logger_mod.configure(settings)
+        logging.getLogger("klangk.sink.hostile").info("good")
+        target.unlink()
+        target.mkdir()  # stat succeeds, inode differs -> reopen -> OSError
+        with caplog.at_level(logging.WARNING, logger="klangk.logger"):
+            logging.getLogger("klangk.sink.hostile").info("hostile")
+            logging.getLogger("klangk.sink.hostile").info("still hostile")
+        (handler,) = _klangk_file_handlers(clean_root)
+        assert handler._sink_broken is True
+        assert (
+            sum(
+                "file logging suspended" in r.getMessage()
+                for r in caplog.records
+            )
+            == 1  # one-shot: the re-entrant warning didn't recurse
+        )
+        # Heal: clear the hostile path and reload settings (SIGHUP path).
+        target.rmdir()
+        logger_mod.configure(settings)
+        logging.getLogger("klangk.sink.hostile").info("healed")
+        assert "healed" in target.read_text()
 
     def test_uvicorn_records_share_the_configured_format(
         self, clean_root, tmp_path, capsys
@@ -452,7 +520,7 @@ class TestLogFileSink:
         def boom(*args, **kwargs):
             raise OSError("gone")
 
-        monkeypatch.setattr(logging.handlers, "WatchedFileHandler", boom)
+        monkeypatch.setattr(logger_mod, "RotationSafeFileHandler", boom)
         with caplog.at_level(logging.WARNING, logger="klangk.logger"):
             logger_mod.configure(settings)
         assert _klangk_file_handlers(clean_root) == []

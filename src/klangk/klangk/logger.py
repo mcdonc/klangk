@@ -50,7 +50,19 @@ import logging
 import logging.handlers
 from datetime import UTC, datetime
 
-__all__ = ["configure", "configure_defaults"]
+__all__ = [
+    "DEFAULT_FORMAT",
+    "DEFAULT_LEVEL",
+    "JsonFormatter",
+    "RotationSafeFileHandler",
+    "configure",
+    "configure_defaults",
+    "drop_klangk_handlers",
+    "format_is_json",
+    "install_file_handler",
+    "level_to_int",
+    "make_formatter",
+]
 
 
 def level_to_int(value: str) -> int:
@@ -108,9 +120,10 @@ class JsonFormatter(logging.Formatter):
 
     Hand-rolled (no ``python-json-logger`` dependency): emits ``timestamp``
     (ISO-8601 UTC), ``level``, ``logger``, and ``message`` — plus ``exc_info``
-    when the record carries an exception. Covers everything that reaches the
-    root handler, klangk's own loggers and third-party ones alike, so the
-    whole stream is uniform and free of ANSI color codes.
+    when the record carries an exception. ``stack_info`` records drop the
+    stack (no ``stack`` field). Covers everything that reaches the root
+    handler, klangk's own loggers and third-party ones alike, so the whole
+    stream is uniform and free of ANSI color codes.
 
     Formatting never raises: a record whose ``%``-args don't match its format
     string would make ``getMessage()`` raise, and the stdlib ``handleError``
@@ -120,11 +133,19 @@ class JsonFormatter(logging.Formatter):
     """
 
     def safe_message(self, record: logging.LogRecord) -> str:
-        """``getMessage()``, degrading to the raw msg on a bad %-format."""
+        """``getMessage()``, degrading to ``str(msg)`` then ``repr(msg)``.
+
+        The nested fallback covers a ``msg`` whose ``__str__`` itself raises
+        (``getMessage()``'s first step is ``str(msg)``), so ``format()``
+        never raises on pathological input either.
+        """
         try:
             return record.getMessage()
         except Exception:
-            return str(record.msg)
+            try:
+                return str(record.msg)
+            except Exception:
+                return repr(record.msg)
 
     def has_exception(self, record: logging.LogRecord) -> bool:
         """Whether the record carries a real exception (not ``(None,)*3``)."""
@@ -190,6 +211,41 @@ def make_formatter(log_format: str) -> logging.Formatter:
     return logging.Formatter(_FORMAT, datefmt=_DATEFMT)
 
 
+class RotationSafeFileHandler(logging.handlers.WatchedFileHandler):
+    """A ``WatchedFileHandler`` that suspends the sink instead of raising.
+
+    ``WatchedFileHandler.emit`` calls ``reopenIfNeeded()`` before the
+    try/except in ``FileHandler.emit`` covers it, so a reopen failure after
+    external rotation (the rotated-to path is a directory, permissions were
+    lost, the file was renamed away without replacement) would propagate out
+    of the ``logger.info(...)`` **call site**. On the first such failure this
+    handler emits one warning and then drops every further record — the
+    console stream stays live; the file sink is dead, not the process. The
+    next :func:`configure` (a SIGHUP reload swaps the sink anyway) re-creates
+    the handler, which heals a suspended sink.
+    """
+
+    _sink_broken = False
+
+    def emit(self, record: logging.LogRecord) -> None:
+        if self._sink_broken:
+            return
+        try:
+            super().emit(record)
+        except RecursionError:
+            raise
+        except Exception:
+            # Set before warning: the warning record itself propagates to
+            # this handler again, and the flag must already be set so the
+            # re-entrant emit returns instead of recursing.
+            self._sink_broken = True
+            logging.getLogger(__name__).warning(
+                "KLANGKD_LOG_FILE=%s write/reopen failed; "
+                "file logging suspended until reload",
+                self.baseFilename,
+            )
+
+
 def install_file_handler(
     root: logging.Logger, level: int, log_file: str
 ) -> None:
@@ -198,20 +254,20 @@ def install_file_handler(
     The file is the machine-ingestion artifact (rsyslog ``imfile`` / fluent-bit
     tail it into a SIEM), so it is **always** :class:`JsonFormatter` — the
     console keeps ``KLANGKD_LOG_FORMAT`` and may stay human-readable while the
-    file carries JSON. ``WatchedFileHandler`` (not plain ``FileHandler``)
-    reopens the file when the inode changes, so external log rotation
-    (logrotate copytruncate / rsyslog) works without a SIGHUP. An open
-    failure is logged at warning and skipped (the console stream stays live)
-    instead of raising: construction-time settings validation has already
-    fail-fasted unwritable paths, so this arm only guards a path that broke
-    between validation and a SIGHUP reconfigure.
+    file carries JSON. :class:`RotationSafeFileHandler` (a
+    ``WatchedFileHandler``) reopens the file when the inode changes, so
+    external log rotation (logrotate rename / rsyslog) works without a
+    SIGHUP. Failure posture: a broken path degrades — a construction-time
+    open failure is logged at warning and skipped, and an emit-time reopen
+    failure suspends the sink with one warning (see the class docstring) — so
+    the console stream stays live either way; construction-time settings
+    validation has already fail-fasted unwritable paths, so these arms only
+    guard a path that broke between validation and use.
     """
     if not log_file:
         return
     try:
-        handler = logging.handlers.WatchedFileHandler(
-            log_file, encoding="utf-8"
-        )
+        handler = RotationSafeFileHandler(log_file, encoding="utf-8")
     except OSError as exc:
         logging.getLogger(__name__).warning(
             "KLANGKD_LOG_FILE=%s unavailable (%s); file logging disabled",
@@ -258,6 +314,11 @@ def _apply(
     """
     root = logging.getLogger()
 
+    # Drop-then-add (not add-then-drop): the brief window can lose a record
+    # emitted mid-swap from a non-loop thread, but the alternative — running
+    # both handler sets at once — would duplicate every record. klangkd is
+    # otherwise single-threaded at reload points, so the window is empty in
+    # practice.
     drop_klangk_handlers(root)
 
     handler = logging.StreamHandler()

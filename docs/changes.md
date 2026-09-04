@@ -554,9 +554,13 @@ sync` report a clear permission-denied error.
   while the file feeds rsyslog `imfile`/fluent-bit. uvicorn's startup/error/
   access records now flow through the same handler (previously they rode
   uvicorn's own text handlers), so the whole stream shares the format. Both
-  are reloadable on SIGHUP; malformed values abort startup. uvicorn access
+  are reloadable on SIGHUP; malformed values abort startup. The file sink
+  follows external rotation (logrotate rename) and suspends itself with a
+  warning instead of crashing if its path breaks at runtime. uvicorn access
   logs are now visible at the default INFO level (previously suppressed at
-  WARNING). See [Environment Variables](reference/environment.md).
+  WARNING), and the Logfire SDK's project-URL print is suppressed so it
+  cannot inject a non-JSON line into the stream. See
+  [Environment Variables](reference/environment.md).
 - **All five container images now publish on a release tag (#3140).**
   Pushing `vX.Y.Z` publishes `klangk-host`, `klangk-host-fips`,
   `klangk-workspace`, `klangk-workspace-fips`, and the newly pullable

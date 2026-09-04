@@ -3273,40 +3273,27 @@ class TestSetupLogfire:
         app = FastAPI()
         assert main.setup_logfire(app) is False
 
-    def test_sdk_stdout_print_is_captured_not_leaked(
-        self, monkeypatch, capsys, caplog
-    ):
-        """The logfire SDK prints its project URL straight to stdout
-        ("Logfire project URL: ..."); setup_logfire must capture it and
-        re-emit through the logger so the log stream keeps one format —
-        no bare print lines next to JSON output (#3156)."""
-        import logging as logging_mod
-
+    def test_project_link_print_suppressed_at_source(self, monkeypatch):
+        """The real SDK (4.37) prints "Logfire project URL: ..." to stderr
+        via rich — from a background token-validation thread when no creds
+        file exists — so a stdout redirect can't catch it. setup_logfire must
+        suppress the print at the source: ``console=ConsoleOptions(
+        show_project_link=False)`` gates both print sites (#3156)."""
         monkeypatch.setenv("LOGFIRE_TOKEN", "test-token")
         monkeypatch.delenv("LOGFIRE_BASE_URL", raising=False)
         monkeypatch.delenv("LOGFIRE_ENVIRONMENT", raising=False)
-        url = "https://logfire-us.pydantic.dev/mcdonc/bark"
         mock_logfire = MagicMock()
-
-        def fake_configure(**kwargs):
-            # Two content lines with a blank between: exercises both arms
-            # of log_captured_output's blank-line filter.
-            print(f"Logfire project URL: {url}")
-            print()
-            print("logfire: ready")
-
-        mock_logfire.configure.side_effect = fake_configure
         with patch.dict("sys.modules", {"logfire": mock_logfire}):
             app = FastAPI()
-            with caplog.at_level(logging_mod.INFO, logger="klangk.lifecycle"):
-                result = main.setup_logfire(app)
+            result = main.setup_logfire(app)
         assert result is True
-        captured = capsys.readouterr()
-        assert captured.out == ""  # nothing leaked past the redirect
-        assert any(
-            f"Logfire project URL: {url}" in r.message
-            for r in caplog.records
-            if r.name == "klangk.lifecycle"
+        mock_logfire.ConsoleOptions.assert_called_once_with(
+            show_project_link=False
+        )
+        configure_kwargs = mock_logfire.configure.call_args.kwargs
+        assert (
+            configure_kwargs["console"]
+            is mock_logfire.ConsoleOptions.return_value
         )
 
     def test_with_token_instruments_app(self, monkeypatch):
@@ -3318,7 +3305,7 @@ class TestSetupLogfire:
             app = FastAPI()
             result = main.setup_logfire(app)
         assert result is True
-        mock_logfire.configure.assert_called_once_with()
+        mock_logfire.configure.assert_called_once()
         mock_logfire.instrument_fastapi.assert_called_once_with(app)
 
     def test_base_url_passed_via_advanced_options(self, monkeypatch):
@@ -3360,6 +3347,7 @@ class TestCorsOrigins:
             base_url="https://custom.logfire"
         )
         mock_logfire.configure.assert_called_once_with(
+            console=mock_logfire.ConsoleOptions.return_value,
             advanced=mock_logfire.AdvancedOptions.return_value,
             environment="staging",
         )

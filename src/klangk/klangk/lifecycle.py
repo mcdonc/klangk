@@ -12,8 +12,6 @@ unchanged except where noted inline (#2738 audit fixes). Owns:
 """
 
 import asyncio
-import contextlib
-import io
 import logging
 import os
 import signal
@@ -1084,30 +1082,6 @@ class Lifecycle:
         state.sockets.notify_host_started()
 
 
-def capture_logfire_output(logfire, kwargs: dict, app: FastAPI) -> str:
-    """Run the logfire configure/instrument calls with stdout captured.
-
-    The SDK prints its project URL (``Logfire project URL: https://...``)
-    straight to ``stdout`` via ``print``, which would inject a non-JSON line
-    into the configured log stream (#3156). Capturing keeps the stream
-    uniform; the text is returned so the caller can re-emit it through the
-    logger, where it picks up ``KLANGKD_LOG_FORMAT``/``KLANGKD_LOG_FILE``
-    like every other record. Startup is single-threaded here, so the
-    process-global redirect races nothing.
-    """
-    with contextlib.redirect_stdout(io.StringIO()) as captured:
-        logfire.configure(**kwargs)
-        logfire.instrument_fastapi(app)
-    return captured.getvalue().strip()
-
-
-def log_captured_output(text: str) -> None:
-    """Re-emit captured SDK stdout through the klangkd logger (#3156)."""
-    for line in text.splitlines():
-        if line.strip():
-            logger.info("logfire: %s", line)
-
-
 def setup_logfire(app: FastAPI) -> bool:
     """Enable Logfire instrumentation if LOGFIRE_TOKEN is set."""
     if not os.environ.get("LOGFIRE_TOKEN"):
@@ -1116,14 +1090,23 @@ def setup_logfire(app: FastAPI) -> bool:
 
     base_url = os.environ.get("LOGFIRE_BASE_URL")
     environment = os.environ.get("LOGFIRE_ENVIRONMENT")
-    kwargs: dict = {}
+    kwargs: dict = {
+        # The SDK prints "Logfire project URL: ..." to stderr via rich —
+        # from a background token-validation thread when no creds file
+        # exists (#3156) — which would inject a non-JSON line into the
+        # configured log stream. Suppress the link print at the source
+        # (both print sites are gated on this option); everything else
+        # keeps its defaults.
+        "console": logfire.ConsoleOptions(show_project_link=False),
+    }
     if environment:
         kwargs["environment"] = environment
     if base_url:
         # The top-level `base_url` argument is deprecated; pass it via
         # `advanced=logfire.AdvancedOptions(base_url=...)` instead (#1410).
         kwargs["advanced"] = logfire.AdvancedOptions(base_url=base_url)
-    log_captured_output(capture_logfire_output(logfire, kwargs, app))
+    logfire.configure(**kwargs)
+    logfire.instrument_fastapi(app)
     logger.info("Logfire instrumentation enabled")
     return True
 
