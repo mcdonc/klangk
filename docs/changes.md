@@ -1638,6 +1638,9 @@ stop)`) and a `server: stop at 23:00 (in 1h 12m)` status line in the
 
 ### Changed
 
+- **Pre-release tags.** Cutting a release from an `a`/`b`/`rc` tag
+  (e.g. `v2.0.0a1`) now marks the GitHub Release as a pre-release, so
+  it no longer claims "latest" from the most recent stable release.
 - **`klangk sandbox` `copy:` destinations are literal container paths
   (#3118).** Only a leading `~` is special (it expands to
   `/home/{handle}`); no other shell expansion happens — a destination

@@ -35,6 +35,18 @@ The workflow runs these jobs:
 
 For patch releases, increment the patch version: `v0.1.1`.
 
+## Pre-releases
+
+A tag with a PEP 440 pre-release segment — `v2.0.0a1`, `v1.2.3b2`,
+`v2.0.0rc1` — runs the same pipeline: all five images publish under the
+tag, the wheel publishes to PyPI (plain `pip install klangk` keeps
+resolving to the last stable release; testers opt in with `--pre` or an
+exact pin), and the GitHub Release is created **flagged as a
+pre-release**, so it does not claim "latest" from the most recent
+stable release. The changelog section must carry the full suffix
+(`## \[v2.0.0a1]`) — the workflow's prefix match is anchored on `]`, so
+`## \[v2.0.0]` does not satisfy tag `v2.0.0a1`.
+
 ## PyPI publishing
 
 The `build-wheel` job publishes via **trusted publishing (OIDC)** — no API

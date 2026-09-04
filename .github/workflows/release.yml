@@ -84,6 +84,13 @@ jobs:
           # auto-generated commit summaries (#2125).
           # Fallback: no changelog section → pure auto-generated notes.
           VERSION="$GITHUB_REF_NAME"
+          # Pre-release tag (vX.Y.ZaN / bN / rcN, e.g. v2.0.0a1) → mark
+          # the GitHub Release as a pre-release so it does not claim
+          # "latest" from the last stable release.
+          PRE_ARGS=()
+          if [[ "$VERSION" =~ ^v[0-9]+(\.[0-9]+){0,2}(a|b|rc)[0-9]+$ ]]; then
+            PRE_ARGS=(--prerelease)
+          fi
           SECTION=""
           if [ -f docs/changes.md ]; then
             # Extract the body of the `## [<version>]` section. Matched as a
@@ -101,15 +108,15 @@ jobs:
             ' docs/changes.md)"
           fi
           if [ -n "$SECTION" ]; then
-            gh release create "$VERSION" \
-              --title "$VERSION" \
-              --notes "$SECTION"
+            NOTES_ARGS=(--notes "$SECTION")
           else
             # No changelog section for this version — pure auto-generated notes.
-            gh release create "$VERSION" \
-              --title "$VERSION" \
-              --generate-notes
+            NOTES_ARGS=(--generate-notes)
           fi
+          gh release create "$VERSION" \
+            --title "$VERSION" \
+            "${NOTES_ARGS[@]}" \
+            "${PRE_ARGS[@]}"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
