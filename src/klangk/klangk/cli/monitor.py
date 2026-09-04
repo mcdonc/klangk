@@ -93,8 +93,9 @@ def dispatch_monitor_event(msg: dict, command: list[str]) -> None:
     # network trouble — wrap every OSError from the run so the reconnect
     # loop lets it end the run instead of retrying forever (#3092).
     # CPython already swallows BrokenPipeError on the input write, so
-    # what reaches here is a failed spawn (missing binary, bad path
-    # component, not executable).
+    # this is almost always a failed spawn (missing binary, bad path
+    # component, not executable); rare resource-exhaustion OSErrors
+    # (EMFILE/ENOMEM) surface here too rather than retrying silently.
     try:
         subprocess.run(command, input=payload.encode(), env=env, check=False)
     except OSError as exc:

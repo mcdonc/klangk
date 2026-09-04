@@ -4575,6 +4575,46 @@ class TestMonitor:
                 )
 
     @pytest.mark.asyncio
+    async def test_uds_enoent_reconnects(self):
+        # The load-bearing composition (#3092's fix direction): a
+        # FileNotFoundError from the UDS socket connect (server down,
+        # socket file absent) must stay a reconnectable network error —
+        # only hook spawn failures are fatal. Unstubbed chain: the real
+        # monitor_connection hits the real ws_connect UDS path.
+        from klangk.cli import main as main_mod
+
+        sleeps = []
+
+        async def fake_sleep(delay):
+            sleeps.append(delay)
+
+        async def fail_connect(*a, **kw):
+            pytest.fail("UDS ENOENT must fail before websockets.connect")
+
+        with (
+            patch("klangk.cli.main.websockets.connect", fail_connect),
+            patch.object(main_mod.asyncio, "sleep", fake_sleep),
+            patch.object(
+                klangk.cli.monitor, "monitor_backoff", lambda a, m: 0.0
+            ),
+        ):
+            with pytest.raises(typer.Exit) as exc_info:
+                await main_mod.monitor_run(
+                    "/nonexistent/klangk.sock",
+                    "tok",
+                    1024,
+                    command=["true"],
+                    types=[],
+                    workspaces=[],
+                    max_reconnects=1,
+                    max_delay=1.0,
+                )
+        # Gave up via the reconnect budget — the ENOENT was treated as
+        # transient, not propagated as a fatal hook error.
+        assert exc_info.value.exit_code == 1
+        assert len(sleeps) == 1
+
+    @pytest.mark.asyncio
     async def test_reconnects_after_disconnect(self):
         # Two clean closes → monitor_connection called twice, with a
         # backoff sleep in between.
