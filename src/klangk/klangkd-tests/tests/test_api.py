@@ -9919,6 +9919,8 @@ class TestAdminEndpoints:
             },
         )
         assert login_resp.status_code == 200
+        # #3172: admin-created user must change password
+        assert login_resp.json()["must_change_password"] is True
 
     async def test_admin_create_user_duplicate(self, client, admin_user, user):
         headers = await self._admin_headers(client)
@@ -10530,6 +10532,204 @@ class TestUserSessionsAudit:
             f"/api/v1/users/{user['id']}/sessions", headers=headers
         )
         assert resp.status_code == 403
+
+
+class TestMustChangePassword:
+    """#3172 — force password change on admin-created/reset passwords."""
+
+    async def _admin_headers(self, client):
+        resp = await client.post(
+            "/api/v1/auth/login",
+            json={
+                "identifier": "testadmin@example.com",
+                "password": "testpass",
+            },
+        )
+        return {"Authorization": f"Bearer {resp.json()['access_token']}"}
+
+    async def test_admin_create_user_sets_flag(
+        self, client, admin_user, app_state
+    ):
+        """Admin-created user with password has must_change_password."""
+        headers = await self._admin_headers(client)
+        resp = await client.post(
+            "/api/v1/users",
+            headers=headers,
+            json={"email": "forced@example.com", "password": "testpass123"},
+        )
+        assert resp.status_code == 200
+        user = await app_state.state.model.users.get_user_by_email(
+            "forced@example.com"
+        )
+        assert user["must_change_password"] is True
+
+    async def test_admin_password_reset_sets_flag(
+        self, client, admin_user, user, app_state
+    ):
+        """Admin password reset sets must_change_password."""
+        headers = await self._admin_headers(client)
+        resp = await client.patch(
+            f"/api/v1/users/{user['id']}",
+            headers=headers,
+            json={"password": "newpass12345"},
+        )
+        assert resp.status_code == 200
+        u = await app_state.state.model.users.get_user_by_id(user["id"])
+        assert u["must_change_password"] is True
+
+    async def test_login_returns_flag(self, client, admin_user, app_state):
+        """Login response includes must_change_password when set."""
+        headers = await self._admin_headers(client)
+        await client.post(
+            "/api/v1/users",
+            headers=headers,
+            json={"email": "flagged@example.com", "password": "testpass123"},
+        )
+        resp = await client.post(
+            "/api/v1/auth/login",
+            json={
+                "identifier": "flagged@example.com",
+                "password": "testpass123",
+            },
+        )
+        assert resp.status_code == 200
+        assert resp.json()["must_change_password"] is True
+
+    async def test_api_gated_under_flag(self, client, admin_user, app_state):
+        """API requests (other than change-password) are rejected under
+        the must_change_password flag."""
+        headers = await self._admin_headers(client)
+        await client.post(
+            "/api/v1/users",
+            headers=headers,
+            json={"email": "gated@example.com", "password": "testpass123"},
+        )
+        login_resp = await client.post(
+            "/api/v1/auth/login",
+            json={
+                "identifier": "gated@example.com",
+                "password": "testpass123",
+            },
+        )
+        token = login_resp.json()["access_token"]
+        flagged_headers = {"Authorization": f"Bearer {token}"}
+        # A normal endpoint should be rejected
+        resp = await client.get(
+            "/api/v1/my-permissions", headers=flagged_headers
+        )
+        assert resp.status_code == 403
+        assert resp.json()["detail"] == "Password change required"
+
+    async def test_change_password_clears_flag(
+        self, client, admin_user, app_state
+    ):
+        """Changing password clears the must_change_password flag."""
+        headers = await self._admin_headers(client)
+        await client.post(
+            "/api/v1/users",
+            headers=headers,
+            json={"email": "clearflag@example.com", "password": "testpass123"},
+        )
+        login_resp = await client.post(
+            "/api/v1/auth/login",
+            json={
+                "identifier": "clearflag@example.com",
+                "password": "testpass123",
+            },
+        )
+        token = login_resp.json()["access_token"]
+        flagged_headers = {"Authorization": f"Bearer {token}"}
+        # Change password should work even under the flag
+        resp = await client.post(
+            "/api/v1/auth/change-password",
+            headers=flagged_headers,
+            json={
+                "current_password": "testpass123",
+                "new_password": "brandnewpass1",
+            },
+        )
+        assert resp.status_code == 200
+        # Verify flag is cleared
+        user = await app_state.state.model.users.get_user_by_email(
+            "clearflag@example.com"
+        )
+        assert user["must_change_password"] is False
+        # Now API should work
+        login2 = await client.post(
+            "/api/v1/auth/login",
+            json={
+                "identifier": "clearflag@example.com",
+                "password": "brandnewpass1",
+            },
+        )
+        assert login2.json()["must_change_password"] is False
+
+    async def test_admin_can_clear_flag(self, client, admin_user, app_state):
+        """Admin can explicitly clear the flag via PATCH."""
+        headers = await self._admin_headers(client)
+        resp = await client.post(
+            "/api/v1/users",
+            headers=headers,
+            json={
+                "email": "adminclear@example.com",
+                "password": "testpass123",
+            },
+        )
+        user_id = resp.json()["id"]
+        resp = await client.patch(
+            f"/api/v1/users/{user_id}",
+            headers=headers,
+            json={"must_change_password": False},
+        )
+        assert resp.status_code == 200
+        user = await app_state.state.model.users.get_user_by_id(user_id)
+        assert user["must_change_password"] is False
+
+    async def test_reset_password_clears_flag(
+        self, client, app, admin_user, app_state
+    ):
+        """Self-service password reset clears the flag."""
+        headers = await self._admin_headers(client)
+        await client.post(
+            "/api/v1/users",
+            headers=headers,
+            json={
+                "email": "resetclear@example.com",
+                "password": "testpass123",
+            },
+        )
+        user = await app_state.state.model.users.get_user_by_email(
+            "resetclear@example.com"
+        )
+        assert user["must_change_password"] is True
+        # Generate a reset token and use it
+        reset_token = app.state.auth.create_password_reset_token(user["id"])
+        resp = await client.post(
+            "/api/v1/auth/reset-password",
+            json={"token": reset_token, "password": "selfchosen999"},
+        )
+        assert resp.status_code == 200
+        user = await app_state.state.model.users.get_user_by_email(
+            "resetclear@example.com"
+        )
+        assert user["must_change_password"] is False
+
+    async def test_list_users_includes_flag(
+        self, client, admin_user, app_state
+    ):
+        """The admin user list includes the must_change_password field."""
+        headers = await self._admin_headers(client)
+        await client.post(
+            "/api/v1/users",
+            headers=headers,
+            json={"email": "listed@example.com", "password": "testpass123"},
+        )
+        resp = await client.get("/api/v1/users", headers=headers)
+        assert resp.status_code == 200
+        users = resp.json()["users"]
+        listed = [u for u in users if u["email"] == "listed@example.com"]
+        assert len(listed) == 1
+        assert listed[0]["must_change_password"] is True
 
 
 class TestGroupEndpoints:

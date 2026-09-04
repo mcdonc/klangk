@@ -313,6 +313,41 @@ def print_login_failure(resp) -> None:
     raise SystemExit(1)
 
 
+def _forced_password_change(
+    server_url: str, token: str, current_password: str
+) -> str:
+    """Prompt for a new password and POST it. Returns the same token
+    (the server clears the flag server-side). Exits on failure."""
+    _out.print(
+        "\n[yellow]Your password was set by an administrator."
+        " You must change it now.[/yellow]\n"
+    )
+    while True:
+        new_password = Prompt.ask("[bold]New password[/bold]", password=True)
+        confirm = Prompt.ask(
+            "[bold]Confirm new password[/bold]", password=True
+        )
+        if new_password != confirm:
+            _err.print("[red]Passwords do not match.[/red]")
+            continue
+        resp = http_request(
+            server_url,
+            "POST",
+            "/api/v1/auth/change-password",
+            json={
+                "current_password": current_password,
+                "new_password": new_password,
+            },
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=15.0,
+        )
+        if resp.status_code == 200:
+            _out.print("[green]Password changed.[/green]")
+            return token
+        detail = login_failure_detail(resp)
+        _err.print(f"[red]Password change failed:[/red] {detail}")
+
+
 def password_login(server_url, email, password, state) -> None:
     """Prompt for credentials (accepts an email or a handle, #616), POST
     them, and persist the returned token. An expired password (#3177)
@@ -337,7 +372,13 @@ def password_login(server_url, email, password, state) -> None:
             return
         print_login_failure(resp)
 
-    token = resp.json()["access_token"]
+    data = resp.json()
+    token = data["access_token"]
+
+    # #3172: server signals that the password was admin-chosen and must
+    # be changed before any other action.
+    if data.get("must_change_password"):
+        token = _forced_password_change(server_url, token, password)
 
     persist_login(state, server_url, email, token)
 

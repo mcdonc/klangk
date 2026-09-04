@@ -136,6 +136,21 @@ String? guardAdminRoute({
   return null;
 }
 
+/// Forced password change gate (#3172).
+///
+/// A logged-in user whose session carries `must_change_password` is
+/// forced to `/change-password` on every route except `/change-password`
+/// itself. Like the banner gate, this is terminal — no other guard runs
+/// while the flag is set.
+String? guardForcedPasswordChange({
+  required bool isLoggedIn,
+  required bool mustChangePassword,
+  required String loc,
+}) {
+  if (!isLoggedIn || !mustChangePassword) return null;
+  return loc == '/change-password' ? null : '/change-password';
+}
+
 /// Root shortcut: a logged-in user at `/` goes to `/workspaces`.
 ///
 /// Returns the redirect target, or null to allow.
@@ -160,6 +175,7 @@ String? guardRoot({required bool isLoggedIn, required String loc}) {
 String? evaluateGuards({
   required bool isLoggedIn,
   required bool bannerRequired,
+  required bool mustChangePassword,
   required String loc,
   required String currentUri,
   required Set<String> publicRoutes,
@@ -175,6 +191,11 @@ String? evaluateGuards({
         loc: loc,
         publicRoutes: publicRoutes,
         currentUri: currentUri,
+      ) ??
+      guardForcedPasswordChange(
+        isLoggedIn: isLoggedIn,
+        mustChangePassword: mustChangePassword,
+        loc: loc,
       ) ??
       guardLoggedInPublicRoute(
         isLoggedIn: isLoggedIn,

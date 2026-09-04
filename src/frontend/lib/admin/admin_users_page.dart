@@ -326,11 +326,12 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
 
   Future<void> _editUser(Map<String, dynamic> user) async {
     final auth = context.read<AuthService>();
-    final result = await showDialog<Map<String, String>>(
+    final result = await showDialog<Map<String, dynamic>>(
       context: context,
       builder: (ctx) => _EditUserDialog(
         currentEmail: user['email'] as String,
         currentHandle: user['handle'] as String? ?? '',
+        mustChangePassword: (user['must_change_password'] as bool?) ?? false,
         passwordPolicy: auth.passwordPolicy,
       ),
     );
@@ -430,6 +431,17 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
                     style: const TextStyle(
                       color: KColors.textSecondary,
                       fontSize: 13,
+                    ),
+                  ),
+                ],
+                if (user['must_change_password'] == true) ...[
+                  const SizedBox(width: 8),
+                  Tooltip(
+                    message: 'Must change password on next login',
+                    child: Icon(
+                      Icons.lock_reset,
+                      size: 16,
+                      color: Colors.orange.shade700,
                     ),
                   ),
                 ],
@@ -1861,11 +1873,13 @@ class _AddUserDialogState extends State<_AddUserDialog> {
 class _EditUserDialog extends StatefulWidget {
   final String currentEmail;
   final String currentHandle;
+  final bool mustChangePassword;
   final PasswordPolicy passwordPolicy;
 
   const _EditUserDialog({
     required this.currentEmail,
     required this.currentHandle,
+    required this.mustChangePassword,
     this.passwordPolicy = const PasswordPolicy(),
   });
 
@@ -1880,12 +1894,14 @@ class _EditUserDialogState extends State<_EditUserDialog> {
   final _confirmController = TextEditingController();
   bool _obscurePassword = true;
   bool _obscureConfirm = true;
+  late bool _mustChangePassword;
 
   @override
   void initState() {
     super.initState();
     _emailController = TextEditingController(text: widget.currentEmail);
     _handleController = TextEditingController(text: widget.currentHandle);
+    _mustChangePassword = widget.mustChangePassword;
   }
 
   @override
@@ -1994,6 +2010,20 @@ class _EditUserDialogState extends State<_EditUserDialog> {
                 onChanged: (_) => setState(() {}),
               ),
             ],
+            const SizedBox(height: 12),
+            CheckboxListTile(
+              title: const Text('Must change password on next login'),
+              subtitle: const Text(
+                'Forces the user to choose a new password before '
+                'they can do anything else',
+                style: TextStyle(fontSize: 12),
+              ),
+              value: _mustChangePassword,
+              onChanged: (v) =>
+                  setState(() => _mustChangePassword = v ?? false),
+              contentPadding: EdgeInsets.zero,
+              controlAffinity: ListTileControlAffinity.leading,
+            ),
           ],
         ),
       ),
@@ -2010,9 +2040,12 @@ class _EditUserDialogState extends State<_EditUserDialog> {
           onPressed: canSave
               ? () {
                   final handle = _handleController.text.trim();
-                  final result = <String, String>{'email': email};
+                  final result = <String, dynamic>{'email': email};
                   if (handle != widget.currentHandle) result['handle'] = handle;
                   if (password.isNotEmpty) result['password'] = password;
+                  if (_mustChangePassword != widget.mustChangePassword) {
+                    result['must_change_password'] = _mustChangePassword;
+                  }
                   Navigator.pop(context, result);
                 }
               : null,

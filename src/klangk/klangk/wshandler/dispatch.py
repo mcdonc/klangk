@@ -88,6 +88,14 @@ async def ws_authenticate(websocket: WebSocket, app):
     if user is None:
         await websocket.close(code=4001, reason="Invalid token")
         return None
+    # A session under the must_change_password flag cannot open a WS
+    # connection (#3172) — the client must change the password first.
+    # 4004, not 4003: the decider socket already uses 4003 for authz
+    # refusals, and duplicate close codes are indistinguishable to
+    # clients (#3172 review).
+    if user.get("must_change_password"):
+        await websocket.close(code=4004, reason="Password change required")
+        return None
     return user, payload.get("jti"), payload.get("exp")
 
 

@@ -92,6 +92,7 @@ class TestRunner:
             (29, "0029_members_create_workspace"),
             (30, "0030_audit_hmac"),
             (31, "0031_password_age"),
+            (32, "0032_must_change_password"),
         ]
         async with aiosqlite.connect(str(app_state.state.db.db_path)) as db:
             assert await _recorded(db) == expected
@@ -193,6 +194,7 @@ class TestRunner:
                 (29, "0029_members_create_workspace"),
                 (30, "0030_audit_hmac"),
                 (31, "0031_password_age"),
+                (32, "0032_must_change_password"),
             ]
 
     async def test_m0008_agent_identity_and_human_collision(

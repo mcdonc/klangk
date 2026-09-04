@@ -70,6 +70,9 @@ class AuthService extends ChangeNotifier {
   /// this is false: every workspace then gets the shared /home/klangk
   /// regardless of the stored column.
   bool _perHandleHomeAvailable = false;
+  // #3172: server signals that the session's password was admin-chosen
+  // and must be changed before any other action is possible.
+  bool _mustChangePassword = false;
   Timer? _permissionTimer;
   Timer? _refreshTimer;
 
@@ -143,6 +146,11 @@ class AuthService extends ChangeNotifier {
   /// the per-workspace home-layout toggle opts in below. False (also
   /// pre-auth, where the field is absent) hides the toggle everywhere.
   bool get perHandleHomeAvailable => _perHandleHomeAvailable;
+
+  /// #3172: the session carries an admin-chosen temporary password
+  /// that must be changed before any other action. The router guard
+  /// forces `/change-password` when true.
+  bool get mustChangePassword => _mustChangePassword;
 
   /// Decode the JWT payload.
   Map<String, dynamic>? get _payload {
@@ -368,6 +376,7 @@ class AuthService extends ChangeNotifier {
     _permissions = {};
     _groups = [];
     _isAdmin = false;
+    _mustChangePassword = false;
     // The pending redirect belongs to the session being cleared; drop it
     // so the next login can never inherit the old session's destination
     // (#2670). If the user was on a protected page, guardAuth re-stashes
@@ -431,6 +440,7 @@ class AuthService extends ChangeNotifier {
       );
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
+        _mustChangePassword = (data['must_change_password'] as bool?) ?? false;
         await _saveToken(data['access_token']);
         return null;
       }
@@ -467,6 +477,14 @@ class AuthService extends ChangeNotifier {
       _loading = false;
       notifyListeners();
     }
+  }
+
+  /// Clear the forced-change flag after a successful password change
+  /// (#3172). Called by the change-password UI after the server returns
+  /// 200.
+  void clearMustChangePassword() {
+    _mustChangePassword = false;
+    notifyListeners();
   }
 
   Future<String?> resendVerification(String email, String password) async {

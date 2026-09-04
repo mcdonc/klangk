@@ -267,7 +267,8 @@ ADMIN_USER_SORT_COLUMNS = {
 # new columns from drifting between lookups.
 _USER_COLUMNS = (
     "SELECT id, email, password_hash, verified, provider, external_id,"
-    " handle, disabled, last_activity_at, created_at, password_set_at"
+    " handle, disabled, last_activity_at, created_at, password_set_at,"
+    " must_change_password"
 )
 
 
@@ -284,6 +285,7 @@ def _user_row_to_dict(row) -> dict:
         "last_activity_at": row["last_activity_at"],
         "created_at": row["created_at"],
         "password_set_at": row["password_set_at"],
+        "must_change_password": bool(row["must_change_password"]),
     }
 
 
@@ -960,7 +962,8 @@ class UsersModel(Submodel):
 
             cursor = await db.execute(
                 "SELECT id, email, handle, verified, provider, created_at,"
-                " disabled, last_login_at, last_activity_at"
+                " disabled, last_login_at, last_activity_at,"
+                " must_change_password"
                 f" FROM users{where_clause}"
                 f" ORDER BY {sort_col} {direction}, id"
                 " LIMIT ? OFFSET ?",
@@ -977,6 +980,7 @@ class UsersModel(Submodel):
                     "disabled": bool(row["disabled"]),
                     "last_login_at": row["last_login_at"],
                     "last_activity_at": row["last_activity_at"],
+                    "must_change_password": bool(row["must_change_password"]),
                 }
                 for row in await cursor.fetchall()
             ]
@@ -1073,6 +1077,42 @@ class UsersModel(Submodel):
                     datetime.now(timezone.utc).isoformat(),
                     user_id,
                 ),
+            )
+            if count > 0 and row["password_hash"] is not None:
+                await self._retire_password(
+                    db, user_id, row["password_hash"], count
+                )
+
+    async def set_must_change_password(self, user_id: str, flag: bool) -> None:
+        """Set or clear the must-change-password flag (#3172)."""
+        async with self.app.state.db.transaction() as db:
+            await db.execute(
+                "UPDATE users SET must_change_password = ? WHERE id = ?",
+                (int(flag), user_id),
+            )
+
+    async def clear_must_change_password(
+        self, user_id: str, password_hash: str
+    ) -> None:
+        """Update a user's password and atomically clear the forced-change
+        flag (#3172). The old hash is retired into password history, same
+        as ``update_password``."""
+        if user_id == AGENT_USER_ID:
+            raise AgentPrincipalError(
+                "Cannot set a password on the system agent user"
+            )
+        count = self.app.state.settings.password_history_count
+        async with self.app.state.db.transaction() as db:
+            cursor = await db.execute(
+                "SELECT password_hash FROM users WHERE id = ?", (user_id,)
+            )
+            row = await cursor.fetchone()
+            if row is None:
+                return
+            await db.execute(
+                "UPDATE users SET password_hash = ?,"
+                " must_change_password = 0 WHERE id = ?",
+                (password_hash, user_id),
             )
             if count > 0 and row["password_hash"] is not None:
                 await self._retire_password(
@@ -1230,7 +1270,7 @@ class UsersModel(Submodel):
         row = await self.app.state.db.fetchone(
             "SELECT id, email, handle, last_login_at, disabled,"
             " last_activity_at, created_at, password_set_at,"
-            " password_hash"
+            " password_hash, must_change_password"
             " FROM users WHERE id = ?",
             (user_id,),
         )
@@ -1246,6 +1286,7 @@ class UsersModel(Submodel):
             "created_at": row["created_at"],
             "password_set_at": row["password_set_at"],
             "password_hash": row["password_hash"],
+            "must_change_password": bool(row["must_change_password"]),
         }
 
     async def search_users(self, query: str, limit: int = 10) -> list[dict]:

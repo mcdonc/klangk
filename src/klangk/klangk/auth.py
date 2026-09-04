@@ -204,6 +204,21 @@ def ensure_not_disabled(user: dict) -> None:
         raise HTTPException(status_code=403, detail="Account disabled")
 
 
+def ensure_password_changed(user: dict) -> None:
+    """Raise 403 when the account requires a password change (#3172).
+
+    Called by ``get_current_user`` on every authenticated request.
+    The change-password endpoint is exempt so the user can actually
+    clear the flag. 403 with a machine-readable detail so clients
+    can drive the forced-change flow.
+    """
+    if user.get("must_change_password"):
+        raise HTTPException(
+            status_code=403,
+            detail="Password change required",
+        )
+
+
 def hash_password(password: str) -> str:
     """Hash a password with PBKDF2-HMAC-SHA512 (#2576).
 
@@ -320,6 +335,7 @@ class EmailRequest(BaseModel):
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
+    must_change_password: bool = False
 
 
 class RegisterResult(BaseModel):
@@ -1282,7 +1298,10 @@ class Auth:
         # Stamp after minting, matching every other session-issuing site
         # (#2583): if minting fails, no login is recorded.
         await self.app.state.model.users.record_login(user["id"])
-        return TokenResponse(access_token=token)
+        return TokenResponse(
+            access_token=token,
+            must_change_password=user.get("must_change_password", False),
+        )
 
     async def _refreshed_or_revoked(self, jti: str) -> TokenResponse | None:
         """The cached replacement when *jti* was already refreshed.
@@ -1538,6 +1557,35 @@ async def get_current_user(
         # to the set-new-password flow instead of looping on refresh.
         if auth.password_expired(user):
             raise password_expired_error()
+        # A forced-change account cannot do anything except change its
+        # password (#3172); the change-password endpoint uses
+        # get_current_user_allow_forced_change instead.
+        ensure_password_changed(user)
+        await auth.record_activity(user["id"])
+        return user
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+
+async def get_current_user_allow_forced_change(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
+) -> dict:
+    """Like ``get_current_user`` but does not reject sessions under the
+    ``must_change_password`` flag (#3172). Used by the change-password
+    endpoint so a forced-change user can actually clear the flag.
+
+    Expired passwords still fail (#3177) — they are resolved by the
+    unauthenticated ``/auth/change-expired-password`` flow, not here."""
+    auth = request.app.state.auth
+    if credentials is None:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    try:
+        user = await _authenticated_user(request, credentials)
+        ensure_not_disabled(user)
+        if auth.password_expired(user):
+            raise password_expired_error()
         await auth.record_activity(user["id"])
         return user
     except JWTError:
@@ -1568,6 +1616,7 @@ async def get_current_user_optional(
         ensure_not_disabled(user)
         if auth.password_expired(user):
             raise password_expired_error()
+        ensure_password_changed(user)
         await auth.record_activity(user["id"])
         return user
     except JWTError:

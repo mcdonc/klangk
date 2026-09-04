@@ -306,6 +306,9 @@ async def admin_create_user(
     user = await app.state.model.users.create_user(
         req.email, password_hash, verified=True
     )
+    # Admin-chosen password: force the user to change it on first
+    # login (#3172, STIG V-222547).
+    await app.state.model.users.set_must_change_password(user["id"], True)
     return {"id": user["id"], "email": user["email"], "status": "created"}
 
 
@@ -370,6 +373,7 @@ class UpdateUserRequest(auth.BaseModel):
     password: str | None = None
     handle: str | None = None
     disabled: bool | None = None
+    must_change_password: bool | None = None
 
 
 async def _require_user(app, user_id: str) -> dict:
@@ -386,6 +390,9 @@ async def _update_user_password(app, user_id: str, password: str) -> None:
     await app.state.auth.validate_password_not_reused(user_id, password)
     password_hash = await asyncio.to_thread(auth.hash_password, password)
     await app.state.model.users.update_password(user_id, password_hash)
+    # Admin-chosen password: force the user to change it on next
+    # login (#3172, STIG V-222547).
+    await app.state.model.users.set_must_change_password(user_id, True)
 
 
 async def _update_user_email(app, user_id: str, email: str) -> None:
@@ -415,6 +422,22 @@ async def _update_user_handle(app, user_id: str, handle: str) -> None:
     await wshandler.refresh_user_handle(app.state.sockets, user_id, handle)
 
 
+async def _apply_user_field_updates(
+    app, req: "UpdateUserRequest", user_id: str
+) -> None:
+    """Apply simple field updates from an admin user-update request."""
+    if req.email is not None:
+        await _update_user_email(app, user_id, req.email)
+    if req.password is not None:
+        await _update_user_password(app, user_id, req.password)
+    if req.handle is not None:
+        await _update_user_handle(app, user_id, req.handle)
+    if req.must_change_password is not None:
+        await app.state.model.users.set_must_change_password(
+            user_id, req.must_change_password
+        )
+
+
 @router.patch("/users/{user_id}")
 async def update_user(
     user_id: str,
@@ -423,12 +446,7 @@ async def update_user(
     app=Depends(get_app_dep),
 ):
     await _require_user(app, user_id)
-    if req.email is not None:
-        await _update_user_email(app, user_id, req.email)
-    if req.password is not None:
-        await _update_user_password(app, user_id, req.password)
-    if req.handle is not None:
-        await _update_user_handle(app, user_id, req.handle)
+    await _apply_user_field_updates(app, req, user_id)
     if req.disabled is not None:
         await _update_user_disabled(app, req, user_id, admin)
     return {"status": "updated"}
