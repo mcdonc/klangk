@@ -1747,6 +1747,24 @@ class TestRevocationKicksDeciders:
         await a.logout(refreshed.access_token)
         raw.close.assert_awaited_once_with(code=4001, reason="Token revoked")
 
+    async def test_eviction_after_refresh_closes_retargeted_decider(
+        self, user, app_state
+    ):
+        """The typical eviction victim is a long-refreshing session
+        (replace_session keeps its original created_at, so it stays
+        oldest) — its decider must still be kickable after rotation."""
+        env = {"KLANGKD_MAX_SESSIONS_PER_USER": "1"}
+        a = self._auth_with_deciders(env)
+        first = await self._login(a)
+        raw = self._decider_raw(a, a.decode_token(first)["jti"])
+        refreshed = await a.refresh_token(first)
+        # The second login evicts the refreshed (still-oldest) session
+        # past the cap of 1.
+        second = await self._login(a)
+        raw.close.assert_awaited_once_with(code=4001, reason="Token revoked")
+        assert await a.get_user_from_token(second) is not None
+        assert await a.get_user_from_token(refreshed.access_token) is None
+
 
 class TestConcurrentLogonAudit:
     """Audit records for concurrent logons from different workstations
