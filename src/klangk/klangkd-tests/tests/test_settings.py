@@ -1211,6 +1211,42 @@ class TestLogFormatValidator:
         assert "json" in msg  # valid formats listed in the message
 
 
+class TestLogFileValidator:
+    """KLANGKD_LOG_FILE — optional JSON sink path, probed fail-fast at
+    construction (#3156)."""
+
+    def test_defaults_to_empty(self):
+        s = make_settings({})
+        assert s.log_file == ""
+
+    def test_empty_string_disables_sink(self):
+        s = make_settings({"KLANGKD_LOG_FILE": ""})
+        assert s.log_file == ""
+
+    def test_writable_path_accepted_and_created(self, tmp_path):
+        target = tmp_path / "klangkd.jsonl"
+        s = make_settings({"KLANGKD_LOG_FILE": str(target)})
+        assert s.log_file == str(target)
+        assert target.exists()  # the append-probe creates it
+
+    def test_tilde_expanded(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        s = make_settings({"KLANGKD_LOG_FILE": "~/klangkd.jsonl"})
+        assert s.log_file == str(tmp_path / "klangkd.jsonl")
+
+    def test_unwritable_path_rejected_at_construction(self):
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            make_settings({"KLANGKD_LOG_FILE": "/nonexistent-dir-xyz/l.jsonl"})
+
+    def test_directory_path_rejected(self, tmp_path):
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            make_settings({"KLANGKD_LOG_FILE": str(tmp_path)})
+
+
 class TestResolveIndirectionsValidator:
     """The ``_resolve_indirections`` model validator runs once at construction
     (#1461): every string field with a ``file:``/``cmd:`` prefix is resolved

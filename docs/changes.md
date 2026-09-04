@@ -545,13 +545,16 @@ sync` report a clear permission-denied error.
 
 ### Added
 
-- **`KLANGKD_LOG_FORMAT` (#3156).** New setting selecting the klangkd root
-  log output format: `text` (default, the colored console format) or `json`
-  — one JSON object per line (`timestamp`, `level`, `logger`, `message`,
-  `exc_info` when present) for SIEM/central-log ingestion (ASD-STIG
-  V-222481/482). Applies to the whole log stream, klangk and third-party
-  records alike, with no ANSI codes. Reloadable on SIGHUP; a malformed value
-  aborts startup. See
+- **`KLANGKD_LOG_FORMAT` / `KLANGKD_LOG_FILE` (#3156).** New settings for
+  SIEM/central-log forwarding (ASD-STIG V-222481/482). `KLANGKD_LOG_FORMAT`
+  (`text`, the default, or `json`) switches the console log stream to one
+  JSON object per line (`timestamp`, `level`, `logger`, `message`, `exc_info`
+  when present); `KLANGKD_LOG_FILE` additionally writes that JSON stream to a
+  file while the console keeps its own format — stdout can stay readable text
+  while the file feeds rsyslog `imfile`/fluent-bit. uvicorn's startup/error/
+  access records now flow through the same handler (previously they rode
+  uvicorn's own text handlers), so the whole stream shares the format. Both
+  are reloadable on SIGHUP; malformed values abort startup. See
   [Environment Variables](reference/environment.md).
 - **All five container images now publish on a release tag (#3140).**
   Pushing `vX.Y.Z` publishes `klangk-host`, `klangk-host-fips`,

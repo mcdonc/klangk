@@ -1482,6 +1482,34 @@ class TestGracefulShutdown:
         mock_restart.assert_awaited_once()
 
 
+class TestUvicornConfig:
+    """klangkd's uvicorn Config wiring (main.make_uvicorn_config, #3156)."""
+
+    def test_log_config_is_none(self):
+        """``log_config=None`` is what routes uvicorn's own loggers (startup,
+        error, access) through klangkd's root handler so they honor
+        KLANGKD_LOG_FORMAT / KLANGKD_LOG_FILE — see the logger tests'
+        TestLogFileSink.test_uvicorn_records_share_the_configured_format."""
+        from unittest.mock import MagicMock
+
+        from klangk.main import make_uvicorn_config
+
+        cfg = make_uvicorn_config(MagicMock(), "/tmp/klangk.sock", 1024)
+        assert cfg.log_config is None
+
+    def test_previous_inline_arguments_preserved(self):
+        from unittest.mock import MagicMock
+
+        from klangk.main import make_uvicorn_config
+
+        cfg = make_uvicorn_config(MagicMock(), "/tmp/klangk.sock", 1024)
+        assert cfg.uds == "/tmp/klangk.sock"
+        assert cfg.proxy_headers is False
+        assert cfg.ws_max_size == 1024
+        assert cfg.ws_ping_interval == 20
+        assert cfg.ws_ping_timeout == 20
+
+
 class TestGracefulExitServer:
     """The uvicorn Server subclass that runs the shutdown hook before
     uvicorn's own exit (main.py, #2527)."""

@@ -32,8 +32,11 @@ def clean_root():
     saved_level = root.level
     yield root
     for h in list(root.handlers):
-        if getattr(h, "_klangk_log_handler", False):
+        if getattr(h, "_klangk_log_handler", False) or getattr(
+            h, "_klangk_log_file_handler", False
+        ):
             root.removeHandler(h)
+            h.close()
     root.handlers = saved_handlers
     root.setLevel(saved_level)
 
@@ -44,12 +47,22 @@ def _klangk_handlers(root):
     ]
 
 
-def _make_settings(level=None, log_format=None):
+def _klangk_file_handlers(root):
+    return [
+        h
+        for h in root.handlers
+        if getattr(h, "_klangk_log_file_handler", False)
+    ]
+
+
+def _make_settings(level=None, log_format=None, log_file=None):
     env = {}
     if level is not None:
         env["KLANGKD_LOG_LEVEL"] = level
     if log_format is not None:
         env["KLANGKD_LOG_FORMAT"] = log_format
+    if log_file is not None:
+        env["KLANGKD_LOG_FILE"] = log_file
     return make_settings(env)
 
 
@@ -239,7 +252,9 @@ class TestConfigureDefaults:
 
     def test_defaults_silence_third_party(self, clean_root):
         logger_mod.configure_defaults()
-        assert logging.getLogger("uvicorn.access").level == logging.WARNING
+        # uvicorn.access stays INFO (SIEM keys on per-request records,
+        # #3156); the chatty libs stay capped.
+        assert logging.getLogger("uvicorn.access").level == logging.INFO
         assert logging.getLogger("sqlalchemy.engine").level == logging.WARNING
 
     def test_defaults_idempotent(self, clean_root):
@@ -309,8 +324,9 @@ class TestConfigure:
     def test_third_party_loggers_silenced(self, clean_root):
         logger_mod.configure(_make_settings("DEBUG"))
         # Root is DEBUG but chatty libraries stay capped (central management,
-        # one of the points of #1467).
-        assert logging.getLogger("uvicorn.access").level == logging.WARNING
+        # one of the points of #1467) — except uvicorn.access, kept at INFO
+        # so a SIEM can key on per-request records (#3156).
+        assert logging.getLogger("uvicorn.access").level == logging.INFO
         assert logging.getLogger("sqlalchemy.engine").level == logging.WARNING
         assert logging.getLogger("httpx").level == logging.WARNING
 
@@ -332,6 +348,115 @@ class TestConfigure:
         logger_mod.configure(_make_settings("INFO"))
         logger_mod.configure(_make_settings("WARNING"))
         assert logging.getLogger("httpx").level == logging.WARNING
+
+
+class TestLogFileSink:
+    """KLANGKD_LOG_FILE — an always-JSON file sink alongside the console
+    handler, so stdout can stay text while the file feeds a SIEM (#3156)."""
+
+    def test_file_handler_installed_with_json_formatter(
+        self, clean_root, tmp_path
+    ):
+        target = tmp_path / "k.jsonl"
+        logger_mod.configure(_make_settings(log_file=str(target)))
+        (handler,) = _klangk_file_handlers(clean_root)
+        assert isinstance(handler.formatter, logger_mod.JsonFormatter)
+        assert len(_klangk_handlers(clean_root)) == 1  # console stays
+
+    def test_console_text_while_file_is_json(
+        self, clean_root, tmp_path, capsys
+    ):
+        """The operator's ask: stdout human-readable, file machine-parseable."""
+        target = tmp_path / "k.jsonl"
+        logger_mod.configure(
+            _make_settings(log_format="text", log_file=str(target))
+        )
+        logging.getLogger("klangk.sink.file").warning("dual %s", "stream")
+        console = capsys.readouterr().err
+        assert "\033[94m" in console  # colored text on stderr
+        (line,) = target.read_text().splitlines()
+        payload = json.loads(line)
+        assert payload["message"] == "dual stream"
+        assert payload["level"] == "WARNING"
+
+    def test_console_json_and_file_json_too(
+        self, clean_root, tmp_path, capsys
+    ):
+        target = tmp_path / "k.jsonl"
+        logger_mod.configure(
+            _make_settings(log_format="json", log_file=str(target))
+        )
+        logging.getLogger("klangk.sink.file2").info("both json")
+        json.loads(capsys.readouterr().err.strip())  # console: valid JSON
+        (line,) = target.read_text().splitlines()
+        assert json.loads(line)["message"] == "both json"
+
+    def test_unset_log_file_installs_no_file_handler(self, clean_root):
+        logger_mod.configure(_make_settings())
+        assert _klangk_file_handlers(clean_root) == []
+
+    def test_path_flip_closes_old_sink_opens_new(
+        self, clean_root, tmp_path, capsys
+    ):
+        """SIGHUP changing KLANGKD_LOG_FILE: old file keeps its records, new
+        file gets the later ones, exactly one file handler stays attached."""
+        old = tmp_path / "old.jsonl"
+        new = tmp_path / "new.jsonl"
+        logger_mod.configure(_make_settings(log_file=str(old)))
+        logging.getLogger("klangk.sink.flip").info("to old")
+        logger_mod.configure(_make_settings(log_file=str(new)))
+        logging.getLogger("klangk.sink.flip").info("to new")
+        assert len(_klangk_file_handlers(clean_root)) == 1
+        assert json.loads(old.read_text())["message"] == "to old"
+        assert json.loads(new.read_text())["message"] == "to new"
+
+    def test_uvicorn_records_share_the_configured_format(
+        self, clean_root, tmp_path, capsys
+    ):
+        """serve() starts uvicorn with log_config=None (main.py) so uvicorn's
+        loggers carry no handlers of their own and propagate to the root
+        handler — startup/access records must come out JSON like everything
+        else (the gap this follow-up closes)."""
+        target = tmp_path / "k.jsonl"
+        logger_mod.configure(
+            _make_settings(log_format="json", log_file=str(target))
+        )
+        logging.getLogger("uvicorn.error").info("Started server process [1]")
+        logging.getLogger("uvicorn.access").info(
+            "GET /api/v1/config 200"  # simplified access record
+        )
+        err = capsys.readouterr().err
+        lines = [json.loads(x) for x in err.strip().splitlines()]
+        assert {p["logger"] for p in lines} == {
+            "uvicorn.error",
+            "uvicorn.access",
+        }
+        file_lines = [json.loads(x) for x in target.read_text().splitlines()]
+        assert {p["logger"] for p in file_lines} == {
+            "uvicorn.error",
+            "uvicorn.access",
+        }
+
+    def test_broken_path_at_reconfigure_warns_not_raises(
+        self, clean_root, tmp_path, caplog, monkeypatch
+    ):
+        """A path that validated at construction but whose open fails at a
+        SIGHUP reconfigure: warn and keep the console stream live instead of
+        tearing the reload down (construction-time validation handles the
+        fail-fast case). Unlinking the file isn't enough — an append-open
+        recreates it — so the open itself is sabotaged."""
+        target = tmp_path / "gone.jsonl"
+        settings = _make_settings(log_file=str(target))
+
+        def boom(*args, **kwargs):
+            raise OSError("gone")
+
+        monkeypatch.setattr(logging, "FileHandler", boom)
+        with caplog.at_level(logging.WARNING, logger="klangk.logger"):
+            logger_mod.configure(settings)
+        assert _klangk_file_handlers(clean_root) == []
+        assert len(_klangk_handlers(clean_root)) == 1  # console still up
+        assert any("KLANGKD_LOG_FILE" in r.message for r in caplog.records)
 
 
 class TestConfigureFormat:

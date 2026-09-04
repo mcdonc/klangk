@@ -886,6 +886,16 @@ class KlangkSettings(BaseSettings):
     # every SIGHUP reload; the validator below rejects anything but
     # text/json (fail-fast) at construction.
     log_format: str = "text"
+    # log_file: optional path to a JSON-lines log sink. When set, every
+    # record ALSO lands in this file as one JSON object per line (always
+    # JSON — the file is the machine-ingestion artifact for SIEM forwarding
+    # via rsyslog imfile / fluent-bit), while the console keeps
+    # ``log_format`` (so stdout can stay human-readable text) (#3156).
+    # Reloadable on SIGHUP (a path change closes the old sink and opens
+    # the new one). The validator probes writability fail-fast at
+    # construction so a bad path aborts boot rather than silently
+    # dropping the SIEM stream.
+    log_file: str = ""
 
     # --- Server / network ---
     # listen: the proxy's **browser** interface/address (e.g. ``127.0.0.1``,
@@ -1875,6 +1885,31 @@ class KlangkSettings(BaseSettings):
                 f"KLANGKD_LOG_FORMAT={v!r} is invalid. Must be text or json."
             )
         return lower
+
+    @field_validator("log_file")
+    @classmethod
+    def _validate_log_file(cls, v: str) -> str:
+        """Normalize/probe the JSON log-file sink at construction (#3156).
+
+        ``None``/empty disables the file sink. A set path is ``~``-expanded
+        and probed for append-writability — an unwritable path aborts boot
+        (fail-fast) so a deploy never runs silently without its SIEM log
+        stream. The probe is an append-open (creates the file if missing,
+        never truncates), the same IO-in-validator posture as the ``file:``/
+        ``cmd:`` indirection resolver.
+        """
+        if _is_unset(v):
+            return ""
+        path = str(v).strip()
+        expanded = str(Path(path).expanduser())
+        try:
+            with open(expanded, "a", encoding="utf-8"):
+                pass
+        except OSError as exc:
+            raise ValueError(
+                f"KLANGKD_LOG_FILE={v!r} is not writable: {exc}"
+            ) from exc
+        return expanded
 
     @field_validator("auth_modes")
     @classmethod
