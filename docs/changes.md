@@ -1659,7 +1659,7 @@ stop)`) and a `server: stop at 23:00 (in 1h 12m)` status line in the
 ### Changed
 
 - **Workspace-scoped named volumes (#3153).** Named volumes
-  auto-created at workspace start now also carry a `klangk.workspace`
+  auto-created at workspace start now also carry a `klangk.workspace-id`
   podman label. A volume may be mounted by a start whose workspace
   matches that label or whose user matches the volume's creator;
   otherwise the start is refused (400 "belongs to another user or

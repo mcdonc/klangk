@@ -424,7 +424,7 @@ async def _create_named_volume(
     labels = {
         "klangk.managed": "true",
         "klangk.instance": app.state.util.instance_id(),
-        "klangk.workspace": workspace_id,
+        "klangk.workspace-id": workspace_id,
     }
     if user_id:
         labels["klangk.user-id"] = user_id
@@ -484,7 +484,7 @@ def volume_claimed_by(
     own workspaces. A missing label side never matches; legacy volumes
     without a workspace label fall back to the user check alone.
     """
-    if vol_labels.get("klangk.workspace") == workspace_id:
+    if vol_labels.get("klangk.workspace-id") == workspace_id:
         return True
     return not _foreign_volume_owner(vol_labels.get("klangk.user-id"), user_id)
 

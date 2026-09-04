@@ -4292,7 +4292,7 @@ class TestExtraMountsVolumeCreation:
         name, labels = p.create_volume.call_args.args
         assert name == "nix-store"
         assert labels["klangk.managed"] == "true"
-        assert labels["klangk.workspace"] == workspace["id"]
+        assert labels["klangk.workspace-id"] == workspace["id"]
         assert (
             labels["klangk.instance"]
             == self.registry.app.state.util.instance_id()
@@ -4418,7 +4418,7 @@ class TestExtraMountsVolumeCreation:
                     "Name": "shared",
                     "Labels": {
                         "klangk.instance": self.registry.app.state.util.instance_id(),
-                        "klangk.workspace": workspace["id"],
+                        "klangk.workspace-id": workspace["id"],
                         "klangk.user-id": "user-member",
                     },
                 }
@@ -4446,7 +4446,7 @@ class TestExtraMountsVolumeCreation:
                     "Name": "elsewhere",
                     "Labels": {
                         "klangk.instance": self.registry.app.state.util.instance_id(),
-                        "klangk.workspace": "ws-other",
+                        "klangk.workspace-id": "ws-other",
                         "klangk.user-id": "user-other",
                     },
                 }

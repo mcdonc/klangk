@@ -554,7 +554,7 @@ class TestWorkspaceScopedVolumes:
                 check=True,
             )
             labels = json.loads(inspected.stdout)[0].get("Labels") or {}
-            assert labels.get("klangk.workspace") == ws
+            assert labels.get("klangk.workspace-id") == ws
             assert labels.get("klangk.user-id") == users["bob_id"]
 
             # owner stop + restart: allowed only via the workspace match
