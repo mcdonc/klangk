@@ -126,8 +126,11 @@ delivery rules are:
 - **Email links** (verification, password reset, invitations) are the
   one place a token must travel by URL, because email is the delivery
   channel. These tokens are single-purpose, one-time, and short-lived:
-  verification tokens die on first use, on an email change, or after
-  72 hours; reset tokens are bound to a digest of the current password
+  verification tokens are bound to the address they were minted for
+  and are consumed by the first redemption, an email change, or
+  72 hours (a stale link only matches again in the narrow case of the
+  account changing its address away and back while the link is still
+  unexpired); reset tokens are bound to a digest of the current password
   hash (the first successful reset consumes every outstanding link) and
   expire after 1 hour; invitation tokens are consumed when the
   invitation is accepted. Links use the URL fragment (`#/verify?…`),

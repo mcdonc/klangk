@@ -50,8 +50,10 @@ class _OidcCompletePageState extends State<OidcCompletePage> {
         }
       }
       setState(() => _error = 'Login code exchange failed.');
-    } catch (e) {
-      setState(() => _error = 'Login code exchange failed: $e');
+    } catch (_) {
+      // Stable message only (#3223 policy): transport errors are mapped
+      // upstream; a malformed 200 body must not leak a raw exception.
+      setState(() => _error = 'Login code exchange failed.');
     }
   }
 

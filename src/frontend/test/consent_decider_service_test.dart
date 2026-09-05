@@ -657,7 +657,7 @@ void main() {
 
     setUp(() {
       channel = _FakeChannel();
-      ConsentDeciderService.testChannelFactory = (_) => channel;
+      ConsentDeciderService.testChannelFactory = (_, __) => channel;
     });
 
     tearDown(() {
@@ -755,7 +755,8 @@ void main() {
     });
 
     test('sendVerdict flashes when the socket send throws', () async {
-      ConsentDeciderService.testChannelFactory = (_) => _ThrowingChannel();
+      ConsentDeciderService.testChannelFactory =
+          (_, __) => _ThrowingChannel();
       final svc = ConsentDeciderService(workspaceId: 'ws', token: 't');
       await svc.connect();
       svc.sendVerdict('r1', 'allowed', 'once'); // sink.add throws
@@ -933,8 +934,13 @@ void main() {
       svc.dispose();
     });
 
+<<<<<<< HEAD
     test('sendRevoke flashes when the socket send throws', () async {
       ConsentDeciderService.testChannelFactory = (_) => _ThrowingChannel();
+=======
+    test('sendRevoke flashes when the socket send throws', () {
+      ConsentDeciderService.testChannelFactory = (_, __) => _ThrowingChannel();
+>>>>>>> d57fd3ec0 (Address fresh-eyes review of #3201)
       final svc = ConsentDeciderService(workspaceId: 'ws', token: 't');
       await svc.connect();
       svc.sendRevoke('v1');
@@ -980,8 +986,13 @@ void main() {
       svc2.dispose();
     });
 
+<<<<<<< HEAD
     test('sendPause/sendUnpause flash when the socket send throws', () async {
       ConsentDeciderService.testChannelFactory = (_) => _ThrowingChannel();
+=======
+    test('sendPause/sendUnpause flash when the socket send throws', () {
+      ConsentDeciderService.testChannelFactory = (_, __) => _ThrowingChannel();
+>>>>>>> d57fd3ec0 (Address fresh-eyes review of #3201)
       final svc = ConsentDeciderService(workspaceId: 'ws', token: 't');
       await svc.connect();
       svc.sendPause('15m');
@@ -1285,7 +1296,7 @@ void main() {
     test('drops expired timed rules, keeps the rest, and notifies', () async {
       var now = DateTime.fromMillisecondsSinceEpoch(1000 * 1000, isUtc: true);
       final ch = _FakeChannel();
-      ConsentDeciderService.testChannelFactory = (_) => ch;
+      ConsentDeciderService.testChannelFactory = (_, __) => ch;
       final svc = ConsentDeciderService(
         workspaceId: 'ws',
         token: 't',
@@ -1353,7 +1364,7 @@ void main() {
       () async {
         var now = DateTime.fromMillisecondsSinceEpoch(1000 * 1000, isUtc: true);
         final ch = _FakeChannel();
-        ConsentDeciderService.testChannelFactory = (_) => ch;
+        ConsentDeciderService.testChannelFactory = (_, __) => ch;
         final svc = ConsentDeciderService(
           workspaceId: 'ws',
           token: 't',

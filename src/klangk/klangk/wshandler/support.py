@@ -50,12 +50,15 @@ def ws_bearer_token(websocket) -> str | None:
     """The JWT from the handshake's ``Sec-WebSocket-Protocol`` header.
 
     The client offers ``bearer, <jwt>`` (comma-separated when multiple
-    subprotocols are requested). The first entry that is not the
-    ``bearer`` marker is the token; ``None`` when no token was offered.
+    subprotocols are requested). The **last** entry that is not the
+    ``bearer`` marker is the token: a future client negotiating an
+    application subprotocol ahead of the pair (``json, bearer, <jwt>``)
+    still parses correctly, and a lone ``[<jwt>]`` offer works too.
+    ``None`` when no token was offered.
     """
     offered = websocket.headers.get("sec-websocket-protocol", "")
-    for entry in offered.split(","):
-        entry = entry.strip()
+    entries = [e.strip() for e in offered.split(",")]
+    for entry in reversed(entries):
         if entry and entry != WS_AUTH_SUBPROTOCOL:
             return entry
     return None

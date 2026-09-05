@@ -45,7 +45,7 @@ class _FakeSink extends Fake implements WebSocketSink {
 }
 
 ConsentDeciderService _serviceWithChannel(_FakeChannel channel) {
-  ConsentDeciderService.testChannelFactory = (_) => channel;
+  ConsentDeciderService.testChannelFactory = (_, __) => channel;
   return ConsentDeciderService(
     workspaceId: 'ws',
     token: 't',
@@ -380,7 +380,7 @@ void main() {
     tester,
   ) async {
     final channel = _FakeChannel();
-    ConsentDeciderService.testChannelFactory = (_) => channel;
+    ConsentDeciderService.testChannelFactory = (_, __) => channel;
     final svc = ConsentDeciderService(
       workspaceId: 'ws',
       token: 't',
