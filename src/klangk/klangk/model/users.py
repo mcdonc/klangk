@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 
 from ..exceptions import ConfigurationError
 from .base import Submodel
+from .egress_consent import consent_rows_for_actor
 
 
 # Agent identity
@@ -988,13 +989,27 @@ class UsersModel(Submodel):
         """Delete a user. Returns True if deleted, False if not found.
 
         Raises ``AgentPrincipalError`` if the target is the system agent.
+        Consent rows the user decided/revoked are re-stamped inside the
+        same transaction (#3174): the ``decided_by``/``revoked_by`` FK
+        sets them NULL, and a tag left over the pre-deletion values
+        would make the offsite checker read routine offboarding as
+        tampering.
         """
         if user_id == AGENT_USER_ID:
             raise AgentPrincipalError("Cannot delete the system agent user")
         async with self.app.state.db.transaction() as db:
+            # Collect affected rows BEFORE the delete (after it, the
+            # nulled decided_by/revoked_by are indistinguishable from
+            # static-policy rows) — the sanctioned owned-connection
+            # pattern, helpers live with the table they touch.
+            row_ids = await consent_rows_for_actor(db, user_id)
             cursor = await db.execute(
                 "DELETE FROM users WHERE id = ?", (user_id,)
             )
+            if cursor.rowcount and row_ids:
+                await self.app.state.model.egress_consent.restamp_rows(
+                    db, row_ids
+                )
             return cursor.rowcount > 0
 
     async def update_email(self, user_id: str, email: str) -> None:

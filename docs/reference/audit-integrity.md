@@ -17,7 +17,10 @@ Tagging is **opt-in** via [`KLANGKD_AUDIT_HMAC_KEY`](environment.md)
 
 - **Key set (nonempty)** — every new audit row is written with a tag;
   every mutation of an `egress_consent` row (decide, revoke, expire)
-  re-computes it.
+  re-computes it. Deleting the user who made a verdict also re-stamps
+  the affected rows in the same transaction (the `decided_by` /
+  `revoked_by` FK sets them NULL) — routine offboarding never shows up
+  as a mismatch.
 - **Key unset (the default)** — no tag is computed or stored. Rows
   carry `NULL` in the `hmac` column.
 
@@ -66,7 +69,7 @@ tagged payload is built as follows:
    - value is SQL `NULL` → the string `<column>=n`
    - otherwise → `s = str(value)` (Python `str()`) and the string
      `<column>=<len(s)>:<s>`, e.g. `dest_host=11:example.com` or
-     `created_at=16:1695849600.123`.
+     `created_at=14:1695849600.123`.
 3. Join the table name and all parts with a single NUL byte (`0x00`).
 4. UTF-8 encode.
 5. `tag = HMAC-SHA256(key, payload).hexdigest()` where `key` is the
@@ -95,8 +98,10 @@ python3 audit_hmac_check.py --db /backups/klangk.db --key "$AUDIT_HMAC_KEY"
 #!/usr/bin/env python3
 """audit_hmac_check.py — verify klangk audit-record HMACs offsite (#3174).
 
-Exit code 0 = every tag present and matching; 1 = mismatch/untagged
-rows found or a usage error. Stdlib only.
+Exit code 0 = no mismatched tags (untagged rows are reported but do
+not fail the run — decide whether untagged is acceptable for your
+window); 1 = mismatched tags found (treat as tampering/corruption);
+2 = usage error (argparse). Stdlib only.
 """
 import argparse
 import hashlib
@@ -141,6 +146,10 @@ def check_table(conn, table, key):
         stored = d["hmac"]
         if stored is None:
             untagged += 1  # written while tagging was disabled, or pre-migration
+        elif not isinstance(stored, str):
+            mismatched += 1  # a BLOB/non-text tag is itself a tampered shape
+            if first_bad is None:
+                first_bad = d["id"]
         elif hmac.compare_digest(
             stored, hmac.new(key, payload(table, d, columns),
                              hashlib.sha256).hexdigest()

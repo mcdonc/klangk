@@ -217,6 +217,32 @@ class TestEgressConsentHmac:
         assert decided is not None
         assert decided["hmac"] is None
 
+    async def test_user_deletion_restamps_affected_rows(
+        self, app_state, db, workspace, user
+    ):
+        """Deleting a user FK-nulls decided_by/revoked_by on their
+        verdicts — the rows must be re-stamped or the offsite checker
+        reads routine offboarding as tampering (#3174 review). The
+        decider is a second user (not the workspace owner) so the
+        deletion doesn't cascade the workspace and its rows away."""
+        decider = await app_state.state.model.users.create_user(
+            "decider@example.com", None, verified=True
+        )
+        ec = app_state.state.model.egress_consent
+        row = await ec.create_request(workspace["id"], "a.com", 80)
+        await ec.decide(row["id"], DECISION_ALLOWED, decider["id"])
+        assert (
+            await app_state.state.model.users.delete_user(decider["id"])
+            is True
+        )
+        fresh = await ec.get_request(row["id"])
+        assert fresh is not None
+        assert fresh["decided_by"] is None
+        assert fresh["hmac"] is not None
+        assert fresh["hmac"] == compute_egress_consent_hmac(
+            app_state.state.settings, fresh
+        )
+
     async def test_restamp_missing_row_returns_none(self, app_state, db):
         """The re-stamp helper's miss path: a row that no longer
         exists surfaces as None instead of raising."""

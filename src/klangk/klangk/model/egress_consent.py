@@ -200,6 +200,16 @@ class EgressConsentModel(Submodel):
                 return None
             return await _restamp(db, self.app.state.settings, request_id)
 
+    async def restamp_rows(self, db, row_ids: list[str]) -> None:
+        """Re-stamp the given rows on a caller-owned connection (the
+        sanctioned multi-step pattern): used after a user deletion
+        FK-nulls the rows' ``decided_by``/``revoked_by`` so the tag
+        tracks the row as last written (#3174). A no-op per row when
+        tagging is disabled (no key configured)."""
+        settings = self.app.state.settings
+        for row_id in row_ids:
+            await _restamp(db, settings, row_id)
+
     async def get_request(self, request_id: str) -> dict | None:
         """Get a single consent request by ID."""
         row = await self.app.state.db.fetchone(
@@ -732,6 +742,19 @@ async def _select_row(db, request_id: str) -> dict | None:
     )
     row = await cursor.fetchone()
     return _row_to_dict(row) if row else None
+
+
+async def consent_rows_for_actor(db, user_id: str) -> list[str]:
+    """Ids of consent rows whose ``decided_by``/``revoked_by`` name the
+    given user — collected BEFORE a user deletion, because after the FK
+    sets the columns NULL they are indistinguishable from static-policy
+    rows (#3174). Runs on the caller-owned connection inside the
+    deleting transaction."""
+    cursor = await db.execute(
+        "SELECT id FROM egress_consent WHERE decided_by = ? OR revoked_by = ?",
+        (user_id, user_id),
+    )
+    return [r[0] for r in await cursor.fetchall()]
 
 
 async def _restamp(db, settings, request_id: str) -> dict | None:

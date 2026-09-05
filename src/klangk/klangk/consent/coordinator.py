@@ -169,8 +169,14 @@ def _forever_entry(host: str, port: int | None, decision: str) -> str | None:
 
 
 def _by_decision(rows: list[dict], decision: str) -> list[dict]:
-    """The in-effect rows carrying one decision."""
-    return [r for r in rows if r["decision"] == decision]
+    """The in-effect rows carrying one decision, with the
+    verification-internal ``hmac`` tag stripped (#3174): the tag never
+    crosses into a workspace."""
+    return [
+        {k: v for k, v in r.items() if k != "hmac"}
+        for r in rows
+        if r["decision"] == decision
+    ]
 
 
 def _pause_frame(until: float | None) -> dict | None:

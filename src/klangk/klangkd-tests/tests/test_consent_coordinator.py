@@ -804,6 +804,25 @@ class TestConsentCoordinatorRules:
             FULL_WS
         )
 
+    async def test_rules_frame_strips_hmac_tag(self):
+        # The verification-internal tag never crosses into a workspace
+        # (#3174) — same policy as _request_frame.
+        allowed = {
+            "id": "a1",
+            "workspace_id": FULL_WS,
+            "dest_host": "allow.com",
+            "dest_port": 443,
+            "decision": "allowed",
+            "duration": "tilrestart",
+            "hmac": "deadbeef",
+        }
+        app = _app(active_rows=[allowed])
+        coord = ConsentCoordinator(app)
+        frame = await coord.rules_frame(FULL_WS)
+        assert frame["allowed"] == [
+            {k: v for k, v in allowed.items() if k != "hmac"}
+        ]
+
     async def test_rules_frame_none_for_missing_workspace(self):
         app = _app(workspace_exists=False)
         coord = ConsentCoordinator(app)
