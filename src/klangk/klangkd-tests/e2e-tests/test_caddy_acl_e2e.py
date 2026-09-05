@@ -1036,7 +1036,6 @@ class TestCaddyAutoHttpsConfig:
                 "KLANGKD_PORT": "443",
                 "KLANGKD_LISTEN": "0.0.0.0",
                 "KLANGKD_TLS_HOSTNAME": "klangk.example.com",
-                "KLANGKD_ACME_EMAIL": "ops@example.com",
                 "KLANGKD_EGRESS_PORT": "18995",
             }
         )
@@ -1051,9 +1050,6 @@ class TestCaddyAutoHttpsConfig:
 
         conf_path = os.path.join(state, "armed.caddy")
         with open(conf_path, "w") as f:
-            # The "sensitive" value inside is the dummy fixture email
-            # ops@example.com, written to the per-test temp dir.
-            # codeql[py/clear-text-storage-of-sensitive-information]
             f.write(cf)
         r = subprocess.run(
             [
