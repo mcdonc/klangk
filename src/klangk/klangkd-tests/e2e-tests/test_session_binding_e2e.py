@@ -137,12 +137,9 @@ class TestHttpRequestSurface:
         A, replayed from B, is refused — and the session is revoked, so
         the token is dead for everyone (the owner re-authenticates)."""
         email, token = _register(api, WS_A)
-        assert (
-            api.get(
-                "/api/v1/auth/me", headers=_bearer(token, WS_A)
-            ).status_code
-            == 200
-        )
+        alive = api.get("/api/v1/auth/me", headers=_bearer(token, WS_A))
+        assert alive.status_code == 200
+        user_id = alive.json()["id"]
 
         replay = api.get("/api/v1/auth/me", headers=_bearer(token, WS_B))
         assert replay.status_code == 401
@@ -154,6 +151,27 @@ class TestHttpRequestSurface:
         records = _violation_records(server)
         assert records, "no session binding violation audit record"
         assert WS_A in records[-1] and WS_B in records[-1]
+
+        # ...in the structured audit stream too (#3205): a
+        # session.revoke row whose detail names the bound workstation
+        # and whose source_ip is the presenting one. The default admin
+        # holds manage-events.
+        admin = _login(api, "admin@example.com", "127.0.0.1", "adminpass")
+        resp = api.get(
+            "/api/v1/events/audit",
+            params={"event": "session.revoke", "limit": 200},
+            headers=_bearer(admin),
+        )
+        assert resp.status_code == 200, resp.text
+        rows = [
+            item
+            for item in resp.json()["items"]
+            if item["detail"].get("reason") == "workstation-binding"
+        ]
+        assert rows, "no workstation-binding session.revoke audit row"
+        assert rows[0]["detail"]["bound_ip"] == WS_A
+        assert rows[0]["source_ip"] == WS_B
+        assert rows[0]["target_id"] == user_id
 
         # Revoked: the legitimate owner's next request reads as revoked.
         owner = api.get("/api/v1/auth/me", headers=_bearer(token, WS_A))

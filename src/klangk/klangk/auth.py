@@ -1895,6 +1895,7 @@ class Auth:
         exp,
         request: Request | None = None,
         workstation: tuple[str | None, str | None] | None = None,
+        user_id: str | None = None,
     ) -> bool:
         """True — after revoking the session — when the token is
         presented from a different workstation than it was issued to
@@ -1923,7 +1924,9 @@ class Auth:
             return False
         if not workstation_mismatch(recorded, workstation, mode == "strict"):
             return False
-        await self._revoke_replayed_session(jti, exp, recorded, workstation)
+        await self._revoke_replayed_session(
+            jti, exp, recorded, workstation, user_id=user_id
+        )
         return True
 
     async def _ws_binding_rejected(self, payload, workstation) -> bool:
@@ -1934,7 +1937,10 @@ class Auth:
         if workstation is None:
             return False
         if await self.reject_replayed_session(
-            payload["jti"], payload.get("exp"), workstation=workstation
+            payload["jti"],
+            payload.get("exp"),
+            workstation=workstation,
+            user_id=payload.get("sub"),
         ):
             logger.info(
                 "token reject: SESSION BOUND TO A DIFFERENT WORKSTATION"
@@ -1943,11 +1949,13 @@ class Auth:
             return True
         return False
 
-    async def _reject_replayed_refresh(self, jti, exp, workstation) -> None:
+    async def _reject_replayed_refresh(
+        self, jti, exp, workstation, user_id=None
+    ) -> None:
         """401 — after revoking — when a refresh is presented from a
         different workstation than the session was issued to (#3194)."""
         if await self.reject_replayed_session(
-            jti, exp, workstation=workstation
+            jti, exp, workstation=workstation, user_id=user_id
         ):
             raise HTTPException(
                 status_code=401,
@@ -1972,17 +1980,24 @@ class Auth:
             return
         payload = self.decode_token(cached, allow_expired=True)
         await self._reject_replayed_refresh(
-            payload.get("jti"), payload.get("exp"), workstation
+            payload.get("jti"),
+            payload.get("exp"),
+            workstation,
+            user_id=payload.get("sub"),
         )
 
     async def _revoke_replayed_session(
-        self, jti, exp, recorded, workstation
+        self, jti, exp, recorded, workstation, user_id=None
     ) -> None:
-        """Audit-log the binding violation and revoke the session (#3194).
+        """Audit the binding violation (log line + structured
+        ``session.revoke`` row, #3205) and revoke the session (#3194).
 
         A missing ``exp`` claim (an atypical token) still rejects the
         presentation but skips the blocklist write — there is no
-        expiry to record.
+        expiry to record. The structured row carries the *presenting*
+        workstation in its source_ip/user_agent columns and the bound
+        one in the detail; no actor — the trigger is an unknown
+        presenter, not the owner.
         """
         logger.info(
             "audit: session binding violation: jti=%s issued to"
@@ -1992,6 +2007,18 @@ class Auth:
             recorded[1],
             workstation[0],
             workstation[1],
+        )
+        await self.app.state.model.audit_events.record_best_effort(
+            "session.revoke",
+            target_type="session",
+            target_id=user_id,
+            detail={
+                "reason": "workstation-binding",
+                "bound_ip": recorded[0],
+                "bound_ua": recorded[1],
+            },
+            source_ip=workstation[0],
+            user_agent=workstation[1],
         )
         if exp is not None:
             await self._revoke_session(jti, exp)
@@ -2023,7 +2050,9 @@ class Auth:
             if not all([user_id, email, jti, exp]):
                 raise HTTPException(status_code=401, detail="Invalid token")
 
-            await self._reject_replayed_refresh(jti, exp, workstation)
+            await self._reject_replayed_refresh(
+                jti, exp, workstation, user_id=user_id
+            )
 
             cached = await self._refreshed_or_revoked(jti, workstation)
             if cached is not None:
@@ -2161,7 +2190,7 @@ async def _authenticated_user(request: Request, credentials) -> dict:
     if await request.app.state.model.tokens.is_token_blocklisted(jti):
         raise HTTPException(status_code=401, detail="Token has been revoked")
     if await request.app.state.auth.reject_replayed_session(
-        jti, payload.get("exp"), request=request
+        jti, payload.get("exp"), request=request, user_id=user_id
     ):
         raise HTTPException(
             status_code=401,
@@ -2188,7 +2217,7 @@ async def _optional_user(request: Request, credentials) -> dict | None:
     if await request.app.state.model.tokens.is_token_blocklisted(jti):
         return None
     if await request.app.state.auth.reject_replayed_session(
-        jti, payload.get("exp"), request=request
+        jti, payload.get("exp"), request=request, user_id=user_id
     ):
         return None
     user = await request.app.state.model.users.get_user_by_id(user_id)

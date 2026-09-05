@@ -3152,6 +3152,22 @@ class TestSessionBinding:
                 is True
             )
         assert "session binding violation" in caplog.text
+        # The structured audit stream (#3205) carries the same signal:
+        # a session.revoke row naming the bound workstation, with the
+        # presenting one in the row's source_ip.
+        events = await app_state.state.model.audit_events.list_events(
+            event="session.revoke"
+        )
+        binding_rows = [
+            e
+            for e in events
+            if e["detail"].get("reason") == "workstation-binding"
+        ]
+        assert len(binding_rows) == 1
+        assert binding_rows[0]["detail"]["bound_ip"] == self.HOME[0]
+        assert binding_rows[0]["source_ip"] == self.AWAY[0]
+        # The direct call passed no user_id — the row has no target.
+        assert binding_rows[0]["target_id"] is None
         # The session is fully revoked: blocklisted, row gone.
         assert await app_state.state.model.tokens.is_token_blocklisted(jti)
         assert (
@@ -3310,6 +3326,18 @@ class TestSessionBindingHTTP:
         # Revoked: a retry (from anywhere) now reads as revoked.
         jti = a.decode_token(token)["jti"]
         assert await app_state.state.model.tokens.is_token_blocklisted(jti)
+        # The structured session.revoke row targets the session's
+        # owner (the deps pass the token's sub, #3205).
+        events = await app_state.state.model.audit_events.list_events(
+            event="session.revoke"
+        )
+        binding_rows = [
+            e
+            for e in events
+            if e["detail"].get("reason") == "workstation-binding"
+        ]
+        assert len(binding_rows) == 1
+        assert binding_rows[0]["target_id"] == a.decode_token(token)["sub"]
 
     async def test_get_current_user_accepts_home_workstation(
         self, user, app_state

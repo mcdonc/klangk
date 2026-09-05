@@ -191,6 +191,13 @@ session is revoked, and an audit record names both workstations:
 audit: session binding violation: jti=<id> issued to ip=198.51.100.7 ua=klangk-cli/1.0, presented from ip=203.0.113.9 ua=klangk-cli/1.0; session revoked
 ```
 
+The revocation is also recorded in the structured audit stream (#3205)
+as a `session.revoke` row (detail `reason: workstation-binding`, the
+bound workstation in the detail, the presenting one as the row's
+source IP), queryable via
+[`GET /api/v1/events/audit`](../reference/api-endpoints.md#get-apiv1eventsaudit)
+by holders of `manage-events`.
+
 The legitimate client shares the token with the thief, so it is logged
 out too and must re-authenticate — that is the point: a replayed token
 dies the moment it is used from elsewhere. Sessions with an unknown

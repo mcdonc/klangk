@@ -316,7 +316,8 @@ operators or integrators to act when upgrading.
   `strict` also requires the same `User-Agent`. A token presented from
   a different workstation — HTTP request, refresh, or WebSocket
   connect — is rejected (401 / close 4001) and its session revoked,
-  with an audit record; the legitimate client is logged out too and
+  with an audit record (log line plus a `session.revoke` structured
+  audit event, #3205); the legitimate client is logged out too and
   must re-login. Sessions with an unknown recorded IP are never
   rejected. Reloadable on SIGHUP. See
   [Authentication: session workstation binding](features/authentication.md#session-workstation-binding-replay-protection).
@@ -2280,7 +2281,7 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   log the underlying error server-side instead.
 
 - **Admin user deletion now revokes sessions (#3195).** `DELETE
-  /api/v1/users/{user_id}` now blocklists every token the deleted user
+/api/v1/users/{user_id}` now blocklists every token the deleted user
   held and cuts their live WebSocket and consent-decider connections.
   Previously sessions stayed alive until their natural expiry.
 
