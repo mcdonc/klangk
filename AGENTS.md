@@ -477,6 +477,20 @@ flutter compile time alone. `fmtk-down` stops the kept services
 (`--wipe` also deletes the scratch state; `fmtk-up --fresh` is
 `fmtk-down --wipe` + launch).
 
+The same stack backs an automated pytest suite (#3232):
+
+```bash
+devenv --quiet -O dotenv.enable:bool false shell -- test-fmtk-e2e
+```
+
+It boots the stack programmatically (headless Chrome under CI or
+without DISPLAY), drives the app via the fmtk CLI, and swaps server
+config through SIGHUP or a full restart — the library lives in
+`src/frontend/e2e-tests/fmtk/fmtkharness.py`. Use it when developing
+new fmtk-driven scenarios (CI re-runs it on the same hardware; do not
+run it as a routine pre-push gate). `FMTK_E2E_FRESH=1` wipes the
+scratch state first.
+
 The harness exists because the frontend is same-origin only: `baseUrl`
 derives from the page origin (klangk-plugin-api `backend_url`), so a
 debug app loaded straight from the flutter dev server calls its own

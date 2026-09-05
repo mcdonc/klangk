@@ -17,12 +17,13 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEVENV_STATE="${DEVENV_STATE:-$REPO_ROOT/.devenv/state}"
 STATE_DIR="${FMTK_STATE:-$DEVENV_STATE/fmtk}"
 FLUTTER_PORT="${FMTK_FLUTTER_PORT:-8125}"
+PROXY_PORT="${FMTK_PROXY_PORT:-8124}"
 
 log() { printf '\033[1m[fmtk-down]\033[0m %s\n' "$*"; }
 
 for pattern in \
   "run --debug -d chrome.*--web-port $FLUTTER_PORT" \
-  "[c]hrome.*127.0.0.1:8124" \
+  "[c]hrome.*127.0.0.1:$PROXY_PORT" \
   "klangk[.]main --config $STATE_DIR/klangkd.yaml" \
   "[c]addy run --config $STATE_DIR/proxy.Caddyfile"; do
   if pkill -TERM -f "$pattern" 2>/dev/null; then
@@ -32,7 +33,7 @@ done
 sleep 2
 for pattern in \
   "run --debug -d chrome.*--web-port $FLUTTER_PORT" \
-  "[c]hrome.*127.0.0.1:8124" \
+  "[c]hrome.*127.0.0.1:$PROXY_PORT" \
   "klangk[.]main --config $STATE_DIR/klangkd.yaml" \
   "[c]addy run --config $STATE_DIR/proxy.Caddyfile"; do
   pkill -KILL -f "$pattern" 2>/dev/null || true

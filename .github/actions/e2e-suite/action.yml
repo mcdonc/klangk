@@ -48,7 +48,7 @@ runs:
         "$retry" devenv shell -- true
 
     - name: Build images
-      if: inputs.run == 'true'
+      if: inputs.run == 'true' && inputs.build-tasks != ''
       shell: bash
       run: |
         . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh 2>/dev/null || true
