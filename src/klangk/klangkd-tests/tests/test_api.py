@@ -17349,10 +17349,13 @@ class TestTestModeEndpoints:
 
 
 class TestNoCoverAudit2910Part3:
-    async def test_create_workspace_oserror_maps_500(self):
+    async def test_create_workspace_oserror_maps_500(self, caplog):
         """create_workspace raising OSError (host-side mkdir failure) is a
         500 with a generic body, not a 400 echoing the OS message
-        (#3215; direct handler call, Depends bypassed)."""
+        (#3215; direct handler call, Depends bypassed). The log record
+        is the operator's only diagnostic — pin it."""
+        import logging
+
         from fastapi import HTTPException
 
         from klangk.api.workspaces import (
@@ -17367,7 +17370,10 @@ class TestNoCoverAudit2910Part3:
             ),
         )
         app.state.settings.default_image = None
-        with pytest.raises(HTTPException) as caught:
+        with (
+            caplog.at_level(logging.ERROR, logger="klangk.api.workspaces"),
+            pytest.raises(HTTPException) as caught,
+        ):
             await create_endpoint(
                 CreateWorkspaceRequest(name="os-fail"),
                 user={"id": "u1", "email": "u@x.com"},
@@ -17375,6 +17381,7 @@ class TestNoCoverAudit2910Part3:
             )
         assert caught.value.status_code == 500
         assert caught.value.detail == "Internal server error"
+        assert "No space left on device" in caplog.text
 
     async def test_duplicate_workspace_collection_acl_false_403(self):
         """The in-handler defense-in-depth collection-create check (#2569):
