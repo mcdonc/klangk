@@ -13,6 +13,7 @@ import base64
 import functools
 import hashlib
 import hmac
+import ipaddress
 import logging
 import re
 import secrets
@@ -383,6 +384,75 @@ def _other_workstation_ips(rows: list[dict], source_ip: str) -> list[str]:
     )
 
 
+def same_workstation_ip(recorded: str, presented: str) -> bool:
+    """True when two known client IPs name the same workstation (#3194).
+
+    Exact equality, or two IPv6 addresses inside one /64 — hosts on
+    the same IPv6 link rotate addresses inside the prefix (privacy
+    extensions), and byte-equality would kill a roaming client's
+    session on every rotation. Everything else (different IPv4s, an
+    IPv4 vs an IPv6, unparseable strings that differ) is different.
+    """
+    if recorded == presented:
+        return True
+    try:
+        rec = ipaddress.ip_address(recorded)
+        pres = ipaddress.ip_address(presented)
+    except ValueError:
+        return False
+    if rec.version != 6 or pres.version != 6:
+        return False
+    return pres in ipaddress.ip_network(f"{recorded}/64", strict=False)
+
+
+def _known_ips_differ(rec_ip: str | None, ip: str | None) -> bool:
+    """True when two KNOWN addresses name different networks; an
+    unknown on either side is never different (fail-open, #3194)."""
+    if rec_ip is None or ip is None:
+        return False
+    return not same_workstation_ip(rec_ip, ip)
+
+
+def _known_agents_differ(rec_agent: str | None, agent: str | None) -> bool:
+    """True when two KNOWN user agents differ; an unknown on either
+    side is never different (fail-open, #3194)."""
+    if rec_agent is None or agent is None:
+        return False
+    return rec_agent != agent
+
+
+def workstation_mismatch(
+    recorded: tuple[str | None, str | None],
+    presented: tuple[str | None, str | None],
+    strict: bool,
+) -> bool:
+    """True when *presented* differs from the recorded *workstation*
+    (#3194).
+
+    Each tuple is ``(source_ip, user_agent)``. Unknown values
+    (``None`` on either side) are never a mismatch — the same
+    fail-open posture as the concurrent-logon audit (#2586): a
+    pre-#2586 session row or an unresolvable client cannot be judged,
+    so it is never rejected. In ``strict`` mode a known-but-different
+    user agent is also a mismatch.
+    """
+    if _known_ips_differ(recorded[0], presented[0]):
+        return True
+    return strict and _known_agents_differ(recorded[1], presented[1])
+
+
+def _request_workstation(request: Request) -> tuple[str | None, str | None]:
+    """The ``(ip, user_agent)`` an HTTP request presents (#3194).
+
+    Reached only when binding is armed (``reject_replayed_session``
+    short-circuits first), so minimal test app states without a
+    ``util`` stay on the unarmed path.
+    """
+    util = request.app.state.util
+    host = request.client.host if request.client else None
+    return util.workstation(request.headers, host)
+
+
 # ---------------------------------------------------------------------------
 # Auth instance — config-reading, app.state-owned (#1501, #1426)
 # ---------------------------------------------------------------------------
@@ -531,6 +601,16 @@ class Auth:
         """The privileged (admins-group) window in minutes; 0 = no
         privileged split — admins use the general window (#3151)."""
         return self.app.state.settings.privileged_session_idle_timeout_minutes
+
+    @property
+    def session_binding(self) -> str:
+        """The session-binding mode: off | ip | strict (#3194).
+
+        Normalized at construction by the settings validator; read
+        live off settings so a SIGHUP reload arms or disarms binding
+        without a restart.
+        """
+        return self.app.state.settings.session_binding
 
     # --- secret / startup guard ---
 
@@ -1719,6 +1799,20 @@ class Auth:
             last = last.replace(tzinfo=timezone.utc)
         return (datetime.now(timezone.utc) - last).total_seconds()
 
+    async def _revoke_session(self, jti: str, exp) -> None:
+        """Fully terminate the session behind *jti*: blocklist the token
+        (no cached replacement, so any later use 401s as revoked), drop
+        its session row, and cut its live sockets — the same complete
+        revocation as logout. Shared by logout, the idle-session
+        termination (#3151), and the workstation-binding rejection
+        (#3194). *exp* is the token's Unix-epoch ``exp`` claim.
+        """
+        expires_at = datetime.fromtimestamp(exp, tz=timezone.utc).isoformat()
+        await self.app.state.model.tokens.blocklist_token(jti, expires_at)
+        await self.app.state.model.sessions.remove_session(jti)
+        await self._kick_revoked_sockets(jti)
+        self.session_stamps.pop(f"jti:{jti}", None)
+
     async def _revoke_idle_session(self, jti: str, exp) -> None:
         """Terminate an idle session: blocklist the token (no cached
         replacement, so any later use 401s as revoked), drop its session
@@ -1731,11 +1825,7 @@ class Auth:
             " configured window)",
             jti,
         )
-        expires_at = datetime.fromtimestamp(exp, tz=timezone.utc).isoformat()
-        await self.app.state.model.tokens.blocklist_token(jti, expires_at)
-        await self.app.state.model.sessions.remove_session(jti)
-        await self._kick_revoked_sockets(jti)
-        self.session_stamps.pop(f"jti:{jti}", None)
+        await self._revoke_session(jti, exp)
         raise HTTPException(
             status_code=401,
             detail="Session timed out due to inactivity",
@@ -1759,7 +1849,97 @@ class Auth:
             return
         await self._revoke_idle_session(jti, exp)
 
-    async def refresh_token(self, token: str) -> TokenResponse:
+    async def reject_replayed_session(
+        self,
+        jti: str,
+        exp,
+        request: Request | None = None,
+        workstation: tuple[str | None, str | None] | None = None,
+    ) -> bool:
+        """True — after revoking the session — when the token is
+        presented from a different workstation than it was issued to
+        (#3194).
+
+        Replay protection for bearer JWTs: with binding armed
+        (``KLANGKD_SESSION_BINDING`` = ip|strict), a token captured on
+        the wire cannot be used from another machine — the mismatch
+        revokes the session (blocklist + row delete + socket kick), an
+        audit record names both workstations, and the caller rejects
+        the request. The legitimate client shares the token, so it is
+        logged out too and must re-authenticate. ``False`` (no action)
+        when binding is off, the session row is missing (a pre-#2585
+        token), or the presentation matches. *workstation* is the
+        caller-resolved pair (WebSocket connects, refresh); *request*
+        is resolved lazily — only on the armed path, so the default
+        off mode costs nothing.
+        """
+        mode = self.session_binding
+        if mode == "off":
+            return False
+        if workstation is None:
+            workstation = _request_workstation(request)
+        recorded = await self.app.state.model.sessions.get_workstation(jti)
+        if recorded is None:
+            return False
+        if not workstation_mismatch(recorded, workstation, mode == "strict"):
+            return False
+        await self._revoke_replayed_session(jti, exp, recorded, workstation)
+        return True
+
+    async def _ws_binding_rejected(self, payload, workstation) -> bool:
+        """True when the presenting connect's workstation fails the
+        session-binding check (#3194) — logged like the other token
+        rejects; a workstation-less caller (no presentation to
+        compare) never does."""
+        if workstation is None:
+            return False
+        if await self.reject_replayed_session(
+            payload["jti"], payload.get("exp"), workstation=workstation
+        ):
+            logger.info(
+                "token reject: SESSION BOUND TO A DIFFERENT WORKSTATION"
+                " -> WS will close 4001 -> client logout"
+            )
+            return True
+        return False
+
+    async def _reject_replayed_refresh(self, jti, exp, workstation) -> None:
+        """401 — after revoking — when a refresh is presented from a
+        different workstation than the session was issued to (#3194)."""
+        if await self.reject_replayed_session(
+            jti, exp, workstation=workstation
+        ):
+            raise HTTPException(
+                status_code=401,
+                detail="Session bound to a different workstation",
+            )
+
+    async def _revoke_replayed_session(
+        self, jti, exp, recorded, workstation
+    ) -> None:
+        """Audit-log the binding violation and revoke the session (#3194).
+
+        A missing ``exp`` claim (an atypical token) still rejects the
+        presentation but skips the blocklist write — there is no
+        expiry to record.
+        """
+        logger.info(
+            "audit: session binding violation: jti=%s issued to"
+            " ip=%s ua=%s, presented from ip=%s ua=%s; session revoked",
+            jti,
+            recorded[0],
+            recorded[1],
+            workstation[0],
+            workstation[1],
+        )
+        if exp is not None:
+            await self._revoke_session(jti, exp)
+
+    async def refresh_token(
+        self,
+        token: str,
+        workstation: tuple[str | None, str | None] | None = None,
+    ) -> TokenResponse:
         """Exchange a valid access token for a new one.
 
         The old token's JTI is blocklisted with the new token cached
@@ -1767,7 +1947,11 @@ class Auth:
         with the same old token return the same new token. With the
         idle session timeout armed (#3151), an idle session is
         terminated here instead of rotated, and the replacement token
-        is capped at the owner's idle window.
+        is capped at the owner's idle window. *workstation* is the
+        caller-presented pair; with binding armed (#3194) a token
+        presented from a different workstation than it was issued to
+        is revoked and refused here too — the refresh seam is the one
+        place a headless stolen-token client must eventually surface.
         """
         try:
             payload = self.decode_token(token)
@@ -1777,6 +1961,8 @@ class Auth:
             exp = payload.get("exp")
             if not all([user_id, email, jti, exp]):
                 raise HTTPException(status_code=401, detail="Invalid token")
+
+            await self._reject_replayed_refresh(jti, exp, workstation)
 
             cached = await self._refreshed_or_revoked(jti)
             if cached is not None:
@@ -1819,21 +2005,28 @@ class Auth:
             )
         return revoked
 
-    async def _user_from_valid_payload(self, payload: dict) -> dict | None:
+    async def _user_from_valid_payload(
+        self,
+        payload: dict,
+        workstation: tuple[str | None, str | None] | None = None,
+    ) -> dict | None:
         """The user for a decoded, unexpired token payload; ``None`` for
-        malformed claims, a revoked token, or a missing user."""
+        malformed claims, a revoked token, or a missing user.
+
+        *workstation* (the pair the presenting WebSocket connect
+        resolved, #3194) is checked against the session row when
+        binding is armed; ``None`` (the request-less legacy callers)
+        skips the check — there is no presentation to compare.
+        """
         user_id = payload.get("sub")
         jti = payload.get("jti")
         if None in (user_id, jti):
             return None
         if await self._token_revoked(jti):
             return None
-        user = await self.app.state.model.users.get_user_by_id(user_id)
-        if user is None:
+        if await self._ws_binding_rejected(payload, workstation):
             return None
-        # Disabled (#2588) and password-expired (#3177) accounts keep
-        # their WS connections shut: returning None rejects the connect
-        # like any dead token, and the client logs out on the 4001 close.
+        user = await self.app.state.model.users.get_user_by_id(user_id)
         reason = self._ws_token_reject_reason(user)
         if reason is not None:
             logger.info(
@@ -1845,8 +2038,12 @@ class Auth:
         await self.record_session_activity(jti)
         return user
 
-    def _ws_token_reject_reason(self, user: dict) -> str | None:
-        """Why a WS auth must reject *user*; ``None`` when acceptable."""
+    def _ws_token_reject_reason(self, user: dict | None) -> str | None:
+        """Why a WS auth must reject *user*; ``None`` when acceptable.
+        A missing user row (deleted mid-session account) rejects like
+        any dead token."""
+        if user is None:
+            return "USER NOT FOUND"
         if user.get("disabled"):
             return "ACCOUNT DISABLED"
         if self.password_expired(user):
@@ -1881,15 +2078,7 @@ class Auth:
             jti = payload.get("jti")
             exp = payload.get("exp")
             if jti and exp:
-                expires_at = datetime.fromtimestamp(
-                    exp, tz=timezone.utc
-                ).isoformat()
-                await self.app.state.model.tokens.blocklist_token(
-                    jti, expires_at
-                )
-                await self.app.state.model.sessions.remove_session(jti)
-                await self._kick_revoked_sockets(jti)
-                self.session_stamps.pop(f"jti:{jti}", None)
+                await self._revoke_session(jti, exp)
         except JWTError:
             pass
 
@@ -1901,7 +2090,8 @@ class Auth:
 
 async def _authenticated_user(request: Request, credentials) -> dict:
     """The user for valid, unrevoked credentials; raises 401 for every
-    failure mode (missing claims, a revoked token, an unknown user)."""
+    failure mode (missing claims, a revoked token, an unknown user,
+    a token presented from a different workstation, #3194)."""
     payload = request.app.state.auth.decode_token(credentials.credentials)
     user_id = payload.get("sub")
     jti = payload.get("jti")
@@ -1909,6 +2099,13 @@ async def _authenticated_user(request: Request, credentials) -> dict:
         raise HTTPException(status_code=401, detail="Invalid token")
     if await request.app.state.model.tokens.is_token_blocklisted(jti):
         raise HTTPException(status_code=401, detail="Token has been revoked")
+    if await request.app.state.auth.reject_replayed_session(
+        jti, payload.get("exp"), request=request
+    ):
+        raise HTTPException(
+            status_code=401,
+            detail="Session bound to a different workstation",
+        )
     user = await request.app.state.model.users.get_user_by_id(user_id)
     if user is None:
         raise HTTPException(status_code=401, detail="User not found")
@@ -1918,13 +2115,20 @@ async def _authenticated_user(request: Request, credentials) -> dict:
 
 async def _optional_user(request: Request, credentials) -> dict | None:
     """The user for valid, unrevoked credentials; ``None`` for missing
-    claims, a revoked token, or an unknown user."""
+    claims, a revoked token, an unknown user, or a token presented
+    from a different workstation (#3194 — the mismatch still revokes
+    the session, then degrades this request to its anonymous view,
+    exactly like any other dead token)."""
     payload = request.app.state.auth.decode_token(credentials.credentials)
     user_id = payload.get("sub")
     jti = payload.get("jti")
     if None in (user_id, jti):
         return None
     if await request.app.state.model.tokens.is_token_blocklisted(jti):
+        return None
+    if await request.app.state.auth.reject_replayed_session(
+        jti, payload.get("exp"), request=request
+    ):
         return None
     user = await request.app.state.model.users.get_user_by_id(user_id)
     if user is None:

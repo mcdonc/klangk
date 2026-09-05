@@ -116,6 +116,27 @@ class SessionsModel(Submodel):
                 (datetime.now(timezone.utc).isoformat(), jti),
             )
 
+    async def get_workstation(
+        self, jti: str
+    ) -> tuple[str | None, str | None] | None:
+        """The ``(source_ip, user_agent)`` recorded for the session row
+        keyed by *jti*, or ``None`` when no row exists (#3194).
+
+        The recorded workstation is what a session was *established*
+        from (at issuance, #2586) and survives refresh rekeying (the
+        row is UPDATEd in place), so the binding predicate compares
+        every later presentation against it. ``None`` (no row — a
+        pre-#2585 token) means the binding cannot be judged; the
+        caller fails open, the same posture as ``get_last_seen``.
+        """
+        row = await self.app.state.db.fetchone(
+            "SELECT source_ip, user_agent FROM user_sessions WHERE jti = ?",
+            (jti,),
+        )
+        if row is None:
+            return None
+        return row[0], row[1]
+
     async def get_last_seen(self, jti: str) -> str | None:
         """The session row's ``last_seen_at`` (UTC ISO string), or
         ``None`` when no row exists (#3151).

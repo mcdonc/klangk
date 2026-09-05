@@ -2522,3 +2522,42 @@ class TestLlmModelEntriesTypeGuard2910:
 
         with pytest.raises(ValueError, match="must be a list"):
             _llm_model_entries(123)
+
+
+class TestSessionBindingValidator:
+    """KLANGKD_SESSION_BINDING must be off/ip/strict, or fail fast at
+    boot (#3194) — a typo must not silently disarm replay protection
+    an operator believes is armed (same posture as log_format)."""
+
+    def test_defaults_to_off(self):
+        s = make_settings({})
+        assert s.session_binding == "off"
+
+    @pytest.mark.parametrize(
+        "raw,expected",
+        [
+            ("off", "off"),
+            ("ip", "ip"),
+            ("strict", "strict"),
+            ("IP", "ip"),
+            ("Strict", "strict"),
+            ("OFF", "off"),
+            (" strict ", "strict"),
+        ],
+    )
+    def test_valid_values_normalized_to_lower(self, raw, expected):
+        s = make_settings({"KLANGKD_SESSION_BINDING": raw})
+        assert s.session_binding == expected
+
+    def test_empty_string_defaults_to_off(self):
+        s = make_settings({"KLANGKD_SESSION_BINDING": ""})
+        assert s.session_binding == "off"
+
+    @pytest.mark.parametrize(
+        "bad", ["yes", "on", "ua", "ip-strict", "both", "1"]
+    )
+    def test_garbage_rejected_at_construction(self, bad):
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            make_settings({"KLANGKD_SESSION_BINDING": bad})

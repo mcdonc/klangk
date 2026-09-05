@@ -917,6 +917,21 @@ class KlangkSettings(BaseSettings):
     # window). Reloadable on SIGHUP (read live at issue/refresh/sweep
     # time).
     privileged_session_idle_timeout_minutes: int = 10
+    # Session workstation binding (#3194): replay protection for
+    # bearer JWTs. ``off`` (the default) — any holder of a token may
+    # use it until expiry, as before. ``ip`` — every authenticated
+    # HTTP request, token refresh, and WebSocket connect must come
+    # from the same network the session was established from (the
+    # effective client IP; two IPv6 addresses inside one /64 count as
+    # the same). ``strict`` — additionally require the same
+    # User-Agent. A token presented from a different workstation is
+    # rejected (401 / WS close 4001) and its session revoked (the
+    # audit log records the violation), so a captured token cannot be
+    # replayed from another machine. Sessions with an unknown
+    # recorded IP (pre-#2586 rows) are never rejected. Read live at
+    # use time; reloadable on SIGHUP. The validator below rejects
+    # anything but off/ip/strict at construction (fail-fast).
+    session_binding: str = "off"
     # Dormant-account auto-disable (#2588). Accounts (except the system
     # agent and members of the admin group) whose newest activity
     # signal — last API access, last login, or creation — is older than
@@ -2066,6 +2081,28 @@ class KlangkSettings(BaseSettings):
         if lower not in ("text", "json"):
             raise ValueError(
                 f"KLANGKD_LOG_FORMAT={v!r} is invalid. Must be text or json."
+            )
+        return lower
+
+    @field_validator("session_binding")
+    @classmethod
+    def _validate_session_binding(cls, v: str) -> str:
+        """Normalize/reject the session-binding mode at construction
+        (#3194).
+
+        Accepts ``off``, ``ip``, or ``strict`` (case-insensitive),
+        normalized to lowercase. ``None``/empty defaults to ``off``.
+        Anything else aborts boot — the same fail-fast posture as
+        ``log_format`` above, so a typo cannot silently disable replay
+        protection an operator believes is armed.
+        """
+        if _is_unset(v):
+            return "off"
+        lower = v.strip().lower()
+        if lower not in ("off", "ip", "strict"):
+            raise ValueError(
+                f"KLANGKD_SESSION_BINDING={v!r} is invalid. "
+                "Must be off, ip, or strict."
             )
         return lower
 

@@ -11,6 +11,8 @@ from klangk.consent.deciders import ConsentDeciderRegistry
 from klangk.model.workspaces import EGRESS_MODE_INTERACTIVE
 from klangk.wshandler.safe_websocket import SafeWebSocket
 
+from _helpers import make_settings
+
 WS = "ws-aaaa1111-2222-3333-4444-555566667777"
 WS2 = "ws-bbbb2222-3333-4444-5555-666677778888"
 
@@ -220,7 +222,12 @@ def _ws_app(
     """App with mocked auth + acl + coordinator, and a real registry."""
     app = types.SimpleNamespace()
     app.state = types.SimpleNamespace()
-    app.state.settings = types.SimpleNamespace(consent_decider_timeout=45.0)
+    # Real settings (default consent_decider_timeout is 45.0) so the
+    # workstation resolver (#3194) has the proxy-trust fields it reads.
+    app.state.settings = make_settings({})
+    from klangk.util import Util
+
+    app.state.util = Util(app)
     # #2394: a workspace-scoped decider's egress_mode is checked at connect.
     # Default interactive so existing connect/register tests keep working;
     # pass egress_mode="static" to exercise the structural rejection.
@@ -1003,6 +1010,19 @@ class TestConsentDeciderWSJti:
         assert authed_user["id"] == "u1"
         assert jti == "jti-decoded"
         assert ws.closed is None  # authenticated, not refused
+
+    async def test_decider_gate_resolves_presenting_workstation(self):
+        """#3194: the decider handshake passes the connect's resolved
+        workstation into the token check, mirroring the main /ws gate —
+        a _FakeWS presents its fake user-agent and no client (unknown IP)."""
+        from klangk.wshandler.decider import _decider_authenticate
+
+        app = _ws_app({"id": "u1", "email": "a@x"})
+        ws = _FakeWS({"token": "tok"}, [])
+        await _decider_authenticate(ws, app, lambda label: None)
+        payload_call = app.state.auth._user_from_valid_payload
+        payload_call.assert_awaited_once()
+        assert payload_call.await_args.args[1] == (None, "fake-decider/1.0")
 
     async def test_connection_records_authenticating_jti(self):
         from fastapi import WebSocketDisconnect

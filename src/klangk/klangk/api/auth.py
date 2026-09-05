@@ -615,7 +615,9 @@ async def refresh_token(request: Request):
         request.headers.get("origin", "?"),
         request.headers.get("referer", "?"),
     )
-    return await request.app.state.auth.refresh_token(token)
+    return await request.app.state.auth.refresh_token(
+        token, workstation(request)
+    )
 
 
 class ChangePasswordRequest(BaseModel):

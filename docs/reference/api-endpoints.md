@@ -1389,7 +1389,10 @@ For OIDC users with logout redirect configured:
 ### POST `/api/v1/auth/refresh`
 
 Exchange the current JWT for a new one. The old token's JTI is
-blocklisted.
+blocklisted. With session binding armed
+(`KLANGKD_SESSION_BINDING`, #3194), a token presented from a different
+workstation than it was issued to is refused with `401` and its
+session revoked.
 
 **Auth:** JWT required.
 

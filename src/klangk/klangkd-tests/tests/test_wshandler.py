@@ -2853,6 +2853,50 @@ class TestHandleWebsocketDispatch:
         assert exp == payload["exp"]
         websocket.close.assert_not_awaited()
 
+    async def test_ws_authenticate_rejects_foreign_workstation(self, user):
+        """#3194: with binding armed, a token issued to one workstation
+        closes 4001 when presented from another, and the session is
+        revoked (blocklisted)."""
+        app_state = _make_app_state()
+        app_state.state.settings = make_settings(
+            {"KLANGKD_SESSION_BINDING": "ip"}
+        )
+        a = app_state.state.auth
+        token = await a.issue_token(
+            user["id"],
+            user["email"],
+            source_ip="198.51.100.7",
+            user_agent="klangk-cli/1.0",
+        )
+        jti = a.decode_token(token)["jti"]
+        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket.client = types.SimpleNamespace(host="203.0.113.9")
+        assert await ws_authenticate(websocket, app_state) is None
+        websocket.close.assert_awaited_once_with(
+            code=4001, reason="Invalid token"
+        )
+        assert await app_state.state.model.tokens.is_token_blocklisted(jti)
+
+    async def test_ws_authenticate_accepts_home_workstation(self, user):
+        """#3194: the same workstation the session was established from
+        connects normally."""
+        app_state = _make_app_state()
+        app_state.state.settings = make_settings(
+            {"KLANGKD_SESSION_BINDING": "ip"}
+        )
+        a = app_state.state.auth
+        token = await a.issue_token(
+            user["id"],
+            user["email"],
+            source_ip="198.51.100.7",
+            user_agent="klangk-cli/1.0",
+        )
+        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket.client = types.SimpleNamespace(host="198.51.100.7")
+        result = await ws_authenticate(websocket, app_state)
+        assert isinstance(result, tuple)
+        websocket.close.assert_not_awaited()
+
     async def test_dispatch_terminal_input(self, user):
         websocket = await self._run_commands(
             user, [{"cmd": "terminal_input", "data": "x"}]

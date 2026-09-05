@@ -308,6 +308,19 @@ operators or integrators to act when upgrading.
 
 ### Security
 
+- **`KLANGKD_SESSION_WORKSTATION_BINDING` (#3194).** Session workstation
+  binding: replay protection for bearer JWTs. `off` (the default)
+  keeps the previous behavior (any token holder may use it until
+  expiry); `ip` binds each session to the network it was established
+  from (two IPv6 addresses inside one /64 count as the same),
+  `strict` also requires the same `User-Agent`. A token presented from
+  a different workstation — HTTP request, refresh, or WebSocket
+  connect — is rejected (401 / close 4001) and its session revoked,
+  with an audit record; the legitimate client is logged out too and
+  must re-login. Sessions with an unknown recorded IP are never
+  rejected. Reloadable on SIGHUP. See
+  [Authentication: session workstation binding](features/authentication.md#session-workstation-binding-replay-protection).
+
 - **Session token storage (#3193).** The frontend now keeps the session
   JWT in browser `sessionStorage` instead of `localStorage`, so closing
   the tab or the browser ends the session instead of leaving a usable
