@@ -184,7 +184,7 @@ class Lifecycle:
         # strong references to the hook task while it drains.
         self.shutting_down: bool = False
         self._shutdown_tasks: set[asyncio.Task] = set()
-        # V-222585 (#3176): non-zero exit the GracefulExitServer must
+        # Fail-secure (#3176): non-zero exit the GracefulExitServer must
         # translate after the teardown completes (set on the failed
         # SIGHUP-recovery path; death-by-SIGTERM alone reads as a
         # "clean" exit to a Restart=on-failure supervisor).
@@ -989,7 +989,7 @@ class Lifecycle:
         logger.info("%s: handing off to server exit", name)
 
     async def _drain_workspaces(self, name: str) -> None:
-        """Drain phase with V-222585 escalation (#3176).
+        """Drain phase with fail-secure escalation (#3176).
 
         A drain that raised *or* verifiably under-stopped (stopped
         fewer than the tracked containers) triggers the forced
@@ -1024,7 +1024,7 @@ class Lifecycle:
             await self._forced_backstop(name)
 
     async def _forced_backstop(self, name: str) -> None:
-        """Forced shutdown backstop, verified (V-222585 / #3176).
+        """Forced shutdown backstop, verified (#3176).
 
         Re-run the registry stop path, then verify against the live
         container listing that nothing of this instance survives —
@@ -1169,7 +1169,7 @@ class Lifecycle:
                 exc,
                 exc_info=exc,
             )
-            # V-222585: instead of os._exit(1) (which skips lifespan
+            # Fail-secure (#3176): instead of os._exit(1) (which skips
             # teardown and orphans the proxy child), send ourselves
             # SIGTERM — the GracefulExitServer hook runs the hardened
             # teardown (proxy stop, container cleanup, DB dispose)
@@ -1383,7 +1383,7 @@ async def lifespan(app: FastAPI):
         loop.remove_signal_handler(signal.SIGHUP)
         # Each teardown step is wrapped so one failure cannot skip the
         # rest — all steps always attempted, each failure logged
-        # (V-222585: fail to a secure state on shutdown failure).
+        # (fail to a secure state on shutdown failure, #3176).
         for step_name, step_coro in (
             ("stop_background_workers", stop_background_workers(app)),
             ("runtime_shutdown", app.state.lifecycle.runtime_shutdown()),

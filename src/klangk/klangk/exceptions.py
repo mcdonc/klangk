@@ -71,7 +71,7 @@ class WorkspaceCapacityError(RuntimeError):
 class AuditWriteError(RuntimeError):
     """A ``container_events`` audit row could not be written (#3154).
 
-    Security finding V-222486 asked for fail-closed auditing; the
+    The security finding asked for fail-closed auditing; the
     honest scope is the *interactive* API lifecycle paths only. Raised
     by :meth:`ContainerRegistry.prewrite_audit_event` when
     ``KLANGKD_AUDIT_FAIL_CLOSED`` is on and the audit-before-act row

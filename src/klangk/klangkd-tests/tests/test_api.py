@@ -197,7 +197,7 @@ class TestHealth:
         assert "audit" not in body
 
     async def test_audit_endpoint_reports_audit_state(self, client, app):
-        """#3154 / V-222486: audit-write failures and the fail-closed
+        """#3154: audit-write failures and the fail-closed
         mode are visible on /audit so an operator or assessor can see
         the audit trail losing rows and verify the mode."""
         resp = await client.get("/audit")
@@ -218,7 +218,7 @@ class TestHealth:
 class TestAuditFailClosedApi3154:
     """KLANGKD_AUDIT_FAIL_CLOSED: the interactive lifecycle endpoints
     refuse with a 503 before any side effect when the audit row cannot
-    be written; autonomous paths stay best-effort (#3154, V-222486)."""
+    be written; autonomous paths stay best-effort (#3154)."""
 
     def _broken_audit(self, app):
         return patch.object(

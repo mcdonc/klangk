@@ -103,7 +103,7 @@ def _make_app_state(settings=None):
 
 def _lifespan_test_app():
     """A FastAPI app wired like ``build_app`` for direct ``lifespan()``
-    tests (V-222585 teardown / fail-secure coverage): fresh state
+    tests (#3176 teardown / fail-secure coverage): fresh state
     objects sharing the fake app_state's registry, sockets, settings,
     db, model, hooks, and lifecycle."""
     app = FastAPI()
@@ -1475,7 +1475,7 @@ class TestGracefulShutdown:
     ):
         """A drain exception triggers the forced backstop
         (registry.shutdown, then a verified-clean listing) before
-        exiting (V-222585)."""
+        exiting (#3176)."""
         import signal as signal_mod
 
         app_state = _make_app_state()
@@ -1519,7 +1519,7 @@ class TestGracefulShutdown:
         self, app_state, caplog
     ):
         """When both the drain and the forced backstop fail, a CRITICAL
-        message warns operators of unsupervised containers (V-222585)."""
+        message warns operators of unsupervised containers (#3176)."""
         import signal as signal_mod
 
         app_state = _make_app_state()
@@ -1554,7 +1554,7 @@ class TestGracefulShutdown:
         containers than were tracked still triggers the backstop —
         per-container stop failures are swallowed by
         drain_all_containers, so the count is the only failure signal
-        (V-222585)."""
+        (#3176)."""
         import signal as signal_mod
 
         app_state = _make_app_state()
@@ -1593,7 +1593,7 @@ class TestGracefulShutdown:
         """A backstop that "succeeds" while containers remain listed
         is NOT success: the verification listing wins over the stop
         path's swallowed failures and CRITICAL names the leftovers
-        (V-222585)."""
+        (#3176)."""
         import signal as signal_mod
 
         app_state = _make_app_state()
@@ -1633,7 +1633,7 @@ class TestGracefulShutdown:
     ):
         """When the post-backstop listing itself fails, the secure
         state cannot be confirmed — CRITICAL, never a silent exit
-        (V-222585)."""
+        (#3176)."""
         import signal as signal_mod
 
         app_state = _make_app_state()
@@ -1671,7 +1671,7 @@ class TestGracefulShutdown:
     ):
         """An exception escaping the drain phase itself (e.g. the
         baseline count raising) is logged and the exit proceeds —
-        never a wedged live server (V-222585)."""
+        never a wedged live server (#3176)."""
         import signal as signal_mod
 
         app_state = _make_app_state()
@@ -1813,7 +1813,7 @@ class TestGracefulExitServer:
         self, app_state
     ):
         """A forced_exit_status set on the lifecycle (failed-recovery
-        path, V-222585) turns the context exit into SystemExit(1)
+        path, #3176) turns the context exit into SystemExit(1)
         instead of re-raising the captured SIGTERM — death-by-signal
         (143) reads as a "clean" exit to a Restart=on-failure
         supervisor, which would leave the node down."""
@@ -2403,7 +2403,7 @@ class TestMainEntryCallback2910:
         self, db, app_state
     ):
         """An exception in one lifespan teardown step does not prevent
-        the remaining steps from running (V-222585)."""
+        the remaining steps from running (#3176)."""
         app, wired = _lifespan_test_app()
         registry = wired.state.container_registry
         with (
@@ -2454,8 +2454,8 @@ class TestMainEntryCallback2910:
         """A failure at any pre-``yield`` lifespan step propagates
         before the yield — the lifespan never starts serving, so
         uvicorn's ``Server.startup`` marks the exit before creating any
-        listener: nothing is bound and no request is served (V-222585,
-        #3176 acceptance: fail secure on initialization failure)."""
+        listener: nothing is bound and no request is served (#3176
+        acceptance: fail secure on initialization failure)."""
         app, wired = _lifespan_test_app()
         registry = wired.state.container_registry
         breaks = {
@@ -3342,7 +3342,7 @@ class TestMainEntryCallback2910:
     async def test_failed_recovery_sends_sigterm(self, app_state, caplog):
         """Recovery that also fails sends SIGTERM to self (not
         os._exit) so the GracefulExitServer runs the hardened lifespan
-        teardown before the process exits (V-222585)."""
+        teardown before the process exits (#3176)."""
         app_state = _make_app_state()
         lc = app_state.state.lifecycle
         with (

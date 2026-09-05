@@ -224,7 +224,7 @@ A bad password then stops the unit in a single failed attempt instead of
 burning CPU in a restart loop; `journalctl -u <unit>` shows the
 `ConfigurationError` naming the setting to fix.
 
-## Accepted residual risks (V-222585)
+## Accepted residual risks
 
 Two startup checks intentionally log a warning and continue rather than
 aborting boot:

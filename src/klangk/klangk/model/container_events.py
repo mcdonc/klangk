@@ -71,7 +71,7 @@ CAUSE_REAP = "reap"  # boot reaps (instance leftovers / dead owners)
 ROLE_WORKSPACE = "workspace"
 ROLE_SIDECAR = "network-sidecar"
 
-# Interactive (API-request) causes (#3154, security finding V-222486):
+# Interactive (API-request) causes (#3154, security finding):
 # the only transitions eligible for audit fail-closed. These causes are
 # fired exclusively by user-initiated HTTP endpoints; everything else
 # (ws_connect, auto_start, idle_timeout, eviction, drain, shutdown,

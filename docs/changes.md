@@ -704,7 +704,7 @@ sync` report a clear permission-denied error.
   user editor (local-password accounts only — flagging an OIDC account
   is refused, since it could never be cleared).
 - **`KLANGKD_AUDIT_FAIL_CLOSED` (#3154).** Opt-in fail-closed
-  container auditing (security finding V-222486): the interactive API
+  container auditing (security finding): the interactive API
   container transitions — POST start/stop/restart and delete's stop —
   write their `container_events` audit row _before_ acting and refuse
   the request with a 503 when it cannot be written; create's eager
