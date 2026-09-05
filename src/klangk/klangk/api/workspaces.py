@@ -30,7 +30,11 @@ from .. import (
     netfilter as netfilter_mod,
     wshandler,
 )
-from ..exceptions import NodeDrainingError, WorkspaceCapacityError
+from ..exceptions import (
+    AuditWriteError,
+    NodeDrainingError,
+    WorkspaceCapacityError,
+)
 from ..model.container_events import (
     CAUSE_API,
     CAUSE_CREATE,
@@ -855,6 +859,10 @@ async def _stop_workspace_container(
     Prefers the live container_id from the registry (tracks the currently
     running container) over the DB value (may be stale if the container
     was already stopped by idle timeout). No-op when neither is set.
+
+    #3154: under ``KLANGKD_AUDIT_FAIL_CLOSED`` an audit-write failure
+    raises :class:`AuditWriteError` BEFORE any teardown — callers
+    (/restart, /delete) map it to a 503 and leave the container running.
     """
     live_state = app.state.container_registry.get_state(workspace["id"])
     cid = (
@@ -868,6 +876,83 @@ async def _stop_workspace_container(
             workspace_id=workspace["id"],
             cause=cause,
             actor_id=actor_id,
+        )
+
+
+async def _stop_and_broadcast(
+    app, workspace_id: str, cid: str, user_id: str
+) -> None:
+    """Stop a running workspace container and tell live WS viewers it
+    was stopped on purpose (re-homed from the retired WS
+    ``shutdown_container`` handler).
+
+    #3154 review B1: the audit pre-write comes FIRST. Under
+    ``KLANGKD_AUDIT_FAIL_CLOSED`` a write failure must refuse the stop
+    before ``notify_workspace_killed`` fires — its production callback
+    (``wire_registry_callbacks`` → reset_workspace_state → remove_state)
+    tears down the registry's tracking of the container, and losing
+    idle/crash/health monitoring for a still-running container is far
+    worse than a refused request. The row id flows into the stop as
+    ``pending_event`` so it is written exactly once, and
+    ``prewrite_decided`` pins THIS request to the gate decision made
+    above (a SIGHUP flip off→on mid-request must not arm the in-method
+    pre-write after the notify already fired — reloads apply to
+    transitions started after them, and this one started).
+
+    #3154 review: ``notify_workspace_killed`` is not exception-safe
+    (its WS fan-out does DB reads), and the stop below never runs when
+    it raises — the pre-written row would describe a stop that did not
+    happen. Any raise (or cancellation) in that window retracts the
+    row before propagating.
+    """
+    registry = app.state.container_registry
+    try:
+        pending = await registry.prewrite_stop_event(
+            workspace_id,
+            cid,
+            cause=CAUSE_STOP,
+            actor_id=user_id,
+        )
+        try:
+            await registry.notify_workspace_killed(
+                workspace_id, container_id=cid
+            )
+        except BaseException:
+            # The stop never began: the row must not survive as a
+            # phantom stop (#3154 review). Best-effort retract.
+            await registry.retract_prewritten_event(pending)
+            raise
+        await registry.stop_and_remove_container(
+            cid,
+            workspace_id=workspace_id,
+            cause=CAUSE_STOP,
+            actor_id=user_id,
+            pending_event=pending,
+            prewrite_decided=True,
+        )
+    except AuditWriteError as exc:
+        # Fail-closed audit refusal (#3154): the stop never started —
+        # refuse the request, leave the container running for a retry.
+        # Unreachable with a ``pending`` id (the row is already written);
+        # kept for a caller that skipped the pre-write above.
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    # Notify live WS viewers that the container was stopped on purpose
+    # so the UI shows "stopped" rather than "disconnected". Only when a
+    # container was actually stopped — a no-op /stop on an
+    # already-stopped workspace must not broadcast. Safe before
+    # reset_workspace_state: a session with subscribers survives reset
+    # (remove_session is a no-op while subscribers remain).
+    session = app.state.sockets.get_session(workspace_id)
+    if session:
+        session.broadcast(
+            {
+                "type": "event",
+                "event": {
+                    "type": "CUSTOM",
+                    "name": "container_stopped",
+                    "value": {"reason": "shut down by user"},
+                },
+            }
         )
 
 
@@ -892,7 +977,14 @@ async def delete_workspace(
     # _stop_workspace_container + reset_workspace_state (below) also stop
     # the agent session and clear shared state; the agent subprocess runs
     # inside the container, so stopping the container kills it either way.
-    await _stop_workspace_container(app, workspace, CAUSE_DELETE, user["id"])
+    # #3154: a fail-closed audit refusal 503s here — the workspace row and
+    # its container survive for a retry (the stop never started).
+    try:
+        await _stop_workspace_container(
+            app, workspace, CAUSE_DELETE, user["id"]
+        )
+    except AuditWriteError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     await wshandler.reset_workspace_state(app.state.sockets, workspace_id)
 
     deleted = await app.state.workspaces.delete_workspace(
@@ -937,7 +1029,16 @@ async def restart_workspace(
     workspace = await app.state.model.workspaces.get_workspace(workspace_id)
     if workspace is None:
         raise HTTPException(status_code=404, detail="Workspace not found")
-    await _stop_workspace_container(app, workspace, CAUSE_RESTART, user["id"])
+    # #3154: a fail-closed audit refusal on either half maps to a 503.
+    # On the stop half the container is untouched (audit-before-act); on
+    # the start half the stop already succeeded under its own audited row,
+    # so the workspace is simply left stopped for a retry.
+    try:
+        await _stop_workspace_container(
+            app, workspace, CAUSE_RESTART, user["id"]
+        )
+    except AuditWriteError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     await wshandler.reset_workspace_state(app.state.sockets, workspace_id)
     # Start a fresh container; the service command fires via the
     # create choke point in start_container.
@@ -970,34 +1071,7 @@ async def stop_workspace(
         else workspace.get("container_id")
     )
     if cid:
-        await app.state.container_registry.notify_workspace_killed(
-            workspace_id, container_id=cid
-        )
-        await app.state.container_registry.stop_and_remove_container(
-            cid,
-            workspace_id=workspace_id,
-            cause=CAUSE_STOP,
-            actor_id=user["id"],
-        )
-        # Notify live WS viewers that the container was stopped on purpose
-        # so the UI shows "stopped" rather than "disconnected" (re-homed
-        # from the retired WS ``shutdown_container`` handler). Only when a
-        # container was actually stopped — a no-op /stop on an
-        # already-stopped workspace must not broadcast. Safe before
-        # reset_workspace_state: a session with subscribers survives reset
-        # (remove_session is a no-op while subscribers remain).
-        session = app.state.sockets.get_session(workspace_id)
-        if session:
-            session.broadcast(
-                {
-                    "type": "event",
-                    "event": {
-                        "type": "CUSTOM",
-                        "name": "container_stopped",
-                        "value": {"reason": "shut down by user"},
-                    },
-                }
-            )
+        await _stop_and_broadcast(app, workspace_id, cid, user["id"])
     await wshandler.reset_workspace_state(app.state.sockets, workspace_id)
     return {"status": "stopped"}
 
@@ -1023,6 +1097,10 @@ async def _start_or_http_error(
     except WorkspaceCapacityError as exc:
         # Capacity refusal (#2525): distinguishable 503 with an
         # actionable "stop a workspace / free memory" detail.
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except AuditWriteError as exc:
+        # Fail-closed audit refusal (#3154): the start never began —
+        # nothing to roll back; the 503 detail carries the audit cause.
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:
         # User-config error (e.g. a bind-mount source path that doesn't

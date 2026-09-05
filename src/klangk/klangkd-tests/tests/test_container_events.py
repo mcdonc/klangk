@@ -15,14 +15,17 @@ import pytest
 from test_container import patch_podman
 from test_wshandler import _base_conn
 from klangk.container.spec import ContainerStartSpec
+from klangk.exceptions import AuditWriteError, NodeDrainingError
 from klangk.model.container_events import (
     ACTOR_AGENT,
     ACTOR_SYSTEM,
     ACTOR_USER,
+    CAUSE_API,
     CAUSE_AUTO_START,
     CAUSE_DRAIN,
     CAUSE_IDLE_TIMEOUT,
     CAUSE_LOGOUT,
+    CAUSE_RESTART,
     CAUSE_SHUTDOWN,
     CAUSE_STOP,
     CAUSE_WS_CONNECT,
@@ -31,6 +34,7 @@ from klangk.model.container_events import (
     actor_type_for,
 )
 from klangk.model.users import AGENT_USER_ID
+from klangk.podman import PodmanError
 
 
 @pytest.fixture
@@ -418,6 +422,640 @@ class TestRegistryRecording:
             await app_state.state.model.container_events.list_events("ws-a")
         )[0]
         assert row["network_namespace"] == "sidecar-live"
+
+
+class TestAuditWriteFailureVisibility3154:
+    """Every audit-write failure — best-effort paths included — is
+    counted so /audit exposes it (#3154, security finding V-222486)."""
+
+    async def test_best_effort_failure_bumps_counter(
+        self, app_state, db, registry
+    ):
+        with patch.object(
+            app_state.state.model.container_events,
+            "record",
+            AsyncMock(side_effect=RuntimeError("db gone")),
+        ):
+            await registry.record_container_event(
+                "ws-a", "cid-1", EVENT_START, cause=CAUSE_API
+            )
+        assert registry.audit_write_failures == 1
+
+    async def test_finalize_failure_bumps_counter(self, app_state, db):
+        registry = app_state.state.container_registry
+        event_id = await app_state.state.model.container_events.record(
+            "ws-a", EVENT_START, CAUSE_API
+        )
+        with patch.object(
+            app_state.state.model.container_events,
+            "finalize_event",
+            AsyncMock(side_effect=RuntimeError("db gone")),
+        ):
+            await registry._finalize_prewritten_event(
+                event_id, container_id="cid-2"
+            )
+        assert registry.audit_write_failures == 1
+
+
+class TestAuditFailClosedModel3154:
+    """The model primitives behind audit-before-act (#3154): record
+    returns its row id, finalize fills only the known post-transition
+    columns, retract removes a row whose transition never happened."""
+
+    async def test_record_returns_row_id(self, app_state, db):
+        events = app_state.state.model.container_events
+        event_id = await events.record(
+            "ws-a", EVENT_START, CAUSE_API, actor_id="u1"
+        )
+        assert isinstance(event_id, int)
+        row = (await events.list_events("ws-a"))[0]
+        assert row["id"] == event_id
+
+    async def test_finalize_fills_known_columns_only(self, app_state, db):
+        events = app_state.state.model.container_events
+        event_id = await events.record("ws-a", EVENT_START, CAUSE_API)
+        row = (await events.list_events("ws-a"))[0]
+        assert row["container_id"] is None  # the pre-write shape
+        await events.finalize_event(
+            event_id, container_id="cid-9", network_namespace="net-1"
+        )
+        row = (await events.list_events("ws-a"))[0]
+        assert row["container_id"] == "cid-9"
+        assert row["network_namespace"] == "net-1"
+        # None means "still unknown", never "clear the column".
+        await events.finalize_event(event_id)
+        await events.finalize_event(event_id, container_id="cid-10")
+        row = (await events.list_events("ws-a"))[0]
+        assert row["container_id"] == "cid-10"
+        assert row["network_namespace"] == "net-1"
+
+    async def test_retract_deletes_the_row(self, app_state, db):
+        events = app_state.state.model.container_events
+        event_id = await events.record("ws-a", EVENT_START, CAUSE_API)
+        await events.retract_event(event_id)
+        assert await events.count_events("ws-a") == 0
+
+
+class TestAuditFailClosedStop3154:
+    """Fail-closed stops (#3154): audit-before-act on the interactive
+    causes, never on the autonomous ones."""
+
+    async def test_interactive_stop_refused_before_teardown(
+        self, app_state, db, registry, workspace
+    ):
+        app_state.state.settings.audit_fail_closed = True
+        ws_id = workspace["id"]
+        registry.track_activity("cid-fc", ws_id)
+        registry._ws_netns_owner[ws_id] = "sidecar-fc"
+        with patch_podman(registry) as mocks:
+            with patch.object(
+                app_state.state.model.container_events,
+                "record",
+                AsyncMock(side_effect=RuntimeError("db gone")),
+            ):
+                with pytest.raises(AuditWriteError):
+                    await registry.stop_and_remove_container(
+                        "cid-fc",
+                        workspace_id=ws_id,
+                        cause=CAUSE_STOP,
+                        actor_id="u1",
+                    )
+        # Refused before ANY side effect: no podman removal, no registry
+        # teardown, no expected-stop bookkeeping, no row.
+        mocks.remove_container.assert_not_awaited()
+        assert ws_id not in registry.stopping
+        assert registry.states[ws_id].container_id == "cid-fc"
+        assert registry._ws_netns_owner[ws_id] == "sidecar-fc"
+        assert registry.audit_write_failures == 1
+        assert (
+            await app_state.state.model.container_events.count_events(ws_id)
+            == 0
+        )
+
+    async def test_interactive_stop_prewrites_final_row(
+        self, app_state, db, registry, workspace
+    ):
+        app_state.state.settings.audit_fail_closed = True
+        ws_id = workspace["id"]
+        registry.track_activity("cid-fc2", ws_id)
+        registry._ws_netns_owner[ws_id] = "sidecar-fc2"
+        with patch_podman(registry):
+            ok = await registry.stop_and_remove_container(
+                "cid-fc2",
+                workspace_id=ws_id,
+                cause=CAUSE_STOP,
+                actor_id="u1",
+            )
+        assert ok is True
+        row = (
+            await app_state.state.model.container_events.list_events(ws_id)
+        )[0]
+        # All fields were known at pre-write; the row IS the final row.
+        assert row["event"] == EVENT_STOP
+        assert row["cause"] == CAUSE_STOP
+        assert row["actor_id"] == "u1"
+        assert row["container_id"] == "cid-fc2"
+        assert row["network_namespace"] == "sidecar-fc2"
+
+    async def test_failed_stop_retracts_prewritten_row(
+        self, app_state, db, registry
+    ):
+        app_state.state.settings.audit_fail_closed = True
+        registry.track_activity("cid-fail", "ws-x")
+        with patch_podman(
+            registry,
+            remove_container=AsyncMock(side_effect=PodmanError(500, "boom")),
+        ):
+            ok = await registry.stop_and_remove_container(
+                "cid-fail", workspace_id="ws-x", cause=CAUSE_STOP
+            )
+        assert ok is False
+        # The stop did not happen, so the pre-written row must be gone.
+        assert (
+            await app_state.state.model.container_events.count_events("ws-x")
+            == 0
+        )
+        assert registry.audit_write_failures == 0
+
+    async def test_autonomous_stop_never_refused(
+        self, app_state, db, registry
+    ):
+        """An idle-timeout stop with the audit DB down must still stop
+        the container — refusing would keep it running AND lose the
+        record (#3154)."""
+        app_state.state.settings.audit_fail_closed = True
+        registry.track_activity("cid-idle", "ws-i")
+        with patch_podman(registry) as mocks:
+            with patch.object(
+                app_state.state.model.container_events,
+                "record",
+                AsyncMock(side_effect=RuntimeError("db gone")),
+            ):
+                ok = await registry.stop_and_remove_container(
+                    "cid-idle", workspace_id="ws-i", cause=CAUSE_IDLE_TIMEOUT
+                )
+        assert ok is True
+        mocks.remove_container.assert_awaited_once()
+        assert registry.audit_write_failures == 1
+
+    async def test_stop_refusal_precedes_killed_callback_teardown(
+        self, app_state, db, registry, workspace
+    ):
+        """#3154 review B1: with the PRODUCTION on_workspace_killed
+        wiring (reset_workspace_state → remove_state — what
+        wire_registry_callbacks installs), a refused /stop must NOT
+        lose the registry's tracking of the still-running container:
+        the audit pre-write precedes notify_workspace_killed."""
+        from klangk import wshandler
+
+        app_state.state.sockets = wshandler.WebSocketState(app_state)
+
+        async def on_killed(ws_id, container_id=None):
+            await wshandler.reset_workspace_state(
+                app_state.state.sockets,
+                ws_id,
+                expected_container_id=container_id,
+            )
+
+        registry.set_on_workspace_killed(on_killed)
+        app_state.state.settings.audit_fail_closed = True
+        ws_id = workspace["id"]
+        registry.track_activity("cid-b1", ws_id)
+        with patch_podman(registry) as mocks:
+            with patch.object(
+                app_state.state.model.container_events,
+                "record",
+                AsyncMock(side_effect=RuntimeError("db gone")),
+            ):
+                with pytest.raises(AuditWriteError):
+                    # The /stop route's ordering: pre-write, THEN notify,
+                    # THEN stop.
+                    pending = await registry.prewrite_stop_event(
+                        ws_id,
+                        "cid-b1",
+                        cause=CAUSE_STOP,
+                        actor_id="u1",
+                    )
+                    await registry.notify_workspace_killed(
+                        ws_id, container_id="cid-b1"
+                    )
+                    await registry.stop_and_remove_container(
+                        "cid-b1",
+                        workspace_id=ws_id,
+                        cause=CAUSE_STOP,
+                        actor_id="u1",
+                        pending_event=pending,
+                    )
+        mocks.remove_container.assert_not_awaited()
+        # The tracking survived: the refusal happened before the
+        # killed callback could tear it down.
+        assert registry.states[ws_id].container_id == "cid-b1"
+
+    async def test_mode_flip_mid_request_cannot_arm_late_refusal(
+        self, app_state, db, registry, workspace
+    ):
+        """#3154 review: the /stop route evaluates the fail-closed gate
+        once; a SIGHUP flipping the mode on mid-request (after the
+        route's ungated pre-write, before the stop) must not arm the
+        in-method pre-write — that refusal would fire after the route
+        already emitted its death frames (``prewrite_decided``)."""
+        ws_id = workspace["id"]
+        registry.track_activity("cid-flip", ws_id)
+        # The route half: mode off — the pre-write is skipped, no row.
+        assert (
+            await registry.prewrite_stop_event(
+                ws_id, "cid-flip", cause=CAUSE_STOP, actor_id="u1"
+            )
+            is None
+        )
+        # The SIGHUP flip — and with it, a broken audit DB.
+        app_state.state.settings.audit_fail_closed = True
+        with patch_podman(registry) as mocks:
+            with patch.object(
+                app_state.state.model.container_events,
+                "record",
+                AsyncMock(side_effect=RuntimeError("db gone")),
+            ):
+                ok = await registry.stop_and_remove_container(
+                    "cid-flip",
+                    workspace_id=ws_id,
+                    cause=CAUSE_STOP,
+                    actor_id="u1",
+                    prewrite_decided=True,
+                )
+        assert ok is True
+        mocks.remove_container.assert_awaited_once()
+        # The stop's own best-effort row failed — counted, not fatal.
+        assert registry.audit_write_failures == 1
+
+    async def test_rebound_stop_retracts_prewritten_row(
+        self, app_state, db, registry, workspace
+    ):
+        """A stop whose target was re-bound away (stopped but not torn
+        down — result False) retracts the pre-written row: the stop of
+        THAT container did not complete (#3154)."""
+        app_state.state.settings.audit_fail_closed = True
+        ws_id = workspace["id"]
+        registry.track_activity("cid-new", ws_id)  # the re-bind
+        with patch_podman(registry):
+            ok = await registry.stop_and_remove_container(
+                "cid-old",  # the stale id the caller held
+                workspace_id=ws_id,
+                cause=CAUSE_STOP,
+                actor_id="u1",
+            )
+        assert ok is False
+        assert (
+            await app_state.state.model.container_events.count_events(ws_id)
+            == 0
+        )
+
+    async def test_route_prewrite_flows_through_pending_event(
+        self, app_state, db, registry, workspace
+    ):
+        """The /stop route's two-phase form (#3154 review B1):
+        prewrite_stop_event's id passed back as ``pending_event``
+        writes the row exactly once — the in-method pre-write is
+        skipped, not duplicated."""
+        app_state.state.settings.audit_fail_closed = True
+        ws_id = workspace["id"]
+        registry.track_activity("cid-pp", ws_id)
+        with patch_podman(registry):
+            pending = await registry.prewrite_stop_event(
+                ws_id, "cid-pp", cause=CAUSE_STOP, actor_id="u1"
+            )
+            assert pending is not None
+            ok = await registry.stop_and_remove_container(
+                "cid-pp",
+                workspace_id=ws_id,
+                cause=CAUSE_STOP,
+                actor_id="u1",
+                pending_event=pending,
+            )
+        assert ok is True
+        assert (
+            await app_state.state.model.container_events.count_events(ws_id)
+            == 1
+        )
+
+    async def test_default_off_stays_best_effort(
+        self, app_state, db, registry
+    ):
+        """The default (KLANGKD_AUDIT_FAIL_CLOSED unset) keeps the #2915
+        behavior: an interactive stop succeeds, failure only counted."""
+        assert app_state.state.settings.audit_fail_closed is False
+        registry.track_activity("cid-be", "ws-be")
+        with patch_podman(registry) as mocks:
+            with patch.object(
+                app_state.state.model.container_events,
+                "record",
+                AsyncMock(side_effect=RuntimeError("db gone")),
+            ):
+                ok = await registry.stop_and_remove_container(
+                    "cid-be", workspace_id="ws-be", cause=CAUSE_STOP
+                )
+        assert ok is True
+        mocks.remove_container.assert_awaited_once()
+        assert registry.audit_write_failures == 1
+
+
+class TestAuditFailClosedStart3154:
+    """Fail-closed starts (#3154): the row is pre-written before the
+    attempt, finalized with the podman ids on success, retracted when
+    no transition happened."""
+
+    async def test_interactive_start_refused_before_container(
+        self, app_state, db, monkeypatch
+    ):
+        app_state.state.settings.audit_fail_closed = True
+        registry = app_state.state.container_registry
+        monkeypatch.setattr(
+            app_state.state.workspaces,
+            "ensure_shared_home_dir",
+            AsyncMock(),
+        )
+        inner = AsyncMock(return_value=("cid-new", "created"))
+        with patch.object(registry, "start_container_inner", inner):
+            with patch.object(
+                app_state.state.model.container_events,
+                "record",
+                AsyncMock(side_effect=RuntimeError("db gone")),
+            ):
+                with pytest.raises(AuditWriteError):
+                    await registry.start_container(
+                        ContainerStartSpec(
+                            workspace_id="ws-s",
+                            home_path="/home/x",
+                            audit_cause=CAUSE_API,
+                            audit_actor_id="u1",
+                        )
+                    )
+        # Refused before the podman attempt.
+        inner.assert_not_awaited()
+        assert registry.audit_write_failures == 1
+        assert "ws-s" not in registry.states
+
+    async def test_interactive_start_prewrites_then_finalizes(
+        self, app_state, db, monkeypatch
+    ):
+        app_state.state.settings.audit_fail_closed = True
+        registry = app_state.state.container_registry
+        monkeypatch.setattr(
+            app_state.state.workspaces,
+            "ensure_shared_home_dir",
+            AsyncMock(),
+        )
+        with patch.object(
+            registry,
+            "start_container_inner",
+            AsyncMock(return_value=("cid-ok", "created")),
+        ):
+            await registry.start_container(
+                ContainerStartSpec(
+                    workspace_id="ws-s2",
+                    home_path="/home/x",
+                    audit_cause=CAUSE_API,
+                    audit_actor_id="u1",
+                )
+            )
+        row = (
+            await app_state.state.model.container_events.list_events("ws-s2")
+        )[0]
+        assert row["event"] == EVENT_START
+        assert row["cause"] == CAUSE_API
+        assert row["actor_id"] == "u1"
+        assert row["container_id"] == "cid-ok"
+
+    async def test_connected_attach_retracts_prewritten_row(
+        self, app_state, db, monkeypatch
+    ):
+        app_state.state.settings.audit_fail_closed = True
+        registry = app_state.state.container_registry
+        monkeypatch.setattr(
+            app_state.state.workspaces,
+            "ensure_shared_home_dir",
+            AsyncMock(),
+        )
+        with patch.object(
+            registry,
+            "start_container_inner",
+            AsyncMock(return_value=("cid-old", "connected")),
+        ):
+            cid, status = await registry.start_container(
+                ContainerStartSpec(workspace_id="ws-s3", home_path="/home/x")
+            )
+        assert (cid, status) == ("cid-old", "connected")
+        # 'connected' is no transition — the pre-written row is retracted.
+        assert (
+            await app_state.state.model.container_events.count_events("ws-s3")
+            == 0
+        )
+
+    async def test_retract_failure_leaves_over_record(
+        self, app_state, db, monkeypatch
+    ):
+        """If the post-refusal retract fails, the pre-written row stays
+        as an over-record of an attempted transition — counted and
+        logged, never fatal (#3154; the safe direction for a trail)."""
+        app_state.state.settings.audit_fail_closed = True
+        registry = app_state.state.container_registry
+        monkeypatch.setattr(
+            app_state.state.workspaces,
+            "ensure_shared_home_dir",
+            AsyncMock(),
+        )
+        with patch.object(
+            registry,
+            "start_container_inner",
+            AsyncMock(return_value=("cid-old", "connected")),
+        ):
+            with patch.object(
+                app_state.state.model.container_events,
+                "retract_event",
+                AsyncMock(side_effect=RuntimeError("db gone")),
+            ):
+                await registry.start_container(
+                    ContainerStartSpec(
+                        workspace_id="ws-r", home_path="/home/x"
+                    )
+                )
+        assert registry.audit_write_failures == 1
+        assert (
+            await app_state.state.model.container_events.count_events("ws-r")
+            == 1
+        )
+
+    async def test_ws_connect_start_excluded_from_gate(
+        self, app_state, db, monkeypatch
+    ):
+        """The normal web-UI start path (WS connect) is user-initiated
+        but NOT an API POST — excluded from the gate per the issue's
+        scope; its audit failures stay counted-and-swallowed (#3154
+        review nit)."""
+        app_state.state.settings.audit_fail_closed = True
+        registry = app_state.state.container_registry
+        monkeypatch.setattr(
+            app_state.state.workspaces,
+            "ensure_shared_home_dir",
+            AsyncMock(),
+        )
+        with patch.object(
+            registry,
+            "start_container_inner",
+            AsyncMock(return_value=("cid-ws", "created")),
+        ):
+            with patch.object(
+                app_state.state.model.container_events,
+                "record",
+                AsyncMock(side_effect=RuntimeError("db gone")),
+            ):
+                cid, status = await registry.start_container(
+                    ContainerStartSpec(
+                        workspace_id="ws-wsc",
+                        home_path="/home/x",
+                        audit_cause=CAUSE_WS_CONNECT,
+                        audit_actor_id="u1",
+                    )
+                )
+        assert (cid, status) == ("cid-ws", "created")
+        assert registry.audit_write_failures == 1
+
+    async def test_restart_start_half_refusal_leaves_stopped(
+        self, app_state, db, registry, workspace
+    ):
+        """A /restart whose stop half succeeded (under its own audited
+        row) but whose start pre-write fails: AuditWriteError out of the
+        start, stop row stands, workspace left stopped for a retry —
+        the same shape as a mid-restart capacity refusal (#3154)."""
+        app_state.state.settings.audit_fail_closed = True
+        ws_id = workspace["id"]
+        registry.track_activity("cid-rs", ws_id)
+        calls = {"n": 0}
+
+        async def flaky_record(*args, **kwargs):
+            calls["n"] += 1
+            if calls["n"] > 1:
+                raise RuntimeError("db gone")
+            return await real_record(*args, **kwargs)
+
+        events = app_state.state.model.container_events
+        real_record = events.record
+        with patch_podman(registry):
+            with patch.object(events, "record", side_effect=flaky_record):
+                ok = await registry.stop_and_remove_container(
+                    "cid-rs",
+                    workspace_id=ws_id,
+                    cause=CAUSE_RESTART,
+                    actor_id="u1",
+                )
+                assert ok is True
+                with pytest.raises(AuditWriteError):
+                    await registry.start_container(
+                        ContainerStartSpec(
+                            workspace_id=ws_id,
+                            home_path="/tmp/home",
+                            audit_cause=CAUSE_RESTART,
+                            audit_actor_id="u1",
+                        )
+                    )
+        row = (await events.list_events(ws_id))[0]
+        assert row["event"] == EVENT_STOP
+        assert row["cause"] == CAUSE_RESTART
+        assert ws_id not in registry.states
+
+    async def test_autonomous_start_never_refused(
+        self, app_state, db, monkeypatch
+    ):
+        """Boot auto-start with the audit DB down still starts the
+        workspace — the failure is counted, not fatal (#3154)."""
+        app_state.state.settings.audit_fail_closed = True
+        registry = app_state.state.container_registry
+        monkeypatch.setattr(
+            app_state.state.workspaces,
+            "ensure_shared_home_dir",
+            AsyncMock(),
+        )
+        with patch.object(
+            registry,
+            "start_container_inner",
+            AsyncMock(return_value=("cid-a", "created")),
+        ):
+            with patch.object(
+                app_state.state.model.container_events,
+                "record",
+                AsyncMock(side_effect=RuntimeError("db gone")),
+            ):
+                cid, status = await registry.start_container(
+                    ContainerStartSpec(
+                        workspace_id="ws-s4",
+                        home_path="/home/x",
+                        audit_cause=CAUSE_AUTO_START,
+                    )
+                )
+        assert (cid, status) == ("cid-a", "created")
+        assert registry.audit_write_failures == 1
+
+    async def test_pre_create_refusal_retracts_prewritten_row(
+        self, app_state, db, registry, workspace
+    ):
+        """A drain refusal after the pre-write leaves no phantom row
+        (#3154): no container, no start."""
+        app_state.state.settings.audit_fail_closed = True
+        with patch_podman(registry):
+            with patch.object(
+                registry,
+                "new_starts_blocked_reason",
+                return_value="node is draining",
+            ):
+                with pytest.raises(NodeDrainingError):
+                    await registry.start_container(
+                        ContainerStartSpec(
+                            workspace_id=workspace["id"],
+                            home_path="/tmp/home",
+                        )
+                    )
+        assert (
+            await app_state.state.model.container_events.count_events(
+                workspace["id"]
+            )
+            == 0
+        )
+
+    async def test_bringup_failure_finalizes_prewritten_row(
+        self, app_state, db, registry, workspace
+    ):
+        """The #2915 failed-start backstop under fail-closed: a container
+        created but whose bringup raised is real, so the pre-written row
+        is finalized with its container id rather than retracted."""
+        app_state.state.settings.audit_fail_closed = True
+        ws_id = workspace["id"]
+        from klangk import ssl_trust
+        from klangk.terminal import Terminal
+
+        app_state.state.ssl_trust = ssl_trust.SSLTrust(app_state)
+        app_state.state.terminal = Terminal(app_state)
+        with patch_podman(registry):
+            with patch.object(
+                registry,
+                "bringup",
+                AsyncMock(side_effect=RuntimeError("exec failed")),
+            ):
+                with pytest.raises(RuntimeError):
+                    await registry.start_container(
+                        ContainerStartSpec(
+                            workspace_id=ws_id,
+                            home_path="/tmp/home",
+                            audit_cause=CAUSE_API,
+                            audit_actor_id="u-9",
+                        )
+                    )
+        row = (
+            await app_state.state.model.container_events.list_events(ws_id)
+        )[0]
+        assert row["event"] == EVENT_START
+        assert row["cause"] == CAUSE_API
+        assert row["actor_id"] == "u-9"
+        assert row["container_id"] == "new-cid"
 
 
 class TestStartWorkspaceThreading:

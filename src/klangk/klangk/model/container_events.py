@@ -9,7 +9,12 @@ network sidecar container whose netns the workspace shares.
 
 Recording is best-effort: an audit write failure is logged and never
 fails the start/stop path it annotates (see
-``ContainerRegistry.record_container_event``).
+``ContainerRegistry.record_container_event``), and every failure
+bumps a counter surfaced on ``/audit`` (#3154). With
+``KLANGKD_AUDIT_FAIL_CLOSED`` the *interactive* API transitions
+instead write their row before acting and refuse the request (503)
+when it cannot be written — see ``INTERACTIVE_START_CAUSES`` /
+``INTERACTIVE_STOP_CAUSES`` and the registry's pre-write helpers.
 
 Retention/bounding (#2924) mirrors the egress-consent pruning design
 (#2303): :meth:`ContainerEventsModel.prune` deletes rows past a
@@ -65,6 +70,16 @@ CAUSE_REAP = "reap"  # boot reaps (instance leftovers / dead owners)
 # lifecycle is slaved to the workspace's).
 ROLE_WORKSPACE = "workspace"
 ROLE_SIDECAR = "network-sidecar"
+
+# Interactive (API-request) causes (#3154, security finding V-222486):
+# the only transitions eligible for audit fail-closed. These causes are
+# fired exclusively by user-initiated HTTP endpoints; everything else
+# (ws_connect, auto_start, idle_timeout, eviction, drain, shutdown,
+# crash_teardown, logout, reap, the sidecar causes) is autonomous or
+# non-API and never refuses to act on an audit failure — see
+# ``AuditWriteError``.
+INTERACTIVE_START_CAUSES = frozenset({CAUSE_API, CAUSE_CREATE, CAUSE_RESTART})
+INTERACTIVE_STOP_CAUSES = frozenset({CAUSE_STOP, CAUSE_RESTART, CAUSE_DELETE})
 
 # Canonical column list so the read shape cannot drift from the schema
 # (a column added to the table is added here once).
@@ -136,6 +151,11 @@ class ContainerEventsModel(Submodel):
         ``container_role`` distinguishes workspace containers from their
         network sidecars; sidecar rows never carry a netns owner (they
         ARE the netns owner).
+
+        Returns the new row id so a fail-closed pre-write (#3154) can
+        later finalize it (``finalize_event``) once the podman ids are
+        known, or retract it (``retract_event``) when the transition it
+        predicted never happened.
         """
         created_at = time.time()
         actor_type = actor_type_for(actor_id)
@@ -177,6 +197,78 @@ class ContainerEventsModel(Submodel):
                     "UPDATE container_events SET hmac = ? WHERE id = ?",
                     (tag, row_id),
                 )
+            return row_id
+
+    @staticmethod
+    def _finalize_updates(
+        container_id: str | None, network_namespace: str | None
+    ) -> dict:
+        """The non-None field updates a finalize applies (#3154) — a
+        None argument means "still unknown", never "clear it"."""
+        return {
+            col: value
+            for col, value in (
+                ("container_id", container_id),
+                ("network_namespace", network_namespace),
+            )
+            if value is not None
+        }
+
+    async def finalize_event(
+        self,
+        event_id: int,
+        *,
+        container_id: str | None = None,
+        network_namespace: str | None = None,
+    ) -> None:
+        """Fill a pre-written row's post-transition fields (#3154).
+
+        Audit-before-act writes the row first; once the transition has
+        happened, the podman-assigned ``container_id`` and the live
+        netns owner are filled in here. A None argument means "still
+        unknown", never "clear the column" — the row keeps whatever
+        it already holds.
+
+        #3174: the integrity tag covers the finalized fields, so it is
+        recomputed over the row's post-update content — and cleared
+        when tagging is off at finalize time, because a stale tag over
+        changed fields would read as tampering to an external checker.
+        A row pruned between pre-write and finalize settles nothing.
+        """
+        updates = self._finalize_updates(container_id, network_namespace)
+        if not updates:
+            return
+        row = await self.app.state.db.fetchone(
+            f"SELECT {_EVENT_COLUMNS} FROM container_events WHERE id = ?",
+            (event_id,),
+        )
+        if row is None:
+            return
+        fields = row_to_dict(row)
+        fields.update(updates)
+        tag = compute_container_event_hmac(self.app.state.settings, fields)
+        sets = ", ".join(f"{col} = ?" for col in updates)
+        params = (*updates.values(), tag, event_id)
+        async with self.app.state.db.transaction() as db:
+            await db.execute(
+                f"UPDATE container_events SET {sets}, hmac = ? WHERE id = ?",
+                params,
+            )
+
+    async def retract_event(self, event_id: int) -> None:
+        """Delete a pre-written row whose transition never happened
+        (#3154).
+
+        Audit-before-act writes the row first; when the action then
+        fails before any state changed (admission refusal, failed
+        podman stop, 'connected' attach to an already-running
+        container), the row describes an event that did not occur and
+        is removed so the trail stays truthful.
+        """
+        async with self.app.state.db.transaction() as db:
+            await db.execute(
+                "DELETE FROM container_events WHERE id = ?", (event_id,)
+            )
 
     async def list_events(
         self,

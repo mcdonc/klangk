@@ -255,10 +255,11 @@ def fuzz_query(rng: random.Random, params: dict[str, str]) -> dict:
 # Each entry: (method, path_template, body_schema_or_None, query_params_or_None)
 # path_template can contain {workspace_id}, {member_id}, etc.
 
-P = "/api/v1"  # all routes except /health are under this prefix
+P = "/api/v1"  # all routes except /audit, /health are under this prefix
 
 ENDPOINTS: list[tuple[str, str, dict | None, dict | None]] = [
     # Public (root_router — no prefix)
+    ("GET", "/audit", None, None),
     ("GET", "/health", None, None),
     ("GET", "/empty", None, None),  # OAuth callback landing page
     # Public (router — /api/v1 prefix)

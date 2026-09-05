@@ -193,6 +193,204 @@ class TestHealth:
         # (#3057).
         assert body["status"] == "ok"
         assert isinstance(body["instance"], str) and body["instance"]
+        # The audit status surface lives on /audit, not here (#3154).
+        assert "audit" not in body
+
+    async def test_audit_endpoint_reports_audit_state(self, client, app):
+        """#3154 / V-222486: audit-write failures and the fail-closed
+        mode are visible on /audit so an operator or assessor can see
+        the audit trail losing rows and verify the mode."""
+        resp = await client.get("/audit")
+        assert resp.status_code == 200
+        assert resp.json() == {
+            "write_failures": 0,
+            "fail_closed": False,
+        }
+        app.state.settings.audit_fail_closed = True
+        app.state.container_registry.audit_write_failures = 3
+        resp = await client.get("/audit")
+        assert resp.json() == {
+            "write_failures": 3,
+            "fail_closed": True,
+        }
+
+
+class TestAuditFailClosedApi3154:
+    """KLANGKD_AUDIT_FAIL_CLOSED: the interactive lifecycle endpoints
+    refuse with a 503 before any side effect when the audit row cannot
+    be written; autonomous paths stay best-effort (#3154, V-222486)."""
+
+    def _broken_audit(self, app):
+        return patch.object(
+            app.state.model.container_events,
+            "record",
+            AsyncMock(side_effect=RuntimeError("db gone")),
+        )
+
+    async def _workspace_id(self, client, headers, name):
+        resp = await client.post(
+            "/api/v1/workspaces", headers=headers, json={"name": name}
+        )
+        assert resp.status_code == 200, resp.text
+        return resp.json()["id"]
+
+    async def test_stop_refused_503_before_teardown(
+        self, client, app, ws_admin, registry
+    ):
+        """#3154 review B1: with the production on_workspace_killed
+        wiring (what wire_registry_callbacks installs), a refused /stop
+        leaves the registry's tracking of the running container intact
+        — the audit pre-write precedes the death frames."""
+        from klangk import wshandler
+
+        async def on_killed(ws_id, container_id=None):
+            await wshandler.reset_workspace_state(
+                app.state.sockets,
+                ws_id,
+                expected_container_id=container_id,
+            )
+
+        registry.set_on_workspace_killed(on_killed)
+        headers = await _auth_headers(client)
+        ws_id = await self._workspace_id(client, headers, "fc-stop")
+        app.state.settings.audit_fail_closed = True
+        registry.track_activity("cid-fc-stop", ws_id)
+        with self._broken_audit(app):
+            resp = await client.post(
+                f"/api/v1/workspaces/{ws_id}/stop", headers=headers
+            )
+        assert resp.status_code == 503
+        assert "audit" in resp.json()["detail"]
+        # Refused before any teardown AND before the killed callback:
+        # the container stays tracked (idle/crash/health keep seeing it).
+        assert registry.states[ws_id].container_id == "cid-fc-stop"
+        assert registry.audit_write_failures == 1
+        registry.states.pop(ws_id, None)
+
+    async def test_stop_notify_failure_retracts_prewritten_row(
+        self, client, app, ws_admin, registry
+    ):
+        """#3154 review: a raise in the window between the /stop
+        pre-write and the stop itself (notify_workspace_killed's WS
+        fan-out does DB reads, exactly the degraded-DB environment the
+        flag targets) must not strand a phantom stop row: the row is
+        retracted, the stop never begins, the error surfaces as a 500."""
+        headers = await _auth_headers(client)
+        ws_id = await self._workspace_id(client, headers, "fc-notify")
+        app.state.settings.audit_fail_closed = True
+        registry.track_activity("cid-fc-notify", ws_id)
+        with patch.object(
+            registry,
+            "notify_workspace_killed",
+            AsyncMock(side_effect=RuntimeError("fan-out db gone")),
+        ):
+            with pytest.raises(RuntimeError, match="fan-out db gone"):
+                await client.post(
+                    f"/api/v1/workspaces/{ws_id}/stop", headers=headers
+                )
+        # The stop never began: no phantom row, tracking intact, and
+        # no audit write failed (the record and the retract both
+        # succeeded).
+        assert await app.state.model.container_events.count_events(ws_id) == 0
+        assert registry.states[ws_id].container_id == "cid-fc-notify"
+        assert registry.audit_write_failures == 0
+        registry.states.pop(ws_id, None)
+
+    async def test_create_eager_start_skipped_not_503(
+        self, client, app, ws_admin, registry
+    ):
+        """#3154 review I1: the create itself already committed, so an
+        audit refusal on its eager start skips the start (workspace
+        created-not-started, warning logged) — the same shape as a
+        drain/capacity refusal there, never a 503 on the create."""
+        app.state.settings.audit_fail_closed = True
+        headers = await _auth_headers(client)
+        with patch.object(app.state.settings, "allow_autostart", "1"):
+            with self._broken_audit(app):
+                resp = await client.post(
+                    "/api/v1/workspaces",
+                    headers=headers,
+                    json={"name": "fc-create", "auto_start": True},
+                )
+        assert resp.status_code == 200
+        ws_id = resp.json()["id"]
+        ws = await app.state.model.workspaces.get_workspace(ws_id)
+        assert ws is not None
+        assert registry.get_state(ws_id) is None
+        assert registry.audit_write_failures == 1
+
+    async def test_start_refused_503_before_container(
+        self, client, app, ws_admin, registry, monkeypatch
+    ):
+        app.state.settings.audit_fail_closed = True
+        headers = await _auth_headers(client)
+        ws_id = await self._workspace_id(client, headers, "fc-start")
+        monkeypatch.setattr(registry, "start_container_inner", AsyncMock())
+        with self._broken_audit(app):
+            resp = await client.post(
+                f"/api/v1/workspaces/{ws_id}/start", headers=headers
+            )
+        assert resp.status_code == 503
+        assert "audit" in resp.json()["detail"]
+        registry.start_container_inner.assert_not_awaited()
+
+    async def test_restart_refused_503_container_untouched(
+        self, client, app, ws_admin, registry
+    ):
+        app.state.settings.audit_fail_closed = True
+        headers = await _auth_headers(client)
+        ws_id = await self._workspace_id(client, headers, "fc-restart")
+        registry.track_activity("cid-fc-rs", ws_id)
+        with self._broken_audit(app):
+            resp = await client.post(
+                f"/api/v1/workspaces/{ws_id}/restart", headers=headers
+            )
+        assert resp.status_code == 503
+        # The stop half never began — the workspace keeps running.
+        assert registry.states[ws_id].container_id == "cid-fc-rs"
+        registry.states.pop(ws_id, None)
+
+    async def test_delete_refused_503_workspace_survives(
+        self, client, app, ws_admin, registry
+    ):
+        app.state.settings.audit_fail_closed = True
+        headers = await _auth_headers(client)
+        ws_id = await self._workspace_id(client, headers, "fc-delete")
+        registry.track_activity("cid-fc-del", ws_id)
+        with self._broken_audit(app):
+            resp = await client.delete(
+                f"/api/v1/workspaces/{ws_id}", headers=headers
+            )
+        assert resp.status_code == 503
+        # The workspace row survives for a retry (the stop never began).
+        ws = await app.state.model.workspaces.get_workspace(ws_id)
+        assert ws is not None
+        registry.states.pop(ws_id, None)
+
+    async def test_default_off_stop_stays_best_effort(
+        self, client, app, ws_admin, registry
+    ):
+        """Flag unset: an audit failure never fails the request (#2915
+        behavior), it is only counted."""
+        assert app.state.settings.audit_fail_closed is False
+        headers = await _auth_headers(client)
+        ws_id = await self._workspace_id(client, headers, "be-stop")
+        registry.track_activity("cid-be-stop", ws_id)
+        with (
+            patch.object(
+                app.state.podman, "remove_container", new_callable=AsyncMock
+            ),
+            patch.object(
+                app.state.podman, "list_containers", new_callable=AsyncMock
+            ),
+        ):
+            with self._broken_audit(app):
+                resp = await client.post(
+                    f"/api/v1/workspaces/{ws_id}/stop", headers=headers
+                )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "stopped"
+        assert registry.audit_write_failures == 1
 
 
 class TestEmpty:
@@ -3790,6 +3988,13 @@ class TestWorkspaceRoutes:
             workspace_id=ws_id,
             cause=CAUSE_STOP,
             actor_id=user["id"],
+            # None = the flag is off, so the route's audit pre-write
+            # (#3154) did not produce a pending row id. The route
+            # pinned the gate decision (prewrite_decided), so the
+            # in-method pre-write cannot re-arm on a mid-request
+            # SIGHUP flip.
+            pending_event=None,
+            prewrite_decided=True,
         )
         # Re-homed from the retired WS shutdown_container handler: REST /stop
         # broadcasts container_stopped so live viewers show "stopped".

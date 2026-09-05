@@ -17,7 +17,7 @@ import time
 
 from .. import podman
 from .. import fips as fips_mod
-from ..exceptions import NodeDrainingError
+from ..exceptions import AuditWriteError, NodeDrainingError
 from ..model.workspaces import EGRESS_MODE_ALLOW, EGRESS_MODE_INTERACTIVE
 from ..model.container_events import (
     CAUSE_DRAIN,
@@ -26,6 +26,8 @@ from ..model.container_events import (
     CAUSE_SHUTDOWN,
     EVENT_START,
     EVENT_STOP,
+    INTERACTIVE_START_CAUSES,
+    INTERACTIVE_STOP_CAUSES,
     ROLE_SIDECAR,
     ROLE_WORKSPACE,
 )
@@ -283,6 +285,12 @@ class ContainerRegistry(NetworkSidecarMixin):
         # closing the completed-during-detection race (review #2625).
         self.stopping: set[str] = set()
         self.stop_epoch: dict[str, int] = {}
+        # Audit-write failure counter (#3154, security finding V-222486):
+        # every container_events write that fails — the best-effort paths
+        # included — bumps this so /audit exposes an operator-visible
+        # (and assessor-visible) signal that the audit trail is losing
+        # rows, beyond the warning log line.
+        self.audit_write_failures: int = 0
         # In-memory drain flag (#2527): while a SIGHUP graceful restart
         # quiesces the node, every container-start path refuses new
         # starts. Deliberately NOT persisted — it must self-clear when
@@ -1041,7 +1049,7 @@ class ContainerRegistry(NetworkSidecarMixin):
         self, spec: ContainerStartSpec
     ) -> tuple[str, str]:
         """Run the under-lock start, backstopping the audit row (#2915
-        review).
+        review; fail-closed pre-write #3154).
 
         If the inner start raises *after* the container was created and
         tracked (e.g. the bringup exec fails), the container is real and
@@ -1052,32 +1060,101 @@ class ContainerRegistry(NetworkSidecarMixin):
         before any container exists (drain gate, admission, port
         allocation) leave no state and record nothing — no container,
         no start.
+
+        With ``audit_fail_closed`` and an interactive cause, the start
+        row is pre-written BEFORE the attempt (#3154): a write failure
+        raises :class:`AuditWriteError` out of this method before any
+        container is created, and the row is then finalized with the
+        podman ids on success or retracted when no transition happened
+        ('connected', or a failure before any container existed).
         """
+        pending = await self._prewrite_start_event(spec)
         try:
             result = await self.start_container_inner(spec)
         except BaseException:
             state = self.states.get(spec.workspace_id)
             if state is not None and state.container_id:
-                await self.record_container_event(
-                    spec.workspace_id,
-                    state.container_id,
-                    EVENT_START,
-                    cause=spec.audit_cause,
-                    actor_id=spec.audit_actor_id,
+                await self._settle_failed_start(
+                    spec, pending, state.container_id
                 )
+            else:
+                await self.retract_prewritten_event(pending)
             raise
         # Success: a real transition (created / restarted) is recorded;
         # 'connected' attached to an already-running container and is no
         # transition at all.
-        if result[1] != "connected":
-            await self.record_container_event(
-                spec.workspace_id,
-                result[0],
-                EVENT_START,
-                cause=spec.audit_cause,
-                actor_id=spec.audit_actor_id,
-            )
+        if result[1] == "connected":
+            await self.retract_prewritten_event(pending)
+            return result
+        await self._settle_completed_start(spec, pending, result[0])
         return result
+
+    async def _prewrite_start_event(
+        self, spec: ContainerStartSpec
+    ) -> int | None:
+        """Audit-before-act start row (#3154) — None unless the
+        interactive fail-closed gate applies."""
+        if (
+            not self.audit_fail_closed
+            or spec.audit_cause not in INTERACTIVE_START_CAUSES
+        ):
+            return None
+        return await self.prewrite_audit_event(
+            spec.workspace_id,
+            None,
+            EVENT_START,
+            cause=spec.audit_cause,
+            actor_id=spec.audit_actor_id,
+        )
+
+    async def _settle_completed_start(
+        self, spec: ContainerStartSpec, pending: int | None, container_id: str
+    ) -> None:
+        """Post-start audit settlement: finalize the pre-written row
+        with the podman ids (#3154), or record the transition
+        best-effort (the non-fail-closed path)."""
+        if pending is not None:
+            await self._finalize_prewritten_event(
+                pending,
+                container_id=container_id,
+                network_namespace=self._ws_netns_owner.get(spec.workspace_id),
+            )
+            return
+        await self.record_container_event(
+            spec.workspace_id,
+            container_id,
+            EVENT_START,
+            cause=spec.audit_cause,
+            actor_id=spec.audit_actor_id,
+        )
+
+    async def _settle_failed_start(
+        self, spec: ContainerStartSpec, pending: int | None, container_id: str
+    ) -> None:
+        """Failed-start backstop (#2915 review): a tracked container is
+        real, so its start row must exist — finalize the pre-written row
+        (#3154, with the live netns owner for row-shape parity with the
+        best-effort path) or record one best-effort. "Tracked" means a
+        ``states`` entry seen by THIS attempt: the guarded routes guard
+        against a pre-existing entry *before* taking the per-workspace
+        lock, so except for a concurrent start racing in through that
+        window (same false-attribution class as the legacy best-effort
+        arm, #2915) the id belongs to a container this attempt made
+        real."""
+        if pending is not None:
+            await self._finalize_prewritten_event(
+                pending,
+                container_id=container_id,
+                network_namespace=self._ws_netns_owner.get(spec.workspace_id),
+            )
+            return
+        await self.record_container_event(
+            spec.workspace_id,
+            container_id,
+            EVENT_START,
+            cause=spec.audit_cause,
+            actor_id=spec.audit_actor_id,
+        )
 
     async def record_container_event(
         self,
@@ -1093,9 +1170,13 @@ class ContainerRegistry(NetworkSidecarMixin):
         """Best-effort container_events write (#2915).
 
         Auditing must never fail the start/stop path it annotates: a
-        DB error is logged and swallowed. Netns defaults to the live
-        sidecar mapping when the caller didn't capture one (workspace
-        starts); sidecar rows own their netns, so theirs stays NULL.
+        DB error is logged, counted in ``audit_write_failures`` (the
+        /audit signal, #3154), and swallowed. Netns defaults to the
+        live sidecar mapping when the caller didn't capture one
+        (workspace starts); sidecar rows own their netns, so theirs
+        stays NULL. The fail-closed interactive paths use the
+        audit-before-act pre-write helpers below instead of / in
+        addition to this.
         """
         if container_role == ROLE_WORKSPACE:
             netns = network_namespace or self._ws_netns_owner.get(workspace_id)
@@ -1112,10 +1193,118 @@ class ContainerRegistry(NetworkSidecarMixin):
                 container_role=container_role,
             )
         except Exception as e:  # noqa: BLE001 — audit is best-effort
+            self._count_audit_write_failure()
             logger.warning(
                 "container_events audit write failed for %s (%s): %s",
                 workspace_id[:8],
                 event,
+                e,
+            )
+
+    @property
+    def audit_fail_closed(self) -> bool:
+        """Live ``KLANGKD_AUDIT_FAIL_CLOSED`` read (#3154) — a SIGHUP
+        settings reload applies to transitions started after it."""
+        return self.app.state.settings.audit_fail_closed
+
+    def _count_audit_write_failure(self) -> None:
+        """Bump the /audit audit-write-failure counter (#3154)."""
+        self.audit_write_failures += 1
+
+    async def prewrite_audit_event(
+        self,
+        workspace_id: str,
+        container_id: str | None,
+        event: str,
+        *,
+        cause: str,
+        actor_id: str | None = None,
+        network_namespace: str | None = None,
+        container_role: str = ROLE_WORKSPACE,
+    ) -> int:
+        """Audit-before-act container_events write (#3154).
+
+        Writes the row BEFORE the transition it will annotate and
+        returns its id, so the caller can refuse the transition up
+        front when the audit trail is unavailable — never
+        start-then-rollback. Only called on the interactive paths
+        (``INTERACTIVE_START_CAUSES`` / ``INTERACTIVE_STOP_CAUSES``)
+        with ``audit_fail_closed`` on: a write failure raises
+        :class:`AuditWriteError` (the API layer maps it to a 503) after
+        being counted and logged. The id feeds
+        ``_finalize_prewritten_event`` (the transition happened — fill
+        in the podman ids) or ``retract_prewritten_event`` (it did
+        not — delete the row).
+        """
+        try:
+            return await self.app.state.model.container_events.record(
+                workspace_id,
+                event,
+                cause,
+                actor_id=actor_id,
+                container_id=container_id,
+                network_namespace=network_namespace,
+                container_role=container_role,
+            )
+        except Exception as e:  # noqa: BLE001 — counted, then refused
+            self._count_audit_write_failure()
+            logger.warning(
+                "container_events audit prewrite failed for %s (%s): %s",
+                workspace_id[:8],
+                event,
+                e,
+            )
+            raise AuditWriteError(
+                f"container_events audit write failed for {workspace_id[:8]}"
+                f" ({event}); refusing the {cause} transition"
+                " (KLANGKD_AUDIT_FAIL_CLOSED)"
+            ) from e
+
+    async def _finalize_prewritten_event(
+        self,
+        event_id: int,
+        *,
+        container_id: str | None = None,
+        network_namespace: str | None = None,
+    ) -> None:
+        """Fill the post-transition podman ids into a pre-written row
+        (#3154). Best-effort: the transition already happened, so a
+        failure is counted and logged, never fatal — the row stands as
+        the record of an event that did occur, just without the ids."""
+        try:
+            await self.app.state.model.container_events.finalize_event(
+                event_id,
+                container_id=container_id,
+                network_namespace=network_namespace,
+            )
+        except Exception as e:  # noqa: BLE001 — audit is best-effort
+            self._count_audit_write_failure()
+            logger.warning(
+                "container_events audit finalize failed for row %s: %s",
+                event_id,
+                e,
+            )
+
+    async def retract_prewritten_event(self, event_id: int | None) -> None:
+        """Delete a pre-written row whose transition never happened
+        (#3154) — no-op for None (the non-fail-closed paths). Best-effort:
+        the refusal/failure already happened; if the delete fails the
+        row stays as an over-record of an attempted transition, which
+        is the safe direction for an audit trail.
+
+        Route-facing (#3154 review): the /stop route calls this when a
+        step BETWEEN its pre-write and the stop raises (the
+        notify_workspace_killed fan-out does DB reads), so no phantom
+        stop row survives a stop that never began."""
+        if event_id is None:
+            return
+        try:
+            await self.app.state.model.container_events.retract_event(event_id)
+        except Exception as e:  # noqa: BLE001 — audit is best-effort
+            self._count_audit_write_failure()
+            logger.warning(
+                "container_events audit retract failed for row %s: %s",
+                event_id,
                 e,
             )
 
@@ -2080,6 +2269,8 @@ class ContainerRegistry(NetworkSidecarMixin):
         *,
         cause: str,
         actor_id: str | None = None,
+        pending_event: int | None = None,
+        prewrite_decided: bool = False,
     ) -> bool:
         """Stop and remove a container.
 
@@ -2128,10 +2319,36 @@ class ContainerRegistry(NetworkSidecarMixin):
         restart, delete, idle_timeout, eviction, logout, drain, shutdown,
         crash_teardown). ``actor_id`` is the acting principal when a user
         (or the agent) fired the stop; None records a system actor.
+        ``pending_event`` (#3154) is a stop row already pre-written via
+        :meth:`prewrite_stop_event` — pass it so the row is written once
+        (the /stop route does this to put the audit refusal before its
+        terminal death frames). ``prewrite_decided`` (#3154 review)
+        says the CALLER already evaluated the fail-closed gate for this
+        stop (its pre-write may legitimately have been skipped with the
+        mode off); the in-method pre-write then never re-arms on a
+        mid-request SIGHUP flip, so a refusal cannot fire after side
+        effects the caller already emitted.
         """
         ws_id = workspace_id or self._cid_to_wsid.get(container_id)
         # Netns owner captured before teardown pops it (#2915).
         netns = self._ws_netns_owner.get(ws_id)
+        # Audit-before-act (#3154): on the interactive fail-closed paths
+        # the stop row is written HERE — a write failure raises
+        # AuditWriteError and the stop is refused before any teardown
+        # (before even the expected-stop bookkeeping below). The /stop
+        # route pre-writes earlier still (via prewrite_stop_event) so the
+        # refusal also precedes notify_workspace_killed, whose production
+        # callback tears down registry state (#3154 review B1); it passes
+        # the row id back in as ``pending_event``.
+        pending = await self.prewrite_stop_event(
+            ws_id,
+            container_id,
+            cause=cause,
+            actor_id=actor_id,
+            netns=netns,
+            prewritten=pending_event,
+            decided=prewrite_decided,
+        )
         if ws_id:
             self._begin_expected_stop(ws_id)
         stopped = False
@@ -2156,10 +2373,11 @@ class ContainerRegistry(NetworkSidecarMixin):
             # Gone via this call AND (untracked, or our registry state torn
             # down — i.e. not left alone by the rebind guard).
             result = self._stop_outcome(ws_id, stopped, torn_down)
-            await self.audit_stop(
+            await self._settle_stop_audit(
                 ws_id,
                 container_id,
                 result,
+                pending,
                 cause=cause,
                 actor_id=actor_id,
                 netns=netns,
@@ -2179,10 +2397,13 @@ class ContainerRegistry(NetworkSidecarMixin):
         removal below, so the crash monitor's sweep cannot misread the
         in-flight removal as an unexpected death."""
         self.stopping.add(ws_id)
-        # Bumped synchronously at stop ENTRY, before any await: the
-        # crash monitor snapshots the epoch around its awaits and
-        # re-checks it before scheduling a restart, so a stop that
-        # begins at any point during death detection/handling
+        # Bumped synchronously at stop ENTRY, before any await — the
+        # fail-closed audit pre-write (#3154) may precede this method's
+        # caller, but a refusal raises before _begin_expected_stop runs
+        # at all, so the epoch invariant holds for every stop that
+        # actually begins. The crash monitor snapshots the epoch around
+        # its awaits and re-checks it before scheduling a restart, so a
+        # stop that begins at any point during death detection/handling
         # invalidates the restart — even if the stop fully completes
         # before the scheduler re-checks (#2524 review).
         self.stop_epoch[ws_id] = self.stop_epoch.get(ws_id, 0) + 1
@@ -2254,6 +2475,84 @@ class ContainerRegistry(NetworkSidecarMixin):
         if ws_id is None:
             return stopped
         return stopped and torn_down
+
+    def _stop_prewrite_gated(self, ws_id: str | None, cause: str) -> bool:
+        """True when the interactive fail-closed stop pre-write applies
+        (#3154)."""
+        return (
+            self.audit_fail_closed
+            and bool(ws_id)
+            and cause in INTERACTIVE_STOP_CAUSES
+        )
+
+    async def prewrite_stop_event(
+        self,
+        ws_id: str | None,
+        container_id: str,
+        *,
+        cause: str,
+        actor_id: str | None,
+        netns: str | None = None,
+        prewritten: int | None = None,
+        decided: bool = False,
+    ) -> int | None:
+        """Audit-before-act stop row (#3154) — route-facing form.
+
+        Writes the row and returns its id so a caller that sequences
+        side effects around the stop (the /stop route's terminal death
+        frames) can put the refusal point FIRST:
+        ``notify_workspace_killed``'s production callback tears down
+        registry state, which a refused stop must not lose for a
+        still-running container (#3154 review B1). Pass the returned id
+        back via ``stop_and_remove_container(pending_event=...)`` so the
+        row is written exactly once. None unless the interactive
+        fail-closed gate applies; raises :class:`AuditWriteError` to
+        refuse the stop before any side effect when the row cannot be
+        written. ``decided`` (#3154 review) says the caller already
+        evaluated the gate for THIS stop (possibly off); skip the
+        in-method re-evaluation so a mid-request SIGHUP flip cannot
+        arm a refusal after the caller's side effects.
+        """
+        if prewritten is not None:
+            return prewritten
+        if decided or not self._stop_prewrite_gated(ws_id, cause):
+            return None
+        return await self.prewrite_audit_event(
+            ws_id,
+            container_id,
+            EVENT_STOP,
+            cause=cause,
+            actor_id=actor_id,
+            network_namespace=netns or self._ws_netns_owner.get(ws_id),
+        )
+
+    async def _settle_stop_audit(
+        self,
+        ws_id: str | None,
+        container_id: str,
+        gone: bool,
+        pending: int | None,
+        *,
+        cause: str,
+        actor_id: str | None,
+        netns: str | None,
+    ) -> None:
+        """Post-stop audit settlement (#3154): a pre-written row is
+        already final when the stop happened (every field was known at
+        pre-write) and retracted when it did not; without one, the
+        legacy best-effort post-hoc write applies."""
+        if pending is not None:
+            if not gone:
+                await self.retract_prewritten_event(pending)
+            return
+        await self.audit_stop(
+            ws_id,
+            container_id,
+            gone,
+            cause=cause,
+            actor_id=actor_id,
+            netns=netns,
+        )
 
     async def audit_stop(
         self,

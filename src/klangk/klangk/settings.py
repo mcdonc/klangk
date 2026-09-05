@@ -1309,6 +1309,19 @@ class KlangkSettings(BaseSettings):
     # a reload applies on the next sweep).
     container_events_retention_days: int = 90
     container_events_row_cap: int = 10000
+    # audit_fail_closed (#3154, security finding V-222486): refuse the
+    # interactive API container transitions — POST start/stop/restart
+    # and delete's stop (503 before any side effect) — and skip
+    # create's eager start when their container_events audit row cannot
+    # be written (audit-before-act: the row is written first). Default
+    # off (best-effort auditing, #2915). Autonomous stops (idle timeout,
+    # eviction, drain, shutdown sweep, crash teardown, boot reaps) and
+    # WS-connect starts are NEVER gated in either mode: refusing those
+    # would keep containers running and lose the record. Every
+    # audit-write failure — best-effort paths included — bumps a counter
+    # surfaced on /audit. Read live (SIGHUP reload applies without a
+    # restart).
+    audit_fail_closed: bool = False
     # Container resource limits (#34): deploy-wide CPU / memory / PIDs caps
     # passed to every workspace container as podman --cpus / --memory /
     # --pids-limit. Ships with protective defaults (2 CPUs / 8g / 16384 PIDs,

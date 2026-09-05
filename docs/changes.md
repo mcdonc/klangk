@@ -683,6 +683,21 @@ sync` report a clear permission-denied error.
   until the password is changed. Admins can set/clear the flag from the
   user editor (local-password accounts only — flagging an OIDC account
   is refused, since it could never be cleared).
+- **`KLANGKD_AUDIT_FAIL_CLOSED` (#3154).** Opt-in fail-closed
+  container auditing (security finding V-222486): the interactive API
+  container transitions — POST start/stop/restart and delete's stop —
+  write their `container_events` audit row _before_ acting and refuse
+  the request with a 503 when it cannot be written; create's eager
+  start is skipped instead (the workspace row is already committed, so
+  it is left created-not-started — the same shape as a drain/capacity
+  refusal). WS-connect starts and autonomous transitions (idle
+  timeout, eviction, logout, drain, shutdown sweep, crash teardown,
+  boot reaps, crash-monitor restarts) are never gated. Default off
+  keeps the best-effort behavior. A new `/audit` endpoint (public,
+  like `/health`) reports `write_failures` (an in-memory counter
+  bumped on every audit-write failure, best-effort paths included;
+  zeroed on restart) and `fail_closed` so assessors can verify the
+  mode. Reloadable on SIGHUP.
 - **All five container images now publish on a release tag (#3140).**
   Pushing `vX.Y.Z` publishes `klangk-host`, `klangk-host-fips`,
   `klangk-workspace`, `klangk-workspace-fips`, and the newly pullable
