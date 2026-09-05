@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -52,4 +55,47 @@ void main() {
       expect(find.textContaining('localhost:8997'), findsNothing);
     },
   );
+
+  // The authGet await can straddle an unmount (the router redirects an
+  // already-tokened user off this public route mid-request); every arm
+  // below the await must bail instead of calling setState on a disposed
+  // state (#3203 review finding).
+  testWidgets('token response after unmount does not touch state',
+      (tester) async {
+    final completer = Completer<http.Response>();
+    // Config resolves immediately so AuthService init finishes while
+    // still mounted; only the verification request parks on the
+    // completer.
+    testAuthHttpClientOverride = MockClient((request) async {
+      if (request.url.path.contains('/api/v1/config')) {
+        return http.Response('{}', 200);
+      }
+      return completer.future;
+    });
+
+    await tester.pumpWidget(buildVerifyPage('some-token'));
+    await tester.pump();
+    await tester.pumpWidget(const MaterialApp(home: SizedBox()));
+    completer.complete(
+      http.Response(jsonEncode({'access_token': 't'}), 200),
+    );
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('network failure after unmount does not touch state',
+      (tester) async {
+    final completer = Completer<http.Response>();
+    testAuthHttpClientOverride = MockClient((request) async {
+      if (request.url.path.contains('/api/v1/config')) {
+        return http.Response('{}', 200);
+      }
+      return completer.future;
+    });
+
+    await tester.pumpWidget(buildVerifyPage('some-token'));
+    await tester.pump();
+    await tester.pumpWidget(const MaterialApp(home: SizedBox()));
+    completer.completeError(Exception('Network unreachable'));
+    await tester.pumpAndSettle();
+  });
 }

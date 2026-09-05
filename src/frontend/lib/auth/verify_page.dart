@@ -38,9 +38,13 @@ class _VerifyPageState extends State<VerifyPage> {
       final auth = context.read<AuthService>();
       final response =
           await auth.authGet('/api/v1/auth/verify?token=${widget.token}');
+      // The await above can straddle an unmount (e.g. the router's
+      // refreshListenable redirecting a already-tokened user off this
+      // public route) — bail before touching state (#3203).
+      if (!mounted) return;
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
-        if (data['access_token'] != null && mounted) {
+        if (data['access_token'] != null) {
           await auth.saveTokenFromVerification(data['access_token']);
           return; // GoRouter redirect handles navigation
         }
@@ -60,6 +64,7 @@ class _VerifyPageState extends State<VerifyPage> {
       // Raw exception detail goes to the log only — the user sees a
       // stable message (#3203).
       debugPrint('[VerifyPage] verification request failed: $e');
+      if (!mounted) return;
       setState(() {
         _loading = false;
         _message = 'Network error. Please try again.';
