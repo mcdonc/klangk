@@ -1,10 +1,12 @@
-# Automatic TLS
+# HTTPS Hosting
 
-This chapter explains how to run klangkd as the **internet-facing server**
-with HTTPS managed end to end — no outer proxy, no operator-supplied
-certificate. klangkd's built-in Caddy proxy obtains and renews a
-CA-issued certificate automatically (ACME, via Let's Encrypt and ZeroSSL)
-for a public hostname you choose (#3192).
+This chapter explains how to serve klangkd over HTTPS — and how klangkd
+builds the public URLs embedded in hosted-app links, login emails, and
+OIDC callbacks. The main path is running klangkd as the
+**internet-facing server** with HTTPS managed end to end — no outer
+proxy, no operator-supplied certificate: klangkd's built-in Caddy proxy
+obtains and renews a CA-issued certificate automatically (ACME, via
+Let's Encrypt and ZeroSSL) for a public hostname you choose (#3192).
 
 This is one of three TLS models:
 
@@ -48,14 +50,14 @@ env vars override file values):
 ```yaml
 listen: "0.0.0.0"
 port: 443
-public-hostname: "klangk.example.com"
+tls-hostname: "klangk.example.com"
 acme-email: "ops@example.com"
 ```
 
-(`KLANGKD_LISTEN`, `KLANGKD_PORT`, `KLANGKD_PUBLIC_HOSTNAME`,
+(`KLANGKD_LISTEN`, `KLANGKD_PORT`, `KLANGKD_TLS_HOSTNAME`,
 `KLANGKD_ACME_EMAIL`)
 
-- **`public-hostname`** — the public FQDN. Setting it **arms** automatic
+- **`tls-hostname`** — the public FQDN. Setting it **arms** automatic
   TLS: the browser listener is rendered as `https://<fqdn>:<port>`,
   Caddy's automatic HTTPS takes over (certificate issuance, renewal,
   HTTP→HTTPS redirect on port 80). Unset (the default) keeps plain HTTP
@@ -75,7 +77,7 @@ acme-email: "ops@example.com"
   could not be answered, so issuance would fail (klangkd logs a warning
   at render time; `0.0.0.0` binds every interface).
 
-Both `public-hostname` and `acme-email` are reloadable: after editing,
+Both `tls-hostname` and `acme-email` are reloadable: after editing,
 send `SIGHUP` (see [Process Signals](signals.md)) and klangkd pushes the
 re-rendered proxy config to the running Caddy — arming or disarming TLS
 does not need a process restart (a `port` change does, as always).
@@ -85,7 +87,7 @@ does not need a process restart (a `port` change does, as always).
 klangkd renders the Caddy global block **without** `auto_https off`,
 adds `email` (when set) and an explicit certificate storage path under
 its state directory (`<state_dir>/caddy-storage`), and addresses the
-browser site as `https://<public-hostname>:<port>`.
+browser site as `https://<tls-hostname>:<port>`.
 
 On boot, Caddy:
 
@@ -114,13 +116,61 @@ modes: it is internal container wiring, never exposed to the internet.
 Browser secure-context APIs (the terminal clipboard, for example) work
 once the site is served over HTTPS.
 
+## Public URLs: `tls-hostname` vs `hosting-hostname`
+
+Two settings sound alike and do different jobs. Keeping them straight
+is the whole game:
+
+- **`tls-hostname`** is _listener identity_. It names the DNS name the
+  certificate is issued for and the HTTPS listener serves. It changes
+  what the proxy binds, it is a bare FQDN (the port comes from `port`),
+  and a bad value refuses to boot. It is **not** used to build URLs.
+- **`hosting-hostname`** (`KLANGKD_HOSTING_HOSTNAME`) is a _URL
+  override_. It never changes any listener; it only pins the authority
+  — `host[:port]`, port allowed — that klangkd writes into generated
+  URLs (hosted-app links, login emails, OIDC callbacks). Its documented
+  job is the behind-a-proxy model, where the `Host` klangkd sees is not
+  the public name.
+
+Neither is needed most of the time. When no override is set, klangkd
+derives every public URL from the request itself, in this order:
+
+1. `KLANGKD_HOSTING_HOSTNAME` (the explicit pin), else
+2. `X-Forwarded-Host` — trusted only when the immediate peer is in
+   `KLANGKD_TRUSTED_PROXY_CIDRS`, else
+3. the `Host` header, verbatim including its port, else
+4. the floor `localhost:<KLANGKD_PORT>` (no request in hand, e.g. a
+   CLI handshake).
+
+The scheme and subpath follow the same shape: `KLANGKD_HOSTING_PROTO`
+over a trusted `X-Forwarded-Proto`, and `KLANGKD_HOSTING_BASE_PATH`
+over a trusted `X-Forwarded-Prefix` (subpath deployments — see
+[Behind a Reverse Proxy](behind-a-proxy.md)).
+
+In the automatic-TLS model this needs **zero extra configuration**:
+the built-in Caddy terminates TLS and forwards the real `Host` with
+`X-Forwarded-Proto: https`, and its loopback peer is trusted by
+default — so URLs derive as `https://<your-fqdn>[:<port>]` on their
+own. `tls-hostname` arms the listener; the headers carry the name into
+URLs.
+
+Which to set, by deployment:
+
+| Deployment                                           | Hostname settings to set                      |
+| ---------------------------------------------------- | --------------------------------------------- |
+| Internet-facing, automatic TLS (this chapter)        | `tls-hostname` only — URLs derive from `Host` |
+| Behind an outer proxy that forwards truthful headers | nothing (still set `trusted-proxy-cidrs`)     |
+| Behind an outer proxy that mangles `Host`/forwarded  | `hosting-hostname` as the URL pin             |
+| Plain HTTP, direct browser access                    | nothing                                       |
+| URLs come out wrong despite correct headers          | `hosting-hostname` as an explicit override    |
+
 ## Checking the setup
 
 Before the first boot, run the pre-flight checker with the arming var
 exported:
 
 ```console
-KLANGKD_PUBLIC_HOSTNAME=klangk.example.com klangkd doctor
+KLANGKD_TLS_HOSTNAME=klangk.example.com klangkd doctor
 ```
 
 When automatic TLS is armed, doctor checks that ports 80/443 are
@@ -152,9 +202,9 @@ After boot, certificate trouble surfaces in the logs at `ERROR` level
 - **Boot fails with "automatic TLS ... requires a newer caddy"** — the
   detected caddy binary cannot load the global options automatic TLS
   needs. Upgrade caddy (e.g. the official caddy repository package), or
-  unset `KLANGKD_PUBLIC_HOSTNAME` and use the
+  unset `KLANGKD_TLS_HOSTNAME` and use the
   [outer-proxy model](behind-a-proxy.md) instead.
-- **Boot fails with "KLANGKD_PUBLIC_HOSTNAME requires KLANGKD_PORT"** —
+- **Boot fails with "KLANGKD_TLS_HOSTNAME requires KLANGKD_PORT"** —
   arming needs the browser listener; set `port` (443 is conventional).
 - **HTTPS listener unreachable from outside** — `listen` is still
   `127.0.0.1`; set it to `0.0.0.0` or a specific interface IP.

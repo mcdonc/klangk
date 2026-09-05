@@ -493,13 +493,13 @@ class CaddyRenderer:
 
     @property
     def auto_https_armed(self) -> bool:
-        """True when ``KLANGKD_PUBLIC_HOSTNAME`` arms automatic TLS (#3192).
+        """True when ``KLANGKD_TLS_HOSTNAME`` arms automatic TLS (#3192).
 
         Read live off settings (reloadable on SIGHUP — the watchdog's
         ``apply_pending_reload`` re-renders and re-POSTs the config, so an
         arm/disarm flows through without a restart).
         """
-        return bool(self.app.state.settings.public_hostname)
+        return bool(self.app.state.settings.tls_hostname)
 
     def caddy_storage_dir(self) -> str:
         """Caddy's certificate storage dir: ``<state_dir>/caddy-storage``.
@@ -526,7 +526,7 @@ class CaddyRenderer:
           (#3192). Unarmed (the default, outer-proxy or plain-HTTP
           deployments) keeps today's exact behavior: klangk serves plain
           HTTP because TLS terminates at an outer proxy or nowhere.
-          Armed (``KLANGKD_PUBLIC_HOSTNAME`` set) the directive is dropped
+          Armed (``KLANGKD_TLS_HOSTNAME`` set) the directive is dropped
           so Caddy runs its ACME automation (HTTP-01 / TLS-ALPN, binding
           80/443 as needed), an explicit ``storage file_system`` keeps
           certificates under klangkd's state dir, and an ``email`` is
@@ -598,11 +598,11 @@ class CaddyRenderer:
         if not self.auto_https_armed or full_global:
             return
         raise AutoHttpsConfigError(
-            "KLANGKD_PUBLIC_HOSTNAME (automatic TLS) needs a Caddy "
+            "KLANGKD_TLS_HOSTNAME (automatic TLS) needs a Caddy "
             "new enough for the full global options block "
             "(persist_config / servers.trusted_proxies); the detected "
             "system Caddy is too old. Upgrade Caddy, or unset "
-            "KLANGKD_PUBLIC_HOSTNAME and terminate TLS at an outer "
+            "KLANGKD_TLS_HOSTNAME and terminate TLS at an outer "
             "proxy (docs/deployment/behind-a-proxy.md)."
         )
 
@@ -815,7 +815,7 @@ class CaddyRenderer:
     ) -> str:
         """The browser-listener site block (full mode only).
 
-        Armed (``KLANGKD_PUBLIC_HOSTNAME`` set, #3192) the site address is
+        Armed (``KLANGKD_TLS_HOSTNAME`` set, #3192) the site address is
         ``https://<fqdn>:<port>`` so Caddy's automatic HTTPS manages the
         certificate for the FQDN (ACME HTTP-01 / TLS-ALPN) and installs the
         HTTP→HTTPS redirect on :80. Unarmed it stays ``http://:<port>`` —
@@ -824,7 +824,7 @@ class CaddyRenderer:
         """
         listen_addr = self.app.state.settings.listen
         port = self.app.state.settings.port
-        fqdn = self.app.state.settings.public_hostname
+        fqdn = self.app.state.settings.tls_hostname
         if fqdn:
             site_addr = f"https://{fqdn}:{port}"
             self._warn_loopback_listen_when_armed(listen_addr)
@@ -885,7 +885,7 @@ class CaddyRenderer:
         deployment needs ``0.0.0.0`` or a specific interface, #3192)."""
         if listen_addr.strip() in ("127.0.0.1", "::1", "localhost"):
             logger.warning(
-                "KLANGKD_PUBLIC_HOSTNAME is set (automatic TLS) but "
+                "KLANGKD_TLS_HOSTNAME is set (automatic TLS) but "
                 "KLANGKD_LISTEN is loopback-only (%s) — the HTTPS listener "
                 "is unreachable from other hosts and the ACME challenge "
                 "cannot be answered, so certificate issuance will fail. "
@@ -1228,8 +1228,8 @@ class CaddyWatchdog:
         s = self.app.state.settings
         if s.port is not None:
             scheme = (
-                f"https (automatic TLS, {s.public_hostname})"
-                if s.public_hostname
+                f"https (automatic TLS, {s.tls_hostname})"
+                if s.tls_hostname
                 else "http"
             )
             logger.info(
@@ -1387,15 +1387,15 @@ class CaddyWatchdog:
         # respawn loop over a config the binary can't load helps nobody.
         if self._renderer.auto_https_armed and not self._full_global:
             logger.error(
-                "KLANGKD_PUBLIC_HOSTNAME is set (automatic TLS) but the "
+                "KLANGKD_TLS_HOSTNAME is set (automatic TLS) but the "
                 "detected caddy (%s) is too old to load the required global "
-                "options. Upgrade caddy, or unset KLANGKD_PUBLIC_HOSTNAME "
+                "options. Upgrade caddy, or unset KLANGKD_TLS_HOSTNAME "
                 "and terminate TLS at an outer proxy "
                 "(docs/deployment/behind-a-proxy.md).",
                 bin_path,
             )
             raise AutoHttpsConfigError(
-                f"automatic TLS (KLANGKD_PUBLIC_HOSTNAME) requires a newer "
+                f"automatic TLS (KLANGKD_TLS_HOSTNAME) requires a newer "
                 f"caddy binary (detected: {bin_path})"
             )
         self._stopping = False

@@ -99,7 +99,7 @@ _CONTAINER_MEM_LIMIT_RE = re.compile(
     r"^(?P<num>\d+(\.\d+)?)[kKmMgGtTpP]?[bB]?$"
 )
 
-# KLANGKD_PUBLIC_HOSTNAME (#3192): a syntactically valid public FQDN —
+# KLANGKD_TLS_HOSTNAME (#3192): a syntactically valid public FQDN —
 # at least two labels (so a bare "localhost" or NetBIOS name is
 # rejected), labels of alphanumerics + inner hyphens (RFC 1123, 1-63
 # chars each), a TLD that is not all-numeric (so an IP literal like
@@ -1052,23 +1052,23 @@ class KlangkSettings(BaseSettings):
     # host IP may set this to that IP to drop every other interface from the
     # egress surface (#1542).
     egress_listen: str = "0.0.0.0"
-    # public_hostname: the public FQDN klangkd serves, arming automatic
+    # tls_hostname: the public FQDN klangkd serves, arming automatic
     # TLS on the built-in Caddy proxy (#3192). Unset (the default) keeps
     # today's exact behavior — plain-HTTP browser listener, ``auto_https
     # off`` — for outer-proxy deployments. Set to a public DNS name (e.g.
     # ``klangk.example.com``) and Caddy obtains and renews a CA-issued
     # certificate (ACME HTTP-01 / TLS-ALPN, Let's Encrypt + ZeroSSL) for
     # that name and serves the browser listener over HTTPS; the site
-    # address becomes ``https://<public_hostname>:<port>``. Requires
+    # address becomes ``https://<tls_hostname>:<port>``. Requires
     # ``KLANGKD_PORT`` set (full/browser mode) and ports 80/443 reachable
     # from the internet for the ACME challenge. Validated at construction
     # (must be a syntactically valid FQDN — not an IP, URL, or single
     # label). Reloadable on SIGHUP (the re-rendered config is pushed to
     # the running Caddy over its admin API). See
-    # docs/deployment/automatic-tls.md.
-    public_hostname: str | None = None
+    # docs/deployment/https-hosting.md.
+    tls_hostname: str | None = None
     # acme_email: the ACME account email (expiry notices, CA account
-    # registration) used when ``public_hostname`` arms automatic TLS
+    # registration) used when ``tls_hostname`` arms automatic TLS
     # (#3192). Rendered as Caddy's global ``email`` directive. Strongly
     # recommended when arming — it is the address the CA sends certificate
     # expiry / renewal-failure notices to. Reloadable on SIGHUP.
@@ -1733,7 +1733,7 @@ class KlangkSettings(BaseSettings):
     def _validate_auto_https(self) -> "KlangkSettings":
         """Validate the automatic-TLS arming pair (#3192).
 
-        ``public_hostname`` must be a syntactically valid public FQDN
+        ``tls_hostname`` must be a syntactically valid public FQDN
         (:data:`_FQDN_RE`) and requires ``KLANGKD_PORT`` set — the browser
         listener it converts to HTTPS only exists in full/browser mode.
         Both fail construction so a typo'd arming aborts boot instead of
@@ -1742,26 +1742,26 @@ class KlangkSettings(BaseSettings):
         normalized (``None``-when-empty) ``port`` is what is checked.
         """
         self._validate_acme_email()
-        raw = self.public_hostname
+        raw = self.tls_hostname
         if not raw or not str(raw).strip():
-            self.public_hostname = None
+            self.tls_hostname = None
             return self
         hostname = str(raw).strip().rstrip(".").lower()
         if not _FQDN_RE.match(hostname):
             raise ValueError(
-                f"KLANGKD_PUBLIC_HOSTNAME={raw!r} is invalid. It must be a "
+                f"KLANGKD_TLS_HOSTNAME={raw!r} is invalid. It must be a "
                 "public DNS name (FQDN) like 'klangk.example.com' — not an "
                 "IP address, URL, or single-label host name — because "
                 "public CAs issue certificates for DNS names only."
             )
         if self.port is None:
             raise ValueError(
-                "KLANGKD_PUBLIC_HOSTNAME requires KLANGKD_PORT to be set "
+                "KLANGKD_TLS_HOSTNAME requires KLANGKD_PORT to be set "
                 "(full/browser mode): the automatic-TLS browser listener is "
                 "rendered only when KLANGKD_PORT arms the browser site. Set "
                 "KLANGKD_PORT (443 for the canonical HTTPS listener)."
             )
-        self.public_hostname = hostname
+        self.tls_hostname = hostname
         return self
 
     def _validate_acme_email(self) -> None:

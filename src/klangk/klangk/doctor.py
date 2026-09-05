@@ -569,7 +569,7 @@ def _auto_https_failure_result(
         name="auto-https ports",
         ok=False,
         message=(
-            f"KLANGKD_PUBLIC_HOSTNAME={hostname} but cannot bind: "
+            f"KLANGKD_TLS_HOSTNAME={hostname} but cannot bind: "
             + "; ".join(failures)
             + ". With automatic TLS armed these ports are part of the "
             "proxy config: caddy refuses to load it and the klangkd "
@@ -587,7 +587,7 @@ def _auto_https_failure_result(
 def check_auto_https_ports(hostname: str | None) -> CheckResult | None:
     """Automatic-TLS pre-flight (#3192): ports 80/443 must be bindable.
 
-    Runs only when ``KLANGKD_PUBLIC_HOSTNAME`` arms automatic TLS (env-var
+    Runs only when ``KLANGKD_TLS_HOSTNAME`` arms automatic TLS (env-var
     detection — doctor is a standalone pre-flight command with no config
     plumbed in; a YAML-configured deployment exports the var when running
     doctor). Failures are error-grade: the auto-HTTPS listeners are part
@@ -719,11 +719,9 @@ def run_doctor(*, verbose: bool = False) -> DoctorReport:
     # 4. End-to-end rootless podman (the definitive check)
     report.add(check_rootless_podman())
 
-    # 5. Automatic TLS (#3192): when KLANGKD_PUBLIC_HOSTNAME arms auto-HTTPS,
+    # 5. Automatic TLS (#3192): when KLANGKD_TLS_HOSTNAME arms auto-HTTPS,
     # the ACME ports must be bindable. Skipped entirely when unarmed.
-    tls_result = check_auto_https_ports(
-        os.environ.get("KLANGKD_PUBLIC_HOSTNAME")
-    )
+    tls_result = check_auto_https_ports(os.environ.get("KLANGKD_TLS_HOSTNAME"))
     if tls_result is not None:
         report.add(tls_result)
 

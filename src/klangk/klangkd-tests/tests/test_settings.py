@@ -1007,11 +1007,11 @@ class TestResolveSocketAndPorts:
 
 
 class TestAutoHttpsSettings:
-    """KLANGKD_PUBLIC_HOSTNAME / KLANGKD_ACME_EMAIL validation (#3192)."""
+    """KLANGKD_TLS_HOSTNAME / KLANGKD_ACME_EMAIL validation (#3192)."""
 
     def test_unset_defaults(self):
         s = KlangkSettings(env={"KLANGKD_STATE_DIR": "/tmp/state"})
-        assert s.public_hostname is None
+        assert s.tls_hostname is None
         assert s.acme_email is None
 
     def test_empty_string_means_unset(self):
@@ -1021,11 +1021,11 @@ class TestAutoHttpsSettings:
             env={
                 "KLANGKD_STATE_DIR": "/tmp/state",
                 "KLANGKD_PORT": "443",
-                "KLANGKD_PUBLIC_HOSTNAME": "",
+                "KLANGKD_TLS_HOSTNAME": "",
                 "KLANGKD_ACME_EMAIL": " ",
             }
         )
-        assert s.public_hostname is None
+        assert s.tls_hostname is None
         assert s.acme_email is None
 
     def test_valid_hostname_normalized(self):
@@ -1034,10 +1034,10 @@ class TestAutoHttpsSettings:
             env={
                 "KLANGKD_STATE_DIR": "/tmp/state",
                 "KLANGKD_PORT": "443",
-                "KLANGKD_PUBLIC_HOSTNAME": "Klangk.Example.COM.",
+                "KLANGKD_TLS_HOSTNAME": "Klangk.Example.COM.",
             }
         )
-        assert s.public_hostname == "klangk.example.com"
+        assert s.tls_hostname == "klangk.example.com"
 
     @pytest.mark.parametrize(
         "good",
@@ -1049,15 +1049,15 @@ class TestAutoHttpsSettings:
             "my-host.example.com",  # inner hyphen
         ],
     )
-    def test_valid_public_hostnames_accepted(self, good):
+    def test_valid_tls_hostnames_accepted(self, good):
         s = KlangkSettings(
             env={
                 "KLANGKD_STATE_DIR": "/tmp/state",
                 "KLANGKD_PORT": "443",
-                "KLANGKD_PUBLIC_HOSTNAME": good,
+                "KLANGKD_TLS_HOSTNAME": good,
             }
         )
-        assert s.public_hostname == good
+        assert s.tls_hostname == good
 
     @pytest.mark.parametrize(
         "bad",
@@ -1081,10 +1081,10 @@ class TestAutoHttpsSettings:
                 env={
                     "KLANGKD_STATE_DIR": "/tmp/state",
                     "KLANGKD_PORT": "443",
-                    "KLANGKD_PUBLIC_HOSTNAME": bad,
+                    "KLANGKD_TLS_HOSTNAME": bad,
                 }
             )
-        assert "KLANGKD_PUBLIC_HOSTNAME" in str(exc_info.value)
+        assert "KLANGKD_TLS_HOSTNAME" in str(exc_info.value)
 
     def test_hostname_requires_port(self):
         """Arming without KLANGKD_PORT (headless) fails construction — the
@@ -1097,7 +1097,7 @@ class TestAutoHttpsSettings:
             KlangkSettings(
                 env={
                     "KLANGKD_STATE_DIR": "/tmp/state",
-                    "KLANGKD_PUBLIC_HOSTNAME": "klangk.example.com",
+                    "KLANGKD_TLS_HOSTNAME": "klangk.example.com",
                 }
             )
         assert "KLANGKD_PORT" in str(exc_info.value)
@@ -1107,7 +1107,7 @@ class TestAutoHttpsSettings:
             env={
                 "KLANGKD_STATE_DIR": "/tmp/state",
                 "KLANGKD_PORT": "443",
-                "KLANGKD_PUBLIC_HOSTNAME": "klangk.example.com",
+                "KLANGKD_TLS_HOSTNAME": "klangk.example.com",
                 "KLANGKD_ACME_EMAIL": " ops@example.com ",
             }
         )
@@ -1130,7 +1130,7 @@ class TestAutoHttpsSettings:
             KlangkSettings(
                 env={
                     "KLANGKD_STATE_DIR": "/tmp/state",
-                    "KLANGKD_PUBLIC_HOSTNAME": "klangk.example.com",
+                    "KLANGKD_TLS_HOSTNAME": "klangk.example.com",
                     "KLANGKD_ACME_EMAIL": bad,
                 }
             )
