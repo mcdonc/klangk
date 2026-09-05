@@ -4,7 +4,7 @@ import logging
 import subprocess
 import sys
 import types
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -348,9 +348,17 @@ class TestVerifyProcessFips:
             fips, "verify_jose_backend", return_value=(True, "jose ok")
         )
 
+    def _linkage_ok(self):
+        return patch.object(
+            fips,
+            "verify_jose_crypto_linkage",
+            return_value=(True, "linkage ok"),
+        )
+
     def test_on_verified(self, caplog):
         with (
             self._jose_ok(),
+            self._linkage_ok(),
             patch.object(fips, "probe_process", return_value=(True, "x")),
             patch.object(fips, "running_in_container", return_value=False),
         ):
@@ -362,6 +370,7 @@ class TestVerifyProcessFips:
         """A passing probe boots fine inside a container too (#2628)."""
         with (
             self._jose_ok(),
+            self._linkage_ok(),
             patch.object(fips, "probe_process", return_value=(True, "x")),
             patch.object(fips, "running_in_container", return_value=True),
         ):
@@ -373,6 +382,7 @@ class TestVerifyProcessFips:
         """Not containerized → warn-only posture (the operator's host)."""
         with (
             self._jose_ok(),
+            self._linkage_ok(),
             patch.object(
                 fips, "probe_process", return_value=(False, "md5 not rejected")
             ),
@@ -380,7 +390,9 @@ class TestVerifyProcessFips:
         ):
             with caplog.at_level(logging.WARNING):
                 fips.verify_process_fips(self._settings(True))
-        assert any("NOT FIPS-enforcing" in r.message for r in caplog.records)
+        assert any(
+            "NOT provider-enforced" in r.message for r in caplog.records
+        )
 
     def test_on_not_verified_in_container_refuses_boot(self, caplog):
         """Containerized backend + failed probe → ConfigurationError (#2628,
@@ -391,15 +403,63 @@ class TestVerifyProcessFips:
         """
         with (
             self._jose_ok(),
+            self._linkage_ok(),
             patch.object(
                 fips, "probe_process", return_value=(False, "md5 not rejected")
             ),
             patch.object(fips, "running_in_container", return_value=True),
         ):
             with caplog.at_level(logging.ERROR):
-                with pytest.raises(ConfigurationError, match="FIPS-enforcing"):
+                with pytest.raises(
+                    ConfigurationError, match="process OpenSSL"
+                ):
                     fips.verify_process_fips(self._settings(True))
         assert any("refusing to start" in r.message for r in caplog.records)
+
+    def test_linkage_failure_warns_on_control_host(self, caplog):
+        """A bundled-wheel cryptography on the operator's host is a
+        posture warning (their OpenSSL choice), not a boot abort — the
+        process probe may still pass on its own."""
+        probe = MagicMock(return_value=(True, "md5 rejected"))
+        with (
+            self._jose_ok(),
+            patch.object(
+                fips,
+                "verify_jose_crypto_linkage",
+                return_value=(False, "bundled-OpenSSL wheel"),
+            ),
+            patch.object(fips, "probe_process", probe),
+            patch.object(fips, "running_in_container", return_value=False),
+        ):
+            with caplog.at_level(logging.WARNING):
+                fips.verify_process_fips(self._settings(True))
+        assert any(
+            "bundled-OpenSSL wheel" in r.message for r in caplog.records
+        )
+        probe.assert_called_once()
+
+    def test_linkage_failure_in_container_refuses_boot(self, caplog):
+        """Inside an image we ship, an unlinked cryptography means the
+        JWT path would sign outside the validated module — abort before
+        the OpenSSL probe even runs."""
+        probe = MagicMock(return_value=(True, "md5 rejected"))
+        with (
+            self._jose_ok(),
+            patch.object(
+                fips,
+                "verify_jose_crypto_linkage",
+                return_value=(False, "bundled-OpenSSL wheel"),
+            ),
+            patch.object(fips, "probe_process", probe),
+            patch.object(fips, "running_in_container", return_value=True),
+        ):
+            with caplog.at_level(logging.ERROR):
+                with pytest.raises(
+                    ConfigurationError, match="cryptography linkage"
+                ):
+                    fips.verify_process_fips(self._settings(True))
+        assert any("refusing to start" in r.message for r in caplog.records)
+        probe.assert_not_called()
 
 
 class TestRunningInContainer:
@@ -518,36 +578,147 @@ class TestVerifyJoseBackend:
 
 
 class TestVerifyProcessFipsJoseGate:
-    """The jose backend check gates boot under FIPS mode (#3175)."""
+    """The jose checks gate boot under FIPS mode (#3175)."""
 
     def _settings(self, on):
         return types.SimpleNamespace(fips_mode=on)
 
-    def test_jose_failure_aborts_boot(self):
-        with patch.object(
-            fips,
-            "verify_jose_backend",
-            return_value=(False, "wrong backend"),
+    def test_jose_failure_aborts_boot_before_other_checks(self):
+        linkage = MagicMock(return_value=(True, "linkage ok"))
+        probe = MagicMock(return_value=(True, "ok"))
+        with (
+            patch.object(
+                fips,
+                "verify_jose_backend",
+                return_value=(False, "wrong backend"),
+            ),
+            patch.object(fips, "verify_jose_crypto_linkage", linkage),
+            patch.object(fips, "probe_process", probe),
         ):
             with pytest.raises(ConfigurationError, match="wrong backend"):
                 fips.verify_process_fips(self._settings(True))
+        linkage.assert_not_called()
+        probe.assert_not_called()
 
     def test_jose_passes_then_process_probe_runs(self, caplog):
+        linkage = MagicMock(return_value=(True, "linkage ok"))
         with (
             patch.object(
                 fips,
                 "verify_jose_backend",
                 return_value=(True, "jose ok"),
             ),
+            patch.object(fips, "verify_jose_crypto_linkage", linkage),
             patch.object(fips, "probe_process", return_value=(True, "ok")),
             patch.object(fips, "running_in_container", return_value=False),
         ):
             with caplog.at_level(logging.INFO):
                 fips.verify_process_fips(self._settings(True))
+        linkage.assert_called_once()
         assert any(
             "jose backend verified" in r.message for r in caplog.records
         )
         assert any("FIPS mode enabled" in r.message for r in caplog.records)
+
+
+class TestVerifyJoseCryptoLinkage:
+    """The JWT module-boundary probe: identity + behavioral gating."""
+
+    def test_identity_failure_short_circuits(self):
+        refused = MagicMock(return_value=True)
+        with (
+            patch.object(
+                fips,
+                "_crypto_openssl_identity",
+                return_value=(False, "bundled-OpenSSL wheel"),
+            ),
+            patch.object(fips, "_crypto_md5_refused", refused),
+        ):
+            ok, detail = fips.verify_jose_crypto_linkage()
+        assert ok is False
+        assert "bundled-OpenSSL wheel" in detail
+        refused.assert_not_called()
+
+    def test_md5_accepted_is_failure(self):
+        with (
+            patch.object(
+                fips,
+                "_crypto_openssl_identity",
+                return_value=(True, "OpenSSL 3.5.7"),
+            ),
+            patch.object(fips, "_crypto_md5_refused", return_value=False),
+        ):
+            ok, detail = fips.verify_jose_crypto_linkage()
+        assert ok is False
+        assert "accepted MD5" in detail
+
+    def test_linked_and_gated(self):
+        with (
+            patch.object(
+                fips,
+                "_crypto_openssl_identity",
+                return_value=(True, "OpenSSL 3.5.7"),
+            ),
+            patch.object(fips, "_crypto_md5_refused", return_value=True),
+        ):
+            ok, detail = fips.verify_jose_crypto_linkage()
+        assert ok is True
+        assert "MD5 refused" in detail
+
+
+class TestCryptoOpensslIdentity:
+    def test_bundled_wheel_detected_by_version_mismatch(self):
+        # Force a process/cryptography version mismatch — the exact
+        # condition a statically-linked wheel produces (the dev venv
+        # itself runs cryptography on a private OpenSSL).
+        with patch.object(fips.ssl, "OPENSSL_VERSION", "OpenSSL 1.2.3"):
+            ok, detail = fips._crypto_openssl_identity()
+        assert ok is False
+        assert "bundled-OpenSSL wheel" in detail
+
+    def test_identity_match(self):
+        from cryptography.hazmat.backends.openssl.backend import backend
+
+        with patch.object(
+            fips.ssl, "OPENSSL_VERSION", backend.openssl_version_text()
+        ):
+            ok, detail = fips._crypto_openssl_identity()
+        assert ok is True
+        assert detail == backend.openssl_version_text()
+
+    def test_backend_not_importable(self):
+        with patch.dict(
+            "sys.modules",
+            {"cryptography.hazmat.backends.openssl.backend": None},
+        ):
+            ok, detail = fips._crypto_openssl_identity()
+        assert ok is False
+        assert "not importable" in detail
+
+
+class TestCryptoMd5Refused:
+    def test_refused_when_provider_blocks(self):
+        class Blocked:
+            def __init__(self, *args):
+                pass
+
+            def update(self, *args):
+                pass
+
+            def finalize(self):
+                raise RuntimeError("unsupported")
+
+        with (
+            patch("cryptography.hazmat.primitives.hashes.Hash", Blocked),
+            patch("cryptography.hazmat.primitives.hashes.MD5"),
+        ):
+            assert fips._crypto_md5_refused() is True
+
+    def test_not_refused_when_md5_is_served(self):
+        # On the dev/CI OpenSSL (no provider activation) MD5 is served,
+        # so the probe must report no gating — deterministic on the
+        # stock runners the suite executes on.
+        assert fips._crypto_md5_refused() is False
 
 
 class TestProbeScriptSyntax:

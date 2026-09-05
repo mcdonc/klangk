@@ -39,6 +39,15 @@ the result is ``ok=False`` with a ``no-probe-available`` detail — a
 FIPS posture that cannot be verified is treated as absent (fail
 closed), and the detail tells the image builder what to provide.
 
+**Host-only JWT checks (#3175):** under ``KLANGKD_FIPS_MODE`` the
+backend startup additionally verifies python-jose's HS256 route —
+the backend binding (:func:`verify_jose_backend`) and cryptography's
+linkage to the process's own provider-gated OpenSSL
+(:func:`verify_jose_crypto_linkage`). The identity comparison there
+asserts *equality* of two version texts (same library loaded), never
+a specific version, so the genericity rule above still holds. These
+checks are host-side only — workspace containers run no jose.
+
 **Dual-maintenance note** (#2626 review): :data:`PROBE_SCRIPT` (the
 self-contained snippet run inside containers via ``python3 -c``)
 deliberately re-implements layer 1 (``probe_hashlib``) and layer 2
@@ -378,17 +387,18 @@ def running_in_container() -> bool:
 def verify_jose_backend() -> tuple[bool, str]:
     """Verify that python-jose's HS256 path uses the ``cryptography`` backend.
 
-    python-jose probes multiple backends at import time
-    (``cryptography`` → ``pycryptodome``/``ecdsa`` → native stdlib).
-    Only the ``cryptography`` route reaches the FIPS-validated OpenSSL
-    via ``cryptography.hazmat.primitives.hmac.HMAC``.  The native
-    fallback (``jose.backends.native.HMACKey``) uses stdlib ``hmac``
-    which goes through ``hashlib`` — and ``hashlib.new("sha256")`` can
-    fall back to CPython's built-in ``_sha2`` (PEP 452), bypassing the
-    provider entirely.
+    The FIPS host image provisions exactly one verified JWT route:
+    python-jose on its ``cryptography`` backend, with ``cryptography``
+    rebuilt from source against the distro libcrypto (the linkage is
+    proven by :func:`verify_jose_crypto_linkage`). python-jose probes
+    backends at import time (``cryptography`` →
+    ``pycryptodome``/``ecdsa`` → native stdlib); a dependency or
+    packaging change could silently re-bind HS256 to a different
+    backend whose route nobody provisioned or verified. Under
+    ``KLANGKD_FIPS_MODE`` the binding is therefore checked at startup
+    and anything but the ``cryptography`` backend aborts the boot.
 
-    Returns ``(ok, detail)``.  Called once at startup under
-    ``KLANGKD_FIPS_MODE`` to prove the JWT code path is covered.
+    Returns ``(ok, detail)``.
     """
     try:
         from jose.backends import HMACKey  # allow-deferred-import
@@ -400,7 +410,105 @@ def verify_jose_backend() -> tuple[bool, str]:
     return (
         False,
         f"jose HMACKey backend is {module!r}, not the cryptography "
-        "backend — HS256 may not route through the validated OpenSSL",
+        "backend — HS256 would run on an unprovisioned, unverified route",
+    )
+
+
+def _crypto_openssl_identity() -> tuple[bool, str]:
+    """The OpenSSL ``cryptography`` loads must be the process's own.
+
+    PyPI manylinux wheels of ``cryptography`` statically link a
+    private OpenSSL that never reads ``OPENSSL_CONF`` — no provider
+    activation reaches it (#3175). The FIPS host image replaces the
+    wheel with a from-source build against the distro libcrypto; when
+    that holds, the version text ``cryptography`` reports is identical
+    to ``ssl.OPENSSL_VERSION`` (the very same library is loaded).
+    """
+    try:
+        # allow-deferred-import
+        from cryptography.hazmat.backends.openssl.backend import backend
+    except ImportError as exc:
+        return False, f"cryptography backend not importable ({exc})"
+    loaded = backend.openssl_version_text()
+    if loaded != ssl.OPENSSL_VERSION:
+        return (
+            False,
+            f"cryptography is bound to OpenSSL {loaded!r} but the process "
+            f"uses {ssl.OPENSSL_VERSION!r} — a bundled-OpenSSL wheel "
+            "bypasses the FIPS provider",
+        )
+    return True, loaded
+
+
+def _crypto_md5_refused() -> bool:
+    """The active provider must refuse MD5 through ``cryptography``.
+
+    Behavioral proof that provider gating reaches jose's HS256 route:
+    under fips+base activation (no default provider) an MD5 digest
+    through ``cryptography`` must fail — the same property the
+    ``_hashlib.openssl_md5`` probe checks for the process itself.
+    """
+    from cryptography.hazmat.primitives import (  # allow-deferred-import
+        hashes,
+    )
+
+    try:
+        digest = hashes.Hash(hashes.MD5())
+        digest.update(b"klangk-fips-md5-probe")
+        digest.finalize()
+    except Exception:  # noqa: BLE001 — any refusal proves the gating
+        return True
+    return False
+
+
+def verify_jose_crypto_linkage() -> tuple[bool, str]:
+    """Prove jose's HS256 route stays inside the validated OpenSSL.
+
+    Two layers (#3175): ``cryptography`` must load the process's own
+    libcrypto (identity), and the active provider must refuse MD5
+    through it (gating). A passing result is the audit line showing
+    the JWT path cannot sign on an unvalidated module.
+    """
+    identity_ok, identity = _crypto_openssl_identity()
+    if not identity_ok:
+        return False, identity
+    if _crypto_md5_refused():
+        return True, f"cryptography linked to {identity}, MD5 refused"
+    return (
+        False,
+        "cryptography accepted MD5 — the active provider does not gate "
+        "its fetches; jose HS256 would sign outside the validated module",
+    )
+
+
+def _posture_failure(subject: str, detail: str) -> None:
+    """Handle a failed deployment-dependent FIPS check (#2628).
+
+    Abort inside a container (an image we ship — its crypto posture is
+    our responsibility); warn on a control host, where the operator's
+    OpenSSL may legitimately not be the FIPS variant while every
+    workspace stays fail-closed at its start gate.
+    """
+    if running_in_container():
+        logger.error(
+            "KLANGKD_FIPS_MODE: %s failed (%s). klangkd is running "
+            "inside a container, where its own crypto (password hashing, "
+            "JWT signing, outbound TLS) is the boundary — refusing to "
+            "start. Use the FIPS host image (klangk:build-fips-host-image "
+            "/ Dockerfile.fips) or turn off KLANGKD_FIPS_MODE.",
+            subject,
+            detail,
+        )
+        raise ConfigurationError(
+            f"KLANGKD_FIPS_MODE: {subject} failed ({detail})"
+        )
+    logger.warning(
+        "KLANGKD_FIPS_MODE is enabled but %s failed on this control host "
+        "(%s). Boot continues — workspace containers stay fail-closed at "
+        "their start gate, but klangkd's own crypto on this host is NOT "
+        "provider-enforced.",
+        subject,
+        detail,
     )
 
 
@@ -427,6 +535,13 @@ def verify_process_fips(settings) -> None:
 
     Either way a *passing* probe is logged at info with the OpenSSL
     version — the audit line an assessor looks for.
+
+    Beyond the OpenSSL posture, the JWT route is verified (#3175):
+    the jose backend binding is a code-level invariant (a wrong
+    backend = an unprovisioned crypto route) and aborts
+    unconditionally; the cryptography↔libcrypto linkage is
+    deployment-dependent and follows the same warn/abort posture as
+    the process probe.
     """
     if not getattr(settings, "fips_mode", False):
         return
@@ -439,6 +554,11 @@ def verify_process_fips(settings) -> None:
         logger.info("FIPS jose backend verified: %s", jose_detail)
     else:
         raise ConfigurationError(f"KLANGKD_FIPS_MODE: {jose_detail}")
+    link_ok, link_detail = verify_jose_crypto_linkage()
+    if link_ok:
+        logger.info("FIPS jose crypto linkage verified: %s", link_detail)
+    else:
+        _posture_failure("jose cryptography linkage", link_detail)
     version = ssl.OPENSSL_VERSION
     ok, detail = probe_process()
     if ok:
@@ -449,28 +569,4 @@ def verify_process_fips(settings) -> None:
             detail,
         )
         return
-    if running_in_container():
-        logger.error(
-            "KLANGKD_FIPS_MODE is enabled but the klangkd process's "
-            "OpenSSL (%s) is NOT FIPS-enforcing (%s). klangkd is running "
-            "inside a container, where its own OpenSSL is the crypto "
-            "boundary (password hashing, JWT signing, outbound TLS) — "
-            "refusing to start. Use the FIPS host image "
-            "(klangk:build-fips-host-image / Dockerfile.fips) or turn "
-            "off KLANGKD_FIPS_MODE.",
-            version,
-            detail,
-        )
-        raise ConfigurationError(
-            "KLANGKD_FIPS_MODE: containerized backend's OpenSSL is not "
-            f"FIPS-enforcing ({detail})"
-        )
-    logger.warning(
-        "KLANGKD_FIPS_MODE is enabled but the klangkd process's OpenSSL "
-        "(%s) is NOT FIPS-enforcing (%s). Workspace containers will still "
-        "be probed and failed closed; run klangkd under an OpenSSL with "
-        "the FIPS provider active (see docs/deployment/fips.md) for a "
-        "fully validated posture.",
-        version,
-        detail,
-    )
+    _posture_failure("process OpenSSL FIPS enforcement", detail)

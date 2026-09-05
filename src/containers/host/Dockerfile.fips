@@ -11,13 +11,20 @@
 #               ONLY fips.so (the CMVP-validated module, certificate
 #               #4985, active until 2030-03-10). Identical to the
 #               workspace builder stage.
+#   stage 1b — rebuild the `cryptography` wheel from source against
+#               the distro libcrypto (#3175): the PyPI manylinux wheel
+#               statically links a PRIVATE OpenSSL that never reads
+#               OPENSSL_CONF — jose HS256 would sign on an unvalidated
+#               module without this.
 #   stage 2  — host image + fips.so in the multiarch modules dir,
 #               fipsinstall run by the system CLI, an activation config
 #               (fips + base, no default) written to the STOCK
-#               /etc/ssl/openssl.cnf path, and the FIPS workspace image
-#               tar swapped in over the stock one embedded by the base
-#               host image (KLANGKD_FIPS_MODE fails closed on a stock
-#               workspace, so a FIPS host must ship a FIPS workspace).
+#               /etc/ssl/openssl.cnf path, the relinked cryptography
+#               wheel installed over the bundled one, and the FIPS
+#               workspace image tar swapped in over the stock one
+#               embedded by the base host image (KLANGKD_FIPS_MODE
+#               fails closed on a stock workspace, so a FIPS host must
+#               ship a FIPS workspace).
 #
 # The validated 3.1.2 module is forward-compatible with newer libcrypto
 # (the validation covers "3.0 ... future 3.5"), so python:3.14-slim's
@@ -60,6 +67,25 @@ RUN ./Configure enable-fips --prefix=/opt/ossl-fips --libdir=lib && \
     make -j"${FIPS_BUILD_JOBS:-$(nproc)}" && \
     make install_fips
 
+# --- Stage 1b: relink cryptography onto the distro libcrypto ----------------
+# The stock host image installs python-jose's `cryptography`
+# dependency from PyPI manylinux wheels, which statically link a
+# private OpenSSL (#3175): that copy never reads OPENSSL_CONF and
+# cannot load the validated provider. Rebuild the SAME version from
+# source against the distro libssl — the library the activation
+# config points at the provider. trixie's rustc (1.85) satisfies
+# cryptography's MSRV (1.83). Toolchain stays in this stage only.
+FROM $HOST_IMAGE AS crypto-relinker
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential libssl-dev pkg-config rustc cargo && \
+    rm -rf /var/lib/apt/lists/*
+RUN version="$(python3 -c \
+        'import importlib.metadata as m; print(m.version("cryptography"))')" && \
+    mkdir -p /wheels && \
+    pip wheel --no-cache-dir --no-deps --no-binary cryptography \
+        "cryptography==${version}" -w /wheels
+
 # --- Stage 2: host image + FIPS activation ----------------------------------
 FROM $HOST_IMAGE
 
@@ -78,6 +104,16 @@ RUN test "$(dpkg --print-architecture)" = "amd64"
 # CLI fallback layer) is not in python:3.14-slim.
 RUN apt-get update && apt-get install -y --no-install-recommends openssl && \
     rm -rf /var/lib/apt/lists/*
+
+# Replace the bundled-OpenSSL cryptography wheel with the distro-linked
+# rebuild (#3175): same version, different linkage — dynamically linked
+# to libcrypto.so.3, the library the activation config below points at
+# the validated provider. WITH deps — the sdist-built wheel loads
+# `cffi` at runtime (the manylinux wheel does not). Proven in the
+# build-time proof below.
+COPY --from=crypto-relinker /wheels/cryptography-*.whl /tmp/
+RUN pip install --force-reinstall /tmp/cryptography-*.whl && \
+    rm -f /tmp/cryptography-*.whl
 
 # Multiarch dir: the default provider search path — anywhere else needs
 # OPENSSL_MODULES set for explicit loads.
@@ -141,13 +177,29 @@ WORKDIR /home/klangk
 #      plain hashlib.md5() can NEVER be the probe, CPython's builtin
 #      _md5 fallback bypasses the provider);
 #   4. the real auth KDF still works: hashlib.pbkdf2_hmac("sha512", ...);
-#   5. env-stripped activation (stock config path, no environment).
+#   5. cryptography loads the SAME libcrypto as the process (a
+#      bundled-OpenSSL wheel would report its private version);
+#   6. the provider gates cryptography's fetches: MD5 through it must
+#      be refused;
+#   7. end-to-end JWT: jose HS256 sign+verify works under the active
+#      provider (HMAC-SHA256 is approved);
+#   8. env-stripped activation (stock config path, no environment).
 RUN openssl list -providers | grep -q 'OpenSSL FIPS Provider' && \
     ! echo hello | openssl md5 > /dev/null 2>&1 && \
     ! python3 -c "import _hashlib; _hashlib.openssl_md5(b'x')" \
       > /dev/null 2>&1 && \
     python3 -c \
       "import hashlib; hashlib.pbkdf2_hmac('sha512', b'x', b'y', 10)" && \
+    python3 -c "import ssl; \
+import cryptography.hazmat.backends.openssl.backend as m; \
+assert m.backend.openssl_version_text() == ssl.OPENSSL_VERSION, \
+(m.backend.openssl_version_text(), ssl.OPENSSL_VERSION)" && \
+    ! python3 -c "import cryptography.hazmat.primitives.hashes as h; \
+d = h.Hash(h.MD5()); d.update(b'x'); d.finalize()" \
+      > /dev/null 2>&1 && \
+    python3 -c "import jose.jwt as jwt; key = 'f' * 32; \
+token = jwt.encode({'probe': 1}, key, algorithm='HS256'); \
+assert jwt.decode(token, key, algorithms=['HS256'])['probe'] == 1" && \
     env -i /usr/bin/openssl list -providers \
       | grep -q 'OpenSSL FIPS Provider' && \
     ! env -i /bin/sh -c 'echo hello | openssl md5' > /dev/null 2>&1
