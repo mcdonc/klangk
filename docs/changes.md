@@ -651,6 +651,14 @@ sync` report a clear permission-denied error.
 
 ### Added
 
+- **Audit subtab in the admin Events tab (#3217).** The Events tab
+  now has a Containers / Audit segmented control; Audit lists the
+  identity/privilege stream of #3205 (logins, account and group
+  changes, ACL and workspace-role edits) newest-first with paging and
+  event / actor / target filters. Rows expand to the read-only detail
+  blob plus source IP and user agent. Same `manage-events` grant as
+  the container history — no new permission wiring.
+
 - **Structured audit stream for identity and privilege actions
   (#3205).** A new `audit_events` table records account
   create/update/delete (admin and self-service), group and ACL
