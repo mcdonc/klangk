@@ -515,6 +515,60 @@ class TestWorkspaceDeleteGate:
         )
         assert resp.status_code == 200
 
+    async def test_non_owner_role_write_gated(
+        self, client, app, ws_admin, admin_user, app_state
+    ):
+        """Role writes by a non-owner carry the gate (#3196): the
+        ``owners`` role group holds the ``*`` wildcard, so minting an
+        owner is the same takeover power as the raw ACL rewrite — the
+        first review of this PR missed it and the second caught it.
+        """
+        _arm(app)
+        ws_id = await self._make_owned_workspace(
+            client, app_state, admin_user, name="seize-roles"
+        )
+        admin_headers = await _login(client)
+        cases = (
+            client.post(
+                f"/api/v1/workspaces/{ws_id}/roles/owners",
+                headers=admin_headers,
+                json={"email": admin_user["email"]},
+            ),
+            client.patch(
+                f"/api/v1/workspaces/{ws_id}/roles",
+                headers=admin_headers,
+                json={"email": admin_user["email"], "role": "spectators"},
+            ),
+            client.delete(
+                f"/api/v1/workspaces/{ws_id}/roles/owners/{admin_user['id']}",
+                headers=admin_headers,
+            ),
+        )
+        for resp in await asyncio.gather(*cases):
+            assert _is_step_up(resp), (resp.request.url, resp.text)
+        assert (await _step_up(client, admin_headers)).status_code == 200
+        resp = await client.post(
+            f"/api/v1/workspaces/{ws_id}/roles/owners",
+            headers=admin_headers,
+            json={"email": admin_user["email"]},
+        )
+        assert resp.status_code == 200
+
+    async def test_owner_role_write_ungated(
+        self, client, app, ws_admin, admin_user, registry
+    ):
+        """The owner assigning roles on their own workspace is
+        self-service sharing — no step-up even when armed."""
+        _arm(app)
+        headers = await _login(client, "testuser@example.com")
+        ws_id = await self._make_workspace(client, headers, "own-roles")
+        resp = await client.post(
+            f"/api/v1/workspaces/{ws_id}/roles/spectators",
+            headers=headers,
+            json={"email": "testadmin@example.com"},
+        )
+        assert resp.status_code == 200
+
     async def test_owner_transfer_ungated(
         self, client, app, ws_admin, admin_user, registry
     ):
@@ -591,6 +645,8 @@ class TestHelpers:
         )
         return types.SimpleNamespace(
             app=app,
+            url=types.SimpleNamespace(path="/gated"),
+            client=None,
             headers={"authorization": authorization} if authorization else {},
         )
 
@@ -698,6 +754,68 @@ class TestHelpers:
         with pytest.raises(HTTPException) as exc:
             await stepup.ensure_step_up_unless_owner(req, full, workspace)
         assert exc.value.detail["error"] == stepup.STEP_UP_REQUIRED
+
+
+class TestAuditEvents:
+    """Every gate outcome lands in the structured audit log (#3205
+    bus, #3196): refusals are the session-hijack signal."""
+
+    async def _events(self, app_state, name):
+        return await app_state.state.model.audit_events.list_events(event=name)
+
+    async def test_refused_write_audited(
+        self, client, app, admin_user, app_state
+    ):
+        _arm(app)
+        headers = await _login(client)
+        assert _is_step_up(await _write(client, headers))
+        rows = await self._events(app_state, "step_up.refused")
+        assert len(rows) == 1
+        assert rows[0]["actor_id"] == admin_user["id"]
+        assert rows[0]["detail"]["path"] == "/api/v1/groups"
+
+    async def test_confirmed_audited(self, client, app, admin_user, app_state):
+        _arm(app)
+        headers = await _login(client)
+        assert (await _step_up(client, headers)).status_code == 200
+        rows = await self._events(app_state, "step_up.confirmed")
+        assert len(rows) == 1
+        assert rows[0]["actor_email"] == admin_user["email"]
+
+    async def test_failed_password_audited(
+        self, client, app, admin_user, app_state
+    ):
+        _arm(app)
+        headers = await _login(client)
+        resp = await _step_up(client, headers, password="wrong")
+        assert resp.status_code == 401
+        rows = await self._events(app_state, "step_up.failed")
+        assert len(rows) == 1
+
+    async def test_exempt_pass_audited(
+        self, client, app, admin_group, app_state
+    ):
+        user = await app_state.state.model.users.create_user(
+            "oidc-audit@example.com", None, verified=True, provider="oidc"
+        )
+        await app_state.state.model.users.add_user_to_group(
+            user["id"], admin_group["id"]
+        )
+        _arm(app)
+        forged = _auth().create_token(user["id"], user["email"])
+        resp = await _write(client, {"Authorization": f"Bearer {forged}"})
+        assert resp.status_code == 200
+        rows = await self._events(app_state, "step_up.exempt")
+        assert len(rows) == 1
+        assert rows[0]["actor_id"] == user["id"]
+
+    async def test_unarmed_gate_writes_nothing(
+        self, client, admin_user, app_state
+    ):
+        headers = await _login(client)
+        resp = await _write(client, headers)
+        assert resp.status_code == 200
+        assert await self._events(app_state, "step_up.refused") == []
 
 
 class TestSessionsModel:

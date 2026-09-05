@@ -937,7 +937,8 @@ class KlangkSettings(BaseSettings):
     # the session cleared for privileged writes (user/group/invitation
     # management, raw ACL rewrites, server schedules, volume deletes,
     # and the takeover-class writes on a workspace you do not own:
-    # delete, raw ACL rewrite, ownership transfer). Inside the window
+    # delete, raw ACL rewrite, ownership transfer, role assignments).
+    # Inside the window
     # those writes
     # pass; outside it they fail with a machine-readable 403
     # (``step_up_required``) until the password is confirmed again.

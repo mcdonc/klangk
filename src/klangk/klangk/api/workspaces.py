@@ -1927,9 +1927,16 @@ async def add_to_workspace_role(
     user: dict = Depends(ROLE_WRITE_GATE),
     app=Depends(get_app_dep),
 ):
-    """Add a user to a workspace role group."""
+    """Add a user to a workspace role group.
+
+    A non-owner role write carries the step-up gate (#3196):
+    ``owners-<id>`` holds the ``*`` wildcard, so minting an owner is
+    the same takeover power as the raw ACL rewrite.
+    """
     if role not in ROLE_GROUP_SUFFIXES:
         raise HTTPException(status_code=400, detail=f"Invalid role: {role}")
+    workspace = await app.state.model.workspaces.get_workspace(workspace_id)
+    await stepup.ensure_step_up_unless_owner(request, user, workspace)
     group_name = f"{role}-{workspace_id}"
     group = await app.state.model.users.get_group_by_name(group_name)
     if group is None:
@@ -1963,6 +1970,10 @@ async def remove_from_workspace_role(
     """Remove a user from a workspace role group."""
     if role not in ROLE_GROUP_SUFFIXES:
         raise HTTPException(status_code=400, detail=f"Invalid role: {role}")
+    # A non-owner role write carries the step-up gate (#3196) —
+    # kicking the owner out of ``owners-<id>`` is a takeover too.
+    workspace = await app.state.model.workspaces.get_workspace(workspace_id)
+    await stepup.ensure_step_up_unless_owner(request, user, workspace)
     group_name = f"{role}-{workspace_id}"
     group = await app.state.model.users.get_group_by_name(group_name)
     if group is None:
@@ -2021,8 +2032,11 @@ async def change_workspace_role(
 
     If ``role`` is set, removes the user from all other roles and adds
     them to the target role.  If ``role`` is null, removes the user
-    from all roles.
+    from all roles. A non-owner change carries the step-up gate
+    (#3196): assigning ``owners`` mints the ``*`` wildcard.
     """
+    workspace = await app.state.model.workspaces.get_workspace(workspace_id)
+    await stepup.ensure_step_up_unless_owner(request, user, workspace)
     target = await app.state.model.users.get_user_by_identifier(body.email)
     if target is None:
         raise HTTPException(status_code=404, detail="User not found")

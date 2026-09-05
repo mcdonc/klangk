@@ -116,16 +116,38 @@ def _exempt_managed_account(user: dict) -> bool:
     return not user.get("password_hash")
 
 
+async def _audit(request: Request, user: dict, event: str, **detail) -> None:
+    """Record one step-up audit event (best-effort, #3205 bus).
+
+    Step-up is a privilege gate on a live session — its refusals are
+    exactly the "session may be hijacked" signal operators review, so
+    every gate outcome (refusal, exemption, confirmation, failed
+    check) lands in ``audit_events`` like the login/identity events,
+    not just the server log.
+    """
+    await request.app.state.model.audit_events.record_best_effort(
+        event,
+        actor_id=user.get("id"),
+        actor_email=user.get("email"),
+        target_type="user",
+        target_id=user.get("id"),
+        detail=detail,
+        source_ip=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+    )
+
+
 async def ensure_step_up(
     request: Request, user: dict, jti: str | None
 ) -> None:
     """The imperative step-up gate.
 
-    No-op when the window is disabled; exempt (with an audit log) for
-    OIDC-managed accounts; otherwise raises the machine-readable 403
-    unless the calling session's stamp is fresh. Used directly by
-    handlers whose gate condition is only known inside the handler
-    (e.g. non-owner workspace deletion) and by :func:`require_step_up`.
+    No-op when the window is disabled; exempt (with an audit event)
+    for OIDC-managed accounts; otherwise raises the machine-readable
+    403 — audited as ``step_up.refused`` — unless the calling
+    session's stamp is fresh. Used directly by handlers whose gate
+    condition is only known inside the handler (e.g. non-owner
+    workspace writes) and by :func:`require_step_up`.
     """
     app = request.app
     window = window_minutes(app)
@@ -138,20 +160,31 @@ async def ensure_step_up(
             user.get("id"),
             user.get("email"),
         )
+        await _audit(request, user, "step_up.exempt", path=request.url.path)
         return
     if not await stepped_up_within(app, jti, window):
+        await _audit(
+            request,
+            user,
+            "step_up.refused",
+            path=request.url.path,
+            window_minutes=window,
+        )
         raise step_up_required_error()
 
 
-async def confirm_step_up_password(app, user: dict, password: str) -> None:
+async def confirm_step_up_password(
+    app, user: dict, password: str, request: Request
+) -> None:
     """Verify the step-up password with login-grade protections.
 
     Same lockout accounting as login (failures count toward
     ``KLANGKD_LOGIN_LOCKOUT_*`` on the account's email) and the same
     time-equalized verify, so the step-up endpoint is not a free
     password-guessing oracle for an attacker holding a hijacked
-    session. OIDC-managed accounts get the same clear 403 as the
-    change-password flow.
+    session — a failed check is audited as ``step_up.failed`` like
+    any other credential guess (#3205). OIDC-managed accounts get the
+    same clear 403 as the change-password flow.
     """
     if not user.get("password_hash"):
         raise HTTPException(
@@ -161,6 +194,7 @@ async def confirm_step_up_password(app, user: dict, password: str) -> None:
     email = user["email"]
     attempt_info = await app.state.auth.check_login_lockout(email)
     if not await auth.verify_login_password(user, password):
+        await _audit(request, user, "step_up.failed", path="step-up")
         await app.state.auth.record_login_failure(email, attempt_info)
         raise HTTPException(status_code=401, detail="Invalid credentials")
     await app.state.auth.clear_login_failures(email)

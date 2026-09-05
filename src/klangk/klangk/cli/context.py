@@ -128,12 +128,17 @@ def server_url() -> str:
 def client() -> KlangkClient:
     """The CLI's client, wired with the interactive step-up prompt.
 
-    #3196: when the server refuses a privileged admin write with the
+    #3196: when the server refuses a privileged write with the
     step-up 403, the user is asked for their password once, the client
     confirms it via POST /auth/step-up, and the request is retried.
-    Commands run from a terminal, so a rich password prompt is always
-    appropriate here (the TUI builds its own client without one — none
-    of its surfaces are step-up-gated).
+    Commands run from a terminal, so a rich password prompt is
+    appropriate here. The TUI builds its own client WITHOUT one: it
+    runs requests on worker threads where a synchronous modal prompt
+    cannot be raised, so a gated write from the TUI (only non-owner
+    workspace operations — delete, ACL rewrite, transfer, role
+    writes) surfaces the server's 403 detail instead; the interactive
+    CLI (`klangk admin ...`, `klangk rm`) prompts normally. A closed
+    stdin (scripts) cancels the prompt rather than tracebacking.
     """
 
     def prompt_password(failed: bool = False) -> str | None:
@@ -142,7 +147,10 @@ def client() -> KlangkClient:
             if not failed
             else "Password incorrect — try again"
         )
-        entered = Prompt.ask(message, password=True)
+        try:
+            entered = Prompt.ask(message, password=True)
+        except (EOFError, KeyboardInterrupt):
+            return None
         return entered or None
 
     return KlangkClient(

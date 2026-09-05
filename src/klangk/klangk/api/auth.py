@@ -743,7 +743,7 @@ async def step_up(
             status_code=400,
             detail="Step-up authentication is not enabled",
         )
-    await stepup.confirm_step_up_password(app, user, req.password)
+    await stepup.confirm_step_up_password(app, user, req.password, request)
     # get_current_user has validated the token, so the header is a
     # valid Bearer; the guarded JTI recovery keeps an exp-boundary race
     # failing closed (401) instead of 500.
@@ -751,6 +751,16 @@ async def step_up(
     stamped = await app.state.model.sessions.stamp_step_up(jti or "")
     if not stamped:
         raise HTTPException(status_code=401, detail="Session not found")
+    await app.state.model.audit_events.record_best_effort(
+        "step_up.confirmed",
+        actor_id=user["id"],
+        actor_email=user["email"],
+        target_type="user",
+        target_id=user["id"],
+        detail={"window_minutes": stepup.window_minutes(app)},
+        source_ip=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+    )
     logger.info(
         "step-up: password confirmed for user=%s email=%s",
         user["id"],

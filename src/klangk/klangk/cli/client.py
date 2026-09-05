@@ -366,31 +366,45 @@ class KlangkClient:
             "step_up_required"
         )
 
+    def _step_up_response(self, password: str) -> int:
+        """POST the confirmation; the response status code (200
+        confirmed, 401 wrong password, anything else — disabled
+        window, lockout, server error — means prompting cannot help)."""
+        resp = request_with_retry(
+            self.server_url,
+            "POST",
+            "/api/v1/auth/step-up",
+            headers=self._headers(),
+            json={"password": password},
+        )
+        return resp.status_code
+
+    def _prompt_and_confirm(self, failed: bool) -> int | None:
+        """One prompt + confirmation round: the POST status, or None
+        when the prompt was cancelled (stop prompting)."""
+        password = self.step_up_prompt(failed)
+        if not password:
+            return None
+        return self._step_up_response(password)
+
     def _confirm_step_up(self) -> bool:
         """Prompt for the password and confirm it with the server.
 
         Returns True when the server stamped the confirmation (the
-        caller should retry its request). Up to three prompts; a wrong
-        password re-prompts (with the failure flagged) instead of
-        dead-ending. A cancelled prompt, or a server with the window
-        disabled, leaves the original 403 to surface via the caller's
-        error handling.
+        caller should retry its request). A wrong password (401)
+        re-prompts — with the failure flagged — up to three times; any
+        other outcome (cancelled prompt, disabled window, lockout,
+        network failure) stops prompting so the original 403 surfaces
+        via the caller's error handling.
         """
         if self.step_up_prompt is None:
             return False
         for failed in (False, True, True):
-            password = self.step_up_prompt(failed)
-            if not password:
-                return False
-            resp = request_with_retry(
-                self.server_url,
-                "POST",
-                "/api/v1/auth/step-up",
-                headers=self._headers(),
-                json={"password": password},
-            )
-            if resp.status_code == 200:
+            outcome = self._prompt_and_confirm(failed)
+            if outcome == 200:
                 return True
+            if outcome != 401:
+                return False
         return False
 
     def _step_up_retry(

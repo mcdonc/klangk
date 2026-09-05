@@ -272,16 +272,24 @@ credential knowledge. Set `KLANGKD_STEP_UP_WINDOW_MINUTES` (default
   deletes — plus the **takeover-class writes on a workspace you do
   not own**: deletion, the raw ACL rewrite
   (`PUT /workspaces/{id}/acl`, which can grant `*` and Deny the
-  owner), and ownership transfer. Listings and other reads are never
-  gated, and writes to your **own** workspace (including deleting,
-  resharing, or transferring it) stay on the plain permission check —
-  self-service, bounded by the grants the owner or an admin chose.
+  owner), ownership transfer, and role assignments (the `owners`
+  role group carries the `*` wildcard, so minting an owner is the
+  same takeover). Listings and other reads are never gated, and
+  writes to your **own** workspace (including deleting, resharing,
+  transferring, or changing roles on it) stay on the plain permission
+  check — self-service, bounded by the grants the owner or an admin
+  chose.
 - A gated write is refused with a machine-readable
   `403 {"error": "step_up_required"}` until the session's owner
   confirms their password at `POST /api/v1/auth/step-up`. The
   confirmation endpoint has the same lockout accounting as login, so
   it is not a free password-guessing oracle for an attacker holding a
   hijacked session.
+- Every gate outcome lands in the structured **audit log**
+  (`audit_events`): `step_up.refused` (a gated write was refused —
+  the session-hijack signal this feature exists to surface),
+  `step_up.confirmed`, `step_up.failed` (a wrong password at the
+  confirmation endpoint), and `step_up.exempt`.
 - The confirmation is **per session**: it is stamped on the calling
   session's row, survives token refresh (a refresh is the same
   session continuing), dies with logout or revocation, and never
@@ -289,9 +297,9 @@ credential knowledge. Set `KLANGKD_STEP_UP_WINDOW_MINUTES` (default
   gated write passes; outside it the next one prompts again.
 - **OIDC-managed accounts** (no klangk password) cannot confirm a
   password; they are exempt from the gate, and each exempt pass is
-  audit-logged for operators reviewing SIEM output. Deployments that
-  arm the window and want full coverage should give their admins
-  local passwords.
+  recorded as a `step_up.exempt` audit event for operators reviewing
+  SIEM output. Deployments that arm the window and want full coverage
+  should give their admins local passwords.
 
 The clients handle the prompt automatically: the web client shows a
 password dialog (re-prompting on a wrong password, up to three

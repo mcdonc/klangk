@@ -555,11 +555,13 @@ class AuthService extends ChangeNotifier {
 
   /// Confirm [password] with the server (POST /auth/step-up, #3196).
   ///
-  /// Returns true when the confirmation was stamped on the session.
+  /// Returns the response status code — 200 when the confirmation
+  /// was stamped, 401 for a wrong password, null on a network error.
   /// Deliberately does NOT route through the auth* wrappers (no retry
-  /// recursion) and does not touch the token — the elevated state lives
-  /// on the server's session row, not in a client-held credential.
-  Future<bool> stepUp(String password) async {
+  /// recursion) and does not touch the token — the elevated state
+  /// lives on the server's session row, not in a client-held
+  /// credential.
+  Future<int?> stepUp(String password) async {
     try {
       final response = await _client.post(
         Uri.parse('$_baseUrl/api/v1/auth/step-up'),
@@ -569,9 +571,9 @@ class AuthService extends ChangeNotifier {
         },
         body: jsonEncode({'password': password}),
       );
-      return response.statusCode == 200;
+      return response.statusCode;
     } catch (_) {
-      return false;
+      return null;
     }
   }
 
@@ -592,7 +594,11 @@ class AuthService extends ChangeNotifier {
     for (var attempt = 0; attempt < 3; attempt++) {
       final password = await prompt(previousFailed: attempt > 0);
       if (password == null || password.isEmpty) return response;
-      if (await stepUp(password)) return await send();
+      final status = await stepUp(password);
+      if (status == 200) return await send();
+      // Only a wrong password (401) re-prompts; a disabled window,
+      // lockout, or network error surfaces the original 403.
+      if (status != 401) return response;
     }
     return response;
   }

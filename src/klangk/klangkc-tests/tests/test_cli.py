@@ -3302,6 +3302,35 @@ class TestClientStepUp:
         assert result.status_code == 403
         assert m.call_count == 1
 
+    def test_non_401_failure_stops_prompting(self):
+        """Only a wrong password (401) re-prompts: a disabled window
+        (400), lockout (429), or similar surfaces the original 403
+        after one prompt."""
+        client = KlangkClient("http://test:8995", "token")
+        prompts = []
+
+        def prompt(failed=False):
+            prompts.append(failed)
+            return "pw"
+
+        client.step_up_prompt = prompt
+        disabled = MagicMock()
+        disabled.status_code = 400
+
+        def fake_request(server, method, path, **kwargs):
+            return (
+                disabled
+                if path == "/api/v1/auth/step-up"
+                else self._step_up_resp()
+            )
+
+        with patch(
+            "klangk.cli.client.request_with_retry", side_effect=fake_request
+        ):
+            result = client.delete("/api/v1/users/some-id")
+        assert result.status_code == 403
+        assert prompts == [False]
+
 
 class TestWs4002Refresh:
     @pytest.mark.asyncio
@@ -7176,6 +7205,9 @@ class TestContextClientConstructor:
             assert client.step_up_prompt() == "the-password"
         ask.assert_called_once()
         with patch("rich.prompt.Prompt.ask", return_value=""):
+            assert client.step_up_prompt() is None
+        # A closed stdin (scripts) cancels instead of tracebacking.
+        with patch("rich.prompt.Prompt.ask", side_effect=EOFError):
             assert client.step_up_prompt() is None
         # A flagged retry changes the prompt message (#3196).
         with patch("rich.prompt.Prompt.ask", return_value="pw") as retry_ask:

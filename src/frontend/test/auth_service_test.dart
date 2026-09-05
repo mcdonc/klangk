@@ -1782,7 +1782,7 @@ void main() {
       final service = AuthService();
       await Future.delayed(Duration.zero);
 
-      expect(await service.stepUp('wrong'), isFalse);
+      expect(await service.stepUp('wrong'), 401);
     });
 
     test('stepUp reports success on 200', () async {
@@ -1794,7 +1794,49 @@ void main() {
       final service = AuthService();
       await Future.delayed(Duration.zero);
 
-      expect(await service.stepUp('the-password'), isTrue);
+      expect(await service.stepUp('the-password'), 200);
+    });
+
+    test('stepUp reports null on network error', () async {
+      testAuthHttpClientOverride = MockClient((request) async {
+        throw Exception('Network unreachable');
+      });
+
+      SharedPreferences.setMockInitialValues({'klangk_jwt': 'my-token'});
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+
+      expect(await service.stepUp('pw'), isNull);
+    });
+
+    test('a non-401 confirmation failure stops prompting', () async {
+      var stepUps = 0;
+      var prompts = 0;
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path == '/api/v1/auth/step-up') {
+          stepUps++;
+          // 400 = the window is disabled server-side; re-prompting
+          // for a password cannot fix that.
+          return http.Response(
+            jsonEncode({'detail': 'Step-up authentication is not enabled'}),
+            400,
+          );
+        }
+        return stepUpRequired();
+      });
+      AuthService.stepUpPrompt = ({bool previousFailed = false}) async {
+        prompts++;
+        return 'pw';
+      };
+
+      SharedPreferences.setMockInitialValues({'klangk_jwt': 'my-token'});
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+
+      final resp = await service.authDelete('/api/v1/users/u1');
+      expect(resp.statusCode, 403);
+      expect(prompts, 1);
+      expect(stepUps, 1);
     });
   });
 }

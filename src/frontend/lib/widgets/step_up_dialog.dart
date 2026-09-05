@@ -59,5 +59,5 @@ Future<String?> showStepUpPasswordDialog(
         ),
       ],
     ),
-  );
+  ).whenComplete(controller.dispose);
 }
