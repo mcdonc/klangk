@@ -304,7 +304,7 @@ class KlangkClient:
         self,
         server_url: str,
         token: str | None = None,
-        step_up_prompt: Callable[[], str | None] | None = None,
+        step_up_prompt: Callable[[bool], str | None] | None = None,
     ):
         self.server_url = server_url
         self.token = token
@@ -313,9 +313,11 @@ class KlangkClient:
         # with the server's machine-readable ``step_up_required`` 403,
         # this callback collects the user's password (or None to
         # cancel), the client confirms it via POST /auth/step-up, and
-        # the original request is retried once. Interactive commands
-        # wire a password prompt (cli.context.client); None (the
-        # default) surfaces the server's error detail unchanged.
+        # the original request is retried once. The callback receives
+        # whether the previous attempt failed so the prompt can say
+        # "incorrect password". Interactive commands wire a password
+        # prompt (cli.context.client); None (the default) surfaces the
+        # server's error detail unchanged.
         self.step_up_prompt = step_up_prompt
 
     # --- HTTP helpers ---
@@ -368,23 +370,28 @@ class KlangkClient:
         """Prompt for the password and confirm it with the server.
 
         Returns True when the server stamped the confirmation (the
-        caller should retry its request). A cancelled prompt, a wrong
-        password, or a server with the window disabled leaves the
-        original 403 to surface via the caller's error handling.
+        caller should retry its request). Up to three prompts; a wrong
+        password re-prompts (with the failure flagged) instead of
+        dead-ending. A cancelled prompt, or a server with the window
+        disabled, leaves the original 403 to surface via the caller's
+        error handling.
         """
         if self.step_up_prompt is None:
             return False
-        password = self.step_up_prompt()
-        if not password:
-            return False
-        resp = request_with_retry(
-            self.server_url,
-            "POST",
-            "/api/v1/auth/step-up",
-            headers=self._headers(),
-            json={"password": password},
-        )
-        return resp.status_code == 200
+        for failed in (False, True, True):
+            password = self.step_up_prompt(failed)
+            if not password:
+                return False
+            resp = request_with_retry(
+                self.server_url,
+                "POST",
+                "/api/v1/auth/step-up",
+                headers=self._headers(),
+                json={"password": password},
+            )
+            if resp.status_code == 200:
+                return True
+        return False
 
     def _step_up_retry(
         self, method: str, path: str, resp: httpx.Response, **kwargs

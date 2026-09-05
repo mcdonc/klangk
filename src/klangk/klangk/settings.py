@@ -919,9 +919,11 @@ class KlangkSettings(BaseSettings):
     privileged_session_idle_timeout_minutes: int = 10
     # Step-up (sudo-mode) reauthentication window (#3196): how many
     # minutes a password confirmation at ``POST /auth/step-up`` keeps
-    # the session cleared for privileged admin writes (user/group/
-    # invitation management, raw ACL rewrites, server schedules, and
-    # non-owner workspace deletion). Inside the window those writes
+    # the session cleared for privileged writes (user/group/invitation
+    # management, raw ACL rewrites, server schedules, volume deletes,
+    # and the takeover-class writes on a workspace you do not own:
+    # delete, raw ACL rewrite, ownership transfer). Inside the window
+    # those writes
     # pass; outside it they fail with a machine-readable 403
     # (``step_up_required``) until the password is confirmed again.
     # 0 (the default) disables the gate — admin writes then pass on

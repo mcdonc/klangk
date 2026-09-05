@@ -23,10 +23,11 @@ class AuthService extends ChangeNotifier {
   // is refused with the server's machine-readable step_up_required
   // 403, this callback collects the user's password (null = cancel);
   // the service confirms it via POST /auth/step-up and retries the
-  // original request once. Wired by the app shell to a password
-  // dialog over the root navigator; null (tests, before the shell
-  // runs) surfaces the 403 to the caller's own error handling.
-  static Future<String?> Function()? stepUpPrompt;
+  // original request once. `previousFailed` lets the prompt say
+  // "incorrect password" on retries. Wired by the app shell to a
+  // password dialog over the root navigator; null (tests, before the
+  // shell runs) surfaces the 403 to the caller's own error handling.
+  static Future<String?> Function({bool previousFailed})? stepUpPrompt;
 
   String? _token;
   bool _loading = false;
@@ -574,12 +575,13 @@ class AuthService extends ChangeNotifier {
     }
   }
 
-  /// Send a write request with one step-up retry (#3196).
+  /// Send a write request with step-up retry (#3196).
   ///
   /// On the step_up_required 403: prompt (when a prompt is wired),
-  /// confirm the password, and re-send the same request once. A
-  /// cancelled prompt, a wrong password, or a still-refused retry
-  /// returns the refusing response for the caller's error handling.
+  /// confirm the password, and re-send the same request — up to three
+  /// prompts, so a typo re-prompts (flagged) instead of dead-ending.
+  /// A cancelled prompt or an exhausted retry returns the refusing
+  /// response for the caller's error handling.
   Future<http.Response> _withStepUp(
     Future<http.Response> Function() send,
   ) async {
@@ -587,10 +589,12 @@ class AuthService extends ChangeNotifier {
     if (!_isStepUpRequired(response)) return response;
     final prompt = stepUpPrompt;
     if (prompt == null) return response;
-    final password = await prompt();
-    if (password == null || password.isEmpty) return response;
-    if (!await stepUp(password)) return response;
-    return await send();
+    for (var attempt = 0; attempt < 3; attempt++) {
+      final password = await prompt(previousFailed: attempt > 0);
+      if (password == null || password.isEmpty) return response;
+      if (await stepUp(password)) return await send();
+    }
+    return response;
   }
 
   Future<http.Response> authGet(String path) async {
