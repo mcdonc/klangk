@@ -1847,19 +1847,27 @@ class KlangkSettings(BaseSettings):
 
     def _warn_tls_issuer_usage(self, issuer: str, *, armed: bool) -> None:
         """Warn on inert TLS settings instead of silently ignoring them."""
-        if issuer != "internal":
-            return
-        if armed and self.acme_email:
+        if issuer == "internal" and armed:
+            self._warn_acme_email_with_internal()
+        self._warn_issuer_without_hostname()
+
+    def _warn_acme_email_with_internal(self) -> None:
+        """acme_email is meaningless under the internal issuer."""
+        if self.acme_email:
             logger.warning(
                 "KLANGKD_ACME_EMAIL has no effect with tls-issuer "
                 "'internal' (no ACME account is created); unset it."
             )
-        elif not armed:
-            logger.warning(
-                "KLANGKD_TLS_ISSUER is set but KLANGKD_TLS_HOSTNAME is "
-                "not — the issuer has nothing to apply to. Set "
-                "KLANGKD_TLS_HOSTNAME too, or remove KLANGKD_TLS_ISSUER."
-            )
+
+    def _warn_issuer_without_hostname(self) -> None:
+        """An explicitly set issuer with nothing to apply to."""
+        if self.tls_hostname or not self.tls_issuer:
+            return
+        logger.warning(
+            "KLANGKD_TLS_ISSUER is set but KLANGKD_TLS_HOSTNAME is "
+            "not — the issuer has nothing to apply to. Set "
+            "KLANGKD_TLS_HOSTNAME too, or remove KLANGKD_TLS_ISSUER."
+        )
 
     def _validate_acme_email(self) -> None:
         """Normalize + sanity-check an explicitly set ``acme_email``.

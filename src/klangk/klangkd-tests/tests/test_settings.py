@@ -2870,3 +2870,33 @@ class TestTlsIssuer:
             "KLANGKD_ACME_EMAIL has no effect" in r.message
             for r in caplog.records
         )
+
+
+class TestTlsIssuerInertAcme:
+    def test_explicit_acme_without_hostname_warns_too(self, caplog):
+        """Explicit tls-issuer 'acme' with no hostname is exactly as inert
+        as 'internal' — warn for both, silence only for unset (#3192
+        review)."""
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            KlangkSettings(
+                env={
+                    "KLANGKD_STATE_DIR": "/tmp/state",
+                    "KLANGKD_TLS_ISSUER": "acme",
+                }
+            )
+        assert any(
+            "KLANGKD_TLS_ISSUER is set but KLANGKD_TLS_HOSTNAME is not"
+            in r.message
+            for r in caplog.records
+        )
+
+    def test_unset_issuer_without_hostname_is_silent(self, caplog):
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            KlangkSettings(env={"KLANGKD_STATE_DIR": "/tmp/state"})
+        assert not any(
+            "KLANGKD_TLS_ISSUER" in r.message for r in caplog.records
+        )

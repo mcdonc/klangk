@@ -519,10 +519,19 @@ def check_podman_machine() -> CheckResult:
     )
 
 
-# Ports automatic TLS needs bindable when armed (#3192): 80 for the ACME
-# HTTP-01 challenge + the HTTP→HTTPS redirect, 443 for the canonical HTTPS
-# listener / TLS-ALPN challenge.
+# Port 80 is always part of an armed ACME config (HTTP-01 challenge + the
+# HTTP→HTTPS redirect). Port 443 only is when the browser listener actually
+# uses it: with KLANGKD_PORT=8443 caddy binds :80 and :8443 — never 443 —
+# so a 443 probe there is a false positive against some other service
+# (#3192 review).
 _AUTO_HTTPS_PORTS = (80, 443)
+
+
+def _armed_ports(browser_port: str | None) -> tuple[int, ...]:
+    """The ACME ports this deployment actually binds."""
+    if browser_port in (None, "", "443"):
+        return _AUTO_HTTPS_PORTS
+    return (80,)
 
 
 def port_bind_error(port: int) -> str | None:
@@ -536,7 +545,9 @@ def port_bind_error(port: int) -> str | None:
     the port still collides — only a listener bound to a *different
     specific* interface on the same port escapes the probe, a shape no
     klangkd deployment creates. IPv6 is not probed (Caddy binds it
-    alongside; the IPv4 result is the signal).
+    alongside; the IPv4 result is the signal). No ``SO_REUSEADDR``: a
+    lingering TIME_WAIT socket on the port reads as in-use — re-run
+    doctor after a few seconds before trusting a busy-port failure.
     """
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
@@ -595,11 +606,11 @@ def _auto_https_failure_result(
     )
 
 
-def _unbindable_acme_ports() -> list[str]:
+def _unbindable_acme_ports(browser_port: str | None) -> list[str]:
     """The armed ACME ports that cannot be bound (``"port: reason"``
     strings; empty when every port binds)."""
     failures = []
-    for port in _AUTO_HTTPS_PORTS:
+    for port in _armed_ports(browser_port):
         reason = port_bind_error(port)
         if reason is not None:
             failures.append(reason)
@@ -607,7 +618,9 @@ def _unbindable_acme_ports() -> list[str]:
 
 
 def check_auto_https_ports(
-    hostname: str | None, issuer: str | None = None
+    hostname: str | None,
+    issuer: str | None = None,
+    browser_port: str | None = None,
 ) -> CheckResult | None:
     """Automatic-TLS pre-flight (#3192): ports 80/443 must be bindable.
 
@@ -623,7 +636,7 @@ def check_auto_https_ports(
     """
     if not hostname or _internal_tls_issuer(issuer):
         return None
-    failures = _unbindable_acme_ports()
+    failures = _unbindable_acme_ports(browser_port)
     if not failures:
         return _auto_https_ok_result(hostname)
     return _auto_https_failure_result(hostname, failures)
@@ -747,6 +760,7 @@ def run_doctor(*, verbose: bool = False) -> DoctorReport:
     tls_result = check_auto_https_ports(
         os.environ.get("KLANGKD_TLS_HOSTNAME"),
         issuer=os.environ.get("KLANGKD_TLS_ISSUER"),
+        browser_port=os.environ.get("KLANGKD_PORT"),
     )
     if tls_result is not None:
         report.add(tls_result)

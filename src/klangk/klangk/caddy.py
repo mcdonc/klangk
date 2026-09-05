@@ -1078,6 +1078,31 @@ class CaddyWatchdog:
         # (_KLANGKD_DISABLE_PROXY) — the flag is just never applied.
         self._pending_reload = True
 
+    def _log_reload_failure(self, exc: Exception) -> None:
+        """A failed SIGHUP reload: ERROR while armed, WARNING otherwise.
+
+        Any failed reload with the live settings armed — refused at render
+        time (``AutoHttpsConfigError``) or rejected by caddy at
+        ``POST /load`` — leaves the same mismatch: settings say TLS is on
+        while caddy keeps serving the last-known-good (plain-HTTP) config.
+        That must be louder than a generic warning; a failed DISARM only
+        keeps more TLS than configured, so it stays a warning (#3192).
+        """
+        if isinstance(exc, AutoHttpsConfigError) or (
+            self._renderer.auto_https_armed
+        ):
+            logger.error(
+                "SIGHUP: automatic TLS could not be applied — the running "
+                "config is unchanged and the browser listener is still "
+                "serving the previous scheme. Fix and reload again: %s",
+                exc,
+            )
+        else:
+            logger.warning(
+                "caddy SIGHUP reload failed (running config unchanged): %s",
+                exc,
+            )
+
     async def apply_pending_reload(self) -> None:
         """Push the re-rendered Caddyfile if reconfigure() flagged one.
 
@@ -1098,22 +1123,8 @@ class CaddyWatchdog:
         try:
             await self.load_config()
             logger.info("caddy config reloaded via admin API (SIGHUP)")
-        except AutoHttpsConfigError as exc:
-            # An armed-but-unloadable config is a refused security arming,
-            # not a routine broken reload: the live settings say TLS is on
-            # while Caddy keeps serving the last-known-good (plain-HTTP)
-            # config. That must be louder than a generic warning (#3192).
-            logger.error(
-                "SIGHUP: automatic TLS could not be applied — the running "
-                "config is unchanged and the browser listener is still "
-                "serving the previous scheme. Fix and reload again: %s",
-                exc,
-            )
         except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "caddy SIGHUP reload failed (running config unchanged): %s",
-                exc,
-            )
+            self._log_reload_failure(exc)
 
     # -- paths / config ----------------------------------------------------
 
@@ -1259,7 +1270,7 @@ class CaddyWatchdog:
             if s.tls_hostname:
                 flavor = (
                     "internal TLS"
-                    if (s.tls_issuer or "").strip() == "internal"
+                    if self._renderer._internal_tls()
                     else "automatic TLS"
                 )
                 scheme = f"https ({flavor}, {s.tls_hostname})"

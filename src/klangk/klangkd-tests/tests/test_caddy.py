@@ -1722,6 +1722,65 @@ class TestAutoHttpsLogs:
         assert "[tls.obtain]" in msg
 
     @pytest.mark.asyncio
+    async def test_apply_pending_reload_arms_but_load_fails_error(
+        self, caplog
+    ):
+        """Armed settings + a load-time failure (caddy rejects the config,
+        e.g. :80 already held) is the same mismatch as a render-time
+        refusal — ERROR, not a generic warning (#3192 review)."""
+        import logging
+
+        wd = _wd(make_settings(_armed_env()))
+        wd._task = object()  # started
+        wd.reconfigure(
+            types.SimpleNamespace(
+                state=types.SimpleNamespace(
+                    settings=make_settings(_armed_env())
+                )
+            )
+        )
+        wd.load_config = AsyncMock(
+            side_effect=httpx.HTTPStatusError(
+                "502",
+                request=httpx.Request("POST", "http://x"),
+                response=httpx.Response(502),
+            )
+        )
+        with caplog.at_level(logging.ERROR):
+            await wd.apply_pending_reload()  # must not raise
+        assert any(
+            "automatic TLS could not be applied" in r.message
+            for r in caplog.records
+        )
+
+    @pytest.mark.asyncio
+    async def test_apply_pending_reload_disarm_failure_stays_warning(
+        self, caplog
+    ):
+        """A failed DISARM only keeps MORE TLS than configured — warning."""
+        import logging
+
+        wd = _wd(make_settings({"KLANGKD_PORT": "8997"}))
+        wd._task = object()
+        wd.reconfigure(
+            types.SimpleNamespace(
+                state=types.SimpleNamespace(
+                    settings=make_settings({"KLANGKD_PORT": "8997"})
+                )
+            )
+        )
+        wd.load_config = AsyncMock(side_effect=httpx.ConnectError("down"))
+        with caplog.at_level(logging.WARNING, logger="klangk.caddy"):
+            await wd.apply_pending_reload()  # must not raise
+        assert any(
+            "caddy SIGHUP reload failed" in r.message for r in caplog.records
+        )
+        assert not any(
+            "automatic TLS could not be applied" in r.message
+            for r in caplog.records
+        )
+
+    @pytest.mark.asyncio
     async def test_apply_pending_reload_swallows_arm_on_old_caddy(
         self, caplog
     ):

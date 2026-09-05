@@ -841,8 +841,8 @@ class TestPortBindError:
         import socket
 
         holder = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        # Loopback-specific bind: the wildcard probe in port_bind_error
-        # must still collide with it on the same port.
+        # Same loopback interface the probe binds; a busy port must
+        # collide regardless of which side holds it.
         holder.bind(("127.0.0.1", 0))
         holder.listen(1)
         port = holder.getsockname()[1]
@@ -898,3 +898,47 @@ class TestCheckAutoHttpsPortsIssuer:
             report = run_doctor()
         names = [r.name for r in report.results]
         assert "auto-https ports" not in names
+
+
+class TestCheckAutoHttpsPortsCustomPort:
+    """443 is probed only when the armed listener actually uses it
+    (#3192 review): with KLANGKD_PORT=8443 caddy binds :80 + :8443 and
+    never 443, so a 443 conflict is some other service's."""
+
+    def test_custom_port_skips_443_probe(self):
+        probed = []
+
+        def fake(port):
+            probed.append(port)
+            return None
+
+        with patch("klangk.doctor.port_bind_error", side_effect=fake):
+            r = check_auto_https_ports(
+                "klangk.example.com", browser_port="8443"
+            )
+        assert r is not None and r.ok
+        assert probed == [80]
+
+    def test_port_443_probes_443(self):
+        probed = []
+
+        def fake(port):
+            probed.append(port)
+            return None
+
+        with patch("klangk.doctor.port_bind_error", side_effect=fake):
+            check_auto_https_ports("klangk.example.com", browser_port="443")
+        assert probed == [80, 443]
+
+    def test_unknown_port_probes_both(self):
+        """Env-only detection (no KLANGKD_PORT exported): assume the
+        canonical shape and probe both."""
+        probed = []
+
+        def fake(port):
+            probed.append(port)
+            return None
+
+        with patch("klangk.doctor.port_bind_error", side_effect=fake):
+            check_auto_https_ports("klangk.example.com")
+        assert probed == [80, 443]

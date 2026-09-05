@@ -9,11 +9,12 @@ would produce, without a CA) and disables the HTTP→HTTPS redirect
 (whose :80 bind unprivileged CI runners cannot make). The rendered
 config is therefore the untouched production output.
 
-The one test-only substitution left is in the SIGHUP test's ACME-mode
-config, which injects ``auto_https disable_redirects`` (the redirect's
-:80 bind again) so the ACME automation policy — the thing under test
-— loads on unprivileged runners; issuance itself fails offline,
-harmlessly.
+The harness also makes three small substitutions around the production
+machinery: a TCP test upstream for the backend UDS dial, ``_task``
+pre-set so reloads are not short-circuited (no ``_watch`` loop runs),
+and — in the SIGHUP test's ACME-mode config only — an injected
+``auto_https disable_redirects`` so the ACME automation policy loads on
+unprivileged runners (issuance itself fails offline, harmlessly).
 
 What is covered:
 
@@ -194,8 +195,11 @@ class _CaddyChild:
                 "--adapter",
                 "caddyfile",
             ],
+            # DEVNULL: nothing drains the pipe in this harness, and the
+            # ACME-mode reload test makes caddy emit issuance-failure
+            # noise — a full pipe would wedge the child.
             stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
         )
         if not _wait_admin_socket(self.admin_socket):
             self.stop()
@@ -285,7 +289,7 @@ def _start_ws_echo(port: int):
     import websockets
 
     loop = asyncio.new_event_loop()
-    state: dict = {}
+    state: dict = {"loop": loop}
 
     async def _handler(ws):
         async for msg in ws:
@@ -302,7 +306,8 @@ def _start_ws_echo(port: int):
         loop.run_until_complete(_setup())
         loop.run_forever()
 
-    threading.Thread(target=_runner, daemon=True).start()
+    state["thread"] = threading.Thread(target=_runner, daemon=True)
+    state["thread"].start()
     # Wait for the listener to bind (server object + sockets appear once
     # _setup ran) — no TCP probe, which would log a handshake error.
     deadline = time.time() + 3

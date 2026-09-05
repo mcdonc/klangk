@@ -161,9 +161,12 @@ the outer proxy to verify klangkd's certificate against the internal
 root CA. Fetch the root certificate from the admin endpoint (owner-only
 Unix socket):
 
+The endpoint answers with a JSON object; extract the embedded root
+certificate (PEM) from its `root_certificate` field:
+
 ```console
 sudo -u <klangkd-user> curl --unix-socket <state_dir>/caddy-admin.sock \
-  http://localhost/pki/ca/local > klangkd-root.crt
+  http://localhost/pki/ca/local | jq -r .root_certificate > klangkd-root.crt
 ```
 
 Then, for an nginx outer proxy:
