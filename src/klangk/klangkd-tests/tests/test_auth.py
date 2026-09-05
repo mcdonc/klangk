@@ -2547,6 +2547,8 @@ class TestChangeExpiredPassword:
             user["email"]
         )
         assert not a.password_expired(row)
+
+
 class TestSessionIdleTimeout:
     """#3151: idle sessions terminate at the refresh seam, with a
     separately configurable privileged (admins-group) window and
@@ -2976,3 +2978,494 @@ class TestSessionIdleReview3151:
         first = await a.app.state.model.sessions.get_last_seen(jti)
         await a.record_ws_session_activity(sid)  # throttled: no write
         assert await a.app.state.model.sessions.get_last_seen(jti) == first
+
+
+class TestWorkstationBindingHelpers:
+    """The pure predicates behind session binding (#3194)."""
+
+    @pytest.mark.parametrize(
+        "recorded,presented,expected",
+        [
+            ("198.51.100.7", "198.51.100.7", True),  # byte-equal
+            ("198.51.100.7", "203.0.113.9", False),  # different IPv4
+            (
+                "2001:db8:1:2::10",
+                "2001:db8:1:2::20",
+                True,
+            ),  # same /64, rotating host
+            ("2001:db8:1:2::", "2001:db8:1:3::", False),  # different /64
+            ("198.51.100.7", "2001:db8::1", False),  # v4 vs v6
+            ("2001:db8::1", "198.51.100.7", False),  # v6 vs v4
+            ("unknown-host", "unknown-host", True),  # equal unparseable
+            ("unknown-host", "other-host", False),  # differing unparseable
+            ("198.51.100.7", "not-an-ip", False),  # one unparseable
+            (
+                "::ffff:198.51.100.7",
+                "::ffff:203.0.113.9",
+                False,
+            ),  # mapped v4s are different hosts, not one ::/64
+            (
+                "::ffff:198.51.100.7",
+                "198.51.100.7",
+                True,
+            ),  # mapped and plain forms of the same host
+        ],
+    )
+    def test_same_workstation_ip(self, recorded, presented, expected):
+        assert auth.same_workstation_ip(recorded, presented) is expected
+
+    @pytest.mark.parametrize(
+        "recorded,presented,strict,expected",
+        [
+            # Unknown on either side is never a mismatch (fail-open).
+            ((None, "UA"), ("203.0.113.9", "UA"), False, False),
+            (("198.51.100.7", "UA"), (None, "UA"), False, False),
+            # IP mismatch is a mismatch in every armed mode.
+            (
+                ("198.51.100.7", "UA"),
+                ("203.0.113.9", "UA"),
+                False,
+                True,
+            ),
+            (("198.51.100.7", "UA"), ("203.0.113.9", "UA"), True, True),
+            # ips agree: user agent only judged in strict mode.
+            (
+                ("198.51.100.7", "UA"),
+                ("198.51.100.7", "Other-UA"),
+                False,
+                False,
+            ),
+            (
+                ("198.51.100.7", "UA"),
+                ("198.51.100.7", "Other-UA"),
+                True,
+                True,
+            ),
+            # Unknown user agent never judges, even in strict mode.
+            ((None, None), ("198.51.100.7", "UA"), True, False),
+            (
+                ("198.51.100.7", None),
+                ("198.51.100.7", "UA"),
+                True,
+                False,
+            ),
+            (
+                ("198.51.100.7", "UA"),
+                ("198.51.100.7", None),
+                True,
+                False,
+            ),
+            # Full agreement.
+            (
+                ("198.51.100.7", "UA"),
+                ("198.51.100.7", "UA"),
+                True,
+                False,
+            ),
+        ],
+    )
+    def test_workstation_mismatch(self, recorded, presented, strict, expected):
+        assert (
+            auth.workstation_mismatch(recorded, presented, strict) is expected
+        )
+
+
+class TestSessionBinding:
+    """Auth-side replay protection: reject_replayed_session (#3194).
+
+    A session issued to one workstation, presented from another, is
+    rejected AND revoked (blocklist + row delete) so the stolen token
+    cannot be retried; every unknown value fails open.
+    """
+
+    HOME = ("198.51.100.7", "klangk-cli/1.0")
+    AWAY = ("203.0.113.9", "klangk-cli/1.0")
+    _UNSET = object()
+
+    async def _issued(self, mode, source_ip=_UNSET, user_agent=_UNSET):
+        """An Auth in *mode* with a token issued to HOME (or the given
+        overrides — pass ``None`` explicitly to record an unknown)."""
+        a = _auth({"KLANGKD_SESSION_WORKSTATION_BINDING": mode})
+        user = await a.app.state.model.users.create_user(
+            "bound@example.com", "pw-hash", verified=True
+        )
+        token = await a.issue_token(
+            user["id"],
+            user["email"],
+            source_ip=self.HOME[0] if source_ip is self._UNSET else source_ip,
+            user_agent=(
+                self.HOME[1] if user_agent is self._UNSET else user_agent
+            ),
+        )
+        return a, token
+
+    async def test_off_mode_never_rejects(self, user, app_state):
+        a, token = await self._issued("off")
+        payload = a.decode_token(token)
+        assert (
+            await a.reject_replayed_session(
+                payload["jti"], payload["exp"], workstation=self.AWAY
+            )
+            is False
+        )
+        assert not await app_state.state.model.tokens.is_token_blocklisted(
+            payload["jti"]
+        )
+
+    async def test_ip_mode_same_workstation_passes(self, user, app_state):
+        a, token = await self._issued("ip")
+        payload = a.decode_token(token)
+        assert (
+            await a.reject_replayed_session(
+                payload["jti"], payload["exp"], workstation=self.HOME
+            )
+            is False
+        )
+
+    async def test_ip_mode_same_ipv6_prefix_passes(self, user, app_state):
+        a, token = await self._issued(
+            "ip", source_ip="2001:db8:1:2::10", user_agent="UA"
+        )
+        payload = a.decode_token(token)
+        assert (
+            await a.reject_replayed_session(
+                payload["jti"],
+                payload["exp"],
+                workstation=("2001:db8:1:2::99", "UA"),
+            )
+            is False
+        )
+
+    async def test_ip_mode_mismatch_rejects_and_revokes(
+        self, user, app_state, caplog
+    ):
+        import logging
+
+        a, token = await self._issued("ip")
+        payload = a.decode_token(token)
+        jti = payload["jti"]
+        with caplog.at_level(logging.INFO, logger="klangk.auth"):
+            assert (
+                await a.reject_replayed_session(
+                    jti, payload["exp"], workstation=self.AWAY
+                )
+                is True
+            )
+        assert "session binding violation" in caplog.text
+        # The structured audit stream (#3205) carries the same signal:
+        # a session.revoke row naming the bound workstation, with the
+        # presenting one in the row's source_ip.
+        events = await app_state.state.model.audit_events.list_events(
+            event="session.revoke"
+        )
+        binding_rows = [
+            e
+            for e in events
+            if e["detail"].get("reason") == "workstation-binding"
+        ]
+        assert len(binding_rows) == 1
+        assert binding_rows[0]["detail"]["bound_ip"] == self.HOME[0]
+        assert binding_rows[0]["source_ip"] == self.AWAY[0]
+        # The direct call passed no user_id — the row has no target.
+        assert binding_rows[0]["target_id"] is None
+        # The session is fully revoked: blocklisted, row gone.
+        assert await app_state.state.model.tokens.is_token_blocklisted(jti)
+        assert (
+            await app_state.state.model.sessions.get_workstation(jti) is None
+        )
+        # ...and a retry of the same stolen token now reads as revoked.
+        assert await a.get_user_from_token(token) is None
+
+    async def test_strict_mode_user_agent_mismatch_rejects(
+        self, user, app_state
+    ):
+        a, token = await self._issued("strict")
+        payload = a.decode_token(token)
+        assert (
+            await a.reject_replayed_session(
+                payload["jti"],
+                payload["exp"],
+                workstation=("198.51.100.7", "attacker-agent"),
+            )
+            is True
+        )
+        assert await app_state.state.model.tokens.is_token_blocklisted(
+            payload["jti"]
+        )
+
+    async def test_strict_mode_unknown_recorded_agent_fails_open(
+        self, user, app_state
+    ):
+        a, token = await self._issued(
+            "strict", source_ip="198.51.100.7", user_agent=None
+        )
+        payload = a.decode_token(token)
+        assert (
+            await a.reject_replayed_session(
+                payload["jti"],
+                payload["exp"],
+                workstation=("198.51.100.7", "any-agent"),
+            )
+            is False
+        )
+
+    async def test_no_session_row_fails_open(self, user, app_state):
+        """A pre-#2585 token (no registry row) cannot be judged."""
+        a = _auth({"KLANGKD_SESSION_WORKSTATION_BINDING": "strict"})
+        token = a.create_token(user["id"], user["email"])
+        payload = a.decode_token(token)
+        assert (
+            await a.reject_replayed_session(
+                payload["jti"], payload["exp"], workstation=self.AWAY
+            )
+            is False
+        )
+
+    async def test_unknown_recorded_ip_fails_open(self, user, app_state):
+        a, token = await self._issued("ip", source_ip=None)
+        payload = a.decode_token(token)
+        assert (
+            await a.reject_replayed_session(
+                payload["jti"], payload["exp"], workstation=self.AWAY
+            )
+            is False
+        )
+
+    async def test_missing_exp_rejects_without_revocation(
+        self, user, app_state
+    ):
+        """A token with no exp claim still rejects, without the
+        (impossible) blocklist write."""
+        a = _auth({"KLANGKD_SESSION_WORKSTATION_BINDING": "ip"})
+        await app_state.state.model.sessions.record_session(
+            user["id"],
+            "jti-noexp",
+            "2099-01-01T00:00:00+00:00",
+            source_ip=self.HOME[0],
+            user_agent=self.HOME[1],
+        )
+        assert (
+            await a.reject_replayed_session(
+                "jti-noexp", None, workstation=self.AWAY
+            )
+            is True
+        )
+        assert not await app_state.state.model.tokens.is_token_blocklisted(
+            "jti-noexp"
+        )
+
+    async def test_binding_reads_settings_live(self, user, app_state):
+        """A SIGHUP-style settings swap arms binding without a restart."""
+        a, token = await self._issued("off")
+        payload = a.decode_token(token)
+        a.app.state.settings = make_settings(
+            {"KLANGKD_SESSION_WORKSTATION_BINDING": "ip"}
+        )
+        assert (
+            await a.reject_replayed_session(
+                payload["jti"], payload["exp"], workstation=self.AWAY
+            )
+            is True
+        )
+
+    async def test_requestless_call_fails_open(self, user, app_state):
+        """A caller presenting neither a request nor a resolved
+        workstation cannot be judged — unknown, fail-open."""
+        a, token = await self._issued("ip")
+        payload = a.decode_token(token)
+        assert (
+            await a.reject_replayed_session(payload["jti"], payload["exp"])
+            is False
+        )
+
+
+class TestSessionBindingHTTP:
+    """Binding enforcement through the HTTP choke points (#3194):
+    get_current_user, get_current_user_optional, refresh_token."""
+
+    HOME_IP = "198.51.100.7"
+
+    def _bound_req(self, mode, ip=None, user_agent="klangk-cli/1.0"):
+        """A request-like on a binding-armed Auth, from (ip, user_agent)."""
+        from klangk.util import Util
+
+        a = _auth({"KLANGKD_SESSION_WORKSTATION_BINDING": mode})
+        a.app.state.auth = a
+        a.app.state.util = Util(a.app)
+        return _types.SimpleNamespace(
+            app=a.app,
+            headers={"user-agent": user_agent},
+            client=_types.SimpleNamespace(host=ip) if ip else None,
+        )
+
+    async def _home_token(self, mode):
+        a = _auth({"KLANGKD_SESSION_WORKSTATION_BINDING": mode})
+        user = await a.app.state.model.users.create_user(
+            "httpbound@example.com", "pw-hash", verified=True
+        )
+        token = await a.issue_token(
+            user["id"],
+            user["email"],
+            source_ip=self.HOME_IP,
+            user_agent="klangk-cli/1.0",
+        )
+        return a, token
+
+    @staticmethod
+    def _creds(token):
+        return HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+
+    async def test_get_current_user_rejects_foreign_workstation(
+        self, user, app_state
+    ):
+        a, token = await self._home_token("ip")
+        req = self._bound_req("ip", ip="203.0.113.9")
+        with pytest.raises(HTTPException) as exc_info:
+            await auth.get_current_user(req, self._creds(token))
+        assert exc_info.value.status_code == 401
+        # Revoked: a retry (from anywhere) now reads as revoked.
+        jti = a.decode_token(token)["jti"]
+        assert await app_state.state.model.tokens.is_token_blocklisted(jti)
+        # The structured session.revoke row targets the session's
+        # owner (the deps pass the token's sub, #3205).
+        events = await app_state.state.model.audit_events.list_events(
+            event="session.revoke"
+        )
+        binding_rows = [
+            e
+            for e in events
+            if e["detail"].get("reason") == "workstation-binding"
+        ]
+        assert len(binding_rows) == 1
+        assert binding_rows[0]["target_id"] == a.decode_token(token)["sub"]
+
+    async def test_get_current_user_accepts_home_workstation(
+        self, user, app_state
+    ):
+        a, token = await self._home_token("ip")
+        req = self._bound_req("ip", ip=self.HOME_IP)
+        result = await auth.get_current_user(req, self._creds(token))
+        assert result["email"] == "httpbound@example.com"
+
+    async def test_get_current_user_optional_degrades_to_anonymous(
+        self, user, app_state
+    ):
+        a, token = await self._home_token("ip")
+        req = self._bound_req("ip", ip="203.0.113.9")
+        assert (
+            await auth.get_current_user_optional(req, self._creds(token))
+            is None
+        )
+        jti = a.decode_token(token)["jti"]
+        assert await app_state.state.model.tokens.is_token_blocklisted(jti)
+
+    async def test_unresolvable_client_fails_open(self, user, app_state):
+        """A request with no client address cannot be judged."""
+        a, token = await self._home_token("ip")
+        req = self._bound_req("ip", ip=None)
+        assert (
+            await auth.get_current_user_optional(req, self._creds(token))
+            is not None
+        )
+
+    async def test_refresh_rejects_foreign_workstation(self, user, app_state):
+        a, token = await self._home_token("ip")
+        with pytest.raises(HTTPException) as exc_info:
+            await a.refresh_token(token, ("203.0.113.9", "klangk-cli/1.0"))
+        assert exc_info.value.status_code == 401
+        assert "different workstation" in exc_info.value.detail
+        jti = a.decode_token(token)["jti"]
+        assert await app_state.state.model.tokens.is_token_blocklisted(jti)
+
+    async def test_refresh_rotates_from_home_workstation(
+        self, user, app_state
+    ):
+        a, token = await self._home_token("ip")
+        refreshed = await a.refresh_token(
+            token, (self.HOME_IP, "klangk-cli/1.0")
+        )
+        assert refreshed.access_token != token
+        # The replacement inherits the recorded workstation (the row is
+        # rekeyed in place), so it stays bound after rotation.
+        new_jti = a.decode_token(refreshed.access_token)["jti"]
+        assert (
+            await app_state.state.model.sessions.get_workstation(new_jti)
+        ) == (self.HOME_IP, "klangk-cli/1.0")
+
+
+class TestSessionBindingCachedRefresh:
+    """The idempotent cached-refresh handover must not disclose the
+    live replacement to a wrong-workstation caller (#3194 review).
+
+    After a legitimate refresh, the old token's row is rekeyed onto
+    the new JTI, so replaying the OLD token from a foreign network
+    skips the row-based check — the cached-replacement return is the
+    seam that must re-check via the new JTI's row.
+    """
+
+    HOME = ("198.51.100.7", "klangk-cli/1.0")
+    AWAY = ("203.0.113.9", "klangk-cli/1.0")
+
+    async def _refreshed_pair(self):
+        """(auth, old_token, new_token) after one HOME refresh."""
+        a = _auth({"KLANGKD_SESSION_WORKSTATION_BINDING": "ip"})
+        user = await a.app.state.model.users.create_user(
+            "cached@example.com", "pw-hash", verified=True
+        )
+        old = await a.issue_token(
+            user["id"],
+            user["email"],
+            source_ip=self.HOME[0],
+            user_agent=self.HOME[1],
+        )
+        result = await a.refresh_token(old, self.HOME)
+        return a, old, result.access_token
+
+    async def test_replayed_old_token_from_away_is_refused(
+        self, user, app_state, caplog
+    ):
+        import logging
+
+        a, old, new = await self._refreshed_pair()
+        new_jti = a.decode_token(new)["jti"]
+        with caplog.at_level(logging.INFO, logger="klangk.auth"):
+            with pytest.raises(HTTPException) as exc_info:
+                await a.refresh_token(old, self.AWAY)
+        assert exc_info.value.status_code == 401
+        assert "different workstation" in exc_info.value.detail
+        # The audit names the violation and the live replacement dies.
+        assert "session binding violation" in caplog.text
+        assert await app_state.state.model.tokens.is_token_blocklisted(new_jti)
+
+    async def test_replayed_old_token_from_home_keeps_idempotency(
+        self, user, app_state
+    ):
+        """The legitimate client retrying its refresh with the old
+        token still gets the cached replacement."""
+        a, old, new = await self._refreshed_pair()
+        again = await a.refresh_token(old, self.HOME)
+        assert again.access_token == new
+        assert not await app_state.state.model.tokens.is_token_blocklisted(
+            a.decode_token(new)["jti"]
+        )
+
+    async def test_expired_old_token_from_away_is_refused(
+        self, user, app_state
+    ):
+        """The expired-token arm of the cached handover carries the
+        same gate: an expired, already-refreshed token replayed from a
+        foreign workstation 401s instead of disclosing the cached
+        replacement."""
+        a, old, new = await self._refreshed_pair()
+        new_jti = a.decode_token(new)["jti"]
+        # Force the old token read as expired: re-sign an equivalent
+        # payload with a past exp (same jti, so the cached row hits).
+        payload = a.decode_token(old, allow_expired=True)
+        payload["exp"] = (
+            datetime.now(timezone.utc) - timedelta(hours=1)
+        ).timestamp()
+        expired_old = jwt.encode(payload, a.secret, algorithm=a.algorithm)
+        with pytest.raises(HTTPException) as exc_info:
+            await a.refresh_token(expired_old, self.AWAY)
+        assert exc_info.value.status_code == 401
+        assert await app_state.state.model.tokens.is_token_blocklisted(new_jti)

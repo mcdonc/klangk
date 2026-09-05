@@ -1655,6 +1655,38 @@ class TestUserSessions:
         rows = await sessions.list_sessions(uid)
         assert [r["jti"] for r in rows] == ["jti-new"]
 
+    async def test_get_workstation(self, db, app_state):
+        """The recorded (source_ip, user_agent) for a session row, kept
+        across refresh rekeying so binding survives rotation (#3194)."""
+        sessions = app_state.state.model.sessions
+        uid = await self._make_user(app_state, "one@example.com")
+        assert await sessions.get_workstation("jti-none") is None
+        await sessions.record_session(
+            uid,
+            "jti-a",
+            "2099-01-01T00:00:00+00:00",
+            source_ip="198.51.100.7",
+            user_agent="klangk-cli/1.0",
+        )
+        await sessions.record_session(
+            uid, "jti-b", "2099-01-01T00:00:00+00:00"
+        )
+        assert await sessions.get_workstation("jti-a") == (
+            "198.51.100.7",
+            "klangk-cli/1.0",
+        )
+        # Issuance without request info records unknown values.
+        assert await sessions.get_workstation("jti-b") == (None, None)
+        # Refresh rekeying carries the recorded workstation onto the new JTI.
+        await sessions.replace_session(
+            "jti-a", uid, "jti-a2", "2099-06-01T00:00:00+00:00"
+        )
+        assert await sessions.get_workstation("jti-a2") == (
+            "198.51.100.7",
+            "klangk-cli/1.0",
+        )
+        assert await sessions.get_workstation("jti-a") is None
+
     async def test_replace_session_preserves_position(self, db, app_state):
         """UPDATE-in-place keeps the original row (created_at + rowid),
         so a refreshed session stays in its eviction-order slot — the

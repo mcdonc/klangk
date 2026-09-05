@@ -55,6 +55,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 from jose import ExpiredSignatureError, JWTError
 
 from .safe_websocket import SafeWebSocket, SlowClientError
+from .dispatch import ws_workstation
 from ..model.egress_consent import (
     DECISION_ALLOWED,
     DECISION_DENIED,
@@ -250,23 +251,29 @@ async def _decider_authenticate(websocket: WebSocket, app, _hs_mark):
     except JWTError:
         await _refuse(websocket, 4001, "Invalid token")
         return None
-    user = await _decider_user_or_refuse(websocket, a, payload)
+    user = await _decider_user_or_refuse(
+        websocket, a, payload, ws_workstation(websocket, app)
+    )
     if user is None:
         return None
     _hs_mark("token")
     return user, payload.get("jti")
 
 
-async def _decider_user_or_refuse(websocket: WebSocket, a, payload):
+async def _decider_user_or_refuse(
+    websocket: WebSocket, a, payload, workstation
+):
     """The authenticated user for a decider registration, or None
     after refusing the handshake.
 
-    Two refusal arms: an unknown user (4001) and a session under the
+    Three refusal arms: an unknown user (4001), a session under the
     must_change_password flag (4004, #3172) — resolving egress holds
     is exactly the kind of action a forced-change session must not
-    take, and 4004 matches the main WS gate in ws_authenticate.
+    take, and 4004 matches the main WS gate in ws_authenticate — and
+    a token presented from a different workstation (4001 via the
+    binding check, #3194, mirroring the main gate).
     """
-    user = await a._user_from_valid_payload(payload)
+    user = await a._user_from_valid_payload(payload, workstation)
     if user is None:
         await _refuse(websocket, 4001, "Invalid token")
         return None

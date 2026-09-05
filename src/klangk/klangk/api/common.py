@@ -91,16 +91,17 @@ async def workspace_resource(request: Request, user: dict) -> str:
 def workstation(request: Request) -> tuple[str | None, str | None]:
     """The ``(source_ip, user_agent)`` a session is established from (#2586).
 
-    The IP is the effective client address, resolved proxy-trust-aware
+    Thin request-flavored wrapper over :meth:`Util.workstation` (the
+    one resolver shared with binding enforcement, #3194): the IP is
+    the effective client address, resolved proxy-trust-aware
     (``X-Real-IP``/``X-Forwarded-For`` honored only behind a trusted
     proxy), so a workstation identity cannot be spoofed by a direct
-    caller. Both values may be ``None`` (unknown) — the audit layer
-    treats unknown as never-different, never same.
+    caller. Both values may be ``None`` (unknown) — the audit and
+    binding layers treat unknown as never-different, never same.
     """
-    ip = request.app.state.util.effective_client_ip(
+    return request.app.state.util.workstation(
         request.headers, request.client.host if request.client else None
     )
-    return ip, request.headers.get("user-agent") or None
 
 
 async def require_workspace_token(request: Request) -> str:
