@@ -692,6 +692,17 @@ sync` report a clear permission-denied error.
   can evict only other failed-login rows), swept
   hourly; both reloadable on SIGHUP. See
   [Audit Record Integrity](reference/audit-integrity.md).
+- **`KLANGKD_TLS_HOSTNAME` / `KLANGKD_TLS_ISSUER` /
+  `KLANGKD_ACME_EMAIL` (#3192).** Setting `KLANGKD_TLS_HOSTNAME` serves
+  the browser listener over HTTPS with an automatically renewed
+  certificate; unset — the default — keeps today's plain HTTP exactly,
+  so outer-proxy deployments are unaffected. Certificates persist under
+  `<state_dir>/caddy-storage`. With the default `acme` issuer the
+  certificate comes from Let's Encrypt/ZeroSSL (public FQDN, reachable
+  ports 80/443, `KLANGKD_ACME_EMAIL` for expiry notices);
+  `tls-issuer: internal` self-generates from the proxy's internal CA
+  instead — the TLS hop behind an outer proxy. Reloadable on SIGHUP;
+  see the HTTPS Hosting deployment chapter.
 - **`KLANGKD_SESSION_IDLE_TIMEOUT_MINUTES` /
   `KLANGKD_PRIVILEGED_SESSION_IDLE_TIMEOUT_MINUTES` (#3151).** Idle
   session timeout: after this many minutes without an authenticated

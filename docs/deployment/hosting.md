@@ -35,7 +35,9 @@ outer nginx (443)
 - `9000+`: User app ports (5 per workspace, mapped to container ports 8000-8004)
 
 For TLS termination or an outer reverse proxy, see
-[Behind a Reverse Proxy](behind-a-proxy.md).
+[Behind a Reverse Proxy](behind-a-proxy.md). To serve HTTPS directly from
+klangkd with an automatically issued certificate (no outer proxy), see
+[HTTPS Hosting](https-hosting.md).
 
 ## Tailscale and LLM Proxy
 

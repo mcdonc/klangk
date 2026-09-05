@@ -15,6 +15,7 @@ import os
 import platform
 import re
 import shutil
+import socket
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -518,6 +519,134 @@ def check_podman_machine() -> CheckResult:
     )
 
 
+# Port 80 is always part of an armed ACME config (HTTP-01 challenge + the
+# HTTP→HTTPS redirect). Port 443 only is when the browser listener actually
+# uses it: with KLANGKD_PORT=8443 caddy binds :80 and :8443 — never 443 —
+# so a 443 probe there is a false positive against some other service
+# (#3192 review).
+_AUTO_HTTPS_PORTS = (80, 443)
+
+
+def _armed_ports(browser_port: str | None) -> tuple[int, ...]:
+    """The ACME ports this deployment actually binds."""
+    if browser_port in (None, "", "443"):
+        return _AUTO_HTTPS_PORTS
+    return (80,)
+
+
+def port_bind_error(port: int) -> str | None:
+    """Why the ACME port <port> would not bind, or None when it would.
+
+    Binds (and immediately closes) an IPv4 socket on the privileged port
+    Caddy's auto-HTTPS listeners bind, so permission denials and
+    conflicts surface here instead of as a mid-boot ACME failure.
+    Probes loopback specifically: EACCES for a privileged port is
+    per-port (not per-interface), and a wildcard or loopback listener on
+    the port still collides — only a listener bound to a *different
+    specific* interface on the same port escapes the probe, a shape no
+    klangkd deployment creates. IPv6 is not probed (Caddy binds it
+    alongside; the IPv4 result is the signal). No ``SO_REUSEADDR``: a
+    lingering TIME_WAIT socket on the port reads as in-use — re-run
+    doctor after a few seconds before trusting a busy-port failure.
+    """
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.bind(("127.0.0.1", port))
+        return None
+    except OSError as exc:
+        return f"{port}: {exc.strerror or exc}"
+    finally:
+        sock.close()
+
+
+def _internal_tls_issuer(issuer: str | None) -> bool:
+    """True when the armed listener uses the internal issuer (no
+    privileged ACME ports to check, #3192)."""
+    return (issuer or "").strip().lower() == "internal"
+
+
+def _auto_https_ok_result(
+    hostname: str, ports: tuple[int, ...]
+) -> CheckResult:
+    """The passing result when every probed ACME port binds (#3192)."""
+    names = ", ".join(str(p) for p in ports)
+    return CheckResult(
+        name="auto-https ports",
+        ok=True,
+        message=(
+            f"ports {names} bindable — ACME issuance for {hostname} "
+            "can proceed"
+        ),
+    )
+
+
+def _auto_https_failure_result(
+    hostname: str, failures: list[str]
+) -> CheckResult:
+    """The error-grade result naming each unbindable port (#3192).
+
+    In armed mode the auto-HTTPS listeners (:80 redirect/challenge, :443)
+    are part of the config caddy loads, so an unbindable port does not
+    degrade to "HTTPS broken, HTTP fine" — caddy refuses the whole load
+    and the watchdog aborts. The proxy is down entirely, browser and
+    egress alike, which is why this is error-grade, not a warning.
+    """
+    return CheckResult(
+        name="auto-https ports",
+        ok=False,
+        message=(
+            f"KLANGKD_TLS_HOSTNAME={hostname} but cannot bind: "
+            + "; ".join(failures)
+            + ". With automatic TLS armed these ports are part of the "
+            "proxy config: caddy refuses to load it and the klangkd "
+            "proxy (browser AND container-egress listeners) will not "
+            "start until the port is free or caddy may bind privileged "
+            "ports."
+        ),
+        hint=(
+            "sudo setcap 'cap_net_bind_service=+ep' "
+            "$(readlink -f $(which caddy))"
+        ),
+    )
+
+
+def _unbindable_acme_ports(ports: tuple[int, ...]) -> list[str]:
+    """The armed ACME ports that cannot be bound (``"port: reason"``
+    strings; empty when every port binds)."""
+    failures = []
+    for port in ports:
+        reason = port_bind_error(port)
+        if reason is not None:
+            failures.append(reason)
+    return failures
+
+
+def check_auto_https_ports(
+    hostname: str | None,
+    issuer: str | None = None,
+    browser_port: str | None = None,
+) -> CheckResult | None:
+    """Automatic-TLS pre-flight (#3192): ports 80/443 must be bindable.
+
+    Runs only when ``KLANGKD_TLS_HOSTNAME`` arms automatic TLS with the
+    ACME issuer (env-var detection — doctor is a standalone pre-flight
+    command with no config plumbed in; a YAML-configured deployment
+    exports the vars when running doctor). The internal issuer needs no
+    privileged ports (no redirect, no ACME challenge), so it is skipped.
+    Failures are error-grade: the auto-HTTPS listeners are part of the
+    armed proxy config, so an unbindable 80/443 keeps caddy from loading
+    it at all — the klangkd proxy does not start (browser and
+    container-egress listeners alike), not merely "no certificate".
+    """
+    if not hostname or _internal_tls_issuer(issuer):
+        return None
+    ports = _armed_ports(browser_port)
+    failures = _unbindable_acme_ports(ports)
+    if not failures:
+        return _auto_https_ok_result(hostname, ports)
+    return _auto_https_failure_result(hostname, failures)
+
+
 def check_rootless_podman() -> CheckResult:
     """Verify rootless podman can actually run a container."""
     if not shutil.which("podman"):
@@ -629,6 +758,17 @@ def run_doctor(*, verbose: bool = False) -> DoctorReport:
 
     # 4. End-to-end rootless podman (the definitive check)
     report.add(check_rootless_podman())
+
+    # 5. Automatic TLS (#3192): when KLANGKD_TLS_HOSTNAME arms auto-HTTPS
+    # with the ACME issuer, the ACME ports must be bindable. Skipped when
+    # unarmed or on the internal issuer (no privileged ports needed).
+    tls_result = check_auto_https_ports(
+        os.environ.get("KLANGKD_TLS_HOSTNAME"),
+        issuer=os.environ.get("KLANGKD_TLS_ISSUER"),
+        browser_port=os.environ.get("KLANGKD_PORT"),
+    )
+    if tls_result is not None:
+        report.add(tls_result)
 
     return report
 

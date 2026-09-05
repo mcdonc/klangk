@@ -209,6 +209,17 @@ def _proxy_preexec() -> None:  # pragma: no cover  – runs in forked child
 logger = logging.getLogger(__name__)
 
 
+class AutoHttpsConfigError(ValueError):
+    """Automatic TLS is armed but the environment cannot serve it (#3192).
+
+    Raised when the armed config cannot be rendered/loaded (e.g. an older
+    caddy that rejects the required global options). The boot path turns
+    it into a fatal startup error; the SIGHUP path logs it at ERROR and
+    keeps the last-known-good config running — either way it is never a
+    silent fallthrough to plain HTTP.
+    """
+
+
 # ---------------------------------------------------------------------------
 # Frontend hardening headers (#3149)
 # ---------------------------------------------------------------------------
@@ -478,18 +489,48 @@ class CaddyRenderer:
         )
         return entries or ["127.0.0.1", "::1"]
 
+    # -- automatic TLS (#3192) ---------------------------------------------
+
+    @property
+    def auto_https_armed(self) -> bool:
+        """True when ``KLANGKD_TLS_HOSTNAME`` arms automatic TLS (#3192).
+
+        Read live off settings (reloadable on SIGHUP — the watchdog's
+        ``apply_pending_reload`` re-renders and re-POSTs the config, so an
+        arm/disarm flows through without a restart).
+        """
+        return bool(self.app.state.settings.tls_hostname)
+
+    def caddy_storage_dir(self) -> str:
+        """Caddy's certificate storage dir: ``<state_dir>/caddy-storage``.
+
+        Armed mode renders ``storage file_system <dir>`` so issued
+        certificates + ACME account state survive restarts — without it
+        Caddy defaults to ``~/.local/share/caddy``, which is wrong for a
+        system-service klangkd (different $HOME, possibly wiped) and would
+        re-issue on every restart, walking into CA rate limits. The
+        watchdog mkdirs it before each config push.
+        """
+        return os.path.join(self.app.state.settings.state_dir, "caddy-storage")
+
     # -- global options ----------------------------------------------------
 
     def _global_block(
         self, admin_socket: str, *, full_global: bool = True
     ) -> str:
-        """The global options block: admin UDS, no HTTPS, no on-disk persistence.
+        """The global options block: admin UDS, HTTPS mode, storage, trust.
 
         - ``admin unix//...`` re-declares the admin endpoint on the
           klangkd-owned UDS so it survives every ``POST /load``.
-        - ``auto_https off`` — klangk serves plain HTTP (it terminates TLS at
-          an outer proxy or not at all); without this Caddy would spawn a
-          certificate-automation server and HTTPS redirect.
+        - ``auto_https off`` — **only when automatic TLS is not armed**
+          (#3192). Unarmed (the default, outer-proxy or plain-HTTP
+          deployments) keeps today's exact behavior: klangk serves plain
+          HTTP because TLS terminates at an outer proxy or nowhere.
+          Armed (``KLANGKD_TLS_HOSTNAME`` set) the directive is dropped
+          so Caddy runs its ACME automation (HTTP-01 / TLS-ALPN, binding
+          80/443 as needed), an explicit ``storage file_system`` keeps
+          certificates under klangkd's state dir, and an ``email`` is
+          registered with the CA when ``KLANGKD_ACME_EMAIL`` is set.
         - ``persist_config off`` — the admin API is the source of truth, not
           disk (mirrors the no-on-disk-config decision).
         - ``servers { trusted_proxies ... }`` when proxy-header trust is on —
@@ -500,6 +541,7 @@ class CaddyRenderer:
           trust-off), in which case ``{client_ip}`` falls back to the
           immediate peer — matching nginx with no realip directives.
         """
+        self._guard_armed_needs_full_global(full_global)
         lines = [
             # No |0600 mode suffix — only honored on Caddy >= 2.8; on older
             # Caddy it's folded into the socket path, breaking the bind
@@ -514,8 +556,8 @@ class CaddyRenderer:
             "	admin unix//" + admin_socket + " {",
             "		origins localhost",
             "	}",
-            "	auto_https off",
         ]
+        lines.extend(self._plain_http_directive())
         # persist_config + servers { trusted_proxies ... } are post-2.6.2
         # features (Ubuntu 24.04's apt caddy is 2.6.2; persist_config and the
         # servers/trusted_proxies option both postdate it, and
@@ -527,6 +569,8 @@ class CaddyRenderer:
         # loads it, no --resume) and {client_ip} resolves the immediate peer
         # (no XFF parsing; fine for direct container/loopback connections).
         if full_global:
+            if self.auto_https_armed:
+                lines.extend(self._auto_https_global_directives())
             lines.append("	persist_config off")
             if not self._reject_proxy_headers():
                 cidrs = " ".join(self._trusted_proxy_cidrs())
@@ -538,6 +582,68 @@ class CaddyRenderer:
                 lines.append("		trusted_proxies_strict")
                 lines.append("	}")
         return "{\n" + "\n".join(lines) + "\n}\n"
+
+    def _guard_armed_needs_full_global(self, full_global: bool) -> None:
+        """Raise when automatic TLS is armed but the caddy can't load the
+        full global block (#3192).
+
+        An older system Caddy (e.g. Ubuntu 24.04's apt 2.6.2) rejects the
+        full global block; the minimal fallback keeps ``auto_https off``
+        baked in, which would silently serve plain HTTP — the exact failure
+        arming exists to prevent. Fail loudly instead. The watchdog probes
+        the binary before the first spawn, so boot aborts; a SIGHUP arm on
+        an old Caddy surfaces as a failed reload (last-known-good config
+        keeps running).
+        """
+        if not self.auto_https_armed or full_global:
+            return
+        raise AutoHttpsConfigError(
+            "KLANGKD_TLS_HOSTNAME (automatic TLS) needs a Caddy "
+            "new enough for the full global options block "
+            "(persist_config / servers.trusted_proxies); the detected "
+            "system Caddy is too old. Upgrade Caddy, or unset "
+            "KLANGKD_TLS_HOSTNAME and terminate TLS at an outer "
+            "proxy (docs/deployment/behind-a-proxy.md)."
+        )
+
+    def _internal_tls(self) -> bool:
+        """True when the armed listener uses the internal (self-generated)
+        certificate issuer — the TLS hop behind an outer proxy (#3192)."""
+        return (
+            self.app.state.settings.tls_issuer or ""
+        ).strip().lower() == "internal"
+
+    def _plain_http_directive(self) -> list[str]:
+        """``auto_https off`` — emitted only in unarmed (plain-HTTP) mode.
+
+        Armed mode returns nothing so Caddy runs its certificate automation
+        (#3192); this split keeps :meth:`_global_block` at complexity rank A.
+        """
+        if self.auto_https_armed:
+            return []
+        return ["	auto_https off"]
+
+    def _auto_https_global_directives(self) -> list[str]:
+        """The armed-mode global directives (#3192).
+
+        Both issuers pin an explicit certificate storage path under
+        ``state_dir`` so issued material survives restarts instead of
+        walking into CA rate limits (acme) or minting a fresh internal
+        CA that no outer proxy trusts (internal). ACME mode additionally
+        registers the CA account email when set; internal mode keeps
+        the HTTP→HTTPS redirect off — the outer proxy redirects
+        browsers itself, and the redirect's port-80 bind would fail
+        for an unprivileged service user.
+        """
+        directives: list[str] = []
+        if self._internal_tls():
+            directives.append("\tauto_https disable_redirects")
+        else:
+            email = (self.app.state.settings.acme_email or "").strip()
+            if email:
+                directives.append(f"\temail {email}")
+        directives.append(f"\tstorage file_system {self.caddy_storage_dir()}")
+        return directives
 
     def _bootstrap_block(self, admin_socket: str) -> str:
         """Admin-only global block used as the child's initial ``--config``.
@@ -722,9 +828,28 @@ class CaddyRenderer:
         upstream: str,
         container_srcs_deny: str,
     ) -> str:
-        """The browser-listener site block (full mode only)."""
+        """The browser-listener site block (full mode only).
+
+        Armed (``KLANGKD_TLS_HOSTNAME`` set, #3192) the site address is
+        ``https://<host>:<port>`` so Caddy's automatic HTTPS manages the
+        certificate for the name (ACME HTTP-01 / TLS-ALPN for the default
+        issuer; a self-generated internal-CA certificate — the TLS hop
+        behind an outer proxy — for ``tls-issuer: internal``, which also
+        carries the ``tls internal`` site directive). Unarmed it stays
+        ``http://:<port>`` — byte-identical to the pre-#3192 render.
+        Everything else inside the block (bind, request_body, CSP, ACLs,
+        routes) is identical either way.
+        """
         listen_addr = self.app.state.settings.listen
         port = self.app.state.settings.port
+        fqdn = self.app.state.settings.tls_hostname
+        if fqdn:
+            site_addr = f"https://{fqdn}:{port}"
+            tls_line = "	tls internal\n" if self._internal_tls() else ""
+            self._warn_loopback_listen_when_armed(listen_addr)
+        else:
+            site_addr = f"http://:{port}"
+            tls_line = ""
         hosted = self._build_hosted_block()
         if container_srcs_deny:
             deny_matcher = (
@@ -759,7 +884,8 @@ class CaddyRenderer:
             "	}\n"
         )
         return (
-            f"http://:{port} {{\n"
+            f"{site_addr} {{\n"
+            f"{tls_line}"
             f"	bind {listen_addr}\n"
             f"	request_body {{\n"
             f"		max_size {self._max_body_size()}\n"
@@ -769,6 +895,33 @@ class CaddyRenderer:
             f"{hosted}"
             f"{auth_local}"
             f"{catch_all}}}\n"
+        )
+
+    def _warn_loopback_listen_when_armed(self, listen_addr: str) -> None:
+        """Warn when TLS is armed but the listener stays loopback-only
+        (#3192). Consequences differ by issuer: ACME additionally cannot
+        answer its challenge, while the internal issuer only loses
+        reachability from the outer proxy — which may be co-located on
+        the same host, so that shape is only warned about softly."""
+        if listen_addr.strip() not in ("127.0.0.1", "::1", "localhost"):
+            return
+        if self._internal_tls():
+            logger.warning(
+                "KLANGKD_TLS_HOSTNAME is set (internal TLS) but "
+                "KLANGKD_LISTEN is loopback-only (%s) — unreachable from "
+                "an outer proxy on another host. Set KLANGKD_LISTEN (e.g. "
+                "0.0.0.0) unless the proxy runs on this same host.",
+                listen_addr,
+            )
+            return
+        logger.warning(
+            "KLANGKD_TLS_HOSTNAME is set (automatic TLS) but "
+            "KLANGKD_LISTEN is loopback-only (%s) — the HTTPS listener "
+            "is unreachable from other hosts and the ACME challenge "
+            "cannot be answered, so certificate issuance will fail. "
+            "Set KLANGKD_LISTEN (e.g. 0.0.0.0) for an internet-facing "
+            "deployment.",
+            listen_addr,
         )
 
     # -- main renderer -----------------------------------------------------
@@ -926,6 +1079,31 @@ class CaddyWatchdog:
         # (_KLANGKD_DISABLE_PROXY) — the flag is just never applied.
         self._pending_reload = True
 
+    def _log_reload_failure(self, exc: Exception) -> None:
+        """A failed SIGHUP reload: ERROR while armed, WARNING otherwise.
+
+        Any failed reload with the live settings armed — refused at render
+        time (``AutoHttpsConfigError``) or rejected by caddy at
+        ``POST /load`` — leaves the same mismatch: settings say TLS is on
+        while caddy keeps serving the last-known-good (plain-HTTP) config.
+        That must be louder than a generic warning; a failed DISARM only
+        keeps more TLS than configured, so it stays a warning (#3192).
+        """
+        if isinstance(exc, AutoHttpsConfigError) or (
+            self._renderer.auto_https_armed
+        ):
+            logger.error(
+                "SIGHUP: automatic TLS could not be applied — the running "
+                "config is unchanged and the browser listener is still "
+                "serving the previous scheme. Fix and reload again: %s",
+                exc,
+            )
+        else:
+            logger.warning(
+                "caddy SIGHUP reload failed (running config unchanged): %s",
+                exc,
+            )
+
     async def apply_pending_reload(self) -> None:
         """Push the re-rendered Caddyfile if reconfigure() flagged one.
 
@@ -947,10 +1125,7 @@ class CaddyWatchdog:
             await self.load_config()
             logger.info("caddy config reloaded via admin API (SIGHUP)")
         except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "caddy SIGHUP reload failed (running config unchanged): %s",
-                exc,
-            )
+            self._log_reload_failure(exc)
 
     # -- paths / config ----------------------------------------------------
 
@@ -992,6 +1167,19 @@ class CaddyWatchdog:
     def find_proxy_bin(self) -> str:
         return self._renderer.find_proxy_bin()
 
+    def _ensure_storage_dir(self) -> None:
+        """Create the armed-mode certificate storage dir (#3192).
+
+        Caddy mkdirs the dir itself, but only once a config using it loads —
+        creating it up front (idempotent) keeps the first ACME run against a
+        definitely-writable path under ``state_dir`` and surfaces permission
+        problems at push time rather than mid-issuance.
+        """
+        if self._renderer.auto_https_armed:
+            os.makedirs(
+                self._renderer.caddy_storage_dir(), mode=0o700, exist_ok=True
+            )
+
     async def load_config(
         self,
         caddyfile: str | None = None,
@@ -1000,7 +1188,12 @@ class CaddyWatchdog:
     ) -> httpx.Response:
         """Render (if omitted) and ``POST /load`` the Caddyfile to running Caddy."""
         if caddyfile is None:
+            # Render first: a render that refuses (e.g. an arm the binary
+            # cannot load) must not leave an empty storage dir behind as
+            # a side effect; an explicit caddyfile needs none at all
+            # (#3192 sweep).
             caddyfile = self._render_caddyfile()
+            self._ensure_storage_dir()
         return await post_load(self.admin_socket, caddyfile, client=client)
 
     # -- supervision -------------------------------------------------------
@@ -1079,7 +1272,21 @@ class CaddyWatchdog:
         """Log which addresses Caddy is serving after a successful config load."""
         s = self.app.state.settings
         if s.port is not None:
-            logger.info("caddy ingress listening on %s:%s", s.listen, s.port)
+            if s.tls_hostname:
+                flavor = (
+                    "internal TLS"
+                    if self._renderer._internal_tls()
+                    else "automatic TLS"
+                )
+                scheme = f"https ({flavor}, {s.tls_hostname})"
+            else:
+                scheme = "http"
+            logger.info(
+                "caddy ingress listening on %s:%s [%s]",
+                s.listen,
+                s.port,
+                scheme,
+            )
         logger.info(
             "caddy egress listening on %s:%s", s.egress_listen, s.egress_port
         )
@@ -1223,6 +1430,23 @@ class CaddyWatchdog:
         # whole config (#1709). klangkd must run on both the devenv's current
         # caddy and that older system caddy.
         self._full_global = caddy_supports_full_global_block(bin_path)
+        # Automatic TLS (#3192) needs the full global block (email / storage /
+        # the dropped auto_https off); on the older caddy the minimal fallback
+        # would silently serve plain HTTP. Fail fast at boot instead — a
+        # respawn loop over a config the binary can't load helps nobody.
+        if self._renderer.auto_https_armed and not self._full_global:
+            logger.error(
+                "KLANGKD_TLS_HOSTNAME is set (automatic TLS) but the "
+                "detected caddy (%s) is too old to load the required global "
+                "options. Upgrade caddy, or unset KLANGKD_TLS_HOSTNAME "
+                "and terminate TLS at an outer proxy "
+                "(docs/deployment/behind-a-proxy.md).",
+                bin_path,
+            )
+            raise AutoHttpsConfigError(
+                f"automatic TLS (KLANGKD_TLS_HOSTNAME) requires a newer "
+                f"caddy binary (detected: {bin_path})"
+            )
         self._stopping = False
         self._task = asyncio.create_task(self._watch(bin_path))
 

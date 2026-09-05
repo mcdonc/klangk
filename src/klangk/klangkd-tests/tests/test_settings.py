@@ -1006,6 +1006,150 @@ class TestResolveSocketAndPorts:
         assert "KLANGKD_CADDY_ADMIN_SOCKET" in msg
 
 
+class TestAutoHttpsSettings:
+    """KLANGKD_TLS_HOSTNAME / KLANGKD_ACME_EMAIL validation (#3192)."""
+
+    def test_unset_defaults(self):
+        s = KlangkSettings(env={"KLANGKD_STATE_DIR": "/tmp/state"})
+        assert s.tls_hostname is None
+        assert s.acme_email is None
+
+    def test_empty_string_means_unset(self):
+        """An explicitly emptied env var is None, not "" — the renderer's
+        armed check and the doctor gate key on truthiness."""
+        s = KlangkSettings(
+            env={
+                "KLANGKD_STATE_DIR": "/tmp/state",
+                "KLANGKD_PORT": "443",
+                "KLANGKD_TLS_HOSTNAME": "",
+                "KLANGKD_ACME_EMAIL": " ",
+            }
+        )
+        assert s.tls_hostname is None
+        assert s.acme_email is None
+
+    def test_valid_hostname_normalized(self):
+        """Lowercased + trailing root dot stripped; port required."""
+        s = KlangkSettings(
+            env={
+                "KLANGKD_STATE_DIR": "/tmp/state",
+                "KLANGKD_PORT": "443",
+                "KLANGKD_TLS_HOSTNAME": "Klangk.Example.COM.",
+            }
+        )
+        assert s.tls_hostname == "klangk.example.com"
+
+    @pytest.mark.parametrize(
+        "good",
+        [
+            "klangk.example.com",
+            "klangk.example.co.uk",  # multi-label TLD
+            "klangk.xn--p1ai",  # punycode TLD (рф) — a real public TLD
+            "xn--80ak6aa92e.com",  # punycode label (例え.com)
+            "my-host.example.com",  # inner hyphen
+        ],
+    )
+    def test_valid_tls_hostnames_accepted(self, good):
+        s = KlangkSettings(
+            env={
+                "KLANGKD_STATE_DIR": "/tmp/state",
+                "KLANGKD_PORT": "443",
+                "KLANGKD_TLS_HOSTNAME": good,
+            }
+        )
+        assert s.tls_hostname == good
+
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            "192.168.1.5",  # IP literal — public CAs don't issue for IPs
+            "https://klangk.example.com",  # URL, not a bare FQDN
+            "klangk.example.com:443",  # port belongs in KLANGKD_PORT
+            "localhost",  # single label — not a public FQDN
+            "my host.example.com",  # space
+            "_bad.example.com",  # leading underscore
+            "-bad.example.com",  # leading hyphen
+            "bad..example.com",  # empty label
+            "x" * 64 + ".example.com",  # label over 63 chars
+        ],
+    )
+    def test_invalid_hostname_rejected(self, bad):
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError) as exc_info:
+            KlangkSettings(
+                env={
+                    "KLANGKD_STATE_DIR": "/tmp/state",
+                    "KLANGKD_PORT": "443",
+                    "KLANGKD_TLS_HOSTNAME": bad,
+                }
+            )
+        assert "KLANGKD_TLS_HOSTNAME" in str(exc_info.value)
+
+    def test_hostname_requires_port(self):
+        """Arming without KLANGKD_PORT (headless) fails construction — the
+        HTTPS browser listener only exists in full/browser mode, and a
+        silently-ignored arming is exactly the plain-HTTP fallthrough
+        #3192 exists to prevent."""
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError) as exc_info:
+            KlangkSettings(
+                env={
+                    "KLANGKD_STATE_DIR": "/tmp/state",
+                    "KLANGKD_TLS_HOSTNAME": "klangk.example.com",
+                }
+            )
+        assert "KLANGKD_PORT" in str(exc_info.value)
+
+    def test_email_normalized_and_stripped(self):
+        s = KlangkSettings(
+            env={
+                "KLANGKD_STATE_DIR": "/tmp/state",
+                "KLANGKD_PORT": "443",
+                "KLANGKD_TLS_HOSTNAME": "klangk.example.com",
+                "KLANGKD_ACME_EMAIL": " ops@example.com ",
+            }
+        )
+        assert s.acme_email == "ops@example.com"
+
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            "not-an-email",
+            "example.com",  # no @
+            "ops@localhost",  # no dot in the domain — not a CA-routable addr
+            "Ops <ops@example.com>",  # display-name form breaks the Caddyfile
+            "ops@example.com,",  # trailing comma
+        ],
+    )
+    def test_bad_email_rejected(self, bad):
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError) as exc_info:
+            KlangkSettings(
+                env={
+                    "KLANGKD_STATE_DIR": "/tmp/state",
+                    "KLANGKD_TLS_HOSTNAME": "klangk.example.com",
+                    "KLANGKD_ACME_EMAIL": bad,
+                }
+            )
+        assert "KLANGKD_ACME_EMAIL" in str(exc_info.value)
+
+    def test_bad_email_rejected_even_when_unarmed(self):
+        """The email sanity check is independent of arming — a typo'd
+        value fails at boot either way."""
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            KlangkSettings(
+                env={
+                    "KLANGKD_STATE_DIR": "/tmp/state",
+                    "KLANGKD_ACME_EMAIL": "nope",
+                }
+            )
+
+
 class TestKlangkdLauncher:
     """Tests for the klangkd launcher's --config resolution."""
 
@@ -2561,3 +2705,198 @@ class TestSessionBindingValidator:
 
         with pytest.raises(ValidationError):
             make_settings({"KLANGKD_SESSION_WORKSTATION_BINDING": bad})
+
+
+class TestTlsIssuer:
+    """KLANGKD_TLS_ISSUER + the issuer-conditional hostname grammar
+    (#3192: 'internal' = self-generated cert for the TLS hop behind an
+    outer proxy)."""
+
+    def test_default_is_none_acme(self):
+        s = KlangkSettings(env={"KLANGKD_STATE_DIR": "/tmp/state"})
+        assert s.tls_issuer is None
+
+    def test_normalized_lowercase(self):
+        s = KlangkSettings(
+            env={
+                "KLANGKD_STATE_DIR": "/tmp/state",
+                "KLANGKD_PORT": "8997",
+                "KLANGKD_TLS_HOSTNAME": "klangkd.internal",
+                "KLANGKD_TLS_ISSUER": " Internal ",
+            }
+        )
+        assert s.tls_issuer == "internal"
+
+    def test_explicit_acme_accepted(self):
+        s = KlangkSettings(
+            env={
+                "KLANGKD_STATE_DIR": "/tmp/state",
+                "KLANGKD_PORT": "443",
+                "KLANGKD_TLS_HOSTNAME": "klangk.example.com",
+                "KLANGKD_TLS_ISSUER": "acme",
+            }
+        )
+        assert s.tls_issuer == "acme"
+
+    @pytest.mark.parametrize("bad", ["files", "letsencrypt", "self-signed"])
+    def test_unknown_issuer_rejected(self, bad):
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError) as exc_info:
+            KlangkSettings(
+                env={
+                    "KLANGKD_STATE_DIR": "/tmp/state",
+                    "KLANGKD_PORT": "443",
+                    "KLANGKD_TLS_HOSTNAME": "klangk.example.com",
+                    "KLANGKD_TLS_ISSUER": bad,
+                }
+            )
+        assert "KLANGKD_TLS_ISSUER" in str(exc_info.value)
+
+    @pytest.mark.parametrize(
+        "name", ["klangkd.internal", "localhost", "klangk", "192.168.1.5"]
+    )
+    def test_internal_accepts_private_names(self, name):
+        """Internal names ACME rejects — single labels, all-numeric TLDs,
+        IPv4 literals — arm fine with the internal issuer."""
+        s = KlangkSettings(
+            env={
+                "KLANGKD_STATE_DIR": "/tmp/state",
+                "KLANGKD_PORT": "8997",
+                "KLANGKD_TLS_HOSTNAME": name,
+                "KLANGKD_TLS_ISSUER": "internal",
+            }
+        )
+        assert s.tls_hostname == name
+
+    def test_internal_still_rejects_garbage(self):
+        from pydantic import ValidationError
+
+        for bad in (
+            "https://klangk.internal",
+            "klangk.internal:8997",
+            "klangk .internal",
+            "[::1]",
+            "klangk..internal",
+        ):
+            with pytest.raises(ValidationError) as exc_info:
+                KlangkSettings(
+                    env={
+                        "KLANGKD_STATE_DIR": "/tmp/state",
+                        "KLANGKD_PORT": "8997",
+                        "KLANGKD_TLS_HOSTNAME": bad,
+                        "KLANGKD_TLS_ISSUER": "internal",
+                    }
+                )
+            assert "KLANGKD_TLS_HOSTNAME" in str(exc_info.value)
+
+    def test_internal_requires_port_like_acme(self):
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            KlangkSettings(
+                env={
+                    "KLANGKD_STATE_DIR": "/tmp/state",
+                    "KLANGKD_TLS_HOSTNAME": "klangkd.internal",
+                    "KLANGKD_TLS_ISSUER": "internal",
+                }
+            )
+
+    def test_acme_still_rejects_internal_name(self):
+        """The strict public-FQDN grammar applies unchanged to the default
+        issuer — single-label names (and IPs) stay rejected, and the error
+        now hints at tls-issuer: internal. (A shaped name like
+        'klangkd.internal' is grammatically public and passes ACME
+        validation — issuance would then simply fail offline.)"""
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError) as exc_info:
+            KlangkSettings(
+                env={
+                    "KLANGKD_STATE_DIR": "/tmp/state",
+                    "KLANGKD_PORT": "8997",
+                    "KLANGKD_TLS_HOSTNAME": "localhost",
+                }
+            )
+        assert "tls-issuer: internal" in str(exc_info.value)
+
+    def test_issuer_without_hostname_warns(self, caplog):
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            KlangkSettings(
+                env={
+                    "KLANGKD_STATE_DIR": "/tmp/state",
+                    "KLANGKD_TLS_ISSUER": "internal",
+                }
+            )
+        assert any(
+            "KLANGKD_TLS_ISSUER is set but KLANGKD_TLS_HOSTNAME is not"
+            in r.message
+            for r in caplog.records
+        )
+
+    def test_acme_email_with_internal_warns(self, caplog):
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            KlangkSettings(
+                env={
+                    "KLANGKD_STATE_DIR": "/tmp/state",
+                    "KLANGKD_PORT": "8997",
+                    "KLANGKD_TLS_HOSTNAME": "klangkd.internal",
+                    "KLANGKD_TLS_ISSUER": "internal",
+                    "KLANGKD_ACME_EMAIL": "ops@example.com",
+                }
+            )
+        assert any(
+            "KLANGKD_ACME_EMAIL has no effect" in r.message
+            for r in caplog.records
+        )
+
+    def test_acme_email_with_acme_does_not_warn(self, caplog):
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            KlangkSettings(
+                env={
+                    "KLANGKD_STATE_DIR": "/tmp/state",
+                    "KLANGKD_PORT": "443",
+                    "KLANGKD_TLS_HOSTNAME": "klangk.example.com",
+                    "KLANGKD_ACME_EMAIL": "ops@example.com",
+                }
+            )
+        assert not any(
+            "KLANGKD_ACME_EMAIL has no effect" in r.message
+            for r in caplog.records
+        )
+
+
+class TestTlsIssuerInertAcme:
+    def test_explicit_acme_without_hostname_warns_too(self, caplog):
+        """Explicit tls-issuer 'acme' with no hostname is exactly as inert
+        as 'internal' — warn for both, silence only for unset (#3192
+        review)."""
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            KlangkSettings(
+                env={
+                    "KLANGKD_STATE_DIR": "/tmp/state",
+                    "KLANGKD_TLS_ISSUER": "acme",
+                }
+            )
+        assert any(
+            "KLANGKD_TLS_ISSUER is set but KLANGKD_TLS_HOSTNAME is not"
+            in r.message
+            for r in caplog.records
+        )
+
+    def test_unset_issuer_without_hostname_is_silent(self, caplog):
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            KlangkSettings(env={"KLANGKD_STATE_DIR": "/tmp/state"})
+        assert not any(
+            "KLANGKD_TLS_ISSUER" in r.message for r in caplog.records
+        )
