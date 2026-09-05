@@ -209,6 +209,59 @@ def _proxy_preexec() -> None:  # pragma: no cover  – runs in forked child
 logger = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# Frontend hardening headers (#3149)
+# ---------------------------------------------------------------------------
+
+#: The Content-Security-Policy served on the browser listener's frontend
+#: paths. Locked to first-party resources: the SPA's scripts, styles,
+#: images, fonts, workers, and WebSocket connections all stay same-origin,
+#: so every fetch directive is ``'self'`` (plus the tokens the Flutter web
+#: build genuinely needs — ``'unsafe-inline'`` for index.html's inline
+#: <script> blocks and Flutter's runtime-injected styles, ``wasm-unsafe-eval``
+#: for CanvasKit/skwasm's ``WebAssembly`` compile, ``data:``/``blob:``
+#: images). Same-origin ``ws:``/``wss:`` upgrades of the page origin are
+#: covered by ``'self'`` (CSP3), so the workspace WebSocket needs no bare
+#: scheme-source — and a bare ``ws:``/``wss:`` would permit a compromised
+#: script to open websockets to any host on the internet. No
+#: ``unsafe-eval`` (the beep/boingball features no longer JS-``eval``),
+#: no third-party origins (Roboto Mono is self-hosted, so fonts.gstatic.com
+#: is gone). ``frame-ancestors 'none'`` + X-Frame-Options DENY is the
+#: clickjacking posture.
+CSP_POLICY = (
+    "default-src 'self'; "
+    "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; "
+    "style-src 'self' 'unsafe-inline'; "
+    "img-src 'self' data: blob:; "
+    "font-src 'self'; "
+    "connect-src 'self'; "
+    "worker-src 'self'; "
+    "object-src 'none'; "
+    "base-uri 'self'; "
+    "frame-ancestors 'none'"
+)
+
+#: Browser-listener paths the hardening headers must NOT touch: the API,
+#: the WebSocket endpoints, and the hosted-ports proxy (deployer-controlled
+#: apps behind /hosted/ — a CSP imposed there could break them).
+_CSP_EXCLUDED_PATHS = "/api /api/* /ws /ws/* /hosted /hosted/*"
+
+
+def csp_block() -> str:
+    """The site-level ``header`` directives serving :data:`CSP_POLICY`.
+
+    Emitted into the browser site only (the egress listener serves
+    containers, not documents). Caddy sorts ``header`` ahead of the
+    ``handle`` blocks, so the headers land on whatever the matched request
+    produces — the reverse-proxied backend response included.
+    """
+    return (
+        f"	@frontend not path {_CSP_EXCLUDED_PATHS}\n"
+        f'	header @frontend Content-Security-Policy "{CSP_POLICY}"\n'
+        '	header @frontend X-Frame-Options "DENY"\n'
+    )
+
+
 def classify_caddy_line(line: str) -> tuple[int, str]:
     """Parse a Caddy JSON log line and return ``(log_level, message)``.
 
@@ -711,6 +764,7 @@ class CaddyRenderer:
             f"	request_body {{\n"
             f"		max_size {self._max_body_size()}\n"
             f"	}}\n"
+            f"{csp_block()}"
             f"{deny_matcher}"
             f"{hosted}"
             f"{auth_local}"

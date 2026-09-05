@@ -15,3 +15,4 @@ dependencies:
       url: https://github.com/mcdonc/klangk-plugin-api.git
       ref: v0.5.1
   http: ^1.2.0
+  web: ^1.1.0

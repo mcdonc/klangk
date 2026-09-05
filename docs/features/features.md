@@ -58,7 +58,7 @@ Because an explicit value is the exact active list (not additive), opting a
 dormant feature in means listing it alongside the defaults you want to keep:
 
 ```bash
-# turn on soliplex while keeping the stock set
+# turn on soliplex (and boingball) while keeping the stock set
 KLANGKD_FEATURES_ENABLE=beep,bobdobbs,boingball,browser-fetch,celebrate,git-credential,soliplex
 ```
 
@@ -70,16 +70,13 @@ config-file key.
 
 ## Default features
 
-[![Boing Ball feature triggered from Pi](../assets/boing-ball.png)](../assets/boing-ball.png)
-
-These six are compiled in and active by default (the manifest's `defaults`
+These five are compiled in and active by default (the manifest's `defaults`
 list):
 
 | Feature          | What it does                                                |
 | ---------------- | ----------------------------------------------------------- |
 | `beep`           | Plays an audible beep via the Web Audio API                 |
 | `bobdobbs`       | Bob "J.R." Dobbs quote overlay, triggered from Pi           |
-| `boingball`      | Bouncing Boing Ball animation overlay, triggered from Pi    |
 | `browser-fetch`  | HTTP fetch using the browser's session cookies, from Pi     |
 | `celebrate`      | Confetti animation in the browser, triggered from Pi        |
 | `git-credential` | Git credential helper with a browser-based PAT/OAuth dialog |
@@ -90,10 +87,13 @@ These ship compiled into the image but are **not** in the default-on set, so a
 bare install does not surface them. Opt in by adding them to
 `KLANGKD_FEATURES_ENABLE` (composed with the stock set, as above).
 
+[![Boing Ball feature triggered from Pi](../assets/boing-ball.png)](../assets/boing-ball.png)
+
 | Feature      | What it does                                                     | Activate                                      |
 | ------------ | ---------------------------------------------------------------- | --------------------------------------------- |
 | `word-count` | File-stats tool for Pi (lines, words, characters, size)          | add `word-count` to `KLANGKD_FEATURES_ENABLE` |
 | `soliplex`   | Soliplex knowledge-base tools (list/query/reply, multi-turn RAG) | add `soliplex` to `KLANGKD_FEATURES_ENABLE`   |
+| `boingball`  | Bouncing Boing Ball animation overlay, triggered from Pi (#3149) | add `boingball` to `KLANGKD_FEATURES_ENABLE`  |
 
 ### `soliplex`
 

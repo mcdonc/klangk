@@ -56,8 +56,10 @@ EXPECTED_FEATURE_NAMES = {
 
 # Compiled-in Dart features that are NOT in DEFAULT_FEATURES — dormant unless
 # an operator opts in via KLANGKD_FEATURES_ENABLE. Soliplex (#1664, vendored
-# local in #1686) is the canonical "compiled-in ⊋ defaults" case.
-DORMANT_FEATURE_NAMES = {"soliplex"}
+# local in #1686) is the canonical "compiled-in ⊋ defaults" case; boingball
+# joined it in #3149 (dropped from the default set so the shipped CSP can omit
+# script-src 'unsafe-eval').
+DORMANT_FEATURE_NAMES = {"soliplex", "boingball"}
 
 # Features with a klangk/ Dart package that declare a ToolPlugin → the tool
 # class emitted into createAllFeatures/createAllNamedFeatures. Features
@@ -453,8 +455,8 @@ class TestManifestContract:
     def test_defaults_are_default_features_constant(self, tmp_path, monkeypatch):
         """The manifest's defaults list == DEFAULT_FEATURES in
         import_dart_features.py — the build-time constant. This is the full
-        conceptual default-on set (6 today), a SUPERSET of the default-on Dart
-        features (5): the extra name is the TS-only browser-fetch, always-on in
+        conceptual default-on set (5 today), a SUPERSET of the default-on Dart
+        features (4): the extra name is the TS-only browser-fetch, always-on in
         the workspace image and harmlessly ignored by the frontend's Dart-only
         active-set filter (#1655 asymmetry)."""
         manifest = self._build_manifest(tmp_path, monkeypatch)
@@ -465,20 +467,20 @@ class TestManifestContract:
         and excludes dormant ones.
 
         Every stock Dart feature is default-on except soliplex (#1664,
-        vendored local in #1686): it's compiled-in (appears in features[])
-        but dormant (NOT in defaults) — operators opt in with
-        KLANGKD_FEATURES_ENABLE. This is the canonical "compiled-in ⊋
-        defaults" case from #1655."""
+        vendored local in #1686) and boingball (#3149): both are compiled-in
+        (appear in features[]) but dormant (NOT in defaults) — operators opt
+        in with KLANGKD_FEATURES_ENABLE. Soliplex is the canonical
+        "compiled-in ⊋ defaults" case from #1655."""
         manifest = self._build_manifest(tmp_path, monkeypatch)
         feature_names = {f["name"] for f in manifest["features"]}
         defaults = set(manifest["defaults"])
         dormant = feature_names - defaults
-        # Soliplex is the only dormant Dart feature today.
+        # Soliplex and boingball are the dormant Dart features today.
         assert dormant == DORMANT_FEATURE_NAMES, (
             f"Dormant Dart features drifted (expected only "
             f"{sorted(DORMANT_FEATURE_NAMES)}): {sorted(dormant)}"
         )
-        # The default-on Dart features are the stock set minus the dormant one.
+        # The default-on Dart features are the stock set minus the dormant ones.
         default_on_dart = feature_names & defaults
         assert default_on_dart == set(EXPECTED_DART_FEATURES) - DORMANT_FEATURE_NAMES, (
             f"Default-on Dart features drifted: {sorted(default_on_dart)}"

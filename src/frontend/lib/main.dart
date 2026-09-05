@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:flterm/flterm.dart';
 import 'package:flutter/foundation.dart' show kIsWeb, kReleaseMode;
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:http/http.dart' as http;
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 import 'package:klangk_features/klangk_features.dart';
@@ -17,6 +18,15 @@ import 'utils/web_helpers_stub.dart'
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // First-party fonts only (#3149): the CSP ships with font-src 'self', so a
+  // runtime fonts.gstatic.com fetch would be blocked anyway. Disabling
+  // runtime fetching makes any future drift (a google_fonts call for a family
+  // that is not bundled — e.g. sheetifye's tokens) fail loudly at the asset
+  // lookup instead of silently attempting the network. Bundled families:
+  // JetBrains Mono, Noto Emoji, RobotoMono (the exact family name sheetifye's
+  // GoogleFonts.robotoMono() resolves against the asset manifest).
+  GoogleFonts.config.allowRuntimeFetching = false;
 
   // flutter-mcp-toolkit debug bridge (#2868): registers the ext.mcp.toolkit.*
   // VM service extensions that the `fmtk` CLI (in the devenv shell) uses to

@@ -143,5 +143,5 @@ def get_browser_id():
 - **beep** (`features/beep/`): Plays a beep sound in the browser
 - **bobdobbs** (`features/bobdobbs/`): Bob "J.R." Dobbs quote generator
 - **browser-fetch** (`features/browser-fetch/`): HTTP fetch using the browser's cookies/session
-- **boingball** (`features/boingball/`): Bouncing Boing Ball animation overlay
+- **boingball** (`features/boingball/`): Bouncing Boing Ball animation overlay (dormant by default since #3149 — activate with `KLANGKD_FEATURES_ENABLE`)
 - **git-credential** (`features/git-credential/`): Git credential helper that prompts for PAT in the browser

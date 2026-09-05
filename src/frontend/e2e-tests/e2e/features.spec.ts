@@ -96,6 +96,28 @@ test.describe("feature artifacts visible to the frontend", () => {
     expect(config).not.toHaveProperty("oauth_providers");
   });
 
+  test("frontend responses carry the hardening headers (#3149)", async ({
+    request,
+  }) => {
+    // The CSP + X-Frame-Options are served by klangkd's fronting proxy on
+    // the browser listener's frontend paths (and must NOT be on API paths —
+    // they'd be inert there, but the scoping is part of the contract).
+    const resp = await request.get(`${API_BASE}/`);
+    expect(resp.ok(), "frontend must be served at /").toBeTruthy();
+    const csp = resp.headers()["content-security-policy"];
+    expect(csp, "Content-Security-Policy header missing on /").toContain(
+      "default-src 'self'",
+    );
+    expect(csp).toContain("frame-ancestors 'none'");
+    expect(resp.headers()["x-frame-options"]).toBe("DENY");
+
+    const api = await request.get(`${API_BASE}/api/v1/config`);
+    expect(
+      api.headers()["content-security-policy"],
+      "CSP must not be sent on API paths",
+    ).toBeUndefined();
+  });
+
   test("/api/v1/config omits features_enable when KLANGKD_FEATURES_ENABLE unset", async ({
     request,
   }) => {

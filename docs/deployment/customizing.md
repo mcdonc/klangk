@@ -301,7 +301,7 @@ To pull upstream klangk improvements into your custom build, `git pull upstream 
 
 ### Features
 
-Edit the checked-in `features.yaml` to add or remove features. The default build compiles in the built-in features declared there: celebrate, beep, bobdobbs, word-count, browser-fetch, boingball, git-credential (`word-count` and `soliplex` ship compiled-in but dormant — activate with `KLANGKD_FEATURES_ENABLE`).
+Edit the checked-in `features.yaml` to add or remove features. The default build compiles in the built-in features declared there: celebrate, beep, bobdobbs, word-count, browser-fetch, boingball, git-credential, soliplex (`word-count`, `soliplex`, and `boingball` ship compiled-in but dormant — activate with `KLANGKD_FEATURES_ENABLE`).
 
 To add an external feature:
 

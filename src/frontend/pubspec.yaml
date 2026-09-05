@@ -11,6 +11,11 @@ dependencies:
   flutter:
     sdk: flutter
   cupertino_icons: ^1.0.0
+  # Direct (was transitive via sheetifye) since main.dart sets
+  # GoogleFonts.config.allowRuntimeFetching = false (#3149) — the deploy is
+  # first-party-only for fonts and the family the sheetifye tokens resolve
+  # (RobotoMono) is bundled as an asset.
+  google_fonts: ^8.2.1
   # XXX: This is because nix MacOS does not support Flutter 3.44 - yet.
   # flterm: vendored in libghostty as packages/flterm, patched to build on
   # Flutter 3.41 / Dart 3.11 (upstream 0.0.3 needs Dart 3.12 for private-named
@@ -70,6 +75,14 @@ flutter:
       fonts:
         - asset: assets/fonts/JetBrainsMono-Regular.ttf
         - asset: assets/fonts/JetBrainsMono-Bold.ttf
+          weight: 700
+    # Family name is load-bearing: sheetifye's GoogleFonts.robotoMono()
+    # resolves google_fonts against the asset manifest by family name, so it
+    # loads this bundled asset instead of fetching (#3149).
+    - family: RobotoMono
+      fonts:
+        - asset: assets/fonts/RobotoMono-Regular.ttf
+        - asset: assets/fonts/RobotoMono-Bold.ttf
           weight: 700
     - family: Noto Emoji
       fonts:

@@ -338,6 +338,17 @@ operators or integrators to act when upgrading.
 /api/v1/auth/change-password` now blocklists every active session
   token and closes their WebSocket connections, forcing re-login on
   all devices.
+- **`Content-Security-Policy` on the served frontend (#3149).** klangkd's
+  rendered Caddy config now sends a strict first-party CSP (plus
+  `X-Frame-Options: DENY`) on the browser listener's frontend responses;
+  API, WebSocket, and hosted-port paths are excluded. To ship an eval-free,
+  fully first-party policy, `boingball` left the default feature set and the
+  `beep`/`boingball` features plus the file viewer's monospace font were
+  made first-party: Web Audio calls use typed interop instead of JS `eval`,
+  and Roboto Mono is self-hosted instead of fetched from fonts.gstatic.com.
+  **Unpinned deployments lose the boingball overlay on upgrade** (it left the
+  `defaults` list); keep it by pinning `KLANGKD_FEATURES_ENABLE` to a list
+  that includes `boingball`.
 
 - **Bounded rate-limit state for the email cooldowns (#3113).** The
   per-address cooldown dicts behind
