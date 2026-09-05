@@ -57,9 +57,12 @@ class _VerifyPageState extends State<VerifyPage> {
         });
       }
     } catch (e) {
+      // Raw exception detail goes to the log only — the user sees a
+      // stable message (#3203).
+      debugPrint('[VerifyPage] verification request failed: $e');
       setState(() {
         _loading = false;
-        _message = 'Connection error: $e';
+        _message = 'Network error. Please try again.';
       });
     }
   }

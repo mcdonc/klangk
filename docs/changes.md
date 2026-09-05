@@ -2291,6 +2291,12 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Auth error messages (#3203).** The web login, register, local-login,
+  resend-verification, and email-verification flows no longer show the raw
+  transport exception (which can include request URLs and endpoint paths)
+  on a connection failure. They now show a stable "Network error. Please
+  try again." message, with the underlying exception logged for debugging.
+
 - **Workspace-create error responses (#3215).** A host-side
   filesystem failure during workspace creation (unwritable data dir,
   disk full) no longer echoes the raw OS message — which names host
