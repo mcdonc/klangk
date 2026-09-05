@@ -869,3 +869,27 @@ class TestRunDoctorAutoHttps:
         results = [r for r in report.results if r.name == "auto-https ports"]
         assert len(results) == 1
         assert results[0].ok
+
+
+class TestCheckAutoHttpsPortsIssuer:
+    """The port check applies to the ACME issuer only (#3192): the
+    internal issuer binds no privileged ports."""
+
+    def test_skipped_for_internal_issuer(self):
+        assert (
+            check_auto_https_ports("klangkd.internal", issuer="internal")
+            is None
+        )
+
+    def test_runs_for_acme_issuer(self):
+        with patch("klangk.doctor.port_bind_error", return_value=None):
+            r = check_auto_https_ports("klangk.example.com", issuer="acme")
+        assert r is not None and r.ok
+
+    def test_internal_env_skips_check_in_run_doctor(self, monkeypatch):
+        monkeypatch.setenv("KLANGKD_TLS_HOSTNAME", "klangkd.internal")
+        monkeypatch.setenv("KLANGKD_TLS_ISSUER", "internal")
+        with patch("platform.system", return_value="Linux"):
+            report = run_doctor()
+        names = [r.name for r in report.results]
+        assert "auto-https ports" not in names

@@ -8,7 +8,9 @@ load balancer.
 > If klangkd itself is the internet-facing server and you want HTTPS
 > without running a second proxy, see
 > [HTTPS Hosting](https-hosting.md) instead — klangkd's built-in Caddy
-> obtains and renews a CA-issued certificate for a public hostname.
+> obtains and renews a CA-issued certificate for a public hostname. To
+> also encrypt the proxy→klangkd hop with an auto-generated certificate,
+> see [Internal TLS](https-hosting.md#internal-tls-the-hop-behind-an-outer-proxy).
 
 ## The two-tier model
 

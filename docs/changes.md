@@ -662,7 +662,11 @@ sync` report a clear permission-denied error.
   `KLANGKD_PORT` and reachable ports 80/443; `KLANGKD_ACME_EMAIL`
   registers the ACME account for expiry notices. Certificates persist
   under `<state_dir>/caddy-storage`, and `klangkd doctor` checks port
-  80/443 bindability when armed. Reloadable on SIGHUP; see the
+  80/443 bindability when armed. **`KLANGKD_TLS_ISSUER=internal`**
+  instead serves the armed listener with a self-generated,
+  auto-renewed certificate from the proxy's internal CA — the TLS hop
+  behind an outer proxy (any host name or IPv4 literal arms; no ACME,
+  no ports 80/443, no redirect). Reloadable on SIGHUP; see the
   HTTPS Hosting deployment chapter.
 - **`KLANGKD_SESSION_IDLE_TIMEOUT_MINUTES` /
   `KLANGKD_PRIVILEGED_SESSION_IDLE_TIMEOUT_MINUTES` (#3151).** Idle

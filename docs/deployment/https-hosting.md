@@ -8,18 +8,20 @@ proxy, no operator-supplied certificate: klangkd's built-in Caddy proxy
 obtains and renews a CA-issued certificate automatically (ACME, via
 Let's Encrypt and ZeroSSL) for a public hostname you choose (#3192).
 
-This is one of three TLS models:
+This is one of four TLS models:
 
-| Model                                       | Who terminates TLS                                               | Chapter                |
-| ------------------------------------------- | ---------------------------------------------------------------- | ---------------------- |
-| **Automatic TLS** (this chapter)            | klangkd's built-in Caddy, certificate issued + renewed by the CA | here                   |
-| [Behind a reverse proxy](behind-a-proxy.md) | an outer nginx/Caddy/HAProxy/load balancer                       | Behind a Reverse Proxy |
-| Operator-provided certificate               | planned (#2167, e.g. `tailscale cert`)                           | —                      |
+| Model                                                | Who terminates TLS                                               | Chapter                |
+| ---------------------------------------------------- | ---------------------------------------------------------------- | ---------------------- |
+| **Automatic TLS** (this chapter)                     | klangkd's built-in Caddy, certificate issued + renewed by the CA | here                   |
+| **Behind a proxy + internal TLS hop** (this chapter) | klangkd's built-in Caddy, self-generated internal-CA certificate | here                   |
+| [Behind a reverse proxy](behind-a-proxy.md), plain   | an outer nginx/Caddy/HAProxy/load balancer                       | Behind a Reverse Proxy |
+| Operator-provided certificate                        | planned (#2167, e.g. `tailscale cert`)                           | —                      |
 
 Use automatic TLS when klangkd runs on a host with a **public DNS name**
-and ports **80/443 reachable from the internet**. Use the outer-proxy
-model when something else already owns ports 80/443, terminates TLS for
-several services, or the host has no public name.
+and ports **80/443 reachable from the internet**. Use an outer proxy when
+something else already owns ports 80/443, terminates TLS for several
+services, or the host has no public name — and add the internal TLS hop
+(below) when the path from that proxy to klangkd must also be encrypted.
 
 ## Requirements
 
@@ -116,6 +118,70 @@ modes: it is internal container wiring, never exposed to the internet.
 Browser secure-context APIs (the terminal clipboard, for example) work
 once the site is served over HTTPS.
 
+## Internal TLS: the hop behind an outer proxy
+
+Many deployments terminate TLS at an outer proxy (the real public HTTPS
+endpoint) but also require encryption on the hop between that proxy and
+klangkd — internal policy, compliance scans, or defense in depth.
+`tls-issuer: internal` serves that case with **no certificate to
+generate and none to renew**: the built-in Caddy runs its own internal
+certificate authority, self-generates the key and certificate for the
+armed name, and renews the (short-lived) certificate continuously.
+
+```yaml
+listen: "0.0.0.0" # or the interface the proxy reaches
+port: 8997
+tls-hostname: "klangkd.internal" # any host name or IPv4 literal
+tls-issuer: "internal"
+trusted-proxy-cidrs: "127.0.0.1,::1,10.0.0.0/24"
+```
+
+(`KLANGKD_LISTEN`, `KLANGKD_PORT`, `KLANGKD_TLS_HOSTNAME`,
+`KLANGKD_TLS_ISSUER`, `KLANGKD_TRUSTED_PROXY_CIDRS`)
+
+Differences from automatic (ACME) TLS:
+
+- **No public name needed** — single-label names (`klangkd`,
+  `localhost`) and IPv4 literals arm fine; the strict public-FQDN
+  grammar applies only to the ACME issuer.
+- **No ACME account, no reachable ports 80/443** — nothing leaves the
+  host. `acme-email` has no effect (klangkd warns if you set it).
+- **No HTTP→HTTPS redirect** — the outer proxy owns port 80 and does
+  its own redirecting; klangkd disables the automatic one (which also
+  keeps the config loadable for unprivileged service users).
+- The **internal root CA and issued leaves live under
+  `<state_dir>/caddy-storage`** — back that directory up: a lost root
+  mints a new CA and breaks the proxy's trust until you redistribute
+  the new root.
+
+**Trust the hop, don't just encrypt it.** With no verification on the
+outer proxy this is encryption-in-transit only — a root whose private
+key lives on the same host cannot defend against that host. Configure
+the outer proxy to verify klangkd's certificate against the internal
+root CA. Fetch the root certificate from the admin endpoint (owner-only
+Unix socket):
+
+```console
+sudo -u <klangkd-user> curl --unix-socket <state_dir>/caddy-admin.sock \
+  http://localhost/pki/ca/local > klangkd-root.crt
+```
+
+Then, for an nginx outer proxy:
+
+```nginx
+proxy_pass https://klangkd.internal:8997;
+proxy_ssl_trusted_certificate /etc/nginx/klangkd-root.crt;
+proxy_ssl_verify on;
+```
+
+(Mutual TLS — the proxy also presenting a client certificate — is not
+wired up yet; watch #2167 for TLS-policy options.)
+
+Everything else behaves as in [Behind a Reverse
+Proxy](behind-a-proxy.md): set `trusted-proxy-cidrs` so forwarded
+headers are honored, and pin `hosting-hostname` if the proxy mangles
+`Host`. See the URL derivation order in the next section.
+
 ## Public URLs: `tls-hostname` vs `hosting-hostname`
 
 Two settings sound alike and do different jobs. Keeping them straight
@@ -161,6 +227,7 @@ Which to set, by deployment:
 | Internet-facing, automatic TLS (this chapter)        | `tls-hostname` only — URLs derive from `Host` |
 | Behind an outer proxy that forwards truthful headers | nothing (still set `trusted-proxy-cidrs`)     |
 | Behind an outer proxy that mangles `Host`/forwarded  | `hosting-hostname` as the URL pin             |
+| Behind an outer proxy, encrypted hop wanted          | `tls-hostname` + `tls-issuer: internal`       |
 | Plain HTTP, direct browser access                    | nothing                                       |
 | URLs come out wrong despite correct headers          | `hosting-hostname` as an explicit override    |
 

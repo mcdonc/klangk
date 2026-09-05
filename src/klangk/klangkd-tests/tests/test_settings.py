@@ -2666,3 +2666,168 @@ class TestLlmModelEntriesTypeGuard2910:
 
         with pytest.raises(ValueError, match="must be a list"):
             _llm_model_entries(123)
+
+
+class TestTlsIssuer:
+    """KLANGKD_TLS_ISSUER + the issuer-conditional hostname grammar
+    (#3192: 'internal' = self-generated cert for the TLS hop behind an
+    outer proxy)."""
+
+    def test_default_is_none_acme(self):
+        s = KlangkSettings(env={"KLANGKD_STATE_DIR": "/tmp/state"})
+        assert s.tls_issuer is None
+
+    def test_normalized_lowercase(self):
+        s = KlangkSettings(
+            env={
+                "KLANGKD_STATE_DIR": "/tmp/state",
+                "KLANGKD_PORT": "8997",
+                "KLANGKD_TLS_HOSTNAME": "klangkd.internal",
+                "KLANGKD_TLS_ISSUER": " Internal ",
+            }
+        )
+        assert s.tls_issuer == "internal"
+
+    def test_explicit_acme_accepted(self):
+        s = KlangkSettings(
+            env={
+                "KLANGKD_STATE_DIR": "/tmp/state",
+                "KLANGKD_PORT": "443",
+                "KLANGKD_TLS_HOSTNAME": "klangk.example.com",
+                "KLANGKD_TLS_ISSUER": "acme",
+            }
+        )
+        assert s.tls_issuer == "acme"
+
+    @pytest.mark.parametrize("bad", ["files", "letsencrypt", "self-signed"])
+    def test_unknown_issuer_rejected(self, bad):
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError) as exc_info:
+            KlangkSettings(
+                env={
+                    "KLANGKD_STATE_DIR": "/tmp/state",
+                    "KLANGKD_PORT": "443",
+                    "KLANGKD_TLS_HOSTNAME": "klangk.example.com",
+                    "KLANGKD_TLS_ISSUER": bad,
+                }
+            )
+        assert "KLANGKD_TLS_ISSUER" in str(exc_info.value)
+
+    @pytest.mark.parametrize(
+        "name", ["klangkd.internal", "localhost", "klangk", "192.168.1.5"]
+    )
+    def test_internal_accepts_private_names(self, name):
+        """Internal names ACME rejects — single labels, all-numeric TLDs,
+        IPv4 literals — arm fine with the internal issuer."""
+        s = KlangkSettings(
+            env={
+                "KLANGKD_STATE_DIR": "/tmp/state",
+                "KLANGKD_PORT": "8997",
+                "KLANGKD_TLS_HOSTNAME": name,
+                "KLANGKD_TLS_ISSUER": "internal",
+            }
+        )
+        assert s.tls_hostname == name
+
+    def test_internal_still_rejects_garbage(self):
+        from pydantic import ValidationError
+
+        for bad in (
+            "https://klangk.internal",
+            "klangk.internal:8997",
+            "klangk .internal",
+            "[::1]",
+            "klangk..internal",
+        ):
+            with pytest.raises(ValidationError) as exc_info:
+                KlangkSettings(
+                    env={
+                        "KLANGKD_STATE_DIR": "/tmp/state",
+                        "KLANGKD_PORT": "8997",
+                        "KLANGKD_TLS_HOSTNAME": bad,
+                        "KLANGKD_TLS_ISSUER": "internal",
+                    }
+                )
+            assert "KLANGKD_TLS_HOSTNAME" in str(exc_info.value)
+
+    def test_internal_requires_port_like_acme(self):
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            KlangkSettings(
+                env={
+                    "KLANGKD_STATE_DIR": "/tmp/state",
+                    "KLANGKD_TLS_HOSTNAME": "klangkd.internal",
+                    "KLANGKD_TLS_ISSUER": "internal",
+                }
+            )
+
+    def test_acme_still_rejects_internal_name(self):
+        """The strict public-FQDN grammar applies unchanged to the default
+        issuer — single-label names (and IPs) stay rejected, and the error
+        now hints at tls-issuer: internal. (A shaped name like
+        'klangkd.internal' is grammatically public and passes ACME
+        validation — issuance would then simply fail offline.)"""
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError) as exc_info:
+            KlangkSettings(
+                env={
+                    "KLANGKD_STATE_DIR": "/tmp/state",
+                    "KLANGKD_PORT": "8997",
+                    "KLANGKD_TLS_HOSTNAME": "localhost",
+                }
+            )
+        assert "tls-issuer: internal" in str(exc_info.value)
+
+    def test_issuer_without_hostname_warns(self, caplog):
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            KlangkSettings(
+                env={
+                    "KLANGKD_STATE_DIR": "/tmp/state",
+                    "KLANGKD_TLS_ISSUER": "internal",
+                }
+            )
+        assert any(
+            "KLANGKD_TLS_ISSUER is set but KLANGKD_TLS_HOSTNAME is not"
+            in r.message
+            for r in caplog.records
+        )
+
+    def test_acme_email_with_internal_warns(self, caplog):
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            KlangkSettings(
+                env={
+                    "KLANGKD_STATE_DIR": "/tmp/state",
+                    "KLANGKD_PORT": "8997",
+                    "KLANGKD_TLS_HOSTNAME": "klangkd.internal",
+                    "KLANGKD_TLS_ISSUER": "internal",
+                    "KLANGKD_ACME_EMAIL": "ops@example.com",
+                }
+            )
+        assert any(
+            "KLANGKD_ACME_EMAIL has no effect" in r.message
+            for r in caplog.records
+        )
+
+    def test_acme_email_with_acme_does_not_warn(self, caplog):
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            KlangkSettings(
+                env={
+                    "KLANGKD_STATE_DIR": "/tmp/state",
+                    "KLANGKD_PORT": "443",
+                    "KLANGKD_TLS_HOSTNAME": "klangk.example.com",
+                    "KLANGKD_ACME_EMAIL": "ops@example.com",
+                }
+            )
+        assert not any(
+            "KLANGKD_ACME_EMAIL has no effect" in r.message
+            for r in caplog.records
+        )

@@ -543,6 +543,12 @@ def port_bind_error(port: int) -> str | None:
         sock.close()
 
 
+def _internal_tls_issuer(issuer: str | None) -> bool:
+    """True when the armed listener uses the internal issuer (no
+    privileged ACME ports to check, #3192)."""
+    return (issuer or "").strip().lower() == "internal"
+
+
 def _auto_https_ok_result(hostname: str) -> CheckResult:
     """The passing result when every ACME port binds (#3192)."""
     return CheckResult(
@@ -584,24 +590,35 @@ def _auto_https_failure_result(
     )
 
 
-def check_auto_https_ports(hostname: str | None) -> CheckResult | None:
-    """Automatic-TLS pre-flight (#3192): ports 80/443 must be bindable.
-
-    Runs only when ``KLANGKD_TLS_HOSTNAME`` arms automatic TLS (env-var
-    detection — doctor is a standalone pre-flight command with no config
-    plumbed in; a YAML-configured deployment exports the var when running
-    doctor). Failures are error-grade: the auto-HTTPS listeners are part
-    of the armed proxy config, so an unbindable 80/443 keeps caddy from
-    loading it at all — the klangkd proxy does not start (browser and
-    container-egress listeners alike), not merely "no certificate".
-    """
-    if not hostname:
-        return None
+def _unbindable_acme_ports() -> list[str]:
+    """The armed ACME ports that cannot be bound (``"port: reason"``
+    strings; empty when every port binds)."""
     failures = []
     for port in _AUTO_HTTPS_PORTS:
         reason = port_bind_error(port)
         if reason is not None:
             failures.append(reason)
+    return failures
+
+
+def check_auto_https_ports(
+    hostname: str | None, issuer: str | None = None
+) -> CheckResult | None:
+    """Automatic-TLS pre-flight (#3192): ports 80/443 must be bindable.
+
+    Runs only when ``KLANGKD_TLS_HOSTNAME`` arms automatic TLS with the
+    ACME issuer (env-var detection — doctor is a standalone pre-flight
+    command with no config plumbed in; a YAML-configured deployment
+    exports the vars when running doctor). The internal issuer needs no
+    privileged ports (no redirect, no ACME challenge), so it is skipped.
+    Failures are error-grade: the auto-HTTPS listeners are part of the
+    armed proxy config, so an unbindable 80/443 keeps caddy from loading
+    it at all — the klangkd proxy does not start (browser and
+    container-egress listeners alike), not merely "no certificate".
+    """
+    if not hostname or _internal_tls_issuer(issuer):
+        return None
+    failures = _unbindable_acme_ports()
     if not failures:
         return _auto_https_ok_result(hostname)
     return _auto_https_failure_result(hostname, failures)
@@ -719,9 +736,13 @@ def run_doctor(*, verbose: bool = False) -> DoctorReport:
     # 4. End-to-end rootless podman (the definitive check)
     report.add(check_rootless_podman())
 
-    # 5. Automatic TLS (#3192): when KLANGKD_TLS_HOSTNAME arms auto-HTTPS,
-    # the ACME ports must be bindable. Skipped entirely when unarmed.
-    tls_result = check_auto_https_ports(os.environ.get("KLANGKD_TLS_HOSTNAME"))
+    # 5. Automatic TLS (#3192): when KLANGKD_TLS_HOSTNAME arms auto-HTTPS
+    # with the ACME issuer, the ACME ports must be bindable. Skipped when
+    # unarmed or on the internal issuer (no privileged ports needed).
+    tls_result = check_auto_https_ports(
+        os.environ.get("KLANGKD_TLS_HOSTNAME"),
+        issuer=os.environ.get("KLANGKD_TLS_ISSUER"),
+    )
     if tls_result is not None:
         report.add(tls_result)
 
