@@ -58,6 +58,7 @@ Thumbs.db
 # Claude
 .claude/
 .coverage
+.coverage.*
 # pytest-testmon line->test map (local iteration only, #2288). Written to
 # the pytest rootdir (src/klangk/.testmondata).
 .testmondata

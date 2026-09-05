@@ -2244,6 +2244,11 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   ("Invalid path", "Permission denied", "Internal server error") and
   log the underlying error server-side instead.
 
+- **Admin user deletion now revokes sessions (#3195).** `DELETE
+  /api/v1/users/{user_id}` now blocklists every token the deleted user
+  held and cuts their live WebSocket and consent-decider connections.
+  Previously sessions stayed alive until their natural expiry.
+
 - **Parallel image-build tasks tolerate transient rootless-podman failures
   (#3168).** `klangk:build-workspace-image` and `klangk:build-network-sidecar`
   run in parallel and are a fresh machine's first rootless podman invocations;

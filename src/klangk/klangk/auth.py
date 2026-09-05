@@ -1063,17 +1063,21 @@ class Auth:
         if deciders is not None:
             await deciders.disconnect_by_jti(jti, reason="Token revoked")
 
-    async def revoke_all_user_sessions(self, user_id: str) -> None:
+    async def revoke_all_user_sessions(
+        self, user_id: str, *, reason: str = "password change"
+    ) -> None:
         """Blocklist and delete every session for *user_id* (#3152).
 
-        Called after a password change: the old credential is invalid, so
-        every session minted with it must be forcibly ended — both the
-        HTTP side (blocklist → 401) and the WebSocket side (kick).
+        Called after a password change (the old credential is invalid, so
+        every session minted with it must be forcibly ended) and on user
+        deletion (#3195) — both the HTTP side (blocklist → 401) and the
+        WebSocket side (kick). *reason* names the trigger in the log.
         """
         rows = await self.app.state.model.sessions.list_sessions(user_id)
         for row in rows:
             logger.info(
-                "password change: revoking session jti=%s (user %s)",
+                "%s: revoking session jti=%s (user %s)",
+                reason,
                 row["jti"],
                 user_id,
             )
