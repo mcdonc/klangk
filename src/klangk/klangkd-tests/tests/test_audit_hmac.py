@@ -157,6 +157,44 @@ class TestContainerEventsHmac:
         rows = await events.list_events()
         assert rows[0]["hmac"] is None
 
+    async def test_finalize_recomputes_hmac_over_finalized_fields(
+        self, app_state, db
+    ):
+        """#3154 × #3174: a fail-closed pre-write (container_id unknown)
+        finalized with the podman ids must carry a tag over its
+        FINALIZED content — a stale pre-write tag would read as
+        tampering to an external checker."""
+        events = app_state.state.model.container_events
+        event_id = await events.record("ws-a", EVENT_START, "api")
+        await events.finalize_event(
+            event_id, container_id="cid-fin", network_namespace="ns-1"
+        )
+        rows = await events.list_events()
+        row = rows[0]
+        assert row["container_id"] == "cid-fin"
+        assert row["hmac"] == compute_container_event_hmac(
+            app_state.state.settings, row
+        )
+
+    async def test_finalize_clears_hmac_when_tagging_disabled(
+        self, app_state, db
+    ):
+        """Tagging switched off between pre-write and finalize: the row
+        is finalized untagged rather than left with a stale tag."""
+        events = app_state.state.model.container_events
+        event_id = await events.record("ws-a", EVENT_START, "api")
+        app_state.state.settings.audit_hmac_key = None
+        await events.finalize_event(event_id, container_id="cid-off")
+        rows = await events.list_events()
+        row = rows[0]
+        assert row["container_id"] == "cid-off"
+        assert row["hmac"] is None
+
+    async def test_finalize_missing_row_is_a_noop(self, app_state, db):
+        """A row pruned between pre-write and finalize settles nothing."""
+        events = app_state.state.model.container_events
+        await events.finalize_event(999999, container_id="cid-gone")
+
 
 class TestEgressConsentHmac:
     async def test_create_request_stores_hmac(self, app_state, db, workspace):

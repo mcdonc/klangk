@@ -199,6 +199,21 @@ class ContainerEventsModel(Submodel):
                 )
             return row_id
 
+    @staticmethod
+    def _finalize_updates(
+        container_id: str | None, network_namespace: str | None
+    ) -> dict:
+        """The non-None field updates a finalize applies (#3154) — a
+        None argument means "still unknown", never "clear it"."""
+        return {
+            col: value
+            for col, value in (
+                ("container_id", container_id),
+                ("network_namespace", network_namespace),
+            )
+            if value is not None
+        }
+
     async def finalize_event(
         self,
         event_id: int,
@@ -220,14 +235,7 @@ class ContainerEventsModel(Submodel):
         changed fields would read as tampering to an external checker.
         A row pruned between pre-write and finalize settles nothing.
         """
-        updates = {
-            col: value
-            for col, value in (
-                ("container_id", container_id),
-                ("network_namespace", network_namespace),
-            )
-            if value is not None
-        }
+        updates = self._finalize_updates(container_id, network_namespace)
         if not updates:
             return
         row = await self.app.state.db.fetchone(
@@ -243,8 +251,7 @@ class ContainerEventsModel(Submodel):
         params = (*updates.values(), tag, event_id)
         async with self.app.state.db.transaction() as db:
             await db.execute(
-                f"UPDATE container_events SET {sets}, hmac = ?"
-                " WHERE id = ?",
+                f"UPDATE container_events SET {sets}, hmac = ? WHERE id = ?",
                 params,
             )
 
