@@ -239,18 +239,27 @@ async def _drain_workers(app, pilot) -> None:
 
 
 async def _settle_cleared_focus(app, pilot, attempts: int = 8) -> None:
-    """Clear screen focus and wait out every delayed focus re-grab (#3224).
+    """Clear screen focus and settle the delayed ``#term_list`` re-grabs
+    (#3224).
 
-    The detail screen re-asserts ``#term_list`` focus from legs a single
-    ``pilot.pause()`` cannot flush: ``on_mount``'s
-    ``call_after_refresh(_focus_term_list)`` hops widget queue →
-    ``screen._callbacks`` → the screen's update-timer tick, so the re-grab
-    can land on the pause *after* ``set_focus(None)`` — the exact #3224
-    macOS flake (recurring past #3188's pre-clear drain). Re-clear and
-    re-drain until a full worker drain + pause completes with focus still
-    cleared: each delayed leg fires at most once, so the loop converges.
-    If it never settles, a periodic leg is re-asserting focus — fail with
-    that named so the next recurrence identifies the missing leg.
+    The detail screen re-asserts ``#term_list`` focus from one-shot legs
+    a single ``pilot.pause()`` cannot flush: ``on_mount``'s
+    ``call_after_refresh(_focus_term_list)`` chains widget queue →
+    ``screen._callbacks`` → the update tick's trailing ``call_next`` →
+    ``Widget.focus()``'s ``app.call_later(set_focus)`` — and the last hop
+    can land on the pause *after* ``set_focus(None)`` (the #3224 macOS
+    flake, recurring past #3188's pre-clear drain). So this polls focus
+    instead of counting hops: re-clear and re-drain until a full worker
+    drain + pause completes with focus still cleared.
+
+    Contract: returns at a no-await point with focus observed cleared —
+    a straggler one-shot leg may still be in flight. Callers are safe
+    when they assert before their next await (nothing can interleave) or
+    when stragglers are idempotent with their own reclaim (a straggler
+    targets the same widget the reclaim just focused). ``attempts``
+    bounds the loop well above the worst case (~4 one-shot legs × a few
+    hops each); exhausting it means a periodic leg — not a one-shot —
+    is re-asserting focus, named in the failure for the next recurrence.
     """
     for _ in range(attempts):
         app.screen.set_focus(None)
@@ -259,8 +268,8 @@ async def _settle_cleared_focus(app, pilot, attempts: int = 8) -> None:
             return
     raise AssertionError(
         "focus was re-grabbed after clearing for "
-        f"{attempts} settle attempts; a periodic leg is re-asserting "
-        "#term_list focus (#3224)"
+        f"{attempts} settle attempts; a periodic leg (not one of the "
+        "one-shot legs) is re-asserting #term_list focus (#3224)"
     )
 
 
