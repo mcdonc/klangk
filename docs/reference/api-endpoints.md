@@ -907,9 +907,16 @@ disabled.
   "email": "new@example.com",
   "password": "newpass",
   "handle": "newhandle",
-  "disabled": true
+  "disabled": true,
+  "must_change_password": false
 }
 ```
+
+`must_change_password` (#3172) sets or clears the forced-change flag on
+a local-password account (`400` for OIDC-linked accounts — they have no
+local password to change). Setting `password` implies
+`must_change_password: true`; an explicit `must_change_password: false`
+in the same request overrides that.
 
 ```json
 { "status": "updated" }
@@ -1138,6 +1145,8 @@ for verification.
 ### POST `/api/v1/auth/change-password`
 
 Change the current user's password. Requires the current password.
+Clears `must_change_password` atomically with the new hash (#3172) —
+this is the **only** endpoint a flagged session may call.
 
 **Auth:** JWT required.
 
@@ -1217,8 +1226,18 @@ on the resolved user's canonical email, so attempts under either form
 share one counter.
 
 ```json
-{ "access_token": "jwt-string", "token_type": "bearer" }
+{
+  "access_token": "jwt-string",
+  "token_type": "bearer",
+  "must_change_password": false
+}
 ```
+
+`must_change_password` (#3172) is `true` when the password was set by an
+admin and has not been changed since. Such a session may only call
+`POST /api/v1/auth/change-password` (and refresh); every other
+authenticated request returns `403 Password change required` and new
+WebSocket connections close with `4004`.
 
 ---
 
@@ -1283,8 +1302,15 @@ blocklisted.
 No request body.
 
 ```json
-{ "access_token": "new-jwt-string", "token_type": "bearer" }
+{
+  "access_token": "new-jwt-string",
+  "token_type": "bearer",
+  "must_change_password": false
+}
 ```
+
+`must_change_password` (#3172) reflects the live flag at refresh time
+(the same semantics as the login response above).
 
 ---
 
@@ -1989,7 +2015,9 @@ delegate events.
 
 **Auth:** JWT required via `?token=` query param.
 
-Close codes: 4001 (missing/invalid token), 4002 (expired token).
+Close codes: 4001 (missing/invalid token), 4002 (expired token), 4004
+(password change required, #3172 — the account must change its password
+before opening any WebSocket connection).
 
 ---
 
@@ -2006,6 +2034,10 @@ strictly workspace-scoped: the `workspace` query param is
 required — a handshake without it is refused.
 
 **Auth:** JWT required. Query param: `workspace` (the workspace id).
+
+Close codes: 4001 (missing/invalid token), 4002 (expired token), 4003
+(forbidden — missing `egress-consent` or wrong scope), 4004 (password
+change required, #3172).
 
 ---
 

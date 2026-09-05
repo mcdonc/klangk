@@ -292,6 +292,41 @@ void main() {
       expect(find.textContaining('Groups:'), findsNothing);
     });
 
+    testWidgets(
+        'edit dialog shows the must-change checkbox per provider '
+        '(#3172)', (tester) async {
+      final oidc = _user('oidc@example.com');
+      oidc['provider'] = 'oidc';
+      serveUsers(
+        (page, pageSize, sort, order, q) => [
+          _user('local@example.com'),
+          oidc,
+        ],
+        total: 2,
+      );
+
+      await pumpPage(tester);
+
+      // Local account: the flag control is offered.
+      await tester.tap(
+        find.text('local@example.com', skipOffstage: false),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Must change password on next login'), findsOneWidget);
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+
+      // OIDC account: no local password to change — the control is
+      // hidden (the server also refuses the field).
+      await tester.tap(
+        find.text('oidc@example.com', skipOffstage: false),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Must change password on next login'), findsNothing);
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+    });
+
     testWidgets('shows pagination controls when more than one page', (
       tester,
     ) async {

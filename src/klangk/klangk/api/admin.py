@@ -303,8 +303,11 @@ async def admin_create_user(
         )
     app.state.auth.validate_password(req.password)
     password_hash = await asyncio.to_thread(auth.hash_password, req.password)
+    # Admin-chosen password: force the user to change it on first
+    # login (#3172). The flag lands in the same INSERT,
+    # so no crash window can leave an unflagged admin-chosen password.
     user = await app.state.model.users.create_user(
-        req.email, password_hash, verified=True
+        req.email, password_hash, verified=True, must_change_password=True
     )
     return {"id": user["id"], "email": user["email"], "status": "created"}
 
@@ -370,6 +373,7 @@ class UpdateUserRequest(auth.BaseModel):
     password: str | None = None
     handle: str | None = None
     disabled: bool | None = None
+    must_change_password: bool | None = None
 
 
 async def _require_user(app, user_id: str) -> dict:
@@ -385,7 +389,11 @@ async def _update_user_password(app, user_id: str, password: str) -> None:
     app.state.auth.validate_password(password)
     await app.state.auth.validate_password_not_reused(user_id, password)
     password_hash = await asyncio.to_thread(auth.hash_password, password)
-    await app.state.model.users.update_password(user_id, password_hash)
+    # Admin-chosen password: force the user to change it on next
+    # login (#3172) — hash + flag land in one transaction.
+    await app.state.model.users.set_password_force_change(
+        user_id, password_hash
+    )
 
 
 async def _update_user_email(app, user_id: str, email: str) -> None:
@@ -415,6 +423,36 @@ async def _update_user_handle(app, user_id: str, handle: str) -> None:
     await wshandler.refresh_user_handle(app.state.sockets, user_id, handle)
 
 
+async def _apply_user_field_updates(
+    app, req: "UpdateUserRequest", user: dict
+) -> None:
+    """Apply simple field updates from an admin user-update request."""
+    user_id = user["id"]
+    if req.email is not None:
+        await _update_user_email(app, user_id, req.email)
+    if req.password is not None:
+        await _update_user_password(app, user_id, req.password)
+    if req.handle is not None:
+        await _update_user_handle(app, user_id, req.handle)
+    if req.must_change_password is not None:
+        await _update_must_change_password(app, user, req.must_change_password)
+
+
+async def _update_must_change_password(app, user: dict, flag: bool) -> None:
+    """Set/clear the forced-change flag (#3172). Rejected for
+    non-local accounts: an OIDC user cannot ever clear it (their
+    passwords live with the IdP), so flagging one is a permanent
+    lockout."""
+    if user.get("provider") not in (None, "local"):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "must_change_password applies only to local-password accounts"
+            ),
+        )
+    await app.state.model.users.set_must_change_password(user["id"], flag)
+
+
 @router.patch("/users/{user_id}")
 async def update_user(
     user_id: str,
@@ -422,13 +460,8 @@ async def update_user(
     admin: dict = Depends(acl.has_permission("manage-users")),
     app=Depends(get_app_dep),
 ):
-    await _require_user(app, user_id)
-    if req.email is not None:
-        await _update_user_email(app, user_id, req.email)
-    if req.password is not None:
-        await _update_user_password(app, user_id, req.password)
-    if req.handle is not None:
-        await _update_user_handle(app, user_id, req.handle)
+    user = await _require_user(app, user_id)
+    await _apply_user_field_updates(app, req, user)
     if req.disabled is not None:
         await _update_user_disabled(app, req, user_id, admin)
     return {"status": "updated"}

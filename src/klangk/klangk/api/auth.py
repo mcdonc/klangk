@@ -463,7 +463,12 @@ async def reset_password(req: ResetPasswordRequest, request: Request):
         user_id, req.password
     )
     password_hash = await asyncio.to_thread(auth.hash_password, req.password)
-    await request.app.state.model.users.update_password(user_id, password_hash)
+    # A self-chosen password via forgot-password clears the forced-change
+    # flag (#3172) — the user chose this password themselves. Hash write
+    # and flag clear land in the same transaction.
+    await request.app.state.model.users.clear_must_change_password(
+        user_id, password_hash
+    )
     # Auto-login after reset
     source_ip, user_agent = workstation(request)
     token = await request.app.state.auth.issue_token(
@@ -596,17 +601,27 @@ async def verify_password_confirmation(
 async def change_password(
     req: ChangePasswordRequest,
     request: Request,
-    user: dict = Depends(auth.get_current_user),
+    user: dict = Depends(auth.get_current_user_allow_forced_change),
 ):
-    """Change password. Requires current password."""
+    """Change password. Requires current password.
+
+    Uses ``get_current_user_allow_forced_change`` instead of the standard
+    ``get_current_user`` so a session under the ``must_change_password``
+    flag can reach this endpoint (#3172).
+    """
     await verify_password_confirmation(
         request.app,
         user,
         req.current_password,
         incorrect_detail="Current password is incorrect",
     )
-    # Self-service changes respect the minimum age (#3177).
-    request.app.state.auth.validate_password_min_age(user)
+    # Self-service changes respect the minimum age (#3177) — except the
+    # forced first change after an admin-set password (#3172): the
+    # temporary password must be replaceable *immediately*, and the
+    # admin reset that set this password already bypassed the age
+    # check.
+    if not user.get("must_change_password"):
+        request.app.state.auth.validate_password_min_age(user)
     request.app.state.auth.validate_password(req.new_password)
     request.app.state.auth.validate_password_changed_enough(
         req.current_password, req.new_password
@@ -617,7 +632,9 @@ async def change_password(
     password_hash = await asyncio.to_thread(
         auth.hash_password, req.new_password
     )
-    await request.app.state.model.users.update_password(
+    # clear_must_change_password atomically updates the hash AND clears
+    # the flag in one transaction (#3172).
+    await request.app.state.model.users.clear_must_change_password(
         user["id"], password_hash
     )
     # Revoke every session so the old credential cannot be reused and

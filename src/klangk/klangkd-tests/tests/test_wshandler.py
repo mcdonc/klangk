@@ -3067,6 +3067,19 @@ class TestHandleWebsocket:
             code=4001, reason="Invalid token"
         )
 
+    async def test_must_change_password_rejected(self, user, app_state):
+        """#3172: a session under must_change_password gets 4004."""
+        app_state = _make_app_state()
+        await app_state.state.model.users.set_must_change_password(
+            user["id"], True
+        )
+        token = _auth().create_token(user["id"], user["email"])
+        websocket = _mock_raw_sock(query_params={"token": token})
+        await handle_websocket(websocket, app_state)
+        websocket.close.assert_awaited_once_with(
+            code=4004, reason="Password change required"
+        )
+
     async def test_valid_token_then_disconnect(self, user, app_state):
         app_state = _make_app_state()
 

@@ -1670,6 +1670,36 @@ class TestPasswordAgeRoutes:
         assert resp.status_code == 400
         assert "must be kept" in resp.json()["detail"]
 
+    async def test_change_password_min_age_bypassed_under_flag(
+        self, client, app, db, app_state, monkeypatch
+    ):
+        """#3172: the forced first change after an admin-set password
+        ignores the minimum age — the temporary password must be
+        replaceable immediately, and blocking it would lock the account
+        behind its own flag."""
+        monkeypatch.setattr(app.state.settings, "password_min_age_hours", 24)
+        await self._fresh_user(app_state, "forcedage@example.com")
+        flagged = await app_state.state.model.users.get_user_by_email(
+            "forcedage@example.com"
+        )
+        await app_state.state.model.users.set_must_change_password(
+            flagged["id"], True
+        )
+        headers = await self._login_token(client, "forcedage@example.com")
+        resp = await client.post(
+            "/api/v1/auth/change-password",
+            json={
+                "current_password": "testpass",
+                "new_password": "freshpass1",
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        user = await app_state.state.model.users.get_user_by_email(
+            "forcedage@example.com"
+        )
+        assert user["must_change_password"] is False
+
     async def test_reset_password_min_age_refused(
         self, client, app, db, app_state, monkeypatch
     ):
@@ -1728,6 +1758,27 @@ class TestPasswordAgeRoutes:
         headers = await self._login_token(client, "midcfg@example.com")
         await self._backdate_password(app_state, user["id"], days=61)
         resp = await client.get("/api/v1/config", headers=headers)
+        assert resp.status_code == 403
+        assert resp.json()["detail"]["error"] == "password_expired"
+
+    async def test_expired_session_refused_on_change_password(
+        self, client, app, db, app_state, monkeypatch
+    ):
+        """#3172: the change-password dependency keeps the expiry gate
+        (#3177) — an expired password is resolved by the
+        /auth/change-expired-password flow, not here."""
+        monkeypatch.setattr(app.state.settings, "password_max_age_days", 60)
+        user = await self._fresh_user(app_state, "midchg@example.com")
+        headers = await self._login_token(client, "midchg@example.com")
+        await self._backdate_password(app_state, user["id"], days=61)
+        resp = await client.post(
+            "/api/v1/auth/change-password",
+            json={
+                "current_password": "testpass",
+                "new_password": "freshpass1",
+            },
+            headers=headers,
+        )
         assert resp.status_code == 403
         assert resp.json()["detail"]["error"] == "password_expired"
 
@@ -2376,6 +2427,20 @@ class TestChangePassword:
         )
         assert resp.status_code == 400
         assert "change at least 8 characters" in resp.json()["detail"]
+
+    async def test_change_password_garbage_token(self, client, db):
+        """#3172: change-password uses its own dependency (flagged sessions
+        allowed), so its invalid-token arm needs its own test."""
+        resp = await client.post(
+            "/api/v1/auth/change-password",
+            json={
+                "current_password": "testpass",
+                "new_password": "newpass1",
+            },
+            headers={"Authorization": "Bearer garbage"},
+        )
+        assert resp.status_code == 401
+        assert resp.json()["detail"] == "Invalid token"
 
     async def test_change_password_wrong_current_beats_too_similar(
         self, client, user, app, monkeypatch
@@ -9919,6 +9984,8 @@ class TestAdminEndpoints:
             },
         )
         assert login_resp.status_code == 200
+        # #3172: admin-created user must change password
+        assert login_resp.json()["must_change_password"] is True
 
     async def test_admin_create_user_duplicate(self, client, admin_user, user):
         headers = await self._admin_headers(client)
@@ -10530,6 +10597,397 @@ class TestUserSessionsAudit:
             f"/api/v1/users/{user['id']}/sessions", headers=headers
         )
         assert resp.status_code == 403
+
+
+class TestMustChangePassword:
+    """#3172 — force password change on admin-created/reset passwords."""
+
+    async def _admin_headers(self, client):
+        resp = await client.post(
+            "/api/v1/auth/login",
+            json={
+                "identifier": "testadmin@example.com",
+                "password": "testpass",
+            },
+        )
+        return {"Authorization": f"Bearer {resp.json()['access_token']}"}
+
+    async def test_admin_create_user_sets_flag(
+        self, client, admin_user, app_state
+    ):
+        """Admin-created user with password has must_change_password."""
+        headers = await self._admin_headers(client)
+        resp = await client.post(
+            "/api/v1/users",
+            headers=headers,
+            json={"email": "forced@example.com", "password": "testpass123"},
+        )
+        assert resp.status_code == 200
+        user = await app_state.state.model.users.get_user_by_email(
+            "forced@example.com"
+        )
+        assert user["must_change_password"] is True
+
+    async def test_admin_password_reset_sets_flag(
+        self, client, admin_user, user, app_state
+    ):
+        """Admin password reset sets must_change_password."""
+        headers = await self._admin_headers(client)
+        resp = await client.patch(
+            f"/api/v1/users/{user['id']}",
+            headers=headers,
+            json={"password": "newpass12345"},
+        )
+        assert resp.status_code == 200
+        u = await app_state.state.model.users.get_user_by_id(user["id"])
+        assert u["must_change_password"] is True
+
+    async def test_login_returns_flag(self, client, admin_user, app_state):
+        """Login response includes must_change_password when set."""
+        headers = await self._admin_headers(client)
+        await client.post(
+            "/api/v1/users",
+            headers=headers,
+            json={"email": "flagged@example.com", "password": "testpass123"},
+        )
+        resp = await client.post(
+            "/api/v1/auth/login",
+            json={
+                "identifier": "flagged@example.com",
+                "password": "testpass123",
+            },
+        )
+        assert resp.status_code == 200
+        assert resp.json()["must_change_password"] is True
+
+    async def test_api_gated_under_flag(self, client, admin_user, app_state):
+        """API requests (other than change-password) are rejected under
+        the must_change_password flag."""
+        headers = await self._admin_headers(client)
+        await client.post(
+            "/api/v1/users",
+            headers=headers,
+            json={"email": "gated@example.com", "password": "testpass123"},
+        )
+        login_resp = await client.post(
+            "/api/v1/auth/login",
+            json={
+                "identifier": "gated@example.com",
+                "password": "testpass123",
+            },
+        )
+        token = login_resp.json()["access_token"]
+        flagged_headers = {"Authorization": f"Bearer {token}"}
+        # A normal endpoint should be rejected
+        resp = await client.get(
+            "/api/v1/my-permissions", headers=flagged_headers
+        )
+        assert resp.status_code == 403
+        assert resp.json()["detail"] == "Password change required"
+
+    async def test_change_password_clears_flag(
+        self, client, admin_user, app_state
+    ):
+        """Changing password clears the must_change_password flag."""
+        headers = await self._admin_headers(client)
+        await client.post(
+            "/api/v1/users",
+            headers=headers,
+            json={"email": "clearflag@example.com", "password": "testpass123"},
+        )
+        login_resp = await client.post(
+            "/api/v1/auth/login",
+            json={
+                "identifier": "clearflag@example.com",
+                "password": "testpass123",
+            },
+        )
+        token = login_resp.json()["access_token"]
+        flagged_headers = {"Authorization": f"Bearer {token}"}
+        # Change password should work even under the flag
+        resp = await client.post(
+            "/api/v1/auth/change-password",
+            headers=flagged_headers,
+            json={
+                "current_password": "testpass123",
+                "new_password": "brandnewpass1",
+            },
+        )
+        assert resp.status_code == 200
+        # Verify flag is cleared
+        user = await app_state.state.model.users.get_user_by_email(
+            "clearflag@example.com"
+        )
+        assert user["must_change_password"] is False
+        # Now API should work
+        login2 = await client.post(
+            "/api/v1/auth/login",
+            json={
+                "identifier": "clearflag@example.com",
+                "password": "brandnewpass1",
+            },
+        )
+        assert login2.json()["must_change_password"] is False
+
+    async def test_admin_can_clear_flag(self, client, admin_user, app_state):
+        """Admin can explicitly clear the flag via PATCH."""
+        headers = await self._admin_headers(client)
+        resp = await client.post(
+            "/api/v1/users",
+            headers=headers,
+            json={
+                "email": "adminclear@example.com",
+                "password": "testpass123",
+            },
+        )
+        user_id = resp.json()["id"]
+        resp = await client.patch(
+            f"/api/v1/users/{user_id}",
+            headers=headers,
+            json={"must_change_password": False},
+        )
+        assert resp.status_code == 200
+        user = await app_state.state.model.users.get_user_by_id(user_id)
+        assert user["must_change_password"] is False
+
+    async def test_reset_password_clears_flag(
+        self, client, app, admin_user, app_state
+    ):
+        """Self-service password reset clears the flag."""
+        headers = await self._admin_headers(client)
+        await client.post(
+            "/api/v1/users",
+            headers=headers,
+            json={
+                "email": "resetclear@example.com",
+                "password": "testpass123",
+            },
+        )
+        user = await app_state.state.model.users.get_user_by_email(
+            "resetclear@example.com"
+        )
+        assert user["must_change_password"] is True
+        # Generate a reset token and use it
+        reset_token = app.state.auth.create_password_reset_token(user["id"])
+        resp = await client.post(
+            "/api/v1/auth/reset-password",
+            json={"token": reset_token, "password": "selfchosen999"},
+        )
+        assert resp.status_code == 200
+        user = await app_state.state.model.users.get_user_by_email(
+            "resetclear@example.com"
+        )
+        assert user["must_change_password"] is False
+
+    async def test_list_users_includes_flag(
+        self, client, admin_user, app_state
+    ):
+        """The admin user list includes the must_change_password field."""
+        headers = await self._admin_headers(client)
+        await client.post(
+            "/api/v1/users",
+            headers=headers,
+            json={"email": "listed@example.com", "password": "testpass123"},
+        )
+        resp = await client.get("/api/v1/users", headers=headers)
+        assert resp.status_code == 200
+        users = resp.json()["users"]
+        listed = [u for u in users if u["email"] == "listed@example.com"]
+        assert len(listed) == 1
+        assert listed[0]["must_change_password"] is True
+
+    async def test_refresh_returns_flag_primary_and_cached(
+        self, client, admin_user, app_state
+    ):
+        """#3172: refresh carries the flag on the primary path AND on the
+        idempotent cached retry — the cached response reads the live
+        flag, not the mint-time one."""
+        headers = await self._admin_headers(client)
+        await client.post(
+            "/api/v1/users",
+            headers=headers,
+            json={"email": "rf@example.com", "password": "testpass123"},
+        )
+        login = await client.post(
+            "/api/v1/auth/login",
+            json={"identifier": "rf@example.com", "password": "testpass123"},
+        )
+        token = login.json()["access_token"]
+        # Primary path: valid (not yet refreshed) token.
+        resp = await client.post(
+            "/api/v1/auth/refresh",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["must_change_password"] is True
+        # Cached path: retrying with the now-blocklisted old token
+        # replays the cached replacement — which must still report the
+        # LIVE flag.
+        resp2 = await client.post(
+            "/api/v1/auth/refresh",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp2.status_code == 200
+        assert resp2.json()["access_token"] == resp.json()["access_token"]
+        assert resp2.json()["must_change_password"] is True
+        # Admin clears the flag; the SAME cached retry now reports false.
+        user = await app_state.state.model.users.get_user_by_email(
+            "rf@example.com"
+        )
+        await client.patch(
+            f"/api/v1/users/{user['id']}",
+            headers=headers,
+            json={"must_change_password": False},
+        )
+        resp3 = await client.post(
+            "/api/v1/auth/refresh",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp3.status_code == 200
+        assert resp3.json()["must_change_password"] is False
+
+    async def test_cached_refresh_for_deleted_user_reports_unflagged(
+        self, client, admin_user, app_state
+    ):
+        """#3172: the cached refresh retry for a since-deleted user
+        still replays the cached token, with the flag defaulting false
+        (there is no user row left to read)."""
+        headers = await self._admin_headers(client)
+        await client.post(
+            "/api/v1/users",
+            headers=headers,
+            json={"email": "gone@example.com", "password": "testpass123"},
+        )
+        login = await client.post(
+            "/api/v1/auth/login",
+            json={
+                "identifier": "gone@example.com",
+                "password": "testpass123",
+            },
+        )
+        token = login.json()["access_token"]
+        user = await app_state.state.model.users.get_user_by_email(
+            "gone@example.com"
+        )
+        # First refresh caches the replacement under the old jti.
+        await client.post(
+            "/api/v1/auth/refresh",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        await client.delete(f"/api/v1/users/{user['id']}", headers=headers)
+        resp = await client.post(
+            "/api/v1/auth/refresh",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["must_change_password"] is False
+
+    async def test_flag_patch_rejected_for_oidc_user(
+        self, client, admin_user, app_state
+    ):
+        """#3172: flagging an OIDC account is a permanent lockout (it has
+        no local password to change) — the admin PATCH refuses."""
+        headers = await self._admin_headers(client)
+        user = await app_state.state.model.users.create_user(
+            "oidcflag@example.com", None, verified=True, provider="oidc"
+        )
+        resp = await client.patch(
+            f"/api/v1/users/{user['id']}",
+            headers=headers,
+            json={"must_change_password": True},
+        )
+        assert resp.status_code == 400
+        assert "local-password" in resp.json()["detail"]
+        fresh = await app_state.state.model.users.get_user_by_id(user["id"])
+        assert fresh["must_change_password"] is False
+
+    async def test_flag_patch_rearm(self, client, admin_user, app_state):
+        """#3172: must_change_password: true alone re-arms the flag."""
+        headers = await self._admin_headers(client)
+        resp = await client.post(
+            "/api/v1/users",
+            headers=headers,
+            json={"email": "rearm@example.com", "password": "testpass123"},
+        )
+        user_id = resp.json()["id"]
+        await client.patch(
+            f"/api/v1/users/{user_id}",
+            headers=headers,
+            json={"must_change_password": False},
+        )
+        resp = await client.patch(
+            f"/api/v1/users/{user_id}",
+            headers=headers,
+            json={"must_change_password": True},
+        )
+        assert resp.status_code == 200
+        user = await app_state.state.model.users.get_user_by_id(user_id)
+        assert user["must_change_password"] is True
+
+    async def test_password_patch_with_flag_false_not_flagged(
+        self, client, admin_user, app_state
+    ):
+        """#3172: password + must_change_password: false in one PATCH —
+        the explicit field wins over the password's implicit flag."""
+        headers = await self._admin_headers(client)
+        await client.post(
+            "/api/v1/users",
+            headers=headers,
+            json={
+                "email": "combined@example.com",
+                "password": "testpass123",
+            },
+        )
+        user = await app_state.state.model.users.get_user_by_email(
+            "combined@example.com"
+        )
+        resp = await client.patch(
+            f"/api/v1/users/{user['id']}",
+            headers=headers,
+            json={"password": "newpass12345", "must_change_password": False},
+        )
+        assert resp.status_code == 200
+        fresh = await app_state.state.model.users.get_user_by_id(user["id"])
+        assert fresh["must_change_password"] is False
+
+    async def test_gate_sweep_across_routers(
+        self, client, admin_user, app_state
+    ):
+        """#3172: the gate rejects a flagged session on representative
+        endpoints across routers, not just /my-permissions."""
+        headers = await self._admin_headers(client)
+        await client.post(
+            "/api/v1/users",
+            headers=headers,
+            json={"email": "sweep@example.com", "password": "testpass123"},
+        )
+        login = await client.post(
+            "/api/v1/auth/login",
+            json={
+                "identifier": "sweep@example.com",
+                "password": "testpass123",
+            },
+        )
+        flagged = {"Authorization": f"Bearer {login.json()['access_token']}"}
+        cases = [
+            ("GET", "/api/v1/workspaces"),
+            ("GET", "/api/v1/my-permissions"),
+            ("GET", "/api/v1/config"),
+            ("POST", "/api/v1/workspaces"),
+        ]
+        for method, path in cases:
+            call = getattr(client, method.lower())
+            resp = await call(path, headers=flagged)
+            assert resp.status_code == 403, (method, path)
+            assert resp.json()["detail"] == "Password change required", (
+                method,
+                path,
+            )
+        # Refresh stays open (the client needs a live token to change
+        # the password) and reports the flag.
+        resp = await client.post("/api/v1/auth/refresh", headers=flagged)
+        assert resp.status_code == 200
+        assert resp.json()["must_change_password"] is True
 
 
 class TestGroupEndpoints:

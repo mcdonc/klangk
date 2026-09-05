@@ -84,11 +84,30 @@ async def ws_authenticate(websocket: WebSocket, app):
     except JWTError:
         await websocket.close(code=4001, reason="Invalid token")
         return None
+    user = await _user_or_close(websocket, a, payload)
+    if user is None:
+        return None
+    return user, payload.get("jti"), payload.get("exp")
+
+
+async def _user_or_close(websocket: WebSocket, a, payload) -> dict | None:
+    """The authenticated user for a main-WS connect, or None after
+    closing the socket.
+
+    Two refusal arms: an unknown user (4001) and a session under the
+    must_change_password flag (4004, #3172 — the client must change
+    the password first; 4004, not 4003, because the decider socket
+    already uses 4003 for authz refusals, and duplicate close codes
+    are indistinguishable to clients, #3172 review).
+    """
     user = await a._user_from_valid_payload(payload)
     if user is None:
         await websocket.close(code=4001, reason="Invalid token")
         return None
-    return user, payload.get("jti"), payload.get("exp")
+    if user.get("must_change_password"):
+        await websocket.close(code=4004, reason="Password change required")
+        return None
+    return user
 
 
 # Exceptions raised by a *handler* that mean the connection itself is

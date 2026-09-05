@@ -115,6 +115,7 @@ void main() {
         return evaluateGuards(
           isLoggedIn: auth.isLoggedIn,
           bannerRequired: auth.bannerRequired,
+          mustChangePassword: auth.mustChangePassword,
           loc: loc,
           currentUri: state.uri.toString(),
           publicRoutes: routes,

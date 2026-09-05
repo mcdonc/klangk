@@ -13,6 +13,7 @@ import 'auth/verify_page.dart';
 import 'auth/forgot_password_page.dart';
 import 'auth/accept_invite_page.dart';
 import 'auth/oidc_complete_page.dart';
+import 'auth/forced_change_password_page.dart';
 import 'auth/reset_password_page.dart';
 import 'auth/settings_page.dart';
 import 'widgets/stale_build_banner.dart';
@@ -81,6 +82,7 @@ class _KlangkAppState extends State<KlangkApp> {
         return evaluateGuards(
           isLoggedIn: auth.isLoggedIn,
           bannerRequired: auth.bannerRequired,
+          mustChangePassword: auth.mustChangePassword,
           loc: loc,
           currentUri: state.uri.toString(),
           publicRoutes: routes,
@@ -123,6 +125,10 @@ class _KlangkAppState extends State<KlangkApp> {
         GoRoute(
           path: '/settings',
           builder: (context, state) => const SettingsPage(),
+        ),
+        GoRoute(
+          path: '/change-password',
+          builder: (context, state) => const ForcedChangePasswordPage(),
         ),
         GoRoute(
           path: '/forgot-password',

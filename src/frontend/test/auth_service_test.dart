@@ -189,15 +189,15 @@ void main() {
       expect(service2.sudoAvailable, isTrue);
     });
 
-    test('loads default_classification_banner from /api/config (#2768)',
-        () async {
-      // Empty by default (no banner, no reserved space); set when the
-      // server advertises one.
-      testAuthHttpClientOverride = _bannerClient();
-      final service = AuthService();
-      await Future.delayed(Duration.zero);
-      expect(service.defaultClassificationBanner, '');
-
+    test(
+      'loads default_classification_banner from /api/config (#2768)',
+      () async {
+        // Empty by default (no banner, no reserved space); set when the
+        // server advertises one.
+        testAuthHttpClientOverride = _bannerClient();
+        final service = AuthService();
+        await Future.delayed(Duration.zero);
+        expect(service.defaultClassificationBanner, '');
 
         testAuthHttpClientOverride = _bannerClient(
           defaultClassificationBanner: 'CUI',
@@ -553,6 +553,196 @@ void main() {
       await service.login('user', 'pass');
       expect(wasLoading, isTrue);
       expect(service.loading, isFalse);
+    });
+  });
+
+  group('mustChangePassword (#3172)', () {
+    test('login sets mustChangePassword from response', () async {
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path.contains('/api/v1/auth/login')) {
+          return http.Response(
+            jsonEncode({
+              'access_token': 'tok',
+              'must_change_password': true,
+            }),
+            200,
+          );
+        }
+        return http.Response('{}', 200);
+      });
+
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+
+      expect(service.mustChangePassword, isFalse);
+      await service.login('user', 'pass');
+      expect(service.mustChangePassword, isTrue);
+    });
+
+    test('clearMustChangePassword resets flag and notifies', () async {
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path.contains('/api/v1/auth/login')) {
+          return http.Response(
+            jsonEncode({
+              'access_token': 'tok',
+              'must_change_password': true,
+            }),
+            200,
+          );
+        }
+        return http.Response('{}', 200);
+      });
+
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+      await service.login('user', 'pass');
+      expect(service.mustChangePassword, isTrue);
+
+      bool notified = false;
+      service.addListener(() => notified = true);
+      service.clearMustChangePassword();
+
+      expect(service.mustChangePassword, isFalse);
+      expect(notified, isTrue);
+    });
+
+    test('logout clears mustChangePassword', () async {
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path.contains('/api/v1/auth/login')) {
+          return http.Response(
+            jsonEncode({
+              'access_token': 'tok',
+              'must_change_password': true,
+            }),
+            200,
+          );
+        }
+        return http.Response('{}', 200);
+      });
+
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+      await service.login('user', 'pass');
+      expect(service.mustChangePassword, isTrue);
+
+      await service.logout();
+      expect(service.mustChangePassword, isFalse);
+    });
+
+    test('refresh response sets mustChangePassword (#3172)', () async {
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path.contains('/api/v1/auth/login')) {
+          return http.Response(
+            jsonEncode({'access_token': 'tok'}),
+            200,
+          );
+        }
+        if (request.url.path.contains('/api/v1/auth/refresh')) {
+          return http.Response(
+            jsonEncode({
+              'access_token': 'tok2',
+              'must_change_password': true,
+            }),
+            200,
+          );
+        }
+        return http.Response('{}', 200);
+      });
+
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+      await service.login('user', 'pass');
+      expect(service.mustChangePassword, isFalse);
+
+      await service.testRefreshToken();
+      expect(service.mustChangePassword, isTrue);
+    });
+
+    test('refresh response clears mustChangePassword (#3172)', () async {
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path.contains('/api/v1/auth/login')) {
+          return http.Response(
+            jsonEncode({
+              'access_token': 'tok',
+              'must_change_password': true,
+            }),
+            200,
+          );
+        }
+        if (request.url.path.contains('/api/v1/auth/refresh')) {
+          return http.Response(
+            jsonEncode({
+              'access_token': 'tok2',
+              'must_change_password': false,
+            }),
+            200,
+          );
+        }
+        return http.Response('{}', 200);
+      });
+
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+      await service.login('user', 'pass');
+      expect(service.mustChangePassword, isTrue);
+
+      await service.testRefreshToken();
+      expect(service.mustChangePassword, isFalse);
+    });
+
+    test('403 Password change required flips the flag (#3172)', () async {
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path.contains('/api/v1/auth/login')) {
+          return http.Response(
+            jsonEncode({'access_token': 'tok'}),
+            200,
+          );
+        }
+        if (request.url.path.contains('/api/v1/workspaces')) {
+          return http.Response(
+            jsonEncode({'detail': 'Password change required'}),
+            403,
+          );
+        }
+        return http.Response('{}', 200);
+      });
+
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+      await service.login('user', 'pass');
+      expect(service.mustChangePassword, isFalse);
+
+      bool notified = false;
+      service.addListener(() => notified = true);
+      final resp = await service.authGet('/api/v1/workspaces');
+      expect(resp.statusCode, 403);
+      expect(service.mustChangePassword, isTrue);
+      expect(notified, isTrue);
+    });
+
+    test('403 with another detail does not flip the flag (#3172)', () async {
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path.contains('/api/v1/auth/login')) {
+          return http.Response(
+            jsonEncode({'access_token': 'tok'}),
+            200,
+          );
+        }
+        if (request.url.path.contains('/api/v1/workspaces')) {
+          return http.Response(
+            jsonEncode({'detail': 'Permission denied'}),
+            403,
+          );
+        }
+        return http.Response('{}', 200);
+      });
+
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+      await service.login('user', 'pass');
+      final resp = await service.authGet('/api/v1/workspaces');
+      expect(resp.statusCode, 403);
+      expect(service.mustChangePassword, isFalse);
     });
   });
 

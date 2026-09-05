@@ -1274,6 +1274,32 @@ void main() {
       client.disconnect();
       client.dispose();
     });
+
+    test('auth close code 4004 (#3172) triggers logout instead of reconnect',
+        () async {
+      final auth = AuthService();
+      await Future.delayed(Duration.zero);
+
+      final client = WsClient();
+      client.updateAuth(auth);
+      await client.connect();
+      client.connectWorkspace('ws-1');
+      channels[0].serverSend({
+        'type': 'container_ready',
+        'workspaceId': 'ws-1',
+      });
+      await Future.delayed(Duration.zero);
+
+      // Server closes with the must-change-password gate code
+      channels[0].serverClose(4004);
+      await Future.delayed(Duration.zero);
+
+      expect(client.reconnecting, isFalse);
+      expect(client.authFailed, isTrue);
+
+      client.disconnect();
+      client.dispose();
+    });
   });
 
   group('WsClient with fake channel', () {

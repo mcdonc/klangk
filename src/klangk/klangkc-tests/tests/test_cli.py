@@ -1061,6 +1061,155 @@ class TestAuth:
                 with pytest.raises(SystemExit):
                     auth.login("http://localhost:8995")
 
+    def test_login_forced_password_change_success(self, tmp_path, monkeypatch):
+        """#3172: must_change_password login forces one change prompt, then
+        re-logins (the change revokes the old session, #3152) and
+        persists the fresh token."""
+        state_path = tmp_path / "klangk-state.yaml"
+        monkeypatch.setattr("klangk.cli.config.STATE_PATH", state_path)
+        login_resp = MagicMock()
+        login_resp.status_code = 200
+        login_resp.json.return_value = {
+            "access_token": "jwt-temp",
+            "must_change_password": True,
+        }
+        change_resp = MagicMock()
+        change_resp.status_code = 200
+        relogin_resp = MagicMock()
+        relogin_resp.status_code = 200
+        relogin_resp.json.return_value = {"access_token": "jwt-fresh"}
+        with patch(
+            "klangk.cli.transport.httpx.request",
+            side_effect=[login_resp, change_resp, relogin_resp],
+        ):
+            with patch(
+                "klangk.cli.auth.Prompt.ask",
+                side_effect=["newpass1", "newpass1"],
+            ):
+                from klangk.cli import auth
+
+                auth.login(
+                    "http://localhost:8995",
+                    email="u@test.com",
+                    password="adminpass1",
+                )
+        state = CLIState.load()
+        assert state.get_token("http://localhost:8995") == "jwt-fresh"
+        assert state.get_email("http://localhost:8995") == "u@test.com"
+
+    def test_login_forced_password_change_mismatch_then_success(
+        self, tmp_path, monkeypatch
+    ):
+        """#3172: a mismatched confirm does not POST; the retry succeeds."""
+        state_path = tmp_path / "klangk-state.yaml"
+        monkeypatch.setattr("klangk.cli.config.STATE_PATH", state_path)
+        login_resp = MagicMock()
+        login_resp.status_code = 200
+        login_resp.json.return_value = {
+            "access_token": "jwt-temp",
+            "must_change_password": True,
+        }
+        change_resp = MagicMock()
+        change_resp.status_code = 200
+        relogin_resp = MagicMock()
+        relogin_resp.status_code = 200
+        relogin_resp.json.return_value = {"access_token": "jwt-fresh"}
+        with patch(
+            "klangk.cli.transport.httpx.request",
+            side_effect=[login_resp, change_resp, relogin_resp],
+        ) as mock_request:
+            with patch(
+                "klangk.cli.auth.Prompt.ask",
+                side_effect=["newpass1", "typo", "newpass1", "newpass1"],
+            ):
+                from klangk.cli import auth
+
+                auth.login(
+                    "http://localhost:8995",
+                    email="u@test.com",
+                    password="adminpass1",
+                )
+        # Three HTTP calls: login + the one successful change POST + the
+        # post-change re-login (the mismatch attempt never POSTs).
+        assert mock_request.call_count == 3
+        state = CLIState.load()
+        assert state.get_token("http://localhost:8995") == "jwt-fresh"
+
+    def test_login_forced_password_change_relogin_fails(
+        self, tmp_path, monkeypatch
+    ):
+        """#3172: when the post-change re-login fails (the change
+        succeeded but the new password is somehow refused), the login
+        aborts through the normal failure path and nothing persists."""
+        state_path = tmp_path / "klangk-state.yaml"
+        monkeypatch.setattr("klangk.cli.config.STATE_PATH", state_path)
+        login_resp = MagicMock()
+        login_resp.status_code = 200
+        login_resp.json.return_value = {
+            "access_token": "jwt-temp",
+            "must_change_password": True,
+        }
+        change_resp = MagicMock()
+        change_resp.status_code = 200
+        relogin_resp = MagicMock()
+        relogin_resp.status_code = 401
+        relogin_resp.json.return_value = {"detail": "Bad credentials"}
+        with patch(
+            "klangk.cli.transport.httpx.request",
+            side_effect=[login_resp, change_resp, relogin_resp],
+        ):
+            with patch(
+                "klangk.cli.auth.Prompt.ask",
+                side_effect=["newpass1", "newpass1"],
+            ):
+                from klangk.cli import auth
+
+                with pytest.raises(SystemExit) as caught:
+                    auth.login(
+                        "http://localhost:8995",
+                        email="u@test.com",
+                        password="adminpass1",
+                    )
+        assert caught.value.code == 1
+        state = CLIState.load()
+        assert state.get_token("http://localhost:8995") is None
+
+    def test_login_forced_password_change_exhausted(
+        self, tmp_path, monkeypatch
+    ):
+        """#3172: after _FORCED_CHANGE_MAX_ATTEMPTS failed change POSTs the
+        login aborts with SystemExit and no token is persisted."""
+        state_path = tmp_path / "klangk-state.yaml"
+        monkeypatch.setattr("klangk.cli.config.STATE_PATH", state_path)
+        login_resp = MagicMock()
+        login_resp.status_code = 200
+        login_resp.json.return_value = {
+            "access_token": "jwt-temp",
+            "must_change_password": True,
+        }
+        fail_resp = MagicMock()
+        fail_resp.status_code = 401
+        fail_resp.json.return_value = {"detail": "Current password incorrect"}
+        with patch(
+            "klangk.cli.transport.httpx.request",
+            side_effect=[login_resp] + [fail_resp] * 5,
+        ):
+            with patch(
+                "klangk.cli.auth.Prompt.ask",
+                side_effect=["newpass1", "newpass1"] * 5,
+            ):
+                from klangk.cli import auth
+
+                with pytest.raises(SystemExit) as caught:
+                    auth.login(
+                        "http://localhost:8995",
+                        email="u@test.com",
+                        password="adminpass1",
+                    )
+        assert caught.value.code == 1
+        state = CLIState.load()
+        assert state.get_token("http://localhost:8995") is None
+
     def test_logout_clears_token(self, tmp_path, monkeypatch):
         state_path = tmp_path / "klangk-state.yaml"
         monkeypatch.setattr("klangk.cli.config.STATE_PATH", state_path)

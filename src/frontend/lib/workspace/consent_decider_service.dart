@@ -443,7 +443,8 @@ class ConsentDeciderService extends ChangeNotifier {
   bool _stopped = false;
   int _attempt = 0;
 
-  /// Whether the last disconnect was an auth failure (close codes 4001/4002).
+  /// Whether the last disconnect was an auth failure (close codes
+  /// 4001/4002/4004 — the last is the must-change-password gate, #3172).
   /// While true the service stops reconnecting -- the app surfaces re-login.
   bool _authFailed = false;
   bool get authFailed => _authFailed;
@@ -651,7 +652,7 @@ class ConsentDeciderService extends ChangeNotifier {
     _stopPing();
     _connected = false;
     final code = ch.closeCode;
-    if (code == 4001 || code == 4002) {
+    if (code == 4001 || code == 4002 || code == 4004) {
       _authFailed = true;
       notifyListeners();
       return; // stop reconnecting; the app surfaces re-login

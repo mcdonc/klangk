@@ -775,6 +775,21 @@ void main() {
       },
     );
 
+    test(
+      'must-change gate close (4004, #3172) sets authFailed and stops reconnecting',
+      () async {
+        final svc = ConsentDeciderService(workspaceId: 'ws', token: 't');
+        svc.connect();
+        channel.serverSend({'type': 'egress_request', 'request': _request()});
+        await Future.delayed(Duration.zero);
+        expect(svc.pending, isNotEmpty);
+        channel.serverClose(4004);
+        await Future.delayed(Duration.zero);
+        expect(svc.authFailed, isTrue);
+        svc.dispose();
+      },
+    );
+
     test('remainingSeconds counts down from requested_at + holdTimeout', () {
       // Fixed clock at epoch-second 1000; requested at 1000, hold 120s.
       final svc = ConsentDeciderService(

@@ -359,6 +359,52 @@ void main() {
     });
   });
 
+  group('guardForcedPasswordChange (#3172)', () {
+    test('forces /change-password when flag is set', () {
+      expect(
+        guardForcedPasswordChange(
+          isLoggedIn: true,
+          mustChangePassword: true,
+          loc: '/workspaces',
+        ),
+        '/change-password',
+      );
+    });
+
+    test('allows /change-password when flag is set', () {
+      expect(
+        guardForcedPasswordChange(
+          isLoggedIn: true,
+          mustChangePassword: true,
+          loc: '/change-password',
+        ),
+        isNull,
+      );
+    });
+
+    test('no redirect when flag is false', () {
+      expect(
+        guardForcedPasswordChange(
+          isLoggedIn: true,
+          mustChangePassword: false,
+          loc: '/workspaces',
+        ),
+        isNull,
+      );
+    });
+
+    test('no redirect when not logged in', () {
+      expect(
+        guardForcedPasswordChange(
+          isLoggedIn: false,
+          mustChangePassword: true,
+          loc: '/workspaces',
+        ),
+        isNull,
+      );
+    });
+  });
+
   group('evaluateGuards precedence', () {
     final featurePaths = {'/celebrate'};
     final routes = _routesWithFeatures(featurePaths);
@@ -368,6 +414,7 @@ void main() {
       // sent to /consent, not /login, and pendingRedirect untouched.
       expect(
         evaluateGuards(
+          mustChangePassword: false,
           isLoggedIn: false,
           bannerRequired: true,
           loc: '/workspaces',
@@ -388,6 +435,7 @@ void main() {
       // in an infinite loop. The banner gate must decide alone here.
       expect(
         evaluateGuards(
+          mustChangePassword: false,
           isLoggedIn: true,
           bannerRequired: true,
           loc: '/consent',
@@ -403,6 +451,7 @@ void main() {
     test('banner gate forces /consent even for logged-in users', () {
       expect(
         evaluateGuards(
+          mustChangePassword: false,
           isLoggedIn: true,
           bannerRequired: true,
           loc: '/workspaces',
@@ -418,6 +467,7 @@ void main() {
     test('logged-out protected route -> /login with pendingRedirect', () {
       expect(
         evaluateGuards(
+          mustChangePassword: false,
           isLoggedIn: false,
           bannerRequired: false,
           loc: '/workspace/abc',
@@ -435,6 +485,7 @@ void main() {
       pendingRedirect = '/workspace/zzz';
       expect(
         evaluateGuards(
+          mustChangePassword: false,
           isLoggedIn: true,
           bannerRequired: false,
           loc: '/login',
@@ -455,6 +506,7 @@ void main() {
       pendingRedirect = '/admin/users';
       expect(
         evaluateGuards(
+          mustChangePassword: false,
           isLoggedIn: true,
           bannerRequired: false,
           loc: '/login',
@@ -475,6 +527,7 @@ void main() {
       pendingRedirect = '/admin/users';
       expect(
         evaluateGuards(
+          mustChangePassword: false,
           isLoggedIn: true,
           bannerRequired: false,
           loc: '/login',
@@ -490,6 +543,7 @@ void main() {
     test('logged-in non-admin on /admin/users -> /workspaces (#2669)', () {
       expect(
         evaluateGuards(
+          mustChangePassword: false,
           isLoggedIn: true,
           bannerRequired: false,
           loc: '/admin/users',
@@ -505,6 +559,7 @@ void main() {
     test('logged-in admin on /admin/users -> allowed (null) (#2669)', () {
       expect(
         evaluateGuards(
+          mustChangePassword: false,
           isLoggedIn: true,
           bannerRequired: false,
           loc: '/admin/users',
@@ -523,6 +578,7 @@ void main() {
       // preempt it (see guardAdminRoute 'logged-out' test).
       expect(
         evaluateGuards(
+          mustChangePassword: false,
           isLoggedIn: false,
           bannerRequired: false,
           loc: '/admin/users',
@@ -541,6 +597,7 @@ void main() {
       // the root guard then redirects.
       expect(
         evaluateGuards(
+          mustChangePassword: false,
           isLoggedIn: true,
           bannerRequired: false,
           loc: '/',
@@ -556,6 +613,7 @@ void main() {
     test('logged-in on /workspaces -> allowed (null)', () {
       expect(
         evaluateGuards(
+          mustChangePassword: false,
           isLoggedIn: true,
           bannerRequired: false,
           loc: '/workspaces',
@@ -571,6 +629,7 @@ void main() {
     test('logged-in on feature route -> allowed (null)', () {
       expect(
         evaluateGuards(
+          mustChangePassword: false,
           isLoggedIn: true,
           bannerRequired: false,
           loc: '/celebrate',
@@ -583,9 +642,42 @@ void main() {
       );
     });
 
+    test('forced password change overrides normal navigation (#3172)', () {
+      expect(
+        evaluateGuards(
+          mustChangePassword: true,
+          isLoggedIn: true,
+          bannerRequired: false,
+          loc: '/workspaces',
+          currentUri: '/workspaces',
+          publicRoutes: routes,
+          featurePaths: featurePaths,
+          canAccessAdmin: false,
+        ),
+        '/change-password',
+      );
+    });
+
+    test('forced password change allows /change-password (#3172)', () {
+      expect(
+        evaluateGuards(
+          mustChangePassword: true,
+          isLoggedIn: true,
+          bannerRequired: false,
+          loc: '/change-password',
+          currentUri: '/change-password',
+          publicRoutes: routes,
+          featurePaths: featurePaths,
+          canAccessAdmin: false,
+        ),
+        isNull,
+      );
+    });
+
     test('logged-out on /consent with no banner -> /login', () {
       expect(
         evaluateGuards(
+          mustChangePassword: false,
           isLoggedIn: false,
           bannerRequired: false,
           loc: '/consent',

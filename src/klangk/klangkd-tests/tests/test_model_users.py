@@ -262,6 +262,10 @@ async def test_agent_principal_guards(users):
         await users.update_email(AGENT_USER_ID, "x@x.com")
     with pytest.raises(AgentPrincipalError):
         await users.update_password(AGENT_USER_ID, "h")
+    with pytest.raises(AgentPrincipalError):
+        await users.set_password_force_change(AGENT_USER_ID, "h")
+    with pytest.raises(AgentPrincipalError):
+        await users.set_must_change_password(AGENT_USER_ID, True)
 
 
 async def test_agent_user_cache(users, agent_user):
@@ -641,3 +645,53 @@ class TestUsersBranchGaps2834:
             user["email"]
         )
         assert refreshed["handle"] == handle_before
+
+
+class TestClearMustChangePassword:
+    """#3172: clear_must_change_password branch coverage."""
+
+    async def test_agent_user_rejected(self, users):
+        with pytest.raises(AgentPrincipalError):
+            await users.clear_must_change_password(AGENT_USER_ID, "hash")
+
+    async def test_deleted_user_is_noop(self, users, user):
+        await users.delete_user(user["id"])
+        # Must not raise — a deleted user is a silent no-op, same as
+        # update_password.
+        await users.clear_must_change_password(user["id"], "hash")
+
+
+class TestSetPasswordForceChange:
+    """#3172: set_password_force_change — hash + flag in one write."""
+
+    async def test_sets_hash_and_flag(self, users, user):
+        await users.set_password_force_change(user["id"], "newhash")
+        row = await users.get_user_by_id(user["id"])
+        # get_user_by_id does not expose the hash; the flag and a
+        # working login-path lookup cover the write.
+        assert row["must_change_password"] is True
+        by_email = await users.get_user_by_email(user["email"])
+        assert by_email["password_hash"] == "newhash"
+        assert by_email["must_change_password"] is True
+
+    async def test_deleted_user_is_noop(self, users, user):
+        await users.delete_user(user["id"])
+        await users.set_password_force_change(user["id"], "newhash")
+
+
+class TestCreateUserMustChangeFlag:
+    """#3172: create_user lands the flag in the INSERT itself."""
+
+    async def test_flag_in_insert(self, users):
+        u = await users.create_user(
+            "flagged@x.com", "hash", verified=True, must_change_password=True
+        )
+        assert u["must_change_password"] is True
+        row = await users.get_user_by_email("flagged@x.com")
+        assert row["must_change_password"] is True
+
+    async def test_default_is_false(self, users):
+        u = await users.create_user("plain@x.com", "hash")
+        assert u["must_change_password"] is False
+        row = await users.get_user_by_email("plain@x.com")
+        assert row["must_change_password"] is False
