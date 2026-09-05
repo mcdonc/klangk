@@ -44,13 +44,23 @@ Workspaces go away; on the next start, `auto_start` brings back any
 that are configured for it. For a config reload with the same drain
 treatment while keeping the listener up, use SIGHUP (below).
 
-A drain failure is logged and never blocks the exit — the process always
-terminates. Budget the quiesce + drain inside your service manager's
-stop deadline (`TimeoutStopSec` under systemd): up to
-`KLANGKD_QUIESCE_TIMEOUT` seconds (default 15) of request quiesce, plus
-one per-workspace stop grace (5s; stops run concurrently across
-workspaces). Raising `KLANGKD_QUIESCE_TIMEOUT` past ~85s blows the
-default 90s `TimeoutStopSec`.
+If the graceful drain fails outright _or_ under-stops (returns fewer
+stopped containers than were running — per-container stop failures
+are logged, not raised), a forced backstop runs (`podman stop` +
+`rm -f` per container, plus a sweep of any instance-labelled
+stragglers). The backstop's outcome is then verified against a fresh
+container listing: if containers of this instance are still listed —
+or the listing itself fails — a `CRITICAL` log names the leftovers
+(operators should expect unsupervised containers until the next
+boot's reaps); the process still terminates so the service manager
+can restart it. Budget the quiesce + drain inside your service
+manager's stop deadline (`TimeoutStopSec` under systemd): up to
+`KLANGKD_QUIESCE_TIMEOUT` seconds (default 15) of request quiesce,
+plus one per-workspace stop grace (5s; stops run concurrently across
+workspaces) — and when the backstop runs, a second full stop round
+(each podman command bounded by its ~30s timeout). Raising
+`KLANGKD_QUIESCE_TIMEOUT` toward ~85s or more blows the default 90s
+`TimeoutStopSec`, which would SIGKILL the process mid-teardown.
 
 ## SIGHUP — graceful runtime recycle
 
@@ -114,9 +124,13 @@ authenticated WebSocket clients receive a `server_recycle` event with a
 
 If any step fails, the failure is logged, a recovery pass re-runs the
 startup sequence, and `host_started` is broadcast on recovery; if the
-recovery itself fails the process exits (code 1) so the service manager
-restarts it — the node never lingers half-restarted while its HTTP
-listener keeps serving.
+recovery itself fails the process sends itself SIGTERM, triggering the
+graceful-stop teardown (proxy child stop, container cleanup, DB
+dispose) and then exits with **status 1** — a failure exit, so a
+`Restart=on-failure` service manager restarts the node — rather than
+dying with SIGTERM's status (143), which supervisors treat as a clean
+stop. The node never lingers half-restarted while its HTTP listener
+keeps serving.
 
 ### When to use it
 
@@ -189,11 +203,11 @@ or drop-in).
 particular, whether restarting can help:
 
 | Status | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `0`    | Clean shutdown (SIGINT/SIGTERM).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --- |
+| `0`    | Clean shutdown. A SIGINT/SIGTERM-driven graceful exit ends with the signal's status (130/143), which supervisors treat as clean.                                                                                                                                                                                                                                                                                                                                                                                                     |     |
 | `78`   | **Configuration error** (`EX_CONFIG`, sysexits.h). Startup was refused over bad configuration — e.g. a `KLANGKD_DEFAULT_PASSWORD` that violates the password policy, `auth_modes: password` without a staged password, an insecure JWT secret with prevention on, `auth_modes: none` on a non-loopback bind, a missing OIDC login hook, or a containerized FIPS backend whose OpenSSL is not FIPS-enforcing. **Restarting cannot fix this** — fix the config/image first. The refusal reason is logged at `ERROR` right before exit. |
 | `3`    | uvicorn startup failure that is _not_ a config refusal (e.g. an unusable database). Retrying makes sense once the underlying fault is repaired.                                                                                                                                                                                                                                                                                                                                                                                      |
-| `1`    | Launcher pre-flight refusals (another instance already running, a browser/egress port already owned) or a UDS bind failure.                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `1`    | Launcher pre-flight refusals (another instance already running, a browser/egress port already owned), a UDS bind failure, or a failed SIGHUP restart recovery (after the graceful teardown ran — restarting makes sense).                                                                                                                                                                                                                                                                                                            |     |
 
 ### Telling systemd not to restart-loop a config error
 
@@ -209,3 +223,18 @@ RestartPreventExitStatus=78
 A bad password then stops the unit in a single failed attempt instead of
 burning CPU in a restart loop; `journalctl -u <unit>` shows the
 `ConfigurationError` naming the setting to fix.
+
+## Accepted residual risks (V-222585)
+
+Two startup checks intentionally log a warning and continue rather than
+aborting boot:
+
+- **FIPS process self-check** (`KLANGKD_FIPS_MODE=1`): if the klangkd
+  host's OpenSSL is not FIPS-enforcing, boot continues with a warning.
+  This is legitimate for control-host deployments where the klangkd
+  process itself runs on a non-FIPS host while workspace containers
+  (the fail-closed gate) enforce FIPS.
+- **Podman pre-warm**: if the throwaway `podman create`/`rm` fails
+  (storage locked, stale container name), boot continues with a
+  warning. The failure means the first real workspace start pays the
+  cold-start latency; it does not affect security posture.

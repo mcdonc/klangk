@@ -190,6 +190,39 @@ class TestDrain:
         assert n == 3
         assert sorted(stopped) == ["ws-0", "ws-1", "ws-2"]
 
+    def test_tracked_container_count_is_drain_baseline(self, app_state, db):
+        """The count matches the drain's own snapshot: only states with
+        a container_id — an under-stopping drain is detected by
+        comparing against it (V-222585)."""
+        from klangk.container.basics import ContainerState
+
+        registry = app_state.state.container_registry
+        self._track(app_state, registry, 2)
+        # A stopped/idle workspace (no container_id) is not a drain
+        # target and must not inflate the count.
+        registry.states["ws-2"] = ContainerState("ws-2", None, app_state)
+        assert registry.tracked_container_count() == 2
+
+    async def test_leftover_containers_lists_instance_label(
+        self, app_state, db
+    ):
+        """Verification listing (V-222585): this instance's still-listed
+        containers by ident (name fallback; unidentifiable entries
+        dropped), queried with the instance label."""
+        registry = app_state.state.container_registry
+        self._stub_sweep(
+            app_state,
+            containers=[
+                {"Id": "abc123", "Labels": {}},
+                {"Names": ["sidecar-1"], "Labels": {}},
+                {"Labels": {}},
+            ],
+        )
+        leftovers = await registry.leftover_containers()
+        assert leftovers == ["abc123", "sidecar-1"]
+        label = f"klangk.instance={app_state.state.util.instance_id()}"
+        app_state.state.podman.list_containers.assert_awaited_with(label)
+
     async def test_drain_runs_concurrently(self, app_state, db):
         """Per-workspace stops overlap (a node with many workspaces must
         not pay N sequential 5s stops) — a stop that is still in flight

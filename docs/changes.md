@@ -360,6 +360,14 @@ operators or integrators to act when upgrading.
   consumers such as off-host audit backups. Rotating the key
   invalidates tags written under the old key.
 
+- **Fail to a secure state on shutdown/abort failure (#3176).** The
+  shutdown teardown is hardened so a failure in one step never skips
+  the rest (proxy child, containers, DB dispose all run). A drain
+  that fails or under-stops during SIGTERM/SIGINT now triggers a
+  verified forced backstop (CRITICAL names any leftover containers),
+  and a failed SIGHUP recovery exits with status 1 after the graceful
+  teardown so `Restart=on-failure` supervisors restart the node.
+
 - **Bounded rate-limit state for the email cooldowns (#3113).** The
   per-address cooldown dicts behind
   `POST /api/v1/auth/forgot-password` and
