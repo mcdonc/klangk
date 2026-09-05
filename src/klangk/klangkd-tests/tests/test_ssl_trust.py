@@ -2,10 +2,12 @@
 
 Covers the shared resolver (:meth:`ssl_trust.SSLTrust.ssl_cert_dir`), the
 backend-process trust path (:meth:`ssl_trust.SSLTrust.apply_backend_ssl_trust`),
-and the merged-bundle semantics (system + custom) that keep
-public-internet TLS working.
+the merged-bundle semantics (system + custom) that keep
+public-internet TLS working, and the ``KLANGKD_TRUSTED_CA_DIR`` approved-CA
+baseline (#3198).
 """
 
+import datetime
 import logging
 import os
 import ssl
@@ -13,6 +15,10 @@ import types
 from pathlib import Path
 
 import pytest
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.x509.oid import NameOID
 
 from klangk import ssl_trust
 from _helpers import make_settings
@@ -224,6 +230,288 @@ class TestApplyBackendSslTrust:
         # Still applied (custom certs present), but warned about system loss.
         assert os.environ["SSL_CERT_FILE"]
         assert any("system bundle" in r.message for r in caplog.records)
+
+
+def _make_ca_cert(cn: str) -> x509.Certificate:
+    """A minimal self-signed CA cert (CA basic constraints, EC key)."""
+    key = ec.generate_private_key(ec.SECP256R1())
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, cn)])
+    now = datetime.datetime.now(datetime.timezone.utc)
+    return (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now)
+        .not_valid_after(now + datetime.timedelta(days=1))
+        .add_extension(
+            x509.BasicConstraints(ca=True, path_length=None), critical=True
+        )
+        .sign(key, hashes.SHA256())
+    )
+
+
+def _write_ca_pem(path, cn: str) -> str:
+    """Write a fresh CA cert as PEM; returns its PEM text."""
+    pem = _make_ca_cert(cn).public_bytes(serialization.Encoding.PEM)
+    Path(path).write_bytes(pem)
+    return pem.decode()
+
+
+class TestTrustedCaAllowlist:
+    """``KLANGKD_TRUSTED_CA_DIR`` — approved-CA baseline (#3198)."""
+
+    @staticmethod
+    def _settings_with_baseline(tmp_path, **env):
+        """Settings with a trusted CA dir + customize dir wired up."""
+        baseline = tmp_path / "baseline"
+        baseline.mkdir()
+        customize = tmp_path / "custom"
+        s = _settings(
+            {
+                "KLANGKD_TRUSTED_CA_DIR": str(baseline),
+                "KLANGKD_CUSTOMIZE_DIR": str(customize),
+                "KLANGKD_STATE_DIR": str(tmp_path / "state"),
+                "KLANGKD_DATA_DIR": str(tmp_path / "data"),
+                **env,
+            }
+        )
+        return s, baseline, customize
+
+    @staticmethod
+    def _staged_pems(settings) -> list[str]:
+        """The staged approved-CA PEM contents, sorted (empty when absent)."""
+        stage = ssl_trust.SSLTrust(
+            types.SimpleNamespace(
+                state=types.SimpleNamespace(settings=settings)
+            )
+        ).ssl_cert_dir()
+        if stage is None:
+            return []
+        files = sorted(Path(stage).glob("ca-*.pem"))
+        return [f.read_text() for f in files]
+
+    def test_baseline_staged_as_trust_source(self, tmp_path):
+        # Baseline holds a CA; customize certs dir absent -> the staged copy
+        # of the baseline (canonical PEM, under <state>/ssl/approved) is the
+        # trust source both scopes consume.
+        s, baseline, _ = self._settings_with_baseline(tmp_path)
+        pem = _write_ca_pem(baseline / "dod-root.pem", "DoD Root CA 3")
+        got = _trust(s).ssl_cert_dir()
+        assert got == os.path.join(str(tmp_path / "state"), "ssl", "approved")
+        assert sorted(os.listdir(got)) == ["ca-000.pem"]
+        assert Path(got, "ca-000.pem").read_text() == pem
+
+    def test_baseline_with_empty_customize_dir(self, tmp_path, caplog):
+        # Empty customize certs dir: no audit output, baseline still trusted.
+        s, baseline, customize = self._settings_with_baseline(tmp_path)
+        _write_ca_pem(baseline / "dod-root.pem", "DoD Root CA 3")
+        (customize / "certs").mkdir(parents=True)
+        with caplog.at_level(logging.INFO):
+            assert _trust(s).ssl_cert_dir() is not None
+        assert not caplog.records
+
+    def test_approved_custom_cert_logged(self, tmp_path, caplog):
+        # The same CA in the customize dir is fingerprint-approved (info).
+        s, baseline, customize = self._settings_with_baseline(tmp_path)
+        pem = _write_ca_pem(baseline / "dod-root.pem", "DoD Root CA 3")
+        certs = customize / "certs"
+        certs.mkdir(parents=True)
+        (certs / "same-ca.pem").write_text(pem)
+        with caplog.at_level(logging.INFO):
+            assert _trust(s).ssl_cert_dir() is not None
+        assert any(
+            "approved" in r.message and "DoD Root CA 3" in r.message
+            for r in caplog.records
+            if r.levelno == logging.INFO
+        )
+
+    def test_nonapproved_custom_cert_refused(self, tmp_path, caplog):
+        # A foreign CA in the customize dir is refused with a warning
+        # naming subject/issuer — and is absent from the staged trust set.
+        s, baseline, customize = self._settings_with_baseline(tmp_path)
+        baseline_pem = _write_ca_pem(
+            baseline / "dod-root.pem", "DoD Root CA 3"
+        )
+        certs = customize / "certs"
+        certs.mkdir(parents=True)
+        _write_ca_pem(certs / "shadow-ca.pem", "Shadow CA")
+        with caplog.at_level(logging.WARNING):
+            assert _trust(s).ssl_cert_dir() is not None
+        assert any(
+            "Refusing non-approved CA" in r.message
+            and "Shadow CA" in r.message
+            and str(baseline) in r.message
+            for r in caplog.records
+        )
+        pems = self._staged_pems(s)
+        assert pems == [baseline_pem]  # foreign CA never staged
+
+    def test_unparseable_custom_cert_refused(self, tmp_path, caplog):
+        # Garbage in the customize dir cannot be verified -> refused.
+        s, baseline, customize = self._settings_with_baseline(tmp_path)
+        _write_ca_pem(baseline / "dod-root.pem", "DoD Root CA 3")
+        certs = customize / "certs"
+        certs.mkdir(parents=True)
+        (certs / "garbage.pem").write_text("not a cert")
+        with caplog.at_level(logging.WARNING):
+            assert _trust(s).ssl_cert_dir() is not None
+        assert any(
+            "unparseable" in r.message and "garbage.pem" in r.message
+            for r in caplog.records
+        )
+
+    def test_missing_baseline_fails_closed(self, tmp_path, caplog):
+        # Baseline dir does not exist -> nothing trusted, error logged.
+        s, baseline, _ = self._settings_with_baseline(tmp_path)
+        baseline.rmdir()
+        with caplog.at_level(logging.ERROR):
+            assert _trust(s).ssl_cert_dir() is None
+        assert any("fail closed" in r.message for r in caplog.records)
+
+    def test_empty_baseline_fails_closed(self, tmp_path, caplog):
+        # Baseline exists but holds no certs -> nothing trusted, error logged.
+        s, baseline, _ = self._settings_with_baseline(tmp_path)
+        (baseline / "notes.txt").write_text("no certs here")
+        with caplog.at_level(logging.ERROR):
+            assert _trust(s).ssl_cert_dir() is None
+        assert any("fail closed" in r.message for r in caplog.records)
+
+    def test_unparseable_baseline_file_excluded_entirely(
+        self, tmp_path, caplog
+    ):
+        # One good + one garbage baseline file: the garbage is excluded from
+        # the fingerprint set AND from the staged dir (its raw bytes never
+        # reach a trust bundle, even if a lenient parser would accept them).
+        s, baseline, _ = self._settings_with_baseline(tmp_path)
+        pem = _write_ca_pem(baseline / "dod-root.pem", "DoD Root CA 3")
+        (baseline / "broken.crt").write_text("garbage")
+        with caplog.at_level(logging.ERROR):
+            assert _trust(s).ssl_cert_dir() is not None
+        assert any(
+            "unparseable" in r.message and "broken.crt" in r.message
+            for r in caplog.records
+        )
+        assert self._staged_pems(s) == [pem]
+
+    def test_duplicate_baseline_certs_deduped(self, tmp_path):
+        # The same CA in two baseline files is staged once (fingerprint
+        # identity, not filename identity).
+        s, baseline, _ = self._settings_with_baseline(tmp_path)
+        pem = _write_ca_pem(baseline / "dod-root.pem", "DoD Root CA 3")
+        (baseline / "dod-root-copy.pem").write_text(pem)
+        assert self._staged_pems(s) == [pem]
+
+    def test_multi_cert_pem_baseline(self, tmp_path):
+        # A single baseline .pem holding two certs: both are staged
+        # (matching is per certificate, not per file).
+        s, baseline, _ = self._settings_with_baseline(tmp_path)
+        cert_a = _make_ca_cert("DoD Root CA A")
+        cert_b = _make_ca_cert("DoD Root CA B")
+        blob = cert_a.public_bytes(
+            serialization.Encoding.PEM
+        ) + cert_b.public_bytes(serialization.Encoding.PEM)
+        (baseline / "bundle.pem").write_bytes(blob)
+        staged = self._staged_pems(s)
+        assert sorted(staged) == sorted(
+            [
+                cert_a.public_bytes(serialization.Encoding.PEM).decode(),
+                cert_b.public_bytes(serialization.Encoding.PEM).decode(),
+            ]
+        )
+
+    def test_der_baseline_cert_parsed(self, tmp_path):
+        # DER-encoded .crt in the baseline is parsed (PEM-first fallback) and
+        # staged as canonical PEM.
+        s, baseline, _ = self._settings_with_baseline(tmp_path)
+        cert = _make_ca_cert("DoD DER CA")
+        (baseline / "dod-der.crt").write_bytes(
+            cert.public_bytes(serialization.Encoding.DER)
+        )
+        assert self._staged_pems(s) == [
+            cert.public_bytes(serialization.Encoding.PEM).decode()
+        ]
+
+    def test_staging_shrinks_with_baseline(self, tmp_path):
+        # Re-resolving after the baseline shrinks removes the stale staged
+        # file — the staged dir always mirrors exactly the current baseline.
+        s, baseline, _ = self._settings_with_baseline(tmp_path)
+        _write_ca_pem(baseline / "a.pem", "Approved CA A")
+        _write_ca_pem(baseline / "b.pem", "Approved CA B")
+        assert len(self._staged_pems(s)) == 2
+        (baseline / "b.pem").unlink()
+        assert len(self._staged_pems(s)) == 1
+
+    def test_staging_failure_fails_closed(self, monkeypatch, tmp_path, caplog):
+        # A staging-dir error (unwritable state dir) must not degrade into
+        # trusting the raw baseline dir: fail closed with an error log.
+        s, baseline, _ = self._settings_with_baseline(tmp_path)
+        _write_ca_pem(baseline / "dod-root.pem", "DoD Root CA 3")
+
+        def boom(*a, **k):
+            raise OSError("read-only state dir")
+
+        monkeypatch.setattr(ssl_trust.os, "makedirs", boom)
+        with caplog.at_level(logging.ERROR):
+            assert _trust(s).ssl_cert_dir() is None
+        assert any("failing closed" in r.message for r in caplog.records)
+
+    def test_backend_bundle_excludes_refused_cert(self, monkeypatch, tmp_path):
+        # End-to-end backend trust: merged bundle = system + staged baseline
+        # only; the refused customize-dir CA never reaches it.
+        s, baseline, customize = self._settings_with_baseline(tmp_path)
+        baseline_pem = _write_ca_pem(
+            baseline / "dod-root.pem", "DoD Root CA 3"
+        )
+        certs = customize / "certs"
+        certs.mkdir(parents=True)
+        foreign_pem = _write_ca_pem(certs / "shadow-ca.pem", "Shadow CA")
+        monkeypatch.setattr(
+            ssl_trust,
+            "system_ca_bundle",
+            lambda self_bundle=None: str(tmp_path / "sys.pem"),
+        )
+        (tmp_path / "sys.pem").write_text("FAKE-SYSTEM-CA\n")
+
+        bundle = _trust(s).apply_backend_ssl_trust()
+
+        assert bundle is not None
+        contents = Path(bundle).read_text()
+        assert "FAKE-SYSTEM-CA\n" in contents
+        assert baseline_pem in contents  # approved baseline trusted
+        assert foreign_pem not in contents  # refused CA excluded
+        for k in ssl_trust.SSL_TRUST_VARS:
+            assert os.environ[k] == bundle
+
+    def test_reload_to_no_trust_revokes_stale_trust(
+        self, monkeypatch, tmp_path, caplog
+    ):
+        # Fail-closed across reloads: trust applied at boot, then the
+        # baseline is emptied and apply runs again (the SIGHUP path) ->
+        # the trust vars we set are cleared and the stale bundle removed.
+        s, baseline, _ = self._settings_with_baseline(tmp_path)
+        _write_ca_pem(baseline / "dod-root.pem", "DoD Root CA 3")
+        monkeypatch.setattr(
+            ssl_trust,
+            "system_ca_bundle",
+            lambda self_bundle=None: str(tmp_path / "sys.pem"),
+        )
+        (tmp_path / "sys.pem").write_text("FAKE-SYSTEM-CA\n")
+        trust = _trust(s)
+        bundle = trust.apply_backend_ssl_trust()
+        assert bundle is not None and os.path.isfile(bundle)
+
+        (baseline / "dod-root.pem").unlink()  # operator empties the baseline
+        with caplog.at_level(logging.WARNING):
+            assert trust.apply_backend_ssl_trust() is None
+        for k in ssl_trust.SSL_TRUST_VARS:
+            assert k not in os.environ  # revoked, not silently stale
+        assert not os.path.exists(bundle)  # stale bundle deleted
+        assert any("revoked" in r.message for r in caplog.records)
+
+        # Idempotent: a second no-trust apply is a quiet no-op.
+        assert trust.apply_backend_ssl_trust() is None
 
 
 class TestSystemCaBundle:

@@ -654,6 +654,17 @@ sync` report a clear permission-denied error.
   can evict only other failed-login rows), swept
   hourly; both reloadable on SIGHUP. See
   [Audit Record Integrity](reference/audit-integrity.md).
+- **`KLANGKD_TRUSTED_CA_DIR` (#3198).** Operator-managed approved CA
+  baseline for runtime SSL trust: when set, only CAs whose SHA-256
+  fingerprint appears among that directory's `.pem`/`.crt` certs are
+  trusted, via a staged copy (`<state_dir>/ssl/approved`) consumed by
+  the backend bundle and workspace containers. Certs dropped into
+  `<KLANGKD_CUSTOMIZE_DIR>/certs` are audited against the baseline;
+  non-approved or unparseable ones are refused with a warning naming
+  subject/issuer. A missing, unreadable, or cert-less baseline fails
+  closed (no custom CAs trusted; previously-applied backend trust is
+  revoked on reload). Unset (default) = no restriction. Reloadable on
+  SIGHUP.
 - **`KLANGKD_SESSION_IDLE_TIMEOUT_MINUTES` /
   `KLANGKD_PRIVILEGED_SESSION_IDLE_TIMEOUT_MINUTES` (#3151).** Idle
   session timeout: after this many minutes without an authenticated
@@ -2267,7 +2278,7 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   log the underlying error server-side instead.
 
 - **Admin user deletion now revokes sessions (#3195).** `DELETE
-  /api/v1/users/{user_id}` now blocklists every token the deleted user
+/api/v1/users/{user_id}` now blocklists every token the deleted user
   held and cuts their live WebSocket and consent-decider connections.
   Previously sessions stayed alive until their natural expiry.
 

@@ -395,6 +395,7 @@ override it per-workspace (`settings.idle_timeout` — see
 | `state_dir`                         | `$XDG_STATE_HOME/klangkd`       | `KLANGKD_STATE_DIR`                         |
 | `config_dir`                        | `$XDG_CONFIG_HOME/klangkd`      | `KLANGKD_CONFIG_DIR`                        |
 | `customize_dir`                     | `<config_dir>/custom`           | `KLANGKD_CUSTOMIZE_DIR`                     |
+| `trusted_ca_dir`                    |                                 | `KLANGKD_TRUSTED_CA_DIR`                    |
 | `features_enable`                   | _(unset → manifest `defaults`)_ | `KLANGKD_FEATURES_ENABLE`                   |
 | `image_name`                        | `klangk-workspace`              | `KLANGKD_IMAGE_NAME`                        |
 | `image_pull_policy`                 | `never`                         | `KLANGKD_IMAGE_PULL_POLICY`                 |

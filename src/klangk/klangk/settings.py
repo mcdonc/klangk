@@ -1119,6 +1119,21 @@ class KlangkSettings(BaseSettings):
     # deriving from the resolved ``config_dir`` (#1644, #1649); no longer
     # under ``state_dir``. Explicit ``KLANGKD_CUSTOMIZE_DIR`` still wins.
     customize_dir: str | None = None
+    # trusted_ca_dir: operator-managed **approved CA baseline** (#3198).
+    # When set, only CAs whose SHA-256 fingerprint appears among the
+    # ``.pem``/``.crt`` certs in this directory are trusted (both scopes:
+    # backend bundle and workspace-container mounts). The directory
+    # replaces ``<KLANGKD_CUSTOMIZE_DIR>/certs`` as the trust source; each
+    # cert found in the customize certs dir is audited against the baseline
+    # — approved ones log at info, non-approved (or unparseable) ones are
+    # **refused** with a warning naming subject/issuer. Lets locked-down
+    # deployments (e.g. DoD-approved CA baseline) enforce a defined CA set.
+    # Unset (the default) = no restriction: every cert in the customize
+    # certs dir is trusted (#1181). An unreadable/empty baseline fails
+    # CLOSED (no custom CAs trusted) with an error log. Read live off
+    # settings at every resolution: reloadable on SIGHUP; applies to
+    # containers started after the change and to the backend on reload.
+    trusted_ca_dir: str | None = None
     # features_enable: which compiled-in features (features) are turned on for
     # this deploy. Canonical semantics (#1655): unset → the manifest's
     # ``defaults`` list (the stock set, backwards-compatible); any explicit
