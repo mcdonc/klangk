@@ -384,6 +384,27 @@ def _other_workstation_ips(rows: list[dict], source_ip: str) -> list[str]:
     )
 
 
+def _unwrap_mapped(addr):
+    """The IPv4 form of an IPv4-mapped IPv6 address
+    (``::ffff:1.2.3.4`` → ``1.2.3.4``), or the address unchanged.
+
+    Without this, two mapped-form IPv4 addresses both parse as IPv6
+    whose /64 is ``::`` — collapsing every IPv4 client into one
+    "workstation" under proxies that forward the raw mapped peer.
+    """
+    if addr.version == 6 and addr.ipv4_mapped is not None:
+        return addr.ipv4_mapped
+    return addr
+
+
+def _same_ipv6_network(rec, pres) -> bool:
+    """True when two (already-unwrapped) addresses are IPv6 hosts
+    inside one /64 — the roaming-tolerant same-workstation judgement."""
+    if rec.version != 6 or pres.version != 6:
+        return False
+    return pres in ipaddress.ip_network(f"{rec}/64", strict=False)
+
+
 def same_workstation_ip(recorded: str, presented: str) -> bool:
     """True when two known client IPs name the same workstation (#3194).
 
@@ -392,17 +413,20 @@ def same_workstation_ip(recorded: str, presented: str) -> bool:
     extensions), and byte-equality would kill a roaming client's
     session on every rotation. Everything else (different IPv4s, an
     IPv4 vs an IPv6, unparseable strings that differ) is different.
+    Note the #2586 concurrent-logon audit deliberately compares raw
+    strings instead (strictst reading); binding is the softer,
+    roaming-tolerant judgement.
     """
     if recorded == presented:
         return True
     try:
-        rec = ipaddress.ip_address(recorded)
-        pres = ipaddress.ip_address(presented)
+        rec = _unwrap_mapped(ipaddress.ip_address(recorded))
+        pres = _unwrap_mapped(ipaddress.ip_address(presented))
     except ValueError:
         return False
-    if rec.version != 6 or pres.version != 6:
-        return False
-    return pres in ipaddress.ip_network(f"{recorded}/64", strict=False)
+    if rec == pres:
+        return True
+    return _same_ipv6_network(rec, pres)
 
 
 def _known_ips_differ(rec_ip: str | None, ip: str | None) -> bool:
@@ -441,13 +465,18 @@ def workstation_mismatch(
     return strict and _known_agents_differ(recorded[1], presented[1])
 
 
-def _request_workstation(request: Request) -> tuple[str | None, str | None]:
-    """The ``(ip, user_agent)`` an HTTP request presents (#3194).
+def _request_workstation(
+    request: Request | None,
+) -> tuple[str | None, str | None]:
+    """The ``(ip, user_agent)`` an HTTP request presents (#3194); a
+    request-less call resolves to unknown (fail-open).
 
     Reached only when binding is armed (``reject_replayed_session``
     short-circuits first), so minimal test app states without a
     ``util`` stay on the unarmed path.
     """
+    if request is None:
+        return None, None
     util = request.app.state.util
     host = request.client.host if request.client else None
     return util.workstation(request.headers, host)
@@ -1697,16 +1726,23 @@ class Auth:
             pass
         return TokenResponse(access_token=cached, must_change_password=flag)
 
-    async def _refreshed_or_revoked(self, jti: str) -> TokenResponse | None:
+    async def _refreshed_or_revoked(
+        self, jti: str, workstation=None
+    ) -> TokenResponse | None:
         """The cached replacement when *jti* was already refreshed.
 
         ``None`` when the jti is not blocklisted at all; a blocklisted
         jti with no cached replacement was revoked by logout → 401.
+        With binding armed (#3194) the cached replacement is handed
+        over only when the caller presents the workstation the
+        (rekeyed) session is bound to — the already-refreshed old
+        token is exactly what a thief replays here.
         """
         if not await self.app.state.model.tokens.is_token_blocklisted(jti):
             return None
         cached = await self.app.state.model.tokens.get_refreshed_token(jti)
         if cached is not None:
+            await self._reject_replayed_cached(cached, workstation)
             return await self._cached_refresh_response(cached)
         raise HTTPException(status_code=401, detail="Token has been revoked")
 
@@ -1768,14 +1804,18 @@ class Auth:
         if deciders is not None:
             deciders.reattach_jti(old_jti, new_jti)
 
-    async def _expired_token_response(self, token: str) -> TokenResponse:
+    async def _expired_token_response(
+        self, token: str, workstation=None
+    ) -> TokenResponse:
         """A previously-refreshed expired token still returns its cached
-        replacement; anything else is a plain 401."""
+        replacement; anything else is a plain 401. The cached handover
+        carries the same binding gate as the live path (#3194)."""
         payload = self.decode_token(token, allow_expired=True)
         jti = payload.get("jti")
         if jti:
             cached = await self.app.state.model.tokens.get_refreshed_token(jti)
             if cached is not None:
+                await self._reject_replayed_cached(cached, workstation)
                 return await self._cached_refresh_response(cached)
         raise HTTPException(status_code=401, detail="Token expired")
 
@@ -1914,6 +1954,27 @@ class Auth:
                 detail="Session bound to a different workstation",
             )
 
+    async def _reject_replayed_cached(self, cached: str, workstation) -> None:
+        """401 — after revoking the live replacement — before handing a
+        cached refresh response to a caller on a different workstation
+        than the (rekeyed) session is bound to (#3194).
+
+        The replayed *old* token's row no longer exists (the refresh
+        rekeyed it), so the binding check runs against the cached
+        replacement's JTI — the row that still records the bound
+        workstation. A mismatch revokes the live replacement and 401s:
+        the idempotent handover must never disclose a live credential
+        to a wrong-workstation caller. A caller with no resolved
+        workstation is judged by the session row lookup inside
+        :meth:`reject_replayed_session` (fail-open on unknown).
+        """
+        if workstation is None:
+            return
+        payload = self.decode_token(cached, allow_expired=True)
+        await self._reject_replayed_refresh(
+            payload.get("jti"), payload.get("exp"), workstation
+        )
+
     async def _revoke_replayed_session(
         self, jti, exp, recorded, workstation
     ) -> None:
@@ -1964,7 +2025,7 @@ class Auth:
 
             await self._reject_replayed_refresh(jti, exp, workstation)
 
-            cached = await self._refreshed_or_revoked(jti)
+            cached = await self._refreshed_or_revoked(jti, workstation)
             if cached is not None:
                 return cached
 
@@ -1991,7 +2052,7 @@ class Auth:
 
         except ExpiredSignatureError:
             # Token expired — check if it was previously refreshed
-            return await self._expired_token_response(token)
+            return await self._expired_token_response(token, workstation)
         except JWTError:
             raise HTTPException(status_code=401, detail="Invalid token")
 

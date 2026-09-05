@@ -205,7 +205,14 @@ and tethering, VPN toggles) is logged out and must log in again; in
 `strict` mode a browser update changes the `User-Agent` with the same
 effect. Users behind the same NAT as an attacker are not distinguished
 by `ip` mode — binding narrows the replay window to the same network,
-it does not eliminate same-NAT replay.
+it does not eliminate same-NAT replay. Binding judges only what the
+workstation resolver can see: if a deployment resolves no client IPs
+at all (e.g. `KLANGKD_REJECT_PROXY_HEADERS` set while every client
+arrives as an unresolvable peer), every presentation reads as unknown
+and binding never rejects — verify the proxy chain forwards the real
+client IP (see
+[concurrent-logon auditing](#concurrent-logon-auditing)) when arming
+binding.
 
 ## Idle session timeout
 

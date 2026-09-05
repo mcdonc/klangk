@@ -2999,6 +2999,16 @@ class TestWorkstationBindingHelpers:
             ("unknown-host", "unknown-host", True),  # equal unparseable
             ("unknown-host", "other-host", False),  # differing unparseable
             ("198.51.100.7", "not-an-ip", False),  # one unparseable
+            (
+                "::ffff:198.51.100.7",
+                "::ffff:203.0.113.9",
+                False,
+            ),  # mapped v4s are different hosts, not one ::/64
+            (
+                "::ffff:198.51.100.7",
+                "198.51.100.7",
+                True,
+            ),  # mapped and plain forms of the same host
         ],
     )
     def test_same_workstation_ip(self, recorded, presented, expected):
@@ -3240,6 +3250,16 @@ class TestSessionBinding:
             is True
         )
 
+    async def test_requestless_call_fails_open(self, user, app_state):
+        """A caller presenting neither a request nor a resolved
+        workstation cannot be judged — unknown, fail-open."""
+        a, token = await self._issued("ip")
+        payload = a.decode_token(token)
+        assert (
+            await a.reject_replayed_session(payload["jti"], payload["exp"])
+            is False
+        )
+
 
 class TestSessionBindingHTTP:
     """Binding enforcement through the HTTP choke points (#3194):
@@ -3341,3 +3361,81 @@ class TestSessionBindingHTTP:
         assert (
             await app_state.state.model.sessions.get_workstation(new_jti)
         ) == (self.HOME_IP, "klangk-cli/1.0")
+
+
+class TestSessionBindingCachedRefresh:
+    """The idempotent cached-refresh handover must not disclose the
+    live replacement to a wrong-workstation caller (#3194 review).
+
+    After a legitimate refresh, the old token's row is rekeyed onto
+    the new JTI, so replaying the OLD token from a foreign network
+    skips the row-based check — the cached-replacement return is the
+    seam that must re-check via the new JTI's row.
+    """
+
+    HOME = ("198.51.100.7", "klangk-cli/1.0")
+    AWAY = ("203.0.113.9", "klangk-cli/1.0")
+
+    async def _refreshed_pair(self):
+        """(auth, old_token, new_token) after one HOME refresh."""
+        a = _auth({"KLANGKD_SESSION_BINDING": "ip"})
+        user = await a.app.state.model.users.create_user(
+            "cached@example.com", "pw-hash", verified=True
+        )
+        old = await a.issue_token(
+            user["id"],
+            user["email"],
+            source_ip=self.HOME[0],
+            user_agent=self.HOME[1],
+        )
+        result = await a.refresh_token(old, self.HOME)
+        return a, old, result.access_token
+
+    async def test_replayed_old_token_from_away_is_refused(
+        self, user, app_state, caplog
+    ):
+        import logging
+
+        a, old, new = await self._refreshed_pair()
+        new_jti = a.decode_token(new)["jti"]
+        with caplog.at_level(logging.INFO, logger="klangk.auth"):
+            with pytest.raises(HTTPException) as exc_info:
+                await a.refresh_token(old, self.AWAY)
+        assert exc_info.value.status_code == 401
+        assert "different workstation" in exc_info.value.detail
+        # The audit names the violation and the live replacement dies.
+        assert "session binding violation" in caplog.text
+        assert await app_state.state.model.tokens.is_token_blocklisted(new_jti)
+
+    async def test_replayed_old_token_from_home_keeps_idempotency(
+        self, user, app_state
+    ):
+        """The legitimate client retrying its refresh with the old
+        token still gets the cached replacement."""
+        a, old, new = await self._refreshed_pair()
+        again = await a.refresh_token(old, self.HOME)
+        assert again.access_token == new
+        assert not await app_state.state.model.tokens.is_token_blocklisted(
+            a.decode_token(new)["jti"]
+        )
+
+    async def test_expired_old_token_from_away_is_refused(
+        self, user, app_state
+    ):
+        """The expired-token arm of the cached handover carries the
+        same gate: an expired, already-refreshed token replayed from a
+        foreign workstation 401s instead of disclosing the cached
+        replacement."""
+        a, old, new = await self._refreshed_pair()
+        new_jti = a.decode_token(new)["jti"]
+        # Force the old token read as expired: re-sign an equivalent
+        # payload with a past exp (same jti, so the cached row hits).
+        payload = a.decode_token(old, allow_expired=True)
+        payload["exp"] = (
+            datetime.now(timezone.utc) - timedelta(hours=1)
+        ).timestamp()
+        expired_old = jwt.encode(payload, a.secret, algorithm=a.algorithm)
+        with pytest.raises(HTTPException) as exc_info:
+            await a.refresh_token(expired_old, self.AWAY)
+        assert exc_info.value.status_code == 401
+        assert await app_state.state.model.tokens.is_token_blocklisted(new_jti)

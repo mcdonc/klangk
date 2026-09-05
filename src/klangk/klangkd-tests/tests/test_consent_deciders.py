@@ -1024,6 +1024,38 @@ class TestConsentDeciderWSJti:
         payload_call.assert_awaited_once()
         assert payload_call.await_args.args[1] == (None, "fake-decider/1.0")
 
+    async def test_decider_gate_rejects_foreign_workstation(self, user):
+        """#3194, real path: with binding armed and a real Auth, a decider
+        connect presenting a token issued to another workstation is
+        refused (4001) and the session revoked."""
+        from _helpers import wire_db_and_model
+
+        from klangk.auth import Auth
+        from klangk.util import Util
+        from klangk.wshandler.decider import _decider_authenticate
+
+        app = types.SimpleNamespace(
+            state=types.SimpleNamespace(
+                settings=make_settings({"KLANGKD_SESSION_BINDING": "ip"})
+            )
+        )
+        wire_db_and_model(app)
+        app.state.auth = Auth(app)
+        app.state.util = Util(app)
+        token = await app.state.auth.issue_token(
+            user["id"],
+            user["email"],
+            source_ip="198.51.100.7",
+            user_agent="fake-decider/1.0",
+        )
+        jti = app.state.auth.decode_token(token)["jti"]
+        ws = _FakeWS({"token": token}, [])
+        ws.client = types.SimpleNamespace(host="203.0.113.9")
+        result = await _decider_authenticate(ws, app, lambda label: None)
+        assert result is None
+        assert ws.closed == (4001, "Invalid token")
+        assert await app.state.model.tokens.is_token_blocklisted(jti)
+
     async def test_connection_records_authenticating_jti(self):
         from fastapi import WebSocketDisconnect
 
