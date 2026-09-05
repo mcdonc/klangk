@@ -1869,6 +1869,7 @@ class TestNumericSettingCoercion:
         "invite_expire_hours",
         "port_range_start",
         "websocket_msg_size_max",
+        "api_rate_limit",
         "file_upload_size_max",
         "hosted_ports_per_workspace",
         "smtp_port",
@@ -1944,6 +1945,7 @@ class TestNumericSettingCoercion:
             "hosted_ports_per_workspace",
             "password_history_count",
             "password_min_changed",
+            "api_rate_limit",
         ],
     )
     def test_zero_keeps_disable_semantics(self, field):
@@ -2063,6 +2065,7 @@ class TestNumericSettingCoercion:
             ("invite_expire_hours", 72),
             ("port_range_start", 9000),
             ("websocket_msg_size_max", 16777216),
+            ("api_rate_limit", 0),
             ("smtp_port", 587),
             ("file_upload_size_max", 524288000),
             ("hosted_ports_per_workspace", 5),

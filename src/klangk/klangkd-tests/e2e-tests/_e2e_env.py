@@ -105,6 +105,12 @@ def clean_env(**overrides: str) -> dict[str, str]:
     # E2E baseline defaults.
     env["_KLANGKD_DISABLE_PROXY"] = "1"
     env.setdefault("KLANGKD_AUTH_MODES", "password")
+    # #3157: per-client-IP API rate limiting is opt-in (default 0). E2E
+    # suites generate machine-speed request bursts from one loopback IP
+    # that would trip any enabled budget nondeterministically; the limit
+    # itself is exercised explicitly (test_api_rate_limit_e2e.py boots
+    # its own server with a tiny budget).
+    env.setdefault("KLANGKD_API_RATE_LIMIT", "0")
     # #3064: child CLI/TUI processes get the widened WS-connect wait on CI
     # to match the bring-up budgets (the strip above removes any ambient
     # value, so this stamp is the only way it reaches the child).

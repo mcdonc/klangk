@@ -6,7 +6,7 @@ used to live in this module were split out in the #2738 audit/refactor:
 - :mod:`klangk.lifecycle` — ``Lifecycle`` (startup/shutdown/restart +
   seeding), the ``lifespan`` context manager, ``setup_logfire``.
 - :mod:`klangk.middleware` — ``LiveCORSMiddleware``, ``InFlightRequests``,
-  ``InFlightMiddleware``.
+  ``InFlightMiddleware``, ``ApiRateLimitMiddleware``.
 - :mod:`klangk.static` — static file mounts + the no-cache middleware.
 - :mod:`klangk.bind_safety` — the no-auth loopback-bind gate.
 
@@ -113,6 +113,7 @@ from .api import root_router, router
 from .util import API_PREFIX
 from .lifecycle import Lifecycle, lifespan
 from .middleware import (
+    ApiRateLimitMiddleware,
     InFlightMiddleware,
     InFlightRequests,
     LiveCORSMiddleware,
@@ -316,10 +317,13 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     # its methods.
     app.state.lifecycle = Lifecycle(app)
 
-    # Middleware stack (outermost first): no-cache → LiveCORS → InFlight.
-    # CORS outside the in-flight counter is deliberate: CORS preflights
-    # are answered without reaching the app and must not be counted
-    # (#2738 audit).
+    # Middleware stack (outermost first): no-cache → LiveCORS → InFlight
+    # → ApiRateLimit. CORS outside the in-flight counter is deliberate:
+    # CORS preflights are answered without reaching the app and must not
+    # be counted (#2738 audit). ApiRateLimit innermost: a rejected request
+    # is still counted as in-flight (it completes immediately) and its
+    # 429 still gets CORS headers from the layers outside it (#3157).
+    app.add_middleware(ApiRateLimitMiddleware, fastapi_app=app)
     app.add_middleware(InFlightMiddleware, counter=app.state.inflight_requests)
     app.add_middleware(LiveCORSMiddleware, fastapi_app=app)
     # Registered once here, NOT inside setup_static_files: add_middleware

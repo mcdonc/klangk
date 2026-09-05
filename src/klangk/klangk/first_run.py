@@ -134,6 +134,9 @@ container_tmp_size: 2g
 #                                     # RUNNING workspaces (0 = unlimited)
 # volume_quota_per_workspace: 0      # per-workspace cap on instance-
 #                                     # managed named volumes (0 = unlimited)
+# api_rate_limit: 300                # per-client-IP /api/* requests per
+#                                     # 60s before 429 + Retry-After
+#                                     # (0 = unlimited)
 #
 # Full settings reference:
 #   https://mcdonc.github.io/klangk/reference/klangkd-config/
