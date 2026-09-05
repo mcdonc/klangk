@@ -65,6 +65,8 @@ class TestPasswordHistoryE2E:
 
     def test_reuse_gate_lifecycle(self, api):
         # All passwords must clear the default 8-char minimum policy.
+        # Each successful change revokes all sessions (#3152), so we
+        # must re-login after every 200.
         seed = "adminpass"
         p1, p2, p3, p4 = (
             "e2e-pass-one",
@@ -81,6 +83,7 @@ class TestPasswordHistoryE2E:
 
         # Change away: retires the seed hash into history.
         assert _change(api, headers, seed, p1).status_code == 200
+        headers = _login(api, p1)
 
         # Changing back to the just-retired seed is rejected.
         resp = _change(api, headers, current=p1, new=seed)
@@ -91,8 +94,11 @@ class TestPasswordHistoryE2E:
         # [p2, p1, seed] after p3, then [p3, p2, p1] after p4 —
         # the seed falls out of the 3-deep window.
         assert _change(api, headers, p1, p2).status_code == 200
+        headers = _login(api, p2)
         assert _change(api, headers, p2, p3).status_code == 200
+        headers = _login(api, p3)
         assert _change(api, headers, p3, p4).status_code == 200
+        headers = _login(api, p4)
 
         # Still inside the window: p1 is rejected.
         resp = _change(api, headers, current=p4, new=p1)
@@ -102,11 +108,13 @@ class TestPasswordHistoryE2E:
         # Pruned out of the window: the seed is reusable again. This
         # retires p4, pruning p1 — history is now [p2, p3, seed].
         assert _change(api, headers, p4, seed).status_code == 200
+        headers = _login(api, seed)
 
         # p1 just fell out of the window -> reusable. That change
         # retires the seed, so history is now [p3, p4, seed]: p3 is
         # still in the window — the gate stays live for the next cycle.
         assert _change(api, headers, seed, p1).status_code == 200
+        headers = _login(api, p1)
         resp = _change(api, headers, current=p1, new=p3)
         assert resp.status_code == 400, resp.text
         assert "recently" in resp.json()["detail"]

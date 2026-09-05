@@ -995,6 +995,47 @@ class WebSocketState:
                 logger.debug("Error closing socket for user %s", user_id)
         return len(socks)
 
+    async def disconnect_by_jti(
+        self, jti: str, *, code: int = 4001, reason: str = ""
+    ) -> int:
+        """Close every live connection authenticated with *jti* (#3152).
+
+        Hard token revocation (logout, session-limit eviction) must cut
+        the sockets that token opened, not just reject the next connect.
+        Refresh rotation deliberately does not come through here — a
+        refresh keeps the session (and its socket) alive under the new
+        token. Code 4001 makes the client log out rather than
+        reconnect-loop, the same convention as ``disconnect_user``.
+        Only the sockets are closed — each handler's ``finally`` block
+        then runs the normal disconnect cleanup. Returns how many
+        connections were closed.
+        """
+        socks = [
+            sock for sock, conn in self.connections.items() if conn.jti == jti
+        ]
+        for sock in socks:
+            try:
+                await sock.close(code=code, reason=reason)
+            except Exception:  # noqa: BLE001
+                logger.debug("Error closing socket for jti %s", jti)
+        return len(socks)
+
+    def reattach_jti(self, old_jti: str, new_jti: str) -> int:
+        """Move live connections from *old_jti* onto *new_jti* (#3152).
+
+        A token refresh keeps the session — and its socket — alive under
+        the new token; retargeting keeps ``conn.jti`` equal to the
+        session row's current JTI so a later hard revocation (logout,
+        session-limit eviction) still finds the socket. Returns how many
+        connections were moved.
+        """
+        moved = 0
+        for conn in self.connections.values():
+            if conn.jti == old_jti:
+                conn.jti = new_jti
+                moved += 1
+        return moved
+
     async def reset_workspace(
         self, workspace_id: str, *, expected_container_id: str | None = None
     ) -> None:

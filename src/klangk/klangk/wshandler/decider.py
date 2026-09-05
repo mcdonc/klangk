@@ -32,7 +32,13 @@ it targets the decider's own workspace (defense-in-depth), enforced in
 ``resolve`` via ``decider_workspace``. Pause/unpause share the same single
 gate as the connection itself (#2883): anyone who may register may also
 pause. Auth mirrors the main ``/ws`` handler: a user JWT in the ``token``
-query param.
+query param — including its revocation story (#3162): the handshake
+records the token's JTI on the registry entry, and a hard revocation
+(logout, session-limit eviction) closes the decider socket with 4001,
+just like the main handler's connections (#3152), and an account
+disable closes every decider of the user (#3162, mirroring the #2588
+per-user kick). Refresh rotation retargets the entry onto the new JTI
+instead of closing it.
 
 Outbound writes go through :class:`SafeWebSocket` (bounded queue +
 ``SlowClientError``) like the main ``/ws`` handler.
@@ -46,8 +52,8 @@ import time
 import uuid
 
 from fastapi import WebSocket, WebSocketDisconnect
+from jose import ExpiredSignatureError, JWTError
 
-from .. import auth
 from .safe_websocket import SafeWebSocket, SlowClientError
 from ..model.egress_consent import (
     DECISION_ALLOWED,
@@ -225,20 +231,31 @@ async def _dispatch_decider_message(
 
 
 async def _decider_authenticate(websocket: WebSocket, app, _hs_mark):
-    """Validate the decider socket's token; refuse + None on failure."""
+    """Validate the decider socket's token; refuse + None on failure.
+
+    Success returns ``(user, jti)`` — the token's JTI rides along so the
+    registration can be targeted for closing when that token is later
+    hard-revoked (#3162), mirroring ``ws_authenticate`` (#3152).
+    """
     token = websocket.query_params.get("token")
     if not token:
         await _refuse(websocket, 4001, "Missing token")
         return None
-    result = await app.state.auth.get_user_from_token(token)
-    _hs_mark("token")
-    if result is auth.Auth.TOKEN_EXPIRED:
+    a = app.state.auth
+    try:
+        payload = a.decode_token(token)
+    except ExpiredSignatureError:
         await _refuse(websocket, 4002, "Token expired")
         return None
-    if result is None:
+    except JWTError:
         await _refuse(websocket, 4001, "Invalid token")
         return None
-    return result
+    user = await a._user_from_valid_payload(payload)
+    _hs_mark("token")
+    if user is None:
+        await _refuse(websocket, 4001, "Invalid token")
+        return None
+    return user, payload.get("jti")
 
 
 _FRAME_DISCONNECTED = object()
@@ -326,9 +343,10 @@ async def handle_consent_decider(websocket: WebSocket, app) -> None:
     def _hs_mark(label: str) -> None:
         _hs_marks.append((label, time.monotonic()))
 
-    user = await _decider_authenticate(websocket, app, _hs_mark)
-    if user is None:
+    authed = await _decider_authenticate(websocket, app, _hs_mark)
+    if authed is None:
         return
+    user, jti = authed
     workspace = websocket.query_params.get("workspace")
     if workspace is None:
         # #2976: consent is strictly a workspace concern -- there is no
@@ -354,7 +372,9 @@ async def handle_consent_decider(websocket: WebSocket, app) -> None:
     decider_id = str(uuid.uuid4())
     email = user.get("email")
     try:
-        registry.register(decider_id, workspace, email, safe_ws)
+        registry.register(
+            decider_id, workspace, email, safe_ws, jti=jti, user_id=user["id"]
+        )
         # Register BEFORE reading the snapshot: a hold created between the two
         # is then delivered twice (once live via fanout, once from the
         # snapshot). That duplicate is benign -- the second verdict no-ops

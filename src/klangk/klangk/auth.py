@@ -717,6 +717,46 @@ class Auth:
             ", ".join(others),
         )
 
+    async def _kick_revoked_sockets(self, jti: str) -> None:
+        """Close live WS connections authenticated with *jti* (#3152).
+
+        Revocation must cut the sockets the token opened, not just
+        reject the next connect — both the main ``/ws`` connections and
+        the consent-decider sockets (#3162: a decider holds
+        egress-consent authority and lives in its own registry). Minimal
+        app states (tests) may not wire ``sockets`` or
+        ``consent_deciders`` — then there is nothing to close.
+        """
+        sockets = getattr(self.app.state, "sockets", None)
+        if sockets is not None:
+            await sockets.disconnect_by_jti(jti, reason="Token revoked")
+        deciders = getattr(self.app.state, "consent_deciders", None)
+        if deciders is not None:
+            await deciders.disconnect_by_jti(jti, reason="Token revoked")
+
+    async def revoke_all_user_sessions(self, user_id: str) -> None:
+        """Blocklist and delete every session for *user_id* (#3152).
+
+        Called after a password change: the old credential is invalid, so
+        every session minted with it must be forcibly ended — both the
+        HTTP side (blocklist → 401) and the WebSocket side (kick).
+        """
+        rows = await self.app.state.model.sessions.list_sessions(user_id)
+        for row in rows:
+            logger.info(
+                "password change: revoking session jti=%s (user %s)",
+                row["jti"],
+                user_id,
+            )
+            await self.app.state.model.tokens.blocklist_token(
+                row["jti"], row["expires_at"]
+            )
+            await self._kick_revoked_sockets(row["jti"])
+        if rows:
+            await self.app.state.model.sessions.remove_sessions(
+                [row["jti"] for row in rows]
+            )
+
     async def _revoke_sessions(
         self, user_id: str, rows: list[dict], limit: int
     ) -> None:
@@ -725,7 +765,8 @@ class Auth:
         Victims are removed oldest-first by blocklisting their JTIs (the
         same revocation path as logout: the next HTTP request 401s with
         "Token has been revoked"; the next WebSocket connect is rejected
-        with 4001 → client logout), then their session rows are deleted.
+        with 4001 → client logout), then their session rows are deleted,
+        and their live WebSocket connections are closed (#3152).
         Blocklisting happens BEFORE the delete so a crash between the two
         can only leave a dead token's row behind (purged on the next
         issuance), never a live token without a row.
@@ -741,6 +782,7 @@ class Auth:
             await self.app.state.model.tokens.blocklist_token(
                 row["jti"], row["expires_at"]
             )
+            await self._kick_revoked_sockets(row["jti"])
         await self.app.state.model.sessions.remove_sessions(
             [row["jti"] for row in rows]
         )
@@ -1053,6 +1095,24 @@ class Auth:
         await self.app.state.model.sessions.replace_session(
             jti, user_id, new_payload["jti"], new_expires_at
         )
+        self._retarget_refreshed_sockets(jti, new_payload["jti"])
+
+    def _retarget_refreshed_sockets(self, old_jti: str, new_jti: str) -> None:
+        """Move live WS connections onto the refreshed token's JTI (#3152).
+
+        Keeps ``conn.jti`` equal to the session row's current JTI so a
+        later hard revocation (logout, eviction) still finds the socket
+        the refreshed session is using — for the main ``/ws``
+        connections and the consent-decider registrations alike
+        (#3162). Minimal app states (tests) may not wire ``sockets`` or
+        ``consent_deciders`` — then there is nothing to retarget.
+        """
+        sockets = getattr(self.app.state, "sockets", None)
+        if sockets is not None:
+            sockets.reattach_jti(old_jti, new_jti)
+        deciders = getattr(self.app.state, "consent_deciders", None)
+        if deciders is not None:
+            deciders.reattach_jti(old_jti, new_jti)
 
     async def _expired_token_response(self, token: str) -> TokenResponse:
         """A previously-refreshed expired token still returns its cached
@@ -1159,7 +1219,8 @@ class Auth:
             return None
 
     async def logout(self, token: str) -> None:
-        """Blocklist the token's JTI and drop its session row."""
+        """Blocklist the token's JTI, drop its session row, and close the
+        WebSocket connections it authenticated (#3152)."""
         try:
             payload = self.decode_token(token)
             jti = payload.get("jti")
@@ -1172,6 +1233,7 @@ class Auth:
                     jti, expires_at
                 )
                 await self.app.state.model.sessions.remove_session(jti)
+                await self._kick_revoked_sockets(jti)
         except JWTError:
             pass
 

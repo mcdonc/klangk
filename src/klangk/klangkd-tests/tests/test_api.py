@@ -949,6 +949,68 @@ class TestAuthRoutes:
         assert resp.json()["status"] == "ok"
         mock_stop.assert_not_called()
 
+    async def test_logout_kicks_live_sockets(self, client, app, user):
+        """#3152: logout closes the WS connections the logged-out token
+        authenticated (4001 -> client logout), not just future connects —
+        and leaves other sessions of the same user connected."""
+        from klangk.wshandler.session import WebSocketState
+        from klangk import wshandler
+
+        assert isinstance(app.state.sockets, WebSocketState)
+        resp = await client.post(
+            "/api/v1/auth/login",
+            json={
+                "identifier": "testuser@example.com",
+                "password": "testpass",
+            },
+        )
+        token = resp.json()["access_token"]
+        jti = app.state.auth.decode_token(token)["jti"]
+        closed: list[tuple[int, str]] = []
+
+        class FakeSock:
+            async def close(self, code=1000, reason=""):
+                closed.append((code, reason))
+
+        # Same user, different session; and another user entirely: both
+        # must survive the logout of the victim's token.
+        victim = types.SimpleNamespace(
+            user={"id": user["id"], "email": user["email"]}, jti=jti
+        )
+        other_session = types.SimpleNamespace(
+            user={"id": user["id"], "email": user["email"]},
+            jti="another-jti",
+        )
+        other_user = types.SimpleNamespace(
+            user={"id": "someone-else", "email": "other@example.com"},
+            jti="third-jti",
+        )
+        app.state.sockets.connections[FakeSock()] = other_user
+        app.state.sockets.connections[FakeSock()] = other_session
+        app.state.sockets.connections[FakeSock()] = victim
+
+        resp = await client.post(
+            "/api/v1/auth/logout",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200
+        assert closed == [(4001, "Token revoked")]
+
+        # A socket whose close() raises must not break the kick: the
+        # remaining sockets are still closed and the count is right.
+        class BadSock:
+            async def close(self, code=1000, reason=""):
+                raise RuntimeError("already closed")
+
+        app.state.sockets.connections.clear()
+        app.state.sockets.connections[BadSock()] = victim
+        app.state.sockets.connections[FakeSock()] = victim
+        kicked = await wshandler.disconnect_by_jti(
+            app.state.sockets, jti, reason="Token revoked"
+        )
+        assert kicked == 2
+        app.state.sockets.connections.clear()
+
     async def test_logout_no_auth(self, client):
         # Idempotent (#2687): no token presented means nothing to revoke,
         # which is the desired end state — not an auth failure.
@@ -2008,7 +2070,15 @@ class TestChangePassword:
             3,
             raising=False,
         )
-        headers = await _auth_headers(client)
+
+        async def _login(pw):
+            r = await client.post(
+                "/api/v1/auth/login",
+                json={"identifier": "testuser@example.com", "password": pw},
+            )
+            return {"Authorization": f"Bearer {r.json()['access_token']}"}
+
+        headers = await _login("testpass")
         # Change away from the seed password once — this retires the
         # seed hash into history; the new hash is never recorded until
         # the user changes away from *it* (#2582).
@@ -2021,6 +2091,8 @@ class TestChangePassword:
             headers=headers,
         )
         assert resp.status_code == 200
+        # Re-login: change-password revokes the old token (#3152).
+        headers = await _login("midpass1")
         # To the current password.
         resp = await client.post(
             "/api/v1/auth/change-password",
@@ -2042,6 +2114,8 @@ class TestChangePassword:
             headers=headers,
         )
         assert resp.status_code == 200
+        # Re-login after the second change.
+        headers = await _login("newpass1")
         resp2 = await client.post(
             "/api/v1/auth/change-password",
             json={
@@ -2079,6 +2153,31 @@ class TestChangePassword:
             resp.json()["detail"]
             == "Account is managed by your identity provider"
         )
+
+
+class TestChangePasswordRevokesTokens:
+    """#3152: changing a password must revoke all existing sessions."""
+
+    async def test_old_token_rejected_after_password_change(
+        self, client, user
+    ):
+        headers = await _auth_headers(client)
+        old_token = headers["Authorization"].split()[-1]
+        resp = await client.post(
+            "/api/v1/auth/change-password",
+            json={
+                "current_password": "testpass",
+                "new_password": "newpass1",
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        # The old token is now blocklisted — a protected call should 401.
+        resp2 = await client.get(
+            "/api/v1/auth/me",
+            headers={"Authorization": f"Bearer {old_token}"},
+        )
+        assert resp2.status_code == 401
 
 
 class TestChangeEmail:
@@ -15377,6 +15476,51 @@ class TestInactivityDisable:
         assert kicked == 2
         assert closed[-1] == (4001, "Account disabled")
         app.state.sockets.connections.clear()
+
+    async def test_admin_disable_kicks_decider_sockets(
+        self, client, app, admin_user, user
+    ):
+        """#3162: disabling an account also closes its live
+        consent-decider sockets (4001) — a decider holds egress-consent
+        authority and must not outlive the disable. The decider is a
+        REAL SafeWebSocket over a mock raw socket (fakes masked the
+        reason-kwarg no-op class of bug, #3160 review)."""
+        from klangk.consent.deciders import ConsentDeciderRegistry
+        from klangk.wshandler.safe_websocket import SafeWebSocket
+
+        app.state.consent_deciders = ConsentDeciderRegistry(app)
+        victim_raw = AsyncMock()
+        victim_raw.close = AsyncMock()
+        other_raw = AsyncMock()
+        other_raw.close = AsyncMock()
+        app.state.consent_deciders.register(
+            "d-victim",
+            "ws-1",
+            user["email"],
+            SafeWebSocket(victim_raw),
+            jti="j-victim",
+            user_id=user["id"],
+        )
+        app.state.consent_deciders.register(
+            "d-other",
+            "ws-2",
+            "other@example.com",
+            SafeWebSocket(other_raw),
+            jti="j-other",
+            user_id="someone-else",
+        )
+        headers = await _admin_login(client)
+        resp = await client.patch(
+            f"/api/v1/users/{user['id']}",
+            headers=headers,
+            json={"disabled": True},
+        )
+        assert resp.status_code == 200
+        victim_raw.close.assert_awaited_once_with(
+            code=4001, reason="Account disabled"
+        )
+        other_raw.close.assert_not_awaited()
+        assert set(app.state.consent_deciders._deciders) == {"d-other"}
 
 
 class TestAdminServerSchedule:

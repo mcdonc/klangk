@@ -308,6 +308,37 @@ operators or integrators to act when upgrading.
 
 ### Security
 
+- **Consent-decider sockets are closed on token revocation (#3162).**
+  The `/ws/consent-decider` connection now shares the #3152 revocation
+  story: logging out, being evicted by the per-user session limit, or
+  having the account disabled (admin action or the inactivity sweep)
+  immediately closes the decider sockets that credential authenticated
+  (close code 4001) and drops their registrations, so egress-consent
+  authority (verdicts, revokes, pause) ends with the credential.
+  Previously the decider socket — which lives in its own registry —
+  kept that authority indefinitely after logout or disable. Refresh
+  rotation retargets the decider onto the new token instead of closing
+  it.
+
+- **WebSocket connections are closed on token revocation (#3152).**
+  Logging out, or being evicted by the per-user session limit, now
+  immediately closes the live WebSocket connections the revoked token
+  authenticated (close code 4001, so clients log out instead of
+  reconnect-looping). Previously an established socket kept full
+  data-plane access until the next reconnect. Refresh rotation is
+  unaffected — a refreshed session keeps its socket, retargeted onto
+  the new token so a later revocation still closes it.
+
+- **WebSocket connections close on token expiry (#3152).** A socket
+  now schedules its own close (code 4002) at the access token's `exp`
+  time. Previously a socket established before the token expired would
+  stay open indefinitely until the client happened to reconnect.
+
+- **Password change revokes all sessions (#3152).** `POST
+/api/v1/auth/change-password` now blocklists every active session
+  token and closes their WebSocket connections, forcing re-login on
+  all devices.
+
 - **Bounded rate-limit state for the email cooldowns (#3113).** The
   per-address cooldown dicts behind
   `POST /api/v1/auth/forgot-password` and
@@ -2068,6 +2099,14 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   `podman info` / `podman unshare` diagnostics first so a persistent
   occurrence stays attributable — and passes every other failure through
   untouched.
+
+- **Account-disable / inactivity socket kick was a no-op (#3152).**
+  `SafeWebSocket.close` dropped the `reason` argument, so the 4001
+  close that admin-disable and the inactivity sweep issue for a
+  disabled user's live connections raised a TypeError that was
+  swallowed — no socket was ever actually closed. `close` now forwards
+  `reason` to the transport, and the kick paths have regression tests
+  against the real `SafeWebSocket`.
 
 - **`build-host-image` / `build_wheel.sh` (#3143).** The release wheel is
   now built with `uv build`, which resolves hatchling/hatch-vcs into its own

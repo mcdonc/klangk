@@ -29,6 +29,8 @@ from .support import (
     WS_DEBUG as WS_DEBUG,
     broadcast_event as broadcast_event,
     disconnect_all_websockets as disconnect_all_websockets,
+    disconnect_by_jti as disconnect_by_jti,
+    disconnect_deciders_by_user as disconnect_deciders_by_user,
     disconnect_user as disconnect_user,
     format_container_info as format_container_info,
     format_idle_timeout as format_idle_timeout,
@@ -62,4 +64,5 @@ from .dispatch import (
     WS_CONNECTION_COMMANDS as WS_CONNECTION_COMMANDS,
     WS_STATE_COMMANDS as WS_STATE_COMMANDS,
     handle_websocket as handle_websocket,
+    ws_authenticate as ws_authenticate,
 )

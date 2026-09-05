@@ -889,6 +889,22 @@ class TestTokenValidation:
         token = _auth().create_token("nonexistent-id", "ghost@example.com")
         assert await _auth().get_user_from_token(token) is None
 
+    async def test_get_user_from_token_expired(self, db):
+        """A valid-signature but expired token returns TOKEN_EXPIRED."""
+        expired = datetime.now(timezone.utc) - timedelta(hours=1)
+        token = jwt.encode(
+            {
+                "sub": "uid",
+                "email": "x",
+                "jti": "j1",
+                "exp": expired,
+            },
+            _auth().secret,
+            algorithm=_auth().algorithm,
+        )
+        result = await _auth().get_user_from_token(token)
+        assert result is _auth().TOKEN_EXPIRED
+
 
 class TestGetCurrentUser:
     async def test_valid_credentials(self, user):
@@ -1455,6 +1471,315 @@ class TestSessionLimit:
             result.user_id
         )
         assert len(rows) == 1
+
+
+class TestRevocationKicksSockets:
+    """#3152: hard revocation (logout, session-limit eviction) closes the
+    live WS connections the revoked token authenticated; refresh rotation
+    (which blocklists the old JTI via _swap_token) must NOT kick — the
+    session lives on under the new token."""
+
+    def _auth_with_sockets(self, env=None):
+        """An Auth whose app_state wires a real WebSocketState, plus that
+        state — fake connections can be planted in ``sockets.connections``."""
+        from klangk.wshandler.session import WebSocketState
+
+        a = _auth(env)
+        sockets = WebSocketState(a.app)
+        a.app.state.sockets = sockets
+        return a, sockets
+
+    @staticmethod
+    def _fake_conn(user, jti):
+        return _types.SimpleNamespace(
+            user={"id": user["id"], "email": user["email"]}, jti=jti
+        )
+
+    async def _login(self, a):
+        result = await a.login(
+            auth.LoginRequest(
+                identifier="testuser@example.com", password="testpass"
+            )
+        )
+        return result.access_token
+
+    async def test_logout_closes_socket_for_that_jti(self, user, app_state):
+        a, sockets = self._auth_with_sockets()
+        token = await self._login(a)
+        jti = a.decode_token(token)["jti"]
+        closed: list[tuple[int, str]] = []
+
+        class FakeSock:
+            async def close(self, code=1000, reason=""):
+                closed.append((code, reason))
+
+        sockets.connections[FakeSock()] = self._fake_conn(user, jti)
+        sockets.connections[FakeSock()] = self._fake_conn(user, "other-jti")
+        try:
+            await a.logout(token)
+            # Only the connection the revoked token authenticated is closed.
+            assert closed == [(4001, "Token revoked")]
+        finally:
+            sockets.connections.clear()
+
+    async def test_session_limit_eviction_closes_evicted_sockets(
+        self, user, app_state
+    ):
+        env = {"KLANGKD_MAX_SESSIONS_PER_USER": "1"}
+        a, sockets = self._auth_with_sockets(env)
+        first = await self._login(a)
+        first_jti = a.decode_token(first)["jti"]
+        closed: list[tuple[int, str]] = []
+
+        class FakeSock:
+            async def close(self, code=1000, reason=""):
+                closed.append((code, reason))
+
+        sockets.connections[FakeSock()] = self._fake_conn(user, first_jti)
+        try:
+            # The second login evicts the first session past the cap of 1.
+            second = await self._login(a)
+            assert closed == [(4001, "Token revoked")]
+            # The surviving session's token still works.
+            assert await a.get_user_from_token(second) is not None
+        finally:
+            sockets.connections.clear()
+
+    async def test_refresh_rotation_does_not_close_socket(
+        self, user, app_state
+    ):
+        """A refresh blocklists the old JTI (idempotent rotation cache)
+        but keeps the session — the socket opened with the old token must
+        stay connected, retargeted onto the new JTI."""
+        a, sockets = self._auth_with_sockets()
+        token = await self._login(a)
+        jti = a.decode_token(token)["jti"]
+        closed: list[tuple[int, str]] = []
+
+        class FakeSock:
+            async def close(self, code=1000, reason=""):
+                closed.append((code, reason))
+
+        conn = self._fake_conn(user, jti)
+        bystander = self._fake_conn(user, "unrelated-jti")
+        sockets.connections[FakeSock()] = conn
+        sockets.connections[FakeSock()] = bystander
+        try:
+            refreshed = await a.refresh_token(token)
+            assert closed == []
+            # Retargeted (#3152 review): the live connection now carries
+            # the refreshed token's JTI; unrelated connections are left
+            # alone.
+            new_jti = a.decode_token(refreshed.access_token)["jti"]
+            assert conn.jti == new_jti
+            assert bystander.jti == "unrelated-jti"
+        finally:
+            sockets.connections.clear()
+
+    async def test_logout_after_refresh_closes_retargeted_socket(
+        self, user, app_state
+    ):
+        """#3152 review: the WS outlives the HTTP token refresh (it keeps
+        the old, rotated JTI), so logging out with the NEW token must
+        still close it — via the refresh-time retarget onto the new JTI."""
+        a, sockets = self._auth_with_sockets()
+        token = await self._login(a)
+        closed: list[tuple[int, str]] = []
+
+        class FakeSock:
+            async def close(self, code=1000, reason=""):
+                closed.append((code, reason))
+
+        # A connection opened with the pre-refresh token, planted BEFORE
+        # the refresh: the refresh retargets its JTI onto the new token.
+        conn = self._fake_conn(user, a.decode_token(token)["jti"])
+        sockets.connections[FakeSock()] = conn
+        try:
+            refreshed = await a.refresh_token(token)
+            await a.logout(refreshed.access_token)
+            assert closed == [(4001, "Token revoked")]
+        finally:
+            sockets.connections.clear()
+
+    async def test_eviction_after_refresh_closes_retargeted_socket(
+        self, user, app_state
+    ):
+        """#3152 review: the typical eviction victim is a long-refreshing
+        session (replace_session keeps its original created_at, so it
+        stays oldest) — its socket must still be kickable after rotation.
+        """
+        env = {"KLANGKD_MAX_SESSIONS_PER_USER": "1"}
+        a, sockets = self._auth_with_sockets(env)
+        first = await self._login(a)
+        closed: list[tuple[int, str]] = []
+
+        class FakeSock:
+            async def close(self, code=1000, reason=""):
+                closed.append((code, reason))
+
+        # The connection opened with the pre-refresh token, planted
+        # BEFORE the refresh so the rotation retargets it.
+        conn = self._fake_conn(user, a.decode_token(first)["jti"])
+        sockets.connections[FakeSock()] = conn
+        try:
+            refreshed = await a.refresh_token(first)
+            # The second login evicts the refreshed (still-oldest)
+            # session past the cap of 1.
+            second = await self._login(a)
+            assert closed == [(4001, "Token revoked")]
+            assert await a.get_user_from_token(second) is not None
+            assert await a.get_user_from_token(refreshed.access_token) is None
+        finally:
+            sockets.connections.clear()
+
+    async def test_revoke_all_user_sessions_closes_every_socket(
+        self, user, app_state
+    ):
+        """revoke_all_user_sessions (used by change-password) blocklists
+        and kicks every session, not just one."""
+        a, sockets = self._auth_with_sockets()
+        t1 = await self._login(a)
+        t2 = await self._login(a)
+        jti1 = a.decode_token(t1)["jti"]
+        jti2 = a.decode_token(t2)["jti"]
+        closed: list[tuple[int, str]] = []
+
+        class FakeSock:
+            async def close(self, code=1000, reason=""):
+                closed.append((code, reason))
+
+        sockets.connections[FakeSock()] = self._fake_conn(user, jti1)
+        sockets.connections[FakeSock()] = self._fake_conn(user, jti2)
+        try:
+            await a.revoke_all_user_sessions(user["id"])
+            assert len(closed) == 2
+            assert all(code == 4001 for code, _ in closed)
+            # Both tokens are now blocklisted.
+            assert await a.get_user_from_token(t1) is None
+            assert await a.get_user_from_token(t2) is None
+        finally:
+            sockets.connections.clear()
+
+    async def test_revoke_all_user_sessions_no_sessions_is_noop(
+        self, user, app_state
+    ):
+        """A user with no sessions (rows empty) skips the kick loop and
+        the remove_sessions call entirely."""
+        a, sockets = self._auth_with_sockets()
+        await a.revoke_all_user_sessions(user["id"])
+        assert not sockets.connections
+        assert await a.app.state.model.sessions.list_sessions(user["id"]) == []
+
+
+class TestRevocationKicksDeciders:
+    """#3162: the consent-decider socket had the same revocation
+    survival as the main /ws socket (#3152) — it lives in its own
+    registry, so the logout/eviction kick must reach that registry too.
+    Refresh rotation retargets (not closes), exactly like the main
+    registry. Entries are REAL SafeWebSockets over mock raw sockets
+    (#3160 review: fakes masked the reason-kwarg no-op)."""
+
+    def _auth_with_deciders(self, env=None):
+        from klangk.consent.deciders import ConsentDeciderRegistry
+
+        a = _auth(env)
+        a.app.state.consent_deciders = ConsentDeciderRegistry(a.app)
+        return a
+
+    @staticmethod
+    def _decider_raw(a, jti, decider_id="d1"):
+        """A real SafeWebSocket over a mock raw socket, registered as a
+        live decider under *jti*; returns the raw socket."""
+        from unittest.mock import AsyncMock
+
+        from klangk.wshandler.safe_websocket import SafeWebSocket
+
+        raw = AsyncMock()
+        raw.close = AsyncMock()
+        a.app.state.consent_deciders.register(
+            decider_id, "ws-1", "d@x", SafeWebSocket(raw), jti=jti
+        )
+        return raw
+
+    async def _login(self, a):
+        result = await a.login(
+            auth.LoginRequest(
+                identifier="testuser@example.com", password="testpass"
+            )
+        )
+        return result.access_token
+
+    async def test_logout_closes_decider_for_that_jti(self, user, app_state):
+        a = self._auth_with_deciders()
+        token = await self._login(a)
+        jti = a.decode_token(token)["jti"]
+        victim = self._decider_raw(a, jti)
+        other = self._decider_raw(a, "other-jti", "d2")
+        await a.logout(token)
+        victim.close.assert_awaited_once_with(
+            code=4001, reason="Token revoked"
+        )
+        other.close.assert_not_awaited()
+        # The kicked decider's registration is gone (authority ends at
+        # revocation); the spared one stays live.
+        deciders = a.app.state.consent_deciders
+        assert set(deciders._deciders) == {"d2"}
+
+    async def test_session_limit_eviction_closes_evicted_decider(
+        self, user, app_state
+    ):
+        env = {"KLANGKD_MAX_SESSIONS_PER_USER": "1"}
+        a = self._auth_with_deciders(env)
+        first = await self._login(a)
+        victim = self._decider_raw(a, a.decode_token(first)["jti"])
+        # The second login evicts the first session past the cap of 1.
+        second = await self._login(a)
+        victim.close.assert_awaited_once_with(
+            code=4001, reason="Token revoked"
+        )
+        assert await a.get_user_from_token(second) is not None
+
+    async def test_refresh_rotation_retargets_decider_not_closed(
+        self, user, app_state
+    ):
+        a = self._auth_with_deciders()
+        token = await self._login(a)
+        raw = self._decider_raw(a, a.decode_token(token)["jti"])
+        refreshed = await a.refresh_token(token)
+        raw.close.assert_not_awaited()
+        # Retargeted onto the refreshed token's JTI, so a later hard
+        # revocation still finds the decider.
+        new_jti = a.decode_token(refreshed.access_token)["jti"]
+        deciders = a.app.state.consent_deciders
+        assert deciders._deciders["d1"]["jti"] == new_jti
+
+    async def test_logout_after_refresh_closes_retargeted_decider(
+        self, user, app_state
+    ):
+        a = self._auth_with_deciders()
+        token = await self._login(a)
+        raw = self._decider_raw(a, a.decode_token(token)["jti"])
+        refreshed = await a.refresh_token(token)
+        await a.logout(refreshed.access_token)
+        raw.close.assert_awaited_once_with(code=4001, reason="Token revoked")
+
+    async def test_eviction_after_refresh_closes_retargeted_decider(
+        self, user, app_state
+    ):
+        """The typical eviction victim is a long-refreshing session
+        (replace_session keeps its original created_at, so it stays
+        oldest) — its decider must still be kickable after rotation."""
+        env = {"KLANGKD_MAX_SESSIONS_PER_USER": "1"}
+        a = self._auth_with_deciders(env)
+        first = await self._login(a)
+        raw = self._decider_raw(a, a.decode_token(first)["jti"])
+        refreshed = await a.refresh_token(first)
+        # The second login evicts the refreshed (still-oldest) session
+        # past the cap of 1.
+        second = await self._login(a)
+        raw.close.assert_awaited_once_with(code=4001, reason="Token revoked")
+        assert await a.get_user_from_token(second) is not None
+        assert await a.get_user_from_token(refreshed.access_token) is None
 
 
 class TestConcurrentLogonAudit:

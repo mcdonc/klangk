@@ -1,5 +1,6 @@
 """Connection: per-WebSocket connection state and command handlers."""
 
+import asyncio
 import logging
 import time
 from datetime import datetime, timedelta, timezone
@@ -34,10 +35,27 @@ logger = logging.getLogger(__name__)
 class Connection:
     """Per-WebSocket connection state and command handlers."""
 
-    def __init__(self, ws: SafeWebSocket, user: dict, app):
+    def __init__(
+        self,
+        ws: SafeWebSocket,
+        user: dict,
+        app,
+        jti: str | None = None,
+        token_exp: float | None = None,
+    ):
         self.app = app
         self.sock = ws
         self.user = user
+        # JTI of the access token this socket authenticated with (#3152):
+        # lets a hard revocation (logout, session-limit eviction) close
+        # exactly the connections that token opened — not every session
+        # of the user. ``None`` on connections built without one (tests).
+        self.jti = jti
+        # Unix-epoch expiry of the access token (#3152): the socket must
+        # not outlive its token. ``_schedule_token_expiry`` starts a task
+        # that closes the socket at this time.
+        self.token_exp = token_exp
+        self._expiry_task: asyncio.Task | None = None
         self.workspace_id: str | None = None
         self.container_id: str | None = None
         # Terminal sessions are owned by the TerminalController
@@ -80,6 +98,29 @@ class Connection:
         # it. Relay state (proc/task/socket) lives on the forwarder
         # (``self.ssh_agent.*``), not on Connection.
         self.ssh_agent = SshAgentForwarder(self)
+
+    # --- token expiry timer (#3152) ---
+
+    def schedule_token_expiry(self) -> None:
+        """Start a background task that closes the socket when the access
+        token expires. Called once after the connection is registered."""
+        if self.token_exp is None:
+            return
+        self._expiry_task = asyncio.create_task(self._expire_when_due())
+
+    async def _expire_when_due(self) -> None:
+        """Sleep until the token's ``exp`` claim, then close the socket."""
+        remaining = self.token_exp - time.time()
+        if remaining > 0:
+            await asyncio.sleep(remaining)
+        logger.info(
+            "Access token expired for user %s — closing socket",
+            self.user.get("email"),
+        )
+        try:
+            await self.sock.close(code=4002, reason="Token expired")
+        except Exception:  # pragma: no cover  # noqa: BLE001
+            logger.debug("Error closing expired socket")
 
     # --- SSH agent forwarding (delegates to SshAgentForwarder) ---
 
@@ -757,6 +798,11 @@ class Connection:
         self._user_home = container_home
 
     async def cleanup(self) -> None:
+        # Cancel the token-expiry timer if still pending (#3152).
+        if self._expiry_task is not None:
+            self._expiry_task.cancel()
+            self._expiry_task = None
+
         # Remove idle callback
         workspace_id = self.workspace_id
         self._remove_idle_callback(workspace_id)

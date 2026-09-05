@@ -446,6 +446,29 @@ def _reject_self_disable(
         )
 
 
+async def _kick_disabled_user_sockets(app, user_id: str) -> None:
+    """Cut a just-disabled user's live sockets (#2588, #3162).
+
+    The main /ws connections (the terminal/control data plane) and the
+    consent-decider sockets (egress-consent authority) alike; 4001 ->
+    the clients log out rather than reconnect-looping.
+    """
+    kicked = await wshandler.disconnect_user(
+        app.state.sockets, user_id, reason="Account disabled"
+    )
+    deciders_kicked = await wshandler.disconnect_deciders_by_user(
+        app, user_id, reason="Account disabled"
+    )
+    if kicked or deciders_kicked:
+        logger.info(
+            "admin: disabled user %s; closed %d live connection(s)"
+            " and %d consent decider(s)",
+            user_id,
+            kicked,
+            deciders_kicked,
+        )
+
+
 async def _update_user_disabled(
     app, req: UpdateUserRequest, user_id: str, admin: dict
 ) -> None:
@@ -461,19 +484,7 @@ async def _update_user_disabled(
     if not updated:  # pragma: no cover — race between get and update
         raise HTTPException(status_code=404, detail="User not found")
     if req.disabled:
-        # Cut the user's live connections too (#2588 review): the
-        # WS is the terminal/control data plane, and a disabled
-        # account must not keep it. 4001 -> the client logs out
-        # rather than reconnect-looping.
-        kicked = await wshandler.disconnect_user(
-            app.state.sockets, user_id, reason="Account disabled"
-        )
-        if kicked:
-            logger.info(
-                "admin: disabled user %s; closed %d live connection(s)",
-                user_id,
-                kicked,
-            )
+        await _kick_disabled_user_sockets(app, user_id)
 
 
 @router.post("/users/{user_id}/unlockout")

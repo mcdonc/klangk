@@ -612,6 +612,9 @@ async def change_password(
     await request.app.state.model.users.update_password(
         user["id"], password_hash
     )
+    # Revoke every session so the old credential cannot be reused and
+    # any live WebSocket connections are closed (#3152).
+    await request.app.state.auth.revoke_all_user_sessions(user["id"])
     return {"status": "updated"}
 
 

@@ -62,6 +62,11 @@ class InactivitySweeper(IntervalWorker):
                     u["id"],
                     reason="Account disabled",
                 )
+                # #3162: the decider surface must not outlive the disable
+                # either — it holds egress-consent authority.
+                await wshandler.disconnect_deciders_by_user(
+                    self.app, u["id"], reason="Account disabled"
+                )
             logger.info(
                 "inactivity: disabled %d account(s) inactive for more than"
                 " %d day(s): %s",

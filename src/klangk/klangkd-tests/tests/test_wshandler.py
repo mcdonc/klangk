@@ -51,6 +51,7 @@ from klangk.wshandler import (
     disconnect_all_websockets,
     send_error,
     handle_websocket,
+    ws_authenticate,
     reset_workspace_state,
     log_ws_msg,
     SEND_QUEUE_SIZE,
@@ -314,7 +315,12 @@ class TestSafeWebSocket:
         raw = AsyncMock()
         sw = SafeWebSocket(raw)
         await sw.close(code=4001)
-        raw.close.assert_awaited_once_with(code=4001)
+        raw.close.assert_awaited_once_with(code=4001, reason=None)
+        # #3152: the kick paths close with a reason; it must reach the
+        # transport (it used to be dropped here, making every
+        # reason-carrying kick a swallowed TypeError no-op).
+        await sw.close(code=4001, reason="Token revoked")
+        raw.close.assert_awaited_with(code=4001, reason="Token revoked")
 
     async def test_headers_delegates(self):
         raw = AsyncMock()
@@ -2810,6 +2816,43 @@ class TestHandleWebsocketDispatch:
         assert app_state.state.sockets.connections == {}
         assert "Connection cleanup failed" in caplog.text
 
+    async def test_connection_records_authenticating_jti(self, user):
+        """#3152: the Connection built by handle_websocket records the
+        JTI of the token it authenticated with, so a later hard revocation
+        can close exactly this connection."""
+        from klangk.wshandler import dispatch as dispatch_mod
+
+        app_state = _make_app_state()
+        token = _auth().create_token(user["id"], user["email"])
+        jti = _auth().decode_token(token)["jti"]
+        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket.receive_text = AsyncMock(side_effect=[WebSocketDisconnect()])
+        seen: list = []
+
+        class RecordingConnection(Connection):
+            def __init__(self, ws, u, app, jti=None, token_exp=None):
+                super().__init__(ws, u, app, jti=jti, token_exp=token_exp)
+                seen.append(jti)
+
+        with patch.object(dispatch_mod, "Connection", RecordingConnection):
+            await handle_websocket(websocket, app_state)
+        assert seen == [jti]
+
+    async def test_ws_authenticate_returns_user_and_jti(self, user):
+        """#3152: ws_authenticate hands the caller the authenticated user
+        plus the token's JTI and exp."""
+        app_state = _make_app_state()
+        token = _auth().create_token(user["id"], user["email"])
+        payload = _auth().decode_token(token)
+        websocket = _mock_raw_sock(query_params={"token": token})
+        result = await ws_authenticate(websocket, app_state)
+        assert isinstance(result, tuple)
+        authed_user, jti, exp = result
+        assert authed_user["id"] == user["id"]
+        assert jti == payload["jti"]
+        assert exp == payload["exp"]
+        websocket.close.assert_not_awaited()
+
     async def test_dispatch_terminal_input(self, user):
         websocket = await self._run_commands(
             user, [{"cmd": "terminal_input", "data": "x"}]
@@ -2920,6 +2963,57 @@ class TestHandleWebsocketDispatch:
         mock_stop.assert_not_awaited()
 
 
+def _planted_safe_socket(app_state, jti, user_id="uid"):
+    """A real SafeWebSocket over a mock raw socket, planted in the
+    registry under a fake connection with *jti* (#3152 review: fakes
+    whose close() happens to accept ``reason`` masked that
+    SafeWebSocket.close historically dropped it)."""
+    raw = _mock_raw_sock()
+    sock = SafeWebSocket(raw)
+    app_state.state.sockets.connections[sock] = types.SimpleNamespace(
+        user={"id": user_id, "email": f"{user_id}@example.com"}, jti=jti
+    )
+    return raw, sock
+
+
+class TestKicksCloseRealSockets:
+    """#3152 review: the kick paths must close REAL SafeWebSocket entries.
+    Both disconnect_by_jti and disconnect_user pass ``reason``; when
+    SafeWebSocket.close silently dropped the kwarg, every such kick was
+    a swallowed TypeError no-op — fake sockets with matching signatures
+    hid it, so these tests use the real writer class."""
+
+    async def test_disconnect_by_jti_closes_real_safe_websocket(self):
+        app_state = _make_app_state()
+        raw, _ = _planted_safe_socket(app_state, "jti-victim")
+        try:
+            kicked = await app_state.state.sockets.disconnect_by_jti(
+                "jti-victim", reason="Token revoked"
+            )
+            assert kicked == 1
+            raw.close.assert_awaited_once_with(
+                code=4001, reason="Token revoked"
+            )
+        finally:
+            app_state.state.sockets.connections.clear()
+
+    async def test_disconnect_user_closes_real_safe_websocket(self):
+        """Regression for the pre-existing latent no-op (#2588 kick):
+        account-disable / inactivity closes also carry ``reason``."""
+        app_state = _make_app_state()
+        raw, _ = _planted_safe_socket(app_state, "jti-x", "u1")
+        try:
+            kicked = await app_state.state.sockets.disconnect_user(
+                "u1", reason="Account disabled"
+            )
+            assert kicked == 1
+            raw.close.assert_awaited_once_with(
+                code=4001, reason="Account disabled"
+            )
+        finally:
+            app_state.state.sockets.connections.clear()
+
+
 # --- handle_restart_container additional coverage ---
 
 
@@ -2960,6 +3054,17 @@ class TestHandleWebsocket:
         await handle_websocket(websocket, app_state)
         websocket.close.assert_awaited_once_with(
             code=4002, reason="Token expired"
+        )
+
+    async def test_unknown_user_token_rejected(self, db, app_state):
+        # Valid signature, but the user no longer exists: the connect is
+        # refused with 4001 (the post-decode None-user arm).
+        app_state = _make_app_state()
+        token = _auth().create_token("nonexistent-id", "ghost@example.com")
+        websocket = _mock_raw_sock(query_params={"token": token})
+        await handle_websocket(websocket, app_state)
+        websocket.close.assert_awaited_once_with(
+            code=4001, reason="Invalid token"
         )
 
     async def test_valid_token_then_disconnect(self, user, app_state):
@@ -11752,7 +11857,13 @@ class TestTokenRenewal:
             ):
                 expiry = datetime.now(timezone.utc) + timedelta(seconds=0.1)
                 session.start_token_renewal(expiry)
-                await original_sleep(0.5)
+                # Poll for the retry instead of a fixed sleep budget: a
+                # busy CI runner (xdist + SQLite migrations) can starve
+                # the renewal task's loop turns well past 0.5s, which
+                # flaked this test on the macOS backend matrix.
+                deadline = time.monotonic() + 5.0
+                while call_count < 2 and time.monotonic() < deadline:
+                    await original_sleep(0.01)
                 session._token_renewal_task.cancel()
                 try:
                     await session._token_renewal_task
@@ -12660,3 +12771,40 @@ class TestNoCoverAudit2910Part3:
         await ctrl.handle_list_error(RuntimeError("listing broke"))
         sent = [c[0][0] for c in sock.send_json.call_args_list]
         assert any(m.get("type") == "error" for m in sent)
+
+
+class TestTokenExpiryTimer:
+    """#3152: the connection must close when the access token expires."""
+
+    async def test_socket_closes_when_token_expires(self):
+        """schedule_token_expiry closes the socket at exp time."""
+        sock = _mock_sock()
+        # token_exp in the past → immediate close
+        conn = _base_conn(ws=sock)
+        conn.token_exp = time.time() - 1
+        conn._expiry_task = None
+        conn.schedule_token_expiry()
+        assert conn._expiry_task is not None
+        await conn._expiry_task
+        sock.close.assert_awaited_once_with(code=4002, reason="Token expired")
+
+    async def test_no_timer_without_token_exp(self):
+        """No expiry task when token_exp is None (e.g. test connections)."""
+        conn = _base_conn()
+        conn.token_exp = None
+        conn._expiry_task = None
+        conn.schedule_token_expiry()
+        assert conn._expiry_task is None
+
+    async def test_cleanup_cancels_expiry_task(self):
+        """cleanup() cancels the pending expiry task."""
+        app_state = _make_app_state()
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock, app_state=app_state)
+        conn.token_exp = time.time() + 3600
+        conn._expiry_task = None
+        conn.schedule_token_expiry()
+        assert conn._expiry_task is not None
+        assert not conn._expiry_task.done()
+        await conn.cleanup()
+        assert conn._expiry_task is None
