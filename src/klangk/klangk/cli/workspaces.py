@@ -25,7 +25,7 @@ from rich.progress import (
 from rich.table import Table
 
 from .client import KlangkClient  # noqa: F401 (type annotations)
-from .client import WorkspaceNotFoundError
+from .client import AuthError, WorkspaceNotFoundError
 from . import context
 from .mount import validate_allowed_domain_spec, validate_mount_spec
 from .options import (
@@ -229,6 +229,36 @@ def validate_create_specs(mount, allow, reject) -> None:
         )
 
 
+def ensure_autostart_allowed(client, requested) -> None:
+    """Refuse up front when the deploy forbids auto-start (#3184).
+
+    ``KLANGKD_ALLOW_AUTOSTART`` is a ceiling on per-workspace auto-start:
+    the web UI and the TUI forms hide their Auto start control when it
+    is off, so ``klangk create --auto-start`` / ``klangk edit
+    --auto-start`` check it too — before any create/edit request is
+    sent, so no workspace is created and no after-the-fact 400 surfaces.
+    Only opting in is capped: ``requested`` falsy (flag omitted, or
+    ``--no-auto-start``) returns without a config round trip. A
+    config-fetch failure degrades to "allowed": the request itself
+    reports the real error, and the server enforces the ceiling
+    regardless (``_check_autostart`` in ``api/workspaces.py``). A
+    200 body that is not a JSON object is treated as "not allowed",
+    the same posture as the TUI's ``allow_autostart`` probe.
+    """
+    if not requested:
+        return
+    try:
+        cfg = client.config()
+    except (httpx.HTTPError, AuthError, ValueError):
+        return
+    if not isinstance(cfg, dict) or cfg.get("allow_autostart") is not True:
+        context.err.print(
+            "[red]Auto-start is not enabled on this server"
+            " (set KLANGKD_ALLOW_AUTOSTART=1)[/red]"
+        )
+        raise typer.Exit(code=1)
+
+
 def create_workspace_or_exit(
     client,
     name,
@@ -276,7 +306,10 @@ def create(
     auto_start: bool = typer.Option(
         False,
         "--auto-start",
-        help="Start container automatically on server boot",
+        help=(
+            "Start container automatically on server boot"
+            " (requires KLANGKD_ALLOW_AUTOSTART=1 on the server)"
+        ),
     ),
     per_handle_home: bool | None = typer.Option(
         None,
@@ -318,12 +351,14 @@ def create(
     """Create a new workspace."""
     context.require_auth()
     validate_create_specs(mount, allow, reject)
+    client = context.client()
+    ensure_autostart_allowed(client, auto_start)
     env_dict = parse_env_list(env) if isinstance(env, list) else None
     settings = build_settings(
         idle_timeout, cpu_limit, memory_limit, pids_limit, allow_sudo
     )
     ws = create_workspace_or_exit(
-        context.client(),
+        client,
         name,
         image=image,
         command=command,

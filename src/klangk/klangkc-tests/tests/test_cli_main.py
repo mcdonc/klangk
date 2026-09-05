@@ -844,7 +844,7 @@ class TestMainCLI:
             "Console",
             return_value=Console(file=buf, force_terminal=True),
         ):
-            main.create("new-ws")
+            main.create("new-ws", auto_start=False)
         assert "new-ws" in buf.getvalue()
 
     def test_create_workspace_error(self, logged_in_cfg, monkeypatch):
@@ -863,7 +863,10 @@ class TestMainCLI:
         monkeypatch.setattr(context_mod, "client", lambda: client)
 
         with pytest.raises(typer.Exit):
-            main.create("dup")
+            # auto_start pinned: a direct call skips click's default
+            # processing, and a raw OptionInfo default is truthy enough
+            # to trip the #3184 ceiling pre-flight.
+            main.create("dup", auto_start=False)
 
     def test_delete_workspace(self, logged_in_cfg, monkeypatch):
         from klangk.cli import main
@@ -3136,6 +3139,90 @@ class TestMainCLI:
         kwargs = client.create_workspace.call_args.kwargs
         assert kwargs["settings"] is None
 
+    def test_create_auto_start_allowed_by_deploy(
+        self, logged_in_cfg, monkeypatch
+    ):
+        """#3184: ``--auto-start`` pre-flights the deploy ceiling and
+        passes when the deploy allows auto-start."""
+        from klangk.cli import main
+
+        ws = Workspace(
+            id="new-id", name="ws", created_at="2025-01-01T00:00:00Z"
+        )
+        client = MagicMock()
+        client.create_workspace.return_value = ws
+        client.config.return_value = {"allow_autostart": True}
+        monkeypatch.setattr(context_mod, "client", lambda: client)
+
+        from typer.testing import CliRunner
+
+        runner = CliRunner()
+        result = runner.invoke(main.app, ["create", "ws", "--auto-start"])
+        assert result.exit_code == 0
+        assert client.create_workspace.call_args.kwargs["auto_start"] is True
+
+    def test_create_auto_start_refused_when_deploy_disallows(
+        self, logged_in_cfg, monkeypatch
+    ):
+        """#3184: allow_autostart is a ceiling — ``--auto-start`` fails
+        fast, before any create request is sent (no half-created
+        workspace, no after-the-fact 400)."""
+        from klangk.cli import main
+
+        client = MagicMock()
+        client.config.return_value = {"allow_autostart": False}
+        monkeypatch.setattr(context_mod, "client", lambda: client)
+
+        from typer.testing import CliRunner
+
+        runner = CliRunner()
+        result = runner.invoke(main.app, ["create", "ws", "--auto-start"])
+        assert result.exit_code == 1
+        assert "Auto-start is not enabled" in result.output
+        client.create_workspace.assert_not_called()
+
+    def test_create_auto_start_degrades_on_config_failure(
+        self, logged_in_cfg, monkeypatch
+    ):
+        """#3184: a failed ceiling pre-flight must not block the create —
+        the request goes through and the server enforces the ceiling."""
+        from klangk.cli import main
+
+        ws = Workspace(
+            id="new-id", name="ws", created_at="2025-01-01T00:00:00Z"
+        )
+        client = MagicMock()
+        client.create_workspace.return_value = ws
+        client.config.side_effect = httpx.ConnectError("boom")
+        monkeypatch.setattr(context_mod, "client", lambda: client)
+
+        from typer.testing import CliRunner
+
+        runner = CliRunner()
+        result = runner.invoke(main.app, ["create", "ws", "--auto-start"])
+        assert result.exit_code == 0
+        client.create_workspace.assert_called_once()
+
+    def test_create_auto_start_refused_on_non_dict_config(
+        self, logged_in_cfg, monkeypatch
+    ):
+        """#3184: a 200 body that isn't a JSON object can't prove the
+        ceiling is off, so it is treated as not allowed — the same
+        posture as the TUI's allow_autostart probe."""
+        from klangk.cli import main
+
+        client = MagicMock()
+        client.config.return_value = "not-a-config-object"
+        monkeypatch.setattr(context_mod, "client", lambda: client)
+
+        from typer.testing import CliRunner
+
+        runner = CliRunner()
+        result = runner.invoke(main.app, ["create", "ws", "--auto-start"])
+        assert result.exit_code == 1
+        assert "Auto-start is not enabled" in result.output
+        client.create_workspace.assert_not_called()
+
     def test_create_with_reject_cidr_rejected(
         self, logged_in_cfg, monkeypatch
     ):
@@ -3715,6 +3802,9 @@ class TestMainCLI:
         client = MagicMock()
         client.resolve_workspace.return_value = ws
         client.put.return_value = MagicMock(status_code=200)
+        # The deploy ceiling allows auto-start (#3184): the command
+        # pre-flights /config before sending the edit.
+        client.config.return_value = {"allow_autostart": True}
 
         with patch.object(context_mod, "client", return_value=client):
             from typer.testing import CliRunner
@@ -3725,6 +3815,51 @@ class TestMainCLI:
 
         body = client.put.call_args[1]["json"]
         assert body["auto_start"] is True
+
+    def test_edit_auto_start_refused_when_deploy_disallows(
+        self, logged_in_cfg, monkeypatch
+    ):
+        """#3184: allow_autostart is a ceiling — ``--auto-start`` fails
+        fast, before any edit request is sent."""
+        from klangk.cli import main
+
+        client = MagicMock()
+        client.config.return_value = {"allow_autostart": False}
+        monkeypatch.setattr(context_mod, "client", lambda: client)
+
+        from typer.testing import CliRunner
+
+        runner = CliRunner()
+        result = runner.invoke(main.app, ["edit", "my-ws", "--auto-start"])
+        assert result.exit_code == 1
+        assert "Auto-start is not enabled" in result.output
+        client.put.assert_not_called()
+
+    def test_edit_no_auto_start_skips_the_ceiling(
+        self, logged_in_cfg, monkeypatch
+    ):
+        """``--no-auto-start`` is always below the ceiling (#3184): the
+        edit proceeds without consulting /config at all."""
+        from klangk.cli import main
+
+        ws = Workspace(
+            id="ws1" + "0" * 52,
+            name="my-ws",
+            created_at="2025-01-01T00:00:00Z",
+        )
+        client = MagicMock()
+        client.resolve_workspace.return_value = ws
+        client.put.return_value = MagicMock(status_code=200)
+        monkeypatch.setattr(context_mod, "client", lambda: client)
+
+        from typer.testing import CliRunner
+
+        runner = CliRunner()
+        result = runner.invoke(main.app, ["edit", "my-ws", "--no-auto-start"])
+        assert result.exit_code == 0
+        client.config.assert_not_called()
+        body = client.put.call_args[1]["json"]
+        assert body["auto_start"] is False
 
     def test_create_with_home_layout_flags(self, logged_in_cfg, monkeypatch):
         # #2721: --per-handle-home / --shared-home thread the home layout
