@@ -223,10 +223,54 @@ async def _drain_workers(app, pilot) -> None:
     the render pipelines' ``clear()`` transiently resets the ListView index
     to None before the re-seed, and on slow runners (macOS CI, #2932) a bare
     ``pilot.pause()`` can observe that window.
+
+    Legs covered: the mount worker → terminal/shared loaders →
+    ``_render_terminals`` → pre-clear ``_focus_term_list`` re-grab chain,
+    plus one screen update-timer tick of pending UI messages. Legs NOT
+    covered: ``on_mount``'s ``call_after_refresh(_focus_term_list)`` can
+    still be one hop away (widget queue → ``screen._callbacks`` → update
+    tick; each ``pause()`` drives a single hop, #3224) — clear focus via
+    ``_settle_cleared_focus`` when the assertion that follows needs focus
+    to stay cleared.
     """
     while len(app.workers):
         await app.workers.wait_for_complete()
     await pilot.pause()
+
+
+async def _settle_cleared_focus(app, pilot, attempts: int = 8) -> None:
+    """Clear screen focus and settle the delayed ``#term_list`` re-grabs
+    (#3224).
+
+    The detail screen re-asserts ``#term_list`` focus from one-shot legs
+    a single ``pilot.pause()`` cannot flush: ``on_mount``'s
+    ``call_after_refresh(_focus_term_list)`` chains widget queue →
+    ``screen._callbacks`` → the update tick's trailing ``call_next`` →
+    ``Widget.focus()``'s ``app.call_later(set_focus)`` — and the last hop
+    can land on the pause *after* ``set_focus(None)`` (the #3224 macOS
+    flake, recurring past #3188's pre-clear drain). So this polls focus
+    instead of counting hops: re-clear and re-drain until a full worker
+    drain + pause completes with focus still cleared.
+
+    Contract: returns at a no-await point with focus observed cleared —
+    a straggler one-shot leg may still be in flight. Callers are safe
+    when they assert before their next await (nothing can interleave) or
+    when stragglers are idempotent with their own reclaim (a straggler
+    targets the same widget the reclaim just focused). ``attempts``
+    bounds the loop well above the worst case (~4 one-shot legs × a few
+    hops each); exhausting it means a periodic leg — not a one-shot —
+    is re-asserting focus, named in the failure for the next recurrence.
+    """
+    for _ in range(attempts):
+        app.screen.set_focus(None)
+        await _drain_workers(app, pilot)
+        if app.screen.focused is None:
+            return
+    raise AssertionError(
+        "focus was re-grabbed after clearing for "
+        f"{attempts} settle attempts; a periodic leg (not one of the "
+        "one-shot legs) is re-asserting #term_list focus (#3224)"
+    )
 
 
 def _attach_notify_spy(app) -> list:
@@ -8031,8 +8075,10 @@ async def test_detail_focus_defaults_to_own_list(monkeypatch):
         await _drain_workers(app, pilot)
         # Move focus off both lists, then reclaim. (Footer.focus() is a no-op
         # in textual, so clear focus directly to reach the reclaim branch.)
-        app.screen.set_focus(None)
-        await pilot.pause()
+        # #3224: the drain above settles the pre-clear legs, but
+        # on_mount's call_after_refresh re-grab can still be a hop away —
+        # re-clear + re-drain until focus stays cleared.
+        await _settle_cleared_focus(app, pilot)
         assert app.screen.focused is None
         app.screen._focus_term_list()
         await pilot.pause()
