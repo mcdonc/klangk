@@ -368,6 +368,15 @@ operators or integrators to act when upgrading.
   and a failed SIGHUP recovery exits with status 1 after the graceful
   teardown so `Restart=on-failure` supervisors restart the node.
 
+- **FIPS mode now keeps JWT signing inside the validated module
+  (#3175).** The FIPS host image rebuilds `cryptography` from source
+  against the distro OpenSSL (the PyPI wheel bundles a private OpenSSL
+  that bypasses the FIPS provider), and `KLANGKD_FIPS_MODE` verifies at
+  startup that python-jose binds the `cryptography` backend and that
+  its OpenSSL is the process's own provider-gated library. The FIPS
+  docs now include the complete cryptographic inventory and the
+  V-222555 posture rationale.
+
 - **Bounded rate-limit state for the email cooldowns (#3113).** The
   per-address cooldown dicts behind
   `POST /api/v1/auth/forgot-password` and

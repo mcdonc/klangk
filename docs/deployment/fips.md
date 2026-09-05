@@ -180,6 +180,10 @@ failure), while a **containerized backend refuses to boot** on a failed
 probe (see [the containerized backend](#the-containerized-backend-fips-host-image)
 above); see the [environment
 reference](../reference/environment.md) for the setting.
+The same startup verifies the JWT route (#3175): python-jose must bind
+its `cryptography` backend, and `cryptography` must be linked to the
+process's own provider-gated OpenSSL (identity + MD5 refusal — see the
+[cryptographic inventory](#cryptographic-inventory)).
 The manual probes above remain the diagnostic equivalent.
 
 Caveat on the probe's meaning: it is a canary for _provider
@@ -199,12 +203,79 @@ and `src/containers/host/Dockerfile.fips`. The activation steps are
 unchanged. Always re-run the build-time proof and the runtime probes
 above before rolling out.
 
-## Relation to password hashing
+## FIPS posture decision (V-222555)
 
-FIPS posture also depends on the algorithms klangkd itself uses for
-password storage. bcrypt bundles its own crypto and is not
-FIPS-approvable; it has been replaced with PBKDF2-HMAC-SHA512 via
-`hashlib`, which routes through the validated provider.
+STIG V-222555 requires cryptographic modules to be FIPS 140-2/3
+validated and used in FIPS mode. Klangk ships FIPS as an **opt-in
+deployment posture** — the operator enables it with
+`KLANGKD_FIPS_MODE=true` and uses the FIPS images — rather than
+making it the default. Rationale:
+
+- **Not every deployment requires FIPS.** Development, evaluation, and
+  non-federal deployments should not pay the operational overhead
+  (separate image, restricted algorithm set, provider enforcement) when
+  they have no compliance requirement.
+- **Opt-in is explicit and auditable.** The gate (`KLANGKD_FIPS_MODE`)
+  makes the posture a deliberate deployment decision, recorded in the
+  environment configuration — never an accident of image selection.
+  When the mode is on, enforcement is comprehensive: the boot gate
+  verifies the process's OpenSSL provider, every workspace container is
+  probed at start and adoption, and the JWT route is verified at
+  startup (backend binding plus cryptography's linkage to the
+  validated libcrypto).
+- **Default-off does not weaken FIPS deployments.** The FIPS images
+  carry the validated module and activate it unconditionally. The gate
+  adds runtime verification — it does not install the module. A FIPS
+  deployment uses the FIPS image _and_ the gate; a non-FIPS deployment
+  uses the stock image with no gate.
+
+Organizations subject to V-222555 deploy with the FIPS host image
+(`klangk-host-fips`) and `KLANGKD_FIPS_MODE=true`. The STIG reviewer
+should confirm both are present in the deployment configuration.
+
+## Cryptographic inventory
+
+Complete list of cryptographic operations klangkd performs, the module
+each routes through, and the FIPS validation status under the FIPS
+image:
+
+| Operation                    | Algorithm                            | Code path                                                                                       | Module                                                                   | FIPS-validated?                                 |
+| ---------------------------- | ------------------------------------ | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ | ----------------------------------------------- |
+| Password hashing             | PBKDF2-HMAC-SHA512 (600k iterations) | `hashlib.pbkdf2_hmac` (`auth.py`)                                                               | OpenSSL `_hashlib` → libcrypto → FIPS provider                           | Yes (CMVP #4985)                                |
+| JWT signing/verification     | HMAC-SHA256 (HS256)                  | `python-jose` → `cryptography` backend → `cryptography.hazmat.primitives.hmac.HMAC` (`auth.py`) | distro libcrypto, via the FIPS image's `cryptography` relink (see below) | Yes (CMVP #4985)                                |
+| Outbound TLS                 | TLS 1.2/1.3                          | `ssl` module / `httpx` (LLM proxy, OIDC, SMTP)                                                  | OpenSSL `_ssl` → libcrypto → FIPS provider                               | Yes (CMVP #4985)                                |
+| Password timing equalization | HMAC comparison                      | `hmac.compare_digest` (`auth.py`)                                                               | C-level constant-time compare (no crypto module)                         | N/A (comparison only)                           |
+| Token identifiers            | UUID4                                | `uuid.uuid4` / `secrets.token_bytes`                                                            | OS `urandom`                                                             | N/A (randomness source, not a crypto algorithm) |
+
+**JWT module boundary (#3175):** the JWT row above holds because the
+FIPS host image **rebuilds `cryptography` from source against the
+distro libcrypto** — a PyPI manylinux wheel statically links a
+_private_ OpenSSL that never reads `OPENSSL_CONF` and cannot load the
+validated provider. This is the industry posture (Red Hat ships
+distro-linked `python3-cryptography`; Chainguard's FIPS images relink
+it; pyca's own docs direct FIPS users to `pip install --no-binary
+cryptography`). The relink is proven twice: at image build time
+(cryptography's OpenSSL version must equal the process's, MD5 through
+cryptography must be refused, and a jose HS256 sign/verify round-trip
+must succeed under the active provider), and at klangkd startup under
+`KLANGKD_FIPS_MODE` — klangkd verifies that python-jose binds its
+`cryptography` backend (a silent fallback to another backend would be
+an unprovisioned, unverified route and aborts the boot) and that
+cryptography's OpenSSL is the process's own provider-gated library
+(identity check + MD5 refusal; a mismatched linkage follows the same
+warn-on-host / abort-in-container posture as the process OpenSSL
+probe).
+
+**Outside the module:** a _stock_ host image (or any deployment using
+the PyPI `cryptography` wheel) signs JWTs on the wheel's private
+OpenSSL — outside every validated boundary, exactly like Caddy's
+statically linked Go crypto. FIPS-scoped deployments must use the
+FIPS host image; the startup gate makes the difference auditable.
+
+**Algorithms not used:** bcrypt (removed in #2576, bundles non-FIPS
+crypto), MD5, DES, RC4, or any non-approved digest. The FIPS provider
+activation config disables the `default` OpenSSL provider, so
+non-approved algorithms fail closed even if called accidentally.
 
 ## Why the container meets FIPS requirements
 
