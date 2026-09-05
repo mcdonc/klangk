@@ -1503,6 +1503,19 @@ class TestRequireDirsValidator:
         )
         assert s.customize_dir == "/explicit/custom"
 
+    def test_trusted_ca_dir_env_round_trip(self):
+        # KLANGKD_TRUSTED_CA_DIR (#3198): unset -> None (no restriction);
+        # set -> the approved-CA baseline path, read live on every resolve.
+        s = KlangkSettings(env={"KLANGKD_STATE_DIR": "/tmp/state"})
+        assert s.trusted_ca_dir is None
+        s = KlangkSettings(
+            env={
+                "KLANGKD_STATE_DIR": "/tmp/state",
+                "KLANGKD_TRUSTED_CA_DIR": "/etc/klangk/dod-cas",
+            }
+        )
+        assert s.trusted_ca_dir == "/etc/klangk/dod-cas"
+
     def test_config_dir_and_customize_default_under_config_home(
         self, monkeypatch
     ):
