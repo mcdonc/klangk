@@ -88,6 +88,12 @@ def test_clean_env_baseline_defaults_present():
     env = clean_env()
     assert env["_KLANGKD_DISABLE_PROXY"] == "1"
     assert env["KLANGKD_AUTH_MODES"] == "password"
+    # #3157: rate limiting is default-off in E2E (machine-speed bursts);
+    # an explicit override must still win.
+    assert env["KLANGKD_API_RATE_LIMIT"] == "0"
+    assert (
+        clean_env(KLANGKD_API_RATE_LIMIT="3")["KLANGKD_API_RATE_LIMIT"] == "3"
+    )
 
 
 def test_clean_env_auth_modes_override():

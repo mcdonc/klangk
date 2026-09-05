@@ -90,6 +90,10 @@ async function globalSetup() {
         ),
         KLANGKD_CUSTOMIZE_DIR: join(dataDir, "customize"),
         KLANGKD_LOGIN_LOCKOUT_FAILURES: "5",
+        // #3157: the browser specs make machine-speed /api bursts from one
+        // loopback IP that would nondeterministically trip the default
+        // per-client-IP budget; disable it for this harness.
+        KLANGKD_API_RATE_LIMIT: "0",
         // Password-reuse gate (#2582): exercised by password-history.spec.ts.
         // Inert for every other spec — nothing else changes passwords.
         KLANGKD_PASSWORD_HISTORY_COUNT: "3",
