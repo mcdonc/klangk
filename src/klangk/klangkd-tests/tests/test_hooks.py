@@ -243,7 +243,7 @@ class TestFireWorkspaceCreated:
 
     async def test_hook_sets_classification_banner(self, app_state, user):
         """#2768: the marking is a plain mutable attribute — a hook that
-        sets it gets it persisted (normalized), like the STIG's per-level
+        sets it gets it persisted (normalized), like a per-level
         classification from the deployment's own logic."""
         await app_state.state.model.init_db()
         hooks = await self._wire(app_state)

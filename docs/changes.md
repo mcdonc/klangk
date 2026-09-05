@@ -546,7 +546,7 @@ sync` report a clear permission-denied error.
 ### Added
 
 - **`KLANGKD_LOG_FORMAT` / `KLANGKD_LOG_FILE` (#3156).** New settings for
-  SIEM/central-log forwarding (ASD-STIG V-222481/482). `KLANGKD_LOG_FORMAT`
+  SIEM/central-log forwarding. `KLANGKD_LOG_FORMAT`
   (`text`, the default, or `json`) switches the console log stream to one
   JSON object per line (`timestamp`, `level`, `logger`, `message`, `exc_info`
   when present); `KLANGKD_LOG_FILE` additionally writes that JSON stream to a
@@ -770,8 +770,7 @@ sync` report a clear permission-denied error.
   default) = unlimited. Reloadable on SIGHUP.
 - **`KLANGKD_CLASSIFICATION_BANNER` (#2768).** Deploy-wide default
   classification marking (free text) for the always-visible marking banner
-  the Application Security and Development STIG requires ("markings at the
-  top and the bottom of screens"). Per-workspace override via the
+  (markings pinned at the top and the bottom of screens). Per-workspace override via the
   `classification_banner` field on `POST`/`PUT /api/v1/workspaces`, `klangk
 create`/`edit --classification-banner`, and the create/edit UIs; the
   workspace-created hook can set it like any other attribute. Markings are

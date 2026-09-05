@@ -1,10 +1,9 @@
 /// Classification marking banner (#2768).
 ///
 /// A persistent, always-rendered classification banner pinned at the top
-/// (and bottom) of the workspace page — the "mark sensitive/classified
-/// output when required" Application Security and Development STIG control
-/// ("markings are required at a minimum at the top and the bottom of
-/// screens"). The effective marking is the workspace's
+/// (and bottom) of the workspace page — markings at a minimum at the top
+/// and the bottom of screens ("mark sensitive/classified output when
+/// required"). The effective marking is the workspace's
 /// `classification_banner` when set, else the deploy-wide default
 /// (`KLANGKD_CLASSIFICATION_BANNER` via `/api/v1/config`'s
 /// `default_classification_banner`).
@@ -90,8 +89,7 @@ class MarkingBanner extends StatelessWidget {
         child: SizedBox(
           width: double.infinity,
           // #2768 review: scale down instead of ellipsize — a marking
-          // clipped to "SECRET//…" is not a marking under the STIG
-          // control, so the full label always stays legible (narrow
+          // clipped to "SECRET//…" is not a marking, so the full label always stays legible (narrow
           // viewports shrink the type rather than dropping text).
           child: FittedBox(
             fit: BoxFit.scaleDown,

@@ -881,7 +881,7 @@ class KlangkSettings(BaseSettings):
     # log_format: root logger output format — ``text`` (the colored console
     # format; default) or ``json`` (one JSON object per line: ISO-8601 UTC
     # timestamp, level, logger, message, plus exc_info when present) for
-    # SIEM ingestion (#3156, ASD-STIG V-222481/482). Like log_level, applied
+    # SIEM ingestion (#3156). Like log_level, applied
     # by ``klangk.logger.configure(settings)`` in build_app and re-applied on
     # every SIGHUP reload; the validator below rejects anything but
     # text/json (fail-fast) at construction.
@@ -1071,8 +1071,8 @@ class KlangkSettings(BaseSettings):
     # classification_banner: deploy-wide default classification marking
     # for workspaces (#2768), free text (e.g. UNCLASSIFIED, CUI, SECRET).
     # Rendered as a persistent banner at the top and bottom of the web
-    # workspace page and as a status line in the TUI (the STIG "mark
-    # sensitive/classified output when required" control). A workspace
+    # workspace page and as a status line in the TUI (marks
+    # sensitive/classified output when required). A workspace
     # overrides it per workspace (``classification_banner`` on
     # POST/PUT /workspaces); NULL/absent workspaces inherit THIS value
     # at display time. Empty (the default) = no deploy-wide marking: no

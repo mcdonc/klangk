@@ -96,8 +96,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
   /// #2768: the effective classification marking — the workspace's own
   /// `classification_banner`, else the deploy default. Empty = no marking
   /// configured: no banner, no reserved screen space. Rendered as
-  /// persistent top + bottom bars around the whole page (STIG: "top and
-  /// the bottom of screens").
+  /// persistent top + bottom bars around the whole page.
   String _marking = '';
 
   ConsentDeciderService? _consent;
