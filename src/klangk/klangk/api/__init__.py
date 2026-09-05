@@ -343,8 +343,8 @@ async def get_config(
         # #3196: the step-up (sudo-mode) window in minutes; 0 = the
         # gate is off. Authenticated-only (it reveals the deploy's
         # auth-hardening posture, like the netfilter fields); clients
-        # use it to know whether admin writes may prompt for a
-        # password and how long a confirmation stays valid.
+        # react to the 403 directly rather than reading this — it is
+        # surfaced for tooling/observability.
         config["step_up_window_minutes"] = s.step_up_window_minutes
     config.update(app.state.features.frontend_config())
     # KLANGKD_FEATURES_ENABLE: the deploy's chosen active-feature list,

@@ -41,7 +41,6 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 from fastapi import Depends, HTTPException, Request
-from fastapi.security import HTTPAuthorizationCredentials
 from jose import JWTError
 
 from . import auth
@@ -189,6 +188,24 @@ def jti_from_request(app, request: Request) -> str | None:
     return payload.get("jti")
 
 
+async def ensure_step_up_unless_owner(
+    request: Request, user: dict, workspace: dict | None
+) -> None:
+    """The conditional gate for cross-principal workspace writes (#3196).
+
+    Ownership is the dividing line: writes to your own workspace are
+    self-service (bounded by grants the owner or an admin chose),
+    while the takeover-class writes to a workspace someone else owns
+    — deletion, the raw ACL rewrite, ownership transfer — are
+    privileged cross-principal operations and carry the gate. A
+    missing workspace row is left to the caller's own not-found path.
+    """
+    if workspace is not None and workspace["user_id"] != user["id"]:
+        await ensure_step_up(
+            request, user, jti_from_request(request.app, request)
+        )
+
+
 def require_step_up():
     """FastAPI dependency: refuse the request unless the calling
     session confirmed its password within the window.
@@ -203,14 +220,13 @@ def require_step_up():
     async def check(
         request: Request,
         user: dict = Depends(auth.get_current_user),
-        credentials: HTTPAuthorizationCredentials | None = Depends(
-            auth.security
-        ),
     ) -> None:
         # get_current_user has already validated the token (raising 401
-        # otherwise), so the credentials here are non-None and decode
-        # deterministically.
-        payload = request.app.state.auth.decode_token(credentials.credentials)
-        await ensure_step_up(request, user, payload.get("jti"))
+        # otherwise), so the header here is a valid Bearer. The JTI is
+        # recovered through the guarded helper rather than a bare
+        # decode: a token whose exp boundary falls between the two
+        # checks must fail closed (403/401), never 500.
+        jti = jti_from_request(request.app, request)
+        await ensure_step_up(request, user, jti)
 
     return check

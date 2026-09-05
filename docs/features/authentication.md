@@ -269,10 +269,13 @@ credential knowledge. Set `KLANGKD_STEP_UP_WINDOW_MINUTES` (default
   management (create/edit/delete/unlock), group management,
   invitations (send/revoke/resend), raw ACL rewrites
   (`PUT /acl/resource`), server stop/recycle schedules, volume
-  deletes, and **deleting a workspace you do not own** (the admin path
-  into other users' data). Listings and other reads are never gated,
-  and deleting your own workspace stays on the plain permission
-  check.
+  deletes — plus the **takeover-class writes on a workspace you do
+  not own**: deletion, the raw ACL rewrite
+  (`PUT /workspaces/{id}/acl`, which can grant `*` and Deny the
+  owner), and ownership transfer. Listings and other reads are never
+  gated, and writes to your **own** workspace (including deleting,
+  resharing, or transferring it) stay on the plain permission check —
+  self-service, bounded by the grants the owner or an admin chose.
 - A gated write is refused with a machine-readable
   `403 {"error": "step_up_required"}` until the session's owner
   confirms their password at `POST /api/v1/auth/step-up`. The
@@ -291,8 +294,9 @@ credential knowledge. Set `KLANGKD_STEP_UP_WINDOW_MINUTES` (default
   local passwords.
 
 The clients handle the prompt automatically: the web client shows a
-password dialog, confirms, and retries the refused request; the CLI
-prompts once on the terminal. The window is read live at check time,
+password dialog (re-prompting on a wrong password, up to three
+attempts), confirms, and retries the refused request; the CLI prompts
+on the terminal the same way. The window is read live at check time,
 so a SIGHUP reload applies immediately (disarming it mid-session
 makes the next write pass without a prompt).
 

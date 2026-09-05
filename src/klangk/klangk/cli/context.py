@@ -136,10 +136,13 @@ def client() -> KlangkClient:
     of its surfaces are step-up-gated).
     """
 
-    def prompt_password() -> str | None:
-        entered = Prompt.ask(
-            "Password (re-authentication for this action)", password=True
+    def prompt_password(failed: bool = False) -> str | None:
+        message = (
+            "Password (re-authentication for this action)"
+            if not failed
+            else "Password incorrect — try again"
         )
+        entered = Prompt.ask(message, password=True)
         return entered or None
 
     return KlangkClient(

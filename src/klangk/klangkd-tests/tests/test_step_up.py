@@ -403,25 +403,8 @@ class TestWorkspaceDeleteGate:
     ):
         """An admin deleting another user's workspace is a privileged
         cross-principal write (#3196)."""
-        from klangk.model import (
-            ACTION_ALLOW,
-            PRINCIPAL_USER,
-        )
-
         _arm(app)
-        owner_headers = await _login(client, "testuser@example.com")
-        ws_id = await self._make_workspace(client, owner_headers, "victim")
-        # Grant the admin delete rights on the workspace (the stock
-        # seed gives admins no cross-workspace delete; the owner's own
-        # wildcard is what usually satisfies this permission).
-        await app_state.state.model.acl.add_acl_entry(
-            f"/workspaces/{ws_id}",
-            100,
-            ACTION_ALLOW,
-            "delete-workspace",
-            PRINCIPAL_USER,
-            user_id=admin_user["id"],
-        )
+        ws_id = await self._make_owned_workspace(client, app_state, admin_user)
         admin_headers = await _login(client)
         resp = await client.delete(
             f"/api/v1/workspaces/{ws_id}", headers=admin_headers
@@ -432,6 +415,117 @@ class TestWorkspaceDeleteGate:
             resp = await client.delete(
                 f"/api/v1/workspaces/{ws_id}", headers=admin_headers
             )
+        assert resp.status_code == 200
+
+    async def _make_owned_workspace(
+        self, client, app_state, admin_user, name="victim"
+    ):
+        """A workspace owned by a plain user with a wildcard ACE for
+        the admin, created directly in the model (the stock seed gives
+        admins no cross-workspace permissions; the grant models an
+        admin or power user the owner delegated to)."""
+        from klangk.model import ACTION_ALLOW, PRINCIPAL_USER
+
+        owner = await app_state.state.model.users.create_user(
+            "wsowner@example.com",
+            auth_mod.hash_password(TEST_PASSWORD),
+            verified=True,
+        )
+        ws = await app_state.state.model.workspaces.create_workspace_with_acl(
+            owner["id"], name
+        )
+        await app_state.state.model.acl.add_acl_entry(
+            f"/workspaces/{ws['id']}",
+            100,
+            ACTION_ALLOW,
+            "*",
+            PRINCIPAL_USER,
+            user_id=admin_user["id"],
+        )
+        return ws["id"]
+
+    async def test_non_owner_acl_rewrite_gated(
+        self, client, app, ws_admin, admin_user, app_state
+    ):
+        """A non-owner raw ACL rewrite can seize the workspace (grant
+        `*`, Deny the owner) — the most dangerous cross-principal
+        write, so it carries the gate (#3196)."""
+        _arm(app)
+        ws_id = await self._make_owned_workspace(
+            client, app_state, admin_user, name="seizable"
+        )
+        admin_headers = await _login(client)
+        resp = await client.put(
+            f"/api/v1/workspaces/{ws_id}/acl",
+            headers=admin_headers,
+            json=[],
+        )
+        assert _is_step_up(resp)
+        assert (await _step_up(client, admin_headers)).status_code == 200
+        resp = await client.put(
+            f"/api/v1/workspaces/{ws_id}/acl",
+            headers=admin_headers,
+            json=[],
+        )
+        assert resp.status_code == 200
+
+    async def test_owner_acl_rewrite_ungated(
+        self, client, app, ws_admin, admin_user, registry
+    ):
+        """The owner rewriting their own workspace's ACL is
+        self-service sharing — no step-up even when armed."""
+        _arm(app)
+        headers = await _login(client, "testuser@example.com")
+        ws_id = await self._make_workspace(client, headers, "own-acl")
+        resp = await client.put(
+            f"/api/v1/workspaces/{ws_id}/acl",
+            headers=headers,
+            json=[
+                {
+                    "principal_type": 1,
+                    "user_id": ws_admin["id"],
+                    "permission": "*",
+                    "action": 1,
+                }
+            ],
+        )
+        assert resp.status_code == 200
+
+    async def test_transfer_gated_for_non_owner(
+        self, client, app, ws_admin, admin_user, app_state
+    ):
+        """A transfer by a non-owner is an ownership takeover — gated
+        (#3196); the owner transferring their own workspace is not."""
+        _arm(app)
+        ws_id = await self._make_owned_workspace(
+            client, app_state, admin_user, name="transferable"
+        )
+        admin_headers = await _login(client)
+        resp = await client.post(
+            f"/api/v1/workspaces/{ws_id}/transfer",
+            headers=admin_headers,
+            json={"email": admin_user["email"]},
+        )
+        assert _is_step_up(resp)
+        assert (await _step_up(client, admin_headers)).status_code == 200
+        resp = await client.post(
+            f"/api/v1/workspaces/{ws_id}/transfer",
+            headers=admin_headers,
+            json={"email": admin_user["email"]},
+        )
+        assert resp.status_code == 200
+
+    async def test_owner_transfer_ungated(
+        self, client, app, ws_admin, admin_user, registry
+    ):
+        _arm(app)
+        headers = await _login(client, "testuser@example.com")
+        ws_id = await self._make_workspace(client, headers, "own-xfer")
+        resp = await client.post(
+            f"/api/v1/workspaces/{ws_id}/transfer",
+            headers=headers,
+            json={"email": "testadmin@example.com"},
+        )
         assert resp.status_code == 200
 
 
@@ -575,6 +669,35 @@ class TestHelpers:
         """Window off: never raises, whatever the session state."""
         req = self._request(app=app_state)
         await stepup.ensure_step_up(req, user, None)
+
+    async def test_unless_owner_none_workspace_noop(self, app_state, user):
+        """A missing workspace row is the caller's not-found path —
+        the conditional gate never fires (#3196)."""
+        app_state.state.settings.step_up_window_minutes = 15
+        req = self._request(app=app_state)
+        await stepup.ensure_step_up_unless_owner(req, user, None)
+
+    async def test_unless_owner_owner_noop(self, app_state, user):
+        """Your own workspace: the conditional gate never fires."""
+        app_state.state.settings.step_up_window_minutes = 15
+        req = self._request(app=app_state)
+        workspace = {"user_id": user["id"]}
+        await stepup.ensure_step_up_unless_owner(req, user, workspace)
+
+    async def test_unless_owner_non_owner_gated(self, app_state, user):
+        """Someone else's workspace while armed: the gate fires (the
+        JTI is None here — no decodable token — so it refuses)."""
+        from fastapi import HTTPException
+
+        app_state.state.settings.step_up_window_minutes = 15
+        req = self._request(app=app_state)
+        # The full row (the fixture's create_user return omits
+        # password_hash, which the exemption check reads).
+        full = await app_state.state.model.users.get_user_by_id(user["id"])
+        workspace = {"user_id": "someone-else"}
+        with pytest.raises(HTTPException) as exc:
+            await stepup.ensure_step_up_unless_owner(req, full, workspace)
+        assert exc.value.detail["error"] == stepup.STEP_UP_REQUIRED
 
 
 class TestSessionsModel:

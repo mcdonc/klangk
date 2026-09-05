@@ -46,10 +46,10 @@ class _KlangkAppState extends State<KlangkApp> {
     // admin write is refused with step_up_required, AuthService asks
     // for the password here (root navigator — works from any page),
     // confirms it with the server, and retries the request.
-    AuthService.stepUpPrompt = () async {
+    AuthService.stepUpPrompt = ({bool previousFailed = false}) async {
       final context = rootNavigatorKey.currentContext;
       if (context == null) return null;
-      return showStepUpPasswordDialog(context);
+      return showStepUpPasswordDialog(context, previousFailed: previousFailed);
     };
   }
 
