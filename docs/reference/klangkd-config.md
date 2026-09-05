@@ -139,6 +139,7 @@ password_min_changed: 8
 listen: "127.0.0.1"
 port: 8997
 egress_port: 8995
+api_rate_limit: 300
 hosting_hostname: klangk.example.com
 hosting_proto: https
 trusted_proxy_cidrs: "127.0.0.1,::1,10.0.0.0/8"
@@ -307,6 +308,17 @@ port: 8997
 | `log_file_backup_count`  | `3`                              | `KLANGKD_LOG_FILE_BACKUP_COUNT`  |
 | `proxy_bin`              | _(auto-discovered)_              | `KLANGKD_PROXY_BIN`              |
 | `websocket_msg_size_max` | `16777216`                       | `KLANGKD_WEBSOCKET_MSG_SIZE_MAX` |
+| `api_rate_limit`         | `300`                            | `KLANGKD_API_RATE_LIMIT`         |
+
+`api_rate_limit` caps `/api/*` requests per client IP (fixed 60s window,
+429 + `Retry-After`), enforced in the backend process — it applies on
+every deployment shape (bare, managed Caddy, outer proxy). `0`
+disables. Static assets, `/ws` upgrades, `/hosted/*`, and `/health`
+never count. The client IP resolves through `KLANGKD_TRUSTED_PROXY_CIDRS`
+— **behind an outer proxy that isn't in that set (or with
+`KLANGKD_REJECT_PROXY_HEADERS`), every forwarded client shares the
+proxy's single bucket**, so add the proxy there before relying on the
+limit.
 
 `idle_timeout_seconds` is the deploy-wide default; a workspace can
 override it per-workspace (`settings.idle_timeout` — see

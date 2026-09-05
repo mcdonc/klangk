@@ -1024,6 +1024,15 @@ class KlangkSettings(BaseSettings):
     # Default 16 MiB; klangkd reads it through the typed config (config file +
     # file:/cmd: resolution), not raw env.
     websocket_msg_size_max: int | None = 16777216
+    # api_rate_limit: per-client-IP /api/* request budget (#3157) — max
+    # requests per 60s window, enforced in-app by
+    # middleware.ApiRateLimitMiddleware (429 + Retry-After). Keyed on the
+    # proxy-trust-aware client IP (util.effective_client_ip), so it is
+    # correct bare, behind the managed Caddy, or behind an outer trusted
+    # proxy. 0 disables. Static assets, /ws, /hosted/*, and the health
+    # endpoints never consume budget. Read live off settings — a SIGHUP
+    # reload changes the limit without a restart.
+    api_rate_limit: int | None = 300
     cors_origins: str | None = None
     # dns_servers: comma-separated DNS nameserver IPs passed to workspace
     # containers via podman --dns (container_dns_config() → create_container).
@@ -1690,6 +1699,7 @@ class KlangkSettings(BaseSettings):
         "inactivity_disable_days",
         "port_range_start",
         "websocket_msg_size_max",
+        "api_rate_limit",
         "file_upload_size_max",
         "hosted_ports_per_workspace",
         "memory_eviction_sustain_polls",
@@ -1733,6 +1743,8 @@ class KlangkSettings(BaseSettings):
             "max_running_workspaces_per_user",
             # Disables the per-workspace volume quota (#3153).
             "volume_quota_per_workspace",
+            # Disables per-client-IP API rate limiting (#3157).
+            "api_rate_limit",
         }
         minimum = 0 if info.field_name in _ZERO_MEANINGFUL else 1
         return _coerce_setting_int(
