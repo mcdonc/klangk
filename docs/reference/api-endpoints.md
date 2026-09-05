@@ -505,49 +505,6 @@ see [Auth Modes](../features/auth-modes.md).
 
 ---
 
-### GET `/api/v1/events`
-
-Paged container start/stop history (#2923), newest first, from the
-`container_events` audit table (#2915). Query params: `limit` (1–200,
-default 50), `offset`, and either `workspace` (an exact workspace id or
-a workspace-name substring) or the legacy exact-match `workspace_id` to
-narrow to one workspace. Items carry the acting principal
-(`actor_type` user/agent/system + `actor_id`), the `cause`
-(api, idle_timeout, eviction, drain, …), the podman correlation ids
-(`container_id`, `container_role` workspace/network-sidecar,
-`network_namespace`), and the resolved `workspace_name` / `actor_email`
-for display. The HMAC integrity tag (#3174) is never sent on the wire.
-
-**Auth:** JWT required. User must have the `manage-events` permission on `/events`.
-
-No request body.
-
-```json
-{
-  "items": [
-    {
-      "id": 1,
-      "workspace_id": "uuid",
-      "workspace_name": "my-ws",
-      "event": "start",
-      "actor_type": "user",
-      "actor_id": "uuid",
-      "actor_email": "user@example.com",
-      "cause": "api",
-      "container_id": "abc123",
-      "container_role": "workspace",
-      "network_namespace": null,
-      "created_at": 1759200000.0
-    }
-  ],
-  "total": 1,
-  "limit": 50,
-  "offset": 0
-}
-```
-
----
-
 ### GET `/api/v1/events/audit`
 
 Paged identity/privilege audit history (#3205), newest first, from the
@@ -582,6 +539,51 @@ No request body.
       "detail": { "via": "password" },
       "source_ip": "203.0.113.7",
       "user_agent": "klangk-cli/1.0",
+      "created_at": 1759200000.0
+    }
+  ],
+  "total": 1,
+  "limit": 50,
+  "offset": 0
+}
+```
+
+---
+
+### GET `/api/v1/events/containers`
+
+Paged container start/stop history (#2923), newest first, from the
+`container_events` audit table (#2915) — the Containers stream of the
+`/events` resource (the Audit stream is `GET /events/audit`, #3205).
+Renamed from `GET /events` when the resource gained its second stream. Query params: `limit` (1–200,
+default 50), `offset`, and either `workspace` (an exact workspace id or
+a workspace-name substring) or the legacy exact-match `workspace_id` to
+narrow to one workspace. Items carry the acting principal
+(`actor_type` user/agent/system + `actor_id`), the `cause`
+(api, idle_timeout, eviction, drain, …), the podman correlation ids
+(`container_id`, `container_role` workspace/network-sidecar,
+`network_namespace`), and the resolved `workspace_name` / `actor_email`
+for display. The HMAC integrity tag (#3174) is never sent on the wire.
+
+**Auth:** JWT required. User must have the `manage-events` permission on `/events`.
+
+No request body.
+
+```json
+{
+  "items": [
+    {
+      "id": 1,
+      "workspace_id": "uuid",
+      "workspace_name": "my-ws",
+      "event": "start",
+      "actor_type": "user",
+      "actor_id": "uuid",
+      "actor_email": "user@example.com",
+      "cause": "api",
+      "container_id": "abc123",
+      "container_role": "workspace",
+      "network_namespace": null,
       "created_at": 1759200000.0
     }
   ],

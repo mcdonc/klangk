@@ -1156,7 +1156,7 @@ async def list_audit_events(
     }
 
 
-@router.get("/events")
+@router.get("/events/containers")
 async def list_container_events(
     request: Request,
     limit: int = Query(50, ge=1, le=200),

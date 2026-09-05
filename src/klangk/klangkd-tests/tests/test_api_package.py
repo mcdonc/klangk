@@ -90,7 +90,8 @@ REPRESENTATIVE_PATHS = [
     f"{API_PREFIX}/invitations",
     f"{API_PREFIX}/groups",
     f"{API_PREFIX}/server/schedule",
-    f"{API_PREFIX}/events",
+    f"{API_PREFIX}/events/containers",
+    f"{API_PREFIX}/events/audit",
     f"{API_PREFIX}/acl/tree",
     # llm proxy (#2072)
     "/llm-proxy/models",

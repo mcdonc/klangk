@@ -542,7 +542,7 @@ ENDPOINTS: list[tuple[str, str, dict | None, dict | None]] = [
     # the point.
     (
         "GET",
-        f"{P}/events",
+        f"{P}/events/containers",
         None,
         {"limit": "int", "offset": "int", "workspace_id": "string"},
     ),

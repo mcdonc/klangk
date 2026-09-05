@@ -1847,6 +1847,12 @@ stop)`) and a `server: stop at 23:00 (in 1h 12m)` status line in the
 
 ### Changed
 
+- **`GET /events` renamed to `GET /events/containers` (#3205).**
+  The container start/stop history moved under the `/events`
+  resource's Containers stream now that the identity/privilege audit
+  stream (`GET /events/audit`) is its sibling — the ACL grant is
+  unchanged (`manage-events` on `/events` governs both). Update any
+  scripts reading the old path.
 - **Workspace-owned named volumes (#3153).** Named volumes are owned
   by the workspace whose start created them: stamped with a
   `klangk.workspace-id` podman label (never a user), mountable only by
