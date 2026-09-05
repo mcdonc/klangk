@@ -2065,7 +2065,7 @@ class TestNumericSettingCoercion:
             ("invite_expire_hours", 72),
             ("port_range_start", 9000),
             ("websocket_msg_size_max", 16777216),
-            ("api_rate_limit", 300),
+            ("api_rate_limit", 0),
             ("smtp_port", 587),
             ("file_upload_size_max", 524288000),
             ("hosted_ports_per_workspace", 5),

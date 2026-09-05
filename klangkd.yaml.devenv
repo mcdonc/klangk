@@ -22,11 +22,6 @@ listen: "127.0.0.1"
 egress_port: "8995"
 idle_timeout_seconds: "300"
 
-# #3157: the dev backend fronts the SPA, the CLI, and local scripting
-# through one loopback IP — they'd all share a single 300/60s budget.
-# Not a deployment template; keep local dev unlimited.
-api_rate_limit: "0"
-
 # "none", "password", "oidc", or "both" for UI (TUI/web) access
 auth_modes: password
 

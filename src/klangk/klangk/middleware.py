@@ -82,7 +82,9 @@ class LiveCORSMiddleware:
 RATE_LIMIT_WINDOW_SECONDS = 60
 
 # Default per-IP budget when ``KLANGKD_API_RATE_LIMIT`` is unset/None.
-RATE_LIMIT_DEFAULT = 300
+# Mirrors the field default: 0 = off (the limit is opt-in; e.g. 300 is
+# the documented example budget).
+RATE_LIMIT_DEFAULT = 0
 
 # Upper bound on tracked per-IP windows. Same shape as the login/resend
 # cooldown accounting in api/auth.py: legitimate traffic stays far below
@@ -98,8 +100,8 @@ class ApiRateLimitMiddleware:
     Enforced in the backend process, not the fronting proxy: the long tail
     of the API surface (workspace enumeration, token refresh, scraping)
     gets one fixed 60s window per client IP — ``KLANGKD_API_RATE_LIMIT``
-    requests per window (default 300, 0 disables). Over-budget requests
-    are answered 429 + ``Retry-After`` with the FastAPI ``{"detail": …}``
+    requests per window (default 0 = off; e.g. 300 is the documented
+    example budget). Over-budget requests are answered 429 + ``Retry-After`` with the FastAPI ``{"detail": …}``
     error shape. Static assets, ``/ws`` upgrades, ``/hosted/*``, and the
     health endpoints never consume budget: only ``http`` scopes whose
     path starts with ``/api/`` are counted.

@@ -621,14 +621,15 @@ sync` report a clear permission-denied error.
   via `/api/v1/config` so the web and CLI change-password forms
   pre-check inline.
 - **`KLANGKD_API_RATE_LIMIT` (#3157).** Per-client-IP API rate
-  limiting, enforced in the backend: at most 300 `/api/*` requests per
-  60s window per client IP (default), answered with 429 +
-  `Retry-After`. The first denial per client per window is logged at
-  WARN. The client IP resolves through `KLANGKD_TRUSTED_PROXY_CIDRS`,
-  so it is correct bare, behind the managed Caddy, or behind an outer
-  trusted proxy. `0` disables; static assets, `/ws` upgrades,
-  `/hosted/*`, and `/health` never count against the budget. Reloadable
-  on SIGHUP.
+  limiting, enforced in the backend: at most N `/api/*` requests per
+  60s window per client IP, answered with 429 + `Retry-After`.
+  **Default 0 = off** (a throttle on real traffic ships opt-in; 300 is
+  the documented example budget). The first denial per client per
+  window is logged at WARN. The client IP resolves through
+  `KLANGKD_TRUSTED_PROXY_CIDRS`, so it is correct bare, behind the
+  managed Caddy, or behind an outer trusted proxy. Static assets,
+  `/ws` upgrades, `/hosted/*`, and `/health` never count against the
+  budget. Reloadable on SIGHUP.
 - **All five container images now publish on a release tag (#3140).**
   Pushing `vX.Y.Z` publishes `klangk-host`, `klangk-host-fips`,
   `klangk-workspace`, `klangk-workspace-fips`, and the newly pullable

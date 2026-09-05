@@ -1026,13 +1026,15 @@ class KlangkSettings(BaseSettings):
     websocket_msg_size_max: int | None = 16777216
     # api_rate_limit: per-client-IP /api/* request budget (#3157) — max
     # requests per 60s window, enforced in-app by
-    # middleware.ApiRateLimitMiddleware (429 + Retry-After). Keyed on the
+    # middleware.ApiRateLimitMiddleware (429 + Retry-After). Default 0 =
+    # off (opt-in: a security control that throttles real traffic ships
+    # disabled; e.g. 300 is the documented example budget). Keyed on the
     # proxy-trust-aware client IP (util.effective_client_ip), so it is
     # correct bare, behind the managed Caddy, or behind an outer trusted
-    # proxy. 0 disables. Static assets, /ws, /hosted/*, and the health
-    # endpoints never consume budget. Read live off settings — a SIGHUP
-    # reload changes the limit without a restart.
-    api_rate_limit: int | None = 300
+    # proxy. Static assets, /ws, /hosted/*, and the health endpoints never
+    # consume budget. Read live off settings — a SIGHUP reload changes the
+    # limit without a restart.
+    api_rate_limit: int | None = 0
     cors_origins: str | None = None
     # dns_servers: comma-separated DNS nameserver IPs passed to workspace
     # containers via podman --dns (container_dns_config() → create_container).

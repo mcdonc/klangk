@@ -170,12 +170,12 @@ class TestBudget:
 
     async def test_none_budget_means_default(self):
         """Defensive parity: a None attribute (the field never surfaces
-        None in practice) falls back to the documented default."""
+        None in practice) falls back to the field default — off."""
         fastapi_app = FastAPI()
         fastapi_app.state.settings = types.SimpleNamespace(api_rate_limit=None)
         fastapi_app.state.util = Util(fastapi_app)
         m = ApiRateLimitMiddleware(_noop_app, fastapi_app=fastapi_app)
-        assert m._budget() == mw.RATE_LIMIT_DEFAULT
+        assert m._budget() == mw.RATE_LIMIT_DEFAULT == 0
 
     async def test_budget_read_live_off_settings(self):
         """Swapping app.state.settings (what SIGHUP does) changes the
