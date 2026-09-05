@@ -22,6 +22,7 @@ import httpx
 import pytest
 
 from klangk.caddy import (
+    AutoHttpsConfigError,
     CaddyRenderer,
     CaddyWatchdog,
     CSP_POLICY,
@@ -1527,20 +1528,36 @@ class TestAutoHttpsGlobalBlock:
         """full_global=False (the pre-2.6.2 minimal fallback) keeps
         ``auto_https off`` baked in — arming on it would silently serve
         plain HTTP, so the render fails loudly instead (#3192)."""
-        with pytest.raises(ValueError, match="KLANGKD_PUBLIC_HOSTNAME"):
+        with pytest.raises(
+            AutoHttpsConfigError, match="KLANGKD_PUBLIC_HOSTNAME"
+        ):
             _renderer(make_settings(_armed_env()))._global_block(
                 "/d/sock", full_global=False
             )
 
-    def test_unarmed_render_unchanged(self):
-        """The unarmed global block keeps its exact pre-#3192 shape
-        (auto_https off, no email/storage directives)."""
+    _UNARMED_GLOBAL_GOLDEN = (
+        "{\n"
+        "\tadmin unix///d/sock {\n"
+        "\t\torigins localhost\n"
+        "\t}\n"
+        "\tauto_https off\n"
+        "\tpersist_config off\n"
+        "\tservers {\n"
+        "\t\ttrusted_proxies static 127.0.0.1 ::1\n"
+        "\t\ttrusted_proxies_strict\n"
+        "\t}\n"
+        "}\n"
+    )
+
+    def test_unarmed_global_block_is_byte_identical(self):
+        """The unarmed global block pinned char-for-char (#3192's
+        byte-identical-when-unarmed contract — substring asserts alone
+        can't catch an indentation or ordering drift; the armed/no-email
+        shape stays covered by the directives tests above)."""
         g = _renderer(make_settings({"KLANGKD_PORT": "8997"}))._global_block(
             "/d/sock"
         )
-        assert "auto_https off" in g
-        assert "email" not in g
-        assert "storage" not in g
+        assert g == self._UNARMED_GLOBAL_GOLDEN
 
 
 class TestAutoHttpsBrowserSite:
@@ -1595,10 +1612,12 @@ class TestAutoHttpsBrowserSite:
             )._browser_site("unix//s", "")
         assert not any("loopback-only" in r.message for r in caplog.records)
 
-    def test_headless_rejects_arming_at_settings(self):
-        """The headless + armed combination is impossible — settings
-        construction fails (see TestAutoHttpsSettings), so the renderer
-        never sees it. Guard documented here for the #3192 contract."""
+    def test_headless_render_has_only_egress_site(self):
+        """Headless (no KLANGKD_PORT) renders exactly one listener — the
+        egress site; the armed+headless combination is impossible because
+        settings construction fails first (TestAutoHttpsSettings in
+        test_settings.py pins that raise; this guards the render side of
+        the same #3192 contract)."""
         s = make_settings({"KLANGKD_EGRESS_PORT": "8995"})
         assert (
             _renderer(s).render_config("unix//s", "/d/sock").count("http://:")
@@ -1624,7 +1643,7 @@ class TestAutoHttpsWatchdog:
         )
         wd = _wd(make_settings(_armed_env()))
         with caplog.at_level(logging.ERROR):
-            with pytest.raises(RuntimeError, match="automatic TLS"):
+            with pytest.raises(AutoHttpsConfigError, match="automatic TLS"):
                 await wd.start()
         assert wd._task is None
         assert any("too old" in r.message for r in caplog.records)
@@ -1709,8 +1728,10 @@ class TestAutoHttpsLogs:
         self, caplog
     ):
         """SIGHUP-arming automatic TLS on an old caddy (full_global=False)
-        raises inside the render — the reload is denied with a warning and
-        the running config keeps serving (last-known-good, #3192)."""
+        raises inside the render — the reload is denied at ERROR level
+        (a refused security arming, not a routine broken reload: the live
+        settings say TLS is on while Caddy keeps the plain-HTTP config)
+        and the running config keeps serving (last-known-good, #3192)."""
         import logging
 
         wd = _wd(make_settings({"KLANGKD_PORT": "8997"}))
@@ -1723,9 +1744,10 @@ class TestAutoHttpsLogs:
                 )
             )
         )
-        with caplog.at_level(logging.WARNING):
+        with caplog.at_level(logging.ERROR):
             await wd.apply_pending_reload()  # must not raise
         assert wd._pending_reload is False
         assert any(
-            "caddy SIGHUP reload failed" in r.message for r in caplog.records
+            "automatic TLS could not be applied" in r.message
+            for r in caplog.records
         )

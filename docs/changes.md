@@ -658,13 +658,13 @@ sync` report a clear permission-denied error.
   Automatic TLS on the built-in proxy: setting `KLANGKD_PUBLIC_HOSTNAME`
   to a public FQDN makes klangkd serve the browser listener over HTTPS
   with a CA-issued, auto-renewed certificate (Caddy auto-HTTPS, ACME via
-  Let's Encrypt + ZeroSSL). Unset — the default — keeps today's plain
-  HTTP + `auto_https off` exactly, so outer-proxy deployments are
-  unaffected. Requires `KLANGKD_PORT` and ports 80/443 reachable;
-  `KLANGKD_ACME_EMAIL` registers the ACME account for expiry notices.
-  Certificates persist under `<state_dir>/caddy-storage`, and
-  `klangkd doctor` checks port 80/443 bindability when armed. Reloadable
-  on SIGHUP. See the Automatic TLS deployment chapter.
+  Let's Encrypt + ZeroSSL); unset — the default — keeps today's plain
+  HTTP exactly, so outer-proxy deployments are unaffected. Requires
+  `KLANGKD_PORT` and reachable ports 80/443; `KLANGKD_ACME_EMAIL`
+  registers the ACME account for expiry notices. Certificates persist
+  under `<state_dir>/caddy-storage`, and `klangkd doctor` checks port
+  80/443 bindability when armed. Reloadable on SIGHUP; see the
+  Automatic TLS deployment chapter.
 - **`KLANGKD_SESSION_IDLE_TIMEOUT_MINUTES` /
   `KLANGKD_PRIVILEGED_SESSION_IDLE_TIMEOUT_MINUTES` (#3151).** Idle
   session timeout: after this many minutes without an authenticated
