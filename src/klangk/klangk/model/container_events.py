@@ -20,6 +20,7 @@ keeping the newest. An admin-facing paged view is tracked separately.
 import logging
 import time
 
+from .audit_hmac import compute_container_event_hmac
 from .base import Submodel, resolve_prune_now
 from .users import AGENT_USER_ID
 
@@ -69,7 +70,8 @@ ROLE_SIDECAR = "network-sidecar"
 # (a column added to the table is added here once).
 _EVENT_COLUMNS = (
     "id, workspace_id, event, actor_type, actor_id, cause,"
-    " container_id, container_role, network_namespace, created_at"
+    " container_id, container_role, network_namespace, created_at,"
+    " hmac"
 )
 
 
@@ -135,8 +137,10 @@ class ContainerEventsModel(Submodel):
         network sidecars; sidecar rows never carry a netns owner (they
         ARE the netns owner).
         """
+        created_at = time.time()
+        actor_type = actor_type_for(actor_id)
         async with self.app.state.db.transaction() as db:
-            await db.execute(
+            cursor = await db.execute(
                 "INSERT INTO container_events"
                 " (workspace_id, event, actor_type, actor_id, cause,"
                 "  container_id, container_role, network_namespace,"
@@ -145,15 +149,34 @@ class ContainerEventsModel(Submodel):
                 (
                     workspace_id,
                     event,
-                    actor_type_for(actor_id),
+                    actor_type,
                     actor_id,
                     cause,
                     container_id,
                     container_role,
                     network_namespace,
-                    time.time(),
+                    created_at,
                 ),
             )
+            row_id = cursor.lastrowid
+            row = {
+                "id": row_id,
+                "workspace_id": workspace_id,
+                "event": event,
+                "actor_type": actor_type,
+                "actor_id": actor_id,
+                "cause": cause,
+                "container_id": container_id,
+                "container_role": container_role,
+                "network_namespace": network_namespace,
+                "created_at": created_at,
+            }
+            tag = compute_container_event_hmac(self.app.state.settings, row)
+            if tag is not None:
+                await db.execute(
+                    "UPDATE container_events SET hmac = ? WHERE id = ?",
+                    (tag, row_id),
+                )
 
     async def list_events(
         self,

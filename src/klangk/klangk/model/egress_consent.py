@@ -9,6 +9,7 @@ reach while in ``egress_mode='interactive'``.
 import time
 import uuid
 
+from .audit_hmac import compute_egress_consent_hmac
 from .base import Submodel, resolve_prune_now
 
 
@@ -72,7 +73,7 @@ DURATION_DEFAULT = DURATION_TILRESTART
 _EC_COLUMNS = (
     "id, workspace_id, dest_host, dest_port, pid, process_name,"
     " decision, duration, requested_at, decided_at, decided_by,"
-    " revoked_at, revoked_by"
+    " revoked_at, revoked_by, hmac"
 )
 
 
@@ -122,7 +123,7 @@ class EgressConsentModel(Submodel):
             )
             if cursor.rowcount == 0:
                 return None
-            return await _select_row(db, request_id)
+            return await _restamp(db, self.app.state.settings, request_id)
 
     async def record_static_denial(
         self,
@@ -197,7 +198,17 @@ class EgressConsentModel(Submodel):
             )
             if cursor.rowcount == 0:
                 return None
-            return await _select_row(db, request_id)
+            return await _restamp(db, self.app.state.settings, request_id)
+
+    async def restamp_rows(self, db, row_ids: list[str]) -> None:
+        """Re-stamp the given rows on a caller-owned connection (the
+        sanctioned multi-step pattern): used after a user deletion
+        FK-nulls the rows' ``decided_by``/``revoked_by`` so the tag
+        tracks the row as last written (#3174). A no-op per row when
+        tagging is disabled (no key configured)."""
+        settings = self.app.state.settings
+        for row_id in row_ids:
+            await _restamp(db, settings, row_id)
 
     async def get_request(self, request_id: str) -> dict | None:
         """Get a single consent request by ID."""
@@ -440,12 +451,7 @@ class EgressConsentModel(Submodel):
                 return None
             # Re-read inside the same transaction so the result is
             # consistent even if the row is deleted concurrently.
-            cursor = await db.execute(
-                f"SELECT {_EC_COLUMNS} FROM egress_consent WHERE id = ?",
-                (request_id,),
-            )
-            row = await cursor.fetchone()
-            return _row_to_dict(row) if row else None
+            return await _restamp(db, self.app.state.settings, request_id)
 
     async def revoke(self, request_id: str, revoked_by: str) -> dict | None:
         """Mark a prior allow/deny verdict revoked (#2339).
@@ -473,12 +479,7 @@ class EgressConsentModel(Submodel):
             )
             if cursor.rowcount == 0:
                 return None
-            cursor = await db.execute(
-                f"SELECT {_EC_COLUMNS} FROM egress_consent WHERE id = ?",
-                (request_id,),
-            )
-            row = await cursor.fetchone()
-            return _row_to_dict(row) if row else None
+            return await _restamp(db, self.app.state.settings, request_id)
 
     async def expire_pending(
         self,
@@ -505,7 +506,10 @@ class EgressConsentModel(Submodel):
                     DECISION_PENDING,
                 ),
             )
-            return cursor.rowcount > 0
+            if cursor.rowcount > 0:
+                await _restamp(db, self.app.state.settings, request_id)
+                return True
+            return False
 
     async def expire_all_pending(self) -> int:
         """Expire EVERY pending request (startup reaping).
@@ -518,13 +522,29 @@ class EgressConsentModel(Submodel):
         """
         decided_at = time.time()
         async with self.app.state.db.transaction() as db:
+            # Read the full rows once up front: after the bulk UPDATE the
+            # only mutated columns are decision/decided_at (both known),
+            # so each tag can be re-stamped without a re-read per row.
             cursor = await db.execute(
+                f"SELECT {_EC_COLUMNS} FROM egress_consent WHERE decision = ?",  # noqa: S608
+                (DECISION_PENDING,),
+            )
+            rows = await cursor.fetchall()
+            if not rows:
+                return 0
+            await db.execute(
                 "UPDATE egress_consent"
                 " SET decision = ?, decided_at = ?"
                 " WHERE decision = ?",
                 (DECISION_EXPIRED, decided_at, DECISION_PENDING),
             )
-            return cursor.rowcount
+            settings = self.app.state.settings
+            for row in rows:
+                d = _row_to_dict(row)
+                d["decision"] = DECISION_EXPIRED
+                d["decided_at"] = decided_at
+                await _stamp_hmac(db, settings, d)
+            return len(rows)
 
     async def clear_tilrestart_duration(self, workspace_id: str) -> int:
         """Delete decided ``tilrestart``-duration verdicts for a workspace (#2346).
@@ -724,6 +744,29 @@ async def _select_row(db, request_id: str) -> dict | None:
     return _row_to_dict(row) if row else None
 
 
+async def consent_rows_for_actor(db, user_id: str) -> list[str]:
+    """Ids of consent rows whose ``decided_by``/``revoked_by`` name the
+    given user — collected BEFORE a user deletion, because after the FK
+    sets the columns NULL they are indistinguishable from static-policy
+    rows (#3174). Runs on the caller-owned connection inside the
+    deleting transaction."""
+    cursor = await db.execute(
+        "SELECT id FROM egress_consent WHERE decided_by = ? OR revoked_by = ?",
+        (user_id, user_id),
+    )
+    return [r[0] for r in await cursor.fetchall()]
+
+
+async def _restamp(db, settings, request_id: str) -> dict | None:
+    """Re-read a just-mutated row and (re)stamp its HMAC in the same
+    transaction (#3174). Returns None when the row no longer exists
+    (a ``_select_row`` miss) so callers surface it as "not found"."""
+    row = await _select_row(db, request_id)
+    if row is not None:
+        await _stamp_hmac(db, settings, row)
+    return row
+
+
 def _row_to_dict(row) -> dict:
     return {
         "id": row["id"],
@@ -739,4 +782,21 @@ def _row_to_dict(row) -> dict:
         "decided_by": row["decided_by"],
         "revoked_at": row["revoked_at"],
         "revoked_by": row["revoked_by"],
+        "hmac": row["hmac"],
     }
+
+
+async def _stamp_hmac(db, settings, row: dict) -> None:
+    """Compute and persist the HMAC tag for a just-written row (#3174).
+
+    A no-op when no audit HMAC key is configured (tagging disabled) —
+    the row is left with a NULL tag (tagging disabled).
+    """
+    tag = compute_egress_consent_hmac(settings, row)
+    if tag is None:
+        return
+    await db.execute(
+        "UPDATE egress_consent SET hmac = ? WHERE id = ?",
+        (tag, row["id"]),
+    )
+    row["hmac"] = tag

@@ -350,6 +350,16 @@ operators or integrators to act when upgrading.
   `defaults` list); keep it by pinning `KLANGKD_FEATURES_ENABLE` to a list
   that includes `boingball`.
 
+- **HMAC integrity tags for audit records (#3174).**
+  With `KLANGKD_AUDIT_HMAC_KEY` set, every `container_events` and
+  `egress_consent` row carries an HMAC-SHA256 tag computed at insert
+  time (and re-computed on decide/revoke/expire mutations). When
+  unset (the default), no tag is written — there is deliberately no
+  derivation from `KLANGKD_JWT_SECRET`. klangkd only writes tags;
+  verification (re-computing tags against the key) is left to external
+  consumers such as off-host audit backups. Rotating the key
+  invalidates tags written under the old key.
+
 - **Bounded rate-limit state for the email cooldowns (#3113).** The
   per-address cooldown dicts behind
   `POST /api/v1/auth/forgot-password` and

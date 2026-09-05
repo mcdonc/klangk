@@ -90,6 +90,7 @@ class TestRunner:
             (27, "0027_retire_admin_marker"),
             (28, "0028_invitations_pending_unique"),
             (29, "0029_members_create_workspace"),
+            (30, "0030_audit_hmac"),
         ]
         async with aiosqlite.connect(str(app_state.state.db.db_path)) as db:
             assert await _recorded(db) == expected
@@ -185,6 +186,7 @@ class TestRunner:
                 (27, "0027_retire_admin_marker"),
                 (28, "0028_invitations_pending_unique"),
                 (29, "0029_members_create_workspace"),
+                (30, "0030_audit_hmac"),
             ]
 
     async def test_m0008_agent_identity_and_human_collision(

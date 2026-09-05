@@ -887,7 +887,9 @@ async def _annotate_events(app, rows: list[dict]) -> list[dict]:
     emails = await _actor_emails(app, rows)
     return [
         {
-            **row,
+            # The raw hmac tag is verification-internal (#3174); the
+            # admin list view never needs it on the wire.
+            **{k: v for k, v in row.items() if k != "hmac"},
             "workspace_name": names.get(row["workspace_id"]),
             "actor_email": emails.get(row["actor_id"]),
         }

@@ -169,8 +169,14 @@ def _forever_entry(host: str, port: int | None, decision: str) -> str | None:
 
 
 def _by_decision(rows: list[dict], decision: str) -> list[dict]:
-    """The in-effect rows carrying one decision."""
-    return [r for r in rows if r["decision"] == decision]
+    """The in-effect rows carrying one decision, with the
+    verification-internal ``hmac`` tag stripped (#3174): the tag never
+    crosses into a workspace."""
+    return [
+        {k: v for k, v in r.items() if k != "hmac"}
+        for r in rows
+        if r["decision"] == decision
+    ]
 
 
 def _pause_frame(until: float | None) -> dict | None:
@@ -1178,11 +1184,15 @@ class ConsentCoordinator:
 
     @staticmethod
     def _request_frame(request: dict) -> dict:
-        """Build an ``egress_request`` frame from a consent-request row."""
+        """Build an ``egress_request`` frame from a consent-request row.
+
+        The raw ``hmac`` tag is verification-internal (#3174) and is
+        dropped before the row crosses into a workspace.
+        """
         return {
             "type": "egress_request",
             "workspace_id": request["workspace_id"],
-            "request": request,
+            "request": {k: v for k, v in request.items() if k != "hmac"},
         }
 
     def _broadcast_resolved(
