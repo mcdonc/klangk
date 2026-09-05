@@ -8023,7 +8023,12 @@ async def test_detail_focus_defaults_to_own_list(monkeypatch):
     app = KlangkApp(st)
     async with app.run_test() as pilot:
         app.push_screen(WorkspaceDetailScreen("alpha"))
-        await pilot.pause()
+        # Settle the whole mount pipeline (mount worker → terminal loaders →
+        # _render_terminals → _focus_term_list re-grab) before clearing
+        # focus. A bare pause() let those land after set_focus(None) on a
+        # loaded runner, so the setup assert raced the screen's own focus
+        # reclaim (#3188) — same posture as the #2932 render races.
+        await _drain_workers(app, pilot)
         # Move focus off both lists, then reclaim. (Footer.focus() is a no-op
         # in textual, so clear focus directly to reach the reclaim branch.)
         app.screen.set_focus(None)
