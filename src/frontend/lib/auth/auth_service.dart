@@ -9,12 +9,12 @@ import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 import '../branding.dart';
 import 'password_policy.dart';
 import 'pending_redirect.dart';
+import 'token_store.dart';
 
 /// Override for testing — set to intercept all HTTP calls in AuthService.
 http.Client? testAuthHttpClientOverride;
 
 class AuthService extends ChangeNotifier {
-  static const _tokenKey = 'klangk_jwt';
   String get _baseUrl => baseUrl;
 
   http.Client get _client => testAuthHttpClientOverride ?? http.Client();
@@ -271,8 +271,9 @@ class AuthService extends ChangeNotifier {
   }
 
   Future<void> _loadToken() async {
-    final prefs = await SharedPreferences.getInstance();
-    _token = prefs.getString(_tokenKey);
+    // #3193: sessionStorage on the web (dies with the tab/browser),
+    // SharedPreferences elsewhere.
+    _token = await readToken();
 
     await _loadConfig();
 
@@ -283,6 +284,7 @@ class AuthService extends ChangeNotifier {
         // stored hash (#1544).
         _bannerAccepted = false;
       } else {
+        final prefs = await SharedPreferences.getInstance();
         final acceptedHash = prefs.getString('klangk_banner_accepted');
         _bannerAccepted = acceptedHash == _bannerText.hashCode.toString();
       }
@@ -353,8 +355,7 @@ class AuthService extends ChangeNotifier {
 
   Future<void> _saveToken(String token) async {
     _token = token;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_tokenKey, token);
+    await writeToken(token);
     // Re-fetch config now that we have a token, so authenticated-only
     // fields (e.g. the netfilter deploy allow-list, #1365) are picked up
     // without an app restart.
@@ -384,8 +385,7 @@ class AuthService extends ChangeNotifier {
     // same-user "resume where you were" behavior after a token expiry.
     pendingRedirect = null;
     _stopPermissionRefresh();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_tokenKey);
+    await clearToken();
     notifyListeners();
   }
 
