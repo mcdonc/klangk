@@ -194,7 +194,12 @@ The window is read live at issue/refresh/sweep time, so a SIGHUP reload
 applies immediately. Arming it on an existing deployment judges sessions
 created before the feature by their issuance time (the session's
 `last_seen_at` is backfilled from `created_at`) — idle ones terminate on
-their next refresh; active ones get stamped by their next request.
+their next refresh; active ones get stamped by their next request. Note
+the transition cost: tokens minted while unarmed are **not** recapped, so
+a pre-arm session only surfaces at its next refresh — up to its residual
+`KLANGKD_ACCESS_TOKEN_HOURS` lifetime away. To cut that window short,
+force a re-login (revoke sessions via the admin UI) when arming, or wait
+out one full token lifetime after arming.
 
 ## Dormant-account auto-disable
 

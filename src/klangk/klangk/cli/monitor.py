@@ -23,6 +23,12 @@ from .client import server_mode_is_none
 from . import context
 from .transport import ws_connect
 
+#: Keepalive cadence for the monitor's WebSocket (#3151): the monitor
+#: transmits nothing on its own, so with the server's idle session
+#: timeout armed a receive-only socket would be closed after the
+#: window. Matches the web client's heartbeat cadence.
+MONITOR_HEARTBEAT_SECONDS = 60.0
+
 
 def truthy_env(msg: dict, key: str, env_name: str) -> dict[str, str]:
     """{env_name: value} when *key* is present and truthy."""
@@ -116,15 +122,44 @@ async def monitor_connection(
 
     Network/auth errors propagate to :func:`monitor_run`, which owns
     reconnect + refresh. Filtering by event type and workspace id is
-    applied here so the dispatcher only sees relevant events.
+    applied here so the dispatcher only sees relevant events. A
+    heartbeat task sends a keepalive frame every
+    :data:`MONITOR_HEARTBEAT_SECONDS` — the monitor transmits nothing
+    on its own otherwise, and with the server's idle session timeout
+    armed (#3151) a receive-only socket is closed after the window;
+    the heartbeat keeps the monitor's own session alive the same way
+    the web client's does.
     """
     type_filter = {t for t in types}
     ws_filter = {w for w in workspaces}
     async with ws_connect(server_spec, token=token, max_size=max_size) as conn:
-        async for raw in conn:
-            msg = parse_monitor_event(raw, type_filter, ws_filter)
-            if msg is not None:
-                dispatch_monitor_event(msg, command)
+        stop = asyncio.Event()
+        heartbeat = asyncio.create_task(monitor_heartbeat_loop(conn, stop))
+        try:
+            async for raw in conn:
+                msg = parse_monitor_event(raw, type_filter, ws_filter)
+                if msg is not None:
+                    dispatch_monitor_event(msg, command)
+        finally:
+            stop.set()
+            await asyncio.gather(heartbeat, return_exceptions=True)
+
+
+async def monitor_heartbeat_loop(conn, stop: asyncio.Event) -> None:
+    """Send a ``heartbeat`` frame periodically until *stop* is set
+    (#3151) — the same command and cadence the web client's heartbeat
+    uses, so an armed idle window does not terminate the monitor's
+    own session."""
+    while not stop.is_set():
+        try:
+            await asyncio.wait_for(
+                stop.wait(), timeout=MONITOR_HEARTBEAT_SECONDS
+            )
+            return
+        except asyncio.TimeoutError:
+            pass
+        if not stop.is_set():
+            await conn.send(json.dumps({"cmd": "heartbeat"}))
 
 
 def type_allowed(etype, type_filter: set) -> bool:

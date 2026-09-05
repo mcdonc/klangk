@@ -2,7 +2,7 @@
 
 import pytest
 from datetime import datetime, timedelta, timezone
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 from fastapi import HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
 from jose import jwt
@@ -2621,6 +2621,29 @@ class TestSessionIdleTimeout:
         with pytest.raises(HTTPException) as exc_info:
             await a.refresh_token(token)
         assert exc_info.value.detail == "Token has been revoked"
+
+    async def test_idle_revocation_kicks_live_sockets(
+        self, user, db, app_state
+    ):
+        """Idle termination is a full revocation (#3151 review): the
+        session's live sockets — the main /ws registry and the consent
+        deciders — are closed immediately, not left for the sweep (a
+        decider socket is in no sweep; without the kick it would keep
+        egress-consent authority past the termination)."""
+        a = self._armed()
+        kicked = AsyncMock()
+        deciders_kicked = AsyncMock()
+        a.app.state.sockets = _types.SimpleNamespace(disconnect_by_jti=kicked)
+        a.app.state.consent_deciders = _types.SimpleNamespace(
+            disconnect_by_jti=deciders_kicked
+        )
+        token = await a.issue_token(user["id"], user["email"])
+        jti = a.decode_token(token)["jti"]
+        await self._backdate(a, jti, minutes=16)
+        with pytest.raises(HTTPException):
+            await a.refresh_token(token)
+        kicked.assert_awaited_once_with(jti, reason="Token revoked")
+        deciders_kicked.assert_awaited_once_with(jti, reason="Token revoked")
 
     async def test_idle_boundary_is_inclusive(self, user, db):
         """Exactly at the window is still alive; past it terminates."""

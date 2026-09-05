@@ -4701,6 +4701,74 @@ class TestMonitor:
         assert json.loads(out[1])["type"] == "container_status"
 
     @pytest.mark.asyncio
+    async def test_heartbeat_keeps_session_alive(self, monkeypatch):
+        """A quiet monitor sends a heartbeat frame (#3151): with the
+        server's idle session timeout armed, a receive-only socket is
+        closed after the window — the monitor must keep its own
+        session alive the way the web client does."""
+        import asyncio
+
+        from klangk.cli import monitor as monitor_mod
+        from klangk.cli.main import monitor_connection
+
+        monkeypatch.setattr(monitor_mod, "MONITOR_HEARTBEAT_SECONDS", 0.01)
+
+        class _SlowConn:
+            """Yields nothing for a beat, then ends the stream."""
+
+            def __init__(self):
+                self.sent: list[str] = []
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                await asyncio.sleep(0.05)
+                raise StopAsyncIteration
+
+            async def send(self, data):
+                self.sent.append(data)
+
+        conn = _SlowConn()
+        with patch(
+            "klangk.cli.main.websockets.connect",
+            return_value=_FakeMonitorCM(conn),
+        ):
+            await monitor_connection(
+                "http://x", "tok", 1024, command=[], types=[], workspaces=[]
+            )
+        assert conn.sent, "no heartbeat sent on a quiet connection"
+        assert json.loads(conn.sent[0]) == {"cmd": "heartbeat"}
+
+    @pytest.mark.asyncio
+    async def test_heartbeat_stops_while_waiting(self, monkeypatch):
+        """Stopping the heartbeat while it is parked in its wait sends
+        no further frame and returns cleanly (the finally-side of
+        ``monitor_connection`` does exactly this on disconnect)."""
+        import asyncio
+
+        from klangk.cli import monitor as monitor_mod
+
+        monkeypatch.setattr(monitor_mod, "MONITOR_HEARTBEAT_SECONDS", 50)
+
+        class _Recorder:
+            def __init__(self):
+                self.sent: list[str] = []
+
+            async def send(self, data):
+                self.sent.append(data)
+
+        conn = _Recorder()
+        stop = asyncio.Event()
+        task = asyncio.ensure_future(
+            monitor_mod.monitor_heartbeat_loop(conn, stop)
+        )
+        await asyncio.sleep(0.01)  # parked in the interval wait now
+        stop.set()
+        await asyncio.wait_for(task, timeout=1)
+        assert conn.sent == []
+
+    @pytest.mark.asyncio
     async def test_type_filter(self, capsys):
         from klangk.cli.main import monitor_connection
 

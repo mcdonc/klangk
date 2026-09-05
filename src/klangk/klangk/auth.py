@@ -1081,6 +1081,7 @@ class Auth:
                 row["jti"], row["expires_at"]
             )
             await self._kick_revoked_sockets(row["jti"])
+            self.session_stamps.pop(f"jti:{row['jti']}", None)
         if rows:
             await self.app.state.model.sessions.remove_sessions(
                 [row["jti"] for row in rows]
@@ -1112,6 +1113,7 @@ class Auth:
                 row["jti"], row["expires_at"]
             )
             await self._kick_revoked_sockets(row["jti"])
+            self.session_stamps.pop(f"jti:{row['jti']}", None)
         await self.app.state.model.sessions.remove_sessions(
             [row["jti"] for row in rows]
         )
@@ -1578,8 +1580,11 @@ class Auth:
 
     async def _revoke_idle_session(self, jti: str, exp) -> None:
         """Terminate an idle session: blocklist the token (no cached
-        replacement, so any later use 401s as revoked) and drop its
-        session row (#3151)."""
+        replacement, so any later use 401s as revoked), drop its session
+        row, and cut its live sockets (#3151) — the same full revocation
+        as logout, immediately rather than sweep-lagged: a consent
+        decider socket is in no idle sweep, so without the kick it
+        would hold egress-consent authority past the termination."""
         logger.info(
             "session idle timeout: revoking jti=%s (idle past the"
             " configured window)",
@@ -1588,6 +1593,8 @@ class Auth:
         expires_at = datetime.fromtimestamp(exp, tz=timezone.utc).isoformat()
         await self.app.state.model.tokens.blocklist_token(jti, expires_at)
         await self.app.state.model.sessions.remove_session(jti)
+        await self._kick_revoked_sockets(jti)
+        self.session_stamps.pop(f"jti:{jti}", None)
         raise HTTPException(
             status_code=401,
             detail="Session timed out due to inactivity",
