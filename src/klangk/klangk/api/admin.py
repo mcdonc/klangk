@@ -353,7 +353,18 @@ async def delete_user(
     # rows, so the per-workspace registry entries can be pruned after the
     # delete (#2912).
     ws_ids = await app.state.model.workspaces.get_user_workspace_ids(user_id)
+    # Revoke every session while the rows still exist to read the JTIs
+    # from (#3195): each token is blocklisted (401 "Token has been
+    # revoked" on its next use) and the live sockets it opened are cut.
+    await app.state.auth.revoke_all_user_sessions(
+        user_id, reason="user deletion"
+    )
     deleted = await app.state.model.users.delete_user(user_id)
+    # Cut what remains by user id, after the row is gone (#3195): a
+    # connect that raced in between the revoke and the delete must hit
+    # the missing user row and die, and sockets from pre-session-registry
+    # tokens carry no session row for the revoke to reach.
+    await _kick_user_sockets(app, user_id, "deleted", "Account deleted")
     # Prune the per-user activity-throttle stamp (#2914): placed before
     # the not-deleted race check so even a lost race (user already gone)
     # does not leave a stale entry behind.
@@ -479,23 +490,27 @@ def _reject_self_disable(
         )
 
 
-async def _kick_disabled_user_sockets(app, user_id: str) -> None:
-    """Cut a just-disabled user's live sockets (#2588, #3162).
+async def _kick_user_sockets(
+    app, user_id: str, action: str, reason: str
+) -> None:
+    """Cut a user's live sockets (#2588, #3162).
 
     The main /ws connections (the terminal/control data plane) and the
     consent-decider sockets (egress-consent authority) alike; 4001 ->
-    the clients log out rather than reconnect-looping.
+    the clients log out rather than reconnect-looping. *action* names
+    the trigger in the log line ("disabled", "deleted").
     """
     kicked = await wshandler.disconnect_user(
-        app.state.sockets, user_id, reason="Account disabled"
+        app.state.sockets, user_id, reason=reason
     )
     deciders_kicked = await wshandler.disconnect_deciders_by_user(
-        app, user_id, reason="Account disabled"
+        app, user_id, reason=reason
     )
     if kicked or deciders_kicked:
         logger.info(
-            "admin: disabled user %s; closed %d live connection(s)"
+            "admin: %s user %s; closed %d live connection(s)"
             " and %d consent decider(s)",
+            action,
             user_id,
             kicked,
             deciders_kicked,
@@ -517,7 +532,7 @@ async def _update_user_disabled(
     if not updated:  # pragma: no cover — race between get and update
         raise HTTPException(status_code=404, detail="User not found")
     if req.disabled:
-        await _kick_disabled_user_sockets(app, user_id)
+        await _kick_user_sockets(app, user_id, "disabled", "Account disabled")
 
 
 @router.post("/users/{user_id}/unlockout")

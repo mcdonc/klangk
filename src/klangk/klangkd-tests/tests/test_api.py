@@ -10296,6 +10296,95 @@ class TestAdminEndpoints:
         emails = [u["email"] for u in resp.json()["users"]]
         assert "testuser@example.com" not in emails
 
+    async def test_delete_user_revokes_sessions(
+        self, client, app, admin_user, user, registry, app_state
+    ):
+        """#3195: deletion blocklists the victim's tokens — the old JWT
+        dies as "revoked" (not merely "user not found"), so nothing
+        issued before the delete stays usable until natural expiry."""
+        login = await client.post(
+            "/api/v1/auth/login",
+            json={
+                "identifier": "testuser@example.com",
+                "password": "testpass",
+            },
+        )
+        victim_headers = {
+            "Authorization": f"Bearer {login.json()['access_token']}"
+        }
+        jti = app.state.auth.decode_token(login.json()["access_token"])["jti"]
+        headers = await self._admin_headers(client)
+        with (
+            patch.object(
+                registry,
+                "stop_user_containers",
+                new_callable=AsyncMock,
+            ),
+            patch.object(
+                app.state.workspaces,
+                "archive_user_data",
+                new_callable=AsyncMock,
+            ),
+        ):
+            resp = await client.delete(
+                f"/api/v1/users/{user['id']}", headers=headers
+            )
+        assert resp.status_code == 200
+        # The token is blocklisted, so it 401s as revoked (the check
+        # runs before the user lookup — a deleted-but-unrevoked token
+        # would say "User not found" instead).
+        resp = await client.get("/api/v1/auth/me", headers=victim_headers)
+        assert resp.status_code == 401
+        assert resp.json()["detail"] == "Token has been revoked"
+        # The blocklist assert is the real check: the session rows would
+        # also vanish via the user-delete cascade without the revoke.
+        assert await app_state.state.model.tokens.is_token_blocklisted(jti)
+
+    async def test_delete_user_kicks_sockets(
+        self, client, app, admin_user, user, registry
+    ):
+        """#3195: deletion cuts the victim's live /ws connections
+        (4001, "Account deleted") — a deleted user's data plane must not
+        outlive the delete. The victim's fake connection has no session
+        row, so it is the by-user kick (not the jti revoke) that closes
+        it — exactly the pre-session-registry-token case. Another user's
+        socket is untouched."""
+        closed: list[tuple[int, str]] = []
+
+        class FakeSock:
+            async def close(self, code=1000, reason=""):
+                closed.append((code, reason))
+
+        victim_conn = types.SimpleNamespace(
+            user={"id": user["id"], "email": user["email"]}
+        )
+        other_conn = types.SimpleNamespace(
+            user={"id": "someone-else", "email": "other@example.com"}
+        )
+        app.state.sockets.connections[FakeSock()] = other_conn
+        app.state.sockets.connections[FakeSock()] = victim_conn
+        headers = await self._admin_headers(client)
+        try:
+            with (
+                patch.object(
+                    registry,
+                    "stop_user_containers",
+                    new_callable=AsyncMock,
+                ),
+                patch.object(
+                    app.state.workspaces,
+                    "archive_user_data",
+                    new_callable=AsyncMock,
+                ),
+            ):
+                resp = await client.delete(
+                    f"/api/v1/users/{user['id']}", headers=headers
+                )
+            assert resp.status_code == 200
+            assert closed == [(4001, "Account deleted")]
+        finally:
+            app.state.sockets.connections.clear()
+
     async def test_delete_user_prunes_activity_stamp(
         self, client, app, admin_user, user, registry
     ):
