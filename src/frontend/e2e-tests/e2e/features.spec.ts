@@ -109,6 +109,14 @@ test.describe("feature artifacts visible to the frontend", () => {
       "default-src 'self'",
     );
     expect(csp).toContain("frame-ancestors 'none'");
+    // #3219: inline index.html scripts ride SHA-256 hash tokens — no
+    // 'unsafe-inline' in script-src — and Trusted Types are enforced.
+    const scriptSrc = csp.match(/script-src[^;]*/)?.[0] ?? "";
+    expect(scriptSrc, `script-src directive: ${scriptSrc}`).not.toContain(
+      "unsafe-inline",
+    );
+    expect(scriptSrc).toContain("sha256-");
+    expect(csp).toContain("require-trusted-types-for 'script'");
     expect(resp.headers()["x-frame-options"]).toBe("DENY");
 
     const api = await request.get(`${API_BASE}/api/v1/config`);
