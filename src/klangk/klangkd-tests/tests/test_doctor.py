@@ -803,7 +803,8 @@ class TestCheckAutoHttpsPorts:
         assert "klangk.example.com" in r.message
 
     def test_warning_when_ports_fail(self):
-        """A bind failure is warning-grade and names the port + reason."""
+        """A bind failure is error-grade (the armed config won't load at
+        all — the whole proxy is down) and names the port + reason."""
         with patch(
             "klangk.doctor.port_bind_error",
             side_effect=lambda p: (
@@ -813,9 +814,10 @@ class TestCheckAutoHttpsPorts:
             ),
         ):
             r = check_auto_https_ports("klangk.example.com")
-        assert r is not None and not r.ok and r.is_warning
+        assert r is not None and not r.ok and not r.is_warning
         assert "80: Permission denied" in r.message
         assert "443: Address already in use" in r.message
+        assert "will not start" in r.message
         assert "setcap" in r.hint
 
 

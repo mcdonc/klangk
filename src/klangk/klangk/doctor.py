@@ -557,17 +557,25 @@ def _auto_https_ok_result(hostname: str) -> CheckResult:
 def _auto_https_failure_result(
     hostname: str, failures: list[str]
 ) -> CheckResult:
-    """The warning-grade result naming each unbindable port (#3192)."""
+    """The error-grade result naming each unbindable port (#3192).
+
+    In armed mode the auto-HTTPS listeners (:80 redirect/challenge, :443)
+    are part of the config caddy loads, so an unbindable port does not
+    degrade to "HTTPS broken, HTTP fine" — caddy refuses the whole load
+    and the watchdog aborts. The proxy is down entirely, browser and
+    egress alike, which is why this is error-grade, not a warning.
+    """
     return CheckResult(
         name="auto-https ports",
         ok=False,
-        is_warning=True,
         message=(
             f"KLANGKD_PUBLIC_HOSTNAME={hostname} but cannot bind: "
             + "; ".join(failures)
-            + ". ACME certificate issuance will fail until this is fixed "
-            "(free the port, or grant caddy permission to bind privileged "
-            "ports)."
+            + ". With automatic TLS armed these ports are part of the "
+            "proxy config: caddy refuses to load it and the klangkd "
+            "proxy (browser AND container-egress listeners) will not "
+            "start until the port is free or caddy may bind privileged "
+            "ports."
         ),
         hint=(
             "sudo setcap 'cap_net_bind_service=+ep' "
@@ -582,10 +590,10 @@ def check_auto_https_ports(hostname: str | None) -> CheckResult | None:
     Runs only when ``KLANGKD_PUBLIC_HOSTNAME`` arms automatic TLS (env-var
     detection — doctor is a standalone pre-flight command with no config
     plumbed in; a YAML-configured deployment exports the var when running
-    doctor). Both failures are warning-grade: klangkd itself still boots,
-    but ACME issuance (80: HTTP-01 challenge + redirect, 443: TLS-ALPN /
-    the canonical listener) cannot succeed until the port is free or the
-    caddy binary may bind privileged ports.
+    doctor). Failures are error-grade: the auto-HTTPS listeners are part
+    of the armed proxy config, so an unbindable 80/443 keeps caddy from
+    loading it at all — the klangkd proxy does not start (browser and
+    container-egress listeners alike), not merely "no certificate".
     """
     if not hostname:
         return None

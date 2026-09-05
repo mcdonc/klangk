@@ -61,16 +61,19 @@ acme-email: "ops@example.com"
   HTTP→HTTPS redirect on port 80). Unset (the default) keeps plain HTTP
   with `auto_https off` — byte-identical to the pre-#3192 behavior, so
   outer-proxy deployments are untouched.
+- **`acme-email`** — strongly recommended. The CA sends certificate
+  expiry and renewal-failure notices there, and it registers the ACME
+  account. Must be a plain address (`ops@example.com`) — a display-name
+  form (`Ops <ops@example.com>`) is rejected at construction, because
+  the value is passed verbatim into the proxy config.
 - **`port`** — required (arming without it refuses to boot). `443` is
   the canonical choice for an internet-facing server; any other port
   works too (the certificate is issued for the hostname, not the port),
   but then browsers must use the explicit port in the URL.
-- **`acme-email`** — strongly recommended. The CA sends certificate
-  expiry and renewal-failure notices there, and it registers the ACME
-  account.
-- **`listen`** — must not stay at the `127.0.0.1` default, or the HTTPS
-  listener is unreachable off-host (klangkd logs a warning at render
-  time; `0.0.0.0` binds every interface).
+- **`listen`** — must not stay at the `127.0.0.1` default: the HTTPS
+  listener would be unreachable off-host **and** the ACME challenge
+  could not be answered, so issuance would fail (klangkd logs a warning
+  at render time; `0.0.0.0` binds every interface).
 
 Both `public-hostname` and `acme-email` are reloadable: after editing,
 send `SIGHUP` (see [Process Signals](signals.md)) and klangkd pushes the
@@ -121,7 +124,16 @@ KLANGKD_PUBLIC_HOSTNAME=klangk.example.com klangkd doctor
 ```
 
 When automatic TLS is armed, doctor checks that ports 80/443 are
-bindable and warns with the `setcap` fix hint when they are not.
+bindable. This is an **error-grade** check, not a warning: with TLS
+armed those ports are part of the proxy config, so an unbindable port
+does not merely break certificate issuance — caddy refuses to load the
+config and the klangkd proxy (browser **and** container-egress
+listeners) does not start at all. The fix hint grants the caddy binary
+permission to bind privileged ports:
+
+```console
+sudo setcap 'cap_net_bind_service=+ep' $(readlink -f $(which caddy))
+```
 
 After boot, certificate trouble surfaces in the logs at `ERROR` level
 (lines from Caddy's `tls.obtain` logger, e.g.
@@ -147,4 +159,15 @@ After boot, certificate trouble surfaces in the logs at `ERROR` level
 - **HTTPS listener unreachable from outside** — `listen` is still
   `127.0.0.1`; set it to `0.0.0.0` or a specific interface IP.
 - **Certificate not issued** — run `klangkd doctor` (see above) and
-  check the logs for `tls.obtain` errors.
+  check the logs for `tls.obtain` errors. Note that an unbindable
+  port 80/443 does not degrade to plain HTTP: with TLS armed, caddy
+  refuses the whole config (see the doctor section above).
+
+## Notes
+
+- **No HSTS header.** The browser site's response headers are identical
+  in armed and unarmed mode; klangkd does not add
+  `Strict-Transport-Security`. Put an HSTS policy in an outer proxy if
+  you need one, or watch #2167 for TLS-header options.
+- The HTTP→HTTPS redirect on port 80 is installed by caddy's automatic
+  HTTPS and redirects to the armed `https://<hostname>:<port>`.

@@ -102,16 +102,26 @@ _CONTAINER_MEM_LIMIT_RE = re.compile(
 # KLANGKD_PUBLIC_HOSTNAME (#3192): a syntactically valid public FQDN —
 # at least two labels (so a bare "localhost" or NetBIOS name is
 # rejected), labels of alphanumerics + inner hyphens (RFC 1123, 1-63
-# chars each), a non-numeric alphabetic TLD of 2-63 chars (so an IP
-# literal like 192.168.1.5 is rejected — public CAs do not issue for
-# it), and a total length <= 253. Matched case-insensitively; the
-# validator lowercases + strips any trailing root dot before matching.
+# chars each), a TLD that is not all-numeric (so an IP literal like
+# 192.168.1.5 is rejected — public CAs do not issue for it; punycode
+# TLDs like ``xn--p1ai`` pass), and a total length <= 253. Matched
+# case-insensitively; the validator lowercases + strips any trailing
+# root dot before matching.
 _FQDN_RE = re.compile(
     r"^(?=.{1,253}$)"
     r"(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+"
-    r"[a-z]{2,63}$",
+    r"(?!\d+$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$",
     re.IGNORECASE,
 )
+
+# KLANGKD_ACME_EMAIL (#3192): a single RFC 5322-ish token — one local
+# part, one @, one dot-bearing domain — with no whitespace, angle
+# brackets, quotes, commas, or semicolons. The value is interpolated
+# UNQUOTED into Caddy's global ``email`` directive, so a display-name
+# form like ``Ops <ops@example.com>`` would make caddy reject the whole
+# Caddyfile at load time; the validator refuses it at construction
+# instead (fail-fast, not a proxy respawn loop).
+_ACME_EMAIL_RE = re.compile(r"^[^\s<>@\"',;]+@[^\s<>@\"',;]+\.[^\s<>@\"',;]+$")
 
 # The XDG "klangkd" subdir used by the default-roots (state + config). The
 # server's tree is ``klangkd`` (the binary name) — distinct from the CLI's
@@ -1755,14 +1765,22 @@ class KlangkSettings(BaseSettings):
         return self
 
     def _validate_acme_email(self) -> None:
-        """Normalize + sanity-check an explicitly set ``acme_email``."""
+        """Normalize + sanity-check an explicitly set ``acme_email``.
+
+        The value lands unquoted in Caddy's global ``email`` directive, so
+        anything but a single ``local@domain.tld`` token (a display-name
+        form, embedded spaces/brackets) would make caddy refuse the whole
+        Caddyfile — refuse it here, at construction, instead (#3192).
+        """
         email = (self.acme_email or "").strip()
         self.acme_email = email or None
-        if email and "@" not in email:
+        if email and not _ACME_EMAIL_RE.match(email):
             raise ValueError(
                 f"KLANGKD_ACME_EMAIL={self.acme_email!r} is invalid. It "
-                "must be an email address (the CA sends certificate "
-                "expiry / renewal-failure notices there), or unset."
+                "must be a plain email address like 'ops@example.com' "
+                "(no display name, spaces, or angle brackets — the value "
+                "is passed verbatim to the certificate authority), or "
+                "unset."
             )
 
     def _normalize_port_fields(self) -> None:

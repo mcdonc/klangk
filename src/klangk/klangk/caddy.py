@@ -209,6 +209,17 @@ def _proxy_preexec() -> None:  # pragma: no cover  – runs in forked child
 logger = logging.getLogger(__name__)
 
 
+class AutoHttpsConfigError(ValueError):
+    """Automatic TLS is armed but the environment cannot serve it (#3192).
+
+    Raised when the armed config cannot be rendered/loaded (e.g. an older
+    caddy that rejects the required global options). The boot path turns
+    it into a fatal startup error; the SIGHUP path logs it at ERROR and
+    keeps the last-known-good config running — either way it is never a
+    silent fallthrough to plain HTTP.
+    """
+
+
 # ---------------------------------------------------------------------------
 # Frontend hardening headers (#3149)
 # ---------------------------------------------------------------------------
@@ -586,7 +597,7 @@ class CaddyRenderer:
         """
         if not self.auto_https_armed or full_global:
             return
-        raise ValueError(
+        raise AutoHttpsConfigError(
             "KLANGKD_PUBLIC_HOSTNAME (automatic TLS) needs a Caddy "
             "new enough for the full global options block "
             "(persist_config / servers.trusted_proxies); the detected "
@@ -867,15 +878,19 @@ class CaddyRenderer:
 
     def _warn_loopback_listen_when_armed(self, listen_addr: str) -> None:
         """Warn when automatic TLS is armed but the listener stays
-        loopback-only — the HTTPS site would be unreachable off-host
+        loopback-only — the HTTPS site would be unreachable off-host AND
+        the ACME challenge listeners (which reuse the site's address)
+        would be unreachable from the internet, so issuance fails too
         (``KLANGKD_LISTEN`` defaults to ``127.0.0.1``; an internet-facing
         deployment needs ``0.0.0.0`` or a specific interface, #3192)."""
         if listen_addr.strip() in ("127.0.0.1", "::1", "localhost"):
             logger.warning(
                 "KLANGKD_PUBLIC_HOSTNAME is set (automatic TLS) but "
                 "KLANGKD_LISTEN is loopback-only (%s) — the HTTPS listener "
-                "will be unreachable from other hosts. Set KLANGKD_LISTEN "
-                "(e.g. 0.0.0.0) for an internet-facing deployment.",
+                "is unreachable from other hosts and the ACME challenge "
+                "cannot be answered, so certificate issuance will fail. "
+                "Set KLANGKD_LISTEN (e.g. 0.0.0.0) for an internet-facing "
+                "deployment.",
                 listen_addr,
             )
 
@@ -1054,6 +1069,17 @@ class CaddyWatchdog:
         try:
             await self.load_config()
             logger.info("caddy config reloaded via admin API (SIGHUP)")
+        except AutoHttpsConfigError as exc:
+            # An armed-but-unloadable config is a refused security arming,
+            # not a routine broken reload: the live settings say TLS is on
+            # while Caddy keeps serving the last-known-good (plain-HTTP)
+            # config. That must be louder than a generic warning (#3192).
+            logger.error(
+                "SIGHUP: automatic TLS could not be applied — the running "
+                "config is unchanged and the browser listener is still "
+                "serving the previous scheme. Fix and reload again: %s",
+                exc,
+            )
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "caddy SIGHUP reload failed (running config unchanged): %s",
@@ -1109,7 +1135,9 @@ class CaddyWatchdog:
         problems at push time rather than mid-issuance.
         """
         if self._renderer.auto_https_armed:
-            os.makedirs(self._renderer.caddy_storage_dir(), exist_ok=True)
+            os.makedirs(
+                self._renderer.caddy_storage_dir(), mode=0o700, exist_ok=True
+            )
 
     async def load_config(
         self,
@@ -1366,8 +1394,8 @@ class CaddyWatchdog:
                 "(docs/deployment/behind-a-proxy.md).",
                 bin_path,
             )
-            raise RuntimeError(
-                "automatic TLS (KLANGKD_PUBLIC_HOSTNAME) requires a newer "
+            raise AutoHttpsConfigError(
+                f"automatic TLS (KLANGKD_PUBLIC_HOSTNAME) requires a newer "
                 f"caddy binary (detected: {bin_path})"
             )
         self._stopping = False

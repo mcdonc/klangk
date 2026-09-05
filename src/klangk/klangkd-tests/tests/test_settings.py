@@ -1040,6 +1040,26 @@ class TestAutoHttpsSettings:
         assert s.public_hostname == "klangk.example.com"
 
     @pytest.mark.parametrize(
+        "good",
+        [
+            "klangk.example.com",
+            "klangk.example.co.uk",  # multi-label TLD
+            "klangk.xn--p1ai",  # punycode TLD (рф) — a real public TLD
+            "xn--80ak6aa92e.com",  # punycode label (例え.com)
+            "my-host.example.com",  # inner hyphen
+        ],
+    )
+    def test_valid_public_hostnames_accepted(self, good):
+        s = KlangkSettings(
+            env={
+                "KLANGKD_STATE_DIR": "/tmp/state",
+                "KLANGKD_PORT": "443",
+                "KLANGKD_PUBLIC_HOSTNAME": good,
+            }
+        )
+        assert s.public_hostname == good
+
+    @pytest.mark.parametrize(
         "bad",
         [
             "192.168.1.5",  # IP literal — public CAs don't issue for IPs
@@ -1093,7 +1113,16 @@ class TestAutoHttpsSettings:
         )
         assert s.acme_email == "ops@example.com"
 
-    @pytest.mark.parametrize("bad", ["not-an-email", "example.com"])
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            "not-an-email",
+            "example.com",  # no @
+            "ops@localhost",  # no dot in the domain — not a CA-routable addr
+            "Ops <ops@example.com>",  # display-name form breaks the Caddyfile
+            "ops@example.com,",  # trailing comma
+        ],
+    )
     def test_bad_email_rejected(self, bad):
         from pydantic import ValidationError
 
