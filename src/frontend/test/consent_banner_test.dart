@@ -66,7 +66,7 @@ void main() {
   ) async {
     final channel = _FakeChannel();
     final svc = _serviceWithChannel(channel);
-    svc.connect();
+    await svc.connect();
     await tester.pumpWidget(_wrap(ConsentBanner(service: svc)));
     await tester.pumpAndSettle();
     expect(find.textContaining('Pending egress consent'), findsNothing);
@@ -78,7 +78,7 @@ void main() {
   ) async {
     final channel = _FakeChannel();
     final svc = _serviceWithChannel(channel);
-    svc.connect();
+    await svc.connect();
     channel.serverSend({
       'type': 'egress_request',
       'request': {
@@ -104,7 +104,7 @@ void main() {
   ) async {
     final channel = _FakeChannel();
     final svc = _serviceWithChannel(channel);
-    svc.connect();
+    await svc.connect();
     channel.serverSend({
       'type': 'egress_request',
       'request': {
@@ -132,7 +132,7 @@ void main() {
   ) async {
     final channel = _FakeChannel();
     final svc = _serviceWithChannel(channel);
-    svc.connect();
+    await svc.connect();
     channel.serverSend({
       'type': 'egress_request',
       'request': {
@@ -160,7 +160,7 @@ void main() {
   ) async {
     final channel = _FakeChannel();
     final svc = _serviceWithChannel(channel);
-    svc.connect();
+    await svc.connect();
     channel.serverSend({
       'type': 'egress_request',
       'request': {
@@ -185,7 +185,7 @@ void main() {
     (tester) async {
       final channel = _FakeChannel();
       final svc = _serviceWithChannel(channel);
-      svc.connect();
+      await svc.connect();
       channel.serverSend({
         'type': 'egress_request',
         'request': {
@@ -238,7 +238,7 @@ void main() {
     (tester) async {
       final channel = _FakeChannel();
       final svc = _serviceWithChannel(channel);
-      svc.connect();
+      await svc.connect();
       channel.serverSend({
         'type': 'egress_request',
         'request': {
@@ -274,7 +274,7 @@ void main() {
       addTearDown(tester.view.reset);
       final channel = _FakeChannel();
       final svc = _serviceWithChannel(channel);
-      svc.connect();
+      await svc.connect();
       channel.serverSend({
         'type': 'egress_request',
         'request': {
@@ -312,7 +312,7 @@ void main() {
     (tester) async {
       final channel = _FakeChannel();
       final svc = _serviceWithChannel(channel);
-      svc.connect();
+      await svc.connect();
       channel.serverSend({
         'type': 'egress_request',
         'request': {
@@ -343,7 +343,7 @@ void main() {
   testWidgets('shows a flash for a server error frame', (tester) async {
     final channel = _FakeChannel();
     final svc = _serviceWithChannel(channel);
-    svc.connect();
+    await svc.connect();
     channel.serverSend({
       'type': 'egress_request',
       'request': {
@@ -368,7 +368,7 @@ void main() {
   ) async {
     final channel = _FakeChannel();
     final svc = _serviceWithChannel(channel);
-    svc.connect();
+    await svc.connect();
     channel.serverClose(4001);
     await tester.pumpWidget(_wrap(ConsentBanner(service: svc)));
     await tester.pumpAndSettle();
@@ -390,7 +390,7 @@ void main() {
       clock: () =>
           DateTime.fromMillisecondsSinceEpoch(2000 * 1000, isUtc: true),
     );
-    svc.connect();
+    await svc.connect();
     channel.serverSend({
       'type': 'egress_request',
       'request': {

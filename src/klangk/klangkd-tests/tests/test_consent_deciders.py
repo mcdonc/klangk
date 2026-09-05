@@ -186,6 +186,7 @@ class _FakeWS:
             if headers is not None
             else {"user-agent": "fake-decider/1.0"}
         )
+        self.url = types.SimpleNamespace(path="/ws/consent-decider")
         self._incoming = iter(incoming)
         self.sent: list[str] = []
         self.accepted = False
@@ -272,6 +273,7 @@ def _ws_app(
         get_user_from_token=AsyncMock(return_value=token_result),
         decode_token=decode_mock,
         _user_from_valid_payload=AsyncMock(return_value=payload_result),
+        check_dpop=MagicMock(return_value=None),
     )
     app.state.acl = types.SimpleNamespace(
         get_principals=AsyncMock(
@@ -1223,3 +1225,31 @@ class TestDeciderRegistryBranchGaps2834:
         assert reg._reaper is first
         await reg.stop()
         assert reg._reaper is None
+
+
+class TestConsentDeciderDpopGate:
+    """#3218: the decider handshake requires a DPoP proof for bound tokens."""
+
+    async def test_proof_failure_refused_4001(self):
+        from klangk.wshandler.decider import _decider_authenticate
+
+        app = _ws_app({"id": "u1", "email": "a@x"})
+        app.state.auth.check_dpop = MagicMock(
+            return_value="proof key does not match"
+        )
+        ws = _FakeWS({"token": "tok"}, [])
+        result = await _decider_authenticate(ws, app, lambda label: None)
+        assert result is None
+        assert ws.closed == (4001, "Invalid DPoP proof")
+
+    async def test_valid_proof_passes_gate(self):
+        from klangk.wshandler.decider import _decider_authenticate
+
+        app = _ws_app({"id": "u1", "email": "a@x"})
+        ws = _FakeWS({"token": "tok", "dpop": "a-proof"}, [])
+        result = await _decider_authenticate(ws, app, lambda label: None)
+        assert result is not None
+        assert ws.closed is None
+        # The proof arrived via the dpop query parameter.
+        check = app.state.auth.check_dpop
+        assert check.call_args.args[0] == "a-proof"

@@ -311,6 +311,14 @@ ENDPOINTS: list[tuple[str, str, dict | None, dict | None]] = [
     # Auth — with token
     ("POST", f"{P}/auth/local", None, None),  # no-auth mode; 403 in password mode
     ("POST", f"{P}/auth/refresh", None, None),
+    # DPoP key registration (#3218): a non-dict or garbage JWK is the
+    # interesting fuzz state (400); a bound caller's re-bind is 409.
+    (
+        "POST",
+        f"{P}/auth/bind",
+        {"jwk": {"kty": "EC", "crv": "P-256", "x": "string", "y": "string"}},
+        None,
+    ),
     # Step-up confirmation (#3196): wrong/garbage passwords are the
     # interesting fuzz states (401 / 429 via lockout; 400 when the
     # window is unarmed).

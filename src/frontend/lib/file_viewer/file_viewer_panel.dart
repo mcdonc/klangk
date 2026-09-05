@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import '../auth/dpop.dart';
 import '../ws/ws_client.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 import '../utils/web_helpers_stub.dart'
@@ -165,10 +166,25 @@ class FileViewerPanelState extends State<FileViewerPanel> {
     _loadFiles();
   }
 
-  Map<String, String> get _headers => {
-        if (widget.authToken != null)
-          'Authorization': 'Bearer ${widget.authToken}',
-      };
+  /// Headers for one authenticated file-API request: the Bearer token
+  /// plus a DPoP proof when that token is bound (#3218).
+  Future<Map<String, String>> _headersFor(
+    String method,
+    String url,
+  ) async {
+    final headers = <String, String>{
+      if (widget.authToken != null)
+        'Authorization': 'Bearer ${widget.authToken}',
+    };
+    if (widget.authToken == null) return headers;
+    final proof = await dpopBackend.createProof(
+      method: method,
+      uri: url,
+      accessToken: widget.authToken!,
+    );
+    if (proof != null) headers['DPoP'] = proof;
+    return headers;
+  }
 
   Future<void> _loadFiles({bool force = false}) async {
     if (!mounted) return;
@@ -194,11 +210,11 @@ class FileViewerPanelState extends State<FileViewerPanel> {
       _listError = null;
     });
     try {
+      final url =
+          '$_baseUrl/api/v1/workspaces/${widget.workspaceId}/files?path=${Uri.encodeComponent(requestedPath)}';
       final response = await _client.get(
-        Uri.parse(
-          '$_baseUrl/api/v1/workspaces/${widget.workspaceId}/files?path=${Uri.encodeComponent(requestedPath)}',
-        ),
-        headers: _headers,
+        Uri.parse(url),
+        headers: await _headersFor('GET', url),
       );
       if (generation != _loadGeneration) return;
       if (response.statusCode == 200) {
@@ -255,7 +271,10 @@ class FileViewerPanelState extends State<FileViewerPanel> {
   /// goes to the log only.
   Future<http.Response> _getFile(Uri uri) async {
     try {
-      return await _client.get(uri, headers: _headers);
+      return await _client.get(
+        uri,
+        headers: await _headersFor('GET', uri.toString()),
+      );
     } catch (e) {
       debugPrint('File read request failed: $e');
       throw Exception('Network error. Please try again.');
@@ -322,11 +341,10 @@ class FileViewerPanelState extends State<FileViewerPanel> {
   Future<void> _saveFileText(String path, String content) async {
     final name =
         path.contains('/') ? path.substring(path.lastIndexOf('/') + 1) : path;
-    final uri = Uri.parse(
-      '$_baseUrl/api/v1/workspaces/${widget.workspaceId}/files/upload?path=${Uri.encodeComponent(path)}',
-    );
-    final request = http.MultipartRequest('POST', uri)
-      ..headers.addAll(_headers)
+    final url =
+        '$_baseUrl/api/v1/workspaces/${widget.workspaceId}/files/upload?path=${Uri.encodeComponent(path)}';
+    final request = http.MultipartRequest('POST', Uri.parse(url))
+      ..headers.addAll(await _headersFor('POST', url))
       ..files.add(
         http.MultipartFile.fromString('file', content, filename: name),
       );
@@ -389,11 +407,11 @@ class FileViewerPanelState extends State<FileViewerPanel> {
     );
     if (confirmed != true) return;
     try {
+      final url =
+          '$_baseUrl/api/v1/workspaces/${widget.workspaceId}/files?path=${Uri.encodeComponent(path)}';
       final response = await _client.delete(
-        Uri.parse(
-          '$_baseUrl/api/v1/workspaces/${widget.workspaceId}/files?path=${Uri.encodeComponent(path)}',
-        ),
-        headers: _headers,
+        Uri.parse(url),
+        headers: await _headersFor('DELETE', url),
       );
       if (response.statusCode == 200 || response.statusCode == 404) {
         // 404 means it was already gone (e.g. deleted in the terminal
@@ -459,10 +477,11 @@ class FileViewerPanelState extends State<FileViewerPanel> {
     final newPath = '$parentDir$newName';
 
     try {
+      final url =
+          '$_baseUrl/api/v1/workspaces/${widget.workspaceId}/files/rename';
       final response = await _client.post(
-        Uri.parse(
-            '$_baseUrl/api/v1/workspaces/${widget.workspaceId}/files/rename'),
-        headers: _headers,
+        Uri.parse(url),
+        headers: await _headersFor('POST', url),
         body: jsonEncode({'old_path': path, 'new_path': newPath}),
       );
       if (response.statusCode == 200) {
@@ -505,7 +524,10 @@ class FileViewerPanelState extends State<FileViewerPanel> {
     final url =
         '$_baseUrl/api/v1/workspaces/${widget.workspaceId}/files/download?path=${Uri.encodeComponent(path)}';
     try {
-      final response = await _client.get(Uri.parse(url), headers: _headers);
+      final response = await _client.get(
+        Uri.parse(url),
+        headers: await _headersFor('GET', url),
+      );
       if (response.statusCode == 404) {
         // The file no longer exists since the listing was cached; drop the
         // stale entry and inform the user instead of showing a bare 404.

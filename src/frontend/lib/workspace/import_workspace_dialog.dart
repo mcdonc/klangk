@@ -59,7 +59,9 @@ class _ImportWorkspaceDialogState extends State<ImportWorkspaceDialog> {
         testAuthHttpClientOverride ?? http.Client(); // coverage:ignore-line
     try {
       final request = http.MultipartRequest('POST', Uri.parse(url));
-      request.headers['Authorization'] = 'Bearer ${widget.auth.token}';
+      request.headers.addAll(
+        await widget.auth.authHeadersFor('POST', '/api/v1/workspaces/import'),
+      );
       request.files.add(
         http.MultipartFile.fromBytes(
           'file',

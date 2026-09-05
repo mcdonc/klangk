@@ -605,7 +605,11 @@ async def local_login(request: Request):
 
 @router.post("/auth/refresh", response_model=auth.TokenResponse)
 async def refresh_token(request: Request):
-    """Exchange a valid access token for a new one."""
+    """Exchange a valid access token for a new one.
+
+    A DPoP-bound token (#3218) must present a fresh ``DPoP`` proof
+    header; the replacement keeps the binding.
+    """
     authorization = request.headers.get("authorization", "")
     if not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Not authenticated")
@@ -617,7 +621,38 @@ async def refresh_token(request: Request):
         request.headers.get("referer", "?"),
     )
     return await request.app.state.auth.refresh_token(
-        token, workstation(request)
+        token,
+        workstation(request),
+        proof=request.headers.get("dpop"),
+    )
+
+
+@router.post("/auth/bind", response_model=auth.TokenResponse)
+async def bind_session_token(
+    request: Request,
+    req: auth.BindRequest,
+    user: dict = Depends(auth.get_current_user_allow_forced_change),
+    credentials: HTTPAuthorizationCredentials | None = Depends(
+        auth.security
+    ),
+):
+    """Swap the caller's session token for one DPoP-bound to a key.
+
+    The web client's post-login step (#3218): it registers the public
+    half of its non-extractable WebCrypto ECDSA P-256 keypair and
+    receives a replacement token carrying ``cnf.jkt``; every later
+    use of that token must present a DPoP proof signed by the private
+    half. ``allow_forced_change`` is the dependency so a
+    must-change-password session can still bind and keep working
+    through the change-password flow (#3172).
+    """
+    source_ip, user_agent = workstation(request)
+    return await request.app.state.auth.bind_token(
+        credentials.credentials,
+        req.jwk,
+        workstation=(source_ip, user_agent),
+        source_ip=source_ip,
+        user_agent=user_agent,
     )
 
 

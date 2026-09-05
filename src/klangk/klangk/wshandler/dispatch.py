@@ -75,7 +75,8 @@ async def ws_authenticate(
     With session binding armed (#3194), the connect is also checked
     against the workstation the session was established from — a
     token replayed from a different machine closes 4001 and its
-    session is revoked.
+    session is revoked. A DPoP-bound token must also prove
+    possession (#3218).
     """
     token = websocket.query_params.get("token")
     if not token:
@@ -83,19 +84,52 @@ async def ws_authenticate(
         return None
 
     a = app.state.auth
-    try:
-        payload = a.decode_token(token)
-    except ExpiredSignatureError:
-        await websocket.close(code=4002, reason="Token expired")
+    payload = await _decode_socket_token(websocket, a, token)
+    if payload is None:
         return None
-    except JWTError:
-        await websocket.close(code=4001, reason="Invalid token")
+    if not await _dpop_gate(websocket, app, token, payload):
         return None
     workstation = ws_workstation(websocket, app)
     user = await _user_or_close(websocket, a, payload, workstation)
     if user is None:
         return None
     return user, payload.get("jti"), payload.get("exp")
+
+
+async def _decode_socket_token(websocket: WebSocket, a, token: str):
+    """The token payload, or None after closing the socket on failure."""
+    try:
+        return a.decode_token(token)
+    except ExpiredSignatureError:
+        await websocket.close(code=4002, reason="Token expired")
+        return None
+    except JWTError:
+        await websocket.close(code=4001, reason="Invalid token")
+        return None
+
+
+async def _dpop_gate(
+    websocket: WebSocket, app, token: str, payload: dict
+) -> bool:
+    """A DPoP-bound token must prove possession at connect (#3218).
+
+    The browser client appends a one-shot ``dpop`` query parameter —
+    the same compact proof the HTTP ``DPoP`` header carries (its jti
+    is single-use and its ath binds it to this exact token, so its
+    presence in the URL leaks nothing reusable). Unbound tokens
+    (CLI/TUI, pre-#3218 clients) pass untouched.
+    """
+    reason = app.state.auth.check_dpop(
+        websocket.query_params.get("dpop"),
+        "GET",
+        websocket.url.path,
+        token,
+        payload,
+    )
+    if reason is None:
+        return True
+    await websocket.close(code=4001, reason="Invalid DPoP proof")
+    return False
 
 
 def ws_workstation(websocket: WebSocket, app) -> tuple[str | None, str | None]:

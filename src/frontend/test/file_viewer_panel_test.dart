@@ -8,7 +8,10 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:klangk_frontend/ws/ws_client.dart';
 import 'package:klangk_frontend/file_viewer/file_viewer_panel.dart';
+import 'package:klangk_frontend/auth/dpop.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
+
+import 'dpop_test_helpers.dart';
 
 class _MockWsClient extends WsClient {
   final StreamController<Map<String, dynamic>> _controller =
@@ -2300,6 +2303,78 @@ void main() {
       expect(find.text('Download'), findsNothing);
       expect(find.text('Rename'), findsNothing);
       expect(find.text('Delete'), findsNothing);
+      client.close();
+    });
+  });
+
+  group('FileViewerPanel DPoP headers (#3218)', () {
+    tearDown(() {
+      testDpopBackendOverride = null;
+    });
+
+    testWidgets('bound token attaches a DPoP proof', (tester) async {
+      testDpopBackendOverride = FakeDpopBackend(proof: 'fv-proof');
+      final seen = <http.Request>[];
+      testHttpClientOverride = MockClient((request) async {
+        seen.add(request);
+        if (request.url.path.contains('/files') &&
+            !request.url.path.contains('/content')) {
+          return http.Response(jsonEncode([]), 200);
+        }
+        return http.Response('Not found', 404);
+      });
+
+      final client = _MockWsClient();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: buildPanel(
+              wsClient: client,
+              authToken: boundToken(),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final listing = seen.firstWhere((r) => r.url.path.contains('/files'));
+      expect(listing.headers['DPoP'], 'fv-proof');
+      expect(listing.headers['Authorization'], contains('Bearer'));
+      client.close();
+    });
+
+    testWidgets('null token sends no auth headers at all', (tester) async {
+      testDpopBackendOverride = FakeDpopBackend(proof: 'fv-proof');
+      final seen = <http.Request>[];
+      testHttpClientOverride = MockClient((request) async {
+        seen.add(request);
+        if (request.url.path.contains('/files') &&
+            !request.url.path.contains('/content')) {
+          return http.Response(jsonEncode([]), 200);
+        }
+        return http.Response('Not found', 404);
+      });
+
+      final client = _MockWsClient();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: FileViewerPanel(
+              wsClient: client,
+              workspaceId: 'ws-1',
+              authToken: null,
+              userHome: '/home/tester',
+              canDownload: true,
+              canWrite: true,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final listing = seen.firstWhere((r) => r.url.path.contains('/files'));
+      expect(listing.headers.containsKey('Authorization'), isFalse);
+      expect(listing.headers.containsKey('DPoP'), isFalse);
       client.close();
     });
   });

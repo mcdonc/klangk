@@ -152,3 +152,97 @@ def wire_db_and_model(app) -> None:
         features.is_enabled.return_value = True
         features.frontend_config.return_value = {}
         state.features = features
+
+
+# --- DPoP (RFC 9449) proof-minting helpers (#3218) --------------------------
+
+
+def make_binding_key():
+    """An EC P-256 keypair for DPoP tests: ``(private, public JWK dict)``.
+
+    Mirrors what the web client registers at ``POST /auth/bind``.
+    """
+    import base64 as _b64
+
+    from cryptography.hazmat.primitives.asymmetric import ec as _ec
+    from cryptography.hazmat.primitives.serialization import (
+        Encoding as _enc,
+        PublicFormat as _pf,
+    )
+
+    private = _ec.generate_private_key(_ec.SECP256R1())
+    point = private.public_key().public_bytes(_enc.X962, _pf.UncompressedPoint)
+
+    def coord(raw: bytes) -> str:
+        return _b64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+    jwk = {
+        "kty": "EC",
+        "crv": "P-256",
+        "x": coord(point[1:33]),
+        "y": coord(point[33:65]),
+    }
+    return private, jwk
+
+
+def der_to_raw_p1363(signature: bytes) -> bytes:
+    """Convert a DER ECDSA signature to the raw 64-byte ``r||s`` form."""
+
+    def integer_at(offset: int) -> tuple[int, int]:
+        length = signature[offset + 1]
+        value = int.from_bytes(
+            signature[offset + 2 : offset + 2 + length], "big"
+        )
+        return value, offset + 2 + length
+
+    r, offset = integer_at(2)
+    s, _ = integer_at(offset)
+    return r.to_bytes(32, "big") + s.to_bytes(32, "big")
+
+
+def build_dpop_proof(private, header: dict, payload: dict, raw=True) -> str:
+    """A compact-serialization DPoP JWT from verbatim header/payload."""
+    import base64 as _b64
+    import json as _json
+
+    from cryptography.hazmat.primitives import hashes as _hashes
+    from cryptography.hazmat.primitives.asymmetric import ec as _ec
+
+    def segment(obj: dict) -> str:
+        encoded = _json.dumps(obj, separators=(",", ":")).encode()
+        return _b64.urlsafe_b64encode(encoded).rstrip(b"=").decode()
+
+    signing_input = f"{segment(header)}.{segment(payload)}"
+    der = private.sign(signing_input.encode(), _ec.ECDSA(_hashes.SHA256()))
+    signature = der_to_raw_p1363(der) if raw else der
+    return (
+        f"{signing_input}."
+        f"{_b64.urlsafe_b64encode(signature).rstrip(b'=').decode()}"
+    )
+
+
+def make_dpop_proof(
+    private,
+    jwk: dict,
+    *,
+    method: str,
+    uri: str,
+    token: str,
+    jti: str | None = None,
+    iat: float | None = None,
+) -> str:
+    """A well-formed DPoP proof (raw P1363 signature, like WebCrypto)."""
+    import time as _time
+    import uuid as _uuid
+
+    from klangk import dpop as _dpop
+
+    header = {"typ": "dpop+jwt", "alg": "ES256", "jwk": jwk}
+    payload = {
+        "jti": jti or _uuid.uuid4().hex,
+        "htm": method,
+        "htu": uri,
+        "iat": int(_time.time()) if iat is None else iat,
+        "ath": _dpop.access_token_hash(token),
+    }
+    return build_dpop_proof(private, header, payload)

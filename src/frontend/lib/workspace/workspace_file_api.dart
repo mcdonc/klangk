@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
+import '../auth/dpop.dart';
 import '../terminal/terminal_link.dart' show PathKind;
 
 /// Classifies an absolute container [path] as a file, directory, or absent
@@ -29,9 +30,10 @@ Future<PathKind> statWorkspacePath({
   final uri = Uri.parse('$baseUrl/api/v1/workspaces/$workspaceId/files'
       '?path=${Uri.encodeQueryComponent(parent)}');
   try {
-    final res = await client.get(uri, headers: {
-      if (authToken != null) 'Authorization': 'Bearer $authToken',
-    });
+    final res = await client.get(
+      uri,
+      headers: await dpopHeadersFor('GET', uri.toString(), authToken),
+    );
     if (res.statusCode != 200) return PathKind.none;
     final entries = jsonDecode(res.body);
     if (entries is! List) return PathKind.none;

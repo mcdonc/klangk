@@ -12,8 +12,9 @@ from klangk.exceptions import ConfigurationError
 from sqlalchemy.exc import IntegrityError as SAIntegrityError
 import types as _types
 
-from _helpers import make_settings
+from _helpers import make_binding_key, make_dpop_proof, make_settings
 from klangk.auth import Auth, password_class_counts
+from klangk import dpop
 
 
 def _auth(env=None):
@@ -31,12 +32,20 @@ def _req(auth=None):
     """A request-like whose ``app.state`` is the auth's app_state.
 
     Exposes ``app.state.auth`` (the FastAPI dep reads it) plus the
-    ``model``/``db`` the dep callables reach (#1572).
+    ``model``/``db`` the dep callables reach (#1572). The HTTP surface
+    the DPoP gate reads (#3218) — headers, method, url.path — is
+    faked with no DPoP header; tokens minted by these tests are
+    unbound, so the gate no-ops.
     """
     if auth is None:
         auth = _auth()
     auth.app.state.auth = auth
-    return _types.SimpleNamespace(app=auth.app)
+    return _types.SimpleNamespace(
+        app=auth.app,
+        headers={},
+        method="GET",
+        url=_types.SimpleNamespace(path="/api/v1/x"),
+    )
 
 
 class TestPasswordHashing:
@@ -3296,6 +3305,8 @@ class TestSessionBindingHTTP:
             app=a.app,
             headers={"user-agent": user_agent},
             client=_types.SimpleNamespace(host=ip) if ip else None,
+            method="GET",
+            url=_types.SimpleNamespace(path="/api/v1/x"),
         )
 
     async def _home_token(self, mode):
@@ -3469,3 +3480,278 @@ class TestSessionBindingCachedRefresh:
             await a.refresh_token(expired_old, self.AWAY)
         assert exc_info.value.status_code == 401
         assert await app_state.state.model.tokens.is_token_blocklisted(new_jti)
+
+
+# --- DPoP binding (#3218) ----------------------------------------------------
+
+
+def _dpop_req(auth_instance, headers=None, method="GET", path="/api/v1/x"):
+    """A request fake carrying the HTTP surface the DPoP gate reads."""
+    req = _req(auth_instance)
+    req.headers = headers or {}
+    req.method = method
+    req.url = _types.SimpleNamespace(path=path)
+    return req
+
+
+class TestDpopBinding:
+    """bind_token: swap an unbound session token for a cnf-bound one."""
+
+    async def test_bind_returns_bound_token(self, user):
+        a = _auth()
+        private, jwk = make_binding_key()
+        token = await a.issue_token(user["id"], user["email"])
+        result = await a.bind_token(token, jwk)
+        payload = a.decode_token(result.access_token)
+        assert payload["cnf"]["jkt"] == dpop.jwk_thumbprint(jwk)
+        # The old JTI is dead (swap machinery, like refresh).
+        assert await a.app.state.model.tokens.is_token_blocklisted(
+            a.decode_token(token, allow_expired=True)["jti"]
+        )
+
+    async def test_bind_preserves_remaining_lifetime(self, user):
+        a = _auth()
+        _, jwk = make_binding_key()
+        token = a.create_token(user["id"], user["email"], expire_hours=1.0)
+        before = a.decode_token(token)["exp"]
+        result = await a.bind_token(token, jwk)
+        after = a.decode_token(result.access_token)["exp"]
+        assert abs(after - before) < 30
+
+    async def test_bind_retry_is_idempotent(self, user):
+        a = _auth()
+        _, jwk = make_binding_key()
+        token = await a.issue_token(user["id"], user["email"])
+        first = await a.bind_token(token, jwk)
+        # A retried bind with the (now blocklisted) old token returns
+        # the cached replacement — same idempotency as refresh.
+        retry = await a.bind_token(token, jwk)
+        assert retry.access_token == first.access_token
+
+    async def test_bind_refuses_already_bound_token(self, user):
+        a = _auth()
+        private, jwk = make_binding_key()
+        _, other_jwk = make_binding_key()
+        bound = a.create_token(user["id"], user["email"], jkt="somejkt")
+        with pytest.raises(HTTPException) as exc_info:
+            await a.bind_token(bound, other_jwk)
+        assert exc_info.value.status_code == 409
+
+    async def test_bind_refuses_non_ec_jwk(self, user):
+        a = _auth()
+        token = await a.issue_token(user["id"], user["email"])
+        with pytest.raises(HTTPException) as exc_info:
+            await a.bind_token(token, {"kty": "RSA", "n": "x", "e": "AQAB"})
+        assert exc_info.value.status_code == 400
+
+    async def test_bind_refuses_private_jwk(self, user):
+        a = _auth()
+        token = await a.issue_token(user["id"], user["email"])
+        _, jwk = make_binding_key()
+        with pytest.raises(HTTPException) as exc_info:
+            await a.bind_token(token, {**jwk, "d": "private"})
+        assert exc_info.value.status_code == 400
+
+    async def test_bind_expired_token_401(self, user):
+        a = _auth()
+        _, jwk = make_binding_key()
+        expired = a.create_token(user["id"], user["email"], expire_hours=-1)
+        with pytest.raises(HTTPException) as exc_info:
+            await a.bind_token(expired, jwk)
+        assert exc_info.value.status_code == 401
+
+    async def test_bind_invalid_token_401(self, user):
+        a = _auth()
+        _, jwk = make_binding_key()
+        with pytest.raises(HTTPException) as exc_info:
+            await a.bind_token("garbage.token.here", jwk)
+        assert exc_info.value.status_code == 401
+
+    async def test_bind_token_without_session_claims_401(self, user):
+        a = _auth()
+        _, jwk = make_binding_key()
+        claimless = jwt.encode(
+            {"sub": user["id"]},
+            a.secret,
+            algorithm=a.algorithm,
+        )
+        with pytest.raises(HTTPException) as exc_info:
+            await a.bind_token(claimless, jwk)
+        assert exc_info.value.status_code == 401
+
+    async def test_bind_deleted_user_401(self, user):
+        a = _auth()
+        _, jwk = make_binding_key()
+        token = a.create_token("ghost-id", "ghost@example.com")
+        with pytest.raises(HTTPException) as exc_info:
+            await a.bind_token(token, jwk)
+        assert exc_info.value.status_code == 401
+
+    async def test_bind_records_audit_event(self, user):
+        a = _auth()
+        _, jwk = make_binding_key()
+        token = await a.issue_token(user["id"], user["email"])
+        await a.bind_token(token, jwk, source_ip="10.0.0.9")
+        events = await a.app.state.model.audit_events.list_events()
+        kinds = [e["event"] for e in events]
+        assert "session.bind" in kinds
+
+
+class TestDpopRefresh:
+    """refresh_token: bound tokens must prove possession to rotate."""
+
+    async def test_bound_refresh_requires_proof(self, user):
+        a = _auth()
+        private, jwk = make_binding_key()
+        jkt = dpop.jwk_thumbprint(jwk)
+        token = a.create_token(user["id"], user["email"], jkt=jkt)
+        with pytest.raises(HTTPException) as exc_info:
+            await a.refresh_token(token)
+        assert exc_info.value.status_code == 401
+        assert "DPoP" in exc_info.value.detail
+
+    async def test_bound_refresh_with_valid_proof_keeps_binding(self, user):
+        a = _auth()
+        private, jwk = make_binding_key()
+        jkt = dpop.jwk_thumbprint(jwk)
+        token = a.create_token(user["id"], user["email"], jkt=jkt)
+        proof = make_dpop_proof(
+            private,
+            jwk,
+            method="POST",
+            uri="https://h/api/v1/auth/refresh",
+            token=token,
+        )
+        result = await a.refresh_token(token, proof=proof)
+        assert a.decode_token(result.access_token)["cnf"]["jkt"] == jkt
+
+    async def test_bound_refresh_with_bad_proof_401(self, user):
+        a = _auth()
+        private, jwk = make_binding_key()
+        jkt = dpop.jwk_thumbprint(jwk)
+        token = a.create_token(user["id"], user["email"], jkt=jkt)
+        proof = make_dpop_proof(
+            private,
+            jwk,
+            method="POST",
+            uri="https://h/api/v1/auth/refresh",
+            token="wrong-token",
+        )
+        with pytest.raises(HTTPException) as exc_info:
+            await a.refresh_token(token, proof=proof)
+        assert exc_info.value.status_code == 401
+
+    async def test_unbound_refresh_without_proof_still_works(self, user):
+        a = _auth()
+        token = await a.issue_token(user["id"], user["email"])
+        result = await a.refresh_token(token)
+        assert result.access_token != token
+
+
+class TestDpopEnforcement:
+    """The FastAPI deps enforce proofs for bound tokens (#3218)."""
+
+    def _bound_credentials(self, user):
+        a = _auth()
+        private, jwk = make_binding_key()
+        token = a.create_token(
+            user["id"], user["email"], jkt=dpop.jwk_thumbprint(jwk)
+        )
+        return (
+            a,
+            private,
+            jwk,
+            HTTPAuthorizationCredentials(scheme="Bearer", credentials=token),
+        )
+
+    async def test_bound_token_without_proof_401(self, user):
+        a, _, _, creds = self._bound_credentials(user)
+        with pytest.raises(HTTPException) as exc_info:
+            await auth.get_current_user(_dpop_req(a), creds)
+        assert exc_info.value.status_code == 401
+        assert "DPoP" in exc_info.value.detail
+
+    async def test_bound_token_with_valid_proof_passes(self, user):
+        a, private, jwk, creds = self._bound_credentials(user)
+        proof = make_dpop_proof(
+            private,
+            jwk,
+            method="GET",
+            uri="https://h/api/v1/x",
+            token=creds.credentials,
+        )
+        req = _dpop_req(a, headers={"dpop": proof})
+        result = await auth.get_current_user(req, creds)
+        assert result["id"] == user["id"]
+
+    async def test_bound_token_with_wrong_path_proof_401(self, user):
+        a, private, jwk, creds = self._bound_credentials(user)
+        proof = make_dpop_proof(
+            private,
+            jwk,
+            method="GET",
+            uri="https://h/other",
+            token=creds.credentials,
+        )
+        req = _dpop_req(a, headers={"dpop": proof})
+        with pytest.raises(HTTPException) as exc_info:
+            await auth.get_current_user(req, creds)
+        assert exc_info.value.status_code == 401
+
+    async def test_optional_dep_rejects_bad_proof(self, user):
+        a, private, jwk, creds = self._bound_credentials(user)
+        proof = make_dpop_proof(
+            private,
+            jwk,
+            method="POST",
+            uri="https://h/api/v1/x",
+            token=creds.credentials,
+        )
+        req = _dpop_req(a, headers={"dpop": proof})
+        with pytest.raises(HTTPException) as exc_info:
+            await auth.get_current_user_optional(req, creds)
+        assert exc_info.value.status_code == 401
+
+    async def test_optional_dep_accepts_valid_proof(self, user):
+        a, private, jwk, creds = self._bound_credentials(user)
+        proof = make_dpop_proof(
+            private,
+            jwk,
+            method="GET",
+            uri="https://h/api/v1/x",
+            token=creds.credentials,
+        )
+        req = _dpop_req(a, headers={"dpop": proof})
+        result = await auth.get_current_user_optional(req, creds)
+        assert result["id"] == user["id"]
+
+    async def test_lenient_logout_dep_ignores_proofs(self, user):
+        a, _, _, creds = self._bound_credentials(user)
+        result = await auth.get_current_user_lenient(_dpop_req(a), creds)
+        assert result["id"] == user["id"]
+
+
+class TestBindEnforcesSessionLimit:
+    """Binding a pre-#2585 token INSERTS a session row (the swap re-keys
+    one), so the cap must hold on the bind path too — mirroring the
+    refresh twin (review of #3218)."""
+
+    async def test_bind_of_untracked_token_enforces_limit(
+        self, user, app_state
+    ):
+        env = {"KLANGKD_MAX_SESSIONS_PER_USER": "1"}
+        a = _auth(env)
+        result = await a.login(
+            auth.LoginRequest(
+                identifier="testuser@example.com", password="testpass"
+            )
+        )
+        tracked = result.access_token
+        untracked = a.create_token(user["id"], user["email"])
+        _, jwk = make_binding_key()
+        bound = await a.bind_token(untracked, jwk)
+        # The untracked (now bound) session evicted the tracked one.
+        assert await a.get_user_from_token(tracked) is None
+        assert await a.get_user_from_token(bound.access_token) is not None
+        rows = await app_state.state.model.sessions.list_sessions(user["id"])
+        assert len(rows) == 1

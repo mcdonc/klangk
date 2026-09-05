@@ -2,7 +2,10 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:klangk_frontend/auth/dpop.dart';
 import 'package:klangk_frontend/workspace/consent_decider_service.dart';
+
+import 'dpop_test_helpers.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 /// Minimal fake WebSocketChannel mirroring ws_client_test's helper.
@@ -661,7 +664,7 @@ void main() {
       ConsentDeciderService.testChannelFactory = null;
     });
 
-    test('empty pending + not auth-failed initially', () {
+    test('empty pending + not auth-failed initially', () async {
       final svc = ConsentDeciderService(workspaceId: 'ws', token: 't');
       expect(svc.pending, isEmpty);
       expect(svc.authFailed, isFalse);
@@ -672,7 +675,7 @@ void main() {
       'connect + snapshot populates pending + sends verdict on the socket',
       () async {
         final svc = ConsentDeciderService(workspaceId: 'ws', token: 't');
-        svc.connect();
+        await svc.connect();
         expect(svc.connected, isTrue);
         // Server's connect snapshot. (Broadcast streams deliver on a microtask,
         // so flush before asserting.)
@@ -719,7 +722,7 @@ void main() {
 
     test('a server error frame surfaces a flash', () async {
       final svc = ConsentDeciderService(workspaceId: 'ws', token: 't');
-      svc.connect();
+      await svc.connect();
       channel.serverSend({'type': 'error', 'message': 'verdict rejected'});
       await Future.delayed(Duration.zero);
       expect(svc.flashMessage, 'verdict rejected');
@@ -728,7 +731,7 @@ void main() {
 
     test('a server error frame with no message flashes a fallback', () async {
       final svc = ConsentDeciderService(workspaceId: 'ws', token: 't');
-      svc.connect();
+      await svc.connect();
       channel.serverSend({'type': 'error'});
       await Future.delayed(Duration.zero);
       expect(svc.flashMessage, 'server error');
@@ -742,7 +745,7 @@ void main() {
         token: 't',
         clock: () => now,
       );
-      svc.connect();
+      await svc.connect();
       channel.serverSend({'type': 'error', 'message': 'boom'});
       await Future.delayed(Duration.zero);
       expect(svc.flashMessage, 'boom');
@@ -751,10 +754,10 @@ void main() {
       svc.dispose();
     });
 
-    test('sendVerdict flashes when the socket send throws', () {
+    test('sendVerdict flashes when the socket send throws', () async {
       ConsentDeciderService.testChannelFactory = (_) => _ThrowingChannel();
       final svc = ConsentDeciderService(workspaceId: 'ws', token: 't');
-      svc.connect();
+      await svc.connect();
       svc.sendVerdict('r1', 'allowed', 'once'); // sink.add throws
       expect(svc.flashMessage, contains('verdict send failed'));
       svc.dispose();
@@ -764,7 +767,7 @@ void main() {
       'auth-fail close (4001) sets authFailed and stops reconnecting',
       () async {
         final svc = ConsentDeciderService(workspaceId: 'ws', token: 't');
-        svc.connect();
+        await svc.connect();
         channel.serverSend({'type': 'egress_request', 'request': _request()});
         await Future.delayed(Duration.zero);
         expect(svc.pending, isNotEmpty);
@@ -779,7 +782,7 @@ void main() {
       'must-change gate close (4004, #3172) sets authFailed and stops reconnecting',
       () async {
         final svc = ConsentDeciderService(workspaceId: 'ws', token: 't');
-        svc.connect();
+        await svc.connect();
         channel.serverSend({'type': 'egress_request', 'request': _request()});
         await Future.delayed(Duration.zero);
         expect(svc.pending, isNotEmpty);
@@ -790,7 +793,8 @@ void main() {
       },
     );
 
-    test('remainingSeconds counts down from requested_at + holdTimeout', () {
+    test('remainingSeconds counts down from requested_at + holdTimeout',
+        () async {
       // Fixed clock at epoch-second 1000; requested at 1000, hold 120s.
       final svc = ConsentDeciderService(
         workspaceId: 'ws',
@@ -808,7 +812,7 @@ void main() {
       'pong and unknown frames are no-ops through the live socket',
       () async {
         final svc = ConsentDeciderService(workspaceId: 'ws', token: 't');
-        svc.connect();
+        await svc.connect();
         channel.serverSend({'type': 'egress_request', 'request': _request()});
         await Future.delayed(Duration.zero);
         expect(svc.pending, hasLength(1));
@@ -831,7 +835,7 @@ void main() {
           // (dispose cancels it regardless).
           reconnectDelays: const [Duration(minutes: 5)],
         );
-        svc.connect();
+        await svc.connect();
         expect(svc.connected, isTrue);
         channel.serverClose(); // clean close, no code -> not an auth failure
         await Future.delayed(Duration.zero);
@@ -845,7 +849,7 @@ void main() {
       'egress_rules frame populates service.rules (sorted, parsed)',
       () async {
         final svc = ConsentDeciderService(workspaceId: 'ws', token: 't');
-        svc.connect();
+        await svc.connect();
         channel.serverSend(
           _rulesFrame(
             allowList: ['github.com', 'pypi.org'],
@@ -874,7 +878,7 @@ void main() {
 
     test('revoke_ack success removes the rule; failure flashes', () async {
       final svc = ConsentDeciderService(workspaceId: 'ws', token: 't');
-      svc.connect();
+      await svc.connect();
       channel.serverSend(
         _rulesFrame(allowed: [_ruleJson(id: 'a', decidedAt: 100)]),
       );
@@ -903,7 +907,7 @@ void main() {
 
     test('revoke_ack ok before any rules is a no-op (no crash)', () async {
       final svc = ConsentDeciderService(workspaceId: 'ws', token: 't');
-      svc.connect();
+      await svc.connect();
       channel.serverSend({'type': 'revoke_ack', 'request_id': 'a', 'ok': true});
       await Future.delayed(Duration.zero);
       expect(svc.rules, isNull);
@@ -912,7 +916,7 @@ void main() {
 
     test('sendRevoke sends a revoke frame on the socket', () async {
       final svc = ConsentDeciderService(workspaceId: 'ws', token: 't');
-      svc.connect();
+      await svc.connect();
       svc.sendRevoke('v1');
       expect(channel.sent, isNotEmpty);
       final out =
@@ -929,18 +933,18 @@ void main() {
       svc.dispose();
     });
 
-    test('sendRevoke flashes when the socket send throws', () {
+    test('sendRevoke flashes when the socket send throws', () async {
       ConsentDeciderService.testChannelFactory = (_) => _ThrowingChannel();
       final svc = ConsentDeciderService(workspaceId: 'ws', token: 't');
-      svc.connect();
+      await svc.connect();
       svc.sendRevoke('v1');
       expect(svc.flashMessage, contains('revoke send failed'));
       svc.dispose();
     });
 
-    test('sendPause sends a pause frame and tracks the request', () {
+    test('sendPause sends a pause frame and tracks the request', () async {
       final svc = ConsentDeciderService(workspaceId: 'ws', token: 't');
-      svc.connect();
+      await svc.connect();
       expect(svc.lastPauseRequest, isNull);
       svc.sendPause('1h');
       expect(channel.sent, isNotEmpty);
@@ -951,9 +955,9 @@ void main() {
       svc.dispose();
     });
 
-    test('sendUnpause sends an unpause frame and clears the request', () {
+    test('sendUnpause sends an unpause frame and clears the request', () async {
       final svc = ConsentDeciderService(workspaceId: 'ws', token: 't');
-      svc.connect();
+      await svc.connect();
       svc.sendPause('1h');
       svc.sendUnpause();
       expect(channel.sent, isNotEmpty);
@@ -976,15 +980,15 @@ void main() {
       svc2.dispose();
     });
 
-    test('sendPause/sendUnpause flash when the socket send throws', () {
+    test('sendPause/sendUnpause flash when the socket send throws', () async {
       ConsentDeciderService.testChannelFactory = (_) => _ThrowingChannel();
       final svc = ConsentDeciderService(workspaceId: 'ws', token: 't');
-      svc.connect();
+      await svc.connect();
       svc.sendPause('15m');
       expect(svc.flashMessage, contains('pause send failed'));
       svc.dispose();
       final svc2 = ConsentDeciderService(workspaceId: 'ws', token: 't');
-      svc2.connect();
+      await svc2.connect();
       svc2.sendUnpause();
       expect(svc2.flashMessage, contains('unpause send failed'));
       svc2.dispose();
@@ -994,7 +998,7 @@ void main() {
       'pause_ack nack reverts the highlight and flashes which op failed',
       () async {
         final svc = ConsentDeciderService(workspaceId: 'ws', token: 't');
-        svc.connect();
+        await svc.connect();
         // A refused pause must not leave its button highlighted as active.
         svc.sendPause('1h');
         expect(svc.lastPauseRequest, '1h');
@@ -1016,7 +1020,7 @@ void main() {
       'pause_ack ok applies the acked window (authoritative fallback)',
       () async {
         final svc = ConsentDeciderService(workspaceId: 'ws', token: 't');
-        svc.connect();
+        await svc.connect();
         channel.serverSend(_rulesFrame(allowList: ['a.io']));
         await Future<void>.delayed(Duration.zero);
         expect(svc.rules!.paused, isNull);
@@ -1038,7 +1042,7 @@ void main() {
 
     test('pause_ack ok before any rules snapshot is a safe no-op', () async {
       final svc = ConsentDeciderService(workspaceId: 'ws', token: 't');
-      svc.connect();
+      await svc.connect();
       svc.sendPause('15m');
       channel.serverSend({'type': 'pause_ack', 'ok': true, 'until': 1300.0});
       await Future<void>.delayed(Duration.zero);
@@ -1287,7 +1291,7 @@ void main() {
         token: 't',
         clock: () => now,
       );
-      svc.connect();
+      await svc.connect();
       ch.serverSend(
         _rulesFrame(
           allowList: ['github.com'],
@@ -1355,7 +1359,7 @@ void main() {
           token: 't',
           clock: () => now,
         );
-        svc.connect();
+        await svc.connect();
         // Live window: until t=1300, now t=1000.
         ch.serverSend(_rulesFrame(paused: {'paused': true, 'until': 1300.0}));
         await Future.delayed(Duration.zero);
@@ -1376,5 +1380,70 @@ void main() {
         svc.dispose();
       },
     );
+  });
+  group('ConsentDeciderService DPoP connect URI (#3218)', () {
+    tearDown(() {
+      testDpopBackendOverride = null;
+    });
+
+    test('bound token carries the dpop proof parameter', () async {
+      testDpopBackendOverride = FakeDpopBackend(proof: 'dec-proof');
+      final bound = boundToken();
+      Uri? seen;
+      ConsentDeciderService.testChannelFactory = (uri) {
+        seen = uri;
+        return _FakeChannel();
+      };
+
+      final svc = ConsentDeciderService(workspaceId: 'ws', token: bound);
+      await svc.connect();
+
+      expect(seen!.queryParameters['dpop'], 'dec-proof');
+      expect(seen!.queryParameters['token'], bound);
+      expect(seen!.queryParameters['workspace'], 'ws');
+      svc.dispose();
+    });
+  });
+
+  group('ConsentDeciderService connect robustness (#3218 review)', () {
+    tearDown(() {
+      testDpopBackendOverride = null;
+    });
+
+    test('overlapping connects open exactly one channel', () async {
+      var opened = 0;
+      final gate = Completer<void>();
+      ConsentDeciderService.testChannelFactory = (_) {
+        opened += 1;
+        // Hold the first (and only permitted) open until the second
+        // connect() call has come and gone.
+        return _FakeChannel();
+      };
+
+      final svc = ConsentDeciderService(workspaceId: 'ws', token: 't');
+      final first = svc.connect();
+      final second = svc.connect(); // must no-op on the in-flight guard
+      await first;
+      await second;
+      await gate.future.timeout(const Duration(milliseconds: 10),
+          onTimeout: () => gate.complete());
+      expect(opened, 1);
+      expect(svc.connected, isTrue);
+      svc.dispose();
+    });
+
+    test('a throwing channel factory is contained and reconnects', () async {
+      ConsentDeciderService.testChannelFactory =
+          (_) => throw StateError('boom');
+      final svc = ConsentDeciderService(workspaceId: 'ws', token: 't');
+      await svc.connect();
+      expect(svc.connected, isFalse);
+      // The failure scheduled the normal reconnect backoff; a later
+      // connect (the timer's path, or an explicit one) still works.
+      ConsentDeciderService.testChannelFactory = (_) => _FakeChannel();
+      await svc.connect();
+      expect(svc.connected, isTrue);
+      svc.dispose();
+    });
   });
 }

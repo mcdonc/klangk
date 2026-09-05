@@ -349,3 +349,45 @@ If `KLANGKD_LOGIN_BANNER` is set, users see a consent page before
 the login form. They must accept before proceeding. This is useful
 for legal notices or terms-of-service acknowledgements. See
 [Environment Variables](../reference/environment.md) for details.
+
+## DPoP session-token binding (XSS theft protection)
+
+Web sessions bind their JWT to a key the browser refuses to export
+(#3218). After any login, the web client registers the public half of a
+WebCrypto ECDSA P-256 keypair (`POST /api/v1/auth/bind`) and receives a
+replacement token carrying the key's RFC 7638 thumbprint in `cnf.jkt`.
+The private half is held as a non-extractable `CryptoKey` in IndexedDB,
+so no script — injected or first-party — can read it. Every
+authenticated request (a `DPoP` header) and every WebSocket connect
+(a one-shot `dpop` query parameter) must then present a fresh proof
+signed by that key: a stolen bound token is useless without it, and a
+script running in a live tab can act as the user but cannot steal a
+credential that outlives the reload.
+
+What this deliberately is **not**: a guarantee that no unbound token
+ever exists. Binding is best-effort at the browser — between mint and
+bind, and on any session whose bind never completes (network failure,
+server refusal, or an in-page attacker sabotaging the bind calls), the
+token stays usable and JS-readable exactly as before #3218. CLI and TUI
+clients are always unbound and unaffected. Closing that residual
+window server-side is tracked in #3230.
+
+Operational notes:
+
+- **Secure context required.** WebCrypto (`crypto.subtle`) exists only
+  on HTTPS or localhost. A plain-HTTP remote deployment silently keeps
+  the previous unbound behavior.
+- **Clock skew matters now.** Proofs older (or further ahead) than
+  `PROOF_WINDOW_SECONDS` (300) are rejected. A workstation whose clock
+  drifts more than ~5 minutes sees every authenticated request fail
+  with `401 Invalid DPoP proof: stale proof` and a re-login loop; the
+  remedy is fixing the client clock (the server clock is the
+  reference).
+- **Key loss forces re-login.** A bound token whose IndexedDB key is
+  gone (cleared site data, new browser profile) cannot prove
+  possession; the client detects this at startup and drops the session.
+- The one-shot proofs are remembered for the freshness window only; a
+  server restart clears that memory (a captured, already-consumed
+  proof could be replayed exactly once, within its window, and only
+  alongside the token itself — the same exposure as the
+  token-in-URL issue tracked in #3201).

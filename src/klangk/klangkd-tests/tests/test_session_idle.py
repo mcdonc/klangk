@@ -307,7 +307,9 @@ class TestWsAuthenticateJti:
         a = app_state.state.auth
         token = await a.issue_token(user["id"], user["email"])
         ws = types.SimpleNamespace(
-            query_params={"token": token}, close=AsyncMock()
+            query_params={"token": token},
+            url=types.SimpleNamespace(path="/ws"),
+            close=AsyncMock(),
         )
         authed = await ws_authenticate(ws, app_state)
         assert authed is not None

@@ -60,7 +60,15 @@ test.describe("session token storage (#3193)", () => {
     const ssToken = await page.evaluate(() =>
       sessionStorage.getItem("klangk_jwt"),
     );
-    expect(ssToken).toBe(token);
+    expect(ssToken).toBeTruthy();
+    expect(ssToken!.startsWith("eyJ")).toBe(true);
+    // #3218: the startup heal BINDS the migrated legacy token — the
+    // stored JWT is now the DPoP-bound replacement (payload carries
+    // cnf.jkt), not the raw seeded token.
+    const payload = JSON.parse(
+      Buffer.from(ssToken!.split(".")[1], "base64").toString(),
+    );
+    expect(payload.cnf?.jkt).toBeTruthy();
     // …and the persistent copy is gone.
     expect(
       await page.evaluate(() => localStorage.getItem("flutter.klangk_jwt")),

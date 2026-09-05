@@ -26,6 +26,8 @@ import 'package:flutter/foundation.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
+import '../auth/dpop.dart';
+
 /// Decision + duration tokens mirror the server (``model/egress_consent.py``);
 /// duplicated here per the client isolation boundary (#2309 rule).
 const String kDecisionAllowed = 'allowed';
@@ -440,6 +442,7 @@ class ConsentDeciderService extends ChangeNotifier {
   Timer? _pingTimer;
   Timer? _reconnectTimer;
   bool _connected = false;
+  bool _connecting = false;
   bool _stopped = false;
   int _attempt = 0;
 
@@ -513,26 +516,50 @@ class ConsentDeciderService extends ChangeNotifier {
   @visibleForTesting
   static WebSocketChannel Function(Uri uri)? testChannelFactory;
 
-  /// The consent-decider WS URL for this workspace (token as a query param,
-  /// mirroring [WsClient]).
-  String get wsUrl {
+  /// The consent-decider WS URL for this workspace: token as a query
+  /// param (mirroring [WsClient]) plus a one-shot DPoP proof parameter
+  /// when the token is bound (#3218).
+  Future<String> wsUrl() async {
     final loc = Uri.base;
     final wsScheme = loc.scheme == 'https' ? 'wss' : 'ws';
     final base =
         '$wsScheme://${loc.host}:${loc.port}$baseUrl/ws/consent-decider';
-    return '$base?workspace=$workspaceId&token=$token';
+    final headers = await dpopHeadersFor('GET', base, token);
+    final proof = headers['DPoP'];
+    final suffix = proof == null ? '' : '&dpop=$proof';
+    return '$base?workspace=$workspaceId&token=$token$suffix';
   }
 
-  /// Open the connection (idempotent: a no-op if already connected/connecting).
-  void connect() {
-    if (_channel != null || _stopped) return;
+  /// Open the connection (idempotent: a no-op if already
+  /// connected/connecting). Async since #3218 (proof minting), so an
+  /// in-flight connect is tracked — two overlapping calls must not open
+  /// two channels — and failures are contained: fire-and-forget callers
+  /// (the workspace page's construction cascade) must never see an
+  /// unhandled async error; a failed connect just schedules the normal
+  /// reconnect backoff.
+  Future<void> connect() async {
+    if (_channel != null || _stopped || _connecting) return;
+    _connecting = true;
+    try {
+      await _openChannel();
+    } catch (e) {
+      debugPrint('[ConsentDecider] connect failed: $e');
+      _channel = null;
+      _scheduleReconnect();
+    } finally {
+      _connecting = false;
+    }
+  }
+
+  Future<void> _openChannel() async {
+    final url = await wsUrl();
     final factory = testChannelFactory;
     WebSocketChannel ch;
     if (factory != null) {
-      ch = factory(Uri.parse(wsUrl));
+      ch = factory(Uri.parse(url));
     } else {
       // coverage:ignore-start
-      ch = WebSocketChannel.connect(Uri.parse(wsUrl));
+      ch = WebSocketChannel.connect(Uri.parse(url));
       // coverage:ignore-end
     }
     _channel = ch;
