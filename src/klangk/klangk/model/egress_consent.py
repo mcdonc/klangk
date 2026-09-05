@@ -9,10 +9,7 @@ reach while in ``egress_mode='interactive'``.
 import time
 import uuid
 
-from .audit_hmac import (
-    compute_egress_consent_hmac,
-    integrity_report,
-)
+from .audit_hmac import compute_egress_consent_hmac
 from .base import Submodel, resolve_prune_now
 
 
@@ -599,24 +596,6 @@ class EgressConsentModel(Submodel):
             row["duration"], row["decided_at"], now
         )
 
-    async def verify_integrity(self) -> dict:
-        """Re-compute every row's HMAC and report mismatches (#3174).
-
-        Rows written before the HMAC migration carry no tag and are
-        counted as ``no_hmac``, not ``tampered``.  The ``tampered`` id
-        list is capped at :data:`audit_hmac.TAMPER_REPORT_CAP`; the
-        full count travels in ``tampered_total``.
-        """
-        rows = await self.app.state.db.fetchall(
-            f"SELECT {_EC_COLUMNS} FROM egress_consent ORDER BY id"
-        )
-        return integrity_report(
-            self.app.state.settings,
-            rows,
-            _row_to_dict,
-            compute_egress_consent_hmac,
-        )
-
     async def prune(self, now: float | None = None) -> int:
         """Bound the table: delete rows past retention / over the per-workspace
         cap (#2303). Returns the number of rows deleted.
@@ -785,8 +764,14 @@ def _row_to_dict(row) -> dict:
 
 
 async def _stamp_hmac(db, settings, row: dict) -> None:
-    """Compute and persist the HMAC tag for a just-written row (#3174)."""
+    """Compute and persist the HMAC tag for a just-written row (#3174).
+
+    A no-op when no audit HMAC key is configured (tagging disabled) —
+    the row is left with a NULL tag (tagging disabled).
+    """
     tag = compute_egress_consent_hmac(settings, row)
+    if tag is None:
+        return
     await db.execute(
         "UPDATE egress_consent SET hmac = ? WHERE id = ?",
         (tag, row["id"]),

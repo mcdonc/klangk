@@ -1,67 +1,72 @@
-"""HMAC integrity protection for audit records (#3174).
+"""HMAC integrity tagging for audit records (#3174) — write side only.
 
-Covers the ``audit_hmac`` module (key derivation, canonical
-serialization, compute/verify), the HMAC-on-insert paths in
-``container_events`` and ``egress_consent``, the per-table
-``verify_integrity`` method, and the migration that adds the ``hmac``
-column.
+Covers the ``audit_hmac`` module (opt-in key resolution, canonical
+serialization, tag computation), the HMAC-on-insert paths in
+``container_events`` and ``egress_consent``, and the migration that
+adds the ``hmac`` column. klangkd only writes tags (opt-in via
+``KLANGKD_AUDIT_HMAC_KEY``); verification is an external consumer's
+job (off-host backup, auditor tooling).
 """
 
-import hmac as _hmac
-import hashlib
-
+import pytest
 
 from klangk.model.audit_hmac import (
-    TAMPER_REPORT_CAP,
     _canonical_pairs,
-    _resolve_key,
     compute_container_event_hmac,
     compute_egress_consent_hmac,
-    verify_hmac,
+    resolve_audit_hmac_key,
 )
-from klangk.model.container_events import EVENT_START, EVENT_STOP, CAUSE_STOP
+from klangk.model.container_events import EVENT_START
 from klangk.model.egress_consent import (
     DECISION_ALLOWED,
     _restamp,
 )
 
 
-class TestKeyDerivation:
+@pytest.fixture(autouse=True)
+def audit_hmac_test_key(app_state):
+    """Tagging is opt-in (#3174): configure an explicit key for every
+    test in this module unless a test overrides it to None."""
+    app_state.state.settings.audit_hmac_key = "test-audit-key"
+
+
+class TestKeyResolution:
     def test_explicit_key_used_when_set(self):
         class FakeSettings:
             audit_hmac_key = "my-explicit-key"
             jwt_secret = "ignored"
 
-        assert _resolve_key(FakeSettings()) == b"my-explicit-key"
+        assert resolve_audit_hmac_key(FakeSettings()) == b"my-explicit-key"
 
-    def test_derived_from_jwt_secret_when_unset(self):
+    def test_unset_key_disables_tagging(self):
         class FakeSettings:
             audit_hmac_key = None
             jwt_secret = "the-jwt-secret"
 
-        key = _resolve_key(FakeSettings())
-        expected = _hmac.new(
-            b"the-jwt-secret", b"klangk-audit-hmac-v1", hashlib.sha256
-        ).digest()
-        assert key == expected
+        # No derivation from the JWT secret — tagging is fully opt-in.
+        assert resolve_audit_hmac_key(FakeSettings()) is None
 
-    def test_empty_string_key_derives_from_jwt(self):
+    def test_empty_string_key_disables_tagging(self):
         class FakeSettings:
             audit_hmac_key = ""
             jwt_secret = "s"
 
-        key = _resolve_key(FakeSettings())
-        expected = _hmac.new(
-            b"s", b"klangk-audit-hmac-v1", hashlib.sha256
-        ).digest()
-        assert key == expected
+        assert resolve_audit_hmac_key(FakeSettings()) is None
+
+    def test_compute_returns_none_when_no_key(self):
+        class FakeSettings:
+            audit_hmac_key = None
+            jwt_secret = "s"
+
+        row = {"id": 1}
+        assert compute_container_event_hmac(FakeSettings(), row) is None
+        assert compute_egress_consent_hmac(FakeSettings(), row) is None
 
 
 class TestCanonicalSerialization:
     """The encoding must be injective: distinct field values must
-    never serialize identically (fresh-eyes review of #3174 — a NULL
-    sentinel or delimiter collision would be an undetectable tamper
-    class)."""
+    never serialize identically (a NULL sentinel or delimiter
+    collision would make two different rows tag identically)."""
 
     def test_none_is_distinct_from_the_literal_marker(self):
         cols = ["process_name", "dest_host"]
@@ -86,28 +91,6 @@ class TestCanonicalSerialization:
         assert _canonical_pairs("t", crafted, cols) != _canonical_pairs(
             "t", honest, cols
         )
-
-
-class TestVerifyHmac:
-    def test_matching_tags(self):
-        assert verify_hmac("abc123", "abc123") is True
-
-    def test_mismatched_tags(self):
-        assert verify_hmac("abc123", "xyz789") is False
-
-    def test_none_stored_always_fails(self):
-        assert verify_hmac(None, "abc123") is False
-
-    def test_blob_stored_fails_instead_of_raising(self):
-        # A tamperer writing a BLOB into the TEXT column must not crash
-        # the verifier (hmac.compare_digest would TypeError).
-        assert verify_hmac(b"\x00", "abc123") is False
-
-    def test_non_ascii_stored_fails_instead_of_raising(self):
-        assert verify_hmac("caf\u00e9", "abc123") is False
-
-    def test_int_stored_fails(self):
-        assert verify_hmac(5, "abc123") is False
 
 
 class TestComputeContainerEventHmac:
@@ -159,91 +142,20 @@ class TestComputeContainerEventHmac:
 class TestContainerEventsHmac:
     async def test_record_stores_hmac(self, app_state, db):
         events = app_state.state.model.container_events
-        await events.record("ws-a", EVENT_START, "api", actor_id="u1")
-        rows = await events.list_events()
-        assert len(rows) == 1
-        assert rows[0]["hmac"] is not None
-        assert len(rows[0]["hmac"]) == 64
-
-    async def test_stored_hmac_verifies(self, app_state, db):
-        events = app_state.state.model.container_events
-        await events.record(
-            "ws-a", EVENT_START, "api", actor_id="u1", container_id="cid-1"
-        )
+        await events.record("ws-a", EVENT_START, "api", container_id="c1")
         rows = await events.list_events()
         row = rows[0]
-        expected = compute_container_event_hmac(app_state.state.settings, row)
-        assert verify_hmac(row["hmac"], expected)
+        assert row["hmac"] is not None
+        assert row["hmac"] == compute_container_event_hmac(
+            app_state.state.settings, row
+        )
 
-    async def test_verify_integrity_clean(self, app_state, db):
+    async def test_no_key_writes_no_hmac(self, app_state, db):
         events = app_state.state.model.container_events
-        await events.record("ws-a", EVENT_START, "api", container_id="c1")
-        await events.record("ws-a", EVENT_STOP, CAUSE_STOP, container_id="c2")
-        result = await events.verify_integrity()
-        assert result["total"] == 2
-        assert result["verified"] == 2
-        assert result["no_hmac"] == 0
-        assert result["tampered"] == []
-
-    async def test_verify_integrity_detects_tamper(self, app_state, db):
-        events = app_state.state.model.container_events
+        app_state.state.settings.audit_hmac_key = None
         await events.record("ws-a", EVENT_START, "api", container_id="c1")
         rows = await events.list_events()
-        row_id = rows[0]["id"]
-        # Tamper with the row
-        async with app_state.state.db.transaction() as conn:
-            await conn.execute(
-                "UPDATE container_events SET cause = 'hacked'"
-                " WHERE container_id = 'c1'"
-            )
-        result = await events.verify_integrity()
-        assert result["total"] == 1
-        assert result["verified"] == 0
-        assert result["tampered_total"] == 1
-        assert result["tampered"] == [{"id": row_id, "workspace_id": "ws-a"}]
-
-    async def test_blob_hmac_is_tampered_not_crash(self, app_state, db):
-        """A tamperer writing a BLOB into the hmac column must be
-        reported, not crash the whole verification pass."""
-        events = app_state.state.model.container_events
-        await events.record("ws-a", EVENT_START, "api", container_id="c1")
-        async with app_state.state.db.transaction() as conn:
-            await conn.execute(
-                "UPDATE container_events SET hmac = x'00'"
-                " WHERE container_id = 'c1'"
-            )
-        result = await events.verify_integrity()
-        assert result["tampered_total"] == 1
-        assert result["no_hmac"] == 0
-
-    async def test_tampered_list_is_capped(self, app_state, db):
-        """The tampered id list truncates at TAMPER_REPORT_CAP; the
-        full count still travels in tampered_total."""
-        events = app_state.state.model.container_events
-        for i in range(TAMPER_REPORT_CAP + 5):
-            await events.record(
-                "ws-a", EVENT_START, "api", container_id=f"c{i}"
-            )
-        async with app_state.state.db.transaction() as conn:
-            await conn.execute("UPDATE container_events SET cause = 'hacked'")
-        result = await events.verify_integrity()
-        assert result["tampered_total"] == TAMPER_REPORT_CAP + 5
-        assert len(result["tampered"]) == TAMPER_REPORT_CAP
-        assert result["tampered_truncated"] is True
-
-    async def test_verify_integrity_null_hmac_is_no_hmac(self, app_state, db):
-        """Rows without an HMAC (pre-migration) are counted as no_hmac."""
-        events = app_state.state.model.container_events
-        await events.record("ws-a", EVENT_START, "api", container_id="c1")
-        # Clear the HMAC to simulate a pre-migration row
-        async with app_state.state.db.transaction() as conn:
-            await conn.execute(
-                "UPDATE container_events SET hmac = NULL"
-                " WHERE container_id = 'c1'"
-            )
-        result = await events.verify_integrity()
-        assert result["no_hmac"] == 1
-        assert result["tampered"] == []
+        assert rows[0]["hmac"] is None
 
 
 class TestEgressConsentHmac:
@@ -252,19 +164,13 @@ class TestEgressConsentHmac:
         row = await ec.create_request(workspace["id"], "example.com", 443)
         assert row is not None
         assert row["hmac"] is not None
-        assert len(row["hmac"]) == 64
-
-    async def test_create_request_hmac_verifies(
-        self, app_state, db, workspace
-    ):
-        ec = app_state.state.model.egress_consent
-        row = await ec.create_request(workspace["id"], "example.com", 443)
-        expected = compute_egress_consent_hmac(app_state.state.settings, row)
-        assert verify_hmac(row["hmac"], expected)
+        assert row["hmac"] == compute_egress_consent_hmac(
+            app_state.state.settings, row
+        )
 
     async def test_static_denial_stores_hmac(self, app_state, db, workspace):
         ec = app_state.state.model.egress_consent
-        row = await ec.record_static_denial(workspace["id"], "evil.com", 80)
+        row = await ec.record_static_denial(workspace["id"], "bad.com", 443)
         assert row is not None
         assert row["hmac"] is not None
 
@@ -282,12 +188,10 @@ class TestEgressConsentHmac:
         original_hmac = row["hmac"]
         decided = await ec.decide(row["id"], DECISION_ALLOWED, user["id"])
         assert decided is not None
-        assert decided["hmac"] is not None
         assert decided["hmac"] != original_hmac
-        expected = compute_egress_consent_hmac(
+        assert decided["hmac"] == compute_egress_consent_hmac(
             app_state.state.settings, decided
         )
-        assert verify_hmac(decided["hmac"], expected)
 
     async def test_revoke_recomputes_hmac(
         self, app_state, db, workspace, user
@@ -298,59 +202,20 @@ class TestEgressConsentHmac:
         decided_hmac = decided["hmac"]
         revoked = await ec.revoke(row["id"], user["id"])
         assert revoked is not None
-        assert revoked["hmac"] is not None
         assert revoked["hmac"] != decided_hmac
-        expected = compute_egress_consent_hmac(
+        assert revoked["hmac"] == compute_egress_consent_hmac(
             app_state.state.settings, revoked
         )
-        assert verify_hmac(revoked["hmac"], expected)
 
-    async def test_verify_integrity_clean(self, app_state, db, workspace):
+    async def test_no_key_writes_no_hmac(self, app_state, db, workspace, user):
         ec = app_state.state.model.egress_consent
-        ws_id = workspace["id"]
-        await ec.create_request(ws_id, "a.com", 80)
-        await ec.record_static_denial(ws_id, "b.com", 443)
-        result = await ec.verify_integrity()
-        assert result["total"] == 2
-        assert result["verified"] == 2
-        assert result["no_hmac"] == 0
-        assert result["tampered"] == []
-
-    async def test_verify_integrity_detects_tamper(
-        self, app_state, db, workspace
-    ):
-        ec = app_state.state.model.egress_consent
-        row = await ec.create_request(workspace["id"], "a.com", 80)
-        async with app_state.state.db.transaction() as conn:
-            await conn.execute(
-                "UPDATE egress_consent SET dest_host = 'hacked.com'"
-                " WHERE id = ?",
-                (row["id"],),
-            )
-        result = await ec.verify_integrity()
-        assert result["tampered"] == [
-            {"id": row["id"], "workspace_id": workspace["id"]}
-        ]
-
-    async def test_verify_integrity_null_marker_impersonation_detected(
-        self, app_state, db, workspace
-    ):
-        """Flipping a NULL column to the serialization's marker value
-        must not verify clean (fresh-eyes review of #3174: a NULL
-        sentinel collision would be an undetectable tamper class)."""
-        ec = app_state.state.model.egress_consent
-        row = await ec.create_request(workspace["id"], "a.com", 80)
-        assert row["process_name"] is None
-        async with app_state.state.db.transaction() as conn:
-            await conn.execute(
-                "UPDATE egress_consent SET process_name = 'n' WHERE id = ?",
-                (row["id"],),
-            )
-        result = await ec.verify_integrity()
-        assert result["tampered_total"] == 1
-        assert result["tampered"] == [
-            {"id": row["id"], "workspace_id": workspace["id"]}
-        ]
+        app_state.state.settings.audit_hmac_key = None
+        row = await ec.create_request(workspace["id"], "example.com", 443)
+        assert row is not None
+        assert row["hmac"] is None
+        decided = await ec.decide(row["id"], DECISION_ALLOWED, user["id"])
+        assert decided is not None
+        assert decided["hmac"] is None
 
     async def test_restamp_missing_row_returns_none(self, app_state, db):
         """The re-stamp helper's miss path: a row that no longer
@@ -359,50 +224,38 @@ class TestEgressConsentHmac:
             row = await _restamp(conn, app_state.state.settings, "no-such-id")
         assert row is None
 
-    async def test_verify_integrity_null_hmac_is_no_hmac(
-        self, app_state, db, workspace
-    ):
-        """Rows without an HMAC (pre-migration) are counted as no_hmac."""
-        ec = app_state.state.model.egress_consent
-        row = await ec.create_request(workspace["id"], "a.com", 80)
-        async with app_state.state.db.transaction() as conn:
-            await conn.execute(
-                "UPDATE egress_consent SET hmac = NULL WHERE id = ?",
-                (row["id"],),
-            )
-        result = await ec.verify_integrity()
-        assert result["no_hmac"] == 1
-        assert result["tampered"] == []
-
     async def test_expire_pending_restamps_hmac(
         self, app_state, db, workspace
     ):
         """expire_pending mutates decision/decided_at — the HMAC must
-        be recomputed so the row still verifies."""
+        be recomputed so the row still carries a valid tag."""
         ec = app_state.state.model.egress_consent
         row = await ec.create_request(workspace["id"], "expire.com", 443)
         original_hmac = row["hmac"]
         assert await ec.expire_pending(row["id"]) is True
-        result = await ec.verify_integrity()
-        assert result["verified"] == 1
-        assert result["tampered"] == []
-        # The tag must have changed (different decision + decided_at).
         refreshed = await ec.get_request(row["id"])
+        assert refreshed["hmac"] is not None
         assert refreshed["hmac"] != original_hmac
+        assert refreshed["hmac"] == compute_egress_consent_hmac(
+            app_state.state.settings, refreshed
+        )
 
     async def test_expire_all_pending_restamps_hmac(
         self, app_state, db, workspace
     ):
         """expire_all_pending is a bulk path — every expired row must
-        carry a valid HMAC afterwards."""
+        carry a valid tag afterwards."""
         ec = app_state.state.model.egress_consent
         ws_id = workspace["id"]
         await ec.create_request(ws_id, "a.com", 80)
         await ec.create_request(ws_id, "b.com", 443)
         assert await ec.expire_all_pending() == 2
-        result = await ec.verify_integrity()
-        assert result["verified"] == 2
-        assert result["tampered"] == []
+        rows = await ec.list_requests(workspace_id=ws_id)
+        for row in rows:
+            assert row["hmac"] is not None
+            assert row["hmac"] == compute_egress_consent_hmac(
+                app_state.state.settings, row
+            )
 
 
 class TestMigration:
@@ -414,3 +267,89 @@ class TestMigration:
             )
             col_names = {row[1] for row in info}
             assert "hmac" in col_names, f"{table} missing hmac column"
+
+
+class TestOffsiteContract:
+    """The documented offsite recompute recipe (docs/reference/
+    audit-integrity.md): a stdlib-only checker reading the raw
+    klangk.db must reproduce every stored tag. If this fails, the
+    writer's serialization drifted from the published contract."""
+
+    CE_COLUMNS = [
+        "id",
+        "workspace_id",
+        "event",
+        "actor_type",
+        "actor_id",
+        "cause",
+        "container_id",
+        "container_role",
+        "network_namespace",
+        "created_at",
+    ]
+    EC_COLUMNS = [
+        "id",
+        "workspace_id",
+        "dest_host",
+        "dest_port",
+        "pid",
+        "process_name",
+        "decision",
+        "duration",
+        "requested_at",
+        "decided_at",
+        "decided_by",
+        "revoked_at",
+        "revoked_by",
+    ]
+
+    def _payload(self, table, row, columns):
+        parts = [table]
+        for col in columns:
+            val = row[col]
+            if val is None:
+                parts.append(f"{col}=n")
+            else:
+                sv = str(val)
+                parts.append(f"{col}={len(sv)}:{sv}")
+        return "\0".join(parts).encode()
+
+    def _stored_tags(self, path, table, columns):
+        import hashlib
+        import hmac as hmac_mod
+        import sqlite3
+
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        names = ", ".join(columns)
+        for row in conn.execute(f"SELECT {names}, hmac FROM {table}"):
+            d = dict(zip(columns + ["hmac"], row))
+            expected = hmac_mod.new(
+                b"test-audit-key",
+                self._payload(table, d, columns),
+                hashlib.sha256,
+            ).hexdigest()
+            yield d["id"], d["hmac"], expected
+        conn.close()
+
+    async def test_offsite_recompute_matches_stored_tags(
+        self, app_state, db, workspace, user
+    ):
+        events = app_state.state.model.container_events
+        ec = app_state.state.model.egress_consent
+        await events.record("ws-a", EVENT_START, "api", container_id="c1")
+        row = await ec.create_request(workspace["id"], "a.com", 80)
+        await ec.decide(row["id"], DECISION_ALLOWED, user["id"])
+        path = app_state.state.db.db_path
+        for table, columns in (
+            ("container_events", self.CE_COLUMNS),
+            ("egress_consent", self.EC_COLUMNS),
+        ):
+            checked = 0
+            for row_id, stored, expected in self._stored_tags(
+                path, table, columns
+            ):
+                assert stored == expected, (
+                    f"{table} id={row_id}: offsite recompute mismatch"
+                )
+                checked += 1
+            assert checked >= 1, f"{table}: nothing tagged"

@@ -59,6 +59,7 @@ nav = [
     { "Podman" = "reference/podman.md" },
     { "OIDC" = "reference/oidc.md" },
     { "Backup and Restore" = "reference/backup-restore.md" },
+    { "Audit Record Integrity" = "reference/audit-integrity.md" },
   ]},
   { "Reference" = [
     { "ACL System" = "reference/acl.md" },

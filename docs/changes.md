@@ -349,21 +349,6 @@ operators or integrators to act when upgrading.
   consumers such as off-host audit backups. Rotating the key
   invalidates tags written under the old key.
 
-- **HMAC integrity protection for audit records (#3174, STIG V-222507).**
-
-- **HMAC integrity protection for audit records (#3174).**
-
-  Every `container_events` and `egress_consent` row now carries an
-  HMAC-SHA256 tag computed at insert time. A new admin endpoint
-  (`GET /api/v1/admin/events/verify`) re-computes and checks every
-  stored tag, reporting tampered or untagged (pre-upgrade) rows
-  (first 100 tampered ids per table; full count in `tampered_total`).
-  The key defaults to a derivation of `KLANGKD_JWT_SECRET`; set
-  `KLANGKD_AUDIT_HMAC_KEY` for an explicit key. Rotating the key (or
-  the JWT secret it derives from) invalidates existing tags —
-  pre-rotation rows then verify as `tampered`.
-
-
 - **Bounded rate-limit state for the email cooldowns (#3113).** The
   per-address cooldown dicts behind
   `POST /api/v1/auth/forgot-password` and

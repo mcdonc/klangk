@@ -15983,56 +15983,6 @@ class TestContainerEventsAPI:
         assert "manage-events" in perms.get("/events", [])
 
 
-class TestAuditVerifyAPI:
-    """#3174: the HMAC verification endpoint."""
-
-    async def _admin_headers(self, client):
-        resp = await client.post(
-            "/api/v1/auth/login",
-            json={
-                "identifier": "testadmin@example.com",
-                "password": "testpass",
-            },
-        )
-        return {"Authorization": f"Bearer {resp.json()['access_token']}"}
-
-    async def test_verify_returns_ok_on_clean_audit(
-        self, client, app, admin_user
-    ):
-        headers = await self._admin_headers(client)
-        events = app.state.model.container_events
-        await events.record("ws-v", EVENT_START, CAUSE_API, container_id="v1")
-        resp = await client.get("/api/v1/events/verify", headers=headers)
-        assert resp.status_code == 200, resp.text
-        data = resp.json()
-        assert data["ok"] is True
-        assert data["container_events"]["verified"] >= 1
-        assert data["container_events"]["tampered"] == []
-        assert data["egress_consent"]["tampered"] == []
-
-    async def test_verify_detects_tampered_row(
-        self, client, app, admin_user, app_state
-    ):
-        headers = await self._admin_headers(client)
-        events = app.state.model.container_events
-        await events.record("ws-v", EVENT_START, CAUSE_API, container_id="v2")
-        async with app_state.state.db.transaction() as conn:
-            await conn.execute(
-                "UPDATE container_events SET cause = 'hacked'"
-                " WHERE container_id = 'v2'"
-            )
-        resp = await client.get("/api/v1/events/verify", headers=headers)
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["ok"] is False
-        assert len(data["container_events"]["tampered"]) >= 1
-
-    async def test_verify_forbidden_for_plain_user(self, client, app, user):
-        headers = await _auth_headers(client)
-        resp = await client.get("/api/v1/events/verify", headers=headers)
-        assert resp.status_code == 403
-
-
 class TestBranchGaps2834:
     """Branch-coverage gaps surfaced by the #2834 branch gate: the
     false/true outcomes of guards the mainline tests only take one side

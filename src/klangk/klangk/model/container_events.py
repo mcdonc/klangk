@@ -20,10 +20,7 @@ keeping the newest. An admin-facing paged view is tracked separately.
 import logging
 import time
 
-from .audit_hmac import (
-    compute_container_event_hmac,
-    integrity_report,
-)
+from .audit_hmac import compute_container_event_hmac
 from .base import Submodel, resolve_prune_now
 from .users import AGENT_USER_ID
 
@@ -175,10 +172,11 @@ class ContainerEventsModel(Submodel):
                 "created_at": created_at,
             }
             tag = compute_container_event_hmac(self.app.state.settings, row)
-            await db.execute(
-                "UPDATE container_events SET hmac = ? WHERE id = ?",
-                (tag, row_id),
-            )
+            if tag is not None:
+                await db.execute(
+                    "UPDATE container_events SET hmac = ? WHERE id = ?",
+                    (tag, row_id),
+                )
 
     async def list_events(
         self,
@@ -208,24 +206,6 @@ class ContainerEventsModel(Submodel):
             f"SELECT COUNT(*) FROM container_events{where}", tuple(params)
         )
         return row[0] if row else 0
-
-    async def verify_integrity(self) -> dict:
-        """Re-compute every row's HMAC and report mismatches (#3174).
-
-        Rows written before the HMAC migration carry no tag and are
-        counted as ``no_hmac``, not ``tampered``.  The ``tampered`` id
-        list is capped at :data:`audit_hmac.TAMPER_REPORT_CAP`; the
-        full count travels in ``tampered_total``.
-        """
-        rows = await self.app.state.db.fetchall(
-            f"SELECT {_EVENT_COLUMNS} FROM container_events ORDER BY id"
-        )
-        return integrity_report(
-            self.app.state.settings,
-            rows,
-            row_to_dict,
-            compute_container_event_hmac,
-        )
 
     async def prune(self, now: float | None = None) -> int:
         """Bound the table: delete rows past retention / over the row cap

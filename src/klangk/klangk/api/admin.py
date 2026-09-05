@@ -934,28 +934,3 @@ async def list_container_events(
         "limit": limit,
         "offset": offset,
     }
-
-
-@router.get("/events/verify")
-async def verify_audit_integrity(
-    request: Request,
-    viewer: dict = Depends(acl.has_permission("manage-events")),
-):
-    """Verify HMAC integrity of audit records (#3174).
-
-    Re-computes the HMAC for every ``container_events`` and
-    ``egress_consent`` row and reports mismatches.  Rows written before
-    the HMAC migration carry no tag and are reported as ``no_hmac``
-    (not ``tampered``).  Each ``tampered`` id list is capped at the
-    first 100 rows; the full count travels in ``tampered_total`` and
-    ``tampered_truncated`` flags the cut.
-    """
-    app = request.app
-    ce = await app.state.model.container_events.verify_integrity()
-    ec = await app.state.model.egress_consent.verify_integrity()
-    ok = ce["tampered_total"] == 0 and ec["tampered_total"] == 0
-    return {
-        "ok": ok,
-        "container_events": ce,
-        "egress_consent": ec,
-    }

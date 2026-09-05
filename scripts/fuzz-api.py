@@ -525,9 +525,6 @@ ENDPOINTS: list[tuple[str, str, dict | None, dict | None]] = [
         None,
         {"limit": "int", "offset": "int", "workspace_id": "string"},
     ),
-    # Audit record HMAC verification (#3174): re-computes every row's
-    # tag and reports mismatches.
-    ("GET", f"{P}/events/verify", None, None),
     # Server scheduling (#2661). `action` is "stop"|"recycle"; `at` is
     # absolute ISO-8601 and `in_seconds` a positive delay — the fuzzer's
     # generic values mostly hit the 422 paths, which is the point.

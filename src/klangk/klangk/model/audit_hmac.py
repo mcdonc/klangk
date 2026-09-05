@@ -2,14 +2,18 @@
 
 Each audit row (``container_events``, ``egress_consent``) carries an
 HMAC-SHA256 tag computed over a canonical serialization of the row's
-data columns at insert time.  Verification re-computes the tag and
-compares; a mismatch means the row was modified after it was written.
+data columns at insert time.  The tag lets an external checker (an off-host
+backup, an auditor's tool) re-compute it with the same key and detect
+that the row was modified after it was written; klangkd itself only
+writes tags — it does not verify them.
 
-The HMAC key is ``KLANGKD_AUDIT_HMAC_KEY``.  When unset the key is
-derived from the server's JWT secret (``KLANGKD_JWT_SECRET``) via a
-one-round HMAC-SHA256 domain separation so integrity is on by default
-without requiring a second secret.  The key is read live from
-``app.state.settings`` (reloadable on SIGHUP).
+The HMAC key is ``KLANGKD_AUDIT_HMAC_KEY``. Tagging is **opt-in**:
+when the key is unset no HMAC is computed or stored — there is
+deliberately no derivation from the JWT secret, because that secret
+ships a known insecure dev default and audit integrity must not
+silently ride on it. The key is read live from
+``app.state.settings`` (reloadable on SIGHUP); rows written while
+tagging is disabled carry no tag.
 
 FIPS compatibility: all crypto goes through :mod:`hashlib` /
 :mod:`hmac`, which route to the process's OpenSSL — the same boundary
@@ -20,20 +24,16 @@ import hashlib
 import hmac
 
 
-# Domain-separation tag used when deriving the audit HMAC key from the
-# JWT secret (the default — no explicit KLANGKD_AUDIT_HMAC_KEY).
-_DERIVE_DOMAIN = b"klangk-audit-hmac-v1"
+def resolve_audit_hmac_key(settings) -> bytes | None:
+    """The configured HMAC key bytes, or None when tagging is disabled.
 
-
-def _resolve_key(settings) -> bytes:
-    """Return the HMAC key bytes, derived or explicit."""
+    Opt-in (#3174): with ``KLANGKD_AUDIT_HMAC_KEY`` unset (or empty) no
+    HMAC is computed or stored. There is deliberately no derivation
+    from the JWT secret — it ships a known insecure dev default, and
+    audit integrity must not silently ride on that.
+    """
     explicit = settings.audit_hmac_key
-    if explicit:
-        return explicit.encode()
-    jwt_secret = settings.jwt_secret or ""
-    return hmac.new(
-        jwt_secret.encode(), _DERIVE_DOMAIN, hashlib.sha256
-    ).digest()
+    return explicit.encode() if explicit else None
 
 
 def _canonical_pairs(table: str, row: dict, columns: list[str]) -> bytes:
@@ -78,9 +78,12 @@ _CE_HMAC_COLUMNS = [
 ]
 
 
-def compute_container_event_hmac(settings, row: dict) -> str:
-    """Compute the HMAC tag for a ``container_events`` row dict."""
-    key = _resolve_key(settings)
+def compute_container_event_hmac(settings, row: dict) -> str | None:
+    """Compute the HMAC tag for a ``container_events`` row dict, or
+    None when no audit HMAC key is configured (tagging disabled)."""
+    key = resolve_audit_hmac_key(settings)
+    if key is None:
+        return None
     payload = _canonical_pairs("container_events", row, _CE_HMAC_COLUMNS)
     return hmac.new(key, payload, hashlib.sha256).hexdigest()
 
@@ -104,61 +107,11 @@ _EC_HMAC_COLUMNS = [
 ]
 
 
-def compute_egress_consent_hmac(settings, row: dict) -> str:
-    """Compute the HMAC tag for an ``egress_consent`` row dict."""
-    key = _resolve_key(settings)
+def compute_egress_consent_hmac(settings, row: dict) -> str | None:
+    """Compute the HMAC tag for an ``egress_consent`` row dict, or
+    None when no audit HMAC key is configured (tagging disabled)."""
+    key = resolve_audit_hmac_key(settings)
+    if key is None:
+        return None
     payload = _canonical_pairs("egress_consent", row, _EC_HMAC_COLUMNS)
     return hmac.new(key, payload, hashlib.sha256).hexdigest()
-
-
-def verify_hmac(expected: str | None, computed: str) -> bool:
-    """Constant-time comparison; a missing or malformed stored tag
-    (NULL, a BLOB, or non-ASCII text — all tampered-column shapes)
-    always fails instead of raising (``hmac.compare_digest`` would
-    TypeError on those and take down the whole verification pass)."""
-    if not isinstance(expected, str) or not expected.isascii():
-        return False
-    return hmac.compare_digest(expected, computed)
-
-
-# How many tampered row ids the verification report lists before
-# truncating (the full count travels in ``tampered_total``); bounds the
-# verify endpoint's response regardless of table size (#3174).
-TAMPER_REPORT_CAP = 100
-
-
-def integrity_report(settings, rows, row_to_dict, compute_hmac) -> dict:
-    """Fold audited rows into the verification report (#3174).
-
-    Shared by ``container_events.verify_integrity`` and
-    ``egress_consent.verify_integrity``: counts verified / ``no_hmac``
-    (NULL tag — pre-migration rows) / tampered rows, and returns the
-    first ``TAMPER_REPORT_CAP`` tampered ids plus the full
-    ``tampered_total`` and a ``tampered_truncated`` flag, so a large
-    corruption cannot blow up the response or the verifier's memory.
-    """
-    verified = 0
-    no_hmac = 0
-    tampered_total = 0
-    tampered: list[dict] = []
-    for row in rows:
-        d = row_to_dict(row)
-        stored = d.get("hmac")
-        if stored is None:
-            no_hmac += 1
-        elif verify_hmac(stored, compute_hmac(settings, d)):
-            verified += 1
-        else:
-            tampered_total += 1
-            if len(tampered) < TAMPER_REPORT_CAP:
-                tampered.append(
-                    {"id": d["id"], "workspace_id": d["workspace_id"]}
-                )
-    return {
-        "total": len(rows),
-        "verified": verified,
-        "no_hmac": no_hmac,
-        "tampered": tampered,
-        "tampered_total": tampered_total,
-        "tampered_truncated": tampered_total > len(tampered),
-    }
