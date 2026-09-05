@@ -9,6 +9,8 @@ caddy, so nothing here shells out to it).
 """
 
 import asyncio
+import base64
+import hashlib
 import json
 import logging
 import os
@@ -16,6 +18,7 @@ import signal
 import sys
 import tempfile
 import types
+from pathlib import Path
 from unittest.mock import AsyncMock, Mock
 
 import httpx
@@ -25,9 +28,10 @@ from klangk.caddy import (
     AutoHttpsConfigError,
     CaddyRenderer,
     CaddyWatchdog,
-    CSP_POLICY,
     classify_caddy_line,
     csp_block,
+    csp_policy,
+    inline_script_hash_tokens,
     is_bind_error,
 )
 from klangk.caddy import (
@@ -575,44 +579,154 @@ class TestLlmBlockCaddyAdapt:
 # ---------------------------------------------------------------------------
 
 
-class TestCspBlock:
-    """The frontend hardening headers (#3149): CSP + X-Frame-Options on the
-    browser listener's frontend paths, excluded from API/WS/hosted, absent
-    from the egress listener."""
+INDEX_HTML = (
+    "<!doctype html><html><body>"
+    "<p>text node outside scripts</p>"
+    "<script>var a = 1;</script>"
+    '<script src="flutter_bootstrap.js?v=abc" defer></script>'
+    "<script>\n  var b = 2;\n</script>"
+    "</body></html>"
+)
 
-    def test_block_shape(self):
-        b = csp_block()
+
+def sha256_token(block: str) -> str:
+    """The CSP source token for one inline script block (independent check)."""
+    return "sha256-" + base64.b64encode(
+        hashlib.sha256(block.encode("utf-8")).digest()
+    ).decode("ascii")
+
+
+def frontend_fixture(tmp_path: Path) -> Path:
+    """A frontend_dir whose index.html has two inline + one external script."""
+    fd = tmp_path / "frontend"
+    fd.mkdir(exist_ok=True)
+    (fd / "index.html").write_text(INDEX_HTML, encoding="utf-8")
+    return fd
+
+
+class TestCspBlock:
+    """The frontend hardening headers (#3149, #3219): CSP + X-Frame-Options
+    on the browser listener's frontend paths, excluded from API/WS/hosted,
+    absent from the egress listener. The CSP allows index.html's inline
+    scripts by SHA-256 hash — no ``'unsafe-inline'`` for scripts — and
+    enforces Trusted Types."""
+
+    def test_block_shape(self, tmp_path):
+        policy = csp_policy(frontend_fixture(tmp_path))
+        b = csp_block(policy)
         assert (
             "@frontend not path /api /api/* /ws /ws/* /hosted /hosted/*" in b
         )
-        assert f'header @frontend Content-Security-Policy "{CSP_POLICY}"' in b
+        assert f'header @frontend Content-Security-Policy "{policy}"' in b
         assert 'header @frontend X-Frame-Options "DENY"' in b
 
-    def test_policy_is_first_party(self):
+    def test_policy_is_first_party(self, tmp_path):
+        policy = csp_policy(frontend_fixture(tmp_path))
         # No third-party origins, no scheme-source widening, and no script
         # eval: fonts are self-hosted (#3149 additional scope), same-origin
         # ws/wss is covered by 'self' (CSP3), and no shipped feature
         # JS-evals.
-        assert "https://" not in CSP_POLICY
-        assert "ws:" not in CSP_POLICY
-        assert "wss:" not in CSP_POLICY
-        assert "unsafe-eval;" not in CSP_POLICY  # wasm-unsafe-eval only
-        assert "fonts.gstatic.com" not in CSP_POLICY
+        assert "https://" not in policy
+        assert "ws:" not in policy
+        assert "wss:" not in policy
+        assert "unsafe-eval;" not in policy  # wasm-unsafe-eval only
+        assert "fonts.gstatic.com" not in policy
         # The clickjacking posture.
-        assert "frame-ancestors 'none'" in CSP_POLICY
+        assert "frame-ancestors 'none'" in policy
 
-    def test_browser_site_carries_headers(self):
+    def test_script_src_no_unsafe_inline_but_hashes(self, tmp_path):
+        policy = csp_policy(frontend_fixture(tmp_path))
+        script_src = policy.split("script-src ", 1)[1].split(";", 1)[0]
+        # #3219: inline scripts ride hash tokens, not 'unsafe-inline'.
+        assert "'unsafe-inline'" not in script_src
+        assert "'self'" in script_src
+        assert "'wasm-unsafe-eval'" in script_src
+        assert script_src.count("sha256-") == 2  # external script not hashed
+
+    def test_style_src_keeps_unsafe_inline(self, tmp_path):
+        policy = csp_policy(frontend_fixture(tmp_path))
+        style_src = policy.split("style-src ", 1)[1].split(";", 1)[0]
+        assert "'unsafe-inline'" in style_src  # Flutter runtime styles
+
+    def test_trusted_types_enforced(self, tmp_path):
+        policy = csp_policy(frontend_fixture(tmp_path))
+        assert "require-trusted-types-for 'script'" in policy
+
+    def test_hash_tokens_match_inline_script_text(self, tmp_path):
+        # The tokens are the browser-computed SHA-256 of the exact text
+        # between <script> and </script> — base64, CSP3 script-hash form.
+        tokens = inline_script_hash_tokens(INDEX_HTML)
+        expected = [
+            sha256_token("var a = 1;"),
+            sha256_token("\n  var b = 2;\n"),
+        ]
+        assert tokens == expected
+        policy = csp_policy(frontend_fixture(tmp_path))
+        for token in tokens:
+            assert token in policy
+
+    def test_missing_index_html_omits_hashes(self, tmp_path, caplog):
+        # No frontend to serve -> strictest posture, still no inline escape
+        # hatch for scripts — and a breadcrumb so the operator is not left
+        # with only a browser-side console error.
+        with caplog.at_level(logging.WARNING):
+            policy = csp_policy(tmp_path / "nowhere")
+        assert "sha256-" not in policy
+        script_src = policy.split("script-src ", 1)[1].split(";", 1)[0]
+        assert "'unsafe-inline'" not in script_src
+        assert "index.html unreadable" in caplog.text
+
+    def test_non_utf8_index_html_no_crash(self, tmp_path):
+        # A windows-1252 byte raises UnicodeDecodeError — a ValueError,
+        # NOT an OSError — out of read_text. It must not escape the
+        # renderer (a raised render wedges the watchdog in a
+        # kill/respawn loop); the strict hash-less policy is served
+        # instead (#3219 review finding).
+        fd = tmp_path / "frontend-1252"
+        fd.mkdir()
+        (fd / "index.html").write_bytes(
+            b"<html><body><script>var s = '\xffcaf\xe9';</script></body></html>"
+        )
+        policy = csp_policy(fd)
+        assert "sha256-" not in policy
+        script_src = policy.split("script-src ", 1)[1].split(";", 1)[0]
+        assert "'unsafe-inline'" not in script_src
+
+    def test_crlf_normalizes_like_the_browser(self, tmp_path):
+        # The HTML input stream folds CRLF/CR to LF before the tokenizer
+        # sees script data, so the browser hashes the LF text; the helper
+        # mirrors that (and csp_policy's read_text already does).
+        crlf = "<script>var a = 1;\r\nvar b;</script>"
+        lf = "<script>var a = 1;\nvar b;</script>"
+        assert inline_script_hash_tokens(crlf) == inline_script_hash_tokens(lf)
+
+    def test_empty_inline_script_yields_token(self):
+        # <script></script> gets no handle_data callback, but the browser
+        # still runs the CSP check on it — emit the empty-string hash so it
+        # is not a guaranteed console violation.
+        tokens = inline_script_hash_tokens("<script></script>")
+        assert tokens == [sha256_token("")]
+
+    def test_browser_site_carries_headers(self, tmp_path):
         s = make_settings(
-            {"KLANGKD_PORT": "8997", "KLANGKD_EGRESS_PORT": "8995"}
+            {
+                "KLANGKD_PORT": "8997",
+                "KLANGKD_EGRESS_PORT": "8995",
+                "KLANGKD_FRONTEND_DIR": str(frontend_fixture(tmp_path)),
+            }
         )
         cf = _renderer(s).render_config("unix//s", "/d/a.sock")
         browser = cf[cf.index("http://:8997 {") :]
         assert "@frontend not path" in browser
-        assert CSP_POLICY in browser
+        assert csp_policy(str(frontend_fixture(tmp_path))) in browser
 
-    def test_egress_site_has_no_headers(self):
+    def test_egress_site_has_no_headers(self, tmp_path):
         s = make_settings(
-            {"KLANGKD_PORT": "8997", "KLANGKD_EGRESS_PORT": "8995"}
+            {
+                "KLANGKD_PORT": "8997",
+                "KLANGKD_EGRESS_PORT": "8995",
+                "KLANGKD_FRONTEND_DIR": str(frontend_fixture(tmp_path)),
+            }
         )
         cf = _renderer(s).render_config("unix//s", "/d/a.sock")
         egress = cf[cf.index("http://:8995 {") : cf.index("http://:8997 {")]

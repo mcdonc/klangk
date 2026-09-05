@@ -12,6 +12,59 @@
     <link rel="manifest" href="manifest.json" />
   </head>
   <body>
+    <script>
+      // #3219: minimal Trusted Types default policy. The served CSP
+      // enforces require-trusted-types-for 'script'. The Flutter loader
+      // carries its own named policy, but pdfrx assigns plain strings to
+      // a script element's src and to new Worker() (a same-origin
+      // pdfium_client.js asset and a same-origin blob: worker URL).
+      // Sanction exactly those shapes; anything else (remote scripts,
+      // data:/javascript: URLs) throws. This policy defines no
+      // createHTML/createScript, so markup and eval sinks stay blocked.
+      (function () {
+        try {
+          if (window.trustedTypes && trustedTypes.createPolicy) {
+            trustedTypes.createPolicy("default", {
+              createScriptURL: function (s) {
+                var m = /^([a-z][a-z0-9+.-]*):/i.exec(s);
+                if (!m) return s; // relative: resolves inside this origin
+                if (
+                  m[1] === "blob" &&
+                  s.indexOf("blob:" + location.origin + "/") === 0
+                )
+                  return s; // pdfrx's same-origin blob worker URL
+                if (s.indexOf(location.origin + "/") === 0) return s;
+                throw new TypeError(
+                  "klangk default Trusted Types policy: refused script URL " +
+                    s,
+                );
+              },
+            });
+          }
+        } catch (e) {
+          // A default policy already exists (or TT is unsupported) —
+          // leave the existing one in charge.
+        }
+        // pdfrx's Dart init assigns globalThis.pdfiumWasmWorkerUrl a
+        // blob: URL whose first statement is importScripts(...) — a
+        // TrustedScriptURL sink inside the worker, which inherits the
+        // page's require-trusted-types-for but can define no policy of
+        // its own. Redirect the worker URL to the build-generated
+        // TT-safe file (pdfium_worker.js inlined, no importScripts)
+        // with a no-op setter, so pdfrx's later blob assignment cannot
+        // restore the violating wrapper (#3219).
+        Object.defineProperty(globalThis, "pdfiumWasmWorkerUrl", {
+          configurable: false,
+          get: function () {
+            return new URL(
+              "assets/packages/pdfrx/assets/worker-tt.js",
+              location.href,
+            ).href;
+          },
+          set: function () {},
+        });
+      })();
+    </script>
     <div
       id="loading"
       style="

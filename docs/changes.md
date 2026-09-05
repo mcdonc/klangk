@@ -321,6 +321,22 @@ operators or integrators to act when upgrading.
   never rejected; reloadable on SIGHUP. See
   [Authentication: session workstation binding](features/authentication.md#session-workstation-binding-replay-protection).
 
+- **CSP: hash-allowed inline scripts + Trusted Types (#3219).** The
+  served `Content-Security-Policy` drops `'unsafe-inline'` from
+  `script-src`: the inline `<script>` blocks of the built frontend's
+  `index.html` are allowed by SHA-256 hash tokens computed at
+  config-render time, and `require-trusted-types-for 'script'` now
+  blocks DOM-based XSS sinks (such as `innerHTML`); a minimal default
+  Trusted Types policy in `index.html` sanctions only relative,
+  same-origin, and same-origin `blob:` script URLs, keeping the PDF
+  viewer's wasm loader working (the build also swaps the viewer's
+  `importScripts`-based blob worker for an inlined same-origin worker
+  file — `importScripts` is a Trusted Types sink inside the worker).
+  Styles keep `'unsafe-inline'` because
+  Flutter injects runtime styles. After a frontend rebuild that changes
+  `index.html`'s inline scripts, a settings reload (SIGHUP) or restart
+  re-computes the hashes.
+
 - **Session token storage (#3193).** The frontend now keeps the session
   JWT in browser `sessionStorage` instead of `localStorage`, so closing
   the tab or the browser ends the session instead of leaving a usable

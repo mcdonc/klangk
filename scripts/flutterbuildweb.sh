@@ -113,6 +113,23 @@ sed -i "s|flutter_bootstrap.js|flutter_bootstrap.js?v=${HASH}|" "$BUILD_DIR/inde
 sed -i "s|</head>|<meta name=\"klangk-build-hash\" content=\"${HASH}\" />\n</head>|" "$BUILD_DIR/index.html"
 echo "Cache-bust: v=$HASH"
 
+# #3219: TT-safe pdfium worker. pdfrx's wasm backend builds its worker
+# from a blob: wrapper whose first statement is importScripts(...) — a
+# TrustedScriptURL sink inside the worker (which inherits the page's
+# require-trusted-types-for but can define no policy). index.html pins
+# globalThis.pdfiumWasmWorkerUrl to this file instead: the real
+# pdfium_worker.js inlined behind the wasm URL the wrapper used to inject
+# — same origin, no importScripts, no TT sinks.
+PDFFRX_ASSETS="$BUILD_DIR/assets/packages/pdfrx/assets"
+{
+  echo '// klangk build-time file (#3219): TT-safe pdfium worker. Generated'
+  echo '// by scripts/flutterbuildweb.sh — do not edit. Replaces pdfrx'"'"'s'
+  echo '// blob: worker wrapper (importScripts is a TrustedScriptURL sink'
+  echo '// under require-trusted-types-for).'
+  echo 'const pdfiumWasmUrl = new URL("pdfium.wasm", self.location.href).href;'
+  cat "$PDFFRX_ASSETS/pdfium_worker.js"
+} >"$PDFFRX_ASSETS/worker-tt.js"
+
 # Re-emit features.json AFTER the Flutter build (#1655). flutter build web
 # may regenerate build/web/ and wipe a manifest written before it, so the
 # pre-build emit in import_dart_features.py is followed by this post-build

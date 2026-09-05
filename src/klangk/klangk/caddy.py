@@ -38,9 +38,12 @@ Out of scope here (tracked in #1559): the ``caddy-l4`` layer-4 plugin
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import ctypes
 import ctypes.util
+import hashlib
+import html.parser
 import ipaddress
 import json
 import logging
@@ -221,36 +224,157 @@ class AutoHttpsConfigError(ValueError):
 
 
 # ---------------------------------------------------------------------------
-# Frontend hardening headers (#3149)
+# Frontend hardening headers (#3149, #3219)
 # ---------------------------------------------------------------------------
 
-#: The Content-Security-Policy served on the browser listener's frontend
-#: paths. Locked to first-party resources: the SPA's scripts, styles,
-#: images, fonts, workers, and WebSocket connections all stay same-origin,
-#: so every fetch directive is ``'self'`` (plus the tokens the Flutter web
-#: build genuinely needs — ``'unsafe-inline'`` for index.html's inline
-#: <script> blocks and Flutter's runtime-injected styles, ``wasm-unsafe-eval``
-#: for CanvasKit/skwasm's ``WebAssembly`` compile, ``data:``/``blob:``
-#: images). Same-origin ``ws:``/``wss:`` upgrades of the page origin are
-#: covered by ``'self'`` (CSP3), so the workspace WebSocket needs no bare
-#: scheme-source — and a bare ``ws:``/``wss:`` would permit a compromised
-#: script to open websockets to any host on the internet. No
-#: ``unsafe-eval`` (the beep/boingball features no longer JS-``eval``),
-#: no third-party origins (Roboto Mono is self-hosted, so fonts.gstatic.com
-#: is gone). ``frame-ancestors 'none'`` + X-Frame-Options DENY is the
-#: clickjacking posture.
-CSP_POLICY = (
-    "default-src 'self'; "
-    "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; "
-    "style-src 'self' 'unsafe-inline'; "
-    "img-src 'self' data: blob:; "
-    "font-src 'self'; "
-    "connect-src 'self'; "
-    "worker-src 'self'; "
-    "object-src 'none'; "
-    "base-uri 'self'; "
-    "frame-ancestors 'none'"
-)
+
+class _InlineScriptExtractor(html.parser.HTMLParser):
+    """Collect the raw text of every inline ``<script>`` block (no ``src``).
+
+    ``HTMLParser`` switches to CDATA (raw-text) mode inside ``script``
+    elements, so :meth:`handle_data` receives the text-between-tags the
+    browser hashes for a CSP ``'sha256-…'`` source token (after the HTML
+    input stream's newline normalization, mirrored by the ``\r``-folding in
+    :func:`inline_script_hash_tokens`). ``src``-bearing scripts are skipped
+    — external files load under ``'self'`` and never consult a hash.
+    Truly empty blocks (``<script></script>``) still yield a token: the
+    browser runs the CSP check on them too. One known divergence from the
+    spec's script-data *escaped* states (``<!--`` / ``<script`` double-
+    escaping): the parser ends the element at the first ``</script>``. The
+    drift is fail-closed — a mismatched hash blocks the script (broken
+    boot, loudly), never an unintended allow — and is unreachable for
+    Flutter-generated ``index.html``.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=False)
+        self.blocks: list[str] = []
+        self._inline = False
+        self._saw_data = False
+
+    def handle_starttag(self, tag, attrs) -> None:
+        if tag == "script" and "src" not in dict(attrs):
+            self._inline = True
+            self._saw_data = False
+
+    def handle_endtag(self, tag) -> None:
+        if tag == "script":
+            if self._inline and not self._saw_data:
+                self.blocks.append("")
+            self._inline = False
+
+    def handle_data(self, data) -> None:
+        if self._inline:
+            self.blocks.append(data)
+            self._saw_data = True
+
+
+def inline_script_hash_tokens(html_text: str) -> list[str]:
+    """CSP ``'sha256-…'`` source tokens for *html_text*'s inline scripts.
+
+    Each token is the base64 SHA-256 of the script's text as the browser
+    sees it — i.e. after the HTML input stream's newline normalization
+    (``\r\n`` and lone ``\r`` fold to ``\n``), applied here so direct calls
+    on CR-bearing text match too (:func:`csp_policy`'s ``read_text``
+    universal-newline translation normalizes identically, making this
+    idempotent there). With these tokens in ``script-src`` the served
+    policy needs no ``'unsafe-inline'`` allowance for scripts (#3219).
+    """
+    extractor = _InlineScriptExtractor()
+    extractor.feed(html_text)
+    extractor.close()
+    return [
+        "sha256-"
+        + base64.b64encode(
+            hashlib.sha256(
+                b.replace("\r\n", "\n").replace("\r", "\n").encode("utf-8")
+            ).digest()
+        ).decode("ascii")
+        for b in extractor.blocks
+    ]
+
+
+def csp_policy(frontend_dir: str | Path) -> str:
+    """The Content-Security-Policy served on the browser listener's paths.
+
+    Locked to first-party resources: the SPA's scripts, styles, images,
+    fonts, workers, and WebSocket connections all stay same-origin, so
+    every fetch directive is ``'self'`` (plus the tokens the Flutter web
+    build genuinely needs — ``'wasm-unsafe-eval'`` for CanvasKit/skwasm's
+    ``WebAssembly`` compile, ``data:``/``blob:`` images, ``'unsafe-inline'``
+    **styles only**: Flutter injects runtime styles, and style injection is
+    not a script-execution vector). The inline ``<script>`` blocks in the
+    served ``index.html`` are allowed by SHA-256 hash tokens computed
+    here — at Caddyfile-emit time, from the live ``frontend_dir`` (#3219) —
+    so dropping ``'unsafe-inline'`` from ``script-src`` costs nothing: the
+    blocks are static at build time. A frontend rebuild that alters them
+    needs only a proxy reload (a SIGHUP settings swap triggers exactly
+    that) to re-hash. When ``index.html`` is absent or unreadable the
+    tokens are simply omitted — still no ``'unsafe-inline'`` (strictest
+    posture; there is no UI to serve then).
+
+    Same-origin ``ws:``/``wss:`` upgrades of the page origin are covered by
+    ``'self'`` (CSP3), so the workspace WebSocket needs no bare scheme-source
+    — and a bare ``ws:``/``wss:`` would permit a compromised script to open
+    websockets to any host on the internet. No ``unsafe-eval`` (the
+    beep/boingball features no longer JS-``eval``), no third-party origins
+    (Roboto Mono is self-hosted, so fonts.gstatic.com is gone).
+    ``frame-ancestors 'none'`` + X-Frame-Options DENY is the clickjacking
+    posture. ``require-trusted-types-for 'script'`` (#3219) closes the
+    DOM-based XSS sinks (``innerHTML`` & co., string ``script.src``, string
+    ``eval``): they only accept TrustedTypes values routed through a
+    policy. Two sanctioned policies cover the shipped frontend — the
+    Flutter loader's own named ``'flutter-js'`` policy, and a minimal
+    **default** policy inlined in ``index.html`` (``createScriptURL``
+    only, permitting relative URLs, same-origin absolute URLs, and
+    same-origin ``blob:`` URLs) that pdfrx's pdfium loader needs
+    (plain-string ``script.src`` for the ``pdfium_client.js`` asset and
+    a ``blob:`` wasm-worker URL). No ``createHTML``/``createScript``
+    escape is defined, so markup and eval sinks stay blocked. The e2e
+    ``csp-console.spec.ts`` asserts a violation-free console across
+    login, workspace, terminal, files, and PDF flows, and positively
+    verifies the pdfium script/Worker (the two TT sinks) came up.
+    """
+    try:
+        html_text = (
+            Path(frontend_dir)
+            .joinpath("index.html")
+            .read_text(encoding="utf-8")
+        )
+    except (OSError, UnicodeDecodeError):
+        # Unreadable OR non-UTF-8 (a ValueError, not an OSError — a
+        # windows-1252 byte would otherwise raise out of the renderer and
+        # wedge the watchdog in a kill/respawn loop). Either way: strict
+        # hash-less policy + a loud breadcrumb for the operator, whose
+        # symptom would otherwise be a blank page with only a browser-side
+        # "Refused to execute inline script" console error to go on.
+        logger.warning(
+            "index.html unreadable or not UTF-8 under %s — serving the "
+            "CSP without inline-script hash tokens (inline scripts will "
+            "be blocked until this is fixed)",
+            frontend_dir,
+        )
+        html_text = ""
+    script_src = "script-src 'self' 'wasm-unsafe-eval'"
+    tokens = inline_script_hash_tokens(html_text)
+    if tokens:
+        # Hash sources are quoted tokens: 'sha256-<b64>' (CSP3 grammar —
+        # an unquoted sha256-… parses as a host-source and is ignored).
+        script_src += " " + " ".join(f"'{t}'" for t in tokens)
+    return (
+        "default-src 'self'; "
+        f"{script_src}; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data: blob:; "
+        "font-src 'self'; "
+        "connect-src 'self'; "
+        "worker-src 'self'; "
+        "object-src 'none'; "
+        "base-uri 'self'; "
+        "frame-ancestors 'none'; "
+        "require-trusted-types-for 'script'"
+    )
+
 
 #: Browser-listener paths the hardening headers must NOT touch: the API,
 #: the WebSocket endpoints, and the hosted-ports proxy (deployer-controlled
@@ -258,8 +382,8 @@ CSP_POLICY = (
 _CSP_EXCLUDED_PATHS = "/api /api/* /ws /ws/* /hosted /hosted/*"
 
 
-def csp_block() -> str:
-    """The site-level ``header`` directives serving :data:`CSP_POLICY`.
+def csp_block(policy: str) -> str:
+    """The site-level ``header`` directives serving *policy*.
 
     Emitted into the browser site only (the egress listener serves
     containers, not documents). Caddy sorts ``header`` ahead of the
@@ -268,7 +392,7 @@ def csp_block() -> str:
     """
     return (
         f"	@frontend not path {_CSP_EXCLUDED_PATHS}\n"
-        f'	header @frontend Content-Security-Policy "{CSP_POLICY}"\n'
+        f'	header @frontend Content-Security-Policy "{policy}"\n'
         '	header @frontend X-Frame-Options "DENY"\n'
     )
 
@@ -840,6 +964,7 @@ class CaddyRenderer:
         Everything else inside the block (bind, request_body, CSP, ACLs,
         routes) is identical either way.
         """
+        csp = csp_policy(self.app.state.settings.frontend_dir)
         listen_addr = self.app.state.settings.listen
         port = self.app.state.settings.port
         fqdn = self.app.state.settings.tls_hostname
@@ -890,7 +1015,7 @@ class CaddyRenderer:
             f"	request_body {{\n"
             f"		max_size {self._max_body_size()}\n"
             f"	}}\n"
-            f"{csp_block()}"
+            f"{csp_block(csp)}"
             f"{deny_matcher}"
             f"{hosted}"
             f"{auth_local}"
