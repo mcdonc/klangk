@@ -7,17 +7,18 @@ OIDC callbacks. The main path is running klangkd as the
 built-in Caddy proxy requests a **Let's Encrypt** certificate itself
 (ZeroSSL as fallback issuer), serves it, and renews it before it
 expires — for a public hostname you choose (#3192). HTTPS here means a
-normal, publicly trusted certificate; there is no certbot to run and
-no certificate files to copy to the host.
+normal, publicly trusted certificate, and klangkd owns its entire
+lifecycle itself: it requests, serves, and renews the certificate with
+no operator tooling.
 
 This is one of four TLS models:
 
-| Model                                                | Who terminates TLS                                                                   | Chapter                                                                     |
-| ---------------------------------------------------- | ------------------------------------------------------------------------------------ | --------------------------------------------------------------------------- |
-| **Automatic TLS** (this chapter)                     | klangkd's built-in Caddy, Let's Encrypt certificate it issues + renews itself        | here                                                                        |
-| **Behind a proxy + internal TLS hop** (this chapter) | klangkd's built-in Caddy, self-generated internal-CA certificate                     | here                                                                        |
-| [Behind a reverse proxy](behind-a-proxy.md), plain   | an outer nginx/Caddy/HAProxy/load balancer                                           | Behind a Reverse Proxy                                                      |
-| Certificate files you already hold                   | klangkd's built-in Caddy, serving files from another ACME client or `tailscale cert` | planned (#2167) — automatic TLS above usually covers this without the files |
+| Model                                                | Who terminates TLS                                                                   | Chapter                                                            |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------ |
+| **Automatic TLS** (this chapter)                     | klangkd's built-in Caddy, Let's Encrypt certificate it issues + renews itself        | here                                                               |
+| **Behind a proxy + internal TLS hop** (this chapter) | klangkd's built-in Caddy, self-generated internal-CA certificate                     | here                                                               |
+| [Behind a reverse proxy](behind-a-proxy.md), plain   | an outer nginx/Caddy/HAProxy/load balancer                                           | Behind a Reverse Proxy                                             |
+| Certificate files you already hold                   | klangkd's built-in Caddy, serving files from another ACME client or `tailscale cert` | planned (#2167) — automatic TLS above usually makes it unnecessary |
 
 Use automatic TLS when klangkd runs on a host with a **public DNS name**
 and ports **80/443 reachable from the internet**. Use an outer proxy when
@@ -34,8 +35,7 @@ services, or the host has no public name — and add the internal TLS hop
   serves HTTPS (and the TLS-ALPN challenge).
 - A Caddy binary new enough for klangkd's full global options block
   (anything from the last few years; klangkd probes the binary at boot
-  and fails with a clear message if it is too old, rather than silently
-  serving plain HTTP).
+  and fails with a clear message when it is too old).
 - Permission for the caddy binary to bind ports below 1024 when klangkd
   does not run as root:
 
@@ -76,10 +76,10 @@ acme-email: "ops@example.com"
   the canonical choice for an internet-facing server; any other port
   works too (the certificate is issued for the hostname, not the port),
   but then browsers must use the explicit port in the URL.
-- **`listen`** — must not stay at the `127.0.0.1` default: the HTTPS
-  listener would be unreachable off-host **and** the ACME challenge
-  could not be answered, so issuance would fail (klangkd logs a warning
-  at render time; `0.0.0.0` binds every interface).
+- **`listen`** — set this past the `127.0.0.1` default: at loopback the
+  HTTPS listener is unreachable from other hosts and the ACME challenge
+  goes unanswered, so issuance fails (klangkd logs a warning at render
+  time; `0.0.0.0` binds every interface).
 
 Both `tls-hostname` and `acme-email` are reloadable: after editing,
 send `SIGHUP` (see [Process Signals](signals.md)) and klangkd pushes the
@@ -88,9 +88,9 @@ does not need a process restart (a `port` change does, as always).
 
 ## How it works
 
-klangkd renders the Caddy global block **without** `auto_https off`,
-adds `email` (when set) and an explicit certificate storage path under
-its state directory (`<state_dir>/caddy-storage`), and addresses the
+klangkd drops `auto_https off` from the Caddy global block, adds
+`email` (when set) and an explicit certificate storage path under its
+state directory (`<state_dir>/caddy-storage`), and addresses the
 browser site as `https://<tls-hostname>:<port>`.
 
 On boot, Caddy:
@@ -125,10 +125,10 @@ once the site is served over HTTPS.
 Many deployments terminate TLS at an outer proxy (the real public HTTPS
 endpoint) but also require encryption on the hop between that proxy and
 klangkd — internal policy, compliance scans, or defense in depth.
-`tls-issuer: internal` serves that case with **no certificate to
-generate and none to renew**: the built-in Caddy runs its own internal
-certificate authority, self-generates the key and certificate for the
-armed name, and renews the (short-lived) certificate continuously.
+`tls-issuer: internal` serves that case: the built-in Caddy runs its
+own internal certificate authority, generates the key and certificate
+for the armed name itself, and renews the short-lived certificate
+continuously.
 
 ```yaml
 listen: "0.0.0.0" # or the interface the proxy reaches
@@ -148,10 +148,11 @@ How this differs from automatic (ACME) TLS:
   like these because public certificate authorities only issue for
   registered public domain names; the internal CA issues a certificate
   for whatever name you configure.
-- **The certificate is generated on this host.** klangkd talks to no
-  certificate authority, so this mode needs no public DNS record and
-  no ports exposed to the internet. (`acme-email` does nothing here;
-  klangkd logs a warning if you set it.)
+- **The certificate is generated on this host.** The internal CA lives
+  inside the proxy process, so issuance involves zero network traffic —
+  this mode works with a private DNS name and a listener reachable only
+  by the outer proxy. (`acme-email` does nothing here; klangkd logs a
+  warning if you set it.)
 - **The HTTPS listener binds `listen:port`, and that is the only port
   involved.** The automatic HTTP→HTTPS redirect stays off: your outer
   proxy already sends browsers to HTTPS, and an enabled redirect would
@@ -187,8 +188,8 @@ proxy_ssl_trusted_certificate /etc/nginx/klangkd-root.crt;
 proxy_ssl_verify on;
 ```
 
-(Mutual TLS — the proxy also presenting a client certificate — is not
-wired up yet; watch #2167 for TLS-policy options.)
+(Mutual TLS — the proxy also presenting a client certificate — is
+future work under #2167.)
 
 Everything else behaves as in [Behind a Reverse
 Proxy](behind-a-proxy.md): set `trusted-proxy-cidrs` so forwarded
@@ -203,16 +204,18 @@ is the whole game:
 - **`tls-hostname`** is _listener identity_. It names the DNS name the
   certificate is issued for and the HTTPS listener serves. It changes
   what the proxy binds, it is a bare FQDN (the port comes from `port`),
-  and a bad value refuses to boot. It is **not** used to build URLs.
+  and a bad value refuses to boot. URL generation ignores it — that is
+  `hosting-hostname`'s job, below.
 - **`hosting-hostname`** (`KLANGKD_HOSTING_HOSTNAME`) is a _URL
-  override_. It never changes any listener; it only pins the authority
-  — `host[:port]`, port allowed — that klangkd writes into generated
-  URLs (hosted-app links, login emails, OIDC callbacks). Its documented
+  override_. It leaves every listener untouched; its whole job is to
+  pin the authority — `host[:port]`, port allowed — that klangkd writes
+  into generated URLs (hosted-app links, login emails, OIDC
+  callbacks). Its documented
   job is the behind-a-proxy model, where the `Host` klangkd sees is not
   the public name.
 
-Neither is needed most of the time. When no override is set, klangkd
-derives every public URL from the request itself, in this order:
+Most deployments set neither. With the pin unset, klangkd derives
+every public URL from the request itself, in this order:
 
 1. `KLANGKD_HOSTING_HOSTNAME` (the explicit pin), else
 2. `X-Forwarded-Host` — trusted only when the immediate peer is in
@@ -254,11 +257,10 @@ KLANGKD_TLS_HOSTNAME=klangk.example.com klangkd doctor
 ```
 
 When automatic TLS is armed, doctor checks that ports 80/443 are
-bindable. This is an **error-grade** check, not a warning: with TLS
-armed those ports are part of the proxy config, so an unbindable port
-does not merely break certificate issuance — caddy refuses to load the
-config and the klangkd proxy (browser **and** container-egress
-listeners) does not start at all. The fix hint grants the caddy binary
+bindable, at **error grade**: with TLS armed those ports are part of
+the proxy config, and an unbindable one stops the klangkd proxy
+entirely (browser **and** container-egress listeners) — caddy refuses
+to load the config, so the proxy stays down until the port is free. The fix hint grants the caddy binary
 permission to bind privileged ports:
 
 ```console
@@ -289,15 +291,16 @@ After boot, certificate trouble surfaces in the logs at `ERROR` level
 - **HTTPS listener unreachable from outside** — `listen` is still
   `127.0.0.1`; set it to `0.0.0.0` or a specific interface IP.
 - **Certificate not issued** — run `klangkd doctor` (see above) and
-  check the logs for `tls.obtain` errors. Note that an unbindable
-  port 80/443 does not degrade to plain HTTP: with TLS armed, caddy
-  refuses the whole config (see the doctor section above).
+  check the logs for `tls.obtain` errors. An unbindable port 80/443
+  stops the whole proxy in this mode — caddy refuses the config
+  outright (see the doctor section above).
 
 ## Notes
 
-- **No HSTS header.** The browser site's response headers are identical
-  in armed and unarmed mode; klangkd does not add
-  `Strict-Transport-Security`. Put an HSTS policy in an outer proxy if
-  you need one, or watch #2167 for TLS-header options.
+- **Response headers are identical in armed and unarmed mode.** HTTPS
+  changes the listener scheme and the certificate; the header set
+  stays the same, so HSTS (`Strict-Transport-Security`) remains an
+  outer-proxy concern when you want it. #2167 tracks TLS-header
+  options.
 - The HTTP→HTTPS redirect on port 80 is installed by caddy's automatic
   HTTPS and redirects to the armed `https://<hostname>:<port>`.
