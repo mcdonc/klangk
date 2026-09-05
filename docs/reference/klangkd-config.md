@@ -400,6 +400,7 @@ override it per-workspace (`settings.idle_timeout` — see
 | `state_dir`                         | `$XDG_STATE_HOME/klangkd`       | `KLANGKD_STATE_DIR`                         |
 | `config_dir`                        | `$XDG_CONFIG_HOME/klangkd`      | `KLANGKD_CONFIG_DIR`                        |
 | `customize_dir`                     | `<config_dir>/custom`           | `KLANGKD_CUSTOMIZE_DIR`                     |
+| `approved_ca_dir`                   |                                 | `KLANGKD_TRUSTED_CA_DIR`                    |
 | `features_enable`                   | _(unset → manifest `defaults`)_ | `KLANGKD_FEATURES_ENABLE`                   |
 | `image_name`                        | `klangk-workspace`              | `KLANGKD_IMAGE_NAME`                        |
 | `image_pull_policy`                 | `never`                         | `KLANGKD_IMAGE_PULL_POLICY`                 |
@@ -453,6 +454,11 @@ override it per-workspace (`settings.idle_timeout` — see
 | `hosted_ports_per_workspace`        | `5`                             | `KLANGKD_HOSTED_PORTS_PER_WORKSPACE`        |
 | `test_mode`                         |                                 | `KLANGKD_TEST_MODE`                         |
 | `version_file`                      |                                 | `KLANGKD_VERSION_FILE`                      |
+
+`approved_ca_dir` is also settable through its issue-named env var
+`KLANGKD_TRUSTED_CA_DIR` (a pydantic `validation_alias`; the field-name form
+`KLANGKD_APPROVED_CA_DIR` works too, and `KLANGKD_TRUSTED_CA_DIR` wins when
+both are set). See [Customizing a Deployment](../deployment/customizing.md#custom-ca-certificates).
 
 ### LLM
 

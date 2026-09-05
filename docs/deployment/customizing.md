@@ -171,6 +171,23 @@ Rotating a cert is just a file change plus a workspace/backend restart — no im
 
 > **Why a merged bundle?** `SSL_CERT_FILE` / `REQUESTS_CA_BUNDLE` / `CURL_CA_BUNDLE` _replace_ the default trust store rather than add to it. Klangk therefore prepends the system CAs before your custom certs. (`NODE_EXTRA_CA_CERTS` is additive, but pointing it at the same merged bundle is harmless.)
 
+#### Restricting trusted CAs to an approved baseline
+
+Deployments that must trust only a defined CA set (e.g. a DoD-approved CA baseline) can enforce one with `KLANGKD_TRUSTED_CA_DIR` (#3198). Point it at an operator-managed directory holding the approved CA certs — those become the **only** custom CAs trusted:
+
+- Only CAs whose SHA-256 fingerprint appears among the `.pem`/`.crt` certs in the directory are trusted — by the backend's outbound TLS **and** every workspace container. klangkd stages the approved certs (one canonical PEM per unique parseable cert) under `<KLANGKD_STATE_DIR>/ssl/approved`; the staged copy — not the raw directories — is what the backend bundle and the workspace-container mounts consume, so a file the strict certificate parser rejects is never trusted even if a lenient consumer might accept its raw bytes.
+- Every cert dropped into `<KLANGKD_CUSTOMIZE_DIR>/certs` is audited against the baseline on each resolution: approved ones log at debug (subject/issuer), non-approved or unparseable ones are **refused** with a warning and never reach a trust bundle or a container.
+- A missing, unreadable, or cert-less baseline directory fails **closed** — no custom CAs are trusted at all, and an error is logged. Backend trust applied earlier in the process is **revoked** on reload (the trust env vars klangkd set are cleared, the stale bundle and the staged cert dir are removed), so fail-closed holds across SIGHUP reloads, not just at boot. Already-running child processes that inherited the vars lose the bundle file and fail their outbound TLS — that is the fail-closed guarantee.
+
+```bash
+docker run -d \
+  -e KLANGKD_TRUSTED_CA_DIR=/etc/klangk/approved-cas \
+  -v ./dod-approved-cas:/etc/klangk/approved-cas:ro \
+  ...
+```
+
+With the setting unset (the default), behavior is unchanged: every cert in `<KLANGKD_CUSTOMIZE_DIR>/certs` is trusted. The setting is read live on every resolution — reloadable on SIGHUP (the backend re-applies — or revokes — its trust bundle; containers started after the change pick up the new baseline).
+
 ### OIDC Login Hook
 
 The `customize/custom/oidc/` directory includes a sample `login_hook.py` that restricts OIDC logins to invited users. Bind-mount it anywhere in the container and point the env var at it:

@@ -668,6 +668,17 @@ sync` report a clear permission-denied error.
 
 ### Added
 
+- **`KLANGKD_TRUSTED_CA_DIR` (#3198).** Operator-managed approved CA
+  baseline for runtime SSL trust: when set, only CAs whose SHA-256
+  fingerprint appears among that directory's `.pem`/`.crt` certs are
+  trusted, via a staged copy (`<state_dir>/ssl/approved`) consumed by
+  the backend bundle and workspace containers. Certs dropped into
+  `<KLANGKD_CUSTOMIZE_DIR>/certs` are audited against the baseline;
+  non-approved or unparseable ones are refused with a warning naming
+  subject/issuer. A missing, unreadable, or cert-less baseline fails
+  closed (no custom CAs trusted; previously-applied backend trust is
+  revoked on reload). Unset (default) = no restriction. Reloadable on
+  SIGHUP.
 - **Audit subtab in the admin Events tab (#3217).** The Events tab
   now has a Containers / Audit segmented control; Audit lists the
   identity/privilege stream of #3205 (logins, account and group

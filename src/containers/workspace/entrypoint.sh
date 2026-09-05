@@ -24,7 +24,8 @@ mkdir -p /tmp/klangk
 
 # Build the CA bundle from mounted deployer certs (runtime trust
 # injection, #1181). The backend mounts <KLANGKD_CUSTOMIZE_DIR>/certs read-only
-# at /opt/klangk/ssl when it contains .pem/.crt CAs, and sets
+# at /opt/klangk/ssl when it contains .pem/.crt CAs (or the staged approved-CA
+# dir when KLANGKD_TRUSTED_CA_DIR is set, #3198), and sets
 # SSL_CERT_FILE / REQUESTS_CA_BUNDLE / CURL_CA_BUNDLE /
 # NODE_EXTRA_CA_CERTS to point at this bundle. Those vars REPLACE the
 # default trust store, so the bundle must contain the system CAs too --
