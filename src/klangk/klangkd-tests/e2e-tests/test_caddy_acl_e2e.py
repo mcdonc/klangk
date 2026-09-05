@@ -1053,7 +1053,8 @@ class TestCaddyAutoHttpsConfig:
         with open(conf_path, "w") as f:
             # The "sensitive" value inside is the dummy fixture email
             # ops@example.com, written to the per-test temp dir.
-            f.write(cf)  # lgtm[py/clear-text-storage-of-sensitive-information]
+            # codeql[py/clear-text-storage-of-sensitive-information]
+            f.write(cf)
         r = subprocess.run(
             [
                 "caddy",
