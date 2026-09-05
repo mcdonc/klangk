@@ -2141,7 +2141,13 @@ class Auth:
         return None
 
     async def get_user_from_token(self, token: str) -> dict | str | None:
-        """Validate a token string (used for WebSocket auth).
+        """Validate a token string (the request-less legacy/test path).
+
+        Production WebSocket auth routes through ``ws_authenticate`` /
+        ``_decider_authenticate``, which pass the connect's resolved
+        workstation so the session-binding check runs (#3194); this
+        method has no presentation to compare, so binding is NOT
+        checked here.
 
         Returns:
             dict: the user record on success.

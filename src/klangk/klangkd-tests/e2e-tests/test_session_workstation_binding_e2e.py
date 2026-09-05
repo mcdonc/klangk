@@ -19,7 +19,7 @@ replay-protection contract on every consuming surface:
 - a second, unarmed server is the control: with binding off, the same
   token answers from any workstation.
 
-Run with: devenv shell -- test-backend-e2e test_session_binding_e2e.py
+Run with: devenv shell -- test-backend-e2e -k session_workstation_binding
 """
 
 import uuid
