@@ -15,6 +15,7 @@ import os
 import platform
 import re
 import shutil
+import socket
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -518,6 +519,86 @@ def check_podman_machine() -> CheckResult:
     )
 
 
+# Ports automatic TLS needs bindable when armed (#3192): 80 for the ACME
+# HTTP-01 challenge + the HTTP→HTTPS redirect, 443 for the canonical HTTPS
+# listener / TLS-ALPN challenge.
+_AUTO_HTTPS_PORTS = (80, 443)
+
+
+def port_bind_error(port: int) -> str | None:
+    """Why binding 0.0.0.0:<port> would fail, or None when it would work.
+
+    Binds (and immediately closes) an IPv4 socket — the same bind Caddy's
+    auto-HTTPS listeners perform — so permission denials and conflicts
+    surface here instead of as a mid-boot ACME failure. IPv6 is not
+    probed (Caddy binds it alongside; the IPv4 result is the signal).
+    """
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.bind(("0.0.0.0", port))
+        return None
+    except OSError as exc:
+        return f"{port}: {exc.strerror or exc}"
+    finally:
+        sock.close()
+
+
+def _auto_https_ok_result(hostname: str) -> CheckResult:
+    """The passing result when every ACME port binds (#3192)."""
+    return CheckResult(
+        name="auto-https ports",
+        ok=True,
+        message=(
+            f"ports 80/443 bindable — ACME issuance for {hostname} can proceed"
+        ),
+    )
+
+
+def _auto_https_failure_result(
+    hostname: str, failures: list[str]
+) -> CheckResult:
+    """The warning-grade result naming each unbindable port (#3192)."""
+    return CheckResult(
+        name="auto-https ports",
+        ok=False,
+        is_warning=True,
+        message=(
+            f"KLANGKD_PUBLIC_HOSTNAME={hostname} but cannot bind: "
+            + "; ".join(failures)
+            + ". ACME certificate issuance will fail until this is fixed "
+            "(free the port, or grant caddy permission to bind privileged "
+            "ports)."
+        ),
+        hint=(
+            "sudo setcap 'cap_net_bind_service=+ep' "
+            "$(readlink -f $(which caddy))"
+        ),
+    )
+
+
+def check_auto_https_ports(hostname: str | None) -> CheckResult | None:
+    """Automatic-TLS pre-flight (#3192): ports 80/443 must be bindable.
+
+    Runs only when ``KLANGKD_PUBLIC_HOSTNAME`` arms automatic TLS (env-var
+    detection — doctor is a standalone pre-flight command with no config
+    plumbed in; a YAML-configured deployment exports the var when running
+    doctor). Both failures are warning-grade: klangkd itself still boots,
+    but ACME issuance (80: HTTP-01 challenge + redirect, 443: TLS-ALPN /
+    the canonical listener) cannot succeed until the port is free or the
+    caddy binary may bind privileged ports.
+    """
+    if not hostname:
+        return None
+    failures = []
+    for port in _AUTO_HTTPS_PORTS:
+        reason = port_bind_error(port)
+        if reason is not None:
+            failures.append(reason)
+    if not failures:
+        return _auto_https_ok_result(hostname)
+    return _auto_https_failure_result(hostname, failures)
+
+
 def check_rootless_podman() -> CheckResult:
     """Verify rootless podman can actually run a container."""
     if not shutil.which("podman"):
@@ -629,6 +710,14 @@ def run_doctor(*, verbose: bool = False) -> DoctorReport:
 
     # 4. End-to-end rootless podman (the definitive check)
     report.add(check_rootless_podman())
+
+    # 5. Automatic TLS (#3192): when KLANGKD_PUBLIC_HOSTNAME arms auto-HTTPS,
+    # the ACME ports must be bindable. Skipped entirely when unarmed.
+    tls_result = check_auto_https_ports(
+        os.environ.get("KLANGKD_PUBLIC_HOSTNAME")
+    )
+    if tls_result is not None:
+        report.add(tls_result)
 
     return report
 

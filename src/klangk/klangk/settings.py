@@ -99,6 +99,20 @@ _CONTAINER_MEM_LIMIT_RE = re.compile(
     r"^(?P<num>\d+(\.\d+)?)[kKmMgGtTpP]?[bB]?$"
 )
 
+# KLANGKD_PUBLIC_HOSTNAME (#3192): a syntactically valid public FQDN —
+# at least two labels (so a bare "localhost" or NetBIOS name is
+# rejected), labels of alphanumerics + inner hyphens (RFC 1123, 1-63
+# chars each), a non-numeric alphabetic TLD of 2-63 chars (so an IP
+# literal like 192.168.1.5 is rejected — public CAs do not issue for
+# it), and a total length <= 253. Matched case-insensitively; the
+# validator lowercases + strips any trailing root dot before matching.
+_FQDN_RE = re.compile(
+    r"^(?=.{1,253}$)"
+    r"(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+"
+    r"[a-z]{2,63}$",
+    re.IGNORECASE,
+)
+
 # The XDG "klangkd" subdir used by the default-roots (state + config). The
 # server's tree is ``klangkd`` (the binary name) — distinct from the CLI's
 # ``klangk`` tree. Different audiences, different shapes: server state is
@@ -1028,6 +1042,27 @@ class KlangkSettings(BaseSettings):
     # host IP may set this to that IP to drop every other interface from the
     # egress surface (#1542).
     egress_listen: str = "0.0.0.0"
+    # public_hostname: the public FQDN klangkd serves, arming automatic
+    # TLS on the built-in Caddy proxy (#3192). Unset (the default) keeps
+    # today's exact behavior — plain-HTTP browser listener, ``auto_https
+    # off`` — for outer-proxy deployments. Set to a public DNS name (e.g.
+    # ``klangk.example.com``) and Caddy obtains and renews a CA-issued
+    # certificate (ACME HTTP-01 / TLS-ALPN, Let's Encrypt + ZeroSSL) for
+    # that name and serves the browser listener over HTTPS; the site
+    # address becomes ``https://<public_hostname>:<port>``. Requires
+    # ``KLANGKD_PORT`` set (full/browser mode) and ports 80/443 reachable
+    # from the internet for the ACME challenge. Validated at construction
+    # (must be a syntactically valid FQDN — not an IP, URL, or single
+    # label). Reloadable on SIGHUP (the re-rendered config is pushed to
+    # the running Caddy over its admin API). See
+    # docs/deployment/automatic-tls.md.
+    public_hostname: str | None = None
+    # acme_email: the ACME account email (expiry notices, CA account
+    # registration) used when ``public_hostname`` arms automatic TLS
+    # (#3192). Rendered as Caddy's global ``email`` directive. Strongly
+    # recommended when arming — it is the address the CA sends certificate
+    # expiry / renewal-failure notices to. Reloadable on SIGHUP.
+    acme_email: str | None = None
     # proxy_port: **deprecated** alias for ``egress_port`` (#1542, #1430).
     # Folded into ``egress_port`` by ``_resolve_socket_and_ports``: if both
     # are set, ``egress_port`` wins and ``proxy_port`` is ignored (with a
@@ -1683,6 +1718,52 @@ class KlangkSettings(BaseSettings):
             max_socket_len,
         )
         return self
+
+    @model_validator(mode="after")
+    def _validate_auto_https(self) -> "KlangkSettings":
+        """Validate the automatic-TLS arming pair (#3192).
+
+        ``public_hostname`` must be a syntactically valid public FQDN
+        (:data:`_FQDN_RE`) and requires ``KLANGKD_PORT`` set — the browser
+        listener it converts to HTTPS only exists in full/browser mode.
+        Both fail construction so a typo'd arming aborts boot instead of
+        silently serving plain HTTP (the whole point of arming is the
+        secure context). Runs after ``_resolve_socket_and_ports`` so the
+        normalized (``None``-when-empty) ``port`` is what is checked.
+        """
+        self._validate_acme_email()
+        raw = self.public_hostname
+        if not raw or not str(raw).strip():
+            self.public_hostname = None
+            return self
+        hostname = str(raw).strip().rstrip(".").lower()
+        if not _FQDN_RE.match(hostname):
+            raise ValueError(
+                f"KLANGKD_PUBLIC_HOSTNAME={raw!r} is invalid. It must be a "
+                "public DNS name (FQDN) like 'klangk.example.com' — not an "
+                "IP address, URL, or single-label host name — because "
+                "public CAs issue certificates for DNS names only."
+            )
+        if self.port is None:
+            raise ValueError(
+                "KLANGKD_PUBLIC_HOSTNAME requires KLANGKD_PORT to be set "
+                "(full/browser mode): the automatic-TLS browser listener is "
+                "rendered only when KLANGKD_PORT arms the browser site. Set "
+                "KLANGKD_PORT (443 for the canonical HTTPS listener)."
+            )
+        self.public_hostname = hostname
+        return self
+
+    def _validate_acme_email(self) -> None:
+        """Normalize + sanity-check an explicitly set ``acme_email``."""
+        email = (self.acme_email or "").strip()
+        self.acme_email = email or None
+        if email and "@" not in email:
+            raise ValueError(
+                f"KLANGKD_ACME_EMAIL={self.acme_email!r} is invalid. It "
+                "must be an email address (the CA sends certificate "
+                "expiry / renewal-failure notices there), or unset."
+            )
 
     def _normalize_port_fields(self) -> None:
         """Empty-string port settings mean unset; a set value must be

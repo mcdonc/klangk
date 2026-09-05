@@ -9,6 +9,7 @@ caddy, so nothing here shells out to it).
 """
 
 import asyncio
+import json
 import logging
 import os
 import signal
@@ -1464,3 +1465,267 @@ class TestCaddyHostIpv4Detection:
 
         monkeypatch.setattr(caddy_mod.subprocess, "check_output", _raise)
         assert caddy_mod.detect_host_ipv4s() == []
+
+
+# ---------------------------------------------------------------------------
+# Automatic TLS via Caddy auto_https (#3192)
+# ---------------------------------------------------------------------------
+
+
+def _armed_env(**extra) -> dict:
+    """Env arming automatic TLS for a public FQDN (full/browser mode)."""
+    env = {
+        "KLANGKD_PORT": "443",
+        "KLANGKD_LISTEN": "0.0.0.0",
+        "KLANGKD_PUBLIC_HOSTNAME": "klangk.example.com",
+    }
+    env.update(extra)
+    return env
+
+
+class TestAutoHttpsArming:
+    """The armed/unarmed predicate + storage dir derivation (#3192)."""
+
+    def test_unarmed_by_default(self):
+        assert _renderer(make_settings({})).auto_https_armed is False
+
+    def test_armed_when_public_hostname_set(self):
+        s = make_settings(_armed_env())
+        assert _renderer(s).auto_https_armed is True
+
+    def test_storage_dir_under_state_dir(self):
+        s = make_settings(_armed_env())
+        assert _renderer(s).caddy_storage_dir() == os.path.join(
+            s.state_dir, "caddy-storage"
+        )
+
+
+class TestAutoHttpsGlobalBlock:
+    def test_armed_drops_auto_https_off(self):
+        g = _renderer(make_settings(_armed_env()))._global_block("/d/sock")
+        assert "auto_https off" not in g
+        # The rest of the global surface is unchanged.
+        assert "admin unix///d/sock" in g
+        assert "persist_config off" in g
+        assert "trusted_proxies static 127.0.0.1 ::1" in g
+
+    def test_armed_emits_storage_and_email(self):
+        s = make_settings(_armed_env(KLANGKD_ACME_EMAIL="ops@example.com"))
+        g = _renderer(s)._global_block("/d/sock")
+        assert (
+            f"storage file_system {os.path.join(s.state_dir, 'caddy-storage')}"
+            in g
+        )
+        assert "email ops@example.com" in g
+
+    def test_armed_without_email_omits_directive(self):
+        g = _renderer(make_settings(_armed_env()))._global_block("/d/sock")
+        assert "\temail" not in g
+        assert "storage file_system" in g
+
+    def test_armed_on_old_caddy_raises(self):
+        """full_global=False (the pre-2.6.2 minimal fallback) keeps
+        ``auto_https off`` baked in — arming on it would silently serve
+        plain HTTP, so the render fails loudly instead (#3192)."""
+        with pytest.raises(ValueError, match="KLANGKD_PUBLIC_HOSTNAME"):
+            _renderer(make_settings(_armed_env()))._global_block(
+                "/d/sock", full_global=False
+            )
+
+    def test_unarmed_render_unchanged(self):
+        """The unarmed global block keeps its exact pre-#3192 shape
+        (auto_https off, no email/storage directives)."""
+        g = _renderer(make_settings({"KLANGKD_PORT": "8997"}))._global_block(
+            "/d/sock"
+        )
+        assert "auto_https off" in g
+        assert "email" not in g
+        assert "storage" not in g
+
+
+class TestAutoHttpsBrowserSite:
+    def test_armed_site_address_is_https_fqdn_port(self):
+        s = make_settings(_armed_env(KLANGKD_PORT="8443"))
+        cf = _renderer(s).render_config("unix//s", "/d/sock")
+        assert "https://klangk.example.com:8443 {" in cf
+        assert "http://:8443 {" not in cf
+        # The egress listener stays plain HTTP — containers don't do TLS.
+        assert "http://:8995 {" in cf
+
+    def test_armed_block_body_unchanged(self):
+        """Arming changes only the site address — the body (bind, CSP,
+        request_body, routes) is identical to the unarmed render."""
+        armed = _renderer(make_settings(_armed_env()))._browser_site(
+            "unix//s", ""
+        )
+        unarmed = _renderer(
+            make_settings(
+                {
+                    "KLANGKD_PORT": "443",
+                    "KLANGKD_LISTEN": "0.0.0.0",
+                }
+            )
+        )._browser_site("unix//s", "")
+
+        def strip_addr(block: str) -> str:
+            return "\n".join(block.splitlines()[1:])
+
+        assert strip_addr(armed) == strip_addr(unarmed)
+
+    def test_armed_warns_on_loopback_listen(self, caplog):
+        """Armed + the default loopback bind would strand the HTTPS
+        listener off-host — warn loudly (#3192)."""
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            _renderer(
+                make_settings(_armed_env(KLANGKD_LISTEN="127.0.0.1"))
+            )._browser_site("unix//s", "")
+        assert any(
+            "KLANGKD_LISTEN is loopback-only" in r.message
+            for r in caplog.records
+        )
+
+    def test_armed_no_loopback_warning_on_wide_listen(self, caplog):
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            _renderer(
+                make_settings(_armed_env(KLANGKD_LISTEN="0.0.0.0"))
+            )._browser_site("unix//s", "")
+        assert not any("loopback-only" in r.message for r in caplog.records)
+
+    def test_headless_rejects_arming_at_settings(self):
+        """The headless + armed combination is impossible — settings
+        construction fails (see TestAutoHttpsSettings), so the renderer
+        never sees it. Guard documented here for the #3192 contract."""
+        s = make_settings({"KLANGKD_EGRESS_PORT": "8995"})
+        assert (
+            _renderer(s).render_config("unix//s", "/d/sock").count("http://:")
+            == 1
+        )  # egress only, no browser site
+
+
+class TestAutoHttpsWatchdog:
+    @pytest.mark.asyncio
+    async def test_start_fails_fast_on_old_caddy(self, monkeypatch, caplog):
+        """Armed + a binary that fails the full-global probe → RuntimeError
+        at start(), before any spawn — not a blank-HTTP respawn loop."""
+        import logging
+
+        monkeypatch.delenv("_KLANGKD_DISABLE_PROXY", raising=False)
+        monkeypatch.setattr(
+            "klangk.caddy.caddy_supports_full_global_block",
+            lambda bin: False,
+        )
+        monkeypatch.setattr(
+            "klangk.caddy.CaddyRenderer.find_proxy_bin",
+            lambda self: "/old/caddy",
+        )
+        wd = _wd(make_settings(_armed_env()))
+        with caplog.at_level(logging.ERROR):
+            with pytest.raises(RuntimeError, match="automatic TLS"):
+                await wd.start()
+        assert wd._task is None
+        assert any("too old" in r.message for r in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_start_proceeds_on_new_caddy(self, monkeypatch):
+        """Armed + probe True → the watchdog task is scheduled as usual."""
+        monkeypatch.delenv("_KLANGKD_DISABLE_PROXY", raising=False)
+        monkeypatch.setattr(
+            "klangk.caddy.caddy_supports_full_global_block",
+            lambda bin: True,
+        )
+        monkeypatch.setattr(
+            "klangk.caddy.CaddyRenderer.find_proxy_bin",
+            lambda self: "/new/caddy",
+        )
+
+        async def _fake_watch(self_wd, bin_path):
+            pass
+
+        monkeypatch.setattr(CaddyWatchdog, "_watch", _fake_watch)
+        wd = _wd(make_settings(_armed_env()))
+        await wd.start()
+        try:
+            assert wd._task is not None
+            await wd._task
+        finally:
+            await wd.stop()
+
+    @pytest.mark.asyncio
+    async def test_load_config_creates_storage_dir(self):
+        """Armed loads mkdir the certificate storage dir so the first ACME
+        run writes under state_dir (survives restarts, #3192)."""
+        s = make_settings(_armed_env())
+        wd = _wd(s)
+        storage = os.path.join(s.state_dir, "caddy-storage")
+        assert not os.path.exists(storage)
+        await wd.load_config(client=_FakeAsyncClient())
+        assert os.path.isdir(storage)
+
+    @pytest.mark.asyncio
+    async def test_load_config_unarmed_no_storage_dir(self):
+        s = make_settings({"KLANGKD_PORT": "8997"})
+        wd = _wd(s)
+        await wd.load_config(client=_FakeAsyncClient())
+        assert not os.path.exists(os.path.join(s.state_dir, "caddy-storage"))
+
+    def test_log_listeners_notes_https(self, caplog):
+        import logging
+
+        with caplog.at_level(logging.INFO):
+            _wd(make_settings(_armed_env()))._log_listeners()
+        assert any("automatic TLS" in r.message for r in caplog.records)
+
+    def test_log_listeners_plain_http_unarmed(self, caplog):
+        import logging
+
+        with caplog.at_level(logging.INFO):
+            _wd(make_settings({"KLANGKD_PORT": "8997"}))._log_listeners()
+        joined = " ".join(r.message for r in caplog.records)
+        assert "http" in joined
+        assert "automatic TLS" not in joined
+
+
+class TestAutoHttpsLogs:
+    def test_acme_error_line_surfaces_at_error(self):
+        """A Caddy ACME failure (tls.obtain logger, error level) relays at
+        ERROR — issuance trouble is never silently swallowed (#3192)."""
+        line = json.dumps(
+            {
+                "level": "error",
+                "logger": "tls.obtain",
+                "msg": "could not get certificate from issuer",
+            }
+        )
+        level, msg = classify_caddy_line(line)
+        assert level == logging.ERROR
+        assert "[tls.obtain]" in msg
+
+    @pytest.mark.asyncio
+    async def test_apply_pending_reload_swallows_arm_on_old_caddy(
+        self, caplog
+    ):
+        """SIGHUP-arming automatic TLS on an old caddy (full_global=False)
+        raises inside the render — the reload is denied with a warning and
+        the running config keeps serving (last-known-good, #3192)."""
+        import logging
+
+        wd = _wd(make_settings({"KLANGKD_PORT": "8997"}))
+        wd._full_global = False  # old caddy, probed at start()
+        wd._task = object()  # started
+        wd.reconfigure(
+            types.SimpleNamespace(
+                state=types.SimpleNamespace(
+                    settings=make_settings(_armed_env())
+                )
+            )
+        )
+        with caplog.at_level(logging.WARNING):
+            await wd.apply_pending_reload()  # must not raise
+        assert wd._pending_reload is False
+        assert any(
+            "caddy SIGHUP reload failed" in r.message for r in caplog.records
+        )

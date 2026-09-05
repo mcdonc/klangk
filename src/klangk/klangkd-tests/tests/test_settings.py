@@ -1006,6 +1006,121 @@ class TestResolveSocketAndPorts:
         assert "KLANGKD_CADDY_ADMIN_SOCKET" in msg
 
 
+class TestAutoHttpsSettings:
+    """KLANGKD_PUBLIC_HOSTNAME / KLANGKD_ACME_EMAIL validation (#3192)."""
+
+    def test_unset_defaults(self):
+        s = KlangkSettings(env={"KLANGKD_STATE_DIR": "/tmp/state"})
+        assert s.public_hostname is None
+        assert s.acme_email is None
+
+    def test_empty_string_means_unset(self):
+        """An explicitly emptied env var is None, not "" — the renderer's
+        armed check and the doctor gate key on truthiness."""
+        s = KlangkSettings(
+            env={
+                "KLANGKD_STATE_DIR": "/tmp/state",
+                "KLANGKD_PORT": "443",
+                "KLANGKD_PUBLIC_HOSTNAME": "",
+                "KLANGKD_ACME_EMAIL": " ",
+            }
+        )
+        assert s.public_hostname is None
+        assert s.acme_email is None
+
+    def test_valid_hostname_normalized(self):
+        """Lowercased + trailing root dot stripped; port required."""
+        s = KlangkSettings(
+            env={
+                "KLANGKD_STATE_DIR": "/tmp/state",
+                "KLANGKD_PORT": "443",
+                "KLANGKD_PUBLIC_HOSTNAME": "Klangk.Example.COM.",
+            }
+        )
+        assert s.public_hostname == "klangk.example.com"
+
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            "192.168.1.5",  # IP literal — public CAs don't issue for IPs
+            "https://klangk.example.com",  # URL, not a bare FQDN
+            "klangk.example.com:443",  # port belongs in KLANGKD_PORT
+            "localhost",  # single label — not a public FQDN
+            "my host.example.com",  # space
+            "_bad.example.com",  # leading underscore
+            "-bad.example.com",  # leading hyphen
+            "bad..example.com",  # empty label
+            "x" * 64 + ".example.com",  # label over 63 chars
+        ],
+    )
+    def test_invalid_hostname_rejected(self, bad):
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError) as exc_info:
+            KlangkSettings(
+                env={
+                    "KLANGKD_STATE_DIR": "/tmp/state",
+                    "KLANGKD_PORT": "443",
+                    "KLANGKD_PUBLIC_HOSTNAME": bad,
+                }
+            )
+        assert "KLANGKD_PUBLIC_HOSTNAME" in str(exc_info.value)
+
+    def test_hostname_requires_port(self):
+        """Arming without KLANGKD_PORT (headless) fails construction — the
+        HTTPS browser listener only exists in full/browser mode, and a
+        silently-ignored arming is exactly the plain-HTTP fallthrough
+        #3192 exists to prevent."""
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError) as exc_info:
+            KlangkSettings(
+                env={
+                    "KLANGKD_STATE_DIR": "/tmp/state",
+                    "KLANGKD_PUBLIC_HOSTNAME": "klangk.example.com",
+                }
+            )
+        assert "KLANGKD_PORT" in str(exc_info.value)
+
+    def test_email_normalized_and_stripped(self):
+        s = KlangkSettings(
+            env={
+                "KLANGKD_STATE_DIR": "/tmp/state",
+                "KLANGKD_PORT": "443",
+                "KLANGKD_PUBLIC_HOSTNAME": "klangk.example.com",
+                "KLANGKD_ACME_EMAIL": " ops@example.com ",
+            }
+        )
+        assert s.acme_email == "ops@example.com"
+
+    @pytest.mark.parametrize("bad", ["not-an-email", "example.com"])
+    def test_bad_email_rejected(self, bad):
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError) as exc_info:
+            KlangkSettings(
+                env={
+                    "KLANGKD_STATE_DIR": "/tmp/state",
+                    "KLANGKD_PUBLIC_HOSTNAME": "klangk.example.com",
+                    "KLANGKD_ACME_EMAIL": bad,
+                }
+            )
+        assert "KLANGKD_ACME_EMAIL" in str(exc_info.value)
+
+    def test_bad_email_rejected_even_when_unarmed(self):
+        """The email sanity check is independent of arming — a typo'd
+        value fails at boot either way."""
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            KlangkSettings(
+                env={
+                    "KLANGKD_STATE_DIR": "/tmp/state",
+                    "KLANGKD_ACME_EMAIL": "nope",
+                }
+            )
+
+
 class TestKlangkdLauncher:
     """Tests for the klangkd launcher's --config resolution."""
 
