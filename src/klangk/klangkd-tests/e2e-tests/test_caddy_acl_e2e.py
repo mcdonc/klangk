@@ -1050,7 +1050,8 @@ class TestCaddyAutoHttpsConfig:
 
         conf_path = os.path.join(state, "armed.caddy")
         with open(conf_path, "w") as f:
-            f.write(cf)
+            # Fixture config (dummy hostname/paths) in a per-test temp dir.
+            f.write(cf)  # lgtm[py/clear-text-storage-sensitive-data]
         r = subprocess.run(
             [
                 "caddy",

@@ -537,9 +537,10 @@ def port_bind_error(port: int) -> str | None:
     try:
         # The all-interfaces bind is the check itself: caddy's auto-HTTPS
         # listeners bind 0.0.0.0:80/:443, so probing loopback would pass
-        # while caddy fails. The empty host is Python's spelling of
-        # INADDR_ANY (bind every interface) — same semantics as caddy's.
-        sock.bind(("", port))
+        # while caddy fails.
+        sock.bind(
+            ("0.0.0.0", port)
+        )  # lgtm[py/bind-socket-all-network-interfaces]
         return None
     except OSError as exc:
         return f"{port}: {exc.strerror or exc}"
