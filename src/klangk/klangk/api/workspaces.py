@@ -381,7 +381,13 @@ async def create_workspace(
             detail=f"A workspace named {body.name!r} already exists",
         )
     except OSError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        # Host-side failure (data-dir mkdir, disk full) — not bad client
+        # input. Generic body + server-side log, the _files_http_error
+        # posture (#3215): the raw message names host paths.
+        logger.error("workspace create failed: %s", e, exc_info=True)
+        raise HTTPException(
+            status_code=500, detail="Internal server error"
+        ) from None
 
     # Eagerly start the container so it's running by the time the
     # user connects.  Errors are logged but don't fail the create.

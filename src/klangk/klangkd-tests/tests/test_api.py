@@ -17349,9 +17349,10 @@ class TestTestModeEndpoints:
 
 
 class TestNoCoverAudit2910Part3:
-    async def test_create_workspace_oserror_maps_400(self):
-        """create_workspace raising OSError (bad mount source etc.) is a
-        400, not a 500 (direct handler call, Depends bypassed)."""
+    async def test_create_workspace_oserror_maps_500(self):
+        """create_workspace raising OSError (host-side mkdir failure) is a
+        500 with a generic body, not a 400 echoing the OS message
+        (#3215; direct handler call, Depends bypassed)."""
         from fastapi import HTTPException
 
         from klangk.api.workspaces import (
@@ -17361,7 +17362,9 @@ class TestNoCoverAudit2910Part3:
 
         app = MagicMock()
         app.state.workspaces.create_workspace = AsyncMock(
-            side_effect=OSError("mount source missing")
+            side_effect=OSError(
+                "[Errno 28] No space left on device: '/var/lib/klangk/...'"
+            ),
         )
         app.state.settings.default_image = None
         with pytest.raises(HTTPException) as caught:
@@ -17370,8 +17373,8 @@ class TestNoCoverAudit2910Part3:
                 user={"id": "u1", "email": "u@x.com"},
                 app=app,
             )
-        assert caught.value.status_code == 400
-        assert "mount source missing" in caught.value.detail
+        assert caught.value.status_code == 500
+        assert caught.value.detail == "Internal server error"
 
     async def test_duplicate_workspace_collection_acl_false_403(self):
         """The in-handler defense-in-depth collection-create check (#2569):
