@@ -52,6 +52,7 @@ nav = [
     { "Packaged klangkd" = "deployment/packaged.md" },
     { "Hosting & Proxy" = "deployment/hosting.md" },
     { "Behind a Reverse Proxy" = "deployment/behind-a-proxy.md" },
+    { "Automatic TLS" = "deployment/automatic-tls.md" },
     { "Customizing" = "deployment/customizing.md" },
     { "FIPS 140-3 Mode" = "deployment/fips.md" },
     { "Process Signals" = "deployment/signals.md" },

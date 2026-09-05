@@ -98,6 +98,13 @@ def _render_config() -> str:
 #                          # the web UI at http://localhost:8997)
 # listen: "127.0.0.1"      # browser interface address (rendered when port
 #                          # is set; must be loopback unless you override)
+# public_hostname: klangk.example.com  # arms automatic TLS on the built-in
+#                          # proxy: Caddy obtains/renews a CA cert for this
+#                          # FQDN and serves https://<fqdn>:<port> (needs a
+#                          # public DNS record + ports 80/443 reachable;
+#                          # see docs/deployment/automatic-tls.md)
+# acme_email: ops@example.com  # ACME account email (cert expiry notices)
+#                          # — recommended whenever public_hostname is set
 # auth_modes: password     # password | oidc | both | none (default: none)
 #                          # password/both require default_password (below)
 # default_user: admin@example.com   # override the derived Unix-user identity

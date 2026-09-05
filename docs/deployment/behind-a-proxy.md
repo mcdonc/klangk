@@ -5,6 +5,11 @@ An outer proxy is a separate server that terminates TLS or routes traffic
 to klangk. Common examples: nginx, Caddy, Traefik, HAProxy, a cloud
 load balancer.
 
+> If klangkd itself is the internet-facing server and you want HTTPS
+> without running a second proxy, see
+> [Automatic TLS](automatic-tls.md) instead — klangkd's built-in Caddy
+> obtains and renews a CA-issued certificate for a public hostname.
+
 ## The two-tier model
 
 klangk runs its own Caddy proxy internally. When you add an outer proxy,

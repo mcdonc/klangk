@@ -1009,3 +1009,62 @@ class TestCaddySecretNotOnDisk:
                 proc.wait(timeout=5)
         finally:
             _stop_echo(echo)
+
+
+class TestCaddyAutoHttpsConfig:
+    """The armed (#3192) Caddyfile must adapt + provision on a real caddy.
+
+    Full ACME issuance cannot run in CI (it needs a public hostname and
+    reachable ports 80/443), so the runtime proof is the strongest check
+    possible here: ``caddy validate`` adapts the Caddyfile *and*
+    provisions its modules — the exact pipeline ``POST /load`` runs —
+    against the armed render (https site address, ``email``,
+    ``storage file_system``, no ``auto_https off``).
+    """
+
+    def test_armed_caddyfile_validates(self, tmp_path):
+        import types
+
+        from klangk.caddy import CaddyRenderer
+        from klangk.settings import KlangkSettings
+
+        state = str(tmp_path)
+        settings = KlangkSettings(
+            {
+                "KLANGKD_STATE_DIR": state,
+                "KLANGKD_DATA_DIR": os.path.join(state, "data"),
+                "KLANGKD_PORT": "443",
+                "KLANGKD_LISTEN": "0.0.0.0",
+                "KLANGKD_PUBLIC_HOSTNAME": "klangk.example.com",
+                "KLANGKD_ACME_EMAIL": "ops@example.com",
+                "KLANGKD_EGRESS_PORT": "18995",
+            }
+        )
+        app = types.SimpleNamespace(
+            state=types.SimpleNamespace(settings=settings)
+        )
+        cf = CaddyRenderer(app).render_config(
+            f"unix//{state}/klangk.sock", f"{state}/caddy-admin.sock"
+        )
+        assert "auto_https off" not in cf
+        assert "https://klangk.example.com:443 {" in cf
+
+        conf_path = os.path.join(state, "armed.caddy")
+        with open(conf_path, "w") as f:
+            f.write(cf)
+        r = subprocess.run(
+            [
+                "caddy",
+                "validate",
+                "--adapter",
+                "caddyfile",
+                "--config",
+                conf_path,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert r.returncode == 0, (
+            f"caddy validate rejected the armed Caddyfile:\n{r.stderr}"
+        )
