@@ -333,6 +333,37 @@ backend only over HTTP/WebSocket. Don't refactor `cli/` to import a shared
 helper from `klangk.*`; duplicate the small bit of logic instead, or put the
 shared code somewhere both can import without crossing the boundary.
 
+## Documentation writing: state what the feature does
+
+In docs, docstrings, and config comments that document
+operator-facing behavior, describe what a mode or setting **does**,
+not a list of what it lacks. "No public name needed, no ACME account,
+no ports 80/443, no redirect" is negative parallelism — the reader
+must reconstruct the behavior from its absences, and the list drifts
+into jargon compression ("no ACME account" instead of "klangkd does
+not contact a certificate authority"). Write the positive statements
+instead:
+
+```markdown
+Wrong: - **No HTTP→HTTPS redirect** — the outer proxy owns port 80
+and does its own redirecting; klangkd disables the automatic
+one.
+Right: - **The HTTPS listener binds `listen:port`, and that is the
+only port involved.** The automatic HTTP→HTTPS redirect stays
+off: your outer proxy already sends browsers to HTTPS, and an
+enabled redirect would try to bind port 80 — a bind that
+fails when klangkd runs as an unprivileged user.
+```
+
+When an absence _is_ the behavior (a redirect that stays off, a
+setting that is unused), state it as a fact and give the reason —
+not as a headline "No X" bullet. Use concrete nouns over shorthand:
+"certificates are stored in `<state_dir>/caddy-storage`", not
+"leaves live under the storage path". Applies to `docs/` prose, the
+env-var reference rows, and the first-run config template comments
+alike. Docs-chapter diffs that introduce a run of "No …" bullets are
+a review flag — rewrite before merging.
+
 ## Changelog (`docs/changes.md`)
 
 `docs/changes.md` is the single source of truth for human-authored release notes,
