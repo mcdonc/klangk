@@ -3,19 +3,21 @@
 This chapter explains how to serve klangkd over HTTPS — and how klangkd
 builds the public URLs embedded in hosted-app links, login emails, and
 OIDC callbacks. The main path is running klangkd as the
-**internet-facing server** with HTTPS managed end to end — no outer
-proxy, no operator-supplied certificate: klangkd's built-in Caddy proxy
-obtains and renews a CA-issued certificate automatically (ACME, via
-Let's Encrypt and ZeroSSL) for a public hostname you choose (#3192).
+**internet-facing server** with HTTPS managed end to end: klangkd's
+built-in Caddy proxy requests a **Let's Encrypt** certificate itself
+(ZeroSSL as fallback issuer), serves it, and renews it before it
+expires — for a public hostname you choose (#3192). HTTPS here means a
+normal, publicly trusted certificate; there is no certbot to run and
+no certificate files to copy to the host.
 
 This is one of four TLS models:
 
-| Model                                                | Who terminates TLS                                               | Chapter                |
-| ---------------------------------------------------- | ---------------------------------------------------------------- | ---------------------- |
-| **Automatic TLS** (this chapter)                     | klangkd's built-in Caddy, certificate issued + renewed by the CA | here                   |
-| **Behind a proxy + internal TLS hop** (this chapter) | klangkd's built-in Caddy, self-generated internal-CA certificate | here                   |
-| [Behind a reverse proxy](behind-a-proxy.md), plain   | an outer nginx/Caddy/HAProxy/load balancer                       | Behind a Reverse Proxy |
-| Operator-provided certificate                        | planned (#2167, e.g. `tailscale cert`)                           | —                      |
+| Model                                                | Who terminates TLS                                                                   | Chapter                                                                     |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------ | --------------------------------------------------------------------------- |
+| **Automatic TLS** (this chapter)                     | klangkd's built-in Caddy, Let's Encrypt certificate it issues + renews itself        | here                                                                        |
+| **Behind a proxy + internal TLS hop** (this chapter) | klangkd's built-in Caddy, self-generated internal-CA certificate                     | here                                                                        |
+| [Behind a reverse proxy](behind-a-proxy.md), plain   | an outer nginx/Caddy/HAProxy/load balancer                                           | Behind a Reverse Proxy                                                      |
+| Certificate files you already hold                   | klangkd's built-in Caddy, serving files from another ACME client or `tailscale cert` | planned (#2167) — automatic TLS above usually covers this without the files |
 
 Use automatic TLS when klangkd runs on a host with a **public DNS name**
 and ports **80/443 reachable from the internet**. Use an outer proxy when
