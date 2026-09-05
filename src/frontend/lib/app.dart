@@ -24,7 +24,8 @@ import 'app_guards.dart';
 
 /// Root navigator key (#3196): the step-up password dialog is shown
 /// from AuthService-level retry logic, which has no widget context —
-/// it resolves the navigator through this key instead.
+/// it resolves the navigator through this key instead. Attached to
+/// the GoRouter (its root navigator), which every route renders in.
 final GlobalKey<NavigatorState> rootNavigatorKey = GlobalKey();
 
 class KlangkApp extends StatefulWidget {
@@ -75,7 +76,6 @@ class _KlangkAppState extends State<KlangkApp> {
           debugShowCheckedModeBanner: false,
           theme: _theme,
           routerConfig: _router!,
-          navigatorKey: rootNavigatorKey,
           builder: (context, child) {
             return Stack(
               children: [
@@ -95,6 +95,7 @@ class _KlangkAppState extends State<KlangkApp> {
     final featurePaths = featureRoutes.map((r) => r.path).toSet();
 
     return GoRouter(
+      navigatorKey: rootNavigatorKey,
       initialLocation: initialLocation,
       refreshListenable: auth,
       redirect: (context, state) {

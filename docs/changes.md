@@ -316,22 +316,6 @@ operators or integrators to act when upgrading.
   after a browser restart, a session-restore reopen, or opening the app
   in a new tab.
 
-=======
-- **`KLANGKD_STEP_UP_WINDOW_MINUTES` (#3196).** Step-up (sudo-mode)
-  reauthentication for privileged admin operations. When armed
-  (minutes; `0` = off, the default; `15` recommended), privileged
-  writes — user/group/invitation management, admin ACL rewrites,
-  server schedules, volume deletes, and deleting a workspace you do
-  not own — are refused with a machine-readable
-  `403 step_up_required` until the session's owner confirms their
-  password via `POST /api/v1/auth/step-up`; the confirmation is per
-  session, survives token refresh, and expires with the window (or
-  logout). The confirmation endpoint shares login's lockout
-  accounting. OIDC-managed accounts are exempt (audit-logged). The
-  web client and CLI prompt and retry automatically. Reloadable on
-  SIGHUP. See
-  [Authentication](features/authentication.md).
-
 - **`KLANGKD_STEP_UP_WINDOW_MINUTES` (#3196).** Step-up (sudo-mode)
   reauthentication for privileged writes: user/group/invitation
   management, admin ACL rewrites, server schedules, volume deletes,
@@ -345,6 +329,7 @@ operators or integrators to act when upgrading.
   OIDC-managed accounts are exempt (audit-logged); the web client and
   CLI prompt and retry automatically. Reloadable on SIGHUP. See
   [Authentication](features/authentication.md).
+
 - **Consent-decider sockets are closed on token revocation (#3162).**
   The `/ws/consent-decider` connection now shares the #3152 revocation
   story: logging out, being evicted by the per-user session limit, or
@@ -2296,7 +2281,7 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   log the underlying error server-side instead.
 
 - **Admin user deletion now revokes sessions (#3195).** `DELETE
-  /api/v1/users/{user_id}` now blocklists every token the deleted user
+/api/v1/users/{user_id}` now blocklists every token the deleted user
   held and cuts their live WebSocket and consent-decider connections.
   Previously sessions stayed alive until their natural expiry.
 
