@@ -311,6 +311,10 @@ ENDPOINTS: list[tuple[str, str, dict | None, dict | None]] = [
     # Auth — with token
     ("POST", f"{P}/auth/local", None, None),  # no-auth mode; 403 in password mode
     ("POST", f"{P}/auth/refresh", None, None),
+    # Step-up confirmation (#3196): wrong/garbage passwords are the
+    # interesting fuzz states (401 / 429 via lockout; 400 when the
+    # window is unarmed).
+    ("POST", f"{P}/auth/step-up", {"password": "password"}, None),
     (
         "POST",
         f"{P}/auth/change-password",

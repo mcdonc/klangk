@@ -14,6 +14,9 @@ void main() {
     testBaseUrlOverride = 'http://localhost:8997';
     SharedPreferences.setMockInitialValues({});
     testAuthHttpClientOverride = null;
+    // #3196: reset the step-up prompt so a test that wires it doesn't
+    // leak into siblings.
+    AuthService.stepUpPrompt = null;
     // Branding.name is static; reset so a test that sets a custom product
     // name doesn't leak into sibling tests.
     Branding.reset();
@@ -22,6 +25,7 @@ void main() {
   tearDown(() {
     testBaseUrlOverride = null;
     testAuthHttpClientOverride = null;
+    AuthService.stepUpPrompt = null;
   });
 
   /// Mock client that returns empty config and no permissions.
@@ -1566,6 +1570,231 @@ void main() {
 
       await service.authGet('/api/v1/workspaces');
       expect(authHeader, 'Bearer my-token');
+    });
+  });
+
+  group('step-up retry (#3196)', () {
+    http.Response stepUpRequired() => http.Response(
+          jsonEncode({
+            'detail': {
+              'error': 'step_up_required',
+              'message': 'Re-authentication required',
+            }
+          }),
+          403,
+        );
+
+    test('prompts, confirms, and retries the write', () async {
+      final calls = <String>[];
+      var deletedOnce = false;
+      testAuthHttpClientOverride = MockClient((request) async {
+        final path = request.url.path;
+        calls.add('${request.method} $path');
+        if (path == '/api/v1/auth/step-up') {
+          expect(jsonDecode(request.body), {'password': 'the-password'});
+          return http.Response(jsonEncode({'status': 'stepped_up'}), 200);
+        }
+        if (path == '/api/v1/users/u1' && !deletedOnce) {
+          deletedOnce = true;
+          return stepUpRequired();
+        }
+        return http.Response(jsonEncode({'status': 'deleted'}), 200);
+      });
+      AuthService.stepUpPrompt = ({bool previousFailed = false}) async {
+        return 'the-password';
+      };
+
+      SharedPreferences.setMockInitialValues({'klangk_jwt': 'my-token'});
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+
+      final resp = await service.authDelete('/api/v1/users/u1');
+      expect(resp.statusCode, 200);
+      // (the service's init fetches — /config, /my-permissions — also
+      // pass through the mock; keep only the write flow)
+      expect(
+        calls.where((c) => !c.startsWith('GET ')).toList(),
+        [
+          'DELETE /api/v1/users/u1',
+          'POST /api/v1/auth/step-up',
+          'DELETE /api/v1/users/u1',
+        ],
+      );
+    });
+
+    test('cancelled prompt surfaces the 403', () async {
+      var deletes = 0;
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path == '/api/v1/users/u1') {
+          deletes++;
+          return stepUpRequired();
+        }
+        return http.Response('{}', 200);
+      });
+      AuthService.stepUpPrompt = ({bool previousFailed = false}) async => null;
+
+      SharedPreferences.setMockInitialValues({'klangk_jwt': 'my-token'});
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+
+      final resp = await service.authDelete('/api/v1/users/u1');
+      expect(resp.statusCode, 403);
+      expect(deletes, 1);
+    });
+
+    test('a wrong password re-prompts (flagged), then succeeds', () async {
+      var deletes = 0;
+      var stepUps = 0;
+      final flags = <bool>[];
+      testAuthHttpClientOverride = MockClient((request) async {
+        final path = request.url.path;
+        if (path == '/api/v1/auth/step-up') {
+          stepUps++;
+          // First confirmation is wrong (401), second succeeds.
+          if (stepUps == 1) {
+            return http.Response(
+              jsonEncode({'detail': 'Invalid credentials'}),
+              401,
+            );
+          }
+          return http.Response(jsonEncode({'status': 'stepped_up'}), 200);
+        }
+        if (path == '/api/v1/users/u1') {
+          deletes++;
+          if (deletes == 1) return stepUpRequired();
+          return http.Response(jsonEncode({'status': 'deleted'}), 200);
+        }
+        return http.Response('{}', 200);
+      });
+      AuthService.stepUpPrompt = ({bool previousFailed = false}) async {
+        flags.add(previousFailed);
+        return 'pw';
+      };
+
+      SharedPreferences.setMockInitialValues({'klangk_jwt': 'my-token'});
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+
+      final resp = await service.authDelete('/api/v1/users/u1');
+      expect(resp.statusCode, 200);
+      expect(flags, [false, true]);
+      expect(stepUps, 2);
+      expect(deletes, 2);
+    });
+
+    test('three wrong passwords surface the 403', () async {
+      var stepUps = 0;
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path == '/api/v1/auth/step-up') {
+          stepUps++;
+          return http.Response(
+            jsonEncode({'detail': 'Invalid credentials'}),
+            401,
+          );
+        }
+        return stepUpRequired();
+      });
+      AuthService.stepUpPrompt =
+          ({bool previousFailed = false}) async => 'wrong';
+
+      SharedPreferences.setMockInitialValues({'klangk_jwt': 'my-token'});
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+
+      final resp = await service.authDelete('/api/v1/users/u1');
+      expect(resp.statusCode, 403);
+      expect(stepUps, 3);
+    });
+
+    test('wrong password surfaces the 403', () async {
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path == '/api/v1/auth/step-up') {
+          return http.Response(
+              jsonEncode({'detail': 'Invalid credentials'}), 401);
+        }
+        return stepUpRequired();
+      });
+      AuthService.stepUpPrompt =
+          ({bool previousFailed = false}) async => 'wrong';
+
+      SharedPreferences.setMockInitialValues({'klangk_jwt': 'my-token'});
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+
+      final resp = await service.authDelete('/api/v1/users/u1');
+      expect(resp.statusCode, 403);
+    });
+
+    test('no prompt wired surfaces the 403', () async {
+      var deletes = 0;
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path == '/api/v1/users/u1') {
+          deletes++;
+          return stepUpRequired();
+        }
+        return http.Response('{}', 200);
+      });
+
+      SharedPreferences.setMockInitialValues({'klangk_jwt': 'my-token'});
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+
+      final resp = await service.authDelete('/api/v1/users/u1');
+      expect(resp.statusCode, 403);
+      expect(deletes, 1);
+    });
+
+    test('plain-string 403 detail is not a step-up', () async {
+      var posts = 0;
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path == '/api/v1/groups') {
+          posts++;
+          return http.Response(
+            jsonEncode({'detail': 'Permission denied'}),
+            403,
+          );
+        }
+        return http.Response('{}', 200);
+      });
+      var prompted = false;
+      AuthService.stepUpPrompt = ({bool previousFailed = false}) async {
+        prompted = true;
+        return 'pw';
+      };
+
+      SharedPreferences.setMockInitialValues({'klangk_jwt': 'my-token'});
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+
+      final resp = await service.authPost('/api/v1/groups');
+      expect(resp.statusCode, 403);
+      expect(prompted, isFalse);
+      expect(posts, 1);
+    });
+
+    test('stepUp reports failure on non-200', () async {
+      testAuthHttpClientOverride = MockClient((request) async {
+        return http.Response(
+            jsonEncode({'detail': 'Invalid credentials'}), 401);
+      });
+
+      SharedPreferences.setMockInitialValues({'klangk_jwt': 'my-token'});
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+
+      expect(await service.stepUp('wrong'), isFalse);
+    });
+
+    test('stepUp reports success on 200', () async {
+      testAuthHttpClientOverride = MockClient((request) async {
+        return http.Response(jsonEncode({'status': 'stepped_up'}), 200);
+      });
+
+      SharedPreferences.setMockInitialValues({'klangk_jwt': 'my-token'});
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+
+      expect(await service.stepUp('the-password'), isTrue);
     });
   });
 }

@@ -201,6 +201,50 @@ a pre-arm session only surfaces at its next refresh — up to its residual
 force a re-login (revoke sessions via the admin UI) when arming, or wait
 out one full token lifetime after arming.
 
+## Step-up (sudo mode) for privileged operations
+
+Once an admin is logged in, the ordinary bearer token authorizes the
+whole session — so a hijacked or momentarily unattended admin session
+could otherwise perform destructive operations with no fresh proof of
+credential knowledge. Set `KLANGKD_STEP_UP_WINDOW_MINUTES` (default
+`0` = off; `15` is the recommended hardening value) to require
+**reauthentication ("step-up")** before privileged writes:
+
+- **Gated operations** are the admin write surface — user
+  management (create/edit/delete/unlock), group management,
+  invitations (send/revoke/resend), raw ACL rewrites
+  (`PUT /acl/resource`), server stop/recycle schedules, volume
+  deletes — plus the **takeover-class writes on a workspace you do
+  not own**: deletion, the raw ACL rewrite
+  (`PUT /workspaces/{id}/acl`, which can grant `*` and Deny the
+  owner), and ownership transfer. Listings and other reads are never
+  gated, and writes to your **own** workspace (including deleting,
+  resharing, or transferring it) stay on the plain permission check —
+  self-service, bounded by the grants the owner or an admin chose.
+- A gated write is refused with a machine-readable
+  `403 {"error": "step_up_required"}` until the session's owner
+  confirms their password at `POST /api/v1/auth/step-up`. The
+  confirmation endpoint has the same lockout accounting as login, so
+  it is not a free password-guessing oracle for an attacker holding a
+  hijacked session.
+- The confirmation is **per session**: it is stamped on the calling
+  session's row, survives token refresh (a refresh is the same
+  session continuing), dies with logout or revocation, and never
+  unlocks a second session of the same user. Inside the window every
+  gated write passes; outside it the next one prompts again.
+- **OIDC-managed accounts** (no klangk password) cannot confirm a
+  password; they are exempt from the gate, and each exempt pass is
+  audit-logged for operators reviewing SIEM output. Deployments that
+  arm the window and want full coverage should give their admins
+  local passwords.
+
+The clients handle the prompt automatically: the web client shows a
+password dialog (re-prompting on a wrong password, up to three
+attempts), confirms, and retries the refused request; the CLI prompts
+on the terminal the same way. The window is read live at check time,
+so a SIGHUP reload applies immediately (disarming it mid-session
+makes the next write pass without a prompt).
+
 ## Dormant-account auto-disable
 
 Accounts that go unused for too long are disabled automatically. Set

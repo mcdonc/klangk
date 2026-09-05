@@ -19,6 +19,16 @@ class AuthService extends ChangeNotifier {
 
   http.Client get _client => testAuthHttpClientOverride ?? http.Client();
 
+  // #3196: sudo-mode (step-up) support. When a privileged admin write
+  // is refused with the server's machine-readable step_up_required
+  // 403, this callback collects the user's password (null = cancel);
+  // the service confirms it via POST /auth/step-up and retries the
+  // original request once. `previousFailed` lets the prompt say
+  // "incorrect password" on retries. Wired by the app shell to a
+  // password dialog over the root navigator; null (tests, before the
+  // shell runs) surfaces the 403 to the caller's own error handling.
+  static Future<String?> Function({bool previousFailed})? stepUpPrompt;
+
   String? _token;
   bool _loading = false;
   bool _initialized = false;
@@ -530,6 +540,63 @@ class AuthService extends ChangeNotifier {
     }
   }
 
+  /// True when [response] is the server's machine-readable step-up
+  /// 403 (#3196) — `detail` is an object with `error:
+  /// 'step_up_required'`.
+  static bool _isStepUpRequired(http.Response response) {
+    if (response.statusCode != 403) return false;
+    try {
+      final detail = jsonDecode(response.body)['detail'];
+      return detail is Map && detail['error'] == 'step_up_required';
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Confirm [password] with the server (POST /auth/step-up, #3196).
+  ///
+  /// Returns true when the confirmation was stamped on the session.
+  /// Deliberately does NOT route through the auth* wrappers (no retry
+  /// recursion) and does not touch the token — the elevated state lives
+  /// on the server's session row, not in a client-held credential.
+  Future<bool> stepUp(String password) async {
+    try {
+      final response = await _client.post(
+        Uri.parse('$_baseUrl/api/v1/auth/step-up'),
+        headers: {
+          ..._authHeaders,
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode({'password': password}),
+      );
+      return response.statusCode == 200;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Send a write request with step-up retry (#3196).
+  ///
+  /// On the step_up_required 403: prompt (when a prompt is wired),
+  /// confirm the password, and re-send the same request — up to three
+  /// prompts, so a typo re-prompts (flagged) instead of dead-ending.
+  /// A cancelled prompt or an exhausted retry returns the refusing
+  /// response for the caller's error handling.
+  Future<http.Response> _withStepUp(
+    Future<http.Response> Function() send,
+  ) async {
+    final response = await send();
+    if (!_isStepUpRequired(response)) return response;
+    final prompt = stepUpPrompt;
+    if (prompt == null) return response;
+    for (var attempt = 0; attempt < 3; attempt++) {
+      final password = await prompt(previousFailed: attempt > 0);
+      if (password == null || password.isEmpty) return response;
+      if (await stepUp(password)) return await send();
+    }
+    return response;
+  }
+
   Future<http.Response> authGet(String path) async {
     final response = await _client.get(
       Uri.parse('$_baseUrl$path'),
@@ -540,42 +607,50 @@ class AuthService extends ChangeNotifier {
   }
 
   Future<http.Response> authPost(String path, {String? body}) async {
-    final response = await _client.post(
-      Uri.parse('$_baseUrl$path'),
-      headers: _authHeaders,
-      body: body,
+    final response = await _withStepUp(
+      () => _client.post(
+        Uri.parse('$_baseUrl$path'),
+        headers: _authHeaders,
+        body: body,
+      ),
     );
     await _handleAuthFailure(response);
     return response;
   }
 
   Future<http.Response> authPatch(String path, {String? body}) async {
-    final response = await _client.patch(
-      Uri.parse('$_baseUrl$path'),
-      headers: _authHeaders,
-      body: body,
+    final response = await _withStepUp(
+      () => _client.patch(
+        Uri.parse('$_baseUrl$path'),
+        headers: _authHeaders,
+        body: body,
+      ),
     );
     await _handleAuthFailure(response);
     return response;
   }
 
   Future<http.Response> authPut(String path, {String? body}) async {
-    final response = await _client.put(
-      Uri.parse('$_baseUrl$path'),
-      headers: {
-        ..._authHeaders,
-        if (body != null) 'Content-Type': 'application/json',
-      },
-      body: body,
+    final response = await _withStepUp(
+      () => _client.put(
+        Uri.parse('$_baseUrl$path'),
+        headers: {
+          ..._authHeaders,
+          if (body != null) 'Content-Type': 'application/json',
+        },
+        body: body,
+      ),
     );
     await _handleAuthFailure(response);
     return response;
   }
 
   Future<http.Response> authDelete(String path) async {
-    final response = await _client.delete(
-      Uri.parse('$_baseUrl$path'),
-      headers: _authHeaders,
+    final response = await _withStepUp(
+      () => _client.delete(
+        Uri.parse('$_baseUrl$path'),
+        headers: _authHeaders,
+      ),
     );
     await _handleAuthFailure(response);
     return response;

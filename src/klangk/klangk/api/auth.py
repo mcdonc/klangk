@@ -30,6 +30,7 @@ from .. import (
     auth,
     model,
     oidc,
+    stepup,
     wshandler,
 )
 from ..settings import parse_bool_setting
@@ -711,6 +712,49 @@ async def change_password(
         user_agent=user_agent,
     )
     return {"status": "updated"}
+
+
+class StepUpRequest(BaseModel):
+    """Sudo-mode password confirmation body (#3196)."""
+
+    password: str
+
+
+@router.post("/auth/step-up")
+async def step_up(
+    req: StepUpRequest,
+    request: Request,
+    user: dict = Depends(auth.get_current_user),
+):
+    """Confirm the caller's password for privileged writes (#3196).
+
+    Verifies the password (with login-grade lockout accounting) and
+    stamps the confirmation on the calling session's row, clearing it
+    for step-up-gated admin writes for
+    ``KLANGKD_STEP_UP_WINDOW_MINUTES``. 400 when the window is disabled
+    (nothing to confirm); 401 on a bad password or a token with no
+    live session row.
+    """
+    app = request.app
+    if stepup.window_minutes(app) <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Step-up authentication is not enabled",
+        )
+    await stepup.confirm_step_up_password(app, user, req.password)
+    # get_current_user has validated the token, so the header is a
+    # valid Bearer; the guarded JTI recovery keeps an exp-boundary race
+    # failing closed (401) instead of 500.
+    jti = stepup.jti_from_request(app, request)
+    stamped = await app.state.model.sessions.stamp_step_up(jti or "")
+    if not stamped:
+        raise HTTPException(status_code=401, detail="Session not found")
+    logger.info(
+        "step-up: password confirmed for user=%s email=%s",
+        user["id"],
+        user["email"],
+    )
+    return {"status": "stepped_up"}
 
 
 @router.post("/auth/change-expired-password")

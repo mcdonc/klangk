@@ -35,14 +35,15 @@ api_auth = sys.modules["klangk.api.auth"]
 
 # Total HTTP route operations the app registers.  The api.py split had
 # to preserve the monolith's 90 exactly; the expired-password route
-# (#3177) and /audit (#3154) are the additions since.
-EXPECTED_ROUTE_COUNT = 93
+# (#3177), /audit (#3154), the #3214 admin audit-events route, and
+# step-up (#3196) are the additions since.
+EXPECTED_ROUTE_COUNT = 94
 
-# Per-domain submodules and the number of routes each owns.  86 sub-routes
+# Per-domain submodules and the number of routes each owns.  88 sub-routes
 # + 3 routes defined directly on the main router (version, config,
-# my-permissions) + 3 on the root router (health, audit, empty) == 92.
+# my-permissions) + 3 on the root router (health, audit, empty) == 94.
 SUBMODULE_ROUTES = {
-    "auth": 18,  # 15 + 2 OIDC login/callback + 1 change-expired-password (#3177)
+    "auth": 19,  # 15 + 2 OIDC login/callback + 1 expired-password (#3177) + step-up (#3196)
     "workspaces": 27,
     "resources": 10,  # 6 files + 4 images/volumes (merged submodules)
     "browser_delegate": 2,
@@ -254,7 +255,7 @@ class TestSubmoduleStructure:
         for submod in SUBMODULE_ROUTES:
             total += len(import_module(f"klangk.api.{submod}").router.routes)
         # 86 sub-routes + 3 direct (version/config/my-permissions) + 3
-        # root (health/audit/empty) == 92.
+        # root (health/audit/empty) == 94.
         assert total == EXPECTED_ROUTE_COUNT - 3 - 3
 
     def test_common_module_has_no_router(self):

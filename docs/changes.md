@@ -316,6 +316,20 @@ operators or integrators to act when upgrading.
   after a browser restart, a session-restore reopen, or opening the app
   in a new tab.
 
+- **`KLANGKD_STEP_UP_WINDOW_MINUTES` (#3196).** Step-up (sudo-mode)
+  reauthentication for privileged writes: user/group/invitation
+  management, admin ACL rewrites, server schedules, volume deletes,
+  and takeover-class writes on workspaces you do not own (delete,
+  raw ACL rewrite, ownership transfer) are refused with a
+  machine-readable `403 step_up_required` until the session's owner
+  confirms their password via `POST /auth/step-up`; the confirmation
+  is per session (survives token refresh, dies with logout), has
+  login-grade lockout accounting, and is honored for the window.
+  `0` (the default) disables the gate; `15` is the recommended value.
+  OIDC-managed accounts are exempt (audit-logged); the web client and
+  CLI prompt and retry automatically. Reloadable on SIGHUP. See
+  [Authentication](features/authentication.md).
+
 - **Consent-decider sockets are closed on token revocation (#3162).**
   The `/ws/consent-decider` connection now shares the #3152 revocation
   story: logging out, being evicted by the per-user session limit, or
@@ -2267,7 +2281,7 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   log the underlying error server-side instead.
 
 - **Admin user deletion now revokes sessions (#3195).** `DELETE
-  /api/v1/users/{user_id}` now blocklists every token the deleted user
+/api/v1/users/{user_id}` now blocklists every token the deleted user
   held and cuts their live WebSocket and consent-decider connections.
   Previously sessions stayed alive until their natural expiry.
 

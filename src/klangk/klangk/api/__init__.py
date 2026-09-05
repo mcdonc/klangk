@@ -340,6 +340,12 @@ async def get_config(
         # workspace gets the shared /home/klangk regardless of the
         # stored column (resolve_per_handle_home clamps at start).
         config["per_handle_home_available"] = bool(s.per_handle_home)
+        # #3196: the step-up (sudo-mode) window in minutes; 0 = the
+        # gate is off. Authenticated-only (it reveals the deploy's
+        # auth-hardening posture, like the netfilter fields); clients
+        # react to the 403 directly rather than reading this — it is
+        # surfaced for tooling/observability.
+        config["step_up_window_minutes"] = s.step_up_window_minutes
     config.update(app.state.features.frontend_config())
     # KLANGKD_FEATURES_ENABLE: the deploy's chosen active-feature list,
     # forwarded verbatim so the frontend can resolve the active set against
