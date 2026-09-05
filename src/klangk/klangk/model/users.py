@@ -489,13 +489,15 @@ class UsersModel(Submodel):
         verified: bool = False,
         provider: str = "local",
         external_id: str | None = None,
+        must_change_password: bool = False,
     ) -> dict:
         async with self.app.state.db.transaction() as db:
             user_id = str(uuid.uuid4())
             handle = await self.generate_handle(db, email)
             await db.execute(
                 "INSERT INTO users (id, email, password_hash, verified,"
-                " provider, external_id, handle) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                " provider, external_id, handle, must_change_password)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     user_id,
                     email,
@@ -504,6 +506,7 @@ class UsersModel(Submodel):
                     provider,
                     external_id,
                     handle,
+                    int(must_change_password),
                 ),
             )
         # #2569: auto-add to the members group if it exists.
@@ -519,6 +522,7 @@ class UsersModel(Submodel):
             # ``ensure_not_disabled`` gate reads (#2588 review) — a
             # fresh user is enabled by definition.
             "disabled": False,
+            "must_change_password": must_change_password,
         }
 
     async def insert_unverified_user(
@@ -1057,6 +1061,57 @@ class UsersModel(Submodel):
         crucially records nothing, so a reset token for a since-deleted
         user cannot trip the history FK (#2611 review).
         """
+        await self._set_password_and_flag(user_id, password_hash, None)
+
+    async def set_must_change_password(self, user_id: str, flag: bool) -> None:
+        """Set or clear the must-change-password flag (#3172).
+
+        Raises ``AgentPrincipalError`` for the system agent, matching
+        the password-setting methods (#3172 review)."""
+        if user_id == AGENT_USER_ID:
+            raise AgentPrincipalError(
+                "Cannot set the must-change flag on the system agent user"
+            )
+        async with self.app.state.db.transaction() as db:
+            await db.execute(
+                "UPDATE users SET must_change_password = ? WHERE id = ?",
+                (int(flag), user_id),
+            )
+
+    async def _write_password_row(
+        self, db, user_id: str, password_hash: str, must_change: bool | None
+    ) -> None:
+        """The users-row UPDATE for a password replacement — with or
+        without a same-transaction flag write (#3172). Always stamps
+        ``password_set_at`` — the password-age policy reads it for both
+        the minimum and maximum lifetime (#3177)."""
+        stamp = datetime.now(timezone.utc).isoformat()
+        if must_change is None:
+            await db.execute(
+                "UPDATE users SET password_hash = ?, password_set_at = ?"
+                " WHERE id = ?",
+                (password_hash, stamp, user_id),
+            )
+        else:
+            await db.execute(
+                "UPDATE users SET password_hash = ?, password_set_at = ?,"
+                " must_change_password = ? WHERE id = ?",
+                (password_hash, stamp, int(must_change), user_id),
+            )
+
+    async def _set_password_and_flag(
+        self, user_id: str, password_hash: str, must_change: bool | None
+    ) -> None:
+        """Replace a password hash in one transaction (#2582, #3172).
+
+        ``must_change`` also writes the forced-change flag inside the
+        same transaction; ``None`` leaves the flag untouched. Raises
+        ``AgentPrincipalError`` if the target is the system agent. A
+        missing user is a silent no-op — callers translate (reset/change
+        404 via their own lookups) — and crucially records nothing, so a
+        reset token for a since-deleted user cannot trip the history FK
+        (#2611 review).
+        """
         if user_id == AGENT_USER_ID:
             raise AgentPrincipalError(
                 "Cannot set a password on the system agent user"
@@ -1069,27 +1124,21 @@ class UsersModel(Submodel):
             row = await cursor.fetchone()
             if row is None:  # deleted user: nothing to update or retire
                 return
-            await db.execute(
-                "UPDATE users SET password_hash = ?, password_set_at = ?"
-                " WHERE id = ?",
-                (
-                    password_hash,
-                    datetime.now(timezone.utc).isoformat(),
-                    user_id,
-                ),
+            await self._write_password_row(
+                db, user_id, password_hash, must_change
             )
             if count > 0 and row["password_hash"] is not None:
                 await self._retire_password(
                     db, user_id, row["password_hash"], count
                 )
 
-    async def set_must_change_password(self, user_id: str, flag: bool) -> None:
-        """Set or clear the must-change-password flag (#3172)."""
-        async with self.app.state.db.transaction() as db:
-            await db.execute(
-                "UPDATE users SET must_change_password = ? WHERE id = ?",
-                (int(flag), user_id),
-            )
+    async def set_password_force_change(
+        self, user_id: str, password_hash: str
+    ) -> None:
+        """Set an admin-chosen password hash and raise the forced-change
+        flag atomically (#3172, STIG V-222547). The old hash retires into
+        password history, same as ``update_password``."""
+        await self._set_password_and_flag(user_id, password_hash, True)
 
     async def clear_must_change_password(
         self, user_id: str, password_hash: str
@@ -1097,27 +1146,7 @@ class UsersModel(Submodel):
         """Update a user's password and atomically clear the forced-change
         flag (#3172). The old hash is retired into password history, same
         as ``update_password``."""
-        if user_id == AGENT_USER_ID:
-            raise AgentPrincipalError(
-                "Cannot set a password on the system agent user"
-            )
-        count = self.app.state.settings.password_history_count
-        async with self.app.state.db.transaction() as db:
-            cursor = await db.execute(
-                "SELECT password_hash FROM users WHERE id = ?", (user_id,)
-            )
-            row = await cursor.fetchone()
-            if row is None:
-                return
-            await db.execute(
-                "UPDATE users SET password_hash = ?,"
-                " must_change_password = 0 WHERE id = ?",
-                (password_hash, user_id),
-            )
-            if count > 0 and row["password_hash"] is not None:
-                await self._retire_password(
-                    db, user_id, row["password_hash"], count
-                )
+        await self._set_password_and_flag(user_id, password_hash, False)
 
     # --- password history (#2582; table from migration 0001) ---
 
@@ -1270,7 +1299,7 @@ class UsersModel(Submodel):
         row = await self.app.state.db.fetchone(
             "SELECT id, email, handle, last_login_at, disabled,"
             " last_activity_at, created_at, password_set_at,"
-            " password_hash, must_change_password"
+            " password_hash, must_change_password, provider"
             " FROM users WHERE id = ?",
             (user_id,),
         )
@@ -1287,6 +1316,7 @@ class UsersModel(Submodel):
             "password_set_at": row["password_set_at"],
             "password_hash": row["password_hash"],
             "must_change_password": bool(row["must_change_password"]),
+            "provider": row["provider"],
         }
 
     async def search_users(self, query: str, limit: int = 10) -> list[dict]:

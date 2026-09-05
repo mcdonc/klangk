@@ -333,6 +333,21 @@ class TestConsentDeciderWS:
         await handle_consent_decider(ws, app)
         assert ws.closed == (4001, "Invalid token")
 
+    async def test_must_change_password_is_rejected(self):
+        # #3172: a forced-change session must not act as a live decider
+        # — resolving egress holds is exactly the action the gate
+        # exists to block. 4004 matches the main WS gate.
+        from klangk.wshandler.decider import handle_consent_decider
+
+        app = _ws_app(
+            {"id": "u1", "email": "a@x", "must_change_password": True}
+        )
+        ws = _FakeWS({"token": "tok", "workspace": WS}, [])
+        await handle_consent_decider(ws, app)
+        assert ws.closed == (4004, "Password change required")
+        assert ws.accepted is False
+        assert app.state.consent_deciders.has_decider(WS) is False
+
     async def test_expired_token_is_rejected(self):
         from klangk import auth
         from klangk.wshandler.decider import handle_consent_decider

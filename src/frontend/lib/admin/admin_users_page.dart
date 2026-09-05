@@ -333,6 +333,7 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
         currentHandle: user['handle'] as String? ?? '',
         mustChangePassword: (user['must_change_password'] as bool?) ?? false,
         passwordPolicy: auth.passwordPolicy,
+        isLocalAccount: (user['provider'] as String? ?? 'local') == 'local',
       ),
     );
     if (result == null) return;
@@ -1876,11 +1877,17 @@ class _EditUserDialog extends StatefulWidget {
   final bool mustChangePassword;
   final PasswordPolicy passwordPolicy;
 
+  /// #3172: the must-change checkbox is offered only for local-password
+  /// accounts — flagging an OIDC account is a permanent lockout (the
+  /// server rejects it too; this hides the dead control).
+  final bool isLocalAccount;
+
   const _EditUserDialog({
     required this.currentEmail,
     required this.currentHandle,
     required this.mustChangePassword,
     this.passwordPolicy = const PasswordPolicy(),
+    this.isLocalAccount = true,
   });
 
   @override
@@ -2010,20 +2017,22 @@ class _EditUserDialogState extends State<_EditUserDialog> {
                 onChanged: (_) => setState(() {}),
               ),
             ],
-            const SizedBox(height: 12),
-            CheckboxListTile(
-              title: const Text('Must change password on next login'),
-              subtitle: const Text(
-                'Forces the user to choose a new password before '
-                'they can do anything else',
-                style: TextStyle(fontSize: 12),
+            if (widget.isLocalAccount) ...[
+              const SizedBox(height: 12),
+              CheckboxListTile(
+                title: const Text('Must change password on next login'),
+                subtitle: const Text(
+                  'Forces the user to choose a new password before '
+                  'they can do anything else',
+                  style: TextStyle(fontSize: 12),
+                ),
+                value: _mustChangePassword,
+                onChanged: (v) =>
+                    setState(() => _mustChangePassword = v ?? false),
+                contentPadding: EdgeInsets.zero,
+                controlAffinity: ListTileControlAffinity.leading,
               ),
-              value: _mustChangePassword,
-              onChanged: (v) =>
-                  setState(() => _mustChangePassword = v ?? false),
-              contentPadding: EdgeInsets.zero,
-              controlAffinity: ListTileControlAffinity.leading,
-            ),
+            ],
           ],
         ),
       ),

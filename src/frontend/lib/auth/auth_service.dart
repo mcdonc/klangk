@@ -506,12 +506,36 @@ class AuthService extends ChangeNotifier {
 
   /// Make an authenticated HTTP request. If the response is 401,
   /// clear the token (router will redirect to login).
+  /// Shared post-flight handling for authenticated requests.
+  ///
+  /// A 401 ends the session. A 403 "Password change required" (#3172)
+  /// flips the local must-change flag so guardForcedPasswordChange
+  /// routes to /change-password on the next notifyListeners — this is
+  /// how a mid-session admin password reset reaches the UI without
+  /// waiting for the next token refresh.
+  Future<void> _handleAuthFailure(http.Response response) async {
+    if (response.statusCode == 401) {
+      await _clearToken();
+      return;
+    }
+    if (response.statusCode != 403 || _token == null) return;
+    try {
+      final detail = jsonDecode(response.body)['detail'];
+      if (detail == 'Password change required' && !_mustChangePassword) {
+        _mustChangePassword = true;
+        notifyListeners();
+      }
+    } catch (_) {
+      // Not JSON (or no detail) — leave the flag alone.
+    }
+  }
+
   Future<http.Response> authGet(String path) async {
     final response = await _client.get(
       Uri.parse('$_baseUrl$path'),
       headers: _authHeaders,
     );
-    if (response.statusCode == 401) await _clearToken();
+    await _handleAuthFailure(response);
     return response;
   }
 
@@ -521,7 +545,7 @@ class AuthService extends ChangeNotifier {
       headers: _authHeaders,
       body: body,
     );
-    if (response.statusCode == 401) await _clearToken();
+    await _handleAuthFailure(response);
     return response;
   }
 
@@ -531,7 +555,7 @@ class AuthService extends ChangeNotifier {
       headers: _authHeaders,
       body: body,
     );
-    if (response.statusCode == 401) await _clearToken();
+    await _handleAuthFailure(response);
     return response;
   }
 
@@ -544,7 +568,7 @@ class AuthService extends ChangeNotifier {
       },
       body: body,
     );
-    if (response.statusCode == 401) await _clearToken();
+    await _handleAuthFailure(response);
     return response;
   }
 
@@ -553,7 +577,7 @@ class AuthService extends ChangeNotifier {
       Uri.parse('$_baseUrl$path'),
       headers: _authHeaders,
     );
-    if (response.statusCode == 401) await _clearToken();
+    await _handleAuthFailure(response);
     return response;
   }
 
@@ -587,6 +611,13 @@ class AuthService extends ChangeNotifier {
         final data = jsonDecode(response.body);
         final newToken = data['access_token'] as String?;
         if (newToken != null) {
+          // #3172: the refresh response carries the live
+          // must-change flag (e.g. an admin reset the password
+          // mid-session). Set it BEFORE _saveToken so its
+          // notifyListeners — which re-runs the router guards —
+          // sees the new value.
+          _mustChangePassword =
+              (data['must_change_password'] as bool?) ?? false;
           await _saveToken(newToken);
         }
       } else if (response.statusCode == 401) {

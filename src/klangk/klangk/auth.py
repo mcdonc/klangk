@@ -1303,6 +1303,23 @@ class Auth:
             must_change_password=user.get("must_change_password", False),
         )
 
+    async def _cached_refresh_response(self, cached: str) -> TokenResponse:
+        """A cached refresh replacement stamped with the *live*
+        must_change_password flag (#3172) — the flag can flip (admin
+        reset) after the replacement was minted, so the cached token's
+        own issue-time state is not authoritative."""
+        flag = False
+        try:
+            payload = self.decode_token(cached)
+            user = await self.app.state.model.users.get_user_by_id(
+                payload.get("sub", "")
+            )
+            if user is not None:
+                flag = user.get("must_change_password", False)
+        except JWTError:
+            pass
+        return TokenResponse(access_token=cached, must_change_password=flag)
+
     async def _refreshed_or_revoked(self, jti: str) -> TokenResponse | None:
         """The cached replacement when *jti* was already refreshed.
 
@@ -1313,7 +1330,7 @@ class Auth:
             return None
         cached = await self.app.state.model.tokens.get_refreshed_token(jti)
         if cached is not None:
-            return TokenResponse(access_token=cached)
+            return await self._cached_refresh_response(cached)
         raise HTTPException(status_code=401, detail="Token has been revoked")
 
     async def _require_active_user(self, user_id: str) -> dict:
@@ -1379,7 +1396,7 @@ class Auth:
         if jti:
             cached = await self.app.state.model.tokens.get_refreshed_token(jti)
             if cached is not None:
-                return TokenResponse(access_token=cached)
+                return await self._cached_refresh_response(cached)
         raise HTTPException(status_code=401, detail="Token expired")
 
     async def refresh_token(self, token: str) -> TokenResponse:

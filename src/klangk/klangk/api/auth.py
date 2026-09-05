@@ -463,11 +463,11 @@ async def reset_password(req: ResetPasswordRequest, request: Request):
         user_id, req.password
     )
     password_hash = await asyncio.to_thread(auth.hash_password, req.password)
-    await request.app.state.model.users.update_password(user_id, password_hash)
     # A self-chosen password via forgot-password clears the forced-change
-    # flag (#3172) — the user chose this password themselves.
-    await request.app.state.model.users.set_must_change_password(
-        user_id, False
+    # flag (#3172) — the user chose this password themselves. Hash write
+    # and flag clear land in the same transaction.
+    await request.app.state.model.users.clear_must_change_password(
+        user_id, password_hash
     )
     # Auto-login after reset
     source_ip, user_agent = workstation(request)

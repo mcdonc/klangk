@@ -664,6 +664,17 @@ sync` report a clear permission-denied error.
   to `0` (disabled); the recommended hardening values are `24` hours /
   `60` days. Reloadable
   on SIGHUP; passwords set before the upgrade age from account creation.
+- **`must_change_password` (#3172).** Admin-chosen passwords now force a
+  change at next login (DISA ASD STIG V-222547, CAT II): creating a user
+  with a password or resetting one from the admin console sets a
+  `must_change_password` flag; the flagged session may do nothing except
+  change its password (API requests 403 `Password change required`, new
+  WS connections close with 4004 — including the consent-decider
+  socket). Login and token-refresh responses carry the flag so clients
+  drive a forced-change flow; both the web UI and the CLI TUI prompt
+  until the password is changed. Admins can set/clear the flag from the
+  user editor (local-password accounts only — flagging an OIDC account
+  is refused, since it could never be cleared).
 - **All five container images now publish on a release tag (#3140).**
   Pushing `vX.Y.Z` publishes `klangk-host`, `klangk-host-fips`,
   `klangk-workspace`, `klangk-workspace-fips`, and the newly pullable

@@ -2366,6 +2366,16 @@ class TestChangePassword:
         headers = await _auth_headers(client)
         # One inserted character — the positional-diff workaround that a
         # naive per-position diff would score as a full overwrite.
+        resp = await client.post(
+            "/api/v1/auth/change-password",
+            json={
+                "current_password": "testpass",
+                "new_password": "xtestpass",
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 400
+        assert "change at least 8 characters" in resp.json()["detail"]
 
     async def test_change_password_garbage_token(self, client, db):
         """#3172: change-password uses its own dependency (flagged sessions
@@ -2380,13 +2390,6 @@ class TestChangePassword:
         )
         assert resp.status_code == 401
         assert resp.json()["detail"] == "Invalid token"
-
-                "new_password": "xtestpass",
-            },
-            headers=headers,
-        )
-        assert resp.status_code == 400
-        assert "change at least 8 characters" in resp.json()["detail"]
 
     async def test_change_password_wrong_current_beats_too_similar(
         self, client, user, app, monkeypatch
@@ -10741,6 +10744,199 @@ class TestMustChangePassword:
         listed = [u for u in users if u["email"] == "listed@example.com"]
         assert len(listed) == 1
         assert listed[0]["must_change_password"] is True
+
+    async def test_refresh_returns_flag_primary_and_cached(
+        self, client, admin_user, app_state
+    ):
+        """#3172: refresh carries the flag on the primary path AND on the
+        idempotent cached retry — the cached response reads the live
+        flag, not the mint-time one."""
+        headers = await self._admin_headers(client)
+        await client.post(
+            "/api/v1/users",
+            headers=headers,
+            json={"email": "rf@example.com", "password": "testpass123"},
+        )
+        login = await client.post(
+            "/api/v1/auth/login",
+            json={"identifier": "rf@example.com", "password": "testpass123"},
+        )
+        token = login.json()["access_token"]
+        # Primary path: valid (not yet refreshed) token.
+        resp = await client.post(
+            "/api/v1/auth/refresh",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["must_change_password"] is True
+        # Cached path: retrying with the now-blocklisted old token
+        # replays the cached replacement — which must still report the
+        # LIVE flag.
+        resp2 = await client.post(
+            "/api/v1/auth/refresh",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp2.status_code == 200
+        assert resp2.json()["access_token"] == resp.json()["access_token"]
+        assert resp2.json()["must_change_password"] is True
+        # Admin clears the flag; the SAME cached retry now reports false.
+        user = await app_state.state.model.users.get_user_by_email(
+            "rf@example.com"
+        )
+        await client.patch(
+            f"/api/v1/users/{user['id']}",
+            headers=headers,
+            json={"must_change_password": False},
+        )
+        resp3 = await client.post(
+            "/api/v1/auth/refresh",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp3.status_code == 200
+        assert resp3.json()["must_change_password"] is False
+
+    async def test_cached_refresh_for_deleted_user_reports_unflagged(
+        self, client, admin_user, app_state
+    ):
+        """#3172: the cached refresh retry for a since-deleted user
+        still replays the cached token, with the flag defaulting false
+        (there is no user row left to read)."""
+        headers = await self._admin_headers(client)
+        await client.post(
+            "/api/v1/users",
+            headers=headers,
+            json={"email": "gone@example.com", "password": "testpass123"},
+        )
+        login = await client.post(
+            "/api/v1/auth/login",
+            json={
+                "identifier": "gone@example.com",
+                "password": "testpass123",
+            },
+        )
+        token = login.json()["access_token"]
+        user = await app_state.state.model.users.get_user_by_email(
+            "gone@example.com"
+        )
+        # First refresh caches the replacement under the old jti.
+        await client.post(
+            "/api/v1/auth/refresh",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        await client.delete(f"/api/v1/users/{user['id']}", headers=headers)
+        resp = await client.post(
+            "/api/v1/auth/refresh",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["must_change_password"] is False
+
+    async def test_flag_patch_rejected_for_oidc_user(
+        self, client, admin_user, app_state
+    ):
+        """#3172: flagging an OIDC account is a permanent lockout (it has
+        no local password to change) — the admin PATCH refuses."""
+        headers = await self._admin_headers(client)
+        user = await app_state.state.model.users.create_user(
+            "oidcflag@example.com", None, verified=True, provider="oidc"
+        )
+        resp = await client.patch(
+            f"/api/v1/users/{user['id']}",
+            headers=headers,
+            json={"must_change_password": True},
+        )
+        assert resp.status_code == 400
+        assert "local-password" in resp.json()["detail"]
+        fresh = await app_state.state.model.users.get_user_by_id(user["id"])
+        assert fresh["must_change_password"] is False
+
+    async def test_flag_patch_rearm(self, client, admin_user, app_state):
+        """#3172: must_change_password: true alone re-arms the flag."""
+        headers = await self._admin_headers(client)
+        resp = await client.post(
+            "/api/v1/users",
+            headers=headers,
+            json={"email": "rearm@example.com", "password": "testpass123"},
+        )
+        user_id = resp.json()["id"]
+        await client.patch(
+            f"/api/v1/users/{user_id}",
+            headers=headers,
+            json={"must_change_password": False},
+        )
+        resp = await client.patch(
+            f"/api/v1/users/{user_id}",
+            headers=headers,
+            json={"must_change_password": True},
+        )
+        assert resp.status_code == 200
+        user = await app_state.state.model.users.get_user_by_id(user_id)
+        assert user["must_change_password"] is True
+
+    async def test_password_patch_with_flag_false_not_flagged(
+        self, client, admin_user, app_state
+    ):
+        """#3172: password + must_change_password: false in one PATCH —
+        the explicit field wins over the password's implicit flag."""
+        headers = await self._admin_headers(client)
+        await client.post(
+            "/api/v1/users",
+            headers=headers,
+            json={
+                "email": "combined@example.com",
+                "password": "testpass123",
+            },
+        )
+        user = await app_state.state.model.users.get_user_by_email(
+            "combined@example.com"
+        )
+        resp = await client.patch(
+            f"/api/v1/users/{user['id']}",
+            headers=headers,
+            json={"password": "newpass12345", "must_change_password": False},
+        )
+        assert resp.status_code == 200
+        fresh = await app_state.state.model.users.get_user_by_id(user["id"])
+        assert fresh["must_change_password"] is False
+
+    async def test_gate_sweep_across_routers(
+        self, client, admin_user, app_state
+    ):
+        """#3172: the gate rejects a flagged session on representative
+        endpoints across routers, not just /my-permissions."""
+        headers = await self._admin_headers(client)
+        await client.post(
+            "/api/v1/users",
+            headers=headers,
+            json={"email": "sweep@example.com", "password": "testpass123"},
+        )
+        login = await client.post(
+            "/api/v1/auth/login",
+            json={
+                "identifier": "sweep@example.com",
+                "password": "testpass123",
+            },
+        )
+        flagged = {"Authorization": f"Bearer {login.json()['access_token']}"}
+        cases = [
+            ("GET", "/api/v1/workspaces"),
+            ("GET", "/api/v1/my-permissions"),
+            ("GET", "/api/v1/config"),
+            ("POST", "/api/v1/workspaces"),
+        ]
+        for method, path in cases:
+            call = getattr(client, method.lower())
+            resp = await call(path, headers=flagged)
+            assert resp.status_code == 403, (method, path)
+            assert resp.json()["detail"] == "Password change required", (
+                method,
+                path,
+            )
+        # Refresh stays open (the client needs a live token to change
+        # the password) and reports the flag.
+        resp = await client.post("/api/v1/auth/refresh", headers=flagged)
+        assert resp.status_code == 200
+        assert resp.json()["must_change_password"] is True
 
 
 class TestGroupEndpoints:

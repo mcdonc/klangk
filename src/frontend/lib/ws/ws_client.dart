@@ -85,11 +85,19 @@ class WsClient extends ChangeNotifier {
   int get reconnectAttempt => _reconnectAttempt;
 
   /// Whether the last disconnect was caused by an auth failure (WebSocket
-  /// close codes 4001/4002). The UI reads this to suppress the "Server
-  /// unreachable" reconnect overlay and surface only the re-login path, so
-  /// the two never overlap (#2227). Reset on a successful connect.
+  /// close codes 4001/4002/4004 — invalid/expired token, or a session
+  /// under the must-change-password flag, #3172). The UI reads this to
+  /// suppress the "Server unreachable" reconnect overlay and surface only
+  /// the re-login path, so the two never overlap (#2227). Reset on a
+  /// successful connect.
   bool _authFailed = false;
   bool get authFailed => _authFailed;
+
+  /// Close codes that must stop reconnection and end the session (#2227,
+  /// #3172). 4004 ("Password change required") logs the user out; the
+  /// next login replays the forced-change flow.
+  static bool isAuthCloseCode(int? code) =>
+      code == 4001 || code == 4002 || code == 4004;
 
   Timer? _reconnectTimer;
 
@@ -346,7 +354,7 @@ class WsClient extends ChangeNotifier {
     } catch (e) {
       debugPrint('[WsClient] channel.ready failed: $e ${DateTime.now()}');
       final code = _channel?.closeCode;
-      if (code == 4001 || code == 4002) {
+      if (isAuthCloseCode(code)) {
         _authFailed = true;
         _errorController.add(
           const WsError(message: 'Session expired, please log in again'),
@@ -493,7 +501,7 @@ class WsClient extends ChangeNotifier {
         // can no longer be refreshed is worse than none).
         _serverSchedules = null;
         final code = _channel?.closeCode;
-        final authFailure = code == 4001 || code == 4002;
+        final authFailure = isAuthCloseCode(code);
         // Set the auth-failure flag BEFORE notifyListeners so the UI (which
         // rebuilds on this notification) suppresses the reconnect overlay
         // immediately and shows only the re-login path (#2227).
@@ -525,7 +533,7 @@ class WsClient extends ChangeNotifier {
         sharedTerminals = [];
         _serverSchedules = null;
         final code = _channel?.closeCode;
-        final authFailure = code == 4001 || code == 4002;
+        final authFailure = isAuthCloseCode(code);
         if (authFailure) {
           _authFailed = true;
           _reconnecting = false;
