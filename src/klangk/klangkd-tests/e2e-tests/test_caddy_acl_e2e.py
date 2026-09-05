@@ -1048,10 +1048,10 @@ class TestCaddyAutoHttpsConfig:
         assert "auto_https off" not in cf
         assert "https://klangk.example.com:443 {" in cf
 
-        conf_path = os.path.join(state, "armed.caddy")
-        with open(conf_path, "w") as f:
-            # Fixture config (dummy hostname/paths) in a per-test temp dir.
-            f.write(cf)  # lgtm[py/clear-text-storage-sensitive-data]
+        # Piped via stdin, not written to a file: the rendered Caddyfile
+        # embeds the trusted-proxy CIDR list, which CodeQL classifies as
+        # sensitive — a file write raises a clear-text-storage alert for
+        # fixture data. Same validation coverage, no on-disk fixture.
         r = subprocess.run(
             [
                 "caddy",
@@ -1059,8 +1059,9 @@ class TestCaddyAutoHttpsConfig:
                 "--adapter",
                 "caddyfile",
                 "--config",
-                conf_path,
+                "-",
             ],
+            input=cf,
             capture_output=True,
             text=True,
             timeout=30,
