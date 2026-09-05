@@ -632,14 +632,14 @@ class Auth:
         return self.app.state.settings.privileged_session_idle_timeout_minutes
 
     @property
-    def session_binding(self) -> str:
+    def session_workstation_binding(self) -> str:
         """The session-binding mode: off | ip | strict (#3194).
 
         Normalized at construction by the settings validator; read
         live off settings so a SIGHUP reload arms or disarms binding
         without a restart.
         """
-        return self.app.state.settings.session_binding
+        return self.app.state.settings.session_workstation_binding
 
     # --- secret / startup guard ---
 
@@ -1901,7 +1901,7 @@ class Auth:
         (#3194).
 
         Replay protection for bearer JWTs: with binding armed
-        (``KLANGKD_SESSION_BINDING`` = ip|strict), a token captured on
+        (``KLANGKD_SESSION_WORKSTATION_BINDING`` = ip|strict), a token captured on
         the wire cannot be used from another machine — the mismatch
         revokes the session (blocklist + row delete + socket kick), an
         audit record names both workstations, and the caller rejects
@@ -1913,7 +1913,7 @@ class Auth:
         is resolved lazily — only on the armed path, so the default
         off mode costs nothing.
         """
-        mode = self.session_binding
+        mode = self.session_workstation_binding
         if mode == "off":
             return False
         if workstation is None:

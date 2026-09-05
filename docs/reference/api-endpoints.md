@@ -1390,7 +1390,7 @@ For OIDC users with logout redirect configured:
 
 Exchange the current JWT for a new one. The old token's JTI is
 blocklisted. With session binding armed
-(`KLANGKD_SESSION_BINDING`, #3194), a token presented from a different
+(`KLANGKD_SESSION_WORKSTATION_BINDING`, #3194), a token presented from a different
 workstation than it was issued to is refused with `401` and its
 session revoked.
 

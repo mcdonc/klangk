@@ -2859,7 +2859,7 @@ class TestHandleWebsocketDispatch:
         revoked (blocklisted)."""
         app_state = _make_app_state()
         app_state.state.settings = make_settings(
-            {"KLANGKD_SESSION_BINDING": "ip"}
+            {"KLANGKD_SESSION_WORKSTATION_BINDING": "ip"}
         )
         a = app_state.state.auth
         token = await a.issue_token(
@@ -2882,7 +2882,7 @@ class TestHandleWebsocketDispatch:
         connects normally."""
         app_state = _make_app_state()
         app_state.state.settings = make_settings(
-            {"KLANGKD_SESSION_BINDING": "ip"}
+            {"KLANGKD_SESSION_WORKSTATION_BINDING": "ip"}
         )
         a = app_state.state.auth
         token = await a.issue_token(

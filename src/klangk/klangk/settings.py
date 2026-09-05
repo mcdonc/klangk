@@ -931,7 +931,7 @@ class KlangkSettings(BaseSettings):
     # recorded IP (pre-#2586 rows) are never rejected. Read live at
     # use time; reloadable on SIGHUP. The validator below rejects
     # anything but off/ip/strict at construction (fail-fast).
-    session_binding: str = "off"
+    session_workstation_binding: str = "off"
     # Dormant-account auto-disable (#2588). Accounts (except the system
     # agent and members of the admin group) whose newest activity
     # signal — last API access, last login, or creation — is older than
@@ -2084,9 +2084,9 @@ class KlangkSettings(BaseSettings):
             )
         return lower
 
-    @field_validator("session_binding")
+    @field_validator("session_workstation_binding")
     @classmethod
-    def _validate_session_binding(cls, v: str) -> str:
+    def _validate_session_workstation_binding(cls, v: str) -> str:
         """Normalize/reject the session-binding mode at construction
         (#3194).
 
@@ -2101,7 +2101,7 @@ class KlangkSettings(BaseSettings):
         lower = v.strip().lower()
         if lower not in ("off", "ip", "strict"):
             raise ValueError(
-                f"KLANGKD_SESSION_BINDING={v!r} is invalid. "
+                f"KLANGKD_SESSION_WORKSTATION_BINDING={v!r} is invalid. "
                 "Must be off, ip, or strict."
             )
         return lower

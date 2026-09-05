@@ -3085,7 +3085,7 @@ class TestSessionBinding:
     async def _issued(self, mode, source_ip=_UNSET, user_agent=_UNSET):
         """An Auth in *mode* with a token issued to HOME (or the given
         overrides — pass ``None`` explicitly to record an unknown)."""
-        a = _auth({"KLANGKD_SESSION_BINDING": mode})
+        a = _auth({"KLANGKD_SESSION_WORKSTATION_BINDING": mode})
         user = await a.app.state.model.users.create_user(
             "bound@example.com", "pw-hash", verified=True
         )
@@ -3195,7 +3195,7 @@ class TestSessionBinding:
 
     async def test_no_session_row_fails_open(self, user, app_state):
         """A pre-#2585 token (no registry row) cannot be judged."""
-        a = _auth({"KLANGKD_SESSION_BINDING": "strict"})
+        a = _auth({"KLANGKD_SESSION_WORKSTATION_BINDING": "strict"})
         token = a.create_token(user["id"], user["email"])
         payload = a.decode_token(token)
         assert (
@@ -3220,7 +3220,7 @@ class TestSessionBinding:
     ):
         """A token with no exp claim still rejects, without the
         (impossible) blocklist write."""
-        a = _auth({"KLANGKD_SESSION_BINDING": "ip"})
+        a = _auth({"KLANGKD_SESSION_WORKSTATION_BINDING": "ip"})
         await app_state.state.model.sessions.record_session(
             user["id"],
             "jti-noexp",
@@ -3242,7 +3242,9 @@ class TestSessionBinding:
         """A SIGHUP-style settings swap arms binding without a restart."""
         a, token = await self._issued("off")
         payload = a.decode_token(token)
-        a.app.state.settings = make_settings({"KLANGKD_SESSION_BINDING": "ip"})
+        a.app.state.settings = make_settings(
+            {"KLANGKD_SESSION_WORKSTATION_BINDING": "ip"}
+        )
         assert (
             await a.reject_replayed_session(
                 payload["jti"], payload["exp"], workstation=self.AWAY
@@ -3271,7 +3273,7 @@ class TestSessionBindingHTTP:
         """A request-like on a binding-armed Auth, from (ip, user_agent)."""
         from klangk.util import Util
 
-        a = _auth({"KLANGKD_SESSION_BINDING": mode})
+        a = _auth({"KLANGKD_SESSION_WORKSTATION_BINDING": mode})
         a.app.state.auth = a
         a.app.state.util = Util(a.app)
         return _types.SimpleNamespace(
@@ -3281,7 +3283,7 @@ class TestSessionBindingHTTP:
         )
 
     async def _home_token(self, mode):
-        a = _auth({"KLANGKD_SESSION_BINDING": mode})
+        a = _auth({"KLANGKD_SESSION_WORKSTATION_BINDING": mode})
         user = await a.app.state.model.users.create_user(
             "httpbound@example.com", "pw-hash", verified=True
         )
@@ -3378,7 +3380,7 @@ class TestSessionBindingCachedRefresh:
 
     async def _refreshed_pair(self):
         """(auth, old_token, new_token) after one HOME refresh."""
-        a = _auth({"KLANGKD_SESSION_BINDING": "ip"})
+        a = _auth({"KLANGKD_SESSION_WORKSTATION_BINDING": "ip"})
         user = await a.app.state.model.users.create_user(
             "cached@example.com", "pw-hash", verified=True
         )

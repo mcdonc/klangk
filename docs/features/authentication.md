@@ -169,7 +169,7 @@ for how to verify the setup.
 ## Session workstation binding (replay protection)
 
 Session JWTs are bearer tokens: by default (`off`), anyone who captures
-one can use it until it expires. Set `KLANGKD_SESSION_BINDING` to bind
+one can use it until it expires. Set `KLANGKD_SESSION_WORKSTATION_BINDING` to bind
 each session to the workstation it was established from, so a captured
 token **cannot be replayed from another machine**:
 

@@ -2525,13 +2525,13 @@ class TestLlmModelEntriesTypeGuard2910:
 
 
 class TestSessionBindingValidator:
-    """KLANGKD_SESSION_BINDING must be off/ip/strict, or fail fast at
+    """KLANGKD_SESSION_WORKSTATION_BINDING must be off/ip/strict, or fail fast at
     boot (#3194) — a typo must not silently disarm replay protection
     an operator believes is armed (same posture as log_format)."""
 
     def test_defaults_to_off(self):
         s = make_settings({})
-        assert s.session_binding == "off"
+        assert s.session_workstation_binding == "off"
 
     @pytest.mark.parametrize(
         "raw,expected",
@@ -2546,12 +2546,12 @@ class TestSessionBindingValidator:
         ],
     )
     def test_valid_values_normalized_to_lower(self, raw, expected):
-        s = make_settings({"KLANGKD_SESSION_BINDING": raw})
-        assert s.session_binding == expected
+        s = make_settings({"KLANGKD_SESSION_WORKSTATION_BINDING": raw})
+        assert s.session_workstation_binding == expected
 
     def test_empty_string_defaults_to_off(self):
-        s = make_settings({"KLANGKD_SESSION_BINDING": ""})
-        assert s.session_binding == "off"
+        s = make_settings({"KLANGKD_SESSION_WORKSTATION_BINDING": ""})
+        assert s.session_workstation_binding == "off"
 
     @pytest.mark.parametrize(
         "bad", ["yes", "on", "ua", "ip-strict", "both", "1"]
@@ -2560,4 +2560,4 @@ class TestSessionBindingValidator:
         from pydantic import ValidationError
 
         with pytest.raises(ValidationError):
-            make_settings({"KLANGKD_SESSION_BINDING": bad})
+            make_settings({"KLANGKD_SESSION_WORKSTATION_BINDING": bad})

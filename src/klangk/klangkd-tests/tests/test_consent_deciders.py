@@ -1036,7 +1036,9 @@ class TestConsentDeciderWSJti:
 
         app = types.SimpleNamespace(
             state=types.SimpleNamespace(
-                settings=make_settings({"KLANGKD_SESSION_BINDING": "ip"})
+                settings=make_settings(
+                    {"KLANGKD_SESSION_WORKSTATION_BINDING": "ip"}
+                )
             )
         )
         wire_db_and_model(app)
