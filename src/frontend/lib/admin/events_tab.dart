@@ -3,6 +3,11 @@
 /// audit streams that share the `manage-events` permission — container
 /// start/stop history ([ContainerEventsPanel], #2923) and the
 /// identity/privilege audit stream ([AuditEventsPanel], #3205/#3217).
+///
+/// The panels live in an [IndexedStack] (the same keep-alive the admin
+/// page uses for its top-level tabs): a subtab's filters, offset, and
+/// expansion state survive switching, and a panel is built lazily —
+/// only once first selected.
 
 import 'package:flutter/material.dart';
 
@@ -20,6 +25,11 @@ class EventsTab extends StatefulWidget {
 
 class _EventsTabState extends State<EventsTab> {
   String _sub = 'containers';
+
+  /// Subtabs built so far (lazy first build; kept alive afterwards).
+  final Set<String> _built = {'containers'};
+
+  static const _order = ['containers', 'audit'];
 
   @override
   Widget build(BuildContext context) {
@@ -44,14 +54,25 @@ class _EventsTabState extends State<EventsTab> {
                 ),
               ],
               selected: {_sub},
-              onSelectionChanged: (sel) => setState(() => _sub = sel.first),
+              onSelectionChanged: (sel) => setState(() {
+                _sub = sel.first;
+                _built.add(_sub);
+              }),
             ),
           ),
         ),
         Expanded(
-          child: _sub == 'audit'
-              ? const AuditEventsPanel()
-              : const ContainerEventsPanel(),
+          child: IndexedStack(
+            index: _sub == 'audit' ? 1 : 0,
+            children: [
+              for (final id in _order)
+                _built.contains(id)
+                    ? (id == 'audit'
+                        ? const AuditEventsPanel()
+                        : const ContainerEventsPanel())
+                    : const SizedBox.shrink(),
+            ],
+          ),
         ),
       ],
     );

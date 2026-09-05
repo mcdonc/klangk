@@ -1,5 +1,6 @@
 // coverage:ignore-file
-/// Admin → Events tab: paged container start/stop history (#2923).
+/// Admin → Events tab → Containers subtab: paged container start/stop
+/// history (#2923).
 ///
 /// Reads the `container_events` audit table (#2915) through
 /// `GET /api/v1/events/containers` — newest first, optional id-or-name workspace

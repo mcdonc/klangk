@@ -19,7 +19,6 @@ import 'package:provider/provider.dart';
 
 import '../auth/auth_service.dart';
 import '../theme/colors.dart';
-import '../utils/system_agent.dart';
 
 /// The Audit subtab body: event/actor/target filter fields, paging
 /// controls, and the history table. Each row expands in place to the
@@ -48,6 +47,12 @@ class _AuditEventsPanelState extends State<AuditEventsPanel> {
   /// Row id whose detail area is expanded (null = none).
   int? _expandedId;
 
+  /// Monotonic load sequence: a response from a superseded load (a
+  /// newer filter/page request raced it) must not overwrite the table
+  /// — the three independent filter debouncers make overlapping
+  /// requests the common case, not the exception.
+  int _seq = 0;
+
   @override
   void initState() {
     super.initState();
@@ -67,10 +72,15 @@ class _AuditEventsPanelState extends State<AuditEventsPanel> {
   }
 
   Future<void> _load({int offset = 0}) async {
+    final seq = ++_seq;
     setState(() {
       _loading = true;
       _error = null;
       _offset = offset;
+      // A fresh page or filter result invalidates any expansion —
+      // ids are unique, but a row resurfacing pages later pre-opened
+      // would be surprising.
+      _expandedId = null;
     });
     try {
       final query = <String, String>{
@@ -83,7 +93,7 @@ class _AuditEventsPanelState extends State<AuditEventsPanel> {
       final auth = context.read<AuthService>();
       final resp =
           await auth.authGet('/api/v1/events/audit?${_encodeQuery(query)}');
-      if (!mounted) return;
+      if (!mounted || seq != _seq) return;
       if (resp.statusCode == 200) {
         final data = jsonDecode(resp.body) as Map<String, dynamic>;
         setState(() {
@@ -99,7 +109,7 @@ class _AuditEventsPanelState extends State<AuditEventsPanel> {
       }
     } catch (e) {
       debugPrint('[AuditEventsPanel] load failed: $e');
-      if (mounted) {
+      if (mounted && seq == _seq) {
         setState(() {
           _error = 'Could not load audit events. Please try again.';
           _loading = false;
@@ -131,15 +141,15 @@ class _AuditEventsPanelState extends State<AuditEventsPanel> {
 
   /// Actor email when the backend denormalized one at write time, the
   /// raw id otherwise (attribution survives the actor's own deletion,
-  /// #3205). A missing actor is an unauthenticated row (login.failed)
-  /// or a fixed system identity.
+  /// #3205). A missing actor is an unauthenticated row (login.failed,
+  /// user.register) — labeled 'anonymous', not 'system': nobody
+  /// authenticated performed it.
   String _actorLabel(Map<String, dynamic> row) {
     final id = row['actor_id'] as String?;
-    if (id == agentUserId) return 'system agent';
     final email = row['actor_email'] as String?;
     if (email != null && email.isNotEmpty) return email;
     if (id != null && id.isNotEmpty) return id;
-    return 'system';
+    return 'anonymous';
   }
 
   /// 'user 2f9a…' / 'group g1' / '' when the event has no target.

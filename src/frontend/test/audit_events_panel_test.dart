@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -9,7 +10,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:klangk_frontend/admin/admin_users_page.dart';
 import 'package:klangk_frontend/admin/audit_events_panel.dart';
 import 'package:klangk_frontend/auth/auth_service.dart';
-import 'package:klangk_frontend/utils/system_agent.dart';
 import 'package:klangk_frontend/ws/ws_client.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 
@@ -225,7 +225,7 @@ void main() {
               _auditEvent(
                 3,
                 event: 'acl.replace',
-                actorId: agentUserId,
+                actorId: 'u-7',
                 targetType: 'workspace',
                 targetId: 'ws-1',
               ),
@@ -240,9 +240,10 @@ void main() {
       expect(find.text('login.failed'), findsOneWidget);
       expect(find.text('acl.replace'), findsOneWidget);
       expect(find.text('admin@example.com'), findsOneWidget);
-      // No actor on login.failed -> 'system'; agent id -> 'system agent'.
-      expect(find.text('system'), findsOneWidget);
-      expect(find.text('system agent'), findsOneWidget);
+      // No actor on login.failed -> 'anonymous'; bare id when the
+      // email was never denormalized (purged actor).
+      expect(find.text('anonymous'), findsOneWidget);
+      expect(find.text('u-7'), findsOneWidget);
       expect(find.text('user u-2'), findsOneWidget);
       expect(find.text('user u-9'), findsOneWidget);
       expect(find.text('workspace ws-1'), findsOneWidget);
@@ -412,6 +413,97 @@ void main() {
       expect(find.text('0 events'), findsOneWidget);
     });
 
+    testWidgets('a superseded slow response never overwrites a newer one',
+        (tester) async {
+      // Overlapping loads are the common case (independent filter
+      // debouncers): the newer request's rows must win even when the
+      // older response lands last.
+      final pending = <Completer<http.Response>>[];
+      testAuthHttpClientOverride =
+          _mockClient(_adminPermissions, (request) async {
+        if (request.url.path == '/api/v1/events/audit') {
+          final actor = request.url.queryParameters['actor'];
+          final completer = Completer<http.Response>();
+          pending.add(completer);
+          final resp = await completer.future;
+          final marker = actor != null ? 'actor-row' : 'event-row';
+          return http.Response(
+            _auditEnvelope([
+              _auditEvent(1, event: 'user.create', targetId: marker),
+            ], total: 1),
+            resp.statusCode,
+          );
+        }
+        return http.Response('Not found', 404);
+      }, isAdmin: true);
+
+      await tester.binding.setSurfaceSize(const Size(1600, 900));
+      await tester.pumpWidget(buildPanel());
+      // Initial load.
+      pending.removeAt(0).complete(http.Response('', 200));
+      await tester.pumpAndSettle();
+
+      // Two filter edits -> two overlapping requests.
+      await tester.enterText(
+        find.byKey(const ValueKey('audit-event-filter')),
+        'user.create',
+      );
+      await tester.pump(const Duration(milliseconds: 350));
+      await tester.enterText(
+        find.byKey(const ValueKey('audit-actor-filter')),
+        'admin@example.com',
+      );
+      await tester.pump(const Duration(milliseconds: 350));
+      expect(pending.length, 2);
+
+      // The newer (actor) response lands first...
+      pending.removeLast().complete(http.Response('', 200));
+      await tester.pumpAndSettle();
+      expect(find.text('user actor-row'), findsOneWidget);
+
+      // ...then the stale (event-only) one: it must be discarded.
+      pending.removeAt(0).complete(http.Response('', 200));
+      await tester.pumpAndSettle();
+      expect(find.text('user actor-row'), findsOneWidget);
+      expect(find.text('user event-row'), findsNothing);
+    });
+
+    testWidgets('paging and filter changes collapse an open expansion',
+        (tester) async {
+      serveAudit((limit, offset, event, actor, target) => http.Response(
+            _auditEnvelope([
+              _auditEvent(
+                1,
+                event: 'user.update',
+                actorEmail: 'admin@example.com',
+                targetId: 'u-2',
+                detail: {'field': 'handle'},
+              ),
+              _auditEvent(
+                2,
+                event: 'user.create',
+                actorEmail: 'admin@example.com',
+                targetId: 'u-3',
+              ),
+            ], total: 2),
+            200,
+          ));
+
+      await pumpPanel(tester);
+      await tester.tap(find.text('user.update'));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('audit-event-detail')), findsOneWidget);
+
+      // A filter change loads a fresh result set: the expansion goes.
+      await tester.enterText(
+        find.byKey(const ValueKey('audit-event-filter')),
+        'user.create',
+      );
+      await tester.pump(const Duration(milliseconds: 350));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('audit-event-detail')), findsNothing);
+    });
+
     testWidgets('table rows fit a narrow viewport (#3006 pattern)',
         (tester) async {
       serveAudit((limit, offset, event, actor, target) => http.Response(
@@ -450,8 +542,12 @@ void main() {
       await tester.tap(find.text('Events'));
       await tester.pumpAndSettle();
       // The Containers subtab is the default: its panel is up first.
-      expect(find.byKey(const ValueKey('events-workspace-filter')),
-          findsOneWidget);
+      // (Offstage panels stay mounted — the keep-alive — so
+      // visibility asserts use hitTestable, not findsNothing.)
+      expect(
+        find.byKey(const ValueKey('events-workspace-filter')).hitTestable(),
+        findsOneWidget,
+      );
       await tester.tap(find.text('Audit'));
       await tester.pumpAndSettle();
     }
@@ -470,19 +566,36 @@ void main() {
 
       await pumpToAudit(tester);
 
-      // The audit panel's filter fields replaced the container one.
+      // The audit panel is the visible subtab now.
       expect(
-          find.byKey(const ValueKey('events-workspace-filter')), findsNothing);
+        find.byKey(const ValueKey('events-workspace-filter')).hitTestable(),
+        findsNothing,
+      );
       expect(
-        find.byKey(const ValueKey('audit-event-filter')),
+        find.byKey(const ValueKey('audit-event-filter')).hitTestable(),
         findsOneWidget,
       );
       expect(find.text('user.create'), findsOneWidget);
 
+      // Keep-alive (#3217 review): subtab state survives switching —
+      // the hidden panel stays mounted offstage, matching the
+      // IndexedStack keep-alive the admin page gives its top tabs.
+      await tester.enterText(
+        find.byKey(const ValueKey('audit-actor-filter')),
+        'kept-filter',
+      );
+      await tester.pump(const Duration(milliseconds: 350));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Containers'));
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('events-workspace-filter')),
           findsOneWidget);
+      await tester.tap(find.text('Audit'));
+      await tester.pumpAndSettle();
+      final field = tester.widget<TextField>(
+        find.byKey(const ValueKey('audit-actor-filter')),
+      );
+      expect(field.controller!.text, 'kept-filter');
     });
 
     testWidgets('delegated auditor reaches the audit stream (#3217)',
