@@ -1676,7 +1676,9 @@ void main() {
       await Future.delayed(Duration.zero);
 
       expect(errors.length, 1);
-      expect(errors[0].message, startsWith('Parse error:'));
+      // #3227: stable wording only — the raw exception (which can
+      // embed frame content) goes to the log, not the stream.
+      expect(errors[0].message, 'Could not read a server message.');
     });
 
     test('server close resets connected state', () async {
@@ -1753,7 +1755,9 @@ void main() {
       await Future.delayed(Duration.zero);
 
       expect(errors.length, 1);
-      expect(errors[0].message, contains('WebSocket error'));
+      // #3227: stable wording only — the raw socket error goes to the
+      // log, not the stream.
+      expect(errors[0].message, 'Connection failed. Please try again.');
       expect(client.connected, isFalse);
     });
   });

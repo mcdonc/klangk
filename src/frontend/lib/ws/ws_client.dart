@@ -479,7 +479,14 @@ class WsClient extends ChangeNotifier {
 
           _handlers[type]?.call(json);
         } catch (e) {
-          _errorController.add(WsError(message: 'Parse error: $e'));
+          // #3227: the raw failure goes to the log; the stream carries
+          // stable wording only (it can reach the restart SnackBar on
+          // screen). The catch wraps handler dispatch as well as
+          // jsonDecode, so say "handling", not "parse".
+          debugPrint('[WsClient] message handling error: $e');
+          _errorController.add(
+            const WsError(message: 'Could not read a server message.'),
+          );
         }
       },
       onDone: () {
@@ -521,7 +528,12 @@ class WsClient extends ChangeNotifier {
         }
       },
       onError: (e) {
-        _errorController.add(WsError(message: 'WebSocket error: $e'));
+        // #3227: log the raw socket error, emit the same stable
+        // wording the channel.ready failure uses.
+        debugPrint('[WsClient] WebSocket error: $e');
+        _errorController.add(
+          const WsError(message: 'Connection failed. Please try again.'),
+        );
         _stopHeartbeat();
         _connected = false;
         // #3000: same invariant as onDone — readiness does not survive the

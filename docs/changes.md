@@ -2313,6 +2313,15 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **File viewer and WebSocket error messages (#3227).** A transport
+  failure while listing a workspace directory or opening a file, and
+  socket/parse errors on the workspace WebSocket, no longer show the
+  raw exception (which can include request URLs and host names) in the
+  file viewer's error views or the restart-failure notice. They now
+  show stable wording ("Network error. Please try again.",
+  "Connection failed. Please try again."), with the underlying
+  exception logged for debugging.
+
 - **Auth error messages (#3203).** The web login, register, local-login,
   resend-verification, and email-verification flows no longer show the raw
   transport exception (which can include request URLs and endpoint paths)
