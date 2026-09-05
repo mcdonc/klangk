@@ -1187,9 +1187,13 @@ class CaddyWatchdog:
         client: httpx.AsyncClient | None = None,
     ) -> httpx.Response:
         """Render (if omitted) and ``POST /load`` the Caddyfile to running Caddy."""
-        self._ensure_storage_dir()
         if caddyfile is None:
+            # Render first: a render that refuses (e.g. an arm the binary
+            # cannot load) must not leave an empty storage dir behind as
+            # a side effect; an explicit caddyfile needs none at all
+            # (#3192 sweep).
             caddyfile = self._render_caddyfile()
+            self._ensure_storage_dir()
         return await post_load(self.admin_socket, caddyfile, client=client)
 
     # -- supervision -------------------------------------------------------

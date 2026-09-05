@@ -801,7 +801,7 @@ class TestCheckAutoHttpsPorts:
             r = check_auto_https_ports("klangk.example.com")
         assert r is not None and r.ok
         assert r.message == (
-            "ports 80/443 bindable — ACME issuance for "
+            "ports 80, 443 bindable — ACME issuance for "
             "klangk.example.com can proceed"
         )
 
@@ -918,6 +918,7 @@ class TestCheckAutoHttpsPortsCustomPort:
             )
         assert r is not None and r.ok
         assert probed == [80]
+        assert r.message.startswith("ports 80 bindable")
 
     def test_port_443_probes_443(self):
         probed = []

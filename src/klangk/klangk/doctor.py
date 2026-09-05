@@ -565,13 +565,17 @@ def _internal_tls_issuer(issuer: str | None) -> bool:
     return (issuer or "").strip().lower() == "internal"
 
 
-def _auto_https_ok_result(hostname: str) -> CheckResult:
-    """The passing result when every ACME port binds (#3192)."""
+def _auto_https_ok_result(
+    hostname: str, ports: tuple[int, ...]
+) -> CheckResult:
+    """The passing result when every probed ACME port binds (#3192)."""
+    names = ", ".join(str(p) for p in ports)
     return CheckResult(
         name="auto-https ports",
         ok=True,
         message=(
-            f"ports 80/443 bindable — ACME issuance for {hostname} can proceed"
+            f"ports {names} bindable — ACME issuance for {hostname} "
+            "can proceed"
         ),
     )
 
@@ -606,11 +610,11 @@ def _auto_https_failure_result(
     )
 
 
-def _unbindable_acme_ports(browser_port: str | None) -> list[str]:
+def _unbindable_acme_ports(ports: tuple[int, ...]) -> list[str]:
     """The armed ACME ports that cannot be bound (``"port: reason"``
     strings; empty when every port binds)."""
     failures = []
-    for port in _armed_ports(browser_port):
+    for port in ports:
         reason = port_bind_error(port)
         if reason is not None:
             failures.append(reason)
@@ -636,9 +640,10 @@ def check_auto_https_ports(
     """
     if not hostname or _internal_tls_issuer(issuer):
         return None
-    failures = _unbindable_acme_ports(browser_port)
+    ports = _armed_ports(browser_port)
+    failures = _unbindable_acme_ports(ports)
     if not failures:
-        return _auto_https_ok_result(hostname)
+        return _auto_https_ok_result(hostname, ports)
     return _auto_https_failure_result(hostname, failures)
 
 

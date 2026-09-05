@@ -1683,6 +1683,19 @@ class TestAutoHttpsWatchdog:
         assert os.path.isdir(storage)
 
     @pytest.mark.asyncio
+    async def test_failed_arm_render_leaves_no_storage_dir(self):
+        """A render that refuses (arm on an old caddy) must not create
+        the storage dir as a side effect (#3192 sweep)."""
+        wd = _wd(make_settings(_armed_env()))
+        wd._full_global = False  # old caddy -> render refuses
+        storage = os.path.join(
+            wd.app.state.settings.state_dir, "caddy-storage"
+        )
+        with pytest.raises(AutoHttpsConfigError):
+            await wd.load_config(client=_FakeAsyncClient())
+        assert not os.path.exists(storage)
+
+    @pytest.mark.asyncio
     async def test_load_config_unarmed_no_storage_dir(self):
         s = make_settings({"KLANGKD_PORT": "8997"})
         wd = _wd(s)
