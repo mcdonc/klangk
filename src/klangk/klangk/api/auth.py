@@ -615,8 +615,13 @@ async def change_password(
         req.current_password,
         incorrect_detail="Current password is incorrect",
     )
-    # Self-service changes respect the minimum age (#3177).
-    request.app.state.auth.validate_password_min_age(user)
+    # Self-service changes respect the minimum age (#3177) — except the
+    # forced first change after an admin-set password (#3172): the
+    # temporary password must be replaceable *immediately*, and the
+    # admin reset that set this password already bypassed the age
+    # check.
+    if not user.get("must_change_password"):
+        request.app.state.auth.validate_password_min_age(user)
     request.app.state.auth.validate_password(req.new_password)
     request.app.state.auth.validate_password_changed_enough(
         req.current_password, req.new_password

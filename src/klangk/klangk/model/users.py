@@ -1136,7 +1136,7 @@ class UsersModel(Submodel):
         self, user_id: str, password_hash: str
     ) -> None:
         """Set an admin-chosen password hash and raise the forced-change
-        flag atomically (#3172, STIG V-222547). The old hash retires into
+        flag atomically (#3172). The old hash retires into
         password history, same as ``update_password``."""
         await self._set_password_and_flag(user_id, password_hash, True)
 

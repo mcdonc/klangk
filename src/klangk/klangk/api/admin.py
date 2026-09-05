@@ -304,7 +304,7 @@ async def admin_create_user(
     app.state.auth.validate_password(req.password)
     password_hash = await asyncio.to_thread(auth.hash_password, req.password)
     # Admin-chosen password: force the user to change it on first
-    # login (#3172, STIG V-222547). The flag lands in the same INSERT,
+    # login (#3172). The flag lands in the same INSERT,
     # so no crash window can leave an unflagged admin-chosen password.
     user = await app.state.model.users.create_user(
         req.email, password_hash, verified=True, must_change_password=True
@@ -390,7 +390,7 @@ async def _update_user_password(app, user_id: str, password: str) -> None:
     await app.state.auth.validate_password_not_reused(user_id, password)
     password_hash = await asyncio.to_thread(auth.hash_password, password)
     # Admin-chosen password: force the user to change it on next
-    # login (#3172, STIG V-222547) — hash + flag land in one transaction.
+    # login (#3172) — hash + flag land in one transaction.
     await app.state.model.users.set_password_force_change(
         user_id, password_hash
     )

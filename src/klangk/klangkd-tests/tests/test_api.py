@@ -1670,6 +1670,36 @@ class TestPasswordAgeRoutes:
         assert resp.status_code == 400
         assert "must be kept" in resp.json()["detail"]
 
+    async def test_change_password_min_age_bypassed_under_flag(
+        self, client, app, db, app_state, monkeypatch
+    ):
+        """#3172: the forced first change after an admin-set password
+        ignores the minimum age — the temporary password must be
+        replaceable immediately, and blocking it would lock the account
+        behind its own flag."""
+        monkeypatch.setattr(app.state.settings, "password_min_age_hours", 24)
+        await self._fresh_user(app_state, "forcedage@example.com")
+        flagged = await app_state.state.model.users.get_user_by_email(
+            "forcedage@example.com"
+        )
+        await app_state.state.model.users.set_must_change_password(
+            flagged["id"], True
+        )
+        headers = await self._login_token(client, "forcedage@example.com")
+        resp = await client.post(
+            "/api/v1/auth/change-password",
+            json={
+                "current_password": "testpass",
+                "new_password": "freshpass1",
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        user = await app_state.state.model.users.get_user_by_email(
+            "forcedage@example.com"
+        )
+        assert user["must_change_password"] is False
+
     async def test_reset_password_min_age_refused(
         self, client, app, db, app_state, monkeypatch
     ):
@@ -1728,6 +1758,27 @@ class TestPasswordAgeRoutes:
         headers = await self._login_token(client, "midcfg@example.com")
         await self._backdate_password(app_state, user["id"], days=61)
         resp = await client.get("/api/v1/config", headers=headers)
+        assert resp.status_code == 403
+        assert resp.json()["detail"]["error"] == "password_expired"
+
+    async def test_expired_session_refused_on_change_password(
+        self, client, app, db, app_state, monkeypatch
+    ):
+        """#3172: the change-password dependency keeps the expiry gate
+        (#3177) — an expired password is resolved by the
+        /auth/change-expired-password flow, not here."""
+        monkeypatch.setattr(app.state.settings, "password_max_age_days", 60)
+        user = await self._fresh_user(app_state, "midchg@example.com")
+        headers = await self._login_token(client, "midchg@example.com")
+        await self._backdate_password(app_state, user["id"], days=61)
+        resp = await client.post(
+            "/api/v1/auth/change-password",
+            json={
+                "current_password": "testpass",
+                "new_password": "freshpass1",
+            },
+            headers=headers,
+        )
         assert resp.status_code == 403
         assert resp.json()["detail"]["error"] == "password_expired"
 

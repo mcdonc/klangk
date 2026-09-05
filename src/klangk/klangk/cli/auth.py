@@ -318,13 +318,14 @@ _FORCED_CHANGE_MAX_ATTEMPTS = 5
 
 def _try_change_password(
     server_url: str, token: str, current_password: str
-) -> bool:
-    """Prompt once and POST; True on success, False on failure."""
+) -> str | None:
+    """Prompt once and POST; the new password on success, None on
+    failure."""
     new_password = Prompt.ask("[bold]New password[/bold]", password=True)
     confirm = Prompt.ask("[bold]Confirm new password[/bold]", password=True)
     if new_password != confirm:
         _err.print("[red]Passwords do not match.[/red]")
-        return False
+        return None
     resp = http_request(
         server_url,
         "POST",
@@ -338,28 +339,72 @@ def _try_change_password(
     )
     if resp.status_code == 200:
         _out.print("[green]Password changed.[/green]")
-        return True
+        return new_password
     _err.print(
         f"[red]Password change failed:[/red] {login_failure_detail(resp)}"
     )
-    return False
+    return None
 
 
 def _forced_password_change(
     server_url: str, token: str, current_password: str
 ) -> str:
-    """Prompt for a new password and POST it. Returns the same token
-    (the server clears the flag server-side). Exits after
+    """Prompt for a new password and POST it. Returns the NEW password
+    — the change revokes every session of the old credential (#3152),
+    so the caller logs in again with it. Exits after
     ``_FORCED_CHANGE_MAX_ATTEMPTS`` failed attempts."""
     _out.print(
         "\n[yellow]Your password was set by an administrator."
         " You must change it now.[/yellow]\n"
     )
     for _ in range(_FORCED_CHANGE_MAX_ATTEMPTS):
-        if _try_change_password(server_url, token, current_password):
-            return token
+        new_password = _try_change_password(
+            server_url, token, current_password
+        )
+        if new_password is not None:
+            return new_password
     _err.print("[red]Too many failed attempts. Login aborted.[/red]")
     raise SystemExit(1)
+
+
+def _fresh_login_token(server_url: str, email: str, password: str) -> str:
+    """Re-login after a forced change revoked the old session (#3152,
+    #3172). Any failure exits through the normal login-failure path."""
+    resp = http_request(
+        server_url,
+        "POST",
+        "/api/v1/auth/login",
+        json={"identifier": email, "password": password},
+        timeout=15.0,
+    )
+    if resp.status_code != 200:
+        print_login_failure(resp)
+    return resp.json()["access_token"]
+
+
+def _login_data(
+    server_url: str, email: str, password: str, state
+) -> dict | None:
+    """The parsed login response, or None when an expired password
+    (#3177) was rotated and the login is already persisted. Any other
+    failure exits through the login-failure path."""
+    resp = http_request(
+        server_url,
+        "POST",
+        "/api/v1/auth/login",
+        json={"identifier": email, "password": password},
+        timeout=15.0,
+    )
+    if resp.status_code == 200:
+        return resp.json()
+    expired = password_expired_message(resp)
+    if expired is not None:
+        token = expired_password_rotation(
+            server_url, email, password, notice=expired
+        )
+        persist_login(state, server_url, email, token)
+        return None
+    print_login_failure(resp)
 
 
 def password_login(server_url, email, password, state) -> None:
@@ -369,32 +414,28 @@ def password_login(server_url, email, password, state) -> None:
     email = email or Prompt.ask("[bold]Email or handle[/bold]")
     password = password or Prompt.ask("[bold]Password[/bold]", password=True)
 
-    resp = http_request(
-        server_url,
-        "POST",
-        "/api/v1/auth/login",
-        json={"identifier": email, "password": password},
-        timeout=15.0,
-    )
-    if resp.status_code != 200:
-        expired = password_expired_message(resp)
-        if expired is not None:
-            token = expired_password_rotation(
-                server_url, email, password, notice=expired
-            )
-            persist_login(state, server_url, email, token)
-            return
-        print_login_failure(resp)
-
-    data = resp.json()
+    data = _login_data(server_url, email, password, state)
+    if data is None:
+        return
     token = data["access_token"]
 
     # #3172: server signals that the password was admin-chosen and must
     # be changed before any other action.
     if data.get("must_change_password"):
-        token = _forced_password_change(server_url, token, password)
+        token = _complete_forced_change(server_url, email, password, token)
 
     persist_login(state, server_url, email, token)
+
+
+def _complete_forced_change(
+    server_url: str, email: str, password: str, token: str
+) -> str:
+    """Run the forced-change flow and return the token to persist. The
+    change revokes the current session (#3152), so the caller cannot
+    reuse *token* — a fresh login with the new password mints the
+    replacement."""
+    new_password = _forced_password_change(server_url, token, password)
+    return _fresh_login_token(server_url, email, new_password)
 
 
 def persist_login(state, server_url, email, token) -> None:

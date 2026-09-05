@@ -665,7 +665,7 @@ sync` report a clear permission-denied error.
   `60` days. Reloadable
   on SIGHUP; passwords set before the upgrade age from account creation.
 - **`must_change_password` (#3172).** Admin-chosen passwords now force a
-  change at next login (DISA ASD STIG V-222547, CAT II): creating a user
+  change at next login: creating a user
   with a password or resetting one from the admin console sets a
   `must_change_password` flag; the flagged session may do nothing except
   change its password (API requests 403 `Password change required`, new

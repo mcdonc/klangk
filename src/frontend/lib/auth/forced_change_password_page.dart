@@ -9,7 +9,7 @@ import 'auth_service.dart';
 import '../widgets/obscure_toggle.dart';
 
 /// Full-screen password change gate shown when the server sets
-/// `must_change_password` on login (#3172, STIG V-222547).
+/// `must_change_password` on login (#3172).
 ///
 /// The user cannot navigate away until they choose a new password.
 class ForcedChangePasswordPage extends StatefulWidget {
@@ -56,9 +56,19 @@ class _ForcedChangePasswordPageState extends State<ForcedChangePasswordPage> {
       );
       if (!mounted) return;
       if (resp.statusCode == 200) {
+        // The change revokes every session of the old credential
+        // (#3152), including this one — end the client session and
+        // send the user to log in with the new password (#3172).
         setState(() => _changing = false);
-        auth.clearMustChangePassword();
-        if (mounted) context.go('/workspaces');
+        await auth.logout();
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Password changed. Log in with your new password.'),
+            ),
+          );
+          context.go('/login');
+        }
       } else {
         final data = jsonDecode(resp.body);
         setState(() {
