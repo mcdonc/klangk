@@ -692,10 +692,10 @@ sync` report a clear permission-denied error.
   it is left created-not-started — the same shape as a drain/capacity
   refusal). WS-connect starts and autonomous stops (idle timeout,
   eviction, drain, shutdown sweep, crash teardown, boot reaps) are
-  never gated. Default off keeps the best-effort behavior. `/health`
-  now also reports `audit.write_failures` (a counter bumped on every
-  audit-write failure, best-effort paths included) and
-  `audit.fail_closed` so assessors can verify the mode. Reloadable on
+  never gated. Default off keeps the best-effort behavior. A new
+  `/audit` endpoint reports `write_failures` (a counter bumped on every
+  audit-write failure, best-effort paths included) and `fail_closed`
+  so assessors can verify the mode. Reloadable on
   SIGHUP.
 - **All five container images now publish on a release tag (#3140).**
   Pushing `vX.Y.Z` publishes `klangk-host`, `klangk-host-fips`,

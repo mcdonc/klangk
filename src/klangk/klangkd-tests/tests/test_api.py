@@ -193,20 +193,23 @@ class TestHealth:
         # (#3057).
         assert body["status"] == "ok"
         assert isinstance(body["instance"], str) and body["instance"]
+        # The audit status surface lives on /audit, not here (#3154).
+        assert "audit" not in body
 
-    async def test_health_reports_audit_state(self, client, app):
+    async def test_audit_endpoint_reports_audit_state(self, client, app):
         """#3154 / V-222486: audit-write failures and the fail-closed
-        mode are visible on /health so an operator or assessor can see
+        mode are visible on /audit so an operator or assessor can see
         the audit trail losing rows and verify the mode."""
-        resp = await client.get("/health")
-        assert resp.json()["audit"] == {
+        resp = await client.get("/audit")
+        assert resp.status_code == 200
+        assert resp.json() == {
             "write_failures": 0,
             "fail_closed": False,
         }
         app.state.settings.audit_fail_closed = True
         app.state.container_registry.audit_write_failures = 3
-        resp = await client.get("/health")
-        assert resp.json()["audit"] == {
+        resp = await client.get("/audit")
+        assert resp.json() == {
             "write_failures": 3,
             "fail_closed": True,
         }

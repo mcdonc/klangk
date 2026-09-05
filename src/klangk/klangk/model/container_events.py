@@ -10,7 +10,7 @@ network sidecar container whose netns the workspace shares.
 Recording is best-effort: an audit write failure is logged and never
 fails the start/stop path it annotates (see
 ``ContainerRegistry.record_container_event``), and every failure
-bumps a counter surfaced on ``/health`` (#3154). With
+bumps a counter surfaced on ``/audit`` (#3154). With
 ``KLANGKD_AUDIT_FAIL_CLOSED`` the *interactive* API transitions
 instead write their row before acting and refuse the request (503)
 when it cannot be written — see ``INTERACTIVE_START_CAUSES`` /

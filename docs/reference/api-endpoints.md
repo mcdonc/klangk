@@ -1,7 +1,7 @@
 # API Endpoints
 
 All HTTP and WebSocket endpoints, alphabetized by path. All REST paths
-are under `/api/v1` except `/health`, `/empty`, and the
+are under `/api/v1` except `/audit`, `/health`, `/empty`, and the
 [`/llm-proxy/*`](#llm-proxy-endpoints) routes.
 
 **Auth types**:
@@ -1980,6 +1980,23 @@ No request body.
 
 ```json
 { "ok": true }
+```
+
+---
+
+### GET `/audit`
+
+Container-audit status (#3154, security finding V-222486):
+`write_failures` counts every `container_events` write that failed
+(best-effort paths included), and `fail_closed` mirrors
+`KLANGKD_AUDIT_FAIL_CLOSED` so an assessor can verify the mode.
+
+**Auth:** None.
+
+No request body.
+
+```json
+{ "write_failures": 0, "fail_closed": false }
 ```
 
 ---

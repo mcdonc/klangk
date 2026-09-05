@@ -16,7 +16,8 @@ submodules, each mounting its own sub-router:
 
 This package builds the main ``router`` by including every sub-router
 without a prefix (so route paths are unchanged) and keeps the unprefixed
-``root_router`` for ``/health`` and ``/empty``.  The few endpoints that do
+``root_router`` for ``/health``, ``/audit``, and ``/empty``.  The few
+endpoints that do
 not belong to a single domain (version, config, my-permissions, and the
 KLANGKD_TEST_MODE-only endpoints) stay here.
 
@@ -94,19 +95,23 @@ async def health(app=Depends(get_app_dep)):
     # matching instance proves it is OURS (a concurrent run's proxy can
     # own the port and forward to its own server, which would otherwise
     # pass the readiness probe and receive this run's traffic).
-    #
-    # The audit block (#3154, security finding V-222486) makes audit
-    # write failures operator-visible beyond the warning log: every
-    # container_events write that failed — the best-effort paths
-    # included — bumps write_failures, and fail_closed mirrors
-    # KLANGKD_AUDIT_FAIL_CLOSED so an assessor can verify the mode.
     return {
         "status": "ok",
         "instance": app.state.util.instance_id(),
-        "audit": {
-            "write_failures": app.state.container_registry.audit_write_failures,
-            "fail_closed": app.state.settings.audit_fail_closed,
-        },
+    }
+
+
+@root_router.get("/audit")
+async def audit_status(app=Depends(get_app_dep)):
+    # The audit status surface (#3154, security finding V-222486): every
+    # container_events write that failed — the best-effort paths
+    # included — bumps write_failures, and fail_closed mirrors
+    # KLANGKD_AUDIT_FAIL_CLOSED, so an operator (or assessor) can see
+    # the audit trail losing rows and verify the mode without reading
+    # the journal.
+    return {
+        "write_failures": app.state.container_registry.audit_write_failures,
+        "fail_closed": app.state.settings.audit_fail_closed,
     }
 
 

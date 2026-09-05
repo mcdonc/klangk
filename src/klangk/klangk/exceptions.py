@@ -85,5 +85,5 @@ class AuditWriteError(RuntimeError):
     Autonomous lifecycle paths (idle timeout, eviction, drain, shutdown
     sweep, crash teardown, boot reaps, logout) never raise it — refusing
     those would keep containers running *and* lose the record, so they
-    stay best-effort (logged, counted in ``/health``).
+    stay best-effort (logged, counted in ``/audit``).
     """

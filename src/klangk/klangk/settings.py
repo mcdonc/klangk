@@ -1319,7 +1319,7 @@ class KlangkSettings(BaseSettings):
     # WS-connect starts are NEVER gated in either mode: refusing those
     # would keep containers running and lose the record. Every
     # audit-write failure — best-effort paths included — bumps a counter
-    # surfaced on /health. Read live (SIGHUP reload applies without a
+    # surfaced on /audit. Read live (SIGHUP reload applies without a
     # restart).
     audit_fail_closed: bool = False
     # Container resource limits (#34): deploy-wide CPU / memory / PIDs caps

@@ -287,7 +287,7 @@ class ContainerRegistry(NetworkSidecarMixin):
         self.stop_epoch: dict[str, int] = {}
         # Audit-write failure counter (#3154, security finding V-222486):
         # every container_events write that fails — the best-effort paths
-        # included — bumps this so /health exposes an operator-visible
+        # included — bumps this so /audit exposes an operator-visible
         # (and assessor-visible) signal that the audit trail is losing
         # rows, beyond the warning log line.
         self.audit_write_failures: int = 0
@@ -1168,7 +1168,7 @@ class ContainerRegistry(NetworkSidecarMixin):
 
         Auditing must never fail the start/stop path it annotates: a
         DB error is logged, counted in ``audit_write_failures`` (the
-        /health signal, #3154), and swallowed. Netns defaults to the
+        /audit signal, #3154), and swallowed. Netns defaults to the
         live sidecar mapping when the caller didn't capture one
         (workspace starts); sidecar rows own their netns, so theirs
         stays NULL. The fail-closed interactive paths use the
@@ -1205,7 +1205,7 @@ class ContainerRegistry(NetworkSidecarMixin):
         return self.app.state.settings.audit_fail_closed
 
     def _count_audit_write_failure(self) -> None:
-        """Bump the /health audit-write-failure counter (#3154)."""
+        """Bump the /audit audit-write-failure counter (#3154)."""
         self.audit_write_failures += 1
 
     async def prewrite_audit_event(
