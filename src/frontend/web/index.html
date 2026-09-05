@@ -24,7 +24,7 @@
       (function () {
         try {
           if (window.trustedTypes && trustedTypes.createPolicy) {
-            trustedTypes.createPolicy("", {
+            trustedTypes.createPolicy("default", {
               createScriptURL: function (s) {
                 var m = /^([a-z][a-z0-9+.-]*):/i.exec(s);
                 if (!m) return s; // relative: resolves inside this origin
@@ -45,6 +45,24 @@
           // A default policy already exists (or TT is unsupported) —
           // leave the existing one in charge.
         }
+        // pdfrx's Dart init assigns globalThis.pdfiumWasmWorkerUrl a
+        // blob: URL whose first statement is importScripts(...) — a
+        // TrustedScriptURL sink inside the worker, which inherits the
+        // page's require-trusted-types-for but can define no policy of
+        // its own. Redirect the worker URL to the build-generated
+        // TT-safe file (pdfium_worker.js inlined, no importScripts)
+        // with a no-op setter, so pdfrx's later blob assignment cannot
+        // restore the violating wrapper (#3219).
+        Object.defineProperty(globalThis, "pdfiumWasmWorkerUrl", {
+          configurable: false,
+          get: function () {
+            return new URL(
+              "assets/packages/pdfrx/assets/worker-tt.js",
+              location.href,
+            ).href;
+          },
+          set: function () {},
+        });
       })();
     </script>
     <div

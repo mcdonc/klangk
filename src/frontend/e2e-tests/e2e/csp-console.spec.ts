@@ -24,11 +24,16 @@ import {
 // they predate this change and are flaky (only fire when such a frame
 // renders). Everything else — script-src, require-trusted-types-for, and
 // any other directive — must stay violation-free.
-const FONT_FALLBACK_FETCH =
-  /^((Fetch API cannot load )?https:\/\/fonts\.gstatic\.com\/s\/|.*(Connecting|Loading) to 'https:\/\/fonts\.gstatic\.com\/s\/)/;
-
 function isKnownFontFallbackNoise(text: string): boolean {
-  if (!FONT_FALLBACK_FETCH.test(text)) return false;
+  // Shape-agnostic across browsers: Chromium says "Connecting to '<url>'
+  // ... connect-src" plus a directive-less companion "Fetch API cannot
+  // load <url>. Refused to connect"; Firefox says "blocked the loading
+  // of a resource (connect-src) at <url>". Require BOTH the fallback-font
+  // host AND fetch-flavored wording — "Refused to connect" is exclusive
+  // to fetches (script-src violations say "Refused to execute"; TT ones
+  // "requires 'Trusted...'"), so a script or TT violation naming that
+  // host still fails the suite.
+  if (!/fonts\.gstatic\.com\/s\//.test(text)) return false;
   return /connect-src|font-src|Refused to connect/.test(text);
 }
 
@@ -127,10 +132,20 @@ test.describe("CSP / Trusted Types (#3219)", () => {
 
       // PDF viewer (deep-link into the existing viewer): pdfrx loads a
       // script tag + wasm + a blob worker — all TT/CSP-sensitive paths.
-      await page.goto(`/#/workspace/${workspaceId}?file=doc.pdf`, {
-        waitUntil: "load",
-      });
-      await page.waitForTimeout(4000);
+      // NOTE: the ?file= param is an ABSOLUTE container path (openFile uses
+      // it verbatim) — a bare name 400s at files/download and the viewer
+      // never mounts pdfrx.
+      await page.goto(
+        `/#/workspace/${workspaceId}?file=${encodeURIComponent("/home/klangk/doc.pdf")}`,
+        { waitUntil: "load" },
+      );
+      // Fresh page boot (canvaskit + WS + container_ready) under CI load can
+      // exceed a fixed wait — poll for the viewer to actually come up.
+      await expect
+        .poll(() => page.evaluate(() => (window as any).__workerCount ?? 0), {
+          timeout: 30_000,
+        })
+        .toBeGreaterThan(0);
 
       // The two TT sinks the review found: the pdfium_client.js asset
       // must have loaded (plain-string script.src) and the wasm Worker

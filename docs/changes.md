@@ -329,7 +329,10 @@ operators or integrators to act when upgrading.
   blocks DOM-based XSS sinks (such as `innerHTML`); a minimal default
   Trusted Types policy in `index.html` sanctions only relative,
   same-origin, and same-origin `blob:` script URLs, keeping the PDF
-  viewer's wasm loader working. Styles keep `'unsafe-inline'` because
+  viewer's wasm loader working (the build also swaps the viewer's
+  `importScripts`-based blob worker for an inlined same-origin worker
+  file — `importScripts` is a Trusted Types sink inside the worker).
+  Styles keep `'unsafe-inline'` because
   Flutter injects runtime styles. After a frontend rebuild that changes
   `index.html`'s inline scripts, a settings reload (SIGHUP) or restart
   re-computes the hashes.
