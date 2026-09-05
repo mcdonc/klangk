@@ -139,20 +139,28 @@ trusted-proxy-cidrs: "127.0.0.1,::1,10.0.0.0/24"
 (`KLANGKD_LISTEN`, `KLANGKD_PORT`, `KLANGKD_TLS_HOSTNAME`,
 `KLANGKD_TLS_ISSUER`, `KLANGKD_TRUSTED_PROXY_CIDRS`)
 
-Differences from automatic (ACME) TLS:
+How this differs from automatic (ACME) TLS:
 
-- **No public name needed** — single-label names (`klangkd`,
-  `localhost`) and IPv4 literals arm fine; the strict public-FQDN
-  grammar applies only to the ACME issuer.
-- **No ACME account, no reachable ports 80/443** — nothing leaves the
-  host. `acme-email` has no effect (klangkd warns if you set it).
-- **No HTTP→HTTPS redirect** — the outer proxy owns port 80 and does
-  its own redirecting; klangkd disables the automatic one (which also
-  keeps the config loadable for unprivileged service users).
-- The **internal root CA and issued leaves live under
-  `<state_dir>/caddy-storage`** — back that directory up: a lost root
-  mints a new CA and breaks the proxy's trust until you redistribute
-  the new root.
+- **The host name can be anything.** `klangkd.internal`, `localhost`,
+  or an IP address like `10.0.0.5` all work. ACME mode rejects names
+  like these because public certificate authorities only issue for
+  registered public domain names; the internal CA issues a certificate
+  for whatever name you configure.
+- **klangkd does not contact a certificate authority.** The
+  certificate is generated on this host, so this mode needs no public
+  DNS record and no ports exposed to the internet. `acme-email` is not
+  used (klangkd logs a warning if you set it).
+- **Ports 80 and 443 are not used.** The HTTPS listener binds
+  `listen:port`, same as any browser listener. Caddy does not start
+  its automatic HTTP-to-HTTPS redirect (which would otherwise try to
+  bind port 80 and fail when klangkd runs as an unprivileged user) —
+  the outer proxy is the one redirecting HTTP to HTTPS.
+- **Certificates are stored in `<state_dir>/caddy-storage`.** That
+  directory holds the internal CA's root key and every certificate it
+  issues. If the directory is lost, caddy creates a new CA on the next
+  start, and the outer proxy rejects klangkd's certificate until you
+  export the new root and install it there (see below). Back the
+  directory up.
 
 **Trust the hop, don't just encrypt it.** With no verification on the
 outer proxy this is encryption-in-transit only — a root whose private
