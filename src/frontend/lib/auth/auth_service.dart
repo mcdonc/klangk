@@ -410,6 +410,15 @@ class AuthService extends ChangeNotifier {
   /// disk without buffering it in memory).
   Map<String, String> get authHeaders => _authHeaders;
 
+  /// Stable user-facing text for a transport failure (#3203): the raw
+  /// exception (URLs, endpoint paths, transport messages) goes to the
+  /// log only — never into error UI. Mirrors the fixed wording the
+  /// standalone auth pages already use.
+  String _networkError(String action, Object error) {
+    debugPrint('[AuthService] $action request failed: $error');
+    return 'Network error. Please try again.';
+  }
+
   Future<String?> register(String email, String password) async {
     _loading = true;
     notifyListeners();
@@ -432,7 +441,7 @@ class AuthService extends ChangeNotifier {
       final error = jsonDecode(response.body);
       return error['detail'] ?? 'Registration failed';
     } catch (e) {
-      return 'Connection error: $e';
+      return _networkError('register', e);
     } finally {
       _loading = false;
       notifyListeners();
@@ -457,7 +466,7 @@ class AuthService extends ChangeNotifier {
       final error = jsonDecode(response.body);
       return error['detail'] ?? 'Login failed';
     } catch (e) {
-      return 'Connection error: $e';
+      return _networkError('login', e);
     } finally {
       _loading = false;
       notifyListeners();
@@ -482,7 +491,7 @@ class AuthService extends ChangeNotifier {
       final error = jsonDecode(response.body);
       return error['detail'] ?? 'Local login failed';
     } catch (e) {
-      return 'Connection error: $e';
+      return _networkError('local login', e);
     } finally {
       _loading = false;
       notifyListeners();
@@ -510,7 +519,7 @@ class AuthService extends ChangeNotifier {
       final error = jsonDecode(response.body);
       return error['detail'] ?? 'Failed to resend';
     } catch (e) {
-      return 'Connection error: $e';
+      return _networkError('resend verification', e);
     }
   }
 

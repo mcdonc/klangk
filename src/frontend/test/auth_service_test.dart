@@ -541,7 +541,8 @@ void main() {
       await Future.delayed(Duration.zero);
 
       final error = await service.login('user', 'pass');
-      expect(error, contains('Connection error'));
+      expect(error, 'Network error. Please try again.');
+      expect(error, isNot(contains('Network unreachable')));
       expect(service.isLoggedIn, isFalse);
     });
 
@@ -800,7 +801,8 @@ void main() {
       await Future.delayed(Duration.zero);
 
       final error = await service.localLogin();
-      expect(error, contains('Connection error'));
+      expect(error, 'Network error. Please try again.');
+      expect(error, isNot(contains('Network unreachable')));
       expect(service.isLoggedIn, isFalse);
     });
   });
@@ -858,7 +860,8 @@ void main() {
       await Future.delayed(Duration.zero);
 
       final error = await service.register('user', 'pass');
-      expect(error, contains('Connection error'));
+      expect(error, 'Network error. Please try again.');
+      expect(error, isNot(contains('Network unreachable')));
       expect(service.isLoggedIn, isFalse);
       expect(service.loading, isFalse);
     });
@@ -1030,7 +1033,8 @@ void main() {
         'user@example.com',
         'pass',
       );
-      expect(error, contains('Connection error'));
+      expect(error, 'Network error. Please try again.');
+      expect(error, isNot(contains('Network unreachable')));
     });
   });
 
