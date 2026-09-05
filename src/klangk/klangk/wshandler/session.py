@@ -1036,6 +1036,71 @@ class WebSocketState:
                 moved += 1
         return moved
 
+    async def close_idle_connections(self, window_for_user) -> int:
+        """Close WebSocket connections quiet past the idle window (#3151).
+
+        *window_for_user* is an awaitable ``(user_id) -> minutes`` (the
+        admin-aware window) — resolved once per distinct user per sweep
+        and only for connections already idle past the shortest
+        possible window, so the common sweep costs no DB reads. Close
+        code 4001 makes the client log out rather than reconnect-loop
+        against a session that will fail its next refresh anyway.
+        Returns how many were closed. The handler's own ``finally``
+        cleanup runs as for any disconnect.
+        """
+        now = time.monotonic()
+        suspects = self._idle_suspects(now, self._min_idle_secs())
+        windows: dict[str, int] = {}
+        closed = 0
+        for conn in suspects:
+            user_id = conn.user.get("id")
+            if user_id not in windows:
+                windows[user_id] = await window_for_user(user_id)
+            idle_secs = now - conn.last_seen_monotonic
+            if windows[user_id] <= 0 or idle_secs <= windows[user_id] * 60:
+                continue
+            closed += await self._close_idle_socket(conn, windows[user_id])
+        return closed
+
+    def _idle_suspects(self, now: float, min_idle: float) -> list:
+        """Connections idle past the shortest possible window (#3151)
+        — the only ones worth a window resolution."""
+        return [
+            conn
+            for conn in self.connections.values()
+            if now - conn.last_seen_monotonic > min_idle
+        ]
+
+    @staticmethod
+    async def _close_idle_socket(conn, window: int) -> int:
+        """Close one idle connection (4001), tolerating a socket that
+        already dropped — one bad close must not abort the sweep's
+        remaining closes (the ``disconnect_user`` posture)."""
+        logger.info(
+            "session idle timeout: closing idle WebSocket for %s"
+            " (window %dmin)",
+            conn.user.get("email"),
+            window,
+        )
+        try:
+            await conn.sock.close(code=4001, reason="Session idle timeout")
+            return 1
+        except Exception:  # noqa: BLE001
+            logger.debug("Error closing idle socket for %s", conn.user)
+            return 0
+
+    def _min_idle_secs(self) -> float:
+        """Seconds after which a connection is an idle-window *suspect*
+        (#3151): the shortest window any user can have — the general
+        setting, or the privileged one when the split is on and
+        shorter."""
+        settings = self.app.state.settings
+        window = settings.session_idle_timeout_minutes
+        privileged = settings.privileged_session_idle_timeout_minutes
+        if 0 < privileged < window:
+            window = privileged
+        return window * 60
+
     async def reset_workspace(
         self, workspace_id: str, *, expected_container_id: str | None = None
     ) -> None:

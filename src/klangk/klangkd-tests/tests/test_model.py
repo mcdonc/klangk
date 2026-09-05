@@ -3,6 +3,7 @@
 import asyncio
 import types
 import uuid
+from datetime import datetime, timedelta, timezone
 
 import aiosqlite
 import pytest
@@ -1714,6 +1715,145 @@ class TestUserSessions:
         ]
         # Nothing left to purge.
         assert await sessions.purge_expired() == 0
+
+
+class TestSessionLastSeen:
+    """Per-session last_seen storage for the idle timeout (#3151)."""
+
+    async def _make_user(self, app_state, email: str) -> str:
+        user = await app_state.state.model.users.create_user(
+            email, "hash", verified=True
+        )
+        return user["id"]
+
+    async def test_record_session_stamps_last_seen(self, db, app_state):
+        """Issuance is activity: a fresh session's last_seen is set."""
+        sessions = app_state.state.model.sessions
+        uid = await self._make_user(app_state, "one@example.com")
+        before = datetime.now(timezone.utc) - timedelta(seconds=5)
+        await sessions.record_session(
+            uid, "jti-a", "2099-01-01T00:00:00+00:00"
+        )
+        last_seen = await sessions.get_last_seen("jti-a")
+        assert last_seen is not None
+        assert datetime.fromisoformat(last_seen) > before
+
+    async def test_touch_session_updates_last_seen(self, db, app_state):
+        """A touch moves the stamp forward; a missing row is a no-op."""
+        sessions = app_state.state.model.sessions
+        uid = await self._make_user(app_state, "one@example.com")
+        old = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat()
+        await sessions.record_session(
+            uid, "jti-a", "2099-01-01T00:00:00+00:00"
+        )
+        async with app_state.state.db.transaction() as tx:
+            await tx.execute(
+                "UPDATE user_sessions SET last_seen_at = ? WHERE jti = ?",
+                (old, "jti-a"),
+            )
+        assert await sessions.get_last_seen("jti-a") == old
+        await sessions.touch_session("jti-a")
+        assert await sessions.get_last_seen("jti-a") != old
+        # An untracked JTI (pre-#2585 token) neither raises nor inserts.
+        await sessions.touch_session("jti-ghost")
+        assert await sessions.get_last_seen("jti-ghost") is None
+
+    async def test_replace_session_carries_last_seen(self, db, app_state):
+        """A refresh keeps the row's last_seen (a refresh is not
+        activity, #3151) and only the JTI/expiry move."""
+        sessions = app_state.state.model.sessions
+        uid = await self._make_user(app_state, "one@example.com")
+        await sessions.record_session(
+            uid, "jti-old", "2099-01-01T00:00:00+00:00"
+        )
+        old = (datetime.now(timezone.utc) - timedelta(minutes=20)).isoformat()
+        async with app_state.state.db.transaction() as tx:
+            await tx.execute(
+                "UPDATE user_sessions SET last_seen_at = ? WHERE jti = ?",
+                (old, "jti-old"),
+            )
+        await sessions.replace_session(
+            "jti-old", uid, "jti-new", "2099-06-01T00:00:00+00:00"
+        )
+        assert await sessions.get_last_seen("jti-new") == old
+
+    async def test_list_sessions_includes_last_seen(self, db, app_state):
+        sessions = app_state.state.model.sessions
+        uid = await self._make_user(app_state, "one@example.com")
+        await sessions.record_session(
+            uid, "jti-a", "2099-01-01T00:00:00+00:00"
+        )
+        rows = await sessions.list_sessions(uid)
+        assert rows[0]["last_seen_at"] is not None
+
+    async def test_record_session_mints_stable_session_id(self, db, app_state):
+        """Each issuance mints a fresh session_id; two sessions for one
+        user get distinct ids (#3151)."""
+        sessions = app_state.state.model.sessions
+        uid = await self._make_user(app_state, "one@example.com")
+        await sessions.record_session(
+            uid, "jti-a", "2099-01-01T00:00:00+00:00"
+        )
+        await sessions.record_session(
+            uid, "jti-b", "2099-01-01T00:00:00+00:00"
+        )
+        sid_a = await sessions.get_session_id("jti-a")
+        sid_b = await sessions.get_session_id("jti-b")
+        assert sid_a is not None and sid_b is not None
+        assert sid_a != sid_b
+        assert await sessions.get_session_id("jti-ghost") is None
+
+    async def test_replace_session_carries_session_id(self, db, app_state):
+        """The refresh rekey keeps the row's session_id — the stable
+        identity WebSocket stamps go through (#3151)."""
+        sessions = app_state.state.model.sessions
+        uid = await self._make_user(app_state, "one@example.com")
+        await sessions.record_session(
+            uid, "jti-old", "2099-01-01T00:00:00+00:00"
+        )
+        sid = await sessions.get_session_id("jti-old")
+        await sessions.replace_session(
+            "jti-old", uid, "jti-new", "2099-06-01T00:00:00+00:00"
+        )
+        assert await sessions.get_session_id("jti-new") == sid
+        assert await sessions.get_session_id("jti-old") is None
+
+    async def test_replace_session_fallback_stamps_and_mints(
+        self, db, app_state
+    ):
+        """The no-row fallback INSERT mints a session_id and stamps
+        last_seen — issuance is activity, and a NULL stamp would be
+        permanently unjudgeable (#3151 review)."""
+        sessions = app_state.state.model.sessions
+        uid = await self._make_user(app_state, "one@example.com")
+        await sessions.replace_session(
+            "jti-untracked", uid, "jti-new", "2099-01-01T00:00:00+00:00"
+        )
+        assert await sessions.get_session_id("jti-new") is not None
+        assert await sessions.get_last_seen("jti-new") is not None
+
+    async def test_touch_session_by_sid(self, db, app_state):
+        """Stamps by stable id reach the row across a rekey; unknown ids
+        are silent no-ops."""
+        sessions = app_state.state.model.sessions
+        uid = await self._make_user(app_state, "one@example.com")
+        await sessions.record_session(
+            uid, "jti-a", "2099-01-01T00:00:00+00:00"
+        )
+        sid = await sessions.get_session_id("jti-a")
+        old = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat()
+        async with app_state.state.db.transaction() as tx:
+            await tx.execute(
+                "UPDATE user_sessions SET last_seen_at = ? WHERE jti = ?",
+                (old, "jti-a"),
+            )
+        await sessions.replace_session(
+            "jti-a", uid, "jti-b", "2099-06-01T00:00:00+00:00"
+        )
+        await sessions.touch_session_by_sid(sid)
+        live = await sessions.get_last_seen("jti-b")
+        assert datetime.fromisoformat(live) > datetime.fromisoformat(old)
+        await sessions.touch_session_by_sid("sid-ghost")  # no-op
 
 
 class TestLoginAttempts:

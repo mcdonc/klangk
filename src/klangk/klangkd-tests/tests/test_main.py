@@ -21,6 +21,7 @@ from klangk import (
     container,
     consent,
     inactivity,
+    session_idle,
     sidecar_connections,
     emailsvc as emailsvc_mod,
     files as files_mod,
@@ -116,6 +117,7 @@ def _lifespan_test_app():
     app.state.proxy_watchdog = caddy_mod.CaddyWatchdog(app)
     app.state.consent_sweeper = consent.EgressConsentSweeper(app)
     app.state.inactivity_sweeper = inactivity.InactivitySweeper(app)
+    app.state.session_idle_monitor = session_idle.SessionIdleMonitor(app)
     app.state.memory_evictor = container.eviction.MemoryPressureEvictor(app)
     app.state.consent_deciders = consent.ConsentDeciderRegistry(app)
     app.state.consent_coordinator = consent.ConsentCoordinator(app)
@@ -1001,6 +1003,7 @@ class TestLifespan:
         app.state.proxy_watchdog = caddy_mod.CaddyWatchdog(app)
         app.state.consent_sweeper = consent.EgressConsentSweeper(app)
         app.state.inactivity_sweeper = inactivity.InactivitySweeper(app)
+        app.state.session_idle_monitor = session_idle.SessionIdleMonitor(app)
         app.state.memory_evictor = container.eviction.MemoryPressureEvictor(
             app
         )
@@ -1075,6 +1078,7 @@ class TestLifespan:
         app.state.proxy_watchdog = caddy_mod.CaddyWatchdog(app)
         app.state.consent_sweeper = consent.EgressConsentSweeper(app)
         app.state.inactivity_sweeper = inactivity.InactivitySweeper(app)
+        app.state.session_idle_monitor = session_idle.SessionIdleMonitor(app)
         app.state.memory_evictor = container.eviction.MemoryPressureEvictor(
             app
         )
@@ -3394,6 +3398,7 @@ class TestMainEntryCallback2910:
         app.state.proxy_watchdog = caddy_mod.CaddyWatchdog(app)
         app.state.consent_sweeper = consent.EgressConsentSweeper(app)
         app.state.inactivity_sweeper = inactivity.InactivitySweeper(app)
+        app.state.session_idle_monitor = session_idle.SessionIdleMonitor(app)
         app.state.memory_evictor = container.eviction.MemoryPressureEvictor(
             app
         )

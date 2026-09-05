@@ -230,6 +230,12 @@ def _ws_app(
                 return_value={"id": WS, "egress_mode": egress_mode}
             ),
         ),
+        # #3151: decider frames stamp the session's idle clock; the
+        # fake session lookup has no rows, so the connect resolves no
+        # session id (fail-open — no stamping in tests).
+        sessions=types.SimpleNamespace(
+            get_session_id=AsyncMock(return_value=None),
+        ),
     )
     app.state.consent_deciders = ConsentDeciderRegistry(app)
     # _decider_authenticate decodes the token once, then validates

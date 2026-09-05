@@ -111,7 +111,10 @@ queryable half of concurrent-logon auditing. One item per unexpired
 session, oldest first; `source_ip` is the effective client IP the
 session was established from (null = unknown, e.g. sessions created
 before the audit feature), `user_agent` is the client's User-Agent
-string (null = none was sent). Expired sessions are excluded.
+string (null = none was sent), and `last_seen_at` is when the session
+last showed activity (an authenticated request or WebSocket frame —
+the clock the idle session timeout judges). Expired sessions are
+excluded.
 
 **Auth:** JWT required. User must have the `manage-users` permission on `/users`.
 
@@ -124,7 +127,8 @@ No request body.
       "created_at": "2026-08-20 18:03:41",
       "expires_at": "2026-08-21 18:03:41.862671+00:00",
       "source_ip": "203.0.113.7",
-      "user_agent": "klangk-cli/1.0"
+      "user_agent": "klangk-cli/1.0",
+      "last_seen_at": "2026-08-21 17:59:02.104881+00:00"
     }
   ]
 }

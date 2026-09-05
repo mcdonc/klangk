@@ -332,20 +332,53 @@ async def _decider_receive_loop(
     workspace,
     user: dict,
     decider_id: str,
+    session_id: str | None = None,
 ) -> None:
     """Receive + dispatch decider frames until the socket drops or the
-    client falls behind."""
+    client falls behind.
+
+    Every frame is session activity (#3151) — a decider socket
+    authenticated with a user session JWT, so its traffic keeps that
+    session's idle clock alive exactly like the main /ws handler's
+    frames (stamped by stable session id, surviving rekeying)."""
     while True:
         frame = await _receive_decider_frame(safe_ws)
         if frame is _FRAME_DISCONNECTED:
             break
         if frame is None:
             continue
-        ok = await _dispatch_decider_frame(
-            app, registry, safe_ws, frame, workspace, user, decider_id
-        )
-        if not ok:
+        if not await _stamp_and_dispatch(
+            app,
+            registry,
+            safe_ws,
+            frame,
+            workspace,
+            user,
+            decider_id,
+            session_id,
+        ):
             break
+
+
+async def _stamp_and_dispatch(
+    app,
+    registry,
+    safe_ws,
+    frame,
+    workspace,
+    user,
+    decider_id,
+    session_id,
+) -> bool:
+    """Stamp the session's idle clock for the frame, then dispatch it.
+
+    Returns the dispatch outcome (False = client fell behind, the
+    receive loop breaks)."""
+    if session_id is not None:
+        await app.state.auth.record_ws_session_activity(session_id)
+    return await _dispatch_decider_frame(
+        app, registry, safe_ws, frame, workspace, user, decider_id
+    )
 
 
 async def handle_consent_decider(websocket: WebSocket, app) -> None:
@@ -401,13 +434,34 @@ async def handle_consent_decider(websocket: WebSocket, app) -> None:
         # to never miss.
         await _replay_decider_snapshot(app, safe_ws, workspace)
         await _decider_receive_loop(
-            app, registry, safe_ws, workspace, user, decider_id
+            app,
+            registry,
+            safe_ws,
+            workspace,
+            user,
+            decider_id,
+            session_id=await _decider_session_id(websocket, app),
         )
     finally:
         # Connection gone (clean disconnect, error, or crash) -> drop the
         # registration so the workspace reverts to static (#2308).
         registry.deregister(decider_id)
         await safe_ws.stop_sender()
+
+
+async def _decider_session_id(websocket: WebSocket, app) -> str | None:
+    """The stable session id behind the decider socket's token (#3151).
+
+    ``None`` when the token has no session row (fail-open, same as the
+    main /ws path). The decode is unguarded: ``_decider_authenticate``
+    validated this exact token moments earlier, so it cannot be
+    malformed here.
+    """
+    token = websocket.query_params.get("token")
+    jti = app.state.auth.decode_token(token).get("jti") if token else None
+    if jti is None:
+        return None
+    return await app.state.model.sessions.get_session_id(jti)
 
 
 async def _replay_decider_snapshot(app, safe_ws, workspace) -> None:

@@ -58,6 +58,17 @@ class Connection:
         self._expiry_task: asyncio.Task | None = None
         self.workspace_id: str | None = None
         self.container_id: str | None = None
+        # Stable session identity for the row behind that JTI (#3151):
+        # resolved once at connect, it survives the per-refresh JTI
+        # rekeying, so frame stamps keep reaching the live row. Kept
+        # distinct from ``self.jti`` (the connect-time token's JTI,
+        # above — the revocation-kick key): stamps must not follow the
+        # rekeyed JTI, kicks must.
+        self.session_id: str | None = None
+        # In-memory idle clock for the session idle timeout (#3151):
+        # bumped on every inbound frame, read by the WS idle sweeper.
+        # Monotonic — sweep decisions never see a wall-clock step.
+        self.last_seen_monotonic: float = time.monotonic()
         # Terminal sessions are owned by the TerminalController
         # collaborator; Connection delegates the terminal_* commands to
         # it.  The ``terminal_session``/``terminal_task`` (and
@@ -123,6 +134,22 @@ class Connection:
             logger.debug("Error closing expired socket")
 
     # --- SSH agent forwarding (delegates to SshAgentForwarder) ---
+
+    async def mark_frame_activity(self) -> None:
+        """Record one inbound frame as session activity (#3151).
+
+        Bumps the in-memory idle clock first (cheap — every frame pays
+        it), then runs the throttled DB stamp of the session row's
+        ``last_seen_at`` by its stable id. The stamp is a dict hit plus
+        at most one small UPDATE per session per throttle interval, so
+        awaiting it on the dispatch path keeps ordering and cannot be
+        dropped by the GC the way a fire-and-forget task can.
+        """
+        self.last_seen_monotonic = time.monotonic()
+        if self.session_id is not None:
+            await self.app.state.auth.record_ws_session_activity(
+                self.session_id
+            )
 
     async def handle_ssh_agent_start(self) -> None:
         await self.ssh_agent.start()

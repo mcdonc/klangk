@@ -134,13 +134,15 @@ class TestConcurrentLogonAudit:
         assert resp.status_code == 200, resp.text
         ips = {item["source_ip"] for item in resp.json()["items"]}
         assert ips == {WS_A, WS_B}
-        # Every row carries the full workstation identity shape.
+        # Every row carries the full workstation identity shape
+        # (plus last_seen_at — the idle-timeout clock, #3151).
         for item in resp.json()["items"]:
             assert set(item) == {
                 "created_at",
                 "expires_at",
                 "source_ip",
                 "user_agent",
+                "last_seen_at",
             }
 
     def test_sessions_endpoint_requires_admin(self, api):

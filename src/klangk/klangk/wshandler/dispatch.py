@@ -62,13 +62,16 @@ WS_STATE_COMMANDS: dict[str, str] = {
 }
 
 
-async def ws_authenticate(websocket: WebSocket, app):
+async def ws_authenticate(
+    websocket: WebSocket, app
+) -> tuple[dict, str, float] | None:
     """Validate the socket's token; close and return None on failure.
 
     Success returns ``(user, jti, exp)`` — the token's JTI rides along
-    so the connection can be targeted for closing when that token is
-    later hard-revoked (#3152), and ``exp`` (Unix epoch) lets the
-    connection schedule its own close when the token expires.
+    so per-frame traffic can stamp the session's ``last_seen_at``
+    (#3151) and so the connection can be targeted for closing when
+    that token is later hard-revoked (#3152); ``exp`` (Unix epoch)
+    lets the connection schedule its own close when the token expires.
     """
     token = websocket.query_params.get("token")
     if not token:
@@ -161,9 +164,17 @@ async def _dispatch_frame(conn, safe_ws, msg, app) -> None:
 
 async def dispatch_ws_loop(conn, safe_ws, user: dict, app) -> None:
     """Receive/dispatch frames until the socket drops. Connection-command
-    table first, then state-command table, else an error frame."""
+    table first, then state-command table, else an error frame.
+
+    Every inbound frame is session activity (#3151): it bumps the
+    connection's in-memory idle clock (the sweeper's signal) and —
+    throttled — stamps the session row's ``last_seen_at`` so the refresh
+    seam sees it too. An open browser's 60-second heartbeat keeps a
+    watched terminal alive while a closed one times out.
+    """
     while True:
         raw = await safe_ws.receive_text()
+        await conn.mark_frame_activity()
         try:
             msg = json.loads(raw)
         except json.JSONDecodeError:
@@ -237,8 +248,16 @@ async def handle_websocket(websocket: WebSocket, app) -> None:
     # Everything from here on is inside the try so a failure in the
     # connect-time work below still runs the ``finally`` cleanup — the
     # snapshot (#1714) awaits DB queries, and a raise there used to
-    # leak the sender task and skip conn.cleanup().
+    # leak the sender task and skip conn.cleanup(). That includes the
+    # stable session-id resolution (#3151): the row's JTI is rekeyed
+    # on every token refresh, so frame stamps must go through a key
+    # that survives the rotation (a missing row — a pre-#2585 token —
+    # leaves None and the connection simply doesn't stamp; fail-open).
+    # Registration deliberately happens BEFORE the SELECT: a broadcast
+    # (the SIGHUP draining fanout) racing the connect must not miss a
+    # just-accepted socket that still eats the 1012 close.
     try:
+        conn.session_id = await app.state.model.sessions.get_session_id(jti)
         await _run_websocket_session(conn, safe_ws, user, app)
     finally:
         await safe_ws.stop_sender()

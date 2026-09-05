@@ -93,6 +93,7 @@ class TestRunner:
             (30, "0030_audit_hmac"),
             (31, "0031_password_age"),
             (32, "0032_must_change_password"),
+            (33, "0033_user_sessions_last_seen"),
         ]
         async with aiosqlite.connect(str(app_state.state.db.db_path)) as db:
             assert await _recorded(db) == expected
@@ -195,6 +196,7 @@ class TestRunner:
                 (30, "0030_audit_hmac"),
                 (31, "0031_password_age"),
                 (32, "0032_must_change_password"),
+                (33, "0033_user_sessions_last_seen"),
             ]
 
     async def test_m0008_agent_identity_and_human_collision(
@@ -3352,5 +3354,55 @@ class TestM0029MembersCreateWorkspace:
                     "create-workspace",
                 ),
             ]
+        finally:
+            await db.__aexit__(None, None, None)
+
+
+class TestM0033UserSessionsLastSeen:
+    """m0033 adds the per-session last_seen_at column (#3151) and
+    backfills it from created_at so arming the feature judges existing
+    rows by age-since-issuance instead of hitting a NULL."""
+
+    async def _old_shape_db(self, tmp_path):
+        """A pre-#3151 user_sessions table (no last_seen_at column)."""
+        db = aiosqlite.connect(str(tmp_path / "m0033.db"))
+        await db.__aenter__()
+        await db.execute("""
+            CREATE TABLE user_sessions (
+                jti TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                expires_at TEXT NOT NULL
+            )
+        """)
+        await db.execute(
+            "INSERT INTO user_sessions (jti, user_id, created_at,"
+            " expires_at) VALUES ('jti-a', 'u1', '2026-01-01 10:00:00',"
+            " '2099-01-01T00:00:00+00:00')"
+        )
+        await db.commit()
+        return db
+
+    async def test_adds_columns_and_backfills(self, tmp_path):
+        db = await self._old_shape_db(tmp_path)
+        try:
+            from klangk.model.migrations import m0033_user_sessions_last_seen
+
+            await m0033_user_sessions_last_seen.migration.apply(db)
+            info = await db.execute("PRAGMA table_info(user_sessions)")
+            cols = {r[1] for r in await info.fetchall()}
+            assert {"last_seen_at", "session_id"} <= cols
+            cursor = await db.execute(
+                "SELECT last_seen_at, session_id FROM user_sessions"
+                " WHERE jti = 'jti-a'"
+            )
+            # last_seen backfilled from created_at (space-separated
+            # naive SQLite form — judged as UTC at read time, see
+            # Auth._session_idle_seconds), session_id from the row's
+            # own (pre-rotation) jti.
+            assert await cursor.fetchone() == (
+                "2026-01-01 10:00:00",
+                "jti-a",
+            )
         finally:
             await db.__aexit__(None, None, None)

@@ -156,7 +156,8 @@ machine is not audited.
 Admins can query a user's active sessions at any time — see
 [`GET /api/v1/users/{id}/sessions`](../reference/api-endpoints.md#get-apiv1usersidsessions)
 in the API reference. Each row shows when the session was established,
-when it expires, and the workstation it came from.
+when it expires, when it was last seen active, and the workstation it
+came from.
 
 Behind a reverse proxy, the workstation audit works only when the proxy
 chain forwards the real client IP (`X-Real-IP` / `X-Forwarded-For` plus
@@ -164,6 +165,41 @@ chain forwards the real client IP (`X-Real-IP` / `X-Forwarded-For` plus
 records the proxy's address and no audit records are ever written — see
 [Behind a Reverse Proxy: concurrent-logon auditing](../deployment/behind-a-proxy.md#concurrent-logon-auditing-depends-on-the-proxy-chain)
 for how to verify the setup.
+
+## Idle session timeout
+
+Tokens expire by **age**, but clients refresh them proactively, so age
+alone never logs out a session nobody is using. Set
+`KLANGKD_SESSION_IDLE_TIMEOUT_MINUTES` (default `0` = off) to terminate
+sessions after **inactivity** instead:
+
+- **Activity** is an authenticated HTTP request or an inbound WebSocket
+  frame — including the web client's 60-second heartbeat, so a browser
+  the user is actually watching stays logged in. A token refresh is
+  deliberately **not** activity (it is the enforcement seam), so a
+  client that only refreshes cannot idle past the window.
+- When the window is armed, **token refreshes are refused** for sessions
+  idle past it (`401 Session timed out due to inactivity`, token
+  blocklisted), and a quiet WebSocket is **closed by the server** with
+  code `4001` (client logout).
+- Access-token lifetimes are **capped at the window**, so an idle
+  client surfaces at its next refresh within the window plus one
+  refresh interval instead of coasting on a long-lived token.
+- `admins`-group members get the shorter **privileged window** — the
+  lesser of this setting and
+  `KLANGKD_PRIVILEGED_SESSION_IDLE_TIMEOUT_MINUTES` (default `10`;
+  `0` turns the split off, giving admins the general window).
+
+The window is read live at issue/refresh/sweep time, so a SIGHUP reload
+applies immediately. Arming it on an existing deployment judges sessions
+created before the feature by their issuance time (the session's
+`last_seen_at` is backfilled from `created_at`) — idle ones terminate on
+their next refresh; active ones get stamped by their next request. Note
+the transition cost: tokens minted while unarmed are **not** recapped, so
+a pre-arm session only surfaces at its next refresh — up to its residual
+`KLANGKD_ACCESS_TOKEN_HOURS` lifetime away. To cut that window short,
+force a re-login (revoke sessions via the admin UI) when arming, or wait
+out one full token lifetime after arming.
 
 ## Dormant-account auto-disable
 
