@@ -346,7 +346,10 @@ def _stop_ws_echo(state: dict) -> None:
 
 
 def _insecure_ctx() -> ssl.SSLContext:
+    """Verification off (self-generated test certs) but TLS 1.2+ pinned —
+    the floor caddy serves, so handshakes prove modern TLS."""
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
     return ctx
