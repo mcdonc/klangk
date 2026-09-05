@@ -1679,7 +1679,6 @@ void main() {
       // #3227: stable wording only — the raw exception (which can
       // embed frame content) goes to the log, not the stream.
       expect(errors[0].message, 'Could not read a server message.');
-      expect(errors[0].message.contains('FormatException'), isFalse);
     });
 
     test('server close resets connected state', () async {
@@ -1759,7 +1758,6 @@ void main() {
       // #3227: stable wording only — the raw socket error goes to the
       // log, not the stream.
       expect(errors[0].message, 'Connection failed. Please try again.');
-      expect(errors[0].message.contains('boom'), isFalse);
       expect(client.connected, isFalse);
     });
   });

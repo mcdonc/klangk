@@ -511,6 +511,61 @@ void main() {
       client.close();
     });
 
+    testWidgets('file read exception shows a stable error message',
+        (tester) async {
+      // #3227 review: the content reader had no transport catch, so a
+      // ClientException (whose toString carries the full request URL)
+      // propagated to the renderer's 'Failed to load file: <error>' view.
+      testHttpClientOverride = MockClient((request) async {
+        if (request.url.path.contains('/files/content')) {
+          throw http.ClientException(
+            'Connection refused',
+            Uri.parse(
+              'http://localhost:8997/api/v1/workspaces/ws-1/files/content?path=/home/tester/readme.txt',
+            ),
+          );
+        }
+        if (request.url.path.contains('/files')) {
+          return http.Response(
+            jsonEncode([
+              {
+                'name': 'readme.txt',
+                'path': '/home/tester/readme.txt',
+                'is_dir': false,
+                'size': 11
+              },
+            ]),
+            200,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+      final client = _MockWsClient();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 800,
+              height: 600,
+              child: buildPanel(wsClient: client),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('readme.txt'));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.textContaining('Network error. Please try again.'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('localhost:8997'), findsNothing);
+      expect(find.textContaining('ClientException'), findsNothing);
+      client.close();
+    });
+
     testWidgets('delete file via context menu', (tester) async {
       var deleteCalled = false;
       testHttpClientOverride = MockClient((request) async {

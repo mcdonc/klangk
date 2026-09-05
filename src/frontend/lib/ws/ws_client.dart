@@ -479,10 +479,11 @@ class WsClient extends ChangeNotifier {
 
           _handlers[type]?.call(json);
         } catch (e) {
-          // #3227: the raw parse failure goes to the log; the stream
-          // carries stable wording only (it can reach the restart
-          // SnackBar on screen).
-          debugPrint('[WsClient] message parse error: $e');
+          // #3227: the raw failure goes to the log; the stream carries
+          // stable wording only (it can reach the restart SnackBar on
+          // screen). The catch wraps handler dispatch as well as
+          // jsonDecode, so say "handling", not "parse".
+          debugPrint('[WsClient] message handling error: $e');
           _errorController.add(
             const WsError(message: 'Could not read a server message.'),
           );

@@ -306,6 +306,47 @@ void main() {
       ws.close();
     });
 
+    test('client-side stable errors route to onRestartError (#3227)', () async {
+      // The socket onError / parse-catch wording must never drift into
+      // the _messageLooksLike* heuristics (capacity / refusal text
+      // matching), which would reroute a plain connection failure to
+      // the page-level error view.
+      final ws = _MockWsClient();
+      final pageErrors = <WsError>[];
+      final restartErrors = <WsError>[];
+
+      final connector = WorkspaceConnector(
+        wsClient: ws,
+        workspaceId: 'ws-1',
+        featureRegistry: ToolPluginRegistry(),
+        onConnected: ({required connected, error}) {},
+        onContainerEvent: (_, __) => {},
+        onSharedTerminalDeleted: (_) => {},
+        onPageError: (e) => pageErrors.add(e),
+        onRestartError: (e) => restartErrors.add(e),
+      );
+
+      await connector.connect();
+
+      ws.emitError(
+        const WsError(message: 'Connection failed. Please try again.'),
+      );
+      ws.emitError(const WsError(message: 'Could not read a server message.'));
+      await Future<void>.delayed(Duration.zero);
+
+      expect(pageErrors, isEmpty);
+      expect(
+        restartErrors.map((e) => e.message),
+        [
+          'Connection failed. Please try again.',
+          'Could not read a server message.',
+        ],
+      );
+
+      connector.dispose();
+      ws.close();
+    });
+
     test('capacity refusals surface as page errors (#2525)', () async {
       final ws = _MockWsClient();
       final pageErrors = <WsError>[];

@@ -248,6 +248,20 @@ class FileViewerPanelState extends State<FileViewerPanel> {
     }
   }
 
+  /// GET a file endpoint, mapping a transport failure to a stable
+  /// exception (#3227). Renderers surface the thrown message verbatim
+  /// in their error view, and a raw `ClientException` stringifies the
+  /// full request URL (host, endpoint path, query) — so the raw error
+  /// goes to the log only.
+  Future<http.Response> _getFile(Uri uri) async {
+    try {
+      return await _client.get(uri, headers: _headers);
+    } catch (e) {
+      debugPrint('File read request failed: $e');
+      throw Exception('Network error. Please try again.');
+    }
+  }
+
   /// Reads a file's decoded text via the `/files/content` endpoint. Injected
   /// into [RenderableFile.readText] for the renderer to call lazily.
   Future<String> _readFileText(String path) async {
@@ -256,11 +270,10 @@ class FileViewerPanelState extends State<FileViewerPanel> {
       // reader endpoint is gated like the download endpoint.
       throw Exception('Download not permitted');
     }
-    final response = await _client.get(
+    final response = await _getFile(
       Uri.parse(
         '$_baseUrl/api/v1/workspaces/${widget.workspaceId}/files/content?path=${Uri.encodeComponent(path)}',
       ),
-      headers: _headers,
     );
     if (response.statusCode == 404) {
       // The file no longer exists (e.g. deleted in the terminal since the
@@ -286,11 +299,10 @@ class FileViewerPanelState extends State<FileViewerPanel> {
       // renderers cannot fetch raw bytes.
       throw Exception('Download not permitted');
     }
-    final response = await _client.get(
+    final response = await _getFile(
       Uri.parse(
         '$_baseUrl/api/v1/workspaces/${widget.workspaceId}/files/download?path=${Uri.encodeComponent(path)}',
       ),
-      headers: _headers,
     );
     if (response.statusCode == 404) {
       // The file no longer exists since the listing was cached; invalidate
