@@ -788,7 +788,7 @@ class TestDoctorMain:
 
 class TestCheckAutoHttpsPorts:
     """The automatic-TLS pre-flight (#3192): ports 80/443 bindability when
-    KLANGKD_PUBLIC_HOSTNAME arms auto-HTTPS. The bind probe is patched so
+    KLANGKD_TLS_HOSTNAME arms auto-HTTPS. The bind probe is patched so
     the tests never touch real privileged ports."""
 
     def test_skipped_when_unarmed(self):
@@ -851,16 +851,16 @@ class TestPortBindError:
 
 class TestRunDoctorAutoHttps:
     def test_check_absent_when_env_unset(self, monkeypatch):
-        """Without KLANGKD_PUBLIC_HOSTNAME the check is skipped entirely —
+        """Without KLANGKD_TLS_HOSTNAME the check is skipped entirely —
         the report for an unarmed deployment is unchanged."""
-        monkeypatch.delenv("KLANGKD_PUBLIC_HOSTNAME", raising=False)
+        monkeypatch.delenv("KLANGKD_TLS_HOSTNAME", raising=False)
         with patch("platform.system", return_value="Linux"):
             report = run_doctor()
         names = [r.name for r in report.results]
         assert "auto-https ports" not in names
 
     def test_check_present_when_env_set(self, monkeypatch):
-        monkeypatch.setenv("KLANGKD_PUBLIC_HOSTNAME", "klangk.example.com")
+        monkeypatch.setenv("KLANGKD_TLS_HOSTNAME", "klangk.example.com")
         with (
             patch("platform.system", return_value="Linux"),
             patch("klangk.doctor.port_bind_error", return_value=None),

@@ -1035,7 +1035,7 @@ class TestCaddyAutoHttpsConfig:
                 "KLANGKD_DATA_DIR": os.path.join(state, "data"),
                 "KLANGKD_PORT": "443",
                 "KLANGKD_LISTEN": "0.0.0.0",
-                "KLANGKD_PUBLIC_HOSTNAME": "klangk.example.com",
+                "KLANGKD_TLS_HOSTNAME": "klangk.example.com",
                 "KLANGKD_ACME_EMAIL": "ops@example.com",
                 "KLANGKD_EGRESS_PORT": "18995",
             }

@@ -1478,7 +1478,7 @@ def _armed_env(**extra) -> dict:
     env = {
         "KLANGKD_PORT": "443",
         "KLANGKD_LISTEN": "0.0.0.0",
-        "KLANGKD_PUBLIC_HOSTNAME": "klangk.example.com",
+        "KLANGKD_TLS_HOSTNAME": "klangk.example.com",
     }
     env.update(extra)
     return env
@@ -1490,7 +1490,7 @@ class TestAutoHttpsArming:
     def test_unarmed_by_default(self):
         assert _renderer(make_settings({})).auto_https_armed is False
 
-    def test_armed_when_public_hostname_set(self):
+    def test_armed_when_tls_hostname_set(self):
         s = make_settings(_armed_env())
         assert _renderer(s).auto_https_armed is True
 
@@ -1528,9 +1528,7 @@ class TestAutoHttpsGlobalBlock:
         """full_global=False (the pre-2.6.2 minimal fallback) keeps
         ``auto_https off`` baked in — arming on it would silently serve
         plain HTTP, so the render fails loudly instead (#3192)."""
-        with pytest.raises(
-            AutoHttpsConfigError, match="KLANGKD_PUBLIC_HOSTNAME"
-        ):
+        with pytest.raises(AutoHttpsConfigError, match="KLANGKD_TLS_HOSTNAME"):
             _renderer(make_settings(_armed_env()))._global_block(
                 "/d/sock", full_global=False
             )

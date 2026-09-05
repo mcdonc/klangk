@@ -37,7 +37,7 @@ outer nginx (443)
 For TLS termination or an outer reverse proxy, see
 [Behind a Reverse Proxy](behind-a-proxy.md). To serve HTTPS directly from
 klangkd with an automatically issued certificate (no outer proxy), see
-[Automatic TLS](automatic-tls.md).
+[HTTPS Hosting](https-hosting.md).
 
 ## Tailscale and LLM Proxy
 
