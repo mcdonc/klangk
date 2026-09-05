@@ -326,10 +326,13 @@ operators or integrators to act when upgrading.
   `script-src`: the inline `<script>` blocks of the built frontend's
   `index.html` are allowed by SHA-256 hash tokens computed at
   config-render time, and `require-trusted-types-for 'script'` now
-  blocks DOM-based XSS sinks (such as `innerHTML`). Styles keep
-  `'unsafe-inline'` because Flutter injects runtime styles. After a
-  frontend rebuild that changes `index.html`'s inline scripts, a
-  settings reload (SIGHUP) or restart re-computes the hashes.
+  blocks DOM-based XSS sinks (such as `innerHTML`); a minimal default
+  Trusted Types policy in `index.html` sanctions only relative,
+  same-origin, and same-origin `blob:` script URLs, keeping the PDF
+  viewer's wasm loader working. Styles keep `'unsafe-inline'` because
+  Flutter injects runtime styles. After a frontend rebuild that changes
+  `index.html`'s inline scripts, a settings reload (SIGHUP) or restart
+  re-computes the hashes.
 
 - **Session token storage (#3193).** The frontend now keeps the session
   JWT in browser `sessionStorage` instead of `localStorage`, so closing

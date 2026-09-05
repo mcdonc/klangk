@@ -322,12 +322,18 @@ def csp_policy(frontend_dir: str | Path) -> str:
     ``frame-ancestors 'none'`` + X-Frame-Options DENY is the clickjacking
     posture. ``require-trusted-types-for 'script'`` (#3219) closes the
     DOM-based XSS sinks (``innerHTML`` & co., string ``script.src``, string
-    ``eval``) outright: they only accept TrustedTypes values routed through
-    an audited policy. The only sanctioned sink needed is the flutter.js
-    loader's own ``'flutter-js'`` policy (it loads the entrypoint and
-    CanvasKit through TT-aware script injection and injects no inline
-    scripts); no default policy was necessary — the shipped frontend runs
-    violation-free (e2e ``csp-console.spec.ts``).
+    ``eval``): they only accept TrustedTypes values routed through a
+    policy. Two sanctioned policies cover the shipped frontend — the
+    Flutter loader's own named ``'flutter-js'`` policy, and a minimal
+    **default** policy inlined in ``index.html`` (``createScriptURL``
+    only, permitting relative URLs, same-origin absolute URLs, and
+    same-origin ``blob:`` URLs) that pdfrx's pdfium loader needs
+    (plain-string ``script.src`` for the ``pdfium_client.js`` asset and
+    a ``blob:`` wasm-worker URL). No ``createHTML``/``createScript``
+    escape is defined, so markup and eval sinks stay blocked. The e2e
+    ``csp-console.spec.ts`` asserts a violation-free console across
+    login, workspace, terminal, files, and PDF flows, and positively
+    verifies the pdfium script/Worker (the two TT sinks) came up.
     """
     try:
         html_text = (

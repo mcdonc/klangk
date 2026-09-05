@@ -33,8 +33,12 @@ function isKnownFontFallbackNoise(text: string): boolean {
 }
 
 function watchViolations(page: Page, sink: string[]) {
+  // "Trusted" covers Trusted Types, TrustedScriptURL, and TrustedHTML —
+  // Chromium's TT sink message is "This document requires
+  // 'TrustedScriptURL' assignment. The action has been blocked.", which
+  // none of the older alternatives match.
   const pattern =
-    /Content Security Policy|Refused to|Trusted Types|trustedTypes|violates|CSP/;
+    /Content Security Policy|Refused to|Trusted|trustedTypes|violates|CSP/;
   page.on("console", (msg) => {
     if (msg.type() === "error" && pattern.test(msg.text())) {
       if (!isKnownFontFallbackNoise(msg.text())) {
@@ -67,6 +71,26 @@ test.describe("CSP / Trusted Types (#3219)", () => {
   }) => {
     const violations: string[] = [];
     watchViolations(page, violations);
+
+    // Positive pdfium signals: count Worker constructions (pdfrx builds
+    // its wasm worker from a blob: URL — a TrustedScriptURL sink that TT
+    // enforcement rejects on a regression), so the spec proves the viewer
+    // came up, not merely that nothing was logged.
+    await page.addInitScript(() => {
+      (window as any).__workerCount = 0;
+      const OrigWorker = window.Worker;
+      class CountingWorker extends OrigWorker {
+        constructor(scriptUrl: string | URL, options?: WorkerOptions) {
+          super(scriptUrl, options);
+          (window as any).__workerCount += 1;
+        }
+      }
+      Object.defineProperty(window, "Worker", {
+        configurable: true,
+        writable: true,
+        value: CountingWorker,
+      });
+    });
 
     const { workspaceId, headers, cleanup } = await createAndOpenWorkspace(
       page,
@@ -107,6 +131,23 @@ test.describe("CSP / Trusted Types (#3219)", () => {
         waitUntil: "load",
       });
       await page.waitForTimeout(4000);
+
+      // The two TT sinks the review found: the pdfium_client.js asset
+      // must have loaded (plain-string script.src) and the wasm Worker
+      // must have been constructed (blob: URL) — both fail under a
+      // Trusted Types regression.
+      const workerCount = await page.evaluate(
+        () => (window as any).__workerCount ?? 0,
+      );
+      expect(workerCount, "pdfium wasm Worker constructed").toBeGreaterThan(0);
+      const pdfiumLoaded = await page.evaluate(() =>
+        performance
+          .getEntriesByType("resource")
+          .some((e) => e.name.includes("pdfium_client.js")),
+      );
+      expect(pdfiumLoaded, "pdfium_client.js loaded (TT script.src sink)").toBe(
+        true,
+      );
 
       // Download round-trip.
       const dl = await request.get(

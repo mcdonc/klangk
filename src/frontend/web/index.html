@@ -12,6 +12,41 @@
     <link rel="manifest" href="manifest.json" />
   </head>
   <body>
+    <script>
+      // #3219: minimal Trusted Types default policy. The served CSP
+      // enforces require-trusted-types-for 'script'. The Flutter loader
+      // carries its own named policy, but pdfrx assigns plain strings to
+      // a script element's src and to new Worker() (a same-origin
+      // pdfium_client.js asset and a same-origin blob: worker URL).
+      // Sanction exactly those shapes; anything else (remote scripts,
+      // data:/javascript: URLs) throws. This policy defines no
+      // createHTML/createScript, so markup and eval sinks stay blocked.
+      (function () {
+        try {
+          if (window.trustedTypes && trustedTypes.createPolicy) {
+            trustedTypes.createPolicy("", {
+              createScriptURL: function (s) {
+                var m = /^([a-z][a-z0-9+.-]*):/i.exec(s);
+                if (!m) return s; // relative: resolves inside this origin
+                if (
+                  m[1] === "blob" &&
+                  s.indexOf("blob:" + location.origin + "/") === 0
+                )
+                  return s; // pdfrx's same-origin blob worker URL
+                if (s.indexOf(location.origin + "/") === 0) return s;
+                throw new TypeError(
+                  "klangk default Trusted Types policy: refused script URL " +
+                    s,
+                );
+              },
+            });
+          }
+        } catch (e) {
+          // A default policy already exists (or TT is unsupported) —
+          // leave the existing one in charge.
+        }
+      })();
+    </script>
     <div
       id="loading"
       style="
