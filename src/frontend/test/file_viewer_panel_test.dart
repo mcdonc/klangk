@@ -437,9 +437,17 @@ void main() {
       client.close();
     });
 
-    testWidgets('file listing exception shows debug message', (tester) async {
+    testWidgets('file listing exception shows a stable error message',
+        (tester) async {
+      // #3227: a transport failure must render stable wording, not the
+      // raw exception (a ClientException stringifies the request URL).
       testHttpClientOverride = MockClient((request) async {
-        throw Exception('Network error');
+        throw http.ClientException(
+          'Connection refused',
+          Uri.parse(
+            'http://localhost:8997/api/v1/workspaces/ws-1/files?path=/home/tester',
+          ),
+        );
       });
       final client = _MockWsClient();
       await tester.pumpWidget(
@@ -450,7 +458,12 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      expect(find.byType(FileViewerPanel), findsOneWidget);
+      expect(
+        find.textContaining('Network error. Please try again.'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('localhost:8997'), findsNothing);
+      expect(find.textContaining('ClientException'), findsNothing);
       client.close();
     });
 

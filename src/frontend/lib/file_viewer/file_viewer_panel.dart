@@ -236,7 +236,9 @@ class FileViewerPanelState extends State<FileViewerPanel> {
       if (mounted) {
         setState(() {
           _entries = [];
-          _listError = '$e';
+          // #3227: the raw exception (request URLs, transport detail)
+          // goes to the log only — the screen shows stable wording.
+          _listError = 'Network error. Please try again.';
         });
       }
     } finally {
