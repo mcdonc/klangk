@@ -693,6 +693,33 @@ class TestDualFormKeys:
         assert s.trusted_proxy_cidrs == "10.0.0.0/8"
         assert s.login_lockout_window == 600
 
+    def test_approved_ca_dir_yaml_snake_and_kebab(self, tmp_path):
+        """#3198: the aliased field accepts both YAML key forms."""
+        state = tmp_path / "state"
+        snake = tmp_path / "snake.yaml"
+        snake.write_text(f"state_dir: {state}\napproved_ca_dir: /from/snake\n")
+        kebab = tmp_path / "kebab.yaml"
+        kebab.write_text(f"state-dir: {state}\napproved-ca-dir: /from/kebab\n")
+        assert (
+            make_settings({}, config_file=str(snake)).approved_ca_dir
+            == "/from/snake"
+        )
+        assert (
+            make_settings({}, config_file=str(kebab)).approved_ca_dir
+            == "/from/kebab"
+        )
+
+    def test_approved_ca_dir_empty_env_behaves_as_unset(self, tmp_path):
+        """#3198: an explicitly emptied KLANGKD_TRUSTED_CA_DIR is falsy,
+        which the resolver treats as no restriction."""
+        s = make_settings(
+            {
+                "KLANGKD_STATE_DIR": str(tmp_path / "state"),
+                "KLANGKD_TRUSTED_CA_DIR": "",
+            }
+        )
+        assert s.approved_ca_dir == ""
+
     def test_kebab_required_dir(self, tmp_path):
         """state-dir (kebab) satisfies the required-dir validator."""
         cfg = tmp_path / "config.yaml"
@@ -1646,6 +1673,19 @@ class TestRequireDirsValidator:
             }
         )
         assert s.customize_dir == "/explicit/custom"
+
+    def test_approved_ca_dir_env_round_trip(self):
+        # KLANGKD_TRUSTED_CA_DIR (#3198): unset -> None (no restriction);
+        # set -> the approved-CA baseline path, read live on every resolve.
+        s = KlangkSettings(env={"KLANGKD_STATE_DIR": "/tmp/state"})
+        assert s.approved_ca_dir is None
+        s = KlangkSettings(
+            env={
+                "KLANGKD_STATE_DIR": "/tmp/state",
+                "KLANGKD_TRUSTED_CA_DIR": "/etc/klangk/dod-cas",
+            }
+        )
+        assert s.approved_ca_dir == "/etc/klangk/dod-cas"
 
     def test_config_dir_and_customize_default_under_config_home(
         self, monkeypatch
