@@ -320,7 +320,13 @@ def csp_policy(frontend_dir: str | Path) -> str:
     beep/boingball features no longer JS-``eval``), no third-party origins
     (Roboto Mono is self-hosted, so fonts.gstatic.com is gone).
     ``frame-ancestors 'none'`` + X-Frame-Options DENY is the clickjacking
-    posture. ``require-trusted-types-for 'script'`` (#3219) closes the
+    posture. ``worker-src 'self' blob:`` sanctions exactly one widening:
+    same-origin ``blob:`` workers. The shipped frontend builds them from
+    in-page Blobs whose script URLs already passed the Trusted Types
+    default policy above (pdfrx's pdfium wasm worker; Flutter's skwasm
+    workers when a wasm build ships) — a ``blob:`` worker inherits the
+    document origin, so this adds no new fetch surface, and remote
+    worker URLs stay blocked. ``require-trusted-types-for 'script'`` (#3219) closes the
     DOM-based XSS sinks (``innerHTML`` & co., string ``script.src``, string
     ``eval``): they only accept TrustedTypes values routed through a
     policy. Two sanctioned policies cover the shipped frontend — the
@@ -368,7 +374,7 @@ def csp_policy(frontend_dir: str | Path) -> str:
         "img-src 'self' data: blob:; "
         "font-src 'self'; "
         "connect-src 'self'; "
-        "worker-src 'self'; "
+        "worker-src 'self' blob:; "
         "object-src 'none'; "
         "base-uri 'self'; "
         "frame-ancestors 'none'; "

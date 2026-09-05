@@ -78,6 +78,24 @@ fi
 
 rm -f build/web/flutter_service_worker.js
 
+# #3219/#3228: pdfrx's pdfium wasm worker is a same-origin blob whose
+# bootstrap calls importScripts() with a plain string — a TrustedScriptURL
+# sink INSIDE the worker scope. Blob workers inherit the creating
+# document's CSP, so require-trusted-types-for applies there while the
+# document-side default policy (index.html) does not exist in the worker.
+# Patch the compiled blob template to install a same-shape default policy
+# in the worker before importScripts runs. Guarded: the template literal
+# must appear exactly once, so a pdfrx upgrade that changes it fails the
+# build loudly instead of shipping a broken PDF viewer.
+PDFIUM_TT_GUARD='";importScripts("'
+PDFIUM_TT_PATCH='";try{trustedTypes&&trustedTypes.createPolicy&&trustedTypes.createPolicy("default",{createScriptURL:function(s){return s}})}catch(e){}importScripts("'
+if [ "$(grep -cF "$PDFIUM_TT_GUARD" build/web/main.dart.js)" != "1" ]; then
+  echo "pdfrx worker blob template not found exactly once in main.dart.js —" >&2
+  echo "pdfrx likely changed; update PDFIUM_TT_PATCH in scripts/flutterbuildweb.sh" >&2
+  exit 1
+fi
+sed -i "s|$PDFIUM_TT_GUARD|$PDFIUM_TT_PATCH|" build/web/main.dart.js
+
 # Inline `sourcesContent` into the source maps so devtools (especially
 # Firefox, which doesn't handle the org-dartlang-sdk:/// scheme dart2js/
 # dart2wasm emit) can resolve every frame without network fetches. Resolves

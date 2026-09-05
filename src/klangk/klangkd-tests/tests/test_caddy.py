@@ -652,6 +652,16 @@ class TestCspBlock:
         policy = csp_policy(frontend_fixture(tmp_path))
         assert "require-trusted-types-for 'script'" in policy
 
+    def test_worker_src_allows_same_origin_blob(self, tmp_path):
+        policy = csp_policy(frontend_fixture(tmp_path))
+        worker_src = policy.split("worker-src ", 1)[1].split(";", 1)[0]
+        # #3228: pdfrx builds its pdfium wasm worker from an in-page Blob
+        # (a same-origin blob: URL that the TT default policy already
+        # vets); Flutter's skwasm workers use the same shape. blob:
+        # workers inherit the document origin, so this widens nothing but
+        # in-page blobs — remote worker URLs stay blocked.
+        assert worker_src == "'self' blob:"
+
     def test_hash_tokens_match_inline_script_text(self, tmp_path):
         # The tokens are the browser-computed SHA-256 of the exact text
         # between <script> and </script> — base64, CSP3 script-hash form.

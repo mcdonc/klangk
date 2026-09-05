@@ -16,9 +16,11 @@ to contain "plugin" to be damaged; the corruption happens during the lossy
 
 This hook diffs every staged file against HEAD and fails on the signature of
 such a round-trip: the byte sequence ``EF BF BD`` appearing more often than in
-the committed version. For files git considers binary we flag *any* increase
-(binaries never legitimately gain replacement chars); for text we require a
-larger jump to avoid false positives on incidental bytes.
+the committed version. For modified files git considers binary we flag *any*
+increase (binaries never legitimately gain replacement chars); for newly
+added binaries and for text we require a sizeable jump — genuine binary data
+can coincidentally contain the sequence, and a real lossy rewrite produces
+hundreds of them.
 """
 
 import subprocess
@@ -30,6 +32,14 @@ REPL = bytes.fromhex("efbfbd")
 # incidental occurrences seen in klangk's source; a real lossy rewrite of a
 # non-UTF-8 text blob produces hundreds.
 TEXT_THRESHOLD = 16
+
+# Newly added binaries (no HEAD baseline) get the same treatment: genuine
+# binary data can coincidentally contain the EF BF BD byte sequence — 2 of
+# the 725 vendored Noto woff2 fallback parts (#3228) each carry exactly one.
+# A real lossy rewrite destroys a font/wasm wholesale and produces hundreds
+# (#1734), far above this bound. MODIFIED binaries keep the strict
+# any-increase rule below — there a committed original exists to protect.
+ADDED_BINARY_THRESHOLD = 8
 
 
 def run(args):
@@ -64,6 +74,15 @@ def count_repl(data):
     return data.count(REPL) if data else 0
 
 
+def is_violation(is_binary: bool, added: bool, increase: int) -> bool:
+    """Whether this diff's replacement-char increase is corruption."""
+    if not is_binary:
+        return increase >= TEXT_THRESHOLD
+    if added:
+        return increase >= ADDED_BINARY_THRESHOLD
+    return increase > 0
+
+
 def find_violations():
     binaries = binary_paths()
     violations = []
@@ -72,14 +91,11 @@ def find_violations():
         old = blob(path, "HEAD")
         n_new = count_repl(new)
         n_old = count_repl(old)
-        if n_new <= n_old:
-            continue
         increase = n_new - n_old
-        is_binary = path in binaries
-        # Binaries: any gain is the corruption signature. Text: threshold to
-        # avoid flagging a stray replacement char in a genuine edit.
-        if is_binary or increase >= TEXT_THRESHOLD:
-            violations.append((path, n_old, n_new, is_binary))
+        if increase <= 0:
+            continue
+        if is_violation(path in binaries, old is None, increase):
+            violations.append((path, n_old, n_new, path in binaries))
     return violations
 
 

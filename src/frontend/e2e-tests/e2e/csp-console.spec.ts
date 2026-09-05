@@ -15,27 +15,16 @@ import {
 // view, download, PDF viewer) and asserts the browser console stays clean of
 // CSP and Trusted Types violations.
 //
-// Known-exception filter: the Flutter engine's CanvasKit renderer lazily
-// fetches per-script Noto fallback fonts (NotoSansSC/TC/HK/JP, Symbols2)
-// from fonts.gstatic.com when a frame rasterizes a codepoint the bundled
-// fonts lack (e.g. the "…" in "Signing in…", or CJK bytes in terminal
-// output). Those fetches are blocked by the pre-existing first-party
-// connect-src 'self' (#3149) and are not a script-execution or TT sink —
-// they predate this change and are flaky (only fire when such a frame
-// renders). Everything else — script-src, require-trusted-types-for, and
-// any other directive — must stay violation-free.
-function isKnownFontFallbackNoise(text: string): boolean {
-  // Shape-agnostic across browsers: Chromium says "Connecting to '<url>'
-  // ... connect-src" plus a directive-less companion "Fetch API cannot
-  // load <url>. Refused to connect"; Firefox says "blocked the loading
-  // of a resource (connect-src) at <url>". Require BOTH the fallback-font
-  // host AND fetch-flavored wording — "Refused to connect" is exclusive
-  // to fetches (script-src violations say "Refused to execute"; TT ones
-  // "requires 'Trusted...'"), so a script or TT violation naming that
-  // host still fails the suite.
-  if (!/fonts\.gstatic\.com\/s\//.test(text)) return false;
-  return /connect-src|font-src|Refused to connect/.test(text);
-}
+// #3228 — fully self-contained frontend. The engine's CanvasKit renderer
+// used to lazily fetch per-script Noto fallback fonts from
+// fonts.gstatic.com whenever a frame rasterized a codepoint the bundled
+// fonts lack; the whole set is now vendored under
+// assets/assets/fallback-fonts/ and web/flutter_bootstrap.js points the
+// engine's fontFallbackBaseUrl there, so fallbacks resolve same-origin.
+// The known-noise filter that #3219 carried for those blocked fetches is
+// gone: any external-origin request — attempted or successful, for fonts,
+// JS, CSS, or images — fails the suite, and the terminal flow renders CJK
+// output so the fallback chain provably fires during the run.
 
 function watchViolations(page: Page, sink: string[]) {
   // "Trusted" covers Trusted Types, TrustedScriptURL, and TrustedHTML —
@@ -46,9 +35,18 @@ function watchViolations(page: Page, sink: string[]) {
     /Content Security Policy|Refused to|Trusted|trustedTypes|violates|CSP/;
   page.on("console", (msg) => {
     if (msg.type() === "error" && pattern.test(msg.text())) {
-      if (!isKnownFontFallbackNoise(msg.text())) {
-        sink.push(`console: ${msg.text()}`);
-      }
+      sink.push(`console: ${msg.text()}`);
+    }
+    // Engine font-fallback failures (404s / permanent unavailability)
+    // mean a codepoint silently degraded to tofu — visible only as a
+    // warning line, so watch for the phrases too.
+    if (
+      (msg.type() === "warning" || msg.type() === "error") &&
+      /permanently unavailable|not found \(404\)|Failed to load font/.test(
+        msg.text(),
+      )
+    ) {
+      sink.push(`font: ${msg.text()}`);
     }
   });
   page.on("pageerror", (err) => {
@@ -56,6 +54,41 @@ function watchViolations(page: Page, sink: string[]) {
       sink.push(`pageerror: ${err}`);
     }
   });
+}
+
+// Records every request whose origin differs from the page origin (#3228).
+// Attach before the first navigation: playwright reports attempted requests
+// even when the CSP blocks them, so an attempted external fetch fails the
+// suite exactly like a successful one. blob:/data: URLs are in-process
+// artifacts, and same-host upgrades (ws:) are the workspace WebSocket.
+// The origin comes from API_BASE, not page.url() — at attach time the page
+// is still about:blank.
+function watchExternalRequests(page: Page, sink: string[]) {
+  const selfOrigin = new URL(API_BASE).origin;
+  page.on("request", (req) => {
+    const url = req.url();
+    if (url.startsWith("blob:") || url.startsWith("data:")) return;
+    let origin: string;
+    try {
+      origin = new URL(url).origin;
+    } catch {
+      return;
+    }
+    if (origin !== selfOrigin) {
+      sink.push(url);
+    }
+  });
+}
+
+// True when a vendored fallback-font part was served from this origin —
+// proves the engine's fallback chain resolved locally (it always fetches
+// Roboto at boot, so this is deterministic even before any CJK renders).
+async function fetchedFallbackFont(page: Page): Promise<boolean> {
+  return page.evaluate(() =>
+    performance
+      .getEntriesByType("resource")
+      .some((e) => e.name.includes("/assets/assets/fallback-fonts/")),
+  );
 }
 
 // A minimal single-page PDF (same fixture as the pdf file-viewer spec).
@@ -70,18 +103,31 @@ const PDF = Buffer.from(
 );
 
 test.describe("CSP / Trusted Types (#3219)", () => {
-  test("login → workspace → terminal → files → pdf → download, zero violations", async ({
+  test("login → workspace → terminal → files → pdf → download, zero violations, zero external fetches", async ({
     page,
     request,
   }) => {
     const violations: string[] = [];
     watchViolations(page, violations);
+    watchExternalRequests(page, violations);
+    if (process.env.KL_CSP_DEBUG) {
+      page.on("console", (m) =>
+        console.log(`[console.${m.type()}]`, m.text().slice(0, 300)),
+      );
+      page.on("pageerror", (e) =>
+        console.log("[pageerror]", String(e).slice(0, 300)),
+      );
+    }
 
     // Positive pdfium signals: count Worker constructions (pdfrx builds
     // its wasm worker from a blob: URL — a TrustedScriptURL sink that TT
     // enforcement rejects on a regression), so the spec proves the viewer
     // came up, not merely that nothing was logged.
     await page.addInitScript(() => {
+      // Keep every resource-timing entry: the default 250-entry buffer
+      // overflows in a full session and would evict the early font
+      // fetches the #3228 assertion reads below.
+      performance.setResourceTimingBufferSize(10000);
       (window as any).__workerCount = 0;
       const OrigWorker = window.Worker;
       class CountingWorker extends OrigWorker {
@@ -104,9 +150,29 @@ test.describe("CSP / Trusted Types (#3219)", () => {
       { waitForTerminal: true },
     );
     try {
-      // Terminal: run a command through the flterm canvas.
-      await terminalType(page, "echo CSP_OK");
+      // Terminal: run a command through the flterm canvas. The cat'd CJK
+      // file makes the engine's font fallback chain fire for codepoints
+      // the bundled fonts lack (#3228): with the vendored set they resolve
+      // same-origin, and a regression back to fonts.gstatic.com is a hard
+      // CSP-violation failure above. (Seeding the text and cat-ing it
+      // avoids keyboard-event quirks with non-ASCII input.)
+      await seedFile(
+        request,
+        workspaceId,
+        "/home/klangk/cjk.txt",
+        "中文测试 … ✓\n",
+        headers,
+        "text/plain",
+      );
+      await terminalType(page, "echo '中文测试 … ✓' && cat ~/cjk.txt");
       await page.waitForTimeout(1500);
+
+      // #3228 (checked before the pdf deep-link reload below — a reload
+      // starts a fresh document whose resource buffer loses these): the
+      // fallback chain resolved from the vendored same-origin parts.
+      await expect
+        .poll(() => fetchedFallbackFont(page), { timeout: 30_000 })
+        .toBe(true);
 
       // File upload (API) + text-file view in the UI.
       await seedFile(
@@ -132,37 +198,38 @@ test.describe("CSP / Trusted Types (#3219)", () => {
 
       // PDF viewer (deep-link into the existing viewer): pdfrx loads a
       // script tag + wasm + a blob worker — all TT/CSP-sensitive paths.
-      // NOTE: the ?file= param is an ABSOLUTE container path (openFile uses
-      // it verbatim) — a bare name 400s at files/download and the viewer
-      // never mounts pdfrx.
+      // The ?file= param is the absolute in-workspace path (a bare name
+      // 400s at files/download and the viewer never mounts).
       await page.goto(
         `/#/workspace/${workspaceId}?file=${encodeURIComponent("/home/klangk/doc.pdf")}`,
         { waitUntil: "load" },
       );
-      // Fresh page boot (canvaskit + WS + container_ready) under CI load can
-      // exceed a fixed wait — poll for the viewer to actually come up.
-      await expect
-        .poll(() => page.evaluate(() => (window as any).__workerCount ?? 0), {
-          timeout: 30_000,
-        })
-        .toBeGreaterThan(0);
+      await page.waitForTimeout(4000);
 
       // The two TT sinks the review found: the pdfium_client.js asset
       // must have loaded (plain-string script.src) and the wasm Worker
       // must have been constructed (blob: URL) — both fail under a
-      // Trusted Types regression.
-      const workerCount = await page.evaluate(
-        () => (window as any).__workerCount ?? 0,
-      );
-      expect(workerCount, "pdfium wasm Worker constructed").toBeGreaterThan(0);
-      const pdfiumLoaded = await page.evaluate(() =>
-        performance
-          .getEntriesByType("resource")
-          .some((e) => e.name.includes("pdfium_client.js")),
-      );
-      expect(pdfiumLoaded, "pdfium_client.js loaded (TT script.src sink)").toBe(
-        true,
-      );
+      // Trusted Types regression. The deep-link goto reloads the document
+      // (playwright goto is a real navigation even for a hash URL), so
+      // poll instead of sleeping a fixed budget: the unminified bundle's
+      // boot + viewer mount routinely exceeds any fixed wait on a loaded
+      // runner.
+      await expect
+        .poll(() => page.evaluate(() => (window as any).__workerCount ?? 0), {
+          timeout: 60_000,
+        })
+        .toBeGreaterThan(0);
+      await expect
+        .poll(
+          () =>
+            page.evaluate(() =>
+              performance
+                .getEntriesByType("resource")
+                .some((e) => e.name.includes("pdfium_client.js")),
+            ),
+          { timeout: 30_000 },
+        )
+        .toBe(true);
 
       // Download round-trip.
       const dl = await request.get(
@@ -172,6 +239,62 @@ test.describe("CSP / Trusted Types (#3219)", () => {
       expect(dl.ok()).toBeTruthy();
 
       await page.waitForTimeout(1500); // let the console settle
+      expect(violations.join("\n---\n") || "(none)").toBe("(none)");
+    } finally {
+      await cleanup();
+    }
+  }, 300_000);
+
+  // #3228 acceptance: an offline (externally-blocked) session renders the
+  // UI and terminal without tofu beyond what the bundled fonts cover. Every
+  // non-same-origin request is aborted at the network layer — stricter
+  // than the CSP, which only reports violations — and the run must stay
+  // free of both external attempts and font-failure warnings while the
+  // vendored fallback parts still load.
+  test("offline: externally-blocked session renders UI + CJK terminal from bundled assets", async ({
+    page,
+    request,
+  }) => {
+    const violations: string[] = [];
+    watchViolations(page, violations);
+    const externalAttempts: string[] = [];
+    const selfOrigin = new URL(API_BASE).origin;
+    await page.route("**/*", (route) => {
+      const url = route.request().url();
+      if (
+        url.startsWith("blob:") ||
+        url.startsWith("data:") ||
+        new URL(url).origin === selfOrigin
+      ) {
+        return route.continue();
+      }
+      externalAttempts.push(url);
+      return route.abort();
+    });
+
+    const { workspaceId, headers, cleanup } = await createAndOpenWorkspace(
+      page,
+      request,
+      "csp-off",
+      { waitForTerminal: true },
+    );
+    try {
+      await seedFile(
+        request,
+        workspaceId,
+        "/home/klangk/cjk.txt",
+        "中文测试 … ✓\n",
+        headers,
+        "text/plain",
+      );
+      await terminalType(page, "echo '中文测试 … ✓' && cat ~/cjk.txt");
+      await expect
+        .poll(() => fetchedFallbackFont(page), { timeout: 30_000 })
+        .toBe(true);
+      expect(
+        externalAttempts.length ? externalAttempts.join("\n") : "(none)",
+        "external requests under a fully self-contained frontend",
+      ).toBe("(none)");
       expect(violations.join("\n---\n") || "(none)").toBe("(none)");
     } finally {
       await cleanup();
