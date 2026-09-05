@@ -256,6 +256,46 @@ a pre-arm session only surfaces at its next refresh — up to its residual
 force a re-login (revoke sessions via the admin UI) when arming, or wait
 out one full token lifetime after arming.
 
+## Step-up (sudo mode) for privileged operations
+
+Once an admin is logged in, the ordinary bearer token authorizes the
+whole session — so a hijacked or momentarily unattended admin session
+could otherwise perform destructive operations with no fresh proof of
+credential knowledge. Set `KLANGKD_STEP_UP_WINDOW_MINUTES` (default
+`0` = off; `15` is the recommended hardening value) to require
+**reauthentication ("step-up")** before privileged writes:
+
+- **Gated operations** are the admin write surface — user
+  management (create/edit/delete/unlock), group management,
+  invitations (send/revoke/resend), raw ACL rewrites
+  (`PUT /acl/resource`), server stop/recycle schedules, volume
+  deletes, and **deleting a workspace you do not own** (the admin path
+  into other users' data). Listings and other reads are never gated,
+  and deleting your own workspace stays on the plain permission
+  check.
+- A gated write is refused with a machine-readable
+  `403 {"error": "step_up_required"}` until the session's owner
+  confirms their password at `POST /api/v1/auth/step-up`. The
+  confirmation endpoint has the same lockout accounting as login, so
+  it is not a free password-guessing oracle for an attacker holding a
+  hijacked session.
+- The confirmation is **per session**: it is stamped on the calling
+  session's row, survives token refresh (a refresh is the same
+  session continuing), dies with logout or revocation, and never
+  unlocks a second session of the same user. Inside the window every
+  gated write passes; outside it the next one prompts again.
+- **OIDC-managed accounts** (no klangk password) cannot confirm a
+  password; they are exempt from the gate, and each exempt pass is
+  audit-logged for operators reviewing SIEM output. Deployments that
+  arm the window and want full coverage should give their admins
+  local passwords.
+
+The clients handle the prompt automatically: the web client shows a
+password dialog, confirms, and retries the refused request; the CLI
+prompts once on the terminal. The window is read live at check time,
+so a SIGHUP reload applies immediately (disarming it mid-session
+makes the next write pass without a prompt).
+
 ## Dormant-account auto-disable
 
 Accounts that go unused for too long are disabled automatically. Set

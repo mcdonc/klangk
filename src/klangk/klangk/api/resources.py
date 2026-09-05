@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field
 
 from .. import (
     acl,
+    stepup,
 )
 from ..container.spec import VOLUME_NAME_PATTERN
 from ..podman import PodmanError as PodmanError
@@ -549,6 +550,7 @@ async def _remove_volume(app, name: str) -> None:
 async def delete_volume(
     name: Annotated[str, Path(pattern=VOLUME_NAME_PATTERN)],
     _user: dict = Depends(acl.has_permission("manage-volumes")),
+    _step_up: None = Depends(stepup.require_step_up()),
     app=Depends(get_app_dep),
 ):
     """Delete an instance-managed volume (#2993).

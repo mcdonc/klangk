@@ -14,6 +14,7 @@ from pathlib import Path
 import typer
 import websockets
 from rich.console import Console
+from rich.prompt import Prompt
 
 from .auth import fetch_config, local_login, seed_config, UNREACHABLE
 from .client import KlangkClient
@@ -125,7 +126,27 @@ def server_url() -> str:
 
 
 def client() -> KlangkClient:
-    return KlangkClient(server_url(), state().get_token(server_url()))
+    """The CLI's client, wired with the interactive step-up prompt.
+
+    #3196: when the server refuses a privileged admin write with the
+    step-up 403, the user is asked for their password once, the client
+    confirms it via POST /auth/step-up, and the request is retried.
+    Commands run from a terminal, so a rich password prompt is always
+    appropriate here (the TUI builds its own client without one — none
+    of its surfaces are step-up-gated).
+    """
+
+    def prompt_password() -> str | None:
+        entered = Prompt.ask(
+            "Password (re-authentication for this action)", password=True
+        )
+        return entered or None
+
+    return KlangkClient(
+        server_url(),
+        state().get_token(server_url()),
+        step_up_prompt=prompt_password,
+    )
 
 
 def resolve_or_exit(client, name: str):

@@ -17,6 +17,7 @@ from sqlalchemy.exc import IntegrityError as SAIntegrityError
 from .. import (
     acl,
     auth,
+    stepup,
     wshandler,
 )
 from ..server_schedule import resolve_fire_at
@@ -129,6 +130,7 @@ async def send_invitation(
     req: SendInviteRequest,
     request: Request,
     admin: dict = Depends(acl.has_permission("manage-invitations")),
+    _step_up: None = Depends(stepup.require_step_up()),
     app=Depends(get_app_dep),
 ):
     """Send an invitation email (admin only)."""
@@ -205,6 +207,7 @@ async def list_invitations(
 async def revoke_invitation(
     invitation_id: str,
     admin: dict = Depends(acl.has_permission("manage-invitations")),
+    _step_up: None = Depends(stepup.require_step_up()),
     app=Depends(get_app_dep),
 ):
     """Revoke a pending invitation (admin only)."""
@@ -224,6 +227,7 @@ async def resend_invitation(
     invitation_id: str,
     request: Request,
     admin: dict = Depends(acl.has_permission("manage-invitations")),
+    _step_up: None = Depends(stepup.require_step_up()),
     app=Depends(get_app_dep),
 ):
     """Resend an invitation email (admin only)."""
@@ -283,6 +287,7 @@ async def admin_create_user(
     req: AdminCreateUserRequest,
     request: Request,
     admin: dict = Depends(acl.has_permission("manage-users")),
+    _step_up: None = Depends(stepup.require_step_up()),
     app=Depends(get_app_dep),
 ):
     """Create a user (admin only).
@@ -394,6 +399,7 @@ async def delete_user(
     user_id: str,
     request: Request,
     admin: dict = Depends(acl.has_permission("manage-users")),
+    _step_up: None = Depends(stepup.require_step_up()),
     app=Depends(get_app_dep),
 ):
     if user_id == admin["id"]:
@@ -548,6 +554,7 @@ async def update_user(
     req: UpdateUserRequest,
     request: Request,
     admin: dict = Depends(acl.has_permission("manage-users")),
+    _step_up: None = Depends(stepup.require_step_up()),
     app=Depends(get_app_dep),
 ):
     user = await _require_user(app, user_id)
@@ -661,6 +668,7 @@ async def unlock_user(
     user_id: str,
     request: Request,
     admin: dict = Depends(acl.has_permission("manage-users")),
+    _step_up: None = Depends(stepup.require_step_up()),
     app=Depends(get_app_dep),
 ):
     """Reset a user's login lockout so they can log in immediately."""
@@ -795,6 +803,7 @@ async def create_group(
     req: CreateGroupRequest,
     request: Request,
     admin: dict = Depends(acl.has_permission("manage-groups")),
+    _step_up: None = Depends(stepup.require_step_up()),
     app=Depends(get_app_dep),
 ):
     existing = await app.state.model.users.get_group_by_name(req.name)
@@ -821,6 +830,7 @@ async def update_group(
     req: UpdateGroupRequest,
     request: Request,
     admin: dict = Depends(acl.has_permission("manage-groups")),
+    _step_up: None = Depends(stepup.require_step_up()),
     app=Depends(get_app_dep),
 ):
     result = await update_group_fields(app, group_id, req)
@@ -841,6 +851,7 @@ async def delete_group(
     group_id: str,
     request: Request,
     admin: dict = Depends(acl.has_permission("manage-groups")),
+    _step_up: None = Depends(stepup.require_step_up()),
     app=Depends(get_app_dep),
 ):
     group = await get_group_or_404(app, group_id)
@@ -878,6 +889,7 @@ async def add_group_member(
     req: AddGroupMemberRequest,
     request: Request,
     admin: dict = Depends(acl.has_permission("manage-groups")),
+    _step_up: None = Depends(stepup.require_step_up()),
     app=Depends(get_app_dep),
 ):
     await get_group_or_404(app, group_id)
@@ -903,6 +915,7 @@ async def remove_group_member(
     user_id: str,
     request: Request,
     admin: dict = Depends(acl.has_permission("manage-groups")),
+    _step_up: None = Depends(stepup.require_step_up()),
     app=Depends(get_app_dep),
 ):
     removed = await app.state.model.users.remove_user_from_group(
@@ -985,6 +998,7 @@ async def replace_resource_acl(
     entries: list[WorkspaceAclEntry],
     request: Request,
     admin: dict = Depends(acl.has_permission("manage-acls")),
+    _step_up: None = Depends(stepup.require_step_up()),
     app=Depends(get_app_dep),
 ):
     """Replace ACL entries for any resource (admin only).
@@ -1034,6 +1048,7 @@ async def schedule_server_action(
     payload: ServerScheduleRequest,
     request: Request,
     admin: dict = Depends(acl.has_permission("manage-server-schedule")),
+    _step_up: None = Depends(stepup.require_step_up()),
 ):
     """Schedule a server stop or recycle for a future time (#2661).
 
@@ -1076,6 +1091,7 @@ async def cancel_server_schedule(
     schedule_id: str,
     request: Request,
     admin: dict = Depends(acl.has_permission("manage-server-schedule")),
+    _step_up: None = Depends(stepup.require_step_up()),
 ):
     """Cancel a pending server stop/recycle schedule (#2661)."""
     app = request.app

@@ -95,6 +95,7 @@ class TestRunner:
             (32, "0032_must_change_password"),
             (33, "0033_user_sessions_last_seen"),
             (34, "0034_audit_events"),
+            (35, "0035_user_sessions_step_up"),
         ]
         async with aiosqlite.connect(str(app_state.state.db.db_path)) as db:
             assert await _recorded(db) == expected
@@ -199,6 +200,7 @@ class TestRunner:
                 (32, "0032_must_change_password"),
                 (33, "0033_user_sessions_last_seen"),
                 (34, "0034_audit_events"),
+                (35, "0035_user_sessions_step_up"),
             ]
 
     async def test_m0008_agent_identity_and_human_collision(

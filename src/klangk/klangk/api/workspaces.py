@@ -29,6 +29,7 @@ from .. import (
     acl,
     auth,
     netfilter as netfilter_mod,
+    stepup,
     wshandler,
 )
 from ..exceptions import (
@@ -966,6 +967,7 @@ async def _stop_and_broadcast(
 @router.delete("/workspaces/{workspace_id}")
 async def delete_workspace(
     workspace_id: str,
+    request: Request,
     user: dict = Depends(
         acl.has_permission("delete-workspace", workspace_resource)
     ),
@@ -974,6 +976,14 @@ async def delete_workspace(
     workspace = await app.state.model.workspaces.get_workspace(workspace_id)
     if workspace is None:
         raise HTTPException(status_code=404, detail="Workspace not found")
+
+    # #3196: deleting a workspace you do not own is a privileged
+    # cross-principal write (the admin path into other users' data), so
+    # it carries the step-up gate. Deleting your own workspace stays on
+    # the plain permission check — self-service, not administration.
+    if workspace["user_id"] != user["id"]:
+        jti = stepup.jti_from_request(app, request)
+        await stepup.ensure_step_up(request, user, jti)
 
     # Capture shared members before we tear down ACL entries, so we can
     # notify them (and the owner/deleter) that the workspace is gone.

@@ -17,9 +17,15 @@ import 'auth/forced_change_password_page.dart';
 import 'auth/reset_password_page.dart';
 import 'auth/settings_page.dart';
 import 'widgets/stale_build_banner.dart';
+import 'widgets/step_up_dialog.dart';
 import 'workspace/workspace_list_page.dart';
 import 'workspace/workspace_page.dart';
 import 'app_guards.dart';
+
+/// Root navigator key (#3196): the step-up password dialog is shown
+/// from AuthService-level retry logic, which has no widget context —
+/// it resolves the navigator through this key instead.
+final GlobalKey<NavigatorState> rootNavigatorKey = GlobalKey();
 
 class KlangkApp extends StatefulWidget {
   final String initialLocation;
@@ -32,6 +38,20 @@ class KlangkApp extends StatefulWidget {
 
 class _KlangkAppState extends State<KlangkApp> {
   GoRouter? _router;
+
+  @override
+  void initState() {
+    super.initState();
+    // #3196: wire the sudo-mode password prompt. When a privileged
+    // admin write is refused with step_up_required, AuthService asks
+    // for the password here (root navigator — works from any page),
+    // confirms it with the server, and retries the request.
+    AuthService.stepUpPrompt = () async {
+      final context = rootNavigatorKey.currentContext;
+      if (context == null) return null;
+      return showStepUpPasswordDialog(context);
+    };
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -55,6 +75,7 @@ class _KlangkAppState extends State<KlangkApp> {
           debugShowCheckedModeBanner: false,
           theme: _theme,
           routerConfig: _router!,
+          navigatorKey: rootNavigatorKey,
           builder: (context, child) {
             return Stack(
               children: [
