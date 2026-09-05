@@ -23,8 +23,13 @@ def draw_seed(raw: int | None) -> int:
     return raw if raw is not None else random.randint(0, 2**32)
 
 
-def uds_login(uds_path: str, email: str, password: str) -> str:
-    """Log in over the backend UDS and return the access token."""
+def uds_login(uds_path: str, identifier: str, password: str) -> str:
+    """Log in over the backend UDS and return the access token.
+
+    The login body's field is ``identifier`` (email or handle, #616) —
+    posting the legacy ``email`` key 422s and the whole fuzz run
+    silently sends nothing.
+    """
     with httpx.Client(
         transport=httpx.HTTPTransport(uds=uds_path),
         base_url="http://klangkd",
@@ -32,7 +37,7 @@ def uds_login(uds_path: str, email: str, password: str) -> str:
     ) as c:
         r = c.post(
             "/api/v1/auth/login",
-            json={"email": email, "password": password},
+            json={"identifier": identifier, "password": password},
         )
         r.raise_for_status()
         return r.json()["access_token"]
