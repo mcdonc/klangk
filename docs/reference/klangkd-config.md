@@ -301,6 +301,9 @@ port: 8997
 | `log_level`              | `INFO`                           | `KLANGKD_LOG_LEVEL`              |
 | `log_format`             | `text`                           | `KLANGKD_LOG_FORMAT`             |
 | `log_file`               |                                  | `KLANGKD_LOG_FILE`               |
+| `log_file_max_bytes`     | `0`                              | `KLANGKD_LOG_FILE_MAX_BYTES`     |
+| `log_file_rotate`        |                                  | `KLANGKD_LOG_FILE_ROTATE`        |
+| `log_file_backup_count`  | `3`                              | `KLANGKD_LOG_FILE_BACKUP_COUNT`  |
 | `proxy_bin`              | _(auto-discovered)_              | `KLANGKD_PROXY_BIN`              |
 | `websocket_msg_size_max` | `16777216`                       | `KLANGKD_WEBSOCKET_MSG_SIZE_MAX` |
 

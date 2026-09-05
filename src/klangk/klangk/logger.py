@@ -48,12 +48,17 @@ from __future__ import annotations
 import json
 import logging
 import logging.handlers
-from datetime import UTC, datetime
+import os
+import time
+from datetime import UTC, datetime, timedelta
+from typing import Callable
 
 __all__ = [
+    "DEFAULT_BACKUP_COUNT",
     "DEFAULT_FORMAT",
     "DEFAULT_LEVEL",
     "JsonFormatter",
+    "ROTATE_WHENS",
     "RotationSafeFileHandler",
     "configure",
     "configure_defaults",
@@ -62,6 +67,7 @@ __all__ = [
     "install_file_handler",
     "level_to_int",
     "make_formatter",
+    "next_rotate_boundary",
 ]
 
 
@@ -102,6 +108,54 @@ DEFAULT_LEVEL = logging.INFO
 # settings are constructed. Pre-settings output is always human-readable
 # text: the JSON choice lives in settings, which do not exist yet at import.
 DEFAULT_FORMAT = "text"
+
+# Default retention for in-app rotation of the ``KLANGKD_LOG_FILE`` sink
+# (#3156): when a rotation trigger is set and the operator doesn't override
+# ``KLANGKD_LOG_FILE_BACKUP_COUNT``, keep three rotated files.
+DEFAULT_BACKUP_COUNT = 3
+
+
+def _utc_top(ts: float, **parts: int) -> datetime:
+    """``ts`` truncated to a UTC boundary (zeroed sub-``parts``)."""
+    return datetime.fromtimestamp(ts, tz=UTC).replace(**parts)
+
+
+def _next_hour(ts: float) -> float:
+    top = _utc_top(ts, minute=0, second=0, microsecond=0)
+    return (top + timedelta(hours=1)).timestamp()
+
+
+def _next_day(ts: float) -> float:
+    top = _utc_top(ts, hour=0, minute=0, second=0, microsecond=0)
+    return (top + timedelta(days=1)).timestamp()
+
+
+def _next_week(ts: float) -> float:
+    top = _utc_top(ts, hour=0, minute=0, second=0, microsecond=0)
+    return (top + timedelta(days=7 - top.weekday())).timestamp()
+
+
+def _next_month(ts: float) -> float:
+    top = _utc_top(ts, day=1, hour=0, minute=0, second=0, microsecond=0)
+    return (top + timedelta(days=32)).replace(day=1).timestamp()
+
+
+# ``KLANGKD_LOG_FILE_ROTATE`` value -> boundary function returning the first
+# UTC boundary strictly after ``ts`` (weekly boundaries are Mondays).
+_ROTATE_BOUNDARIES: dict[str, Callable[[float], float]] = {
+    "hourly": _next_hour,
+    "daily": _next_day,
+    "weekly": _next_week,
+    "monthly": _next_month,
+}
+
+#: The accepted ``KLANGKD_LOG_FILE_ROTATE`` values (shared with settings).
+ROTATE_WHENS = frozenset(_ROTATE_BOUNDARIES)
+
+
+def next_rotate_boundary(ts: float, rotate: str) -> float:
+    """First UTC boundary strictly after ``ts`` for a rotate value."""
+    return _ROTATE_BOUNDARIES[rotate](ts)
 
 
 def format_is_json(value: str | None) -> bool:
@@ -212,8 +266,9 @@ def make_formatter(log_format: str) -> logging.Formatter:
 
 
 class RotationSafeFileHandler(logging.handlers.WatchedFileHandler):
-    """A ``WatchedFileHandler`` that suspends the sink instead of raising.
+    """A watched file sink that can also rotate itself (size/time, #3156).
 
+    **External rotation** (no triggers set — the default):
     ``WatchedFileHandler.emit`` calls ``reopenIfNeeded()`` before the
     try/except in ``FileHandler.emit`` covers it, so a reopen failure after
     external rotation (the rotated-to path is a directory, permissions were
@@ -223,14 +278,78 @@ class RotationSafeFileHandler(logging.handlers.WatchedFileHandler):
     console stream stays live; the file sink is dead, not the process. The
     next :func:`configure` (a SIGHUP reload swaps the sink anyway) re-creates
     the handler, which heals a suspended sink.
+
+    **In-app rotation** (``max_bytes`` and/or ``rotate`` set): each emit
+    first checks the triggers and rolls the file over — ``<path>.1`` …
+    ``<path>.N`` numeric suffixes, oldest deleted, ``backup_count`` of 0
+    discards the rotated file outright. A file may overshoot ``max_bytes``
+    by one record (the check runs before the write). Time triggers roll on
+    UTC boundaries (weekly = Monday). With any trigger set the app owns
+    rotation — keep external rotators (logrotate/rsyslog) off the same path.
+    A rollover failure takes the same suspend-with-one-warning path as a
+    reopen failure.
     """
 
     _sink_broken = False
+
+    def __init__(
+        self,
+        filename,
+        *,
+        encoding="utf-8",
+        max_bytes: int = 0,
+        rotate: str = "",
+        backup_count: int = DEFAULT_BACKUP_COUNT,
+    ):
+        super().__init__(filename, encoding=encoding)
+        self.max_bytes = max_bytes
+        self.rotate = rotate
+        self.backup_count = backup_count
+        self.next_rollover_ts = (
+            next_rotate_boundary(time.time(), rotate) if rotate else None
+        )
+
+    def _file_size(self) -> int:
+        if self.stream is None:
+            return 0
+        return os.fstat(self.stream.fileno()).st_size
+
+    def should_rollover(self, record: logging.LogRecord) -> bool:
+        if self.rotate and record.created >= self.next_rollover_ts:
+            return True
+        return bool(self.max_bytes) and self._file_size() >= self.max_bytes
+
+    def _shift_numbered_backups(self, base: str) -> None:
+        oldest = f"{base}.{self.backup_count}"
+        if os.path.exists(oldest):
+            os.remove(oldest)
+        for i in range(self.backup_count - 1, 0, -1):
+            src = f"{base}.{i}"
+            if os.path.exists(src):
+                os.replace(src, f"{base}.{i + 1}")
+        os.replace(base, f"{base}.1")
+
+    def do_rollover(self) -> None:
+        if self.stream:
+            self.stream.close()
+            self.stream = None
+        if self.backup_count > 0:
+            self._shift_numbered_backups(self.baseFilename)
+        elif os.path.exists(self.baseFilename):
+            os.remove(self.baseFilename)
+        self.stream = self._open()
+        self._statstream()
+        if self.rotate:
+            self.next_rollover_ts = next_rotate_boundary(
+                time.time(), self.rotate
+            )
 
     def emit(self, record: logging.LogRecord) -> None:
         if self._sink_broken:
             return
         try:
+            if self.should_rollover(record):
+                self.do_rollover()
             super().emit(record)
         except RecursionError:
             raise
@@ -247,7 +366,12 @@ class RotationSafeFileHandler(logging.handlers.WatchedFileHandler):
 
 
 def install_file_handler(
-    root: logging.Logger, level: int, log_file: str
+    root: logging.Logger,
+    level: int,
+    log_file: str,
+    max_bytes: int = 0,
+    rotate: str = "",
+    backup_count: int = DEFAULT_BACKUP_COUNT,
 ) -> None:
     """Attach the JSON file sink for ``KLANGKD_LOG_FILE`` (#3156).
 
@@ -257,9 +381,10 @@ def install_file_handler(
     file carries JSON. :class:`RotationSafeFileHandler` (a
     ``WatchedFileHandler``) reopens the file when the inode changes, so
     external log rotation (logrotate rename / rsyslog) works without a
-    SIGHUP. Failure posture: a broken path degrades — a construction-time
-    open failure is logged at warning and skipped, and an emit-time reopen
-    failure suspends the sink with one warning (see the class docstring) — so
+    SIGHUP; ``max_bytes``/``rotate`` instead turn on in-app rotation (see
+    the class docstring). Failure posture: a broken path degrades — a
+    construction-time open failure is logged at warning and skipped, and an
+    emit-time reopen/rollover failure suspends the sink with one warning — so
     the console stream stays live either way; construction-time settings
     validation has already fail-fasted unwritable paths, so these arms only
     guard a path that broke between validation and use.
@@ -267,7 +392,13 @@ def install_file_handler(
     if not log_file:
         return
     try:
-        handler = RotationSafeFileHandler(log_file, encoding="utf-8")
+        handler = RotationSafeFileHandler(
+            log_file,
+            encoding="utf-8",
+            max_bytes=max_bytes,
+            rotate=rotate,
+            backup_count=backup_count,
+        )
     except OSError as exc:
         logging.getLogger(__name__).warning(
             "KLANGKD_LOG_FILE=%s unavailable (%s); file logging disabled",
@@ -299,7 +430,12 @@ def drop_klangk_handlers(root: logging.Logger) -> None:
 
 
 def _apply(
-    level: int, log_format: str = DEFAULT_FORMAT, log_file: str = ""
+    level: int,
+    log_format: str = DEFAULT_FORMAT,
+    log_file: str = "",
+    max_bytes: int = 0,
+    rotate: str = "",
+    backup_count: int = DEFAULT_BACKUP_COUNT,
 ) -> None:
     """Install/replace the klangk root handlers at ``level`` + silence 3rd-party.
 
@@ -330,7 +466,9 @@ def _apply(
 
     root.setLevel(level)
 
-    install_file_handler(root, level, log_file)
+    install_file_handler(
+        root, level, log_file, max_bytes, rotate, backup_count
+    )
 
     for name, lvl in _THIRD_PARTY_LEVELS.items():
         logging.getLogger(name).setLevel(lvl)
@@ -360,15 +498,19 @@ def configure(settings) -> None:
 
     Called in :func:`klangk.main.build_app` (once settings are constructed) and
     again on every SIGHUP reload (after the settings swap, before the subsystem
-    reconfigure loop) so ``KLANGKD_LOG_LEVEL``, ``KLANGKD_LOG_FORMAT``, and
-    ``KLANGKD_LOG_FILE`` take effect without a process restart (#1587). Reads
-    ``settings.log_level``, ``settings.log_format``, and ``settings.log_file``
-    live; idempotent.
+    reconfigure loop) so ``KLANGKD_LOG_LEVEL``, ``KLANGKD_LOG_FORMAT``,
+    ``KLANGKD_LOG_FILE``, and the rotation knobs
+    (``KLANGKD_LOG_FILE_MAX_BYTES`` / ``KLANGKD_LOG_FILE_ROTATE`` /
+    ``KLANGKD_LOG_FILE_BACKUP_COUNT``) take effect without a process
+    restart (#1587). Reads them live off the settings object; idempotent.
     """
     _apply(
         level_to_int(settings.log_level),
         settings.log_format,
         settings.log_file,
+        settings.log_file_max_bytes,
+        settings.log_file_rotate,
+        settings.log_file_backup_count,
     )
 
 

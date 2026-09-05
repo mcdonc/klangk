@@ -56,7 +56,14 @@ def _klangk_file_handlers(root):
     ]
 
 
-def _make_settings(level=None, log_format=None, log_file=None):
+def _make_settings(
+    level=None,
+    log_format=None,
+    log_file=None,
+    max_bytes=None,
+    rotate=None,
+    backup_count=None,
+):
     env = {}
     if level is not None:
         env["KLANGKD_LOG_LEVEL"] = level
@@ -64,6 +71,12 @@ def _make_settings(level=None, log_format=None, log_file=None):
         env["KLANGKD_LOG_FORMAT"] = log_format
     if log_file is not None:
         env["KLANGKD_LOG_FILE"] = log_file
+    if max_bytes is not None:
+        env["KLANGKD_LOG_FILE_MAX_BYTES"] = max_bytes
+    if rotate is not None:
+        env["KLANGKD_LOG_FILE_ROTATE"] = rotate
+    if backup_count is not None:
+        env["KLANGKD_LOG_FILE_BACKUP_COUNT"] = backup_count
     return make_settings(env)
 
 
@@ -550,6 +563,171 @@ class TestLogFileSink:
         finally:
             handler.close()
         assert handler._sink_broken is False
+
+
+class TestLogRotation:
+    """In-app rotation of the KLANGKD_LOG_FILE sink (#3156): size
+    (KLANGKD_LOG_FILE_MAX_BYTES) and time (KLANGKD_LOG_FILE_ROTATE)
+    triggers, retention via KLANGKD_LOG_FILE_BACKUP_COUNT."""
+
+    def test_no_triggers_never_rotates(self, clean_root, tmp_path):
+        """The default (no triggers) keeps today's external-rotation-only
+        posture: however many records, no <path>.N ever appears."""
+        target = tmp_path / "k.jsonl"
+        logger_mod.configure(_make_settings(log_file=str(target)))
+        for i in range(20):
+            logging.getLogger("klangk.rot").info("record %d", i)
+        assert not (tmp_path / "k.jsonl.1").exists()
+        assert len(target.read_text().splitlines()) == 20
+
+    def test_size_trigger_rotates_and_keeps_backups(
+        self, clean_root, tmp_path
+    ):
+        target = tmp_path / "k.jsonl"
+        logger_mod.configure(
+            _make_settings(
+                log_file=str(target), max_bytes="200", backup_count="2"
+            )
+        )
+        for i in range(10):
+            logging.getLogger("klangk.rot").info("sized record %d", i)
+        assert (tmp_path / "k.jsonl.1").exists()
+        assert (tmp_path / "k.jsonl.2").exists()
+        assert not (tmp_path / "k.jsonl.3").exists()  # retention honored
+        # Every rotated file holds only whole JSON lines, newest in .1.
+        for name in ("k.jsonl", "k.jsonl.1", "k.jsonl.2"):
+            for line in (tmp_path / name).read_text().splitlines():
+                json.loads(line)
+
+    def test_size_trigger_zero_backups_discards(self, clean_root, tmp_path):
+        target = tmp_path / "k.jsonl"
+        logger_mod.configure(
+            _make_settings(
+                log_file=str(target), max_bytes="100", backup_count="0"
+            )
+        )
+        for i in range(10):
+            logging.getLogger("klangk.rot").info("record %d", i)
+        assert not (tmp_path / "k.jsonl.1").exists()
+        # base holds only the records since the last rollover
+        lines = [json.loads(x) for x in target.read_text().splitlines()]
+        assert len(lines) < 10
+        assert lines[-1]["message"] == "record 9"
+
+    def test_boundary_math_utc(self):
+        """next_rotate_boundary: first UTC boundary strictly after ts —
+        hourly/daily/weekly (Monday)/monthly, from 2026-01-01 13:45:30Z
+        (a Thursday)."""
+        from datetime import UTC as UTC_TZ, datetime as dt_cls
+
+        ts = dt_cls(2026, 1, 1, 13, 45, 30, tzinfo=UTC_TZ).timestamp()
+
+        def at(y, m, d, h=0):
+            return dt_cls(y, m, d, h, tzinfo=UTC_TZ).timestamp()
+
+        assert logger_mod.next_rotate_boundary(ts, "hourly") == at(
+            2026, 1, 1, 14
+        )
+        assert logger_mod.next_rotate_boundary(ts, "daily") == at(2026, 1, 2)
+        assert logger_mod.next_rotate_boundary(ts, "weekly") == at(2026, 1, 5)
+        assert logger_mod.next_rotate_boundary(ts, "monthly") == at(2026, 2, 1)
+
+    def test_time_trigger_rotates_on_passed_boundary(
+        self, clean_root, tmp_path
+    ):
+        target = tmp_path / "k.jsonl"
+        logger_mod.configure(
+            _make_settings(log_file=str(target), rotate="hourly")
+        )
+        logging.getLogger("klangk.rot").info("before boundary")
+        # Force the boundary into the past (a full hour need not elapse).
+        (handler,) = _klangk_file_handlers(clean_root)
+        handler.next_rollover_ts = 0.0
+        logging.getLogger("klangk.rot").info("after boundary")
+        assert json.loads((tmp_path / "k.jsonl.1").read_text())["message"] == (
+            "before boundary"
+        )
+        lines = [json.loads(x) for x in target.read_text().splitlines()]
+        assert [p["message"] for p in lines] == ["after boundary"]
+
+    def test_both_triggers_either_fires(self, clean_root, tmp_path):
+        """Size + time both armed: the size arm rotates even though the
+        time boundary is an hour away."""
+        target = tmp_path / "k.jsonl"
+        logger_mod.configure(
+            _make_settings(
+                log_file=str(target), max_bytes="150", rotate="daily"
+            )
+        )
+        for i in range(8):
+            logging.getLogger("klangk.rot").info("both %d", i)
+        assert (tmp_path / "k.jsonl.1").exists()
+
+    def test_rollover_failure_suspends_not_crashes(
+        self, clean_root, tmp_path, caplog, monkeypatch
+    ):
+        """A failing rename during rollover takes the suspend path: the log
+        call never raises, one warning, later records skipped from the file,
+        console stays live — same posture as a failed reopen."""
+        target = tmp_path / "k.jsonl"
+        logger_mod.configure(
+            _make_settings(log_file=str(target), max_bytes="80")
+        )
+        logging.getLogger("klangk.rot").info("first")
+
+        def boom(*args, **kwargs):
+            raise OSError("rename denied")
+
+        monkeypatch.setattr(logger_mod.os, "replace", boom)
+        with caplog.at_level(logging.WARNING, logger="klangk.logger"):
+            logging.getLogger("klangk.rot").info("triggers rollover")
+            logging.getLogger("klangk.rot").info("after failure")
+        (handler,) = _klangk_file_handlers(clean_root)
+        assert handler._sink_broken is True
+        assert (
+            sum(
+                "file logging suspended" in r.getMessage()
+                for r in caplog.records
+            )
+            == 1
+        )
+
+    def test_rollover_direct_arms(self, tmp_path):
+        """Direct handler calls cover arms emit can't reach: a rollover
+        with no open stream, a zero-backup rollover with the base file
+        already gone, and the size check against no stream (size 0)."""
+        one = tmp_path / "one.jsonl"
+        h = logger_mod.RotationSafeFileHandler(
+            one, encoding="utf-8", backup_count=0
+        )
+        h.stream.close()
+        h.stream = None
+        h.do_rollover()  # no stream; existing base removed; reopened
+        assert one.exists()
+        h.close()
+
+        two = tmp_path / "two.jsonl"
+        h2 = logger_mod.RotationSafeFileHandler(
+            two, encoding="utf-8", backup_count=0
+        )
+        h2.stream.close()
+        h2.stream = None
+        two.unlink()
+        h2.do_rollover()  # no stream AND no base: neither arm fires
+        assert two.exists()
+        h2.close()
+
+        three = tmp_path / "three.jsonl"
+        h3 = logger_mod.RotationSafeFileHandler(
+            three, encoding="utf-8", max_bytes=10
+        )
+        h3.stream.close()
+        h3.stream = None
+        record = logging.LogRecord(
+            "klangk.test", logging.INFO, __file__, 1, "m", (), None
+        )
+        assert h3.should_rollover(record) is False  # no stream -> size 0
+        h3.close()
 
 
 class TestConfigureFormat:

@@ -556,7 +556,12 @@ sync` report a clear permission-denied error.
   uvicorn's own text handlers), so the whole stream shares the format. Both
   are reloadable on SIGHUP; malformed values abort startup. The file sink
   follows external rotation (logrotate rename) and suspends itself with a
-  warning instead of crashing if its path breaks at runtime. uvicorn access
+  warning instead of crashing if its path breaks at runtime. New rotation
+  settings let the app own rotation instead: `KLANGKD_LOG_FILE_MAX_BYTES`
+  (size trigger, `0` = off) and `KLANGKD_LOG_FILE_ROTATE`
+  (`hourly`/`daily`/`weekly`/`monthly`, UTC boundaries) rotate the sink to
+  numeric-suffix backups, retention via `KLANGKD_LOG_FILE_BACKUP_COUNT`
+  (default 3). uvicorn access
   logs are now visible at the default INFO level (previously suppressed at
   WARNING), and the Logfire SDK's project-URL print is suppressed so it
   cannot inject a non-JSON line into the stream. See
