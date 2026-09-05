@@ -148,16 +148,16 @@ class TestBudget:
         assert (await _call(m, _scope())).status == 200
         assert (await _call(m, _scope())).status == 429
         # Age the open window past the window length.
-        for key, (start, count) in list(m._windows.items()):
-            m._windows[key] = (start - 61.0, count)
+        for key, (start, count, warned) in list(m._windows.items()):
+            m._windows[key] = (start - 61.0, count, warned)
         assert (await _call(m, _scope())).status == 200
 
     async def test_retry_after_reflects_window_remainder(self):
         m = _middleware(budget="1")
         await _call(m, _scope())
         # 59s elapsed: exactly 1s of window left -> Retry-After: 1.
-        for key, (start, count) in list(m._windows.items()):
-            m._windows[key] = (start - 59.0, count)
+        for key, (start, count, warned) in list(m._windows.items()):
+            m._windows[key] = (start - 59.0, count, warned)
         denied = await _call(m, _scope())
         assert denied.status == 429
         assert denied.headers["retry-after"] == "1"
@@ -241,10 +241,40 @@ class TestBoundedState:
         """Recording for a new IP drops other IPs' expired windows."""
         m = _middleware(budget="100")
         await _call(m, _scope(client=("203.0.113.1", 1)))
-        for key, (start, count) in list(m._windows.items()):
-            m._windows[key] = (start - 120.0, count)
+        for key, (start, count, warned) in list(m._windows.items()):
+            m._windows[key] = (start - 120.0, count, warned)
         await _call(m, _scope(client=("203.0.113.2", 2)))
         assert set(m._windows) == {"203.0.113.2"}
+
+
+class TestObservability:
+    async def test_denial_logs_once_per_window(self, caplog):
+        """The first denial of a window warns; further denials stay
+        silent (a scraper must not be able to log-flood)."""
+        m = _middleware(budget="1")
+        with caplog.at_level("WARNING", logger="klangk.middleware"):
+            await _call(m, _scope())  # allowed
+            assert "rate limit" not in caplog.text
+            await _call(m, _scope())  # first denial
+            assert "rate limit exceeded" in caplog.text
+            assert "127.0.0.1" in caplog.text
+            caplog.clear()
+            await _call(m, _scope())  # further denials: silent
+            await _call(m, _scope())
+            assert caplog.text == ""
+
+    async def test_denial_log_latch_resets_with_window(self, caplog):
+        """A fresh window can warn again (once per window)."""
+        m = _middleware(budget="1")
+        with caplog.at_level("WARNING", logger="klangk.middleware"):
+            await _call(m, _scope())
+            await _call(m, _scope())  # warn
+            for key, (start, count, warned) in list(m._windows.items()):
+                m._windows[key] = (start - 61.0, count, warned)
+            await _call(m, _scope())  # allowed (fresh window)
+            caplog.clear()
+            await _call(m, _scope())  # deny again
+            assert caplog.text.count("rate limit exceeded") == 1
 
 
 # ---------------------------------------------------------------------------
@@ -281,6 +311,43 @@ class TestThroughRouter:
             # Outside /api/ — unlimited regardless of the trip above.
             r = await client.get("/health")
             assert r.status_code == 200
+
+    async def test_429_carries_cors_headers(self):
+        """The limiter sits inside LiveCORS, so a cross-origin caller's
+        429 must still carry CORS headers (otherwise the browser turns
+        it into an opaque error with no Retry-After to read)."""
+        from klangk.middleware import LiveCORSMiddleware
+
+        app = FastAPI()
+        app.state.settings = make_settings(
+            {
+                "KLANGKD_API_RATE_LIMIT": "1",
+                "KLANGKD_CORS_ORIGINS": "http://cors.example",
+            }
+        )
+        app.state.util = Util(app)
+
+        @app.get("/api/v1/version")
+        async def version():
+            return {"version": "dev"}
+
+        app.add_middleware(ApiRateLimitMiddleware, fastapi_app=app)
+        app.add_middleware(LiveCORSMiddleware, fastapi_app=app)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            await client.get("/api/v1/version")
+            denied = await client.get(
+                "/api/v1/version",
+                headers={"Origin": "http://cors.example"},
+            )
+        assert denied.status_code == 429
+        assert (
+            denied.headers["access-control-allow-origin"]
+            == "http://cors.example"
+        )
+        assert "retry-after" in denied.headers
 
 
 # ---------------------------------------------------------------------------

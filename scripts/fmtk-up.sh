@@ -122,6 +122,7 @@ auth_modes: password
 jwt_secret: fmtk-scratch-secret
 default_user: admin@example.com
 default_password: admin123abc
+api_rate_limit: "0"  # fmtk drives machine-speed /api bursts from one IP
 state_dir: "$STATE_DIR/klangk"
 data_dir: "$STATE_DIR/klangk/data"
 EOF

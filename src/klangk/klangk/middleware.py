@@ -26,12 +26,15 @@ still receives CORS headers from the CORS layer outside it (#3157).
 
 import asyncio
 import json
+import logging
 import math
 import time
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.datastructures import Headers
+
+logger = logging.getLogger(__name__)
 
 
 # --- Live CORS middleware (#1610) ---
@@ -120,9 +123,10 @@ class ApiRateLimitMiddleware:
     def __init__(self, app_asgi, *, fastapi_app: FastAPI) -> None:
         self.app = app_asgi
         self._fastapi_app = fastapi_app
-        # ip -> (window_start_monotonic, requests_in_window). Insertion-
-        # ordered; the oldest entry is shed first when the cap is hit.
-        self._windows: dict[str, tuple[float, int]] = {}
+        # ip -> (window_start_monotonic, requests_in_window, warned).
+        # Insertion-ordered; the first-seen entry is shed first when the
+        # cap is hit. "warned" latches the once-per-window denial log.
+        self._windows: dict[str, tuple[float, int, bool]] = {}
 
     def _budget(self) -> int:
         """Effective per-IP budget (live off settings; 0 disables)."""
@@ -150,26 +154,51 @@ class ApiRateLimitMiddleware:
     def _window_retry_after(self, key: str, budget: int) -> int:
         """Record one request for *key*; 0 to allow, else seconds to wait."""
         now = time.monotonic()
-        start, count = self._windows.get(key, (now, 0))
+        start, count, warned = self._windows.get(key, (now, 0, False))
         if now - start >= RATE_LIMIT_WINDOW_SECONDS:
-            start, count = now, 0
+            start, count, warned = now, 0, False
         if count >= budget:
             remaining = start + RATE_LIMIT_WINDOW_SECONDS - now
-            return max(1, math.ceil(remaining))
+            retry = max(1, math.ceil(remaining))
+            self._warn_once(key, start, count, warned, retry)
+            return retry
         self._record(key, start, count, now)
         return 0
 
+    def _warn_once(
+        self, key: str, start: float, count: int, warned: bool, retry: int
+    ) -> None:
+        """Log the first denial of a window (once per IP per window, so a
+        scraper hammering away cannot log-flood; the latch resets with
+        the window). The one line is the operator's only signal that real
+        users are being throttled — e.g. behind a misconfigured outer
+        proxy funneling every client into one bucket."""
+        if warned:
+            return
+        logger.warning(
+            "per-client-IP API rate limit exceeded for %s;"
+            " retrying in %ss (KLANGKD_API_RATE_LIMIT)",
+            key,
+            retry,
+        )
+        self._windows[key] = (start, count, True)
+
     def _record(self, key: str, start: float, count: int, now: float) -> None:
         """Insert the incremented window, pruning expired/oldest entries
-        so a unique-IP flood cannot grow the dict unboundedly."""
+        so a unique-IP flood cannot grow the dict unboundedly. Shedding
+        can evict a live window, granting that IP a fresh budget on its
+        next request — accepted: reaching the cap needs ~RATE_LIMIT_MAX_ENTRIES
+        distinct client IPs within one 60s window, and every key is
+        source-IP or trusted-proxy derived, so the reset costs an attacker
+        nothing it didn't already have (a fresh bucket per new IP)."""
         self._prune_expired(now)
         while len(self._windows) >= RATE_LIMIT_MAX_ENTRIES:
             del self._windows[next(iter(self._windows))]
-        self._windows[key] = (start, count + 1)
+        self._windows[key] = (start, count + 1, False)
 
     def _prune_expired(self, now: float) -> None:
         """Drop windows whose 60s window has closed."""
-        for key, (start, _) in list(self._windows.items()):
+        for key, (start, _, _) in list(self._windows.items()):
             if now - start >= RATE_LIMIT_WINDOW_SECONDS:
                 del self._windows[key]
 
