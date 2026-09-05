@@ -535,7 +535,10 @@ def port_bind_error(port: int) -> str | None:
     """
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
-        sock.bind(("0.0.0.0", port))
+        # The all-interfaces bind is the check itself: caddy's auto-HTTPS
+        # listeners bind 0.0.0.0:80/:443, so probing loopback would pass
+        # while caddy fails.
+        sock.bind(("0.0.0.0", port))  # lgtm[py/bind-socket-all-interfaces]
         return None
     except OSError as exc:
         return f"{port}: {exc.strerror or exc}"

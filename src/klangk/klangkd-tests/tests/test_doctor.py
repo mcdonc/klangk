@@ -800,7 +800,10 @@ class TestCheckAutoHttpsPorts:
         with patch("klangk.doctor.port_bind_error", return_value=None):
             r = check_auto_https_ports("klangk.example.com")
         assert r is not None and r.ok
-        assert "klangk.example.com" in r.message
+        assert r.message == (
+            "ports 80/443 bindable — ACME issuance for "
+            "klangk.example.com can proceed"
+        )
 
     def test_warning_when_ports_fail(self):
         """A bind failure is error-grade (the armed config won't load at
@@ -829,7 +832,7 @@ class TestPortBindError:
         import socket
 
         probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        probe.bind(("0.0.0.0", 0))
+        probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]
         probe.close()
         assert port_bind_error(port) is None
@@ -838,7 +841,9 @@ class TestPortBindError:
         import socket
 
         holder = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        holder.bind(("0.0.0.0", 0))
+        # Loopback-specific bind: the wildcard probe in port_bind_error
+        # must still collide with it on the same port.
+        holder.bind(("127.0.0.1", 0))
         holder.listen(1)
         port = holder.getsockname()[1]
         try:
