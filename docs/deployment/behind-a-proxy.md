@@ -5,6 +5,13 @@ An outer proxy is a separate server that terminates TLS or routes traffic
 to klangk. Common examples: nginx, Caddy, Traefik, HAProxy, a cloud
 load balancer.
 
+> If klangkd itself is the internet-facing server and you want HTTPS
+> without running a second proxy, see
+> [HTTPS Hosting](https-hosting.md) instead — klangkd's built-in Caddy
+> obtains and renews a CA-issued certificate for a public hostname. To
+> also encrypt the proxy→klangkd hop with an auto-generated certificate,
+> see [Internal TLS](https-hosting.md#internal-tls-the-hop-behind-an-outer-proxy).
+
 ## The two-tier model
 
 klangk runs its own Caddy proxy internally. When you add an outer proxy,
@@ -100,6 +107,11 @@ hosting-base-path: "/klangk"
 
 These override the forwarded-header values. Set them when the outer
 proxy does not send `X-Forwarded-Host` or `X-Forwarded-Proto`.
+
+For the full derivation order — pin, trusted forwarded headers,
+`Host`, floor — and how this differs from `KLANGKD_TLS_HOSTNAME`
+(automatic TLS on an internet-facing klangkd), see
+[HTTPS Hosting](https-hosting.md#public-urls-tls-hostname-vs-hosting-hostname).
 
 ### Complete klangkd.yaml example
 

@@ -11,6 +11,8 @@ from klangk.doctor import (
     CheckResult,
     DoctorReport,
     TMUX_MIN_VERSION,
+    port_bind_error,
+    check_auto_https_ports,
     check_binary,
     check_gnu_du,
     check_gnu_stat,
@@ -782,3 +784,117 @@ class TestDoctorMain:
             doctor_mod, "run_doctor", return_value=self._report(False)
         ):
             assert doctor_mod.doctor_main() == 1
+
+
+class TestCheckAutoHttpsPorts:
+    """The automatic-TLS pre-flight (#3192): ports 80/443 bindability when
+    KLANGKD_TLS_HOSTNAME arms auto-HTTPS. The bind probe is patched so
+    the tests never touch real privileged ports."""
+
+    def test_skipped_when_unarmed(self):
+        """No hostname (unset/empty) → no check at all (None)."""
+        assert check_auto_https_ports(None) is None
+        assert check_auto_https_ports("") is None
+
+    def test_ok_when_both_ports_bind(self):
+        with patch("klangk.doctor.port_bind_error", return_value=None):
+            r = check_auto_https_ports("klangk.example.com")
+        assert r is not None and r.ok
+        assert r.message == (
+            "ports 80/443 bindable — ACME issuance for "
+            "klangk.example.com can proceed"
+        )
+
+    def test_warning_when_ports_fail(self):
+        """A bind failure is error-grade (the armed config won't load at
+        all — the whole proxy is down) and names the port + reason."""
+        with patch(
+            "klangk.doctor.port_bind_error",
+            side_effect=lambda p: (
+                f"{p}: Permission denied"
+                if p == 80
+                else f"{p}: Address already in use"
+            ),
+        ):
+            r = check_auto_https_ports("klangk.example.com")
+        assert r is not None and not r.ok and not r.is_warning
+        assert "80: Permission denied" in r.message
+        assert "443: Address already in use" in r.message
+        assert "will not start" in r.message
+        assert "setcap" in r.hint
+
+
+class TestPortBindError:
+    """The real bind probe (no mocking) against unprivileged ports —
+    the same code path doctor runs against 80/443 (#3192)."""
+
+    def test_free_port_binds_cleanly(self):
+        import socket
+
+        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+        probe.close()
+        assert port_bind_error(port) is None
+
+    def test_in_use_port_reports_the_error(self):
+        import socket
+
+        holder = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        # Loopback-specific bind: the wildcard probe in port_bind_error
+        # must still collide with it on the same port.
+        holder.bind(("127.0.0.1", 0))
+        holder.listen(1)
+        port = holder.getsockname()[1]
+        try:
+            err = port_bind_error(port)
+        finally:
+            holder.close()
+        assert err is not None
+        assert str(port) in err
+
+
+class TestRunDoctorAutoHttps:
+    def test_check_absent_when_env_unset(self, monkeypatch):
+        """Without KLANGKD_TLS_HOSTNAME the check is skipped entirely —
+        the report for an unarmed deployment is unchanged."""
+        monkeypatch.delenv("KLANGKD_TLS_HOSTNAME", raising=False)
+        with patch("platform.system", return_value="Linux"):
+            report = run_doctor()
+        names = [r.name for r in report.results]
+        assert "auto-https ports" not in names
+
+    def test_check_present_when_env_set(self, monkeypatch):
+        monkeypatch.setenv("KLANGKD_TLS_HOSTNAME", "klangk.example.com")
+        with (
+            patch("platform.system", return_value="Linux"),
+            patch("klangk.doctor.port_bind_error", return_value=None),
+        ):
+            report = run_doctor()
+        results = [r for r in report.results if r.name == "auto-https ports"]
+        assert len(results) == 1
+        assert results[0].ok
+
+
+class TestCheckAutoHttpsPortsIssuer:
+    """The port check applies to the ACME issuer only (#3192): the
+    internal issuer binds no privileged ports."""
+
+    def test_skipped_for_internal_issuer(self):
+        assert (
+            check_auto_https_ports("klangkd.internal", issuer="internal")
+            is None
+        )
+
+    def test_runs_for_acme_issuer(self):
+        with patch("klangk.doctor.port_bind_error", return_value=None):
+            r = check_auto_https_ports("klangk.example.com", issuer="acme")
+        assert r is not None and r.ok
+
+    def test_internal_env_skips_check_in_run_doctor(self, monkeypatch):
+        monkeypatch.setenv("KLANGKD_TLS_HOSTNAME", "klangkd.internal")
+        monkeypatch.setenv("KLANGKD_TLS_ISSUER", "internal")
+        with patch("platform.system", return_value="Linux"):
+            report = run_doctor()
+        names = [r.name for r in report.results]
+        assert "auto-https ports" not in names

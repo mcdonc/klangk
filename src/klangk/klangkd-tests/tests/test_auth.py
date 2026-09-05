@@ -2547,6 +2547,8 @@ class TestChangeExpiredPassword:
             user["email"]
         )
         assert not a.password_expired(row)
+
+
 class TestSessionIdleTimeout:
     """#3151: idle sessions terminate at the refresh seam, with a
     separately configurable privileged (admins-group) window and

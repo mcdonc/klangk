@@ -29,6 +29,7 @@ Design (see #1392, #1394):
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 import math
 import os
@@ -98,6 +99,52 @@ _VALID_AUTH_MODES = frozenset({"password", "oidc", "both", "none"})
 _CONTAINER_MEM_LIMIT_RE = re.compile(
     r"^(?P<num>\d+(\.\d+)?)[kKmMgGtTpP]?[bB]?$"
 )
+
+# KLANGKD_TLS_HOSTNAME (#3192): a syntactically valid public FQDN —
+# at least two labels (so a bare "localhost" or NetBIOS name is
+# rejected), labels of alphanumerics + inner hyphens (RFC 1123, 1-63
+# chars each), a TLD that is not all-numeric (so an IP literal like
+# 192.168.1.5 is rejected — public CAs do not issue for it; punycode
+# TLDs like ``xn--p1ai`` pass), and a total length <= 253. Matched
+# case-insensitively; the validator lowercases + strips any trailing
+# root dot before matching.
+_FQDN_RE = re.compile(
+    r"^(?=.{1,253}$)"
+    r"(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+"
+    r"(?!\d+$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$",
+    re.IGNORECASE,
+)
+
+# KLANGKD_ACME_EMAIL (#3192): a single RFC 5322-ish token — one local
+# part, one @, one dot-bearing domain — with no whitespace, angle
+# brackets, quotes, commas, or semicolons. The value is interpolated
+# UNQUOTED into Caddy's global ``email`` directive, so a display-name
+# form like ``Ops <ops@example.com>`` would make caddy reject the whole
+# Caddyfile at load time; the validator refuses it at construction
+# instead (fail-fast, not a proxy respawn loop).
+_ACME_EMAIL_RE = re.compile(r"^[^\s<>@\"',;]+@[^\s<>@\"',;]+\.[^\s<>@\"',;]+$")
+
+# KLANGKD_TLS_HOSTNAME with tls-issuer "internal" (#3192): any RFC 1123
+# host name — single labels (``klangkd``, ``localhost``) and all-numeric
+# TLDs included, no public-FQDN shape required — because the internal
+# CA issues for whatever name it is asked. IPv4 literals additionally
+# pass via :func:`_is_ipv4` (kept separate for clarity; IPv6 needs
+# bracketed site addresses and is rejected with a hint instead).
+_INTERNAL_TLS_NAME_RE = re.compile(
+    r"^(?=.{1,253}$)"
+    r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+    r"(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$",
+    re.IGNORECASE,
+)
+
+
+def _is_ipv4(value: str) -> bool:
+    """True when *value* is a bare IPv4 literal."""
+    try:
+        return "." in value and ipaddress.ip_address(value).version == 4
+    except ValueError:
+        return False
+
 
 # The XDG "klangkd" subdir used by the default-roots (state + config). The
 # server's tree is ``klangkd`` (the binary name) — distinct from the CLI's
@@ -1013,6 +1060,38 @@ class KlangkSettings(BaseSettings):
     # host IP may set this to that IP to drop every other interface from the
     # egress surface (#1542).
     egress_listen: str = "0.0.0.0"
+    # tls_hostname: the public FQDN klangkd serves, arming automatic
+    # TLS on the built-in Caddy proxy (#3192). Unset (the default) keeps
+    # today's exact behavior — plain-HTTP browser listener, ``auto_https
+    # off`` — for outer-proxy deployments. Set to a public DNS name (e.g.
+    # ``klangk.example.com``) and Caddy obtains and renews a CA-issued
+    # certificate (ACME HTTP-01 / TLS-ALPN, Let's Encrypt + ZeroSSL) for
+    # that name and serves the browser listener over HTTPS; the site
+    # address becomes ``https://<tls_hostname>:<port>``. Requires
+    # ``KLANGKD_PORT`` set (full/browser mode) and ports 80/443 reachable
+    # from the internet for the ACME challenge. Validated at construction
+    # (must be a syntactically valid FQDN — not an IP, URL, or single
+    # label). Reloadable on SIGHUP (the re-rendered config is pushed to
+    # the running Caddy over its admin API). See
+    # docs/deployment/https-hosting.md.
+    tls_hostname: str | None = None
+    # tls_issuer: how the armed listener's certificate is obtained
+    # (#3192). "acme" (the default, also when unset): ACME issuance
+    # (Let's Encrypt + ZeroSSL) for the public FQDN — the
+    # internet-facing model. "internal": a self-generated certificate
+    # from the proxy's internal CA — the TLS hop behind an outer proxy:
+    # no public name, no ACME account, no ports 80/443, and the HTTP→
+    # HTTPS redirect is disabled (the outer proxy owns port 80). The
+    # internal root + leaf certificates live under the explicit storage
+    # path and renew automatically (short-lived leaves). Reloadable on
+    # SIGHUP. See docs/deployment/https-hosting.md.
+    tls_issuer: str | None = None
+    # acme_email: the ACME account email (expiry notices, CA account
+    # registration) used when ``tls_hostname`` arms automatic TLS
+    # (#3192). Rendered as Caddy's global ``email`` directive. Strongly
+    # recommended when arming — it is the address the CA sends certificate
+    # expiry / renewal-failure notices to. Reloadable on SIGHUP.
+    acme_email: str | None = None
     # proxy_port: **deprecated** alias for ``egress_port`` (#1542, #1430).
     # Folded into ``egress_port`` by ``_resolve_socket_and_ports``: if both
     # are set, ``egress_port`` wins and ``proxy_port`` is ignored (with a
@@ -1668,6 +1747,123 @@ class KlangkSettings(BaseSettings):
             max_socket_len,
         )
         return self
+
+    @model_validator(mode="after")
+    def _validate_auto_https(self) -> "KlangkSettings":
+        """Validate the automatic-TLS arming trio (#3192).
+
+        ``tls_hostname`` requires ``KLANGKD_PORT`` set — the browser
+        listener it converts to HTTPS only exists in full/browser mode.
+        Its grammar is issuer-conditional (:data:`_FQDN_RE` for the ACME
+        issuer — public CAs only issue for public DNS names; any RFC 1123
+        host name or IPv4 literal for the internal issuer). ``tls_issuer``
+        must be ``acme`` (default) or ``internal``. All failures abort
+        construction so a typo'd arming never silently serves plain HTTP
+        (the whole point of arming is the secure context). Runs after
+        ``_resolve_socket_and_ports`` so the normalized
+        (``None``-when-empty) ``port`` is what is checked.
+        """
+        self._validate_acme_email()
+        issuer = self._normalize_tls_issuer()
+        raw = self.tls_hostname
+        if not raw or not str(raw).strip():
+            self.tls_hostname = None
+            self._warn_tls_issuer_usage(issuer, armed=False)
+            return self
+        hostname = str(raw).strip().rstrip(".").lower()
+        self._validate_tls_hostname_grammar(hostname, issuer, raw)
+        if self.port is None:
+            raise ValueError(
+                "KLANGKD_TLS_HOSTNAME requires KLANGKD_PORT to be set "
+                "(full/browser mode): the automatic-TLS browser listener is "
+                "rendered only when KLANGKD_PORT arms the browser site. Set "
+                "KLANGKD_PORT (443 for the canonical HTTPS listener)."
+            )
+        self.tls_hostname = hostname
+        self._warn_tls_issuer_usage(issuer, armed=True)
+        return self
+
+    def _normalize_tls_issuer(self) -> str:
+        """Canonicalize ``tls_issuer``; raise on an unknown value.
+
+        Returns the effective issuer (``"acme"`` when unset) so the rest
+        of the arming validation can branch on it without re-reading the
+        raw field.
+        """
+        issuer = (self.tls_issuer or "").strip().lower()
+        if issuer not in ("", "acme", "internal"):
+            raise ValueError(
+                f"KLANGKD_TLS_ISSUER={self.tls_issuer!r} is invalid. It "
+                "must be 'acme' (default; Let's Encrypt/ZeroSSL issuance "
+                "for a public name) or 'internal' (self-generated "
+                "certificate from the proxy's internal CA, for a TLS hop "
+                "behind an outer proxy)."
+            )
+        self.tls_issuer = issuer or None
+        return issuer or "acme"
+
+    def _validate_tls_hostname_grammar(
+        self, hostname: str, issuer: str, raw: str
+    ) -> None:
+        """Issuer-conditional hostname grammar (#3192).
+
+        ACME needs a public FQDN; the internal issuer happily covers
+        single-label names (``klangkd``, ``localhost``) and IPv4 literals
+        — the behind-a-proxy TLS-hop names.
+        """
+        if issuer == "internal":
+            if _INTERNAL_TLS_NAME_RE.match(hostname) or _is_ipv4(hostname):
+                return
+            raise ValueError(
+                f"KLANGKD_TLS_HOSTNAME={raw!r} is invalid for "
+                "tls-issuer 'internal'. It must be a host name (labels of "
+                "alphanumerics and inner hyphens, e.g. 'klangkd.internal' "
+                "or 'localhost') or an IPv4 literal — no scheme, port, "
+                "path, or brackets."
+            )
+        if not _FQDN_RE.match(hostname):
+            raise ValueError(
+                f"KLANGKD_TLS_HOSTNAME={raw!r} is invalid. It must be a "
+                "public DNS name (FQDN) like 'klangk.example.com' — not an "
+                "IP address, URL, or single-label host name — because "
+                "public CAs issue certificates for DNS names only. (For "
+                "an internal name or IP, set tls-issuer: internal.)"
+            )
+
+    def _warn_tls_issuer_usage(self, issuer: str, *, armed: bool) -> None:
+        """Warn on inert TLS settings instead of silently ignoring them."""
+        if issuer != "internal":
+            return
+        if armed and self.acme_email:
+            logger.warning(
+                "KLANGKD_ACME_EMAIL has no effect with tls-issuer "
+                "'internal' (no ACME account is created); unset it."
+            )
+        elif not armed:
+            logger.warning(
+                "KLANGKD_TLS_ISSUER is set but KLANGKD_TLS_HOSTNAME is "
+                "not — the issuer has nothing to apply to. Set "
+                "KLANGKD_TLS_HOSTNAME too, or remove KLANGKD_TLS_ISSUER."
+            )
+
+    def _validate_acme_email(self) -> None:
+        """Normalize + sanity-check an explicitly set ``acme_email``.
+
+        The value lands unquoted in Caddy's global ``email`` directive, so
+        anything but a single ``local@domain.tld`` token (a display-name
+        form, embedded spaces/brackets) would make caddy refuse the whole
+        Caddyfile — refuse it here, at construction, instead (#3192).
+        """
+        email = (self.acme_email or "").strip()
+        self.acme_email = email or None
+        if email and not _ACME_EMAIL_RE.match(email):
+            raise ValueError(
+                f"KLANGKD_ACME_EMAIL={self.acme_email!r} is invalid. It "
+                "must be a plain email address like 'ops@example.com' "
+                "(no display name, spaces, or angle brackets — the value "
+                "is passed verbatim to the certificate authority), or "
+                "unset."
+            )
 
     def _normalize_port_fields(self) -> None:
         """Empty-string port settings mean unset; a set value must be
