@@ -638,6 +638,22 @@ sync` report a clear permission-denied error.
 
 ### Added
 
+- **Structured audit stream for identity and privilege actions
+  (#3205).** A new `audit_events` table records account
+  create/update/delete (admin and self-service), group and ACL
+  changes, workspace role assignments and ownership transfers,
+  login/logout/failed-login (with the issuing path in the detail), and
+  session revocation — each row carrying actor, target, and the
+  request's source IP and user agent. Covered by the opt-in
+  `KLANGKD_AUDIT_HMAC_KEY` tagging; writes are best-effort and never
+  fail the action they annotate. Queryable by `manage-events` holders
+  via `GET /api/v1/events/audit` (paged, filterable by event, actor,
+  target). Bounded by `KLANGKD_AUDIT_EVENTS_RETENTION_DAYS` (default
+  `365`) and `KLANGKD_AUDIT_EVENTS_ROW_CAP` (default `100000`,
+  applied per class so a flood of unauthenticated failed-login rows
+  can evict only other failed-login rows), swept
+  hourly; both reloadable on SIGHUP. See
+  [Audit Record Integrity](reference/audit-integrity.md).
 - **`KLANGKD_SESSION_IDLE_TIMEOUT_MINUTES` /
   `KLANGKD_PRIVILEGED_SESSION_IDLE_TIMEOUT_MINUTES` (#3151).** Idle
   session timeout: after this many minutes without an authenticated
@@ -1839,6 +1855,12 @@ stop)`) and a `server: stop at 23:00 (in 1h 12m)` status line in the
 
 ### Changed
 
+- **`GET /events` renamed to `GET /events/containers` (#3205).**
+  The container start/stop history moved under the `/events`
+  resource's Containers stream now that the identity/privilege audit
+  stream (`GET /events/audit`) is its sibling — the ACL grant is
+  unchanged (`manage-events` on `/events` governs both). Update any
+  scripts reading the old path.
 - **Workspace-owned named volumes (#3153).** Named volumes are owned
   by the workspace whose start created them: stamped with a
   `klangk.workspace-id` podman label (never a user), mountable only by

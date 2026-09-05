@@ -38,6 +38,11 @@ logger = logging.getLogger(__name__)
 # client-side mirrors of the length rule stay valid.
 MAX_PASSWORD_BYTES = 72
 
+# Longest attempted identifier stored in an audit row (#3205): bounds
+# the size of attacker-controlled text a ``login.failed`` detail can
+# carry (row count is bounded separately by the per-class prune cap).
+AUDIT_IDENTIFIER_MAX = 256
+
 # PBKDF2-HMAC-SHA512 parameters (#2576). hashlib.pbkdf2_hmac delegates to
 # the OpenSSL the container provides, so under the FIPS provider (see
 # #2570) password hashing routes through the validated module — unlike
@@ -769,13 +774,22 @@ class Auth:
 
     # --- lockout accounting (shared by login and resend-verification) ---
 
-    async def check_login_lockout(self, lockout_key: str) -> dict | None:
+    async def check_login_lockout(
+        self,
+        lockout_key: str,
+        *,
+        source_ip: str | None = None,
+        user_agent: str | None = None,
+    ) -> dict | None:
         """Raise 429 if *lockout_key* is currently locked out.
 
         Returns the pre-verify ``attempt_info`` (``None`` when lockout
         is disabled) for the caller to hand to
         :meth:`record_login_failure`, which needs it to apply the
-        sliding-window reset.
+        sliding-window reset. An attempt on an already-locked key is
+        also audited as a ``login.failed`` row (reason ``locked-out``)
+        with the request's workstation metadata (#3205) — the most
+        attack-signalling period must not leave the audit stream blank.
         """
         if self.login_lockout_failures <= 0:
             return None
@@ -786,6 +800,16 @@ class Auth:
         )
         is_locked, msg = is_locked_out(attempt_info)
         if is_locked:
+            await self.app.state.model.audit_events.record_best_effort(
+                "login.failed",
+                target_type="user",
+                detail={
+                    "identifier": lockout_key[:AUDIT_IDENTIFIER_MAX],
+                    "reason": "locked-out",
+                },
+                source_ip=source_ip,
+                user_agent=user_agent,
+            )
             raise HTTPException(status_code=429, detail=msg)
         return attempt_info
 
@@ -978,6 +1002,7 @@ class Auth:
         *,
         source_ip: str | None = None,
         user_agent: str | None = None,
+        via: str = "password",
     ) -> str:
         """Mint an access token AND register it as a session (#2585).
 
@@ -994,6 +1019,11 @@ class Auth:
         is still purged of expired rows so it stays bounded). The minted
         token's lifetime is capped at the owner's idle window when the
         idle session timeout is armed (#3151).
+
+        Every mint is also one ``login`` row in the ``audit_events``
+        stream (#3205), tagged with *via* — the path that
+        authenticated the caller (password, oidc, invite, …) — and the
+        workstation metadata above.
         """
         token = await self.create_capped_token(user_id, email)
         payload = self.decode_token(token)
@@ -1008,7 +1038,19 @@ class Auth:
             user_agent=user_agent,
         )
         await self._audit_concurrent_logons(user_id, email, source_ip)
-        await self._enforce_session_limit(user_id)
+        await self._enforce_session_limit(
+            user_id, source_ip=source_ip, user_agent=user_agent
+        )
+        await self.app.state.model.audit_events.record_best_effort(
+            "login",
+            actor_id=user_id,
+            actor_email=email,
+            target_type="user",
+            target_id=user_id,
+            detail={"via": via},
+            source_ip=source_ip,
+            user_agent=user_agent,
+        )
         return token
 
     async def _audit_concurrent_logons(
@@ -1092,7 +1134,13 @@ class Auth:
             )
 
     async def _revoke_sessions(
-        self, user_id: str, rows: list[dict], limit: int
+        self,
+        user_id: str,
+        rows: list[dict],
+        limit: int,
+        *,
+        source_ip: str | None = None,
+        user_agent: str | None = None,
     ) -> None:
         """Blocklist then delete the given (oldest-first) session rows.
 
@@ -1121,8 +1169,26 @@ class Auth:
         await self.app.state.model.sessions.remove_sessions(
             [row["jti"] for row in rows]
         )
+        await self.app.state.model.audit_events.record_best_effort(
+            "session.revoke",
+            target_type="session",
+            target_id=user_id,
+            detail={
+                "reason": "session-limit",
+                "revoked": len(rows),
+                "cap": limit,
+            },
+            source_ip=source_ip,
+            user_agent=user_agent,
+        )
 
-    async def _enforce_session_limit(self, user_id: str) -> None:
+    async def _enforce_session_limit(
+        self,
+        user_id: str,
+        *,
+        source_ip: str | None = None,
+        user_agent: str | None = None,
+    ) -> None:
         """Revoke the user's oldest sessions past the configured cap.
 
         Dead sessions (their JWT already failed exp verification) never
@@ -1136,7 +1202,13 @@ class Auth:
             return
         rows = await sessions.list_sessions(user_id)
         if len(rows) > limit:
-            await self._revoke_sessions(user_id, rows[:-limit], limit)
+            await self._revoke_sessions(
+                user_id,
+                rows[:-limit],
+                limit,
+                source_ip=source_ip,
+                user_agent=user_agent,
+            )
 
     async def record_activity(self, user_id: str) -> None:
         """Stamp ``users.last_activity_at`` (throttled) on API access (#2588).
@@ -1285,7 +1357,10 @@ class Auth:
     # --- registration / login flows ---
 
     async def _authenticated_expired_user(
-        self, req: ChangeExpiredPasswordRequest
+        self,
+        req: ChangeExpiredPasswordRequest,
+        source_ip: str | None,
+        user_agent: str | None,
     ) -> dict:
         """Resolve and gate a change-expired-password caller.
 
@@ -1300,9 +1375,16 @@ class Auth:
             req.identifier
         )
         lockout_key = user["email"] if user else req.identifier
-        attempt_info = await self.check_login_lockout(lockout_key)
+        attempt_info = await self.check_login_lockout(
+            lockout_key, source_ip=source_ip, user_agent=user_agent
+        )
         await self._reject_bad_credentials(
-            user, req.current_password, lockout_key, attempt_info
+            user,
+            req.current_password,
+            lockout_key,
+            attempt_info,
+            source_ip=source_ip,
+            user_agent=user_agent,
         )
         if not user.get("verified"):
             raise HTTPException(
@@ -1335,7 +1417,9 @@ class Auth:
         Auto-logins on success (same posture as reset-password) so
         clients finish in one round trip.
         """
-        user = await self._authenticated_expired_user(req)
+        user = await self._authenticated_expired_user(
+            req, source_ip, user_agent
+        )
         self.validate_password_min_age(user)
         self.validate_password(req.new_password)
         await self.validate_password_not_reused(user["id"], req.new_password)
@@ -1345,11 +1429,24 @@ class Auth:
         await self.app.state.model.users.update_password(
             user["id"], password_hash
         )
+        # The expired-password change is a password change (#3205) —
+        # its own audit row, before the auto-login's ``login`` row.
+        await self.app.state.model.audit_events.record_best_effort(
+            "user.password.change",
+            actor_id=user["id"],
+            actor_email=user["email"],
+            target_type="user",
+            target_id=user["id"],
+            detail={"via": "expired-password"},
+            source_ip=source_ip,
+            user_agent=user_agent,
+        )
         token = await self.issue_token(
             user["id"],
             user["email"],
             source_ip=source_ip,
             user_agent=user_agent,
+            via="expired-password",
         )
         await self.app.state.model.users.record_login(user["id"])
         return TokenResponse(access_token=token)
@@ -1386,6 +1483,18 @@ class Auth:
             )
         except SAIntegrityError:
             raise HTTPException(status_code=400, detail="Registration failed")
+        # The account creation is audited (#3205); the auto-login below
+        # adds its own ``login`` row when a session is minted.
+        await self.app.state.model.audit_events.record_best_effort(
+            "user.register",
+            actor_id=user["id"],
+            actor_email=user["email"],
+            target_type="user",
+            target_id=user["id"],
+            detail={"email": user["email"], "verified": verified},
+            source_ip=source_ip,
+            user_agent=user_agent,
+        )
         token = None
         if verified:
             token = await self.issue_token(
@@ -1393,6 +1502,7 @@ class Auth:
                 user["email"],
                 source_ip=source_ip,
                 user_agent=user_agent,
+                via="register",
             )
             await self.app.state.model.users.record_login(user["id"])
         return RegisterResult(
@@ -1400,12 +1510,31 @@ class Auth:
         )
 
     async def _reject_bad_credentials(
-        self, user: dict | None, password: str, lockout_key: str, attempt_info
+        self,
+        user: dict | None,
+        password: str,
+        lockout_key: str,
+        attempt_info,
+        *,
+        source_ip: str | None = None,
+        user_agent: str | None = None,
     ) -> None:
         """401 unless a real password hash matched; records the failure
-        on the lockout key."""
+        on the lockout key. A failed credential check is also one
+        ``login.failed`` row in the ``audit_events`` stream (#3205) —
+        actor-less (the attempter is unauthenticated), targeted at the
+        account when it resolves, with the attempted identifier in the
+        detail."""
         password_ok = await verify_login_password(user, password)
         if user is None or not user.get("password_hash") or not password_ok:
+            await self.app.state.model.audit_events.record_best_effort(
+                "login.failed",
+                target_type="user",
+                target_id=user["id"] if user else None,
+                detail={"identifier": lockout_key[:AUDIT_IDENTIFIER_MAX]},
+                source_ip=source_ip,
+                user_agent=user_agent,
+            )
             await self.record_login_failure(lockout_key, attempt_info)
             raise HTTPException(status_code=401, detail="Invalid credentials")
 
@@ -1430,9 +1559,16 @@ class Auth:
         # Check if locked out before doing any expensive work (the only
         # expensive step below is verify_password's PBKDF2, run in a
         # worker thread so the event loop is not blocked).
-        attempt_info = await self.check_login_lockout(lockout_key)
+        attempt_info = await self.check_login_lockout(
+            lockout_key, source_ip=source_ip, user_agent=user_agent
+        )
         await self._reject_bad_credentials(
-            user, req.password, lockout_key, attempt_info
+            user,
+            req.password,
+            lockout_key,
+            attempt_info,
+            source_ip=source_ip,
+            user_agent=user_agent,
         )
         if not user.get("verified"):
             raise HTTPException(
@@ -1454,6 +1590,7 @@ class Auth:
             user["email"],
             source_ip=source_ip,
             user_agent=user_agent,
+            via="password",
         )
         # Stamp after minting, matching every other session-issuing site
         # (#2583): if minting fails, no login is recorded.

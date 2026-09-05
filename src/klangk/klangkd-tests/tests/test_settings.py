@@ -1873,6 +1873,61 @@ class TestContainerEventsPruneSettings:
             make_settings({}, config_file=str(cfg))
 
 
+# ---------------------------------------------------------------------------
+# audit_events prune knobs (#3205)
+# ---------------------------------------------------------------------------
+
+
+class TestAuditEventsPruneSettings:
+    def test_defaults(self):
+        s = make_settings({})
+        assert s.audit_events_retention_days == 365
+        assert s.audit_events_row_cap == 100000
+
+    def test_env_overrides(self):
+        s = make_settings(
+            {
+                "KLANGKD_AUDIT_EVENTS_RETENTION_DAYS": "7",
+                "KLANGKD_AUDIT_EVENTS_ROW_CAP": "500",
+            }
+        )
+        assert s.audit_events_retention_days == 7
+        assert s.audit_events_row_cap == 500
+
+    def test_zero_disables(self):
+        s = make_settings(
+            {
+                "KLANGKD_AUDIT_EVENTS_RETENTION_DAYS": "0",
+                "KLANGKD_AUDIT_EVENTS_ROW_CAP": "0",
+            }
+        )
+        assert s.audit_events_retention_days == 0
+        assert s.audit_events_row_cap == 0
+
+    def test_empty_string_falls_back_to_default(self):
+        s = make_settings(
+            {
+                "KLANGKD_AUDIT_EVENTS_RETENTION_DAYS": "",
+                "KLANGKD_AUDIT_EVENTS_ROW_CAP": "",
+            }
+        )
+        assert s.audit_events_retention_days == 365
+        assert s.audit_events_row_cap == 100000
+
+    @pytest.mark.parametrize(
+        ("key", "value"),
+        [
+            ("KLANGKD_AUDIT_EVENTS_RETENTION_DAYS", "-1"),
+            ("KLANGKD_AUDIT_EVENTS_ROW_CAP", "-5"),
+            ("KLANGKD_AUDIT_EVENTS_RETENTION_DAYS", "soon"),
+            ("KLANGKD_AUDIT_EVENTS_ROW_CAP", "1.5"),
+        ],
+    )
+    def test_malformed_raises(self, key, value):
+        with pytest.raises(Exception, match=key):
+            make_settings({key: value})
+
+
 class TestNumericSettingCoercion:
     """Numeric settings accept int/float, string, and file:/cmd: (#2603).
 
@@ -1958,6 +2013,7 @@ class TestNumericSettingCoercion:
             make_settings({"KLANGKD_PASSWORD_MIN_CHANGED": "73"})
         s = make_settings({"KLANGKD_PASSWORD_MIN_CHANGED": "72"})
         assert s.password_min_changed == 72
+
     def test_password_min_age_hours_capped(self):
         """#3177: the minimum age ceiling (8760h = 365d) catches unit
         confusion rather than limiting a real policy."""

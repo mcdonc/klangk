@@ -36,7 +36,7 @@ api_auth = sys.modules["klangk.api.auth"]
 # Total HTTP route operations the app registers.  The api.py split had
 # to preserve the monolith's 90 exactly; the expired-password route
 # (#3177) and /audit (#3154) are the additions since.
-EXPECTED_ROUTE_COUNT = 92
+EXPECTED_ROUTE_COUNT = 93
 
 # Per-domain submodules and the number of routes each owns.  86 sub-routes
 # + 3 routes defined directly on the main router (version, config,
@@ -46,7 +46,7 @@ SUBMODULE_ROUTES = {
     "workspaces": 27,
     "resources": 10,  # 6 files + 4 images/volumes (merged submodules)
     "browser_delegate": 2,
-    "admin": 27,
+    "admin": 28,
     "llm_proxy": 2,
 }
 
@@ -90,7 +90,8 @@ REPRESENTATIVE_PATHS = [
     f"{API_PREFIX}/invitations",
     f"{API_PREFIX}/groups",
     f"{API_PREFIX}/server/schedule",
-    f"{API_PREFIX}/events",
+    f"{API_PREFIX}/events/containers",
+    f"{API_PREFIX}/events/audit",
     f"{API_PREFIX}/acl/tree",
     # llm proxy (#2072)
     "/llm-proxy/models",

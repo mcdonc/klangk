@@ -16,7 +16,10 @@ FULL_WS = "aaaa1111bbbb-cccc-dddd-eeee-ffffffffffff"
 
 
 def _app(
-    *, prune: AsyncMock | None = None, events_prune: AsyncMock | None = None
+    *,
+    prune: AsyncMock | None = None,
+    events_prune: AsyncMock | None = None,
+    audit_prune: AsyncMock | None = None,
 ):
     app = types.SimpleNamespace()
     app.state = types.SimpleNamespace()
@@ -26,9 +29,13 @@ def _app(
     container_events = types.SimpleNamespace(
         prune=events_prune or AsyncMock(return_value=0)
     )
+    audit_events = types.SimpleNamespace(
+        prune=audit_prune or AsyncMock(return_value=0)
+    )
     app.state.model = types.SimpleNamespace(
         egress_consent=egress_consent,
         container_events=container_events,
+        audit_events=audit_events,
     )
     return app
 
@@ -138,6 +145,7 @@ class TestContainerEventsSweep2924:
         await sw.sweep()
         assert app.state.model.egress_consent.prune.await_count == 1
         assert app.state.model.container_events.prune.await_count == 1
+        assert app.state.model.audit_events.prune.await_count == 1
 
     async def test_prune_counts_logged(self, caplog):
         """A non-zero prune count is surfaced at info (operator can see the

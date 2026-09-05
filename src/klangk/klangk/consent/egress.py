@@ -87,6 +87,7 @@ class EgressConsentSweeper(IntervalWorker):
         model = self.app.state.model
         await self._prune_target("egress consent", model.egress_consent)
         await self._prune_target("container events", model.container_events)
+        await self._prune_target("audit events", model.audit_events)
 
     async def _prune_target(self, label: str, target) -> None:
         """Prune one bounded table; a failure is logged and the remaining

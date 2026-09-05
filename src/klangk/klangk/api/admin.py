@@ -20,7 +20,7 @@ from .. import (
     wshandler,
 )
 from ..server_schedule import resolve_fire_at
-from .common import get_app_dep
+from .common import get_app_dep, workstation
 from ..model import (
     ACTION_ALLOW,
     AgentPrincipalError,
@@ -37,6 +37,45 @@ from .common import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+async def record_admin_event(
+    app,
+    request: Request,
+    admin: dict,
+    event: str,
+    target_type: str,
+    target_id: str | None,
+    detail: dict | None,
+) -> None:
+    """Write one admin identity/privilege audit row (#3205).
+
+    Every admin-route audit emit needs the same ingredients — the
+    acting admin, the workstation the request came from, and the
+    event's target/detail — so they funnel through here. Best-effort
+    by design (``record_best_effort``): an unwritable audit table is
+    logged, never bricked onto account management.
+    """
+    source_ip, user_agent = workstation(request)
+    await app.state.model.audit_events.record_best_effort(
+        event,
+        actor_id=admin["id"],
+        actor_email=admin["email"],
+        target_type=target_type,
+        target_id=target_id,
+        detail=detail,
+        source_ip=source_ip,
+        user_agent=user_agent,
+    )
+
+
+async def record_admin_user_event(
+    app, request: Request, admin: dict, event: str, user_id: str, detail: dict
+) -> None:
+    """``record_admin_event`` with a user target (the common case)."""
+    await record_admin_event(
+        app, request, admin, event, "user", user_id, detail
+    )
 
 
 class SendInviteRequest(BaseModel):
@@ -290,6 +329,14 @@ async def admin_create_user(
                 "verification email",
             )
 
+        await record_admin_user_event(
+            app,
+            request,
+            admin,
+            "user.create",
+            user_id,
+            {"email": req.email, "status": "pending-verification"},
+        )
         return {
             "id": user_id,
             "email": req.email,
@@ -308,6 +355,14 @@ async def admin_create_user(
     # so no crash window can leave an unflagged admin-chosen password.
     user = await app.state.model.users.create_user(
         req.email, password_hash, verified=True, must_change_password=True
+    )
+    await record_admin_user_event(
+        app,
+        request,
+        admin,
+        "user.create",
+        user["id"],
+        {"email": req.email, "status": "created"},
     )
     return {"id": user["id"], "email": user["email"], "status": "created"}
 
@@ -337,6 +392,7 @@ async def list_user_workspaces(
 @router.delete("/users/{user_id}")
 async def delete_user(
     user_id: str,
+    request: Request,
     admin: dict = Depends(acl.has_permission("manage-users")),
     app=Depends(get_app_dep),
 ):
@@ -376,6 +432,17 @@ async def delete_user(
     registry = app.state.container_registry
     for ws_id in ws_ids:
         registry.prune_workspace_registry_entries(ws_id)
+    # The deletion is audited with the victim's email in the detail —
+    # the user row (and its email) is gone, so the audit row is the
+    # only place the identity survives (#3205).
+    await record_admin_user_event(
+        app,
+        request,
+        admin,
+        "user.delete",
+        user_id,
+        {"email": user["email"]},
+    )
     return {"status": "deleted"}
 
 
@@ -464,10 +531,22 @@ async def _update_must_change_password(app, user: dict, flag: bool) -> None:
     await app.state.model.users.set_must_change_password(user["id"], flag)
 
 
+# The admin-updatable fields, in the order UpdateUserRequest declares
+# them — the audit detail names which of them a PATCH carried (#3205).
+_UPDATABLE_USER_FIELDS = (
+    "email",
+    "password",
+    "handle",
+    "disabled",
+    "must_change_password",
+)
+
+
 @router.patch("/users/{user_id}")
 async def update_user(
     user_id: str,
     req: UpdateUserRequest,
+    request: Request,
     admin: dict = Depends(acl.has_permission("manage-users")),
     app=Depends(get_app_dep),
 ):
@@ -475,7 +554,49 @@ async def update_user(
     await _apply_user_field_updates(app, req, user)
     if req.disabled is not None:
         await _update_user_disabled(app, req, user_id, admin)
+    changed = [
+        f for f in _UPDATABLE_USER_FIELDS if getattr(req, f) is not None
+    ]
+    await record_admin_user_event(
+        app,
+        request,
+        admin,
+        "user.update",
+        user_id,
+        {"fields": changed},
+    )
+    await record_admin_credential_events(app, request, admin, req, user_id)
     return {"status": "updated"}
+
+
+async def record_admin_credential_events(
+    app, request: Request, admin: dict, req: "UpdateUserRequest", user_id: str
+) -> None:
+    """Emit the specific credential events an admin PATCH carried.
+
+    The self-service paths emit ``user.password.change`` /
+    ``user.email.change`` directly, so an incident query on those names
+    must see admin-forced changes too (#3205 review) — not just the
+    ``user.update`` row the PATCH always writes.
+    """
+    if req.password is not None:
+        await record_admin_user_event(
+            app,
+            request,
+            admin,
+            "user.password.change",
+            user_id,
+            {"via": "admin"},
+        )
+    if req.email is not None:
+        await record_admin_user_event(
+            app,
+            request,
+            admin,
+            "user.email.change",
+            user_id,
+            {"email": req.email, "via": "admin"},
+        )
 
 
 def _reject_self_disable(
@@ -538,6 +659,7 @@ async def _update_user_disabled(
 @router.post("/users/{user_id}/unlockout")
 async def unlock_user(
     user_id: str,
+    request: Request,
     admin: dict = Depends(acl.has_permission("manage-users")),
     app=Depends(get_app_dep),
 ):
@@ -546,6 +668,9 @@ async def unlock_user(
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
     await app.state.model.login_attempts.clear_login_attempts(user["email"])
+    await record_admin_user_event(
+        app, request, admin, "user.unlock", user_id, {"email": user["email"]}
+    )
     return {"status": "unlocked"}
 
 
@@ -668,6 +793,7 @@ async def list_groups(
 @router.post("/groups")
 async def create_group(
     req: CreateGroupRequest,
+    request: Request,
     admin: dict = Depends(acl.has_permission("manage-groups")),
     app=Depends(get_app_dep),
 ):
@@ -677,6 +803,15 @@ async def create_group(
             status_code=409, detail="A group with this name already exists"
         )
     group = await app.state.model.users.create_group(req.name, req.description)
+    await record_admin_event(
+        app,
+        request,
+        admin,
+        "group.create",
+        "group",
+        group["id"],
+        {"name": req.name},
+    )
     return group
 
 
@@ -684,24 +819,45 @@ async def create_group(
 async def update_group(
     group_id: str,
     req: UpdateGroupRequest,
+    request: Request,
     admin: dict = Depends(acl.has_permission("manage-groups")),
     app=Depends(get_app_dep),
 ):
-    return await update_group_fields(app, group_id, req)
+    result = await update_group_fields(app, group_id, req)
+    await record_admin_event(
+        app,
+        request,
+        admin,
+        "group.update",
+        "group",
+        group_id,
+        {"name": req.name, "description": req.description},
+    )
+    return result
 
 
 @router.delete("/groups/{group_id}")
 async def delete_group(
     group_id: str,
+    request: Request,
     admin: dict = Depends(acl.has_permission("manage-groups")),
     app=Depends(get_app_dep),
 ):
-    await get_group_or_404(app, group_id)
+    group = await get_group_or_404(app, group_id)
     await app.state.model.users.delete_group(group_id)
     # Clean up the group's ACL entries (ported from the removed
     # DELETE /groups — the admin variant used to orphan them).
     await app.state.model.acl.delete_acl_entries_for_resource(
         f"/groups/{group_id}"
+    )
+    await record_admin_event(
+        app,
+        request,
+        admin,
+        "group.delete",
+        "group",
+        group_id,
+        {"name": group["name"]},
     )
     return {"status": "deleted"}
 
@@ -720,6 +876,7 @@ async def list_group_members(
 async def add_group_member(
     group_id: str,
     req: AddGroupMemberRequest,
+    request: Request,
     admin: dict = Depends(acl.has_permission("manage-groups")),
     app=Depends(get_app_dep),
 ):
@@ -728,6 +885,15 @@ async def add_group_member(
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
     await app.state.model.users.add_user_to_group(req.user_id, group_id)
+    await record_admin_event(
+        app,
+        request,
+        admin,
+        "group.member.add",
+        "group",
+        group_id,
+        {"user_id": req.user_id},
+    )
     return {"status": "added"}
 
 
@@ -735,6 +901,7 @@ async def add_group_member(
 async def remove_group_member(
     group_id: str,
     user_id: str,
+    request: Request,
     admin: dict = Depends(acl.has_permission("manage-groups")),
     app=Depends(get_app_dep),
 ):
@@ -745,6 +912,15 @@ async def remove_group_member(
         raise HTTPException(
             status_code=404, detail="User is not a member of this group"
         )
+    await record_admin_event(
+        app,
+        request,
+        admin,
+        "group.member.remove",
+        "group",
+        group_id,
+        {"user_id": user_id},
+    )
     return {"status": "removed"}
 
 
@@ -807,6 +983,7 @@ def workspace_scope(resource: str) -> str | None:
 async def replace_resource_acl(
     resource: str,
     entries: list[WorkspaceAclEntry],
+    request: Request,
     admin: dict = Depends(acl.has_permission("manage-acls")),
     app=Depends(get_app_dep),
 ):
@@ -832,6 +1009,15 @@ async def replace_resource_acl(
 
     acl_entries = serialize_acl_entries(entries)
     await app.state.model.acl.replace_acl_entries(resource, acl_entries)
+    await record_admin_event(
+        app,
+        request,
+        admin,
+        "acl.replace",
+        "acl",
+        resource,
+        {"entries": len(entries)},
+    )
     return await app.state.model.acl.get_acl_entries_resolved(resource)
 
 
@@ -948,7 +1134,44 @@ async def _annotate_events(app, rows: list[dict]) -> list[dict]:
     ]
 
 
-@router.get("/events")
+@router.get("/events/audit")
+async def list_audit_events(
+    request: Request,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    event: str | None = None,
+    actor: str | None = None,
+    target: str | None = None,
+    viewer: dict = Depends(acl.has_permission("manage-events")),
+):
+    """Paged identity/privilege audit history (#3205).
+
+    Newest-first rows from the ``audit_events`` table plus the
+    filter-matching total. ``event`` / ``actor`` / ``target`` are
+    optional substrings (event name; actor id or email; target id).
+    The raw ``hmac`` tag is verification-internal (#3174) and never
+    ships on the wire. Gated on ``manage-events`` — the same
+    permission as the container-events view, so a delegate granted
+    read-only audit access sees both streams.
+    """
+    app = request.app
+    rows = await app.state.model.audit_events.list_events(
+        event=event, actor=actor, target=target, limit=limit, offset=offset
+    )
+    total = await app.state.model.audit_events.count_events(
+        event=event, actor=actor, target=target
+    )
+    return {
+        "items": [
+            {k: v for k, v in row.items() if k != "hmac"} for row in rows
+        ],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
+
+
+@router.get("/events/containers")
 async def list_container_events(
     request: Request,
     limit: int = Query(50, ge=1, le=200),

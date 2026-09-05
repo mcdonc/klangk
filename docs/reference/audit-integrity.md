@@ -1,7 +1,8 @@
 # Audit Record Integrity
 
 klangk can tag its audit records — the `container_events` container
-lifecycle history and the `egress_consent` egress verdict trail — with
+lifecycle history, the `egress_consent` egress verdict trail, and the
+`audit_events` identity/privilege stream (#3205) — with
 an HMAC-SHA256 tag written at the same time as the row. The tag lets an
 **external** checker prove, later and off-host, that a row was not
 modified after klangk wrote it. klangkd itself only _writes_ tags; it
@@ -47,8 +48,10 @@ max row id) and verify pre-rotation rows with the old key.
 
 ## What is tagged
 
-Both tables live in `<data_dir>/klangk.db` and gained a nullable `hmac`
-TEXT column (migration 0030). The tag is computed over a canonical
+All three tables live in `<data_dir>/klangk.db`. `container_events` and
+`egress_consent` gained a nullable `hmac` TEXT column in migration 0030;
+`audit_events` (#3205) ships with its `hmac` column from migration 0034.
+The tag is computed over a canonical
 serialization of the row's data columns — everything **except** the
 `hmac` column itself — in this fixed order:
 
@@ -57,14 +60,16 @@ cause, container_id, container_role, network_namespace, created_at`
 - `egress_consent`: `id, workspace_id, dest_host, dest_port, pid,
 process_name, decision, duration, requested_at, decided_at,
 decided_by, revoked_at, revoked_by`
+- `audit_events`: `id, event, actor_id, actor_email, target_type,
+target_id, detail, source_ip, user_agent, created_at`
 
 ## The tag format (the contract)
 
 Reimplementing verification only requires the standard library. The
 tagged payload is built as follows:
 
-1. Start with the table name: the literal string `container_events` or
-   `egress_consent`.
+1. Start with the table name: the literal string `container_events`,
+   `egress_consent`, or `audit_events`.
 2. For each covered column, in the fixed order above, append one part:
    - value is SQL `NULL` → the string `<column>=n`
    - otherwise → `s = str(value)` (Python `str()`) and the string
@@ -119,6 +124,11 @@ COLUMNS = {
         "id", "workspace_id", "dest_host", "dest_port", "pid",
         "process_name", "decision", "duration", "requested_at",
         "decided_at", "decided_by", "revoked_at", "revoked_by",
+    ],
+    "audit_events": [
+        "id", "event", "actor_id", "actor_email", "target_type",
+        "target_id", "detail", "source_ip", "user_agent",
+        "created_at",
     ],
 }
 

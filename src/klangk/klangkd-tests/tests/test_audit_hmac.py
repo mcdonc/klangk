@@ -12,6 +12,7 @@ import pytest
 
 from klangk.model.audit_hmac import (
     _canonical_pairs,
+    compute_audit_event_hmac,
     compute_container_event_hmac,
     compute_egress_consent_hmac,
     resolve_audit_hmac_key,
@@ -61,6 +62,7 @@ class TestKeyResolution:
         row = {"id": 1}
         assert compute_container_event_hmac(FakeSettings(), row) is None
         assert compute_egress_consent_hmac(FakeSettings(), row) is None
+        assert compute_audit_event_hmac(FakeSettings(), row) is None
 
 
 class TestCanonicalSerialization:
@@ -194,6 +196,85 @@ class TestContainerEventsHmac:
         """A row pruned between pre-write and finalize settles nothing."""
         events = app_state.state.model.container_events
         await events.finalize_event(999999, container_id="cid-gone")
+
+
+class TestComputeAuditEventHmac:
+    def test_deterministic_and_sized(self):
+        class S:
+            audit_hmac_key = "k"
+            jwt_secret = "j"
+
+        row = {
+            "id": 1,
+            "event": "login",
+            "actor_id": "u1",
+            "actor_email": "u1@example.com",
+            "target_type": "user",
+            "target_id": "u1",
+            "detail": '{"via": "password"}',
+            "source_ip": "10.0.0.1",
+            "user_agent": "pytest",
+            "created_at": 1000.0,
+        }
+        tag1 = compute_audit_event_hmac(S(), row)
+        tag2 = compute_audit_event_hmac(S(), row)
+        assert tag1 == tag2
+        assert len(tag1) == 64  # sha256 hex
+
+    def test_different_data_different_tag(self):
+        class S:
+            audit_hmac_key = "k"
+            jwt_secret = "j"
+
+        row = {
+            "id": 1,
+            "event": "login",
+            "actor_id": "u1",
+            "actor_email": "u1@example.com",
+            "target_type": "user",
+            "target_id": "u1",
+            "detail": None,
+            "source_ip": "10.0.0.1",
+            "user_agent": "pytest",
+            "created_at": 1000.0,
+        }
+        tag1 = compute_audit_event_hmac(S(), row)
+        row["source_ip"] = "10.0.0.2"
+        tag2 = compute_audit_event_hmac(S(), row)
+        assert tag1 != tag2
+
+
+class TestAuditEventsHmac:
+    async def test_record_stores_hmac(self, app_state, db):
+        events = app_state.state.model.audit_events
+        await events.record(
+            "login",
+            actor_id="u1",
+            actor_email="u1@example.com",
+            target_type="user",
+            target_id="u1",
+            detail={"via": "password"},
+            source_ip="10.0.0.1",
+            user_agent="pytest",
+        )
+        rows = await events.list_events()
+        row = rows[0]
+        assert row["hmac"] is not None
+        # The tag covers the stored JSON string; list_events parses
+        # detail into an object, so re-serialize before comparing.
+        import json
+
+        tagged = {**row, "detail": json.dumps(row["detail"])}
+        assert row["hmac"] == compute_audit_event_hmac(
+            app_state.state.settings, tagged
+        )
+
+    async def test_no_key_writes_no_hmac(self, app_state, db):
+        events = app_state.state.model.audit_events
+        app_state.state.settings.audit_hmac_key = None
+        await events.record("logout")
+        rows = await events.list_events()
+        assert rows[0]["hmac"] is None
 
 
 class TestEgressConsentHmac:

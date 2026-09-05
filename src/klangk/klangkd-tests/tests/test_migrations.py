@@ -94,6 +94,7 @@ class TestRunner:
             (31, "0031_password_age"),
             (32, "0032_must_change_password"),
             (33, "0033_user_sessions_last_seen"),
+            (34, "0034_audit_events"),
         ]
         async with aiosqlite.connect(str(app_state.state.db.db_path)) as db:
             assert await _recorded(db) == expected
@@ -197,6 +198,7 @@ class TestRunner:
                 (31, "0031_password_age"),
                 (32, "0032_must_change_password"),
                 (33, "0033_user_sessions_last_seen"),
+                (34, "0034_audit_events"),
             ]
 
     async def test_m0008_agent_identity_and_human_collision(
@@ -3404,5 +3406,59 @@ class TestM0033UserSessionsLastSeen:
                 "2026-01-01 10:00:00",
                 "jti-a",
             )
+        finally:
+            await db.__aexit__(None, None, None)
+
+
+class TestM0034AuditEvents:
+    """m0034 creates the ``audit_events`` identity/privilege audit
+    table (#3205) with its time/event indexes; the ``hmac`` column
+    ships with the table (the shared #3174 tagging covers it from the
+    first row)."""
+
+    async def test_creates_table_and_indexes(self, tmp_path):
+        db = aiosqlite.connect(str(tmp_path / "m0034.db"))
+        await db.__aenter__()
+        try:
+            from klangk.model.migrations import m0034_audit_events
+
+            await m0034_audit_events.migration.apply(db)
+            info = await db.execute("PRAGMA table_info(audit_events)")
+            cols = {r[1] for r in await info.fetchall()}
+            assert {
+                "id",
+                "event",
+                "actor_id",
+                "actor_email",
+                "target_type",
+                "target_id",
+                "detail",
+                "source_ip",
+                "user_agent",
+                "created_at",
+                "hmac",
+            } <= cols
+            idx = await db.execute(
+                "SELECT name FROM sqlite_master WHERE type='index'"
+                " AND tbl_name='audit_events'"
+            )
+            names = {r[0] for r in await idx.fetchall()}
+            assert {
+                "idx_audit_events_time",
+                "idx_audit_events_event",
+            } <= names
+        finally:
+            await db.__aexit__(None, None, None)
+
+    async def test_fresh_db_is_noop(self, tmp_path):
+        """The CREATEs are IF NOT EXISTS — re-applying over a database
+        the baseline already built settles nothing."""
+        db = aiosqlite.connect(str(tmp_path / "m0034-existing.db"))
+        await db.__aenter__()
+        try:
+            from klangk.model.migrations import m0034_audit_events
+
+            await m0034_audit_events.migration.apply(db)
+            await m0034_audit_events.migration.apply(db)  # idempotent
         finally:
             await db.__aexit__(None, None, None)

@@ -16719,7 +16719,7 @@ class TestContainerEventsAPI:
         )
         await events.record(ws_id, EVENT_START, CAUSE_AUTO_START)
 
-        resp = await client.get("/api/v1/events", headers=headers)
+        resp = await client.get("/api/v1/events/containers", headers=headers)
         assert resp.status_code == 200, resp.text
         data = resp.json()
         assert data["total"] == 3
@@ -16756,7 +16756,7 @@ class TestContainerEventsAPI:
         await events.record(ws_b, EVENT_START, CAUSE_API, container_id="b-0")
 
         resp = await client.get(
-            "/api/v1/events",
+            "/api/v1/events/containers",
             headers=headers,
             params={"workspace_id": ws_a, "limit": 2, "offset": 1},
         )
@@ -16781,27 +16781,35 @@ class TestContainerEventsAPI:
 
         # An exact id through the unified param narrows like workspace_id.
         resp = await client.get(
-            "/api/v1/events", headers=headers, params={"workspace": ws_a}
+            "/api/v1/events/containers",
+            headers=headers,
+            params={"workspace": ws_a},
         )
         assert resp.status_code == 200, resp.text
         assert [i["container_id"] for i in resp.json()["items"]] == ["a-0"]
 
         # A name substring narrows to every workspace whose name matches.
         resp = await client.get(
-            "/api/v1/events", headers=headers, params={"workspace": "alpha"}
+            "/api/v1/events/containers",
+            headers=headers,
+            params={"workspace": "alpha"},
         )
         data = resp.json()
         assert data["total"] == 1
         assert [i["container_id"] for i in data["items"]] == ["a-0"]
 
         resp = await client.get(
-            "/api/v1/events", headers=headers, params={"workspace": "lab"}
+            "/api/v1/events/containers",
+            headers=headers,
+            params={"workspace": "lab"},
         )
         assert resp.json()["total"] == 2
 
         # A query matching no id and no name yields an empty page.
         resp = await client.get(
-            "/api/v1/events", headers=headers, params={"workspace": "nope"}
+            "/api/v1/events/containers",
+            headers=headers,
+            params={"workspace": "nope"},
         )
         data = resp.json()
         assert data["total"] == 0
@@ -16809,7 +16817,7 @@ class TestContainerEventsAPI:
 
         # The unified param wins over the legacy exact workspace_id.
         resp = await client.get(
-            "/api/v1/events",
+            "/api/v1/events/containers",
             headers=headers,
             params={"workspace": "alpha", "workspace_id": ws_b},
         )
@@ -16832,7 +16840,7 @@ class TestContainerEventsAPI:
 
         for key in ("workspace", "workspace_id"):
             resp = await client.get(
-                "/api/v1/events", headers=headers, params={key: ""}
+                "/api/v1/events/containers", headers=headers, params={key: ""}
             )
             assert resp.status_code == 200, (key, resp.text)
             data = resp.json()
@@ -16852,7 +16860,7 @@ class TestContainerEventsAPI:
             CAUSE_DELETE,
             actor_id="no-such-user",
         )
-        resp = await client.get("/api/v1/events", headers=headers)
+        resp = await client.get("/api/v1/events/containers", headers=headers)
         assert resp.status_code == 200
         item = resp.json()["items"][0]
         assert item["workspace_name"] is None
@@ -16863,7 +16871,7 @@ class TestContainerEventsAPI:
         headers = await self._admin_headers(client)
         for params in ({"limit": 0}, {"limit": 501}, {"offset": -1}):
             resp = await client.get(
-                "/api/v1/events",
+                "/api/v1/events/containers",
                 headers=headers,
                 params=params,
             )
@@ -16871,7 +16879,7 @@ class TestContainerEventsAPI:
 
     async def test_plain_user_forbidden(self, client, app, user):
         headers = await _auth_headers(client)
-        resp = await client.get("/api/v1/events", headers=headers)
+        resp = await client.get("/api/v1/events/containers", headers=headers)
         assert resp.status_code == 403
 
     async def test_delegated_grant_reads_without_admin(
@@ -16895,7 +16903,7 @@ class TestContainerEventsAPI:
         )
 
         headers = await _auth_headers(client)
-        resp = await client.get("/api/v1/events", headers=headers)
+        resp = await client.get("/api/v1/events/containers", headers=headers)
         assert resp.status_code == 200, resp.text
         data = resp.json()
         assert data["total"] == 1
@@ -17602,7 +17610,7 @@ class TestAdminTabPermissions:
             "/api/v1/invitations",
             "/api/v1/acl/tree",
             "/api/v1/server/schedule",
-            "/api/v1/events",
+            "/api/v1/events/containers",
         ):
             resp = await client.get(path, headers=headers)
             assert resp.status_code == 200, (path, resp.text)
@@ -17629,7 +17637,7 @@ class TestAdminTabPermissions:
             "/api/v1/invitations",
             "/api/v1/acl/tree",
             "/api/v1/server/schedule",
-            "/api/v1/events",
+            "/api/v1/events/containers",
         ):
             resp = await client.get(path, headers=headers)
             assert resp.status_code == 403, path

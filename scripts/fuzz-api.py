@@ -205,6 +205,16 @@ def fuzz_uuid(rng: random.Random) -> str:
     return rng.choice(choices)
 
 
+def _fuzz_field(rng: random.Random, generators: dict, kind) -> object:
+    """One body-field value. Known string kinds draw from their
+    generator; a non-string schema kind (e.g. the LLM endpoint's
+    ``messages`` list) falls back to a generic fuzzed value — a
+    ``dict.get`` on an unhashable kind would raise and abort the run."""
+    if not isinstance(kind, str):
+        return fuzz_value(rng)
+    return generators.get(kind, fuzz_string)(rng)
+
+
 def fuzz_body(rng: random.Random, schema: dict[str, str]) -> dict:
     """Build a fuzzed JSON body from a schema like {"email": "email", "password": "password"}."""
     generators = {
@@ -225,7 +235,7 @@ def fuzz_body(rng: random.Random, schema: dict[str, str]) -> dict:
         if rng.random() < 0.1:
             body[key] = fuzz_value(rng)
         else:
-            body[key] = generators.get(kind, fuzz_string)(rng)
+            body[key] = _fuzz_field(rng, generators, kind)
     # Sometimes add extra unknown fields
     if rng.random() < 0.2:
         body[fuzz_string(rng)] = fuzz_value(rng)
@@ -532,9 +542,23 @@ ENDPOINTS: list[tuple[str, str, dict | None, dict | None]] = [
     # the point.
     (
         "GET",
-        f"{P}/events",
+        f"{P}/events/containers",
         None,
         {"limit": "int", "offset": "int", "workspace_id": "string"},
+    ),
+    # Identity/privilege audit stream (#3205): same paging envelope,
+    # with `event`/`actor`/`target` substring filters.
+    (
+        "GET",
+        f"{P}/events/audit",
+        None,
+        {
+            "limit": "int",
+            "offset": "int",
+            "event": "string",
+            "actor": "string",
+            "target": "string",
+        },
     ),
     # Server scheduling (#2661). `action` is "stop"|"recycle"; `at` is
     # absolute ISO-8601 and `in_seconds` a positive delay — the fuzzer's
@@ -698,6 +722,10 @@ class AnomalyTracker:
         self.connection_errors: list[dict] = []
         self.requests_sent = 0
         self.by_status: dict[int, int] = {}
+        # The fuzz loop itself aborted (login failure, fixture seeding
+        # crash, ...): a run that sent no requests must never report
+        # CLEAN / exit 0.
+        self.runner_error = False
 
     def record(
         self,
@@ -760,10 +788,16 @@ class AnomalyTracker:
         )
         exception_lines = _stderr_anomaly_lines(stderr_output)
         _report_stderr_anomalies(lines, exception_lines)
+        _report_runner_error(lines, self)
 
         lines.append("")
-        has_anomalies = bool(
-            self.server_errors or self.connection_errors or exception_lines
+        has_anomalies = any(
+            [
+                self.server_errors,
+                self.connection_errors,
+                exception_lines,
+                self.runner_error,
+            ]
         )
         if has_anomalies:
             lines.append("RESULT: ANOMALIES FOUND")
@@ -771,6 +805,16 @@ class AnomalyTracker:
             lines.append("RESULT: CLEAN ✓")
         lines.append("=" * 60)
         return "\n".join(lines)
+
+
+def _report_runner_error(lines: list[str], tracker: "AnomalyTracker") -> None:
+    """Note a session that aborted before/while running — a clean
+    report with zero requests would be a false pass."""
+    if tracker.runner_error:
+        lines.append("")
+        lines.append(
+            "RUNNER ERROR: the session aborted early — see the traceback above"
+        )
 
 
 def _report_server_errors(lines: list[str], errors: list[dict]) -> None:
@@ -1219,6 +1263,7 @@ def fuzz_session(tracker: AnomalyTracker, args, seed: int, data_dir: str) -> str
     except KeyboardInterrupt:
         logger.info("Interrupted by user")
     except Exception:
+        tracker.runner_error = True
         logger.exception("Fuzz runner error")
     finally:
         stop_server(proc, tee)
@@ -1234,9 +1279,13 @@ def write_server_log(stderr_data: str) -> None:
 
 
 def fuzz_exit(tracker: AnomalyTracker) -> int:
-    """Exit code: 1 on 5xx or connection errors (the anomalies that gate
-    CI), 0 otherwise."""
-    return 1 if bool(tracker.server_errors or tracker.connection_errors) else 0
+    """Exit code: 1 on 5xx, connection errors, or a runner error (the
+    anomalies that gate CI), 0 otherwise."""
+    return (
+        1
+        if any([tracker.server_errors, tracker.connection_errors, tracker.runner_error])
+        else 0
+    )
 
 
 def main():

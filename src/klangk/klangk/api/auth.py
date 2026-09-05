@@ -161,6 +161,18 @@ async def register(
         )
         logger.info("Verification email sent, committing user: %s", req.email)
 
+    # The unverified account creation is audited (#3205); there is no
+    # actor yet (the registrant is unauthenticated) and no login row
+    # until the verification flow mints a session.
+    reg_ip, reg_ua = workstation(request)
+    await app.state.model.audit_events.record_best_effort(
+        "user.register",
+        target_type="user",
+        target_id=user_id,
+        detail={"email": req.email, "verified": False},
+        source_ip=reg_ip,
+        user_agent=reg_ua,
+    )
     return {"status": "pending_verification", "email": req.email}
 
 
@@ -205,6 +217,7 @@ async def verify_email(token: str, request: Request):
         user["email"],
         source_ip=source_ip,
         user_agent=user_agent,
+        via="email-verify",
     )
     await request.app.state.model.users.record_login(user_id)
     return {"status": "verified", "access_token": access_token}
@@ -287,16 +300,31 @@ def _rate_limited(timestamps: dict, cooldown: float, email: str) -> bool:
     return False
 
 
-async def _authorize_resend(app, user, req, lockout_key, attempt_info) -> None:
+async def _authorize_resend(
+    app, user, req, lockout_key, attempt_info, source_ip, user_agent
+) -> None:
     """401 unless the email+password pair authorizes a resend.
 
     Same lockout accounting as login (#2618): failures are recorded on
-    the lockout key. Without this the endpoint accepted unlimited
-    password guesses — the 60s cooldown only bounds email sending and
-    only applies after the check succeeds.
+    the lockout key (and audited as ``login.failed`` rows, #3205 — a
+    failed password check here is a credential guess like any other).
+    Without this the endpoint accepted unlimited password guesses —
+    the 60s cooldown only bounds email sending and only applies after
+    the check succeeds.
     """
     password_ok = await auth.verify_login_password(user, req.password)
     if user is None or not user.get("password_hash") or not password_ok:
+        await app.state.model.audit_events.record_best_effort(
+            "login.failed",
+            target_type="user",
+            target_id=user["id"] if user else None,
+            detail={
+                "identifier": lockout_key[: auth.AUDIT_IDENTIFIER_MAX],
+                "path": "resend-verification",
+            },
+            source_ip=source_ip,
+            user_agent=user_agent,
+        )
         await app.state.auth.record_login_failure(lockout_key, attempt_info)
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
@@ -312,8 +340,13 @@ async def resend_verification(
     # Lockout key: the resolved user's canonical email when known, the
     # raw input for unknown addresses (#2618).
     lockout_key = user["email"] if user else req.email
-    attempt_info = await app.state.auth.check_login_lockout(lockout_key)
-    await _authorize_resend(app, user, req, lockout_key, attempt_info)
+    source_ip, user_agent = workstation(request)
+    attempt_info = await app.state.auth.check_login_lockout(
+        lockout_key, source_ip=source_ip, user_agent=user_agent
+    )
+    await _authorize_resend(
+        app, user, req, lockout_key, attempt_info, source_ip, user_agent
+    )
     if user.get("verified"):
         raise HTTPException(status_code=400, detail="Account already verified")
     await app.state.auth.clear_login_failures(lockout_key)
@@ -469,13 +502,26 @@ async def reset_password(req: ResetPasswordRequest, request: Request):
     await request.app.state.model.users.clear_must_change_password(
         user_id, password_hash
     )
-    # Auto-login after reset
+    # The self-chosen reset is a password change (#3205), audited before
+    # the auto-login's ``login`` row below.
     source_ip, user_agent = workstation(request)
+    await request.app.state.model.audit_events.record_best_effort(
+        "user.password.change",
+        actor_id=user_id,
+        actor_email=user["email"],
+        target_type="user",
+        target_id=user_id,
+        detail={"via": "password-reset"},
+        source_ip=source_ip,
+        user_agent=user_agent,
+    )
+    # Auto-login after reset
     token = await request.app.state.auth.issue_token(
         user_id,
         user["email"],
         source_ip=source_ip,
         user_agent=user_agent,
+        via="password-reset",
     )
     await request.app.state.model.users.record_login(user_id)
     return {"status": "reset", "access_token": token}
@@ -550,6 +596,7 @@ async def local_login(request: Request):
         user["email"],
         source_ip=source_ip,
         user_agent=user_agent,
+        via="local",
     )
     await request.app.state.model.users.record_login(user["id"])
     return LocalLoginResponse(access_token=token, email=user["email"])
@@ -640,6 +687,29 @@ async def change_password(
     # Revoke every session so the old credential cannot be reused and
     # any live WebSocket connections are closed (#3152).
     await request.app.state.auth.revoke_all_user_sessions(user["id"])
+    # Both halves are audited (#3205): the password change itself, and
+    # the session revocation it forced (every live session ended).
+    source_ip, user_agent = workstation(request)
+    await request.app.state.model.audit_events.record_best_effort(
+        "user.password.change",
+        actor_id=user["id"],
+        actor_email=user["email"],
+        target_type="user",
+        target_id=user["id"],
+        detail={"via": "self-service"},
+        source_ip=source_ip,
+        user_agent=user_agent,
+    )
+    await request.app.state.model.audit_events.record_best_effort(
+        "session.revoke",
+        actor_id=user["id"],
+        actor_email=user["email"],
+        target_type="session",
+        target_id=user["id"],
+        detail={"reason": "password-change"},
+        source_ip=source_ip,
+        user_agent=user_agent,
+    )
     return {"status": "updated"}
 
 
@@ -686,6 +756,19 @@ async def change_email(
     if existing is not None and existing["id"] != user["id"]:
         raise HTTPException(status_code=400, detail="Email already in use")
     await app.state.model.users.update_email(user["id"], req.email)
+    # The email change is audited the moment it lands (#3205); the
+    # verification email below can still fail with the change applied.
+    source_ip, user_agent = workstation(request)
+    await app.state.model.audit_events.record_best_effort(
+        "user.email.change",
+        actor_id=user["id"],
+        actor_email=user["email"],
+        target_type="user",
+        target_id=user["id"],
+        detail={"email": req.email},
+        source_ip=source_ip,
+        user_agent=user_agent,
+    )
     # Mark as unverified and send verification email
     await app.state.model.users.mark_unverified(user["id"])
 
@@ -710,6 +793,7 @@ class ChangeHandleRequest(BaseModel):
 @router.post("/auth/change-handle")
 async def change_handle(
     req: ChangeHandleRequest,
+    request: Request,
     user: dict = Depends(auth.get_current_user),
     app=Depends(get_app_dep),
 ):
@@ -723,6 +807,17 @@ async def change_handle(
         raise HTTPException(status_code=400, detail=str(e))
     await wshandler.refresh_user_handle(
         app.state.sockets, user["id"], req.handle
+    )
+    source_ip, user_agent = workstation(request)
+    await app.state.model.audit_events.record_best_effort(
+        "user.handle.change",
+        actor_id=user["id"],
+        actor_email=user["email"],
+        target_type="user",
+        target_id=user["id"],
+        detail={"handle": req.handle},
+        source_ip=source_ip,
+        user_agent=user_agent,
     )
     return {"status": "updated", "handle": req.handle}
 
@@ -788,6 +883,19 @@ async def logout(
     # would miss a lowercase ``bearer`` token).
     if credentials is not None:
         await request.app.state.auth.logout(credentials.credentials)
+        if user is not None:
+            # The logout is audited (#3205) only when it ended a live
+            # session — an anonymous or dead-token call revoked nothing.
+            source_ip, user_agent = workstation(request)
+            await request.app.state.model.audit_events.record_best_effort(
+                "logout",
+                actor_id=user["id"],
+                actor_email=user["email"],
+                target_type="session",
+                target_id=user["id"],
+                source_ip=source_ip,
+                user_agent=user_agent,
+            )
 
     result: dict = {"status": "ok"}
     if user is None:
@@ -869,6 +977,7 @@ async def accept_invite(req: AcceptInviteRequest, request: Request):
         user["email"],
         source_ip=source_ip,
         user_agent=user_agent,
+        via="invite",
     )
     await request.app.state.model.users.record_login(user["id"])
     return {"status": "accepted", "access_token": access_token}
@@ -1227,6 +1336,7 @@ async def oidc_callback(
         email,
         source_ip=source_ip,
         user_agent=user_agent,
+        via="oidc",
     )
     await request.app.state.model.users.record_login(user["id"])
     return _build_redirect_response(

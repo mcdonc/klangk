@@ -88,6 +88,32 @@ def compute_container_event_hmac(settings, row: dict) -> str | None:
     return hmac.new(key, payload, hashlib.sha256).hexdigest()
 
 
+# --- Audit events ---
+
+_AE_HMAC_COLUMNS = [
+    "id",
+    "event",
+    "actor_id",
+    "actor_email",
+    "target_type",
+    "target_id",
+    "detail",
+    "source_ip",
+    "user_agent",
+    "created_at",
+]
+
+
+def compute_audit_event_hmac(settings, row: dict) -> str | None:
+    """Compute the HMAC tag for an ``audit_events`` row dict, or
+    None when no audit HMAC key is configured (tagging disabled)."""
+    key = resolve_audit_hmac_key(settings)
+    if key is None:
+        return None
+    payload = _canonical_pairs("audit_events", row, _AE_HMAC_COLUMNS)
+    return hmac.new(key, payload, hashlib.sha256).hexdigest()
+
+
 # --- Egress consent ---
 
 _EC_HMAC_COLUMNS = [

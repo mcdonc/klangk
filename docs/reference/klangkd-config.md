@@ -429,6 +429,8 @@ override it per-workspace (`settings.idle_timeout` — see
 | `container_tmp_size`                | `2g`                            | `KLANGKD_CONTAINER_TMP_SIZE`                |
 | `container_events_retention_days`   | `90`                            | `KLANGKD_CONTAINER_EVENTS_RETENTION_DAYS`   |
 | `container_events_row_cap`          | `10000`                         | `KLANGKD_CONTAINER_EVENTS_ROW_CAP`          |
+| `audit_events_retention_days`       | `365`                           | `KLANGKD_AUDIT_EVENTS_RETENTION_DAYS`       |
+| `audit_events_row_cap`              | `100000`                        | `KLANGKD_AUDIT_EVENTS_ROW_CAP`              |
 | `audit_fail_closed`                 | `false`                         | `KLANGKD_AUDIT_FAIL_CLOSED`                 |
 | `network_sidecar_image`             | `klangk-network-sidecar`        | `KLANGKD_NETWORK_SIDECAR_IMAGE`             |
 | `nix_seed`                          | _(unset)_                       | `KLANGKD_NIX_SEED__TYPE`/`__PATH`           |

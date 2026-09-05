@@ -13,7 +13,7 @@ import 'package:klangk_frontend/ws/ws_client.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 
 /// A paged events envelope, matching the backend
-/// `GET /events` response.
+/// `GET /events/containers` response.
 String _eventsEnvelope(
   List<Map<String, dynamic>> items, {
   int total = 0,
@@ -171,7 +171,7 @@ void main() {
     testAuthHttpClientOverride = _mockClient(_adminPermissions, (
       request,
     ) async {
-      if (request.url.path == '/api/v1/events') {
+      if (request.url.path == '/api/v1/events/containers') {
         requests.add(request);
         final limit = int.parse(request.url.queryParameters['limit'] ?? '50');
         final offset = int.parse(request.url.queryParameters['offset'] ?? '0');
@@ -361,7 +361,7 @@ void main() {
           '/events': ['manage-events'],
         },
         (request) async {
-          if (request.url.path == '/api/v1/events') {
+          if (request.url.path == '/api/v1/events/containers') {
             return http.Response(
               _eventsEnvelope([
                 _event('ws-a', workspaceName: 'audit-ws', actorType: 'system'),
