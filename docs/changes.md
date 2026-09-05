@@ -350,6 +350,9 @@ operators or integrators to act when upgrading.
   invalidates tags written under the old key.
 
 - **HMAC integrity protection for audit records (#3174, STIG V-222507).**
+
+- **HMAC integrity protection for audit records (#3174).**
+
   Every `container_events` and `egress_consent` row now carries an
   HMAC-SHA256 tag computed at insert time. A new admin endpoint
   (`GET /api/v1/admin/events/verify`) re-computes and checks every

@@ -1,4 +1,4 @@
-"""HMAC integrity protection for audit records (STIG V-222507, #3174).
+"""HMAC integrity protection for audit records (#3174).
 
 Each audit row (``container_events``, ``egress_consent``) carries an
 HMAC-SHA256 tag computed over a canonical serialization of the row's
