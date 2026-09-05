@@ -709,6 +709,15 @@ in
   # Idempotent fixture seeding (also run by fmtk-up): sharer/acler/viewer
   # users + the fmtk-verify workspace against a running backend.
   scripts.fmtk-seed.exec = ''exec ${venvPython} "$DEVENV_ROOT/scripts/fmtk-seed.py" "$@"'';
+  # fmtk-driven frontend e2e suite (#3232): boots the fmtk-up scratch stack
+  # programmatically (headless under CI), drives the debug app through the
+  # fmtk CLI, and swaps server config via SIGHUP/restart. The first run in
+  # a cold worktree pays the flutter debug compile; the backend + proxy are
+  # kept across runs (fmtk-down stops them). FMTK_E2E_FRESH=1 wipes first.
+  scripts.test-fmtk-e2e.exec = ''
+    cd $DEVENV_ROOT
+    exec ${venvPython} -m pytest src/frontend/e2e-tests/fmtk -v --no-cov "$@"
+  '';
 
   scripts.serve-docs.exec = ''
     cd $DEVENV_ROOT

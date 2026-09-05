@@ -31,11 +31,23 @@ if [[ -z $chrome_bin ]]; then
 fi
 
 args=()
+flutter_port="${FMTK_FLUTTER_PORT:-8125}"
+proxy_port="${FMTK_PROXY_PORT:-8124}"
 for arg in "$@"; do
   case "$arg" in
-  http://127.0.0.1:8125* | http://localhost:8125*) arg="http://127.0.0.1:8124/#/" ;;
+  http://127.0.0.1:${flutter_port}* | http://localhost:${flutter_port}*)
+    arg="http://127.0.0.1:${proxy_port}/#/"
+    ;;
   esac
   args+=("$arg")
 done
+
+# Extra flags for unattended runs (fmtk e2e harness, #3232): CI stock
+# runners have no DISPLAY, so the harness points FMTK_CHROME_FLAGS at
+# --headless=new (+ --no-sandbox etc) before launching flutter run.
+if [[ -n ${FMTK_CHROME_FLAGS:-} ]]; then
+  read -ra extra_flags <<<"$FMTK_CHROME_FLAGS"
+  args+=("${extra_flags[@]}")
+fi
 
 exec "$chrome_bin" --no-first-run --no-default-browser-check "${args[@]}"

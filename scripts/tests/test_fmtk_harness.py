@@ -110,12 +110,16 @@ def test_down_stops_the_right_processes():
     down = _DOWN.read_text()
     for pattern in (
         "run --debug -d chrome",
-        "[c]hrome.*127.0.0.1:8124",
+        "[c]hrome.*127.0.0.1:$PROXY_PORT",
         "klangk[.]main --config",
         "[c]addy run --config",
         "--wipe",
     ):
         assert pattern in down, f"fmtk-down must handle: {pattern}"
+    assert 'PROXY_PORT="${FMTK_PROXY_PORT:-8124}"' in down, (
+        "the chrome pattern must follow FMTK_PROXY_PORT (side-by-side "
+        "harnesses on overridden ports, #3232)"
+    )
 
 
 def assert_removed_fixtures_absent(seed: str) -> None:
@@ -149,7 +153,39 @@ def test_seed_matrix_wiring():
     )
 
 
+def test_seed_clears_must_change_password():
+    """Admin-created users carry must_change_password (#3172), which
+    refuses every API call but the change flow — the seed must clear it
+    for every fixture user on every run or fixture logins dead-end."""
+    seed = _SEED.read_text()
+    assert '"must_change_password": False' in seed, (
+        "the seed must PATCH must_change_password off for fixture users"
+    )
+
+
 def test_agents_documents_the_harness():
     agents = _AGENTS.read_text()
     assert "fmtk-up" in agents, "AGENTS.md must point at the fmtk-up harness"
     assert "fmtk-down" in agents, "AGENTS.md must document fmtk-down"
+    assert "test-fmtk-e2e" in agents, (
+        "AGENTS.md must document the automated fmtk e2e runner (#3232)"
+    )
+
+
+def assert_suite_files_present(suite_dir: Path) -> None:
+    """The pytest suite pieces must exist together (#3232)."""
+    for name in ("fmtkharness.py", "conftest.py", "test_smoke.py"):
+        assert (suite_dir / name).is_file(), f"{name} is missing from {suite_dir}"
+
+
+def test_e2e_suite_wiring():
+    """The fmtk-driven e2e suite (#3232): devenv script, library, tests,
+    and CI workflow must all exist together."""
+    nix = _DEVENV_NIX.read_text()
+    assert "scripts.test-fmtk-e2e.exec" in nix, (
+        "devenv.nix must define the test-fmtk-e2e script"
+    )
+    assert_suite_files_present(_REPO_ROOT / "src/frontend/e2e-tests/fmtk")
+    workflow = _REPO_ROOT / ".github/workflows/fmtk-e2e-tests.yml"
+    assert workflow.is_file(), "the fmtk e2e CI workflow is missing"
+    assert "test-fmtk-e2e" in workflow.read_text()

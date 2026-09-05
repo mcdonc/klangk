@@ -1,0 +1,85 @@
+name: "E2E: fmtk Frontend Tests"
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: "Runner kind: stock (ubuntu-latest) or the self-hosted nix VM"
+        type: choice
+        options: [stock, nix]
+        default: stock
+  push:
+    branches: [release/**]
+  pull_request:
+    paths:
+      - "src/klangk/**"
+      - "src/frontend/e2e-tests/fmtk/**"
+      - "scripts/fmtk-up.sh"
+      - "scripts/fmtk-down.sh"
+      - "scripts/fmtk-chrome.sh"
+      - "scripts/fmtk-seed.py"
+      - "devenv.nix"
+      - "devenv.yaml"
+      - ".github/workflows/fmtk-e2e-tests.yml"
+      - ".github/actions/e2e-suite/**"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  # fmtk-driven browser e2e (#3232/#3231): boots the fmtk-up scratch stack
+  # (headless Chrome under CI — no DISPLAY) and drives the debug frontend
+  # through the fmtk CLI. No image build needed: the smoke-level suites
+  # compile from source via `flutter run --debug` and do not start
+  # workspace containers (suites that do will pass build-tasks).
+  test-fmtk-e2e:
+    runs-on: ${{ inputs.runner == 'nix' && 'nix' || 'ubuntu-latest' }}
+    timeout-minutes: 60
+    env:
+      # No cross-run reuse on CI: the self-hosted nix VM persists processes
+      # AND state between dispatches, and an adopted backend would be built
+      # from the PREVIOUS commit's code (silent false greens/reds). Stock
+      # runners are ephemeral anyway — fresh costs nothing there.
+      FMTK_E2E_FRESH: "1"
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          filters: |
+            e2e:
+              - 'src/klangk/**'
+              - 'src/frontend/e2e-tests/fmtk/**'
+              - 'scripts/fmtk-up.sh'
+              - 'scripts/fmtk-down.sh'
+              - 'scripts/fmtk-chrome.sh'
+              - 'scripts/fmtk-seed.py'
+              - 'devenv.nix'
+              - 'devenv.yaml'
+              - '.github/workflows/fmtk-e2e-tests.yml'
+              - '.github/actions/e2e-suite/**'
+
+      # Stock runners only (see backend-e2e-tests.yml); skipped when the
+      # paths filter found no e2e-relevant changes.
+      - uses: ./.github/actions/devenv-setup
+        if: inputs.runner != 'nix' && steps.filter.outputs.e2e == 'true'
+
+      - uses: ./.github/actions/e2e-suite
+        with:
+          run: ${{ steps.filter.outputs.e2e }}
+          suite: test-fmtk-e2e
+          suite-name: fmtk
+          build-tasks: ""
+
+      - name: Upload harness logs
+        if: always() && steps.filter.outputs.e2e == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: fmtk-e2e-logs
+          retention-days: 7
+          path: |
+            .devenv/state/fmtk/klangkd.log
+            .devenv/state/fmtk/caddy.log
+            .devenv/state/fmtk/flutter-e2e.log

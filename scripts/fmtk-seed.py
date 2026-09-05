@@ -90,25 +90,52 @@ def login(base: str, email: str, password: str) -> str:
     return body["access_token"]
 
 
+def create_fixture_user(base: str, token: str, email: str) -> str:
+    """Create one fixture user via the admin API; returns its id."""
+    status, body = api(
+        base,
+        token,
+        "POST",
+        "/api/v1/users",
+        {"email": email, "password": FIXTURE_PASSWORD},
+    )
+    if status != 200:
+        sys.exit(f"create {email} failed ({status}): {body}")
+    print(f"created user {email}")
+    return body["id"]
+
+
+def clear_must_change(base: str, token: str, user_id: str, email: str) -> None:
+    """Clear the admin-created must-change-password flag (#3172)."""
+    status, body = api(
+        base,
+        token,
+        "PATCH",
+        f"/api/v1/users/{user_id}",
+        {"must_change_password": False},
+    )
+    if status != 200:
+        sys.exit(f"clear must-change for {email} failed ({status}): {body}")
+
+
 def ensure_users(base: str, token: str) -> dict[str, str]:
-    """Create missing fixture users; returns email -> user_id."""
-    _, listing = api(base, token, "GET", "/api/v1/users")
+    """Create missing fixture users; returns email -> user_id.
+
+    Admin-created users carry ``must_change_password`` (#3172), which
+    would refuse every API call but the change-password flow — pointless
+    for fixture accounts — so the flag is cleared for every fixture
+    user on every seed run (also fixing users created before this
+    clear-on-create behavior landed).
+    """
+    # page_size covers the fixture set (the bare listing defaults to a
+    # small page — fixtures falling off page 1 would 400 on re-create)
+    _, listing = api(base, token, "GET", "/api/v1/users?page_size=100")
     ids = {u["email"]: u["id"] for u in listing["users"]}
     for name in FIXTURES:
         email = f"{name}@example.com"
-        if email in ids:
-            continue
-        status, body = api(
-            base,
-            token,
-            "POST",
-            "/api/v1/users",
-            {"email": email, "password": FIXTURE_PASSWORD},
-        )
-        if status != 200:
-            sys.exit(f"create {email} failed ({status}): {body}")
-        ids[email] = body["id"]
-        print(f"created user {email}")
+        user_id = ids.get(email) or create_fixture_user(base, token, email)
+        clear_must_change(base, token, user_id, email)
+        ids[email] = user_id
     return ids
 
 
