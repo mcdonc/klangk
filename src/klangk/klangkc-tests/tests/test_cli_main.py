@@ -7049,6 +7049,38 @@ class TestAccountCommands:
         assert result.exit_code == 1
         client.change_password.assert_not_called()
 
+    def test_account_passwd_min_changed_rejected(
+        self, logged_in_cfg, monkeypatch
+    ):
+        """#3173: too-similar password exits 1 before hitting the server."""
+        from klangk.cli import account, main
+        from typer.testing import CliRunner
+
+        client = MagicMock()
+        monkeypatch.setattr(context_mod, "client", lambda: client)
+        monkeypatch.setattr(
+            authcmds_mod.account,
+            "password_policy",
+            lambda url: account.PasswordPolicy(
+                min_length=4,
+                requirements={
+                    "upper": 0,
+                    "lower": 0,
+                    "digit": 0,
+                    "special": 0,
+                },
+                min_changed=8,
+            ),
+        )
+        # "oldpw" -> "oldpx" is edit distance 1 — well under min_changed=8.
+        answers = iter(["oldpw", "oldpx1", "oldpx1"])
+        monkeypatch.setattr(
+            "klangk.cli.main.Prompt.ask", lambda *a, **k: next(answers)
+        )
+        result = CliRunner().invoke(main.app, ["account", "passwd"])
+        assert result.exit_code == 1
+        client.change_password.assert_not_called()
+
     def test_account_passwd_backend_error(self, logged_in_cfg, monkeypatch):
         import httpx
 

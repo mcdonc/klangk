@@ -1873,6 +1873,7 @@ class TestNumericSettingCoercion:
         "hosted_ports_per_workspace",
         "smtp_port",
         "password_history_count",
+        "password_min_changed",
     ]
     # 0 is legal here (disable semantics), so only these get the 0-rejection
     INT_NO_ZERO_FIELDS = [
@@ -1923,6 +1924,15 @@ class TestNumericSettingCoercion:
         s = make_settings({"KLANGKD_PASSWORD_HISTORY_COUNT": "24"})
         assert s.password_history_count == 24
 
+    def test_password_min_changed_capped(self):
+        """#3173: values above the max possible edit distance (72, the
+        bcrypt byte cap) would silently lock out all self-service
+        password changes."""
+        with pytest.raises(Exception, match="password_min_changed"):
+            make_settings({"KLANGKD_PASSWORD_MIN_CHANGED": "73"})
+        s = make_settings({"KLANGKD_PASSWORD_MIN_CHANGED": "72"})
+        assert s.password_min_changed == 72
+
     @pytest.mark.parametrize(
         "field",
         [
@@ -1933,6 +1943,7 @@ class TestNumericSettingCoercion:
             "max_sessions_per_user",
             "hosted_ports_per_workspace",
             "password_history_count",
+            "password_min_changed",
         ],
     )
     def test_zero_keeps_disable_semantics(self, field):

@@ -251,6 +251,11 @@ _BAD_PORT_MSG = (
 # policy, a common industry benchmark for this knob.
 _PASSWORD_HISTORY_MAX = 24
 
+# Passwords are capped at 72 bytes (bcrypt), so the maximum possible
+# edit distance between any two legal passwords is 72 code points.
+# Values above this would silently lock out all self-service changes.
+_PASSWORD_MIN_CHANGED_MAX = 72
+
 
 def _resolve_numeric_indirection(v, name: str):
     """Resolve ``file:``/``cmd:`` on a raw numeric-setting value (#2603).
@@ -849,6 +854,16 @@ class KlangkSettings(BaseSettings):
     # disables reuse checking and history recording entirely. Capped
     # at 24 (each retired hash costs a PBKDF2 verify per set).
     password_history_count: int = 0
+    # Minimum character change on self-service password change (#3173):
+    # the edit distance between the current and new
+    # password must be >= this many characters, or the change is
+    # rejected with 400. Only enforced where the old plaintext is
+    # presented (``POST /auth/change-password``); reset and admin-set
+    # flows see only hashes and stay exempt (password-history reuse
+    # still applies there). 0 (the default) disables the gate. Capped at _PASSWORD_MIN_CHANGED_MAX (the
+    # byte-length ceiling on passwords). Reloadable on SIGHUP (read
+    # live at change time).
+    password_min_changed: int = 0
     login_lockout_failures: int | None = 5
     login_lockout_duration: int | None = 900
     login_lockout_window: int | None = 300
@@ -1671,6 +1686,7 @@ class KlangkSettings(BaseSettings):
         "max_sessions_per_user",
         "invite_expire_hours",
         "password_history_count",
+        "password_min_changed",
         "inactivity_disable_days",
         "port_range_start",
         "websocket_msg_size_max",
@@ -1711,6 +1727,7 @@ class KlangkSettings(BaseSettings):
             "max_sessions_per_user",
             "hosted_ports_per_workspace",
             "password_history_count",
+            "password_min_changed",
             "inactivity_disable_days",
             # Disables the per-user running-workspace cap (#2525).
             "max_running_workspaces_per_user",
@@ -1761,6 +1778,20 @@ class KlangkSettings(BaseSettings):
                 f"password_history_count={v} must be <= "
                 f"{_PASSWORD_HISTORY_MAX} — every remembered hash costs"
                 " a PBKDF2 verify on each password set."
+            )
+        return v
+
+    @field_validator("password_min_changed", mode="after")
+    @classmethod
+    def _cap_password_min_changed(cls, v):
+        """Reject values above ``_PASSWORD_MIN_CHANGED_MAX`` (#3173):
+        passwords are capped at 72 bytes, so a higher minimum would
+        silently make every self-service password change fail."""
+        if v > _PASSWORD_MIN_CHANGED_MAX:
+            raise ValueError(
+                f"password_min_changed={v} must be <= "
+                f"{_PASSWORD_MIN_CHANGED_MAX} — the maximum possible "
+                "edit distance between two legal passwords."
             )
         return v
 

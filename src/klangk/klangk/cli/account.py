@@ -86,10 +86,12 @@ def validate_email(email: str) -> str | None:
 
 
 class PasswordPolicy(NamedTuple):
-    """Server-advertised password policy (#2581): length + class counts."""
+    """Server-advertised password policy (#2581, #3173): length, class
+    counts, and the min-changed-character rule."""
 
     min_length: int
     requirements: dict
+    min_changed: int = 0
 
     def complexity_error(self, password: str) -> str | None:
         """Local mirror of the server's complexity rule.
@@ -106,6 +108,45 @@ class PasswordPolicy(NamedTuple):
         if unmet:
             return f"Password must contain {', '.join(unmet)}"
         return None
+
+    def changed_error(self, current: str, new: str) -> str | None:
+        """Local mirror of the server's min-changed rule (#3173).
+
+        Returns the same error string the server's 400 would carry when
+        the edit distance between ``current`` and ``new`` is below
+        ``min_changed``, else ``None``. Only the server
+        has both passwords at change time, so this is a fast-fail UX
+        layer over the authoritative check.
+        """
+        if self.min_changed <= 0:
+            return None
+        if password_edit_distance(current, new) < self.min_changed:
+            return (
+                f"New password must change at least {self.min_changed} "
+                "characters from the current password"
+            )
+        return None
+
+
+def password_edit_distance(old: str, new: str) -> int:
+    """Levenshtein distance in code points (#3173).
+
+    Mirrors ``klangk.auth.password_edit_distance`` on the server —
+    duplicated rather than imported because the CLI must not depend on
+    the server package (AGENTS.md). Substitutions, insertions, and
+    deletions each count as one changed character.
+    """
+    prev = list(range(len(new) + 1))
+    for i, old_char in enumerate(old, start=1):
+        cur = [i] + [0] * len(new)
+        for j, new_char in enumerate(new, start=1):
+            cur[j] = min(
+                prev[j] + 1,
+                cur[j - 1] + 1,
+                prev[j - 1] + (old_char != new_char),
+            )
+        prev = cur
+    return prev[-1]
 
 
 def unmet_class_messages(counts: dict) -> list[str]:
@@ -153,6 +194,14 @@ def parsed_min_length(config: dict) -> int:
         return _DEFAULT_MIN_PASSWORD
 
 
+def parsed_min_changed(config: dict) -> int:
+    """The advertised min changed-character count, 0 when unparseable."""
+    try:
+        return max(0, int(config.get("password_min_changed") or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
 def parsed_requirements(config: dict) -> dict:
     """The advertised class requirements (0s when absent or unparseable)."""
     requirements = dict(_DEFAULT_REQUIREMENTS)
@@ -179,5 +228,7 @@ def password_policy(server_url: str) -> PasswordPolicy:
     if not isinstance(config, dict):
         return default_policy()
     return PasswordPolicy(
-        parsed_min_length(config), parsed_requirements(config)
+        parsed_min_length(config),
+        parsed_requirements(config),
+        parsed_min_changed(config),
     )

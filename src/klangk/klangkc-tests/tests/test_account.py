@@ -148,6 +148,68 @@ class TestPasswordPolicy:
         assert policy.requirements["upper"] == 0
 
 
+class TestPasswordEditDistance:
+    """CLI mirror of the server's Levenshtein (#3173)."""
+
+    def test_identical(self):
+        assert account.password_edit_distance("same", "same") == 0
+
+    def test_substitution(self):
+        assert account.password_edit_distance("abc", "axc") == 1
+
+    def test_insertion(self):
+        assert account.password_edit_distance("abc", "xabc") == 1
+
+    def test_deletion(self):
+        assert account.password_edit_distance("abc", "ac") == 1
+
+    def test_empty(self):
+        assert account.password_edit_distance("", "abc") == 3
+        assert account.password_edit_distance("abc", "") == 3
+
+    def test_counts_code_points_not_bytes(self):
+        # "café" -> "cafe": one code point; a byte diff would score 2.
+        assert account.password_edit_distance("café", "cafe") == 1
+
+
+class TestChangedError:
+    """CLI mirror of the server's min-changed gate (#3173)."""
+
+    def test_disabled_when_zero(self):
+        p = account.PasswordPolicy(
+            min_length=4, requirements={}, min_changed=0
+        )
+        assert p.changed_error("same", "same") is None
+
+    def test_rejects_too_similar(self):
+        p = account.PasswordPolicy(
+            min_length=4, requirements={}, min_changed=8
+        )
+        err = p.changed_error("testpass", "testpas9")
+        assert err is not None
+        assert "8 characters" in err
+
+    def test_accepts_enough_change(self):
+        p = account.PasswordPolicy(
+            min_length=4, requirements={}, min_changed=8
+        )
+        assert p.changed_error("testpass", "Qwerty!234") is None
+
+
+class TestParsedMinChanged:
+    def test_parses_valid(self):
+        assert account.parsed_min_changed({"password_min_changed": 8}) == 8
+
+    def test_defaults_zero_when_absent(self):
+        assert account.parsed_min_changed({}) == 0
+
+    def test_defaults_zero_on_garbage(self):
+        assert account.parsed_min_changed({"password_min_changed": "xyz"}) == 0
+
+    def test_clamps_negative_to_zero(self):
+        assert account.parsed_min_changed({"password_min_changed": -5}) == 0
+
+
 class TestPasswordComplexityError:
     """The ASCII mirror of the server rule (stays in sync with the server
     and the Flutter PasswordPolicy — non-ASCII is special, never a letter

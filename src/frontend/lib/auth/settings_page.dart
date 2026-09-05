@@ -261,7 +261,16 @@ class _PasswordSectionState extends State<_PasswordSection> {
               // Server-advertised policy (KLANGKD_MIN_PASSWORD_LENGTH +
               // character-class counts, #2581/#1350) instead of hardcoded 8 —
               // otherwise the client passes a password the server rejects.
-              return context.read<AuthService>().passwordPolicy.validate(v);
+              final policyError =
+                  context.read<AuthService>().passwordPolicy.validate(v);
+              if (policyError != null) return policyError;
+              // #3173: when armed, the new password must
+              // differ from the current one by enough characters. Both
+              // are in hand here, so check inline before the round-trip.
+              return context.read<AuthService>().passwordPolicy.changedError(
+                    _currentPasswordController.text,
+                    v,
+                  );
             },
           ),
           const SizedBox(height: 12),

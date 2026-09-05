@@ -110,6 +110,30 @@ security = HTTPBearer(auto_error=False)
 # ---------------------------------------------------------------------------
 
 
+def password_edit_distance(old: str, new: str) -> int:
+    """Levenshtein distance between two passwords, in code points (#3173).
+
+    Substitutions, insertions, and deletions each count as one changed
+    character. Insertions/deletions counting is what kills
+    the positional-diff workaround (prepending to ``Password1234!``
+    changes every position yet is one inserted character). Passwords
+    are capped at 72 bytes (so at most 72 code points), keeping
+    the DP table trivially small. Pure Python keeps the server/CLI
+    mirrors identical.
+    """
+    prev = list(range(len(new) + 1))
+    for i, old_char in enumerate(old, start=1):
+        cur = [i] + [0] * len(new)
+        for j, new_char in enumerate(new, start=1):
+            cur[j] = min(
+                prev[j] + 1,
+                cur[j - 1] + 1,
+                prev[j - 1] + (old_char != new_char),
+            )
+        prev = cur
+    return prev[-1]
+
+
 def is_locked_out(
     attempt_info: dict | None,
 ) -> tuple[bool, str | None]:
@@ -372,6 +396,11 @@ class Auth:
         return self.app.state.settings.password_history_count
 
     @property
+    def password_min_changed(self) -> int:
+        """Min character edit distance for self-service changes (#3173)."""
+        return self.app.state.settings.password_min_changed
+
+    @property
     def password_requirements(self) -> dict:
         """Character-class counts a password must satisfy (#2581).
 
@@ -535,6 +564,31 @@ class Auth:
             raise HTTPException(
                 status_code=400,
                 detail=("Password was used recently; choose a different one"),
+            )
+
+    def validate_password_changed_enough(self, old: str, new: str) -> None:
+        """Reject the change when too few characters differ (#3173).
+
+        The edit distance to the current password must reach
+        ``KLANGKD_PASSWORD_MIN_CHANGED`` characters. Called only from
+        the self-service change-password route, where the old plaintext
+        is presented and re-authenticated; reset and admin-set flows
+        never see the old plaintext, so the control cannot apply there
+        (password-history reuse still does). No-op when the setting is
+        0 (the default). Runs before the reuse check — this diff is a
+        cheap DP while reuse costs PBKDF2 verifies.
+        """
+        minimum = self.password_min_changed
+        if minimum <= 0:
+            return
+        distance = password_edit_distance(old, new)
+        if distance < minimum:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"New password must change at least {minimum} "
+                    "characters from the current password"
+                ),
             )
 
     # --- lockout predicates (read lockout config) ---

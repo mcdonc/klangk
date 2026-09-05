@@ -133,6 +133,7 @@ password_require_lower: 1
 password_require_digit: 1
 password_require_special: 1
 password_history_count: 5
+password_min_changed: 8
 
 # --- Server / network ---
 listen: "127.0.0.1"
