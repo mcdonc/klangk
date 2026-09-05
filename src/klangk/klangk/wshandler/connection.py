@@ -58,13 +58,12 @@ class Connection:
         self._expiry_task: asyncio.Task | None = None
         self.workspace_id: str | None = None
         self.container_id: str | None = None
-        # The session JTI this socket authenticated with (#3151), set
-        # by ``handle_websocket`` after construction. Kept for
-        # diagnostics; frame stamping goes through ``session_id``.
-        self.jti: str | None = None
         # Stable session identity for the row behind that JTI (#3151):
         # resolved once at connect, it survives the per-refresh JTI
-        # rekeying, so frame stamps keep reaching the live row.
+        # rekeying, so frame stamps keep reaching the live row. Kept
+        # distinct from ``self.jti`` (the connect-time token's JTI,
+        # above — the revocation-kick key): stamps must not follow the
+        # rekeyed JTI, kicks must.
         self.session_id: str | None = None
         # In-memory idle clock for the session idle timeout (#3151):
         # bumped on every inbound frame, read by the WS idle sweeper.
