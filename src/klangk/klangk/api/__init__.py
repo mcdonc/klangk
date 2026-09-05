@@ -108,7 +108,9 @@ async def audit_status(app=Depends(get_app_dep)):
     # included — bumps write_failures, and fail_closed mirrors
     # KLANGKD_AUDIT_FAIL_CLOSED, so an operator (or assessor) can see
     # the audit trail losing rows and verify the mode without reading
-    # the journal.
+    # the journal. Public like /health: the counters carry no user
+    # data, and an assessor must be able to probe the mode
+    # unauthenticated.
     return {
         "write_failures": app.state.container_registry.audit_write_failures,
         "fail_closed": app.state.settings.audit_fail_closed,
