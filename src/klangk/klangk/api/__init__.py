@@ -103,7 +103,7 @@ async def health(app=Depends(get_app_dep)):
 
 @root_router.get("/audit")
 async def audit_status(app=Depends(get_app_dep)):
-    # The audit status surface (#3154, security finding V-222486): every
+    # The audit status surface (#3154, security finding): every
     # container_events write that failed — the best-effort paths
     # included — bumps write_failures, and fail_closed mirrors
     # KLANGKD_AUDIT_FAIL_CLOSED, so an operator (or assessor) can see

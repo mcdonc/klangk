@@ -193,7 +193,7 @@ class TestDrain:
     def test_tracked_container_count_is_drain_baseline(self, app_state, db):
         """The count matches the drain's own snapshot: only states with
         a container_id — an under-stopping drain is detected by
-        comparing against it (V-222585)."""
+        comparing against it (#3176)."""
         from klangk.container.basics import ContainerState
 
         registry = app_state.state.container_registry
@@ -206,7 +206,7 @@ class TestDrain:
     async def test_leftover_containers_lists_instance_label(
         self, app_state, db
     ):
-        """Verification listing (V-222585): this instance's still-listed
+        """Verification listing (#3176): this instance's still-listed
         containers by ident (name fallback; unidentifiable entries
         dropped), queried with the instance label."""
         registry = app_state.state.container_registry

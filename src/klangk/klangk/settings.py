@@ -1327,7 +1327,7 @@ class KlangkSettings(BaseSettings):
     # a reload applies on the next sweep).
     container_events_retention_days: int = 90
     container_events_row_cap: int = 10000
-    # audit_fail_closed (#3154, security finding V-222486): refuse the
+    # audit_fail_closed (#3154, security finding): refuse the
     # interactive API container transitions — POST start/stop/restart
     # and delete's stop (503 before any side effect) — and skip
     # create's eager start when their container_events audit row cannot

@@ -1990,7 +1990,7 @@ No request body.
 
 ### GET `/audit`
 
-Container-audit status (#3154, security finding V-222486):
+Container-audit status (#3154, security finding):
 `write_failures` counts every `container_events` write that failed
 (best-effort paths included), and `fail_closed` mirrors
 `KLANGKD_AUDIT_FAIL_CLOSED` so an assessor can verify the mode. The

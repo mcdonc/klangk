@@ -285,7 +285,7 @@ class ContainerRegistry(NetworkSidecarMixin):
         # closing the completed-during-detection race (review #2625).
         self.stopping: set[str] = set()
         self.stop_epoch: dict[str, int] = {}
-        # Audit-write failure counter (#3154, security finding V-222486):
+        # Audit-write failure counter (#3154, security finding):
         # every container_events write that fails — the best-effort paths
         # included — bumps this so /audit exposes an operator-visible
         # (and assessor-visible) signal that the audit trail is losing
@@ -2742,8 +2742,8 @@ class ContainerRegistry(NetworkSidecarMixin):
         return stopped
 
     def tracked_container_count(self) -> int:
-        """Running containers a drain is expected to stop (V-222585,
-        #3176): the drain's own snapshot baseline, counted up front so
+        """Running containers a drain is expected to stop (#3176):
+        the drain's own snapshot baseline, counted up front so
         the caller can detect an under-stopping drain by outcome —
         per-container stop failures never raise out of
         ``drain_all_containers``."""
@@ -2751,7 +2751,7 @@ class ContainerRegistry(NetworkSidecarMixin):
 
     async def leftover_containers(self) -> list[str]:
         """Idents of this instance's containers still listed as
-        running (V-222585, #3176) — ground truth for verifying a
+        running (#3176) — ground truth for verifying a
         forced-backstop stop actually left nothing behind (the stop
         path swallows per-container failures). Raises on a listing
         failure so the caller can treat "cannot verify" as insecure.

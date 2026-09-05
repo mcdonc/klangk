@@ -426,7 +426,7 @@ class TestRegistryRecording:
 
 class TestAuditWriteFailureVisibility3154:
     """Every audit-write failure — best-effort paths included — is
-    counted so /audit exposes it (#3154, security finding V-222486)."""
+    counted so /audit exposes it (#3154, security finding)."""
 
     async def test_best_effort_failure_bumps_counter(
         self, app_state, db, registry
