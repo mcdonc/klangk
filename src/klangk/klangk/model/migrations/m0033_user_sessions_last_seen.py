@@ -44,7 +44,7 @@ async def apply(db) -> None:
 
 
 migration = Migration(
-    id=30,
+    id=33,
     name="0033_user_sessions_last_seen",
     apply=apply,
 )
