@@ -1078,13 +1078,13 @@ class ContainerRegistry(NetworkSidecarMixin):
                     spec, pending, state.container_id
                 )
             else:
-                await self._retract_prewritten_event(pending)
+                await self.retract_prewritten_event(pending)
             raise
         # Success: a real transition (created / restarted) is recorded;
         # 'connected' attached to an already-running container and is no
         # transition at all.
         if result[1] == "connected":
-            await self._retract_prewritten_event(pending)
+            await self.retract_prewritten_event(pending)
             return result
         await self._settle_completed_start(spec, pending, result[0])
         return result
@@ -1135,9 +1135,12 @@ class ContainerRegistry(NetworkSidecarMixin):
         real, so its start row must exist — finalize the pre-written row
         (#3154, with the live netns owner for row-shape parity with the
         best-effort path) or record one best-effort. "Tracked" means a
-        ``states`` entry created by THIS attempt (the guarded routes
-        never reach the start path with a pre-existing entry), so the
-        id belongs to a container this attempt made real."""
+        ``states`` entry seen by THIS attempt: the guarded routes guard
+        against a pre-existing entry *before* taking the per-workspace
+        lock, so except for a concurrent start racing in through that
+        window (same false-attribution class as the legacy best-effort
+        arm, #2915) the id belongs to a container this attempt made
+        real."""
         if pending is not None:
             await self._finalize_prewritten_event(
                 pending,
@@ -1230,7 +1233,7 @@ class ContainerRegistry(NetworkSidecarMixin):
         :class:`AuditWriteError` (the API layer maps it to a 503) after
         being counted and logged. The id feeds
         ``_finalize_prewritten_event`` (the transition happened — fill
-        in the podman ids) or ``_retract_prewritten_event`` (it did
+        in the podman ids) or ``retract_prewritten_event`` (it did
         not — delete the row).
         """
         try:
@@ -1282,12 +1285,17 @@ class ContainerRegistry(NetworkSidecarMixin):
                 e,
             )
 
-    async def _retract_prewritten_event(self, event_id: int | None) -> None:
+    async def retract_prewritten_event(self, event_id: int | None) -> None:
         """Delete a pre-written row whose transition never happened
         (#3154) — no-op for None (the non-fail-closed paths). Best-effort:
         the refusal/failure already happened; if the delete fails the
         row stays as an over-record of an attempted transition, which
-        is the safe direction for an audit trail."""
+        is the safe direction for an audit trail.
+
+        Route-facing (#3154 review): the /stop route calls this when a
+        step BETWEEN its pre-write and the stop raises (the
+        notify_workspace_killed fan-out does DB reads), so no phantom
+        stop row survives a stop that never began."""
         if event_id is None:
             return
         try:
@@ -2262,6 +2270,7 @@ class ContainerRegistry(NetworkSidecarMixin):
         cause: str,
         actor_id: str | None = None,
         pending_event: int | None = None,
+        prewrite_decided: bool = False,
     ) -> bool:
         """Stop and remove a container.
 
@@ -2313,7 +2322,12 @@ class ContainerRegistry(NetworkSidecarMixin):
         ``pending_event`` (#3154) is a stop row already pre-written via
         :meth:`prewrite_stop_event` — pass it so the row is written once
         (the /stop route does this to put the audit refusal before its
-        terminal death frames).
+        terminal death frames). ``prewrite_decided`` (#3154 review)
+        says the CALLER already evaluated the fail-closed gate for this
+        stop (its pre-write may legitimately have been skipped with the
+        mode off); the in-method pre-write then never re-arms on a
+        mid-request SIGHUP flip, so a refusal cannot fire after side
+        effects the caller already emitted.
         """
         ws_id = workspace_id or self._cid_to_wsid.get(container_id)
         # Netns owner captured before teardown pops it (#2915).
@@ -2333,6 +2347,7 @@ class ContainerRegistry(NetworkSidecarMixin):
             actor_id=actor_id,
             netns=netns,
             prewritten=pending_event,
+            decided=prewrite_decided,
         )
         if ws_id:
             self._begin_expected_stop(ws_id)
@@ -2479,6 +2494,7 @@ class ContainerRegistry(NetworkSidecarMixin):
         actor_id: str | None,
         netns: str | None = None,
         prewritten: int | None = None,
+        decided: bool = False,
     ) -> int | None:
         """Audit-before-act stop row (#3154) — route-facing form.
 
@@ -2492,11 +2508,14 @@ class ContainerRegistry(NetworkSidecarMixin):
         row is written exactly once. None unless the interactive
         fail-closed gate applies; raises :class:`AuditWriteError` to
         refuse the stop before any side effect when the row cannot be
-        written.
+        written. ``decided`` (#3154 review) says the caller already
+        evaluated the gate for THIS stop (possibly off); skip the
+        in-method re-evaluation so a mid-request SIGHUP flip cannot
+        arm a refusal after the caller's side effects.
         """
         if prewritten is not None:
             return prewritten
-        if not self._stop_prewrite_gated(ws_id, cause):
+        if decided or not self._stop_prewrite_gated(ws_id, cause):
             return None
         return await self.prewrite_audit_event(
             ws_id,
@@ -2524,7 +2543,7 @@ class ContainerRegistry(NetworkSidecarMixin):
         legacy best-effort post-hoc write applies."""
         if pending is not None:
             if not gone:
-                await self._retract_prewritten_event(pending)
+                await self.retract_prewritten_event(pending)
             return
         await self.audit_stop(
             ws_id,

@@ -267,6 +267,35 @@ class TestAuditFailClosedApi3154:
         assert registry.audit_write_failures == 1
         registry.states.pop(ws_id, None)
 
+    async def test_stop_notify_failure_retracts_prewritten_row(
+        self, client, app, ws_admin, registry
+    ):
+        """#3154 review: a raise in the window between the /stop
+        pre-write and the stop itself (notify_workspace_killed's WS
+        fan-out does DB reads, exactly the degraded-DB environment the
+        flag targets) must not strand a phantom stop row: the row is
+        retracted, the stop never begins, the error surfaces as a 500."""
+        headers = await _auth_headers(client)
+        ws_id = await self._workspace_id(client, headers, "fc-notify")
+        app.state.settings.audit_fail_closed = True
+        registry.track_activity("cid-fc-notify", ws_id)
+        with patch.object(
+            registry,
+            "notify_workspace_killed",
+            AsyncMock(side_effect=RuntimeError("fan-out db gone")),
+        ):
+            with pytest.raises(RuntimeError, match="fan-out db gone"):
+                await client.post(
+                    f"/api/v1/workspaces/{ws_id}/stop", headers=headers
+                )
+        # The stop never began: no phantom row, tracking intact, and
+        # no audit write failed (the record and the retract both
+        # succeeded).
+        assert await app.state.model.container_events.count_events(ws_id) == 0
+        assert registry.states[ws_id].container_id == "cid-fc-notify"
+        assert registry.audit_write_failures == 0
+        registry.states.pop(ws_id, None)
+
     async def test_create_eager_start_skipped_not_503(
         self, client, app, ws_admin, registry
     ):
@@ -3960,8 +3989,12 @@ class TestWorkspaceRoutes:
             cause=CAUSE_STOP,
             actor_id=user["id"],
             # None = the flag is off, so the route's audit pre-write
-            # (#3154) did not produce a pending row id.
+            # (#3154) did not produce a pending row id. The route
+            # pinned the gate decision (prewrite_decided), so the
+            # in-method pre-write cannot re-arm on a mid-request
+            # SIGHUP flip.
             pending_event=None,
+            prewrite_decided=True,
         )
         # Re-homed from the retired WS shutdown_container handler: REST /stop
         # broadcasts container_stopped so live viewers show "stopped".

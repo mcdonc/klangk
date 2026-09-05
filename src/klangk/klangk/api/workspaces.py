@@ -893,7 +893,17 @@ async def _stop_and_broadcast(
     tears down the registry's tracking of the container, and losing
     idle/crash/health monitoring for a still-running container is far
     worse than a refused request. The row id flows into the stop as
-    ``pending_event`` so it is written exactly once.
+    ``pending_event`` so it is written exactly once, and
+    ``prewrite_decided`` pins THIS request to the gate decision made
+    above (a SIGHUP flip off→on mid-request must not arm the in-method
+    pre-write after the notify already fired — reloads apply to
+    transitions started after them, and this one started).
+
+    #3154 review: ``notify_workspace_killed`` is not exception-safe
+    (its WS fan-out does DB reads), and the stop below never runs when
+    it raises — the pre-written row would describe a stop that did not
+    happen. Any raise (or cancellation) in that window retracts the
+    row before propagating.
     """
     registry = app.state.container_registry
     try:
@@ -903,13 +913,22 @@ async def _stop_and_broadcast(
             cause=CAUSE_STOP,
             actor_id=user_id,
         )
-        await registry.notify_workspace_killed(workspace_id, container_id=cid)
+        try:
+            await registry.notify_workspace_killed(
+                workspace_id, container_id=cid
+            )
+        except BaseException:
+            # The stop never began: the row must not survive as a
+            # phantom stop (#3154 review). Best-effort retract.
+            await registry.retract_prewritten_event(pending)
+            raise
         await registry.stop_and_remove_container(
             cid,
             workspace_id=workspace_id,
             cause=CAUSE_STOP,
             actor_id=user_id,
             pending_event=pending,
+            prewrite_decided=True,
         )
     except AuditWriteError as exc:
         # Fail-closed audit refusal (#3154): the stop never started —

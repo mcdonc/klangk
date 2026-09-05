@@ -651,6 +651,43 @@ class TestAuditFailClosedStop3154:
         # killed callback could tear it down.
         assert registry.states[ws_id].container_id == "cid-b1"
 
+    async def test_mode_flip_mid_request_cannot_arm_late_refusal(
+        self, app_state, db, registry, workspace
+    ):
+        """#3154 review: the /stop route evaluates the fail-closed gate
+        once; a SIGHUP flipping the mode on mid-request (after the
+        route's ungated pre-write, before the stop) must not arm the
+        in-method pre-write — that refusal would fire after the route
+        already emitted its death frames (``prewrite_decided``)."""
+        ws_id = workspace["id"]
+        registry.track_activity("cid-flip", ws_id)
+        # The route half: mode off — the pre-write is skipped, no row.
+        assert (
+            await registry.prewrite_stop_event(
+                ws_id, "cid-flip", cause=CAUSE_STOP, actor_id="u1"
+            )
+            is None
+        )
+        # The SIGHUP flip — and with it, a broken audit DB.
+        app_state.state.settings.audit_fail_closed = True
+        with patch_podman(registry) as mocks:
+            with patch.object(
+                app_state.state.model.container_events,
+                "record",
+                AsyncMock(side_effect=RuntimeError("db gone")),
+            ):
+                ok = await registry.stop_and_remove_container(
+                    "cid-flip",
+                    workspace_id=ws_id,
+                    cause=CAUSE_STOP,
+                    actor_id="u1",
+                    prewrite_decided=True,
+                )
+        assert ok is True
+        mocks.remove_container.assert_awaited_once()
+        # The stop's own best-effort row failed — counted, not fatal.
+        assert registry.audit_write_failures == 1
+
     async def test_rebound_stop_retracts_prewritten_row(
         self, app_state, db, registry, workspace
     ):

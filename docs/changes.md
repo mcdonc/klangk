@@ -690,13 +690,14 @@ sync` report a clear permission-denied error.
   the request with a 503 when it cannot be written; create's eager
   start is skipped instead (the workspace row is already committed, so
   it is left created-not-started — the same shape as a drain/capacity
-  refusal). WS-connect starts and autonomous stops (idle timeout,
-  eviction, drain, shutdown sweep, crash teardown, boot reaps) are
-  never gated. Default off keeps the best-effort behavior. A new
-  `/audit` endpoint reports `write_failures` (a counter bumped on every
-  audit-write failure, best-effort paths included) and `fail_closed`
-  so assessors can verify the mode. Reloadable on
-  SIGHUP.
+  refusal). WS-connect starts and autonomous transitions (idle
+  timeout, eviction, logout, drain, shutdown sweep, crash teardown,
+  boot reaps, crash-monitor restarts) are never gated. Default off
+  keeps the best-effort behavior. A new `/audit` endpoint (public,
+  like `/health`) reports `write_failures` (an in-memory counter
+  bumped on every audit-write failure, best-effort paths included;
+  zeroed on restart) and `fail_closed` so assessors can verify the
+  mode. Reloadable on SIGHUP.
 - **All five container images now publish on a release tag (#3140).**
   Pushing `vX.Y.Z` publishes `klangk-host`, `klangk-host-fips`,
   `klangk-workspace`, `klangk-workspace-fips`, and the newly pullable
