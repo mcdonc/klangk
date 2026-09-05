@@ -2,9 +2,9 @@
 
 A per-workspace classification marking (free text, e.g. ``UNCLASSIFIED``,
 ``CUI``, ``SECRET``) rendered as a persistent banner at the top and bottom
-of the workspace page in the web UI and as a status line in the TUI — the
-"mark sensitive/classified output when required" Application Security and
-Development STIG control (markings at the top and bottom of screens).
+of the workspace page in the web UI and as a status line in the TUI —
+markings pinned at the top and bottom of screens ("mark sensitive/classified
+output when required").
 
 ``NULL`` = inherit the deploy-wide default
 (``KLANGKD_CLASSIFICATION_BANNER``), which itself defaults to unset — no

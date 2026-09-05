@@ -1167,6 +1167,164 @@ class TestLogLevelValidator:
         assert "DEBUG" in msg  # valid levels listed in the message
 
 
+class TestLogFormatValidator:
+    """KLANGKD_LOG_FORMAT must be text or json, or fail fast at boot
+    (#3156) — the same fail-fast posture as the log_level validator."""
+
+    def test_defaults_to_text(self):
+        s = make_settings({})
+        assert s.log_format == "text"
+
+    @pytest.mark.parametrize(
+        "raw,expected",
+        [
+            ("text", "text"),
+            ("json", "json"),
+            ("JSON", "json"),
+            ("Json", "json"),
+            ("TEXT", "text"),
+            (" json ", "json"),
+        ],
+    )
+    def test_valid_values_normalized_to_lower(self, raw, expected):
+        s = make_settings({"KLANGKD_LOG_FORMAT": raw})
+        assert s.log_format == expected
+
+    def test_empty_string_defaults_to_text(self):
+        s = make_settings({"KLANGKD_LOG_FORMAT": ""})
+        assert s.log_format == "text"
+
+    @pytest.mark.parametrize("bad", ["syslog", "xml", "jsonl", "pretty"])
+    def test_garbage_rejected_at_construction(self, bad):
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            make_settings({"KLANGKD_LOG_FORMAT": bad})
+
+    def test_error_message_names_valid_formats(self):
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError) as exc_info:
+            make_settings({"KLANGKD_LOG_FORMAT": "syslog"})
+        msg = str(exc_info.value)
+        assert "syslog" in msg
+        assert "json" in msg  # valid formats listed in the message
+
+
+class TestLogFileValidator:
+    """KLANGKD_LOG_FILE — optional JSON sink path, probed fail-fast at
+    construction (#3156)."""
+
+    def test_defaults_to_empty(self):
+        s = make_settings({})
+        assert s.log_file == ""
+
+    def test_empty_string_disables_sink(self):
+        s = make_settings({"KLANGKD_LOG_FILE": ""})
+        assert s.log_file == ""
+
+    def test_writable_path_accepted_and_created(self, tmp_path):
+        target = tmp_path / "klangkd.jsonl"
+        s = make_settings({"KLANGKD_LOG_FILE": str(target)})
+        assert s.log_file == str(target)
+        assert target.exists()  # the append-probe creates it
+
+    def test_tilde_expanded(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        s = make_settings({"KLANGKD_LOG_FILE": "~/klangkd.jsonl"})
+        assert s.log_file == str(tmp_path / "klangkd.jsonl")
+
+    def test_unwritable_path_rejected_at_construction(self):
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            make_settings({"KLANGKD_LOG_FILE": "/nonexistent-dir-xyz/l.jsonl"})
+
+    def test_directory_path_rejected(self, tmp_path):
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            make_settings({"KLANGKD_LOG_FILE": str(tmp_path)})
+
+
+class TestLogFileMaxBytesValidator:
+    """KLANGKD_LOG_FILE_MAX_BYTES — size trigger, fail-fast (#3156)."""
+
+    def test_defaults_to_zero(self):
+        assert make_settings({}).log_file_max_bytes == 0
+
+    def test_positive_accepted(self):
+        s = make_settings({"KLANGKD_LOG_FILE_MAX_BYTES": "1048576"})
+        assert s.log_file_max_bytes == 1048576
+
+    def test_zero_accepted(self):
+        s = make_settings({"KLANGKD_LOG_FILE_MAX_BYTES": "0"})
+        assert s.log_file_max_bytes == 0
+
+    def test_negative_rejected(self):
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError) as exc_info:
+            make_settings({"KLANGKD_LOG_FILE_MAX_BYTES": "-5"})
+        assert "MAX_BYTES" in str(exc_info.value)
+
+    def test_non_integer_rejected(self):
+        # pydantic int coercion rejects garbage before the validator runs.
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            make_settings({"KLANGKD_LOG_FILE_MAX_BYTES": "big"})
+
+
+class TestLogFileRotateValidator:
+    """KLANGKD_LOG_FILE_ROTATE — time trigger, normalized + fail-fast
+    (#3156)."""
+
+    def test_defaults_to_empty(self):
+        assert make_settings({}).log_file_rotate == ""
+
+    @pytest.mark.parametrize("value", ["hourly", "daily", "weekly", "monthly"])
+    def test_all_intervals_accepted(self, value):
+        s = make_settings({"KLANGKD_LOG_FILE_ROTATE": value})
+        assert s.log_file_rotate == value
+
+    def test_case_and_space_normalized(self):
+        s = make_settings({"KLANGKD_LOG_FILE_ROTATE": " Daily "})
+        assert s.log_file_rotate == "daily"
+
+    def test_empty_disables(self):
+        s = make_settings({"KLANGKD_LOG_FILE_ROTATE": ""})
+        assert s.log_file_rotate == ""
+
+    def test_garbage_rejected(self):
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError) as exc_info:
+            make_settings({"KLANGKD_LOG_FILE_ROTATE": "sometimes"})
+        msg = str(exc_info.value)
+        assert "sometimes" in msg
+        assert "daily" in msg  # valid values listed in the message
+
+
+class TestLogFileBackupCountValidator:
+    """KLANGKD_LOG_FILE_BACKUP_COUNT — retention, fail-fast (#3156)."""
+
+    def test_defaults_to_three(self):
+        assert make_settings({}).log_file_backup_count == 3
+
+    @pytest.mark.parametrize("value", ["0", "1", "10"])
+    def test_non_negative_accepted(self, value):
+        s = make_settings({"KLANGKD_LOG_FILE_BACKUP_COUNT": value})
+        assert s.log_file_backup_count == int(value)
+
+    def test_negative_rejected(self):
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError) as exc_info:
+            make_settings({"KLANGKD_LOG_FILE_BACKUP_COUNT": "-1"})
+        assert "BACKUP_COUNT" in str(exc_info.value)
+
+
 class TestResolveIndirectionsValidator:
     """The ``_resolve_indirections`` model validator runs once at construction
     (#1461): every string field with a ``file:``/``cmd:`` prefix is resolved

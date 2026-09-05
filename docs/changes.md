@@ -592,6 +592,27 @@ sync` report a clear permission-denied error.
 
 ### Added
 
+- **`KLANGKD_LOG_FORMAT` / `KLANGKD_LOG_FILE` (#3156).** New settings for
+  SIEM/central-log forwarding. `KLANGKD_LOG_FORMAT`
+  (`text`, the default, or `json`) switches the console log stream to one
+  JSON object per line (`timestamp`, `level`, `logger`, `message`, `exc_info`
+  when present); `KLANGKD_LOG_FILE` additionally writes that JSON stream to a
+  file while the console keeps its own format — stdout can stay readable text
+  while the file feeds rsyslog `imfile`/fluent-bit. uvicorn's startup/error/
+  access records now flow through the same handler (previously they rode
+  uvicorn's own text handlers), so the whole stream shares the format. Both
+  are reloadable on SIGHUP; malformed values abort startup. The file sink
+  follows external rotation (logrotate rename) and suspends itself with a
+  warning instead of crashing if its path breaks at runtime. New rotation
+  settings let the app own rotation instead: `KLANGKD_LOG_FILE_MAX_BYTES`
+  (size trigger, `0` = off) and `KLANGKD_LOG_FILE_ROTATE`
+  (`hourly`/`daily`/`weekly`/`monthly`, UTC boundaries) rotate the sink to
+  numeric-suffix backups, retention via `KLANGKD_LOG_FILE_BACKUP_COUNT`
+  (default 3). uvicorn access
+  logs are now visible at the default INFO level (previously suppressed at
+  WARNING), and the Logfire SDK's project-URL print is suppressed so it
+  cannot inject a non-JSON line into the stream. See
+  [Environment Variables](reference/environment.md).
 - **All five container images now publish on a release tag (#3140).**
   Pushing `vX.Y.Z` publishes `klangk-host`, `klangk-host-fips`,
   `klangk-workspace`, `klangk-workspace-fips`, and the newly pullable
@@ -801,8 +822,7 @@ sync` report a clear permission-denied error.
   default) = unlimited. Reloadable on SIGHUP.
 - **`KLANGKD_CLASSIFICATION_BANNER` (#2768).** Deploy-wide default
   classification marking (free text) for the always-visible marking banner
-  the Application Security and Development STIG requires ("markings at the
-  top and the bottom of screens"). Per-workspace override via the
+  (markings pinned at the top and the bottom of screens). Per-workspace override via the
   `classification_banner` field on `POST`/`PUT /api/v1/workspaces`, `klangk
 create`/`edit --classification-banner`, and the create/edit UIs; the
   workspace-created hook can set it like any other attribute. Markings are

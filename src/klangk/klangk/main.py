@@ -755,25 +755,39 @@ def main(
     asgi_app.state.util.set_uds_mode(True)
 
     server = make_graceful_exit_server(asgi_app)(
-        uvicorn.Config(
-            asgi_app,
-            uds=uds_path,
-            # proxy_headers=False: over a UDS request.client is None;
-            # our trust helpers handle header trust via Util's uds-mode
-            # flag. Letting uvicorn also rewrite client would double-resolve.
-            proxy_headers=False,
-            ws_max_size=ws_max_size,
-            # Server stays at uvicorn's default (20/20). The TUI detects
-            # a wedged / half-open connection via its own client-side
-            # pings (set in ``cli/tui/ws.py``, 10s/10s) — its single
-            # reachability signal (#2052) — so there's no need to
-            # tighten the server globally (which would also affect the
-            # web UI and `klangk monitor`).
-            ws_ping_interval=20,
-            ws_ping_timeout=20,
-        )
+        make_uvicorn_config(asgi_app, uds_path, ws_max_size)
     )
     _run_server(server, uds_path, asgi_app.state)
+
+
+def make_uvicorn_config(asgi_app, uds_path: str, ws_max_size: int):
+    """Build klangkd's uvicorn Config (#3156 wiring: ``log_config=None``).
+
+    With uvicorn's default ``LOGGING_CONFIG`` (used when ``log_config`` is
+    unset), uvicorn installs its own handlers on the ``uvicorn`` /
+    ``uvicorn.access`` loggers with ``propagate: False`` *after* our
+    :func:`klangk.logger.configure` has run — so startup/access records
+    bypass the root handler entirely and never honor ``KLANGKD_LOG_FORMAT``
+    or ``KLANGKD_LOG_FILE`` (bare ``INFO:`` lines in a JSON stream).
+    ``log_config=None`` skips uvicorn's logging setup: its loggers keep no
+    handlers, propagate to the root handler, and share klangkd's configured
+    format — text or JSON, console and file alike.
+
+    The rest mirrors the previous inline call: proxy_headers=False (over a
+    UDS ``request.client`` is None; Util's uds-mode flag owns header trust —
+    letting uvicorn also rewrite client would double-resolve) and the 20/20
+    ws ping timeouts (the TUI detects wedged connections via its own
+    client-side pings, #2052).
+    """
+    return uvicorn.Config(
+        asgi_app,
+        uds=uds_path,
+        proxy_headers=False,
+        ws_max_size=ws_max_size,
+        ws_ping_interval=20,
+        ws_ping_timeout=20,
+        log_config=None,
+    )
 
 
 def make_graceful_exit_server(asgi_app):

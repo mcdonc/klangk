@@ -67,6 +67,12 @@ from klangk.model.workspaces import normalize_classification_banner
 # implementation of the ``cmd:`` secret prefix, shared with
 # util.resolve_file_value.
 from klangk.util import run_cmd_value
+
+# logger.py is stdlib-only (no settings import), so this is cycle-safe —
+# the accepted KLANGKD_LOG_FILE_ROTATE values and their boundary math live
+# there, next to the rotating handler that consumes them (#3156).
+from klangk.logger import ROTATE_WHENS
+
 from pydantic_settings.sources.providers.env import parse_env_vars
 
 logger = logging.getLogger(__name__)
@@ -878,6 +884,42 @@ class KlangkSettings(BaseSettings):
     # (fail-fast) so a typo'd level aborts boot rather than silently leaving
     # logging at the wrong verbosity.
     log_level: str = "INFO"
+    # log_format: root logger output format — ``text`` (the colored console
+    # format; default) or ``json`` (one JSON object per line: ISO-8601 UTC
+    # timestamp, level, logger, message, plus exc_info when present) for
+    # SIEM ingestion (#3156). Like log_level, applied
+    # by ``klangk.logger.configure(settings)`` in build_app and re-applied on
+    # every SIGHUP reload; the validator below rejects anything but
+    # text/json (fail-fast) at construction.
+    log_format: str = "text"
+    # log_file: optional path to a JSON-lines log sink. When set, every
+    # record ALSO lands in this file as one JSON object per line (always
+    # JSON — the file is the machine-ingestion artifact for SIEM forwarding
+    # via rsyslog imfile / fluent-bit), while the console keeps
+    # ``log_format`` (so stdout can stay human-readable text) (#3156).
+    # Reloadable on SIGHUP (a path change closes the old sink and opens
+    # the new one). The validator probes writability fail-fast at
+    # construction so a bad path aborts boot rather than silently
+    # dropping the SIEM stream.
+    log_file: str = ""
+    # log_file_max_bytes: size trigger for in-app rotation of the
+    # ``KLANGKD_LOG_FILE`` sink (#3156). ``0`` (the default) = never
+    # self-rotate; external rotation (logrotate/rsyslog) stays the
+    # mechanism. A positive value rotates the file (numeric-suffix
+    # backups) once it reaches that size; a file may overshoot by one
+    # record (checked before each write). Fail-fast at construction,
+    # live on SIGHUP reload, like the other log_* fields.
+    log_file_max_bytes: int = 0
+    # log_file_rotate: time trigger for in-app rotation — ``hourly``,
+    # ``daily``, ``weekly``, or ``monthly`` (UTC boundaries; weekly =
+    # Monday). Empty (the default) = no time trigger. Either trigger
+    # (or both) makes the app own rotation of the sink — keep external
+    # rotators off the same path.
+    log_file_rotate: str = ""
+    # log_file_backup_count: rotated ``<path>.N`` files to keep when a
+    # rotation trigger fires (oldest deleted first). ``0`` discards the
+    # rotated file outright. Only meaningful with a trigger set.
+    log_file_backup_count: int = 3
 
     # --- Server / network ---
     # listen: the proxy's **browser** interface/address (e.g. ``127.0.0.1``,
@@ -1058,8 +1100,8 @@ class KlangkSettings(BaseSettings):
     # classification_banner: deploy-wide default classification marking
     # for workspaces (#2768), free text (e.g. UNCLASSIFIED, CUI, SECRET).
     # Rendered as a persistent banner at the top and bottom of the web
-    # workspace page and as a status line in the TUI (the STIG "mark
-    # sensitive/classified output when required" control). A workspace
+    # workspace page and as a status line in the TUI (marks
+    # sensitive/classified output when required). A workspace
     # overrides it per workspace (``classification_banner`` on
     # POST/PUT /workspaces); NULL/absent workspaces inherit THIS value
     # at display time. Empty (the default) = no deploy-wide marking: no
@@ -1852,6 +1894,99 @@ class KlangkSettings(BaseSettings):
             "Must be a level name (DEBUG/INFO/WARNING/ERROR/CRITICAL) "
             "or a numeric value."
         )
+
+    @field_validator("log_format")
+    @classmethod
+    def _validate_log_format(cls, v: str) -> str:
+        """Normalize/reject the log output format at construction (#3156).
+
+        Accepts ``text`` or ``json`` (case-insensitive), normalized to
+        lowercase. ``None``/empty defaults to ``text``. Anything else aborts
+        boot — the same fail-fast posture as ``log_level`` above.
+        """
+        if _is_unset(v):
+            return "text"
+        lower = v.strip().lower()
+        if lower not in ("text", "json"):
+            raise ValueError(
+                f"KLANGKD_LOG_FORMAT={v!r} is invalid. Must be text or json."
+            )
+        return lower
+
+    @field_validator("log_file")
+    @classmethod
+    def _validate_log_file(cls, v: str) -> str:
+        """Normalize/probe the JSON log-file sink at construction (#3156).
+
+        ``None``/empty disables the file sink. A set path is ``~``-expanded
+        and probed for append-writability — an unwritable path aborts boot
+        (fail-fast) so a deploy never runs silently without its SIEM log
+        stream. The probe is an append-open (creates the file if missing,
+        never truncates), the same IO-in-validator posture as the ``file:``/
+        ``cmd:`` indirection resolver.
+        """
+        if _is_unset(v):
+            return ""
+        path = str(v).strip()
+        expanded = str(Path(path).expanduser())
+        try:
+            with open(expanded, "a", encoding="utf-8"):
+                pass
+        except OSError as exc:
+            raise ValueError(
+                f"KLANGKD_LOG_FILE={v!r} is not writable: {exc}"
+            ) from exc
+        return expanded
+
+    @field_validator("log_file_max_bytes")
+    @classmethod
+    def _validate_log_file_max_bytes(cls, v: int) -> int:
+        """Reject negative size thresholds (fail-fast, #3156).
+
+        ``0`` (the default) = no size rotation; pydantic already rejects
+        non-integer strings for the int field, so this only guards the
+        negative case (a size threshold that could never trigger).
+        """
+        if v < 0:
+            raise ValueError(
+                f"KLANGKD_LOG_FILE_MAX_BYTES={v} is invalid. "
+                "Must be >= 0 (0 = no size rotation)."
+            )
+        return v
+
+    @field_validator("log_file_rotate")
+    @classmethod
+    def _validate_log_file_rotate(cls, v: str) -> str:
+        """Normalize/reject the time-rotation value (fail-fast, #3156).
+
+        Accepts ``hourly``/``daily``/``weekly``/``monthly``
+        (case-insensitive), normalized to lowercase. ``None``/empty (the
+        default) = no time trigger. Anything else aborts boot — the same
+        posture as ``log_format`` above.
+        """
+        if _is_unset(v):
+            return ""
+        lower = v.strip().lower()
+        if lower not in ROTATE_WHENS:
+            raise ValueError(
+                f"KLANGKD_LOG_FILE_ROTATE={v!r} is invalid. "
+                "Must be hourly, daily, weekly, or monthly."
+            )
+        return lower
+
+    @field_validator("log_file_backup_count")
+    @classmethod
+    def _validate_log_file_backup_count(cls, v: int) -> int:
+        """Reject negative backup counts (fail-fast, #3156).
+
+        ``0`` is valid (discard the rotated file); only negatives are
+        nonsense.
+        """
+        if v < 0:
+            raise ValueError(
+                f"KLANGKD_LOG_FILE_BACKUP_COUNT={v} is invalid. Must be >= 0."
+            )
+        return v
 
     @field_validator("auth_modes")
     @classmethod

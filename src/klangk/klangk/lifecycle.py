@@ -1090,7 +1090,15 @@ def setup_logfire(app: FastAPI) -> bool:
 
     base_url = os.environ.get("LOGFIRE_BASE_URL")
     environment = os.environ.get("LOGFIRE_ENVIRONMENT")
-    kwargs: dict = {}
+    kwargs: dict = {
+        # The SDK prints "Logfire project URL: ..." to stderr via rich —
+        # from a background token-validation thread when no creds file
+        # exists (#3156) — which would inject a non-JSON line into the
+        # configured log stream. Suppress the link print at the source
+        # (both print sites are gated on this option); everything else
+        # keeps its defaults.
+        "console": logfire.ConsoleOptions(show_project_link=False),
+    }
     if environment:
         kwargs["environment"] = environment
     if base_url:

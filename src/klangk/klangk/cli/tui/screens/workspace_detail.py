@@ -516,7 +516,7 @@ class WorkspaceDetailScreen(StatusScreen):
     def _render_marking_bar(self) -> None:
         """Render (or hide) the classification marking line (#2768).
 
-        The STIG posture: the marking is persistent — visible on every
+        The design posture: the marking is persistent — visible on every
         render of the detail screen, top of the screen, color-coded. With
         no effective marking (no workspace override, no deploy default)
         the bar is hidden entirely and reserves no row.

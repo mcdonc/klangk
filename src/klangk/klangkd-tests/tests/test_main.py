@@ -1482,6 +1482,34 @@ class TestGracefulShutdown:
         mock_restart.assert_awaited_once()
 
 
+class TestUvicornConfig:
+    """klangkd's uvicorn Config wiring (main.make_uvicorn_config, #3156)."""
+
+    def test_log_config_is_none(self):
+        """``log_config=None`` is what routes uvicorn's own loggers (startup,
+        error, access) through klangkd's root handler so they honor
+        KLANGKD_LOG_FORMAT / KLANGKD_LOG_FILE — see the logger tests'
+        TestLogFileSink.test_uvicorn_records_share_the_configured_format."""
+        from unittest.mock import MagicMock
+
+        from klangk.main import make_uvicorn_config
+
+        cfg = make_uvicorn_config(MagicMock(), "/tmp/klangk.sock", 1024)
+        assert cfg.log_config is None
+
+    def test_previous_inline_arguments_preserved(self):
+        from unittest.mock import MagicMock
+
+        from klangk.main import make_uvicorn_config
+
+        cfg = make_uvicorn_config(MagicMock(), "/tmp/klangk.sock", 1024)
+        assert cfg.uds == "/tmp/klangk.sock"
+        assert cfg.proxy_headers is False
+        assert cfg.ws_max_size == 1024
+        assert cfg.ws_ping_interval == 20
+        assert cfg.ws_ping_timeout == 20
+
+
 class TestGracefulExitServer:
     """The uvicorn Server subclass that runs the shutdown hook before
     uvicorn's own exit (main.py, #2527)."""
@@ -3245,6 +3273,29 @@ class TestSetupLogfire:
         app = FastAPI()
         assert main.setup_logfire(app) is False
 
+    def test_project_link_print_suppressed_at_source(self, monkeypatch):
+        """The real SDK (4.37) prints "Logfire project URL: ..." to stderr
+        via rich — from a background token-validation thread when no creds
+        file exists — so a stdout redirect can't catch it. setup_logfire must
+        suppress the print at the source: ``console=ConsoleOptions(
+        show_project_link=False)`` gates both print sites (#3156)."""
+        monkeypatch.setenv("LOGFIRE_TOKEN", "test-token")
+        monkeypatch.delenv("LOGFIRE_BASE_URL", raising=False)
+        monkeypatch.delenv("LOGFIRE_ENVIRONMENT", raising=False)
+        mock_logfire = MagicMock()
+        with patch.dict("sys.modules", {"logfire": mock_logfire}):
+            app = FastAPI()
+            result = main.setup_logfire(app)
+        assert result is True
+        mock_logfire.ConsoleOptions.assert_called_once_with(
+            show_project_link=False
+        )
+        configure_kwargs = mock_logfire.configure.call_args.kwargs
+        assert (
+            configure_kwargs["console"]
+            is mock_logfire.ConsoleOptions.return_value
+        )
+
     def test_with_token_instruments_app(self, monkeypatch):
         monkeypatch.setenv("LOGFIRE_TOKEN", "test-token")
         monkeypatch.delenv("LOGFIRE_BASE_URL", raising=False)
@@ -3254,7 +3305,7 @@ class TestSetupLogfire:
             app = FastAPI()
             result = main.setup_logfire(app)
         assert result is True
-        mock_logfire.configure.assert_called_once_with()
+        mock_logfire.configure.assert_called_once()
         mock_logfire.instrument_fastapi.assert_called_once_with(app)
 
     def test_base_url_passed_via_advanced_options(self, monkeypatch):
@@ -3296,6 +3347,7 @@ class TestCorsOrigins:
             base_url="https://custom.logfire"
         )
         mock_logfire.configure.assert_called_once_with(
+            console=mock_logfire.ConsoleOptions.return_value,
             advanced=mock_logfire.AdvancedOptions.return_value,
             environment="staging",
         )
