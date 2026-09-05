@@ -105,6 +105,11 @@ def password_class_counts(password: str) -> dict[str, int]:
 security = HTTPBearer(auto_error=False)
 
 
+# ---------------------------------------------------------------------------
+# Pure helpers (no config) — module-level
+# ---------------------------------------------------------------------------
+
+
 def password_edit_distance(old: str, new: str) -> int:
     """Levenshtein distance between two passwords, in code points (#3173).
 
@@ -127,11 +132,6 @@ def password_edit_distance(old: str, new: str) -> int:
             )
         prev = cur
     return prev[-1]
-
-
-# ---------------------------------------------------------------------------
-# Pure helpers (no config) — module-level
-# ---------------------------------------------------------------------------
 
 
 def is_locked_out(

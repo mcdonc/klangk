@@ -2196,6 +2196,27 @@ class TestChangePassword:
         assert resp.status_code == 400
         assert "change at least 8 characters" in resp.json()["detail"]
 
+    async def test_change_password_wrong_current_beats_too_similar(
+        self, client, user, app, monkeypatch
+    ):
+        """#3173: re-auth runs before the distance check — a wrong current
+        password yields the 401, never the too-similar 400 (which would
+        leak distance information about the submitted pair)."""
+        monkeypatch.setattr(
+            app.state.settings, "password_min_changed", 8, raising=False
+        )
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/auth/change-password",
+            json={
+                "current_password": "wrongpass",
+                "new_password": "xtestpass",
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 401
+        assert "characters" not in resp.json()["detail"]
+
     async def test_change_password_enough_change_succeeds(
         self, client, user, app, monkeypatch
     ):

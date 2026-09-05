@@ -117,8 +117,8 @@ class PasswordPolicy {
     if (minChanged <= 0) return null;
     if (_editDistance(current.runes.toList(), newPassword.runes.toList()) <
         minChanged) {
-      return 'Must change at least $minChanged characters from the '
-          'current password';
+      return 'New password must change at least $minChanged characters '
+          'from the current password';
     }
     return null;
   }

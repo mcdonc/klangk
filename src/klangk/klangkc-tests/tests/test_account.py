@@ -167,6 +167,10 @@ class TestPasswordEditDistance:
         assert account.password_edit_distance("", "abc") == 3
         assert account.password_edit_distance("abc", "") == 3
 
+    def test_counts_code_points_not_bytes(self):
+        # "café" -> "cafe": one code point; a byte diff would score 2.
+        assert account.password_edit_distance("café", "cafe") == 1
+
 
 class TestChangedError:
     """CLI mirror of the server's min-changed gate (#3173)."""
