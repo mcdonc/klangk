@@ -232,47 +232,64 @@ class _InlineScriptExtractor(html.parser.HTMLParser):
     """Collect the raw text of every inline ``<script>`` block (no ``src``).
 
     ``HTMLParser`` switches to CDATA (raw-text) mode inside ``script``
-    elements, so :meth:`handle_data` receives the exact bytes-between-tags
-    the browser hashes for a CSP ``'sha256-…'`` source token. ``src``-bearing
-    scripts are skipped — external files load under ``'self'`` and never
-    consult a hash.
+    elements, so :meth:`handle_data` receives the text-between-tags the
+    browser hashes for a CSP ``'sha256-…'`` source token (after the HTML
+    input stream's newline normalization, mirrored by the ``\r``-folding in
+    :func:`inline_script_hash_tokens`). ``src``-bearing scripts are skipped
+    — external files load under ``'self'`` and never consult a hash.
+    Truly empty blocks (``<script></script>``) still yield a token: the
+    browser runs the CSP check on them too. One known divergence from the
+    spec's script-data *escaped* states (``<!--`` / ``<script`` double-
+    escaping): the parser ends the element at the first ``</script>``. The
+    drift is fail-closed — a mismatched hash blocks the script (broken
+    boot, loudly), never an unintended allow — and is unreachable for
+    Flutter-generated ``index.html``.
     """
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=False)
         self.blocks: list[str] = []
         self._inline = False
+        self._saw_data = False
 
     def handle_starttag(self, tag, attrs) -> None:
         if tag == "script" and "src" not in dict(attrs):
             self._inline = True
+            self._saw_data = False
 
     def handle_endtag(self, tag) -> None:
         if tag == "script":
+            if self._inline and not self._saw_data:
+                self.blocks.append("")
             self._inline = False
 
     def handle_data(self, data) -> None:
         if self._inline:
             self.blocks.append(data)
+            self._saw_data = True
 
 
 def inline_script_hash_tokens(html_text: str) -> list[str]:
     """CSP ``'sha256-…'`` source tokens for *html_text*'s inline scripts.
 
-    Each token is the base64 SHA-256 digest of the exact element text —
-    what a browser computes when matching a hash source against an inline
-    script (CSP3 script-hash matching). With these tokens in
-    ``script-src`` the served policy needs no ``'unsafe-inline'``
-    allowance for scripts (#3219).
+    Each token is the base64 SHA-256 of the script's text as the browser
+    sees it — i.e. after the HTML input stream's newline normalization
+    (``\r\n`` and lone ``\r`` fold to ``\n``), applied here so direct calls
+    on CR-bearing text match too (:func:`csp_policy`'s ``read_text``
+    universal-newline translation normalizes identically, making this
+    idempotent there). With these tokens in ``script-src`` the served
+    policy needs no ``'unsafe-inline'`` allowance for scripts (#3219).
     """
     extractor = _InlineScriptExtractor()
     extractor.feed(html_text)
     extractor.close()
     return [
         "sha256-"
-        + base64.b64encode(hashlib.sha256(b.encode("utf-8")).digest()).decode(
-            "ascii"
-        )
+        + base64.b64encode(
+            hashlib.sha256(
+                b.replace("\r\n", "\n").replace("\r", "\n").encode("utf-8")
+            ).digest()
+        ).decode("ascii")
         for b in extractor.blocks
     ]
 
@@ -318,7 +335,19 @@ def csp_policy(frontend_dir: str | Path) -> str:
             .joinpath("index.html")
             .read_text(encoding="utf-8")
         )
-    except OSError:
+    except (OSError, UnicodeDecodeError):
+        # Unreadable OR non-UTF-8 (a ValueError, not an OSError — a
+        # windows-1252 byte would otherwise raise out of the renderer and
+        # wedge the watchdog in a kill/respawn loop). Either way: strict
+        # hash-less policy + a loud breadcrumb for the operator, whose
+        # symptom would otherwise be a blank page with only a browser-side
+        # "Refused to execute inline script" console error to go on.
+        logger.warning(
+            "index.html unreadable or not UTF-8 under %s — serving the "
+            "CSP without inline-script hash tokens (inline scripts will "
+            "be blocked until this is fixed)",
+            frontend_dir,
+        )
         html_text = ""
     script_src = "script-src 'self' 'wasm-unsafe-eval'"
     tokens = inline_script_hash_tokens(html_text)

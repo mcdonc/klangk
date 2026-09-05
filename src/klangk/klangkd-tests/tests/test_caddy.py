@@ -665,13 +665,47 @@ class TestCspBlock:
         for token in tokens:
             assert token in policy
 
-    def test_missing_index_html_omits_hashes(self, tmp_path):
+    def test_missing_index_html_omits_hashes(self, tmp_path, caplog):
         # No frontend to serve -> strictest posture, still no inline escape
-        # hatch for scripts.
-        policy = csp_policy(tmp_path / "nowhere")
+        # hatch for scripts — and a breadcrumb so the operator is not left
+        # with only a browser-side console error.
+        with caplog.at_level(logging.WARNING):
+            policy = csp_policy(tmp_path / "nowhere")
         assert "sha256-" not in policy
         script_src = policy.split("script-src ", 1)[1].split(";", 1)[0]
         assert "'unsafe-inline'" not in script_src
+        assert "index.html unreadable" in caplog.text
+
+    def test_non_utf8_index_html_no_crash(self, tmp_path):
+        # A windows-1252 byte raises UnicodeDecodeError — a ValueError,
+        # NOT an OSError — out of read_text. It must not escape the
+        # renderer (a raised render wedges the watchdog in a
+        # kill/respawn loop); the strict hash-less policy is served
+        # instead (#3219 review finding).
+        fd = tmp_path / "frontend-1252"
+        fd.mkdir()
+        (fd / "index.html").write_bytes(
+            b"<html><body><script>var s = '\xffcaf\xe9';</script></body></html>"
+        )
+        policy = csp_policy(fd)
+        assert "sha256-" not in policy
+        script_src = policy.split("script-src ", 1)[1].split(";", 1)[0]
+        assert "'unsafe-inline'" not in script_src
+
+    def test_crlf_normalizes_like_the_browser(self, tmp_path):
+        # The HTML input stream folds CRLF/CR to LF before the tokenizer
+        # sees script data, so the browser hashes the LF text; the helper
+        # mirrors that (and csp_policy's read_text already does).
+        crlf = "<script>var a = 1;\r\nvar b;</script>"
+        lf = "<script>var a = 1;\nvar b;</script>"
+        assert inline_script_hash_tokens(crlf) == inline_script_hash_tokens(lf)
+
+    def test_empty_inline_script_yields_token(self):
+        # <script></script> gets no handle_data callback, but the browser
+        # still runs the CSP check on it — emit the empty-string hash so it
+        # is not a guaranteed console violation.
+        tokens = inline_script_hash_tokens("<script></script>")
+        assert tokens == [sha256_token("")]
 
     def test_browser_site_carries_headers(self, tmp_path):
         s = make_settings(
