@@ -35,6 +35,16 @@ operators or integrators to act when upgrading.
 
 ### Breaking
 
+- **Token-in-URL removal changes client contracts (#3201).**
+  Anything connecting to `/ws` or `/ws/consent-decider` must switch
+  from the `?token=` query param to the `bearer` WebSocket subprotocol
+  (the JWT rides the handshake's `Sec-WebSocket-Protocol` header), and
+  any client of the verify endpoint must `POST` the token in the body
+  (the GET form is gone). Verification/reset emails sent by a
+  pre-upgrade server stop working after the upgrade (the new one-time
+  bindings reject the old token shapes) — affected users must request
+  a fresh link. See the [token delivery policy](/features/authentication/#token-delivery-policy).
+
 - **User bind mounts disabled by default (#3153).** With
   `KLANGKD_ALLOWED_MOUNT_ROOTS` unset (previously: any non-protected
   host path was allowed), workspace mount entries with a host-path
@@ -316,13 +326,8 @@ operators or integrators to act when upgrading.
   `POST /api/v1/auth/verify` (formerly GET) takes the verification
   token in the body. Email-link tokens (verify/reset/invite) are now
   strictly one-time — a replayed verification link or a reset link
-  minted before an earlier reset is rejected. **Breaking for
-  integrators:** anything connecting to `/ws` or `/ws/consent-decider`
-  must switch from the query param to the `bearer` subprotocol, and
-  any client of the verify endpoint must POST. Verification/reset
-  emails sent by a pre-upgrade server stop working after the upgrade
-  (the new one-time bindings reject the old token shapes) — affected
-  users must request a fresh link. See the [token delivery policy](/features/authentication/#token-delivery-policy).
+  minted before an earlier reset is rejected. Client-contract
+  migration notes: see the Breaking entry above.
 
 - **`KLANGKD_SESSION_WORKSTATION_BINDING` (#3194).** Session workstation
   binding: replay protection for bearer JWTs. `off` (the default)

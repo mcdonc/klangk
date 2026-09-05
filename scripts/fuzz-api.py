@@ -279,6 +279,7 @@ ENDPOINTS: list[tuple[str, str, dict | None, dict | None]] = [
     ("POST", f"{P}/auth/register", {"email": "email", "password": "password"}, None),
     ("POST", f"{P}/auth/login", {"email": "email", "password": "password"}, None),
     ("POST", f"{P}/auth/verify", {"token": "string"}, None),
+    ("POST", f"{P}/auth/oidc/exchange", {"code": "string"}, None),
     (
         "POST",
         f"{P}/auth/resend-verification",

@@ -7122,6 +7122,56 @@ class TestOidcBrowserLogin:
         with pytest.raises(SystemExit):
             oidc_browser_login("http://srv", "prov", CLIState())
 
+    def test_exchange_garbage_json_200_body_exits_1(self, monkeypatch):
+        """A 200 whose body is not JSON at all fails the login instead
+        of crashing the main thread."""
+        from klangk.cli.auth import oidc_browser_login
+
+        resp = MagicMock(status_code=200)
+        resp.json.side_effect = ValueError("not json")
+        monkeypatch.setattr(
+            "klangk.cli.auth.http_request", MagicMock(return_value=resp)
+        )
+        monkeypatch.setattr(
+            "klangk.cli.auth.webbrowser.open",
+            self._drive_callback("code=one-time", []),
+        )
+        with pytest.raises(SystemExit):
+            oidc_browser_login("http://srv", "prov", CLIState())
+
+    def test_exchange_malformed_200_body_exits_1(self, monkeypatch):
+        """A 200 whose body is not a JSON object fails the login instead
+        of crashing the callback thread (review #3201 finding 3)."""
+        from klangk.cli.auth import oidc_browser_login
+
+        resp = MagicMock(status_code=200)
+        resp.json.return_value = ["not", "a", "dict"]
+        monkeypatch.setattr(
+            "klangk.cli.auth.http_request", MagicMock(return_value=resp)
+        )
+        monkeypatch.setattr(
+            "klangk.cli.auth.webbrowser.open",
+            self._drive_callback("code=one-time", []),
+        )
+        with pytest.raises(SystemExit):
+            oidc_browser_login("http://srv", "prov", CLIState())
+
+    def test_exchange_tokenless_200_body_exits_1(self, monkeypatch):
+        """A 200 whose JSON object lacks the token fails the login."""
+        from klangk.cli.auth import oidc_browser_login
+
+        resp = MagicMock(status_code=200)
+        resp.json.return_value = {"email": "x@example.com"}
+        monkeypatch.setattr(
+            "klangk.cli.auth.http_request", MagicMock(return_value=resp)
+        )
+        monkeypatch.setattr(
+            "klangk.cli.auth.webbrowser.open",
+            self._drive_callback("code=one-time", []),
+        )
+        with pytest.raises(SystemExit):
+            oidc_browser_login("http://srv", "prov", CLIState())
+
     def test_error_callback_exits_1(self, monkeypatch):
         from klangk.cli.auth import oidc_browser_login
 

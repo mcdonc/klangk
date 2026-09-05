@@ -114,7 +114,7 @@ async function connectWs(
 ): Promise<TestWsClient> {
   const wsUrl = API_BASE.replace("http://", "ws://");
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(`${wsUrl}/ws?token=${token}`);
+    const ws = new WebSocket(`${wsUrl}/ws`, ["bearer", token]);
     const client = new TestWsClient(ws);
     const timeout = setTimeout(() => {
       ws.close();

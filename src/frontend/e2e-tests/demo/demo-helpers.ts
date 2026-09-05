@@ -957,7 +957,7 @@ export async function connectWs(
 ): Promise<DemoWs> {
   const wsUrl = DEMO_URL.replace(/^http/, "ws");
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(`${wsUrl}/ws?token=${token}`);
+    const ws = new WebSocket(`${wsUrl}/ws`, ["bearer", token]);
     const client = new DemoWs(ws);
     const t = setTimeout(() => {
       ws.close();

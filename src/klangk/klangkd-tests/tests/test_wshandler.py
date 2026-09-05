@@ -3090,6 +3090,21 @@ class TestHandleWebsocket:
             await asyncio.wait_for(task, timeout=2)
         websocket.accept.assert_awaited_once_with(subprotocol=None)
 
+    async def test_app_subprotocol_before_pair_parses_last_entry(
+        self, user, app_state, db
+    ):
+        """#3201: a future client negotiating an application subprotocol
+        ahead of the pair (`json, bearer, <jwt>`) still yields the JWT —
+        the scan takes the LAST non-marker entry."""
+        a = app_state.state.auth
+        token = await a.issue_token(user["id"], user["email"])
+        websocket = _mock_raw_sock(
+            headers={"sec-websocket-protocol": f"json, bearer, {token}"}
+        )
+        authed = await ws_authenticate(websocket, app_state)
+        assert authed is not None
+        assert authed[0]["id"] == user["id"]
+
     async def test_bearer_marker_echoed_on_accept(self, user, app_state, db):
         """#3201: the offered 'bearer' marker is echoed so browser
         clients complete the subprotocol negotiation."""

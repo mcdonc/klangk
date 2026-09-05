@@ -53,6 +53,8 @@ class _OidcCompletePageState extends State<OidcCompletePage> {
     } catch (_) {
       // Stable message only (#3223 policy): transport errors are mapped
       // upstream; a malformed 200 body must not leak a raw exception.
+      // The await may have straddled an unmount (#3203) — re-check.
+      if (!mounted) return;
       setState(() => _error = 'Login code exchange failed.');
     }
   }

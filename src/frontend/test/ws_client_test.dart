@@ -470,7 +470,11 @@ void main() {
     test('connect success via testChannelFactory', () async {
       SharedPreferences.setMockInitialValues({'klangk_jwt': 'test-token'});
       final channel = _FakeWebSocketChannel();
-      WsClient.testChannelFactory = (_, __) => channel;
+      List<String>? seenProtocols;
+      WsClient.testChannelFactory = (_, protocols) {
+        seenProtocols = protocols;
+        return channel;
+      };
 
       final auth = AuthService();
       await Future.delayed(Duration.zero);
@@ -481,6 +485,8 @@ void main() {
 
       await client.connect();
       expect(client.connected, isTrue);
+      // #3201: the JWT rides the subprotocol list, never the URL.
+      expect(seenProtocols, ['bearer', 'test-token']);
       client.disconnect();
       client.dispose();
     });

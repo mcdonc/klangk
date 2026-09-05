@@ -2176,7 +2176,9 @@ socket. Requires the `egress-consent` permission on the workspace
 strictly workspace-scoped: the `workspace` query param is
 required — a handshake without it is refused.
 
-**Auth:** JWT required. Query param: `workspace` (the workspace id).
+**Auth:** JWT via the handshake's `Sec-WebSocket-Protocol` header
+(`bearer, <jwt>` — the server echoes `bearer`; #3201). Query param:
+`workspace` (the workspace id).
 
 Close codes: 4001 (missing/invalid token), 4002 (expired token), 4003
 (forbidden — missing `egress-consent` or wrong scope), 4004 (password

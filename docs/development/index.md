@@ -58,7 +58,6 @@ changes.
 
 Inside `devenv shell`, these commands are available:
 
-
 | Command                     | Description                                   |
 | --------------------------- | --------------------------------------------- |
 | `test-backend`              | Run Python unit tests (server + client)       |
@@ -72,7 +71,7 @@ Inside `devenv shell`, these commands are available:
 | `test-cli-e2e`              | Run CLI E2E tests                             |
 | `test-terminal-windows-e2e` | CLI E2E: named terminal windows               |
 | `test-frontend-e2e`         | Run frontend E2E tests (Playwright)           |
-| `test-super-e2e`            | Super-E2E: features inside the Docker host   |
+| `test-super-e2e`            | Super-E2E: features inside the Docker host    |
 | `test-fuzz-api`             | API fuzz test against an isolated server      |
 | `test-all`                  | Every suite (needs podman + images)           |
 | `consent-watch`             | Live view of a workspace's consent history    |

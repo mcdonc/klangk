@@ -98,6 +98,62 @@ def local_login(server_url: str) -> tuple[str, str]:
     return email, token
 
 
+def _exchange_credentials(data) -> tuple[str, str] | None:
+    """(token, email) from a decoded exchange body, or None."""
+    token = data.get("access_token") if isinstance(data, dict) else None
+    if not token:
+        return None
+    return token, data.get("email") or "unknown"
+
+
+def _parse_exchange_response(resp) -> tuple[str, str] | None:
+    """(token, email) from an exchange response, or None on any
+    non-200 or malformed body."""
+    if resp.status_code != 200:
+        return None
+    try:
+        return _exchange_credentials(resp.json())
+    except Exception:
+        return None
+
+
+def _redeem_login_code(server_url: str, code: str) -> tuple[str, str] | None:
+    """Exchange a one-time OIDC login code for ``(token, email)``.
+
+    #3201: runs on the main thread after the localhost callback landed.
+    A transport failure, non-200, or malformed body all return None —
+    the caller renders the same "exchange failed" outcome.
+    """
+    try:
+        resp = http_request(
+            server_url,
+            "POST",
+            "/api/v1/auth/oidc/exchange",
+            json={"code": code},
+            timeout=15.0,
+        )
+    except Exception:
+        return None
+    return _parse_exchange_response(resp)
+
+
+def _apply_captured_code(server_url, holders) -> None:
+    """Redeem the callback-captured code into the shared holders.
+
+    *holders* is the ``(code, error, token, email)`` list quartet the
+    callback handler and the main thread share; on any redemption
+    failure the error holder carries the stable failure message.
+    """
+    code_holder, error_holder, token_holder, email_holder = holders
+    if not code_holder[0] or error_holder[0]:
+        return
+    redeemed = _redeem_login_code(server_url, code_holder[0])
+    if redeemed is None:
+        error_holder[0] = "Login code exchange failed"
+    else:
+        token_holder[0], email_holder[0] = redeemed
+
+
 def oidc_browser_login(
     server_url: str,
     provider_id: str,
@@ -118,42 +174,27 @@ def oidc_browser_login(
 
     token_holder: list[str | None] = [None]
     email_holder: list[str | None] = [None]
+    code_holder: list[str | None] = [None]
     error_holder: list[str | None] = [None]
 
     class CallbackHandler(http.server.BaseHTTPRequestHandler):
         def do_GET(self):  # noqa: N802
             parsed = urlparse(self.path)
             params = parse_qs(parsed.query)
-            # #3201: the redirect carries a one-time code, not the JWT;
-            # redeem it immediately for the session token so the JWT
-            # never touches a URL or browser history.
+            # #3201: the redirect carries a one-time code, not the JWT.
+            # The handler only captures the code (and stays fast, so the
+            # main thread's 120s join window is not eaten by the
+            # exchange round trip); the main thread redeems it for the
+            # session token below, so the JWT never touches a URL or
+            # browser history.
             code = params.get("code", [None])[0]
             if code:
-                try:
-                    resp = http_request(
-                        server_url,
-                        "POST",
-                        "/api/v1/auth/oidc/exchange",
-                        json={"code": code},
-                        timeout=15.0,
-                    )
-                except httpx.HTTPError:
-                    resp = None
-                if resp is not None and resp.status_code == 200:
-                    data = resp.json()
-                    token_holder[0] = data.get("access_token")
-                    email_holder[0] = data.get("email") or "unknown"
-                if token_holder[0]:
-                    self._send_page(
-                        200,
-                        "Login Successful",
-                        "You are now logged in. You can close this tab.",
-                        "#2e7d32",
-                    )
-                    return
-                error_holder[0] = "Login code exchange failed"
+                code_holder[0] = code
                 self._send_page(
-                    400, "Login Failed", error_holder[0], "#c62828"
+                    200,
+                    "Login Received",
+                    "You can close this tab.",
+                    "#2e7d32",
                 )
             else:
                 error = params.get("error", ["Unknown error"])[0]
@@ -202,6 +243,14 @@ margin:0;background:#1a1a2e;color:#e0e0e0">
     # Wait for the callback (timeout after 2 minutes)
     server_thread.join(timeout=120)
     server.server_close()
+
+    # Redeem the captured one-time code for the session token (#3201).
+    # Runs on the main thread after the callback landed, keeping the
+    # handler fast; failures collapse into the same "exchange failed"
+    # outcome the error arm renders.
+    _apply_captured_code(
+        server_url, (code_holder, error_holder, token_holder, email_holder)
+    )
 
     if token_holder[0]:
         token = token_holder[0]
