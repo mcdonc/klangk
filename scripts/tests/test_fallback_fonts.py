@@ -11,16 +11,20 @@ klangk points that base at the same-origin vendored mirror instead, via
 These tests pin the three legs of that arrangement so a silent drift is
 loud:
 
-1. The vendored tree matches the engine's current URL set and the
-   ``FALLBACK-FONTS.sha256`` manifest (re-run
-   ``scripts/vendor_flutter_fallback_fonts.py`` after a Flutter/toolchain
-   bump that changes the set).
-2. Every ``family/version`` directory is listed in ``pubspec.yaml`` —
+1. The vendored tree matches the ``FALLBACK-FONTS.sha256`` manifest —
+   every listed part exists with its pinned hash, and nothing extra
+   ships (runs everywhere, no Flutter needed).
+2. The manifest's URL set matches the engine's current set — this needs
+   a Flutter SDK with engine sources on PATH (the devenv/nix layout), so
+   it is skipped with a loud reason in CI jobs that run ``scripts/tests``
+   without Flutter; re-run ``scripts/vendor_flutter_fallback_fonts.py``
+   after a Flutter/toolchain bump that changes the set.
+3. Every ``family/version`` directory is listed in ``pubspec.yaml`` —
    Flutter directory assets are not recursive, so an unlisted directory's
-   parts would silently never ship.
-3. ``flutter_bootstrap.js`` points the engine at the same-origin mirror
-   (the double ``assets/assets/`` prefix is load-bearing: bundled assets
-   are served under ``build/web/assets/assets/``).
+   parts would silently never ship — and ``flutter_bootstrap.js`` points
+   the engine at the same-origin mirror (the double ``assets/assets/``
+   prefix is load-bearing: bundled assets are served under
+   ``build/web/assets/assets/``).
 """
 
 from __future__ import annotations
@@ -28,6 +32,8 @@ from __future__ import annotations
 import re
 import sys
 from pathlib import Path
+
+import pytest
 
 _ROOT = Path(__file__).resolve().parents[2]
 _FRONTEND = _ROOT / "src/frontend"
@@ -43,12 +49,40 @@ def _import_vendor_module():
     return vendor
 
 
-def test_vendored_tree_matches_engine_and_manifest():
+def _manifest_hashes():
     vendor = _import_vendor_module()
-    urls = vendor.engine_font_urls(vendor.flutter_sdk("flutter"))
     hashes = vendor.read_manifest(vendor.TARGET_DIR / vendor.MANIFEST_NAME)
-    problems = vendor.check_tree(urls, hashes)
+    assert hashes, f"{vendor.MANIFEST_NAME} missing or empty — re-run the vendor script"
+    return vendor, hashes
+
+
+def test_tree_matches_manifest():
+    """Every manifest-listed part is on disk with its pinned hash, and no
+    unlisted woff2 ships (runs in CI: no Flutter SDK required)."""
+    vendor, hashes = _manifest_hashes()
+    problems = vendor.check_tree(sorted(hashes), hashes)
     assert not problems, "\n".join(problems)
+
+
+def test_manifest_matches_engine_set():
+    """The manifest pins exactly the URLs the engine can request.
+
+    Needs a Flutter SDK carrying engine sources (the devenv/nix layout at
+    ``<sdk>/engine/src/flutter/lib/web_ui``); the stock CI runners of
+    ``scripts/tests`` have no Flutter, so those skip loudly — the drift
+    this catches is introduced by toolchain bumps, which are cut from a
+    devenv shell where the test runs.
+    """
+    vendor, hashes = _manifest_hashes()
+    try:
+        urls = set(vendor.engine_font_urls(vendor.flutter_sdk("flutter")))
+    except SystemExit as exc:
+        pytest.skip(f"no Flutter SDK with engine sources on PATH ({exc})")
+    assert urls == set(hashes), (
+        f"engine set drifted from the vendored manifest: "
+        f"missing={sorted(urls - set(hashes))[:5]}, "
+        f"extra={sorted(set(hashes) - urls)[:5]} — re-run the vendor script"
+    )
 
 
 def vendored_dirs(target: Path) -> set[str]:
@@ -85,9 +119,18 @@ def test_pubspec_lists_every_vendored_directory():
 
 
 def test_bootstrap_points_engine_at_vendored_fonts():
+    text = _BOOTSTRAP.read_text()
+    # The {{flutter_build_config}}/{{flutter_js}} placeholders must stay on
+    # their exact single-line form — the flutter tool substitutes by exact
+    # match, and a reformatted file (e.g. by prettier) ships the raw
+    # placeholder and breaks app boot. The file is in .prettierignore for
+    # the same reason; this pins it.
+    assert text.startswith("{{flutter_build_config}}\n{{flutter_js}}\n"), (
+        "bootstrap template placeholders must stay on their exact lines"
+    )
     assigned = re.findall(
         r'fontFallbackBaseUrl:\s*"([^"]+)"',
-        _BOOTSTRAP.read_text(),
+        text,
     )
     assert assigned == ["assets/assets/fallback-fonts/"], (
         "flutter_bootstrap.js must keep fontFallbackBaseUrl on the vendored "

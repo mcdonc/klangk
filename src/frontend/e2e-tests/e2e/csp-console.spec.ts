@@ -37,16 +37,28 @@ function watchViolations(page: Page, sink: string[]) {
     if (msg.type() === "error" && pattern.test(msg.text())) {
       sink.push(`console: ${msg.text()}`);
     }
-    // Engine font-fallback failures (404s / permanent unavailability)
-    // mean a codepoint silently degraded to tofu — visible only as a
-    // warning line, so watch for the phrases too.
+    // Engine font-fallback failures mean a codepoint silently degraded
+    // to tofu — they surface as warnings, so watch for the phrases too
+    // (the engine's own 404 wording is "Permanent HTTP failure", and
+    // exhaustion is "permanently unavailable").
     if (
       (msg.type() === "warning" || msg.type() === "error") &&
-      /permanently unavailable|not found \(404\)|Failed to load font/.test(
+      /permanently unavailable|Permanent HTTP failure|Failed to load font/.test(
         msg.text(),
       )
     ) {
       sink.push(`font: ${msg.text()}`);
+    }
+    // pdfium worker failures: pdfium_client.js logs "Worker error:" when
+    // the wasm worker fails to load or parse — the exact signature of a
+    // broken worker bootstrap (a garbled or TT-blocked worker script
+    // still constructs the Worker object, so the workerCount assertion
+    // alone cannot catch it).
+    if (
+      msg.type() === "error" &&
+      /Worker error|Failed to load pdfium/.test(msg.text())
+    ) {
+      sink.push(`pdfium: ${msg.text()}`);
     }
   });
   page.on("pageerror", (err) => {
@@ -57,12 +69,12 @@ function watchViolations(page: Page, sink: string[]) {
 }
 
 // Records every request whose origin differs from the page origin (#3228).
-// Attach before the first navigation: playwright reports attempted requests
-// even when the CSP blocks them, so an attempted external fetch fails the
-// suite exactly like a successful one. blob:/data: URLs are in-process
+// Attach before the first navigation. blob:/data: URLs are in-process
 // artifacts, and same-host upgrades (ws:) are the workspace WebSocket.
 // The origin comes from API_BASE, not page.url() — at attach time the page
-// is still about:blank.
+// is still about:blank. This is belt-and-braces on top of the console
+// watch: a CSP-blocked external fetch is reliably reported as a console
+// violation, while this catches anything that would load silently.
 function watchExternalRequests(page: Page, sink: string[]) {
   const selfOrigin = new URL(API_BASE).origin;
   page.on("request", (req) => {
@@ -77,6 +89,17 @@ function watchExternalRequests(page: Page, sink: string[]) {
     if (origin !== selfOrigin) {
       sink.push(url);
     }
+  });
+}
+
+// Keep every resource-timing entry in each document the page loads: the
+// default 250-entry buffer fills in a full session, and once full, NEW
+// entries are dropped — including the fallback-font fetches the #3228
+// assertions read. Runs before app code via addInitScript (so it also
+// re-applies in the fresh document after the pdf deep-link reload).
+async function initResourceBuffer(page: Page) {
+  await page.addInitScript(() => {
+    performance.setResourceTimingBufferSize(10000);
   });
 }
 
@@ -110,6 +133,7 @@ test.describe("CSP / Trusted Types (#3219)", () => {
     const violations: string[] = [];
     watchViolations(page, violations);
     watchExternalRequests(page, violations);
+    await initResourceBuffer(page);
     if (process.env.KL_CSP_DEBUG) {
       page.on("console", (m) =>
         console.log(`[console.${m.type()}]`, m.text().slice(0, 300)),
@@ -119,15 +143,13 @@ test.describe("CSP / Trusted Types (#3219)", () => {
       );
     }
 
-    // Positive pdfium signals: count Worker constructions (pdfrx builds
-    // its wasm worker from a blob: URL — a TrustedScriptURL sink that TT
-    // enforcement rejects on a regression), so the spec proves the viewer
-    // came up, not merely that nothing was logged.
+    // Positive pdfium signals: count Worker constructions (the wasm
+    // worker is a TrustedScriptURL sink that TT enforcement rejects on a
+    // regression), so the spec proves the viewer's worker came up, not
+    // merely that nothing was logged. Worker construction alone does
+    // NOT prove the worker script parses — that failure is caught by
+    // the "Worker error" console watch above.
     await page.addInitScript(() => {
-      // Keep every resource-timing entry: the default 250-entry buffer
-      // overflows in a full session and would evict the early font
-      // fetches the #3228 assertion reads below.
-      performance.setResourceTimingBufferSize(10000);
       (window as any).__workerCount = 0;
       const OrigWorker = window.Worker;
       class CountingWorker extends OrigWorker {
@@ -257,6 +279,7 @@ test.describe("CSP / Trusted Types (#3219)", () => {
   }) => {
     const violations: string[] = [];
     watchViolations(page, violations);
+    await initResourceBuffer(page);
     const externalAttempts: string[] = [];
     const selfOrigin = new URL(API_BASE).origin;
     await page.route("**/*", (route) => {

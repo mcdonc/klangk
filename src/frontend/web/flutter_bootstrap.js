@@ -1,13 +1,5 @@
-{
-  {
-    flutter_build_config;
-  }
-}
-{
-  {
-    flutter_js;
-  }
-}
+{{flutter_build_config}}
+{{flutter_js}}
 
 // First-party fallback fonts (#3228). The web engine's font fallback
 // service lazily fetches Noto script/emoji fallback fonts (and the

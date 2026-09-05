@@ -21,20 +21,21 @@
       // Sanction exactly those shapes; anything else (remote scripts,
       // data:/javascript: URLs) throws. This policy defines no
       // createHTML/createScript, so markup and eval sinks stay blocked.
-      //
-      // #3228: the default policy's special name was "" in early Trusted
-      // Types and is "default" in the current spec — Chrome 133+ routes
-      // sink fallback through the "default"-named policy and treats "" as
-      // an ordinary name, so registering only "" leaves pdfrx's plain
-      // string URLs blocked on modern browsers. Register both names with
-      // the same rules: whichever generation the browser implements, one
-      // of them is the default policy.
       (function () {
         var create = function (name) {
           try {
             if (window.trustedTypes && trustedTypes.createPolicy) {
               trustedTypes.createPolicy(name, {
                 createScriptURL: function (s) {
+                  if (s.indexOf("\\") !== -1 || s.indexOf("//") === 0) {
+                    // Protocol-relative URLs are scheme-less yet
+                    // cross-origin, and backslashes confuse URL parsing —
+                    // neither is a shape this origin produces.
+                    throw new TypeError(
+                      "klangk default Trusted Types policy: refused script URL " +
+                        s,
+                    );
+                  }
                   var m = /^([a-z][a-z0-9+.-]*):/i.exec(s);
                   if (!m) return s; // relative: resolves inside this origin
                   if (
@@ -55,8 +56,32 @@
             // unsupported) — leave the existing one in charge.
           }
         };
+        // The default policy's special name was "" in early Trusted Types
+        // and is "default" in the current spec — Chrome 133+ routes sink
+        // fallback through the "default"-named policy and treats "" as an
+        // ordinary name, so registering only one leaves plain-string
+        // script URLs blocked on the other generation (#3228). Register
+        // both names with the same rules.
         create("default");
         create("");
+        // pdfrx's Dart init assigns globalThis.pdfiumWasmWorkerUrl a
+        // blob: URL whose first statement is importScripts(...) — a
+        // TrustedScriptURL sink inside the worker, which inherits the
+        // page's require-trusted-types-for but can define no policy of
+        // its own. Redirect the worker URL to the build-generated
+        // TT-safe file (pdfium_worker.js inlined, no importScripts)
+        // with a no-op setter, so pdfrx's later blob assignment cannot
+        // restore the violating wrapper (#3219).
+        Object.defineProperty(globalThis, "pdfiumWasmWorkerUrl", {
+          configurable: false,
+          get: function () {
+            return new URL(
+              "assets/packages/pdfrx/assets/worker-tt.js",
+              location.href,
+            ).href;
+          },
+          set: function () {},
+        });
       })();
     </script>
     <div

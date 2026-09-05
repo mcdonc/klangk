@@ -83,7 +83,13 @@ def engine_font_urls(sdk: Path) -> list[str]:
     # the fallback list: SkiaFontCollection always fetches it as the default
     # fallback font unless the app bundles a "Roboto" family.
     roboto_line = engine_file(sdk, "canvaskit", "fonts.dart").read_text()
-    urls.append(_ROBOTO_URL_RE.search(roboto_line).group(1))
+    roboto = _ROBOTO_URL_RE.search(roboto_line)
+    if roboto is None:
+        raise SystemExit(
+            "boot-time Roboto URL not found in canvaskit/fonts.dart "
+            "(engine layout change) — update _ROBOTO_URL_RE"
+        )
+    urls.append(roboto.group(1))
     return sorted(set(urls))
 
 
