@@ -1875,6 +1875,8 @@ class TestNumericSettingCoercion:
         "smtp_port",
         "password_history_count",
         "password_min_changed",
+        "password_min_age_hours",
+        "password_max_age_days",
     ]
     # 0 is legal here (disable semantics), so only these get the 0-rejection
     INT_NO_ZERO_FIELDS = [
@@ -1933,6 +1935,21 @@ class TestNumericSettingCoercion:
             make_settings({"KLANGKD_PASSWORD_MIN_CHANGED": "73"})
         s = make_settings({"KLANGKD_PASSWORD_MIN_CHANGED": "72"})
         assert s.password_min_changed == 72
+    def test_password_min_age_hours_capped(self):
+        """#3177: the minimum age ceiling (8760h = 365d) catches unit
+        confusion rather than limiting a real policy."""
+        with pytest.raises(Exception, match="password_min_age_hours"):
+            make_settings({"KLANGKD_PASSWORD_MIN_AGE_HOURS": "8761"})
+        s = make_settings({"KLANGKD_PASSWORD_MIN_AGE_HOURS": "24"})
+        assert s.password_min_age_hours == 24
+
+    def test_password_max_age_days_capped(self):
+        """#3177: beyond 3650 days (10 years) the knob means "never" — a
+        typo should abort startup instead of silently disabling expiry."""
+        with pytest.raises(Exception, match="password_max_age_days"):
+            make_settings({"KLANGKD_PASSWORD_MAX_AGE_DAYS": "3651"})
+        s = make_settings({"KLANGKD_PASSWORD_MAX_AGE_DAYS": "60"})
+        assert s.password_max_age_days == 60
 
     @pytest.mark.parametrize(
         "field",
@@ -1946,6 +1963,8 @@ class TestNumericSettingCoercion:
             "password_history_count",
             "password_min_changed",
             "api_rate_limit",
+            "password_min_age_hours",
+            "password_max_age_days",
         ],
     )
     def test_zero_keeps_disable_semantics(self, field):

@@ -853,6 +853,33 @@ class TestTokenValidation:
         assert result is not None
         assert result["id"] == user["id"]
 
+    async def test_expired_password_rejected_on_ws(
+        self, app_state, db, monkeypatch
+    ):
+        """An expired password rejects WS auth like a dead token (#3177),
+        mirroring the disabled-account treatment (#2588)."""
+        monkeypatch.setattr(
+            app_state.state.settings,
+            "password_max_age_days",
+            60,
+            raising=False,
+        )
+        a = Auth(app_state)
+        pw_hash = auth.hash_password("testpass")
+        user = await app_state.state.model.users.create_user(
+            "ws-exp@example.com", pw_hash, verified=True
+        )
+        token = a.create_token(user["id"], user["email"])
+        assert await a.get_user_from_token(token) is not None
+        old = (datetime.now(timezone.utc) - timedelta(days=61)).isoformat()
+        async with app_state.state.db.transaction() as raw_db:
+            await raw_db.execute(
+                "UPDATE users SET password_set_at = ?, created_at = ?"
+                " WHERE id = ?",
+                (old, old, user["id"]),
+            )
+        assert await a.get_user_from_token(token) is None
+
     async def test_get_user_from_invalid_token(self, db):
         result = await _auth().get_user_from_token("invalid.token.here")
         assert result is None
@@ -2142,3 +2169,381 @@ class TestRefreshTokenNoCover2910:
         with pytest.raises(HTTPException) as caught:
             await _auth().refresh_token("not-a-jwt")
         assert caught.value.status_code == 401
+
+
+class TestPasswordMinAge:
+    """Minimum password age enforcement (#3177)."""
+
+    def _auth_with_min_age(self, app_state, monkeypatch, hours=24):
+        monkeypatch.setattr(
+            app_state.state.settings,
+            "password_min_age_hours",
+            hours,
+            raising=False,
+        )
+        return Auth(app_state)
+
+    async def _fresh_user(self, app_state):
+        pw_hash = auth.hash_password("testpass")
+        return await app_state.state.model.users.create_user(
+            "age@example.com", pw_hash, verified=True
+        )
+
+    async def test_disabled_when_zero(self, app_state, db):
+        """Default 0 means no minimum age — never raises."""
+        a = Auth(app_state)
+        assert a.password_min_age_hours == 0
+        user = await self._fresh_user(app_state)
+        row = await a.app.state.model.users.get_user_by_identifier(
+            user["email"]
+        )
+        # Should not raise even on a just-created user.
+        a.validate_password_min_age(row)
+
+    async def test_rejects_change_inside_window(
+        self, app_state, db, monkeypatch
+    ):
+        """A password set 1 hour ago must be refused when min age is 24h."""
+        a = self._auth_with_min_age(app_state, monkeypatch, hours=24)
+        user = await self._fresh_user(app_state)
+        # Stamp password_set_at to 1 hour ago.
+        recent = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+        async with app_state.state.db.transaction() as raw_db:
+            await raw_db.execute(
+                "UPDATE users SET password_set_at = ? WHERE id = ?",
+                (recent, user["id"]),
+            )
+        row = await a.app.state.model.users.get_user_by_identifier(
+            user["email"]
+        )
+        with pytest.raises(HTTPException) as exc_info:
+            a.validate_password_min_age(row)
+        assert exc_info.value.status_code == 400
+        assert "hour" in exc_info.value.detail
+
+    async def test_allows_change_after_window(
+        self, app_state, db, monkeypatch
+    ):
+        """A password set 25 hours ago passes a 24-hour minimum age."""
+        a = self._auth_with_min_age(app_state, monkeypatch, hours=24)
+        user = await self._fresh_user(app_state)
+        old = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
+        async with app_state.state.db.transaction() as raw_db:
+            await raw_db.execute(
+                "UPDATE users SET password_set_at = ? WHERE id = ?",
+                (old, user["id"]),
+            )
+        row = await a.app.state.model.users.get_user_by_identifier(
+            user["email"]
+        )
+        a.validate_password_min_age(row)  # should not raise
+
+    async def test_unknown_set_time_is_allowed(
+        self, app_state, db, monkeypatch
+    ):
+        """No parseable password_set_at and no parseable created_at means
+        the age cannot be judged — the check must not brick the account."""
+        a = self._auth_with_min_age(app_state, monkeypatch, hours=24)
+        user = await self._fresh_user(app_state)
+        # created_at is NOT NULL, but it can hold an unparseable value —
+        # parse_user_ts("garbage") is None, same as NULL password_set_at.
+        async with app_state.state.db.transaction() as raw_db:
+            await raw_db.execute(
+                "UPDATE users SET password_set_at = NULL,"
+                " created_at = 'garbage' WHERE id = ?",
+                (user["id"],),
+            )
+        row = await a.app.state.model.users.get_user_by_identifier(
+            user["email"]
+        )
+        a.validate_password_min_age(row)  # should not raise
+
+    async def test_falls_back_to_created_at(self, app_state, db, monkeypatch):
+        """When password_set_at is NULL, created_at is the fallback.
+        A recently created account is inside the min-age window."""
+        a = self._auth_with_min_age(app_state, monkeypatch, hours=24)
+        user = await self._fresh_user(app_state)
+        # Ensure password_set_at is NULL (migration backfill scenario).
+        async with app_state.state.db.transaction() as raw_db:
+            await raw_db.execute(
+                "UPDATE users SET password_set_at = NULL WHERE id = ?",
+                (user["id"],),
+            )
+        row = await a.app.state.model.users.get_user_by_identifier(
+            user["email"]
+        )
+        # created_at is "now" which is within the 24h window → rejected.
+        with pytest.raises(HTTPException) as exc_info:
+            a.validate_password_min_age(row)
+        assert exc_info.value.status_code == 400
+
+
+class TestPasswordExpiry:
+    """Maximum password age / expiry enforcement (#3177)."""
+
+    def _auth_with_max_age(self, app_state, monkeypatch, days=60):
+        monkeypatch.setattr(
+            app_state.state.settings,
+            "password_max_age_days",
+            days,
+            raising=False,
+        )
+        return Auth(app_state)
+
+    async def _user_with_old_password(self, app_state, days_ago):
+        pw_hash = auth.hash_password("testpass")
+        user = await app_state.state.model.users.create_user(
+            "expiry@example.com", pw_hash, verified=True
+        )
+        old = (
+            datetime.now(timezone.utc) - timedelta(days=days_ago)
+        ).isoformat()
+        async with app_state.state.db.transaction() as raw_db:
+            await raw_db.execute(
+                "UPDATE users SET password_set_at = ?, created_at = ?"
+                " WHERE id = ?",
+                (old, old, user["id"]),
+            )
+        return user
+
+    async def test_disabled_when_zero(self, app_state, db):
+        """Default 0 means no expiry — password_expired always False."""
+        a = Auth(app_state)
+        assert a.password_max_age_days == 0
+        user = await self._user_with_old_password(app_state, days_ago=999)
+        row = await a.app.state.model.users.get_user_by_identifier(
+            user["email"]
+        )
+        assert not a.password_expired(row)
+
+    async def test_not_expired_inside_window(self, app_state, db, monkeypatch):
+        a = self._auth_with_max_age(app_state, monkeypatch, days=60)
+        user = await self._user_with_old_password(app_state, days_ago=30)
+        row = await a.app.state.model.users.get_user_by_identifier(
+            user["email"]
+        )
+        assert not a.password_expired(row)
+
+    async def test_expired_past_window(self, app_state, db, monkeypatch):
+        a = self._auth_with_max_age(app_state, monkeypatch, days=60)
+        user = await self._user_with_old_password(app_state, days_ago=61)
+        row = await a.app.state.model.users.get_user_by_identifier(
+            user["email"]
+        )
+        assert a.password_expired(row)
+
+    async def test_unknown_set_time_not_expired(
+        self, app_state, db, monkeypatch
+    ):
+        """A local account whose timestamps cannot be parsed is never
+        expired — a malformed row must not brick logins."""
+        a = self._auth_with_max_age(app_state, monkeypatch, days=60)
+        pw_hash = auth.hash_password("testpass")
+        user = await app_state.state.model.users.create_user(
+            "unknown-ts@example.com", pw_hash, verified=True
+        )
+        async with app_state.state.db.transaction() as raw_db:
+            await raw_db.execute(
+                "UPDATE users SET password_set_at = NULL,"
+                " created_at = 'garbage' WHERE id = ?",
+                (user["id"],),
+            )
+        row = await a.app.state.model.users.get_user_by_identifier(
+            user["email"]
+        )
+        assert not a.password_expired(row)
+
+    async def test_oidc_user_never_expires(self, app_state, db, monkeypatch):
+        """OIDC users have no klangk password — nothing to age."""
+        a = self._auth_with_max_age(app_state, monkeypatch, days=1)
+        await app_state.state.model.users.create_user(
+            "oidc@example.com", None, verified=True, provider="oidc"
+        )
+        row = await a.app.state.model.users.get_user_by_identifier(
+            "oidc@example.com"
+        )
+        assert not a.password_expired(row)
+
+    async def test_login_blocked_when_expired(
+        self, app_state, db, monkeypatch
+    ):
+        """Login returns 403 with password_expired error detail."""
+        a = self._auth_with_max_age(app_state, monkeypatch, days=60)
+        user = await self._user_with_old_password(app_state, days_ago=61)
+        with pytest.raises(HTTPException) as exc_info:
+            await a.login(
+                auth.LoginRequest(
+                    identifier=user["email"], password="testpass"
+                )
+            )
+        assert exc_info.value.status_code == 403
+        assert exc_info.value.detail["error"] == "password_expired"
+
+    async def test_refresh_blocked_when_expired(
+        self, app_state, db, monkeypatch
+    ):
+        """Token refresh refuses to extend a session past the max age."""
+        # Start with a non-expired password to get a valid token.
+        pw_hash = auth.hash_password("testpass")
+        user = await app_state.state.model.users.create_user(
+            "refresh-exp@example.com", pw_hash, verified=True
+        )
+        a = self._auth_with_max_age(app_state, monkeypatch, days=60)
+        result = await a.login(
+            auth.LoginRequest(
+                identifier="refresh-exp@example.com", password="testpass"
+            )
+        )
+        # Now backdate the password to make it expired.
+        old = (datetime.now(timezone.utc) - timedelta(days=61)).isoformat()
+        async with app_state.state.db.transaction() as raw_db:
+            await raw_db.execute(
+                "UPDATE users SET password_set_at = ?, created_at = ?"
+                " WHERE id = ?",
+                (old, old, user["id"]),
+            )
+        with pytest.raises(HTTPException) as exc_info:
+            await a.refresh_token(result.access_token)
+        assert exc_info.value.status_code == 403
+        assert exc_info.value.detail["error"] == "password_expired"
+
+
+class TestChangeExpiredPassword:
+    """The expired-password rotation flow (#3177)."""
+
+    def _auth_with_expiry(self, app_state, monkeypatch, max_days=60):
+        monkeypatch.setattr(
+            app_state.state.settings,
+            "password_max_age_days",
+            max_days,
+            raising=False,
+        )
+        return Auth(app_state)
+
+    async def _expired_user(self, app_state, days_ago=61, verified=True):
+        pw_hash = auth.hash_password("oldpass")
+        user = await app_state.state.model.users.create_user(
+            "rotate@example.com", pw_hash, verified=verified
+        )
+        old = (
+            datetime.now(timezone.utc) - timedelta(days=days_ago)
+        ).isoformat()
+        async with app_state.state.db.transaction() as raw_db:
+            await raw_db.execute(
+                "UPDATE users SET password_set_at = ?, created_at = ?"
+                " WHERE id = ?",
+                (old, old, user["id"]),
+            )
+        return user
+
+    async def test_rotates_and_mints_token(self, app_state, db, monkeypatch):
+        """Successful rotation returns a valid access token."""
+        a = self._auth_with_expiry(app_state, monkeypatch)
+        await self._expired_user(app_state)
+        result = await a.change_expired_password(
+            auth.ChangeExpiredPasswordRequest(
+                identifier="rotate@example.com",
+                current_password="oldpass",
+                new_password="freshpass1",
+            )
+        )
+        assert result.access_token
+
+    async def test_rejects_when_not_expired(self, app_state, db, monkeypatch):
+        """Cannot use the endpoint as a general change-password bypass."""
+        a = self._auth_with_expiry(app_state, monkeypatch, max_days=60)
+        pw_hash = auth.hash_password("current")
+        await app_state.state.model.users.create_user(
+            "notexp@example.com", pw_hash, verified=True
+        )
+        with pytest.raises(HTTPException) as exc_info:
+            await a.change_expired_password(
+                auth.ChangeExpiredPasswordRequest(
+                    identifier="notexp@example.com",
+                    current_password="current",
+                    new_password="newpass1",
+                )
+            )
+        assert exc_info.value.status_code == 400
+        assert "not expired" in exc_info.value.detail
+
+    async def test_rejects_wrong_current_password(
+        self, app_state, db, monkeypatch
+    ):
+        """Wrong current password is a 401 (same gate as login)."""
+        a = self._auth_with_expiry(app_state, monkeypatch)
+        await self._expired_user(app_state)
+        with pytest.raises(HTTPException) as exc_info:
+            await a.change_expired_password(
+                auth.ChangeExpiredPasswordRequest(
+                    identifier="rotate@example.com",
+                    current_password="wrong",
+                    new_password="freshpass1",
+                )
+            )
+        assert exc_info.value.status_code == 401
+
+    async def test_rejects_unverified_user(self, app_state, db, monkeypatch):
+        """An unverified account cannot rotate through this endpoint
+        (same gate as login)."""
+        a = self._auth_with_expiry(app_state, monkeypatch)
+        await self._expired_user(app_state, verified=False)
+        with pytest.raises(HTTPException) as exc_info:
+            await a.change_expired_password(
+                auth.ChangeExpiredPasswordRequest(
+                    identifier="rotate@example.com",
+                    current_password="oldpass",
+                    new_password="freshpass1",
+                )
+            )
+        assert exc_info.value.status_code == 403
+        assert "not verified" in exc_info.value.detail
+
+    async def test_rejects_rotation_when_min_age_exceeds_max(
+        self, app_state, db, monkeypatch
+    ):
+        """A min > max misconfig cannot turn the expiry flow into a
+        change-password / history-cycling bypass — the rotation still
+        validates the minimum age."""
+        monkeypatch.setattr(
+            app_state.state.settings,
+            "password_max_age_days",
+            1,
+            raising=False,
+        )
+        monkeypatch.setattr(
+            app_state.state.settings,
+            "password_min_age_hours",
+            720,
+            raising=False,
+        )
+        a = Auth(app_state)
+        await self._expired_user(app_state, days_ago=2)
+        with pytest.raises(HTTPException) as exc_info:
+            await a.change_expired_password(
+                auth.ChangeExpiredPasswordRequest(
+                    identifier="rotate@example.com",
+                    current_password="oldpass",
+                    new_password="freshpass1",
+                )
+            )
+        assert exc_info.value.status_code == 400
+        assert "hour" in exc_info.value.detail
+
+    async def test_password_set_at_stamped_after_rotation(
+        self, app_state, db, monkeypatch
+    ):
+        """After a successful rotation, password_set_at is recent."""
+        a = self._auth_with_expiry(app_state, monkeypatch)
+        user = await self._expired_user(app_state)
+        await a.change_expired_password(
+            auth.ChangeExpiredPasswordRequest(
+                identifier="rotate@example.com",
+                current_password="oldpass",
+                new_password="freshpass1",
+            )
+        )
+        row = await a.app.state.model.users.get_user_by_identifier(
+            user["email"]
+        )
+        assert not a.password_expired(row)

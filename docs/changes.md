@@ -651,6 +651,19 @@ sync` report a clear permission-denied error.
   managed Caddy, or behind an outer trusted proxy. Static assets,
   `/ws` upgrades, `/hosted/*`, and `/health` never count against the
   budget. Reloadable on SIGHUP.
+- **`KLANGKD_PASSWORD_MIN_AGE_HOURS` / `KLANGKD_PASSWORD_MAX_AGE_DAYS` (#3177).**
+  Password age policy: how many hours a
+  password must be kept before a self-service change or forgot-password
+  reset (admin resets bypass), and how many days before it expires. An
+  expired password is refused at login, token refresh, and — like a
+  disabled account — on the next authenticated request and WebSocket
+  connect, with a machine-readable `403`; the CLI and TUI login flows
+  then prompt for a new password (`POST /auth/change-expired-password`,
+  which auto-logins and is refused when password login is disabled).
+  Local password accounts only — OIDC logins are unaffected. Both default
+  to `0` (disabled); the recommended hardening values are `24` hours /
+  `60` days. Reloadable
+  on SIGHUP; passwords set before the upgrade age from account creation.
 - **All five container images now publish on a release tag (#3140).**
   Pushing `vX.Y.Z` publishes `klangk-host`, `klangk-host-fips`,
   `klangk-workspace`, `klangk-workspace-fips`, and the newly pullable

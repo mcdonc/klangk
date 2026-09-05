@@ -1151,6 +1151,37 @@ Change the current user's password. Requires the current password.
 
 ---
 
+### POST `/api/v1/auth/change-expired-password`
+
+Replace an expired password (maximum password age reached, #3177)
+and auto-login. Takes the identifier (email or
+handle), the current — expired — password as the ownership proof, and
+the new password. Lockout-accounted like login; rejected with `400`
+when the password has **not** expired (so it cannot serve as a general
+change-password bypass). Refused with `403` when password login is
+disabled (`oidc`-only mode), like `/auth/login`. Local password
+accounts only — OIDC logins are unaffected by password expiry. An
+expired password also fails the next authenticated request and
+WebSocket connect on any already-minted token (same posture as a
+disabled account), so expiry takes effect mid-session, not just at
+the next refresh.
+
+**Auth:** None.
+
+```json
+{
+  "identifier": "user@example.com",
+  "current_password": "expiredpass",
+  "new_password": "newpass1"
+}
+```
+
+```json
+{ "access_token": "jwt-string", "token_type": "bearer" }
+```
+
+---
+
 ### POST `/api/v1/auth/forgot-password`
 
 Request a password reset email. Always returns success even if the email

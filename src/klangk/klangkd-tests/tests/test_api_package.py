@@ -35,13 +35,13 @@ api_auth = sys.modules["klangk.api.auth"]
 
 # Total HTTP route operations the monolith exposed (per the issue).  The
 # split must preserve this exactly — no dropped or duplicated handlers.
-EXPECTED_ROUTE_COUNT = 90
+EXPECTED_ROUTE_COUNT = 91
 
 # Per-domain submodules and the number of routes each owns.  86 sub-routes
 # + 3 routes defined directly on the main router (version, config,
 # my-permissions) + 2 on the root router (health, empty) == 91.
 SUBMODULE_ROUTES = {
-    "auth": 17,  # 15 + the 2 OIDC login/callback routes (merged from oidc_auth)
+    "auth": 18,  # 15 + 2 OIDC login/callback + 1 change-expired-password (#3177)
     "workspaces": 27,
     "resources": 10,  # 6 files + 4 images/volumes (merged submodules)
     "browser_delegate": 2,
@@ -250,8 +250,8 @@ class TestSubmoduleStructure:
         total = 0
         for submod in SUBMODULE_ROUTES:
             total += len(import_module(f"klangk.api.{submod}").router.routes)
-        # 85 sub-routes + 3 direct (version/config/my-permissions) + 2
-        # root (health/empty) == 90.
+        # 86 sub-routes + 3 direct (version/config/my-permissions) + 2
+        # root (health/empty) == 91.
         assert total == EXPECTED_ROUTE_COUNT - 3 - 2
 
     def test_common_module_has_no_router(self):

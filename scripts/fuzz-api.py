@@ -287,6 +287,16 @@ ENDPOINTS: list[tuple[str, str, dict | None, dict | None]] = [
         {"token": "string", "password": "password"},
         None,
     ),
+    (
+        "POST",
+        f"{P}/auth/change-expired-password",
+        {
+            "identifier": "email",
+            "current_password": "password",
+            "new_password": "password",
+        },
+        None,
+    ),
     # Auth — with token
     ("POST", f"{P}/auth/local", None, None),  # no-auth mode; 403 in password mode
     ("POST", f"{P}/auth/refresh", None, None),

@@ -1,13 +1,19 @@
 import 'dart:async';
+
 // ignore: unused_import
 import '../theme/colors.dart';
+
 import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
+
 import '../ws/ws_client.dart';
 import '../auth/auth_service.dart';
+
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
+
 import '../utils/page_title.dart';
 import '../widgets/app_bar_actions.dart';
 import '../widgets/app_bar_title.dart';
@@ -24,7 +30,9 @@ import 'marking_banner.dart';
 import 'server_schedule_banner.dart';
 import 'consent_decider_service.dart';
 import 'consent_rules_panel.dart';
+
 import 'package:http/http.dart' as http;
+
 import '../utils/web_helpers_stub.dart'
     if (dart.library.js_interop) '../utils/web_helpers_web.dart';
 import '../debug/debug_panel.dart';
@@ -165,10 +173,9 @@ class _WorkspacePageState extends State<WorkspacePage> {
     // #2768: re-resolve the effective marking when the workspace row
     // changes (the server notifies on a classification_banner edit, so
     // the banner updates live after saving in the settings panel).
-    _markingSub = context
-        .read<WsClient>()
-        .workspacesChanged
-        .listen((_) => _fetchWorkspaceName());
+    _markingSub = context.read<WsClient>().workspacesChanged.listen(
+      (_) => _fetchWorkspaceName(),
+    );
     WidgetsBinding.instance.addPostFrameCallback((_) => _connectToWorkspace());
   }
 
@@ -185,7 +192,8 @@ class _WorkspacePageState extends State<WorkspacePage> {
     // permission list must be loaded by then.
     await _fetchPermissions();
     try {
-      final ws = await _findWorkspace(auth, '/api/v1/workspaces') ??
+      final ws =
+          await _findWorkspace(auth, '/api/v1/workspaces') ??
           await _findWorkspace(auth, '/api/v1/workspaces/shared');
       if (ws != null && mounted) {
         final name = ws['name'] as String?;
@@ -270,8 +278,9 @@ class _WorkspacePageState extends State<WorkspacePage> {
       featureRegistry: _featureRegistry,
       // #2710: on a deploy that disabled the browser-delegate bridge, the
       // tab never subscribes to bridge requests.
-      browserDelegateEnabled:
-          context.read<AuthService>().browserDelegateEnabled,
+      browserDelegateEnabled: context
+          .read<AuthService>()
+          .browserDelegateEnabled,
       onConnected: ({required bool connected, String? error}) {
         if (!mounted) return;
         if (!connected) {
@@ -322,7 +331,8 @@ class _WorkspacePageState extends State<WorkspacePage> {
         final deletedUserId = msg['user_id'] as String? ?? '';
         final deletedWindow = msg['window_name'] as String? ?? '';
         final deletedWid = msg['window_id'] as String? ?? '';
-        final wasViewing = _activeSharedTerminal != null &&
+        final wasViewing =
+            _activeSharedTerminal != null &&
             _activeSharedTerminal!['user_id'] == deletedUserId &&
             _activeSharedTerminal!['window_id'] == deletedWid;
         if (wasViewing) {
@@ -429,15 +439,17 @@ class _WorkspacePageState extends State<WorkspacePage> {
       // Snapshot the previous window ids BEFORE reassigning, so we can tell a
       // switch to an existing window apart from a brand-new window becoming
       // active.
-      final prevWindowIds =
-          _prevTerminalWindows.map((w) => w['id'] as String?).toSet();
+      final prevWindowIds = _prevTerminalWindows
+          .map((w) => w['id'] as String?)
+          .toSet();
       _prevTerminalWindows = wsClient.terminalWindows;
       _prevSharedTerminals = wsClient.sharedTerminals;
       // Track selected own-window: initialize on first message, or
       // reset if the selected window was closed.
       if (wsClient.terminalWindows.isNotEmpty) {
-        final ids =
-            wsClient.terminalWindows.map((w) => w['id'] as String?).toSet();
+        final ids = wsClient.terminalWindows
+            .map((w) => w['id'] as String?)
+            .toSet();
         // Follow tmux's active window on a switch to an EXISTING window (or
         // the first load) so the Flutter tab matches the status-bar selection
         // (#2171) — but NOT when a brand-new window just became active. The
@@ -450,7 +462,8 @@ class _WorkspacePageState extends State<WorkspacePage> {
             break;
           }
         }
-        final followActive = activeId != null &&
+        final followActive =
+            activeId != null &&
             (prevWindowIds.isEmpty || prevWindowIds.contains(activeId));
         if (followActive) {
           _selectedOwnWindowId = activeId;
@@ -758,8 +771,9 @@ class _WorkspacePageState extends State<WorkspacePage> {
               canEditAcl: _hasPerm('share-advanced'),
             )
           : null,
-      consentRules:
-          _consent != null ? ConsentRulesPanel(service: _consent!) : null,
+      consentRules: _consent != null
+          ? ConsentRulesPanel(service: _consent!)
+          : null,
       terminalKey: _terminalKey,
       fileViewerKey: _fileViewerKey,
       initialFile: widget.initialFile,
