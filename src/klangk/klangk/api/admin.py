@@ -554,7 +554,38 @@ async def update_user(
         user_id,
         {"fields": changed},
     )
+    await record_admin_credential_events(app, request, admin, req, user_id)
     return {"status": "updated"}
+
+
+async def record_admin_credential_events(
+    app, request: Request, admin: dict, req: "UpdateUserRequest", user_id: str
+) -> None:
+    """Emit the specific credential events an admin PATCH carried.
+
+    The self-service paths emit ``user.password.change`` /
+    ``user.email.change`` directly, so an incident query on those names
+    must see admin-forced changes too (#3205 review) — not just the
+    ``user.update`` row the PATCH always writes.
+    """
+    if req.password is not None:
+        await record_admin_user_event(
+            app,
+            request,
+            admin,
+            "user.password.change",
+            user_id,
+            {"via": "admin"},
+        )
+    if req.email is not None:
+        await record_admin_user_event(
+            app,
+            request,
+            admin,
+            "user.email.change",
+            user_id,
+            {"email": req.email, "via": "admin"},
+        )
 
 
 def _reject_self_disable(

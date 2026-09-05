@@ -318,7 +318,10 @@ async def _authorize_resend(
             "login.failed",
             target_type="user",
             target_id=user["id"] if user else None,
-            detail={"identifier": lockout_key, "path": "resend-verification"},
+            detail={
+                "identifier": lockout_key[: auth.AUDIT_IDENTIFIER_MAX],
+                "path": "resend-verification",
+            },
             source_ip=source_ip,
             user_agent=user_agent,
         )
@@ -337,8 +340,10 @@ async def resend_verification(
     # Lockout key: the resolved user's canonical email when known, the
     # raw input for unknown addresses (#2618).
     lockout_key = user["email"] if user else req.email
-    attempt_info = await app.state.auth.check_login_lockout(lockout_key)
     source_ip, user_agent = workstation(request)
+    attempt_info = await app.state.auth.check_login_lockout(
+        lockout_key, source_ip=source_ip, user_agent=user_agent
+    )
     await _authorize_resend(
         app, user, req, lockout_key, attempt_info, source_ip, user_agent
     )

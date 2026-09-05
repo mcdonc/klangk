@@ -5,7 +5,7 @@ Covers the ``audit_events`` table (migration 0034), the
 ``auth.py`` (``issue_token`` login rows, ``_reject_bad_credentials``
 login.failed rows, session-limit revocation), the HTTP emit sites
 (account CRUD, group/ACL/role changes, self-service account changes,
-logout), and the ``GET /admin/audit-events`` listing.
+logout), and the ``GET /events/audit`` listing.
 """
 
 from unittest.mock import AsyncMock, patch
@@ -187,6 +187,20 @@ class TestAuditEventsModel:
         assert await events.prune() == 3
         assert await events.count_events() == 2
 
+    async def test_row_cap_is_per_class(self, app_state, db):
+        """A flood of unauthenticated login.failed rows can evict only
+        other login.failed rows — never the privileged-action history
+        (#3205 review)."""
+        events = app_state.state.model.audit_events
+        await events.record("user.delete", target_type="user")
+        for _ in range(4):
+            await events.record("login.failed")
+        app_state.state.settings.audit_events_retention_days = 0
+        app_state.state.settings.audit_events_row_cap = 2
+        assert await events.prune() == 2
+        assert await events.count_events(event="user.delete") == 1
+        assert await events.count_events(event="login.failed") == 2
+
     async def test_prune_both_passes(self, app_state, db):
         events = app_state.state.model.audit_events
         for _ in range(4):
@@ -275,6 +289,48 @@ class TestAuthChokePoints:
         assert rows[0]["target_id"] is None
         assert rows[0]["detail"] == {"identifier": "ghost@example.com"}
 
+    async def test_failed_login_identifier_is_bounded(self, app_state, db):
+        """An attacker-chosen identifier is truncated in the audit row
+        (#3205 review) — the text a login.failed detail can carry is
+        bounded even though the identifier itself is not."""
+        with pytest.raises(Exception):
+            await app_state.state.auth.login(
+                klangk_auth.LoginRequest(
+                    identifier="x" * 5000, password="whatever"
+                ),
+            )
+        rows = await _rows_for(app_state, "login.failed")
+        assert len(rows[0]["detail"]["identifier"]) == (
+            klangk_auth.AUDIT_IDENTIFIER_MAX
+        )
+
+    async def test_locked_out_attempt_is_audited(self, app_state, user, db):
+        """A 429 from an active lockout leaves its own login.failed row
+        (#3205 review) — the locked-out window must not be blank in the
+        audit stream."""
+        req = klangk_auth.LoginRequest(
+            identifier="testuser@example.com", password="wrong"
+        )
+        for _ in range(app_state.state.settings.login_lockout_failures):
+            with pytest.raises(Exception):
+                await app_state.state.auth.login(
+                    req, source_ip="10.0.0.9", user_agent="audit-probe"
+                )
+        # The next attempt hits the lockout -> 429, still audited.
+        with pytest.raises(Exception) as exc:
+            await app_state.state.auth.login(
+                req, source_ip="10.0.0.9", user_agent="audit-probe"
+            )
+        assert exc.value.status_code == 429
+        locked = [
+            row
+            for row in await _rows_for(app_state, "login.failed")
+            if row["detail"].get("reason") == "locked-out"
+        ]
+        assert locked[0]["source_ip"] == "10.0.0.9"
+        assert locked[0]["user_agent"] == "audit-probe"
+        assert locked[0]["detail"]["identifier"] == "testuser@example.com"
+
     async def test_session_limit_revocation_records_event(
         self, app_state, user, db
     ):
@@ -305,7 +361,10 @@ class TestAuthChokePoints:
             verified=True,
         )
         rows = await _rows_for(app_state, "user.register")
-        assert rows[0]["detail"] == {"verified": True}
+        assert rows[0]["detail"] == {
+            "email": "reg-audit@example.com",
+            "verified": True,
+        }
         # The auto-login is its own row, tagged with its path.
         logins = await _rows_for(app_state, "login")
         assert logins[0]["detail"] == {"via": "register"}
@@ -364,6 +423,32 @@ class TestAdminUserAudit:
         rows = await _events(api_app, "user.update")
         assert rows[0]["detail"]["fields"] == ["handle", "disabled"]
         assert rows[0]["target_id"] == user["id"]
+
+    async def test_admin_password_reset_emits_password_change(
+        self, api_client, api_app, admin_user, user
+    ):
+        """An admin-forced reset is a user.password.change row too
+        (#3205 review), so incident queries on the event name see it;
+        likewise an admin email change."""
+        headers = await _admin_login(api_client)
+        resp = await api_client.patch(
+            f"/api/v1/users/{user['id']}",
+            json={
+                "password": "newpass1",
+                "email": "admin-moved@example.com",
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        pw = await _events(api_app, "user.password.change")
+        assert pw[0]["detail"] == {"via": "admin"}
+        assert pw[0]["actor_id"] == admin_user["id"]
+        assert pw[0]["target_id"] == user["id"]
+        email = await _events(api_app, "user.email.change")
+        assert email[0]["detail"] == {
+            "email": "admin-moved@example.com",
+            "via": "admin",
+        }
 
     async def test_delete_user_records_email(
         self, api_client, api_app, admin_user

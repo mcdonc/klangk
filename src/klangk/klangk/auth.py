@@ -38,6 +38,11 @@ logger = logging.getLogger(__name__)
 # client-side mirrors of the length rule stay valid.
 MAX_PASSWORD_BYTES = 72
 
+# Longest attempted identifier stored in an audit row (#3205): bounds
+# the size of attacker-controlled text a ``login.failed`` detail can
+# carry (row count is bounded separately by the per-class prune cap).
+AUDIT_IDENTIFIER_MAX = 256
+
 # PBKDF2-HMAC-SHA512 parameters (#2576). hashlib.pbkdf2_hmac delegates to
 # the OpenSSL the container provides, so under the FIPS provider (see
 # #2570) password hashing routes through the validated module — unlike
@@ -769,13 +774,22 @@ class Auth:
 
     # --- lockout accounting (shared by login and resend-verification) ---
 
-    async def check_login_lockout(self, lockout_key: str) -> dict | None:
+    async def check_login_lockout(
+        self,
+        lockout_key: str,
+        *,
+        source_ip: str | None = None,
+        user_agent: str | None = None,
+    ) -> dict | None:
         """Raise 429 if *lockout_key* is currently locked out.
 
         Returns the pre-verify ``attempt_info`` (``None`` when lockout
         is disabled) for the caller to hand to
         :meth:`record_login_failure`, which needs it to apply the
-        sliding-window reset.
+        sliding-window reset. An attempt on an already-locked key is
+        also audited as a ``login.failed`` row (reason ``locked-out``)
+        with the request's workstation metadata (#3205) — the most
+        attack-signalling period must not leave the audit stream blank.
         """
         if self.login_lockout_failures <= 0:
             return None
@@ -786,6 +800,16 @@ class Auth:
         )
         is_locked, msg = is_locked_out(attempt_info)
         if is_locked:
+            await self.app.state.model.audit_events.record_best_effort(
+                "login.failed",
+                target_type="user",
+                detail={
+                    "identifier": lockout_key[:AUDIT_IDENTIFIER_MAX],
+                    "reason": "locked-out",
+                },
+                source_ip=source_ip,
+                user_agent=user_agent,
+            )
             raise HTTPException(status_code=429, detail=msg)
         return attempt_info
 
@@ -1329,7 +1353,10 @@ class Auth:
     # --- registration / login flows ---
 
     async def _authenticated_expired_user(
-        self, req: ChangeExpiredPasswordRequest
+        self,
+        req: ChangeExpiredPasswordRequest,
+        source_ip: str | None,
+        user_agent: str | None,
     ) -> dict:
         """Resolve and gate a change-expired-password caller.
 
@@ -1344,9 +1371,16 @@ class Auth:
             req.identifier
         )
         lockout_key = user["email"] if user else req.identifier
-        attempt_info = await self.check_login_lockout(lockout_key)
+        attempt_info = await self.check_login_lockout(
+            lockout_key, source_ip=source_ip, user_agent=user_agent
+        )
         await self._reject_bad_credentials(
-            user, req.current_password, lockout_key, attempt_info
+            user,
+            req.current_password,
+            lockout_key,
+            attempt_info,
+            source_ip=source_ip,
+            user_agent=user_agent,
         )
         if not user.get("verified"):
             raise HTTPException(
@@ -1379,7 +1413,9 @@ class Auth:
         Auto-logins on success (same posture as reset-password) so
         clients finish in one round trip.
         """
-        user = await self._authenticated_expired_user(req)
+        user = await self._authenticated_expired_user(
+            req, source_ip, user_agent
+        )
         self.validate_password_min_age(user)
         self.validate_password(req.new_password)
         await self.validate_password_not_reused(user["id"], req.new_password)
@@ -1451,7 +1487,7 @@ class Auth:
             actor_email=user["email"],
             target_type="user",
             target_id=user["id"],
-            detail={"verified": verified},
+            detail={"email": user["email"], "verified": verified},
             source_ip=source_ip,
             user_agent=user_agent,
         )
@@ -1491,7 +1527,7 @@ class Auth:
                 "login.failed",
                 target_type="user",
                 target_id=user["id"] if user else None,
-                detail={"identifier": lockout_key},
+                detail={"identifier": lockout_key[:AUDIT_IDENTIFIER_MAX]},
                 source_ip=source_ip,
                 user_agent=user_agent,
             )
@@ -1519,7 +1555,9 @@ class Auth:
         # Check if locked out before doing any expensive work (the only
         # expensive step below is verify_password's PBKDF2, run in a
         # worker thread so the event loop is not blocked).
-        attempt_info = await self.check_login_lockout(lockout_key)
+        attempt_info = await self.check_login_lockout(
+            lockout_key, source_ip=source_ip, user_agent=user_agent
+        )
         await self._reject_bad_credentials(
             user,
             req.password,

@@ -42,8 +42,13 @@ Retention/bounding mirrors ``container_events`` (#2924):
 :meth:`AuditEventsModel.prune` deletes rows past a retention window
 (``audit_events_retention_days``) and trims overflow past a
 deploy-wide row cap (``audit_events_row_cap``), keeping the newest —
-swept hourly by the consent sweeper. An admin-facing paged view is
-``GET /api/v1/admin/audit-events`` (``manage-events``).
+swept hourly by the consent sweeper. The row cap is applied **per
+class**: unauthenticated ``login.failed`` rows (the only class an
+anonymous caller can mint) get their own bucket, so a spray of failed
+logins can evict at most other ``login.failed`` rows — never the
+genuine account/privilege history an incident review starts from.
+An admin-facing paged view is
+``GET /api/v1/events/audit`` (``manage-events``).
 """
 
 import json
@@ -216,9 +221,12 @@ class AuditEventsModel(Submodel):
         cap. Returns the number of rows deleted.
 
         Mirrors ``container_events`` (#2924): every row is terminal
-        history at write time, so both passes are pure deletion —
-        retention window first, then the deploy-wide row cap keeping
-        the newest.
+        history at write time, so the passes are pure deletion —
+        retention window first, then the row cap keeping the newest.
+        The cap is applied per class (#3205 review): ``login.failed``
+        rows — the only class an unauthenticated caller can mint — are
+        capped in their own bucket, so flooding them evicts only other
+        ``login.failed`` rows, never the privileged-action history.
         """
         settings = self.app.state.settings
         retention_days = settings.audit_events_retention_days
@@ -243,13 +251,19 @@ class AuditEventsModel(Submodel):
             return cursor.rowcount
 
     async def _prune_row_cap(self, row_cap: int) -> int:
-        """Deploy-wide cap: delete the oldest rows over the cap, keeping
-        the newest (the same tie-break :meth:`list_events` uses)."""
-        async with self.app.state.db.transaction() as db:
-            cursor = await db.execute(
-                "DELETE FROM audit_events WHERE id IN"
-                " (SELECT id FROM audit_events"
-                " ORDER BY created_at DESC, id DESC LIMIT -1 OFFSET ?)",
-                (row_cap,),
-            )
-            return cursor.rowcount
+        """Deploy-wide cap, applied per class: delete the oldest rows
+        over the cap in each bucket, keeping the newest (the same
+        tie-break :meth:`list_events` uses). The unauthenticated
+        ``login.failed`` class is capped separately from everything
+        else so it cannot evict privileged-action history."""
+        deleted = 0
+        for predicate in ("event != 'login.failed'", "event = 'login.failed'"):
+            async with self.app.state.db.transaction() as db:
+                cursor = await db.execute(
+                    "DELETE FROM audit_events WHERE id IN"
+                    f" (SELECT id FROM audit_events WHERE {predicate}"
+                    " ORDER BY created_at DESC, id DESC LIMIT -1 OFFSET ?)",
+                    (row_cap,),
+                )
+                deleted += cursor.rowcount
+        return deleted

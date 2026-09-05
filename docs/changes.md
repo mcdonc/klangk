@@ -641,7 +641,9 @@ sync` report a clear permission-denied error.
   fail the action they annotate. Queryable by `manage-events` holders
   via `GET /api/v1/events/audit` (paged, filterable by event, actor,
   target). Bounded by `KLANGKD_AUDIT_EVENTS_RETENTION_DAYS` (default
-  `365`) and `KLANGKD_AUDIT_EVENTS_ROW_CAP` (default `100000`), swept
+  `365`) and `KLANGKD_AUDIT_EVENTS_ROW_CAP` (default `100000`,
+  applied per class so a flood of unauthenticated failed-login rows
+  can evict only other failed-login rows), swept
   hourly; both reloadable on SIGHUP. See
   [Audit Record Integrity](reference/audit-integrity.md).
 - **`KLANGKD_SESSION_IDLE_TIMEOUT_MINUTES` /

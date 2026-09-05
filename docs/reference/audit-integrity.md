@@ -48,8 +48,10 @@ max row id) and verify pre-rotation rows with the old key.
 
 ## What is tagged
 
-Both tables live in `<data_dir>/klangk.db` and gained a nullable `hmac`
-TEXT column (migration 0030). The tag is computed over a canonical
+All three tables live in `<data_dir>/klangk.db`. `container_events` and
+`egress_consent` gained a nullable `hmac` TEXT column in migration 0030;
+`audit_events` (#3205) ships with its `hmac` column from migration 0034.
+The tag is computed over a canonical
 serialization of the row's data columns — everything **except** the
 `hmac` column itself — in this fixed order:
 
@@ -58,6 +60,8 @@ cause, container_id, container_role, network_namespace, created_at`
 - `egress_consent`: `id, workspace_id, dest_host, dest_port, pid,
 process_name, decision, duration, requested_at, decided_at,
 decided_by, revoked_at, revoked_by`
+- `audit_events`: `id, event, actor_id, actor_email, target_type,
+target_id, detail, source_ip, user_agent, created_at`
 
 ## The tag format (the contract)
 
@@ -120,6 +124,11 @@ COLUMNS = {
         "id", "workspace_id", "dest_host", "dest_port", "pid",
         "process_name", "decision", "duration", "requested_at",
         "decided_at", "decided_by", "revoked_at", "revoked_by",
+    ],
+    "audit_events": [
+        "id", "event", "actor_id", "actor_email", "target_type",
+        "target_id", "detail", "source_ip", "user_agent",
+        "created_at",
     ],
 }
 
