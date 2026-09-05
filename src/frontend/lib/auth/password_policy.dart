@@ -3,7 +3,7 @@
 /// Mirrors the server's ``validate_password`` (length floor +
 /// character-class counts from ``/api/v1/config``'s
 /// ``password_requirements``) and the min-changed-character rule
-/// (``password_min_changed``, STIG V-222541). The server enforces
+/// (``password_min_changed``). The server enforces
 /// authoritatively; this is inline client-side feedback only.
 class PasswordPolicy {
   /// Minimum password length advertised by the server.
@@ -17,7 +17,7 @@ class PasswordPolicy {
   final int requireSpecial;
 
   /// Minimum character edit distance a self-service password change
-  /// must reach (STIG V-222541, server ``KLANGKD_PASSWORD_MIN_CHANGED``).
+  /// must reach (server ``KLANGKD_PASSWORD_MIN_CHANGED``).
   /// ``0`` (the default) disables the rule; it only applies where both
   /// passwords are in hand (the settings-page change form), never to
   /// registration — which has no current password to differ from.

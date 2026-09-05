@@ -854,15 +854,13 @@ class KlangkSettings(BaseSettings):
     # disables reuse checking and history recording entirely. Capped
     # at 24 (each retired hash costs a PBKDF2 verify per set).
     password_history_count: int = 0
-    # Minimum character change on self-service password change (#3173,
-    # STIG V-222541 "at least eight of the total number of characters
-    # must change"): the edit distance between the current and new
+    # Minimum character change on self-service password change (#3173):
+    # the edit distance between the current and new
     # password must be >= this many characters, or the change is
     # rejected with 400. Only enforced where the old plaintext is
     # presented (``POST /auth/change-password``); reset and admin-set
     # flows see only hashes and stay exempt (password-history reuse
-    # still applies there). 0 (the default) disables the gate; set 8
-    # for STIG compliance. Capped at _PASSWORD_MIN_CHANGED_MAX (the
+    # still applies there). 0 (the default) disables the gate. Capped at _PASSWORD_MIN_CHANGED_MAX (the
     # byte-length ceiling on passwords). Reloadable on SIGHUP (read
     # live at change time).
     password_min_changed: int = 0

@@ -1308,7 +1308,7 @@ class TestValidatePasswordNotReused:
 
 
 class TestPasswordEditDistance:
-    """Levenshtein distance over code points (STIG V-222541, #3173)."""
+    """Levenshtein distance over code points (#3173)."""
 
     def test_zero_for_identical(self):
         assert auth.password_edit_distance("same-pass", "same-pass") == 0

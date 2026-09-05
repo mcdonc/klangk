@@ -269,7 +269,7 @@ async def get_config(
         # Exposed so clients can explain the constraint inline.
         "password_history_count": app.state.auth.password_history_count,
         # Minimum character edit distance the self-service change must
-        # reach (STIG V-222541, #3173); 0 = no constraint. Clients with
+        # reach (#3173); 0 = no constraint. Clients with
         # both passwords in hand (change-password forms) pre-check it.
         "password_min_changed": app.state.auth.password_min_changed,
         # Deployer logo override (KLANGKD_LOGO_URL). Empty when unset, in

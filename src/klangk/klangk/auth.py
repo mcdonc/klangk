@@ -109,8 +109,7 @@ def password_edit_distance(old: str, new: str) -> int:
     """Levenshtein distance between two passwords, in code points (#3173).
 
     Substitutions, insertions, and deletions each count as one changed
-    character — STIG V-222541's "change of at least eight of the total
-    number of characters". Insertions/deletions counting is what kills
+    character. Insertions/deletions counting is what kills
     the positional-diff workaround (prepending to ``Password1234!``
     changes every position yet is one inserted character). Passwords
     are capped at 72 bytes (so at most 72 code points), keeping
@@ -570,8 +569,8 @@ class Auth:
     def validate_password_changed_enough(self, old: str, new: str) -> None:
         """Reject the change when too few characters differ (#3173).
 
-        STIG V-222541: at least eight of the total number of characters
-        must change (``KLANGKD_PASSWORD_MIN_CHANGED``). Called only from
+        The edit distance to the current password must reach
+        ``KLANGKD_PASSWORD_MIN_CHANGED`` characters. Called only from
         the self-service change-password route, where the old plaintext
         is presented and re-authenticated; reset and admin-set flows
         never see the old plaintext, so the control cannot apply there

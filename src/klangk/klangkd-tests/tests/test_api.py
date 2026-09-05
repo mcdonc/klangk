@@ -2178,7 +2178,7 @@ class TestChangePassword:
     async def test_change_password_too_similar_rejected(
         self, client, user, app, monkeypatch
     ):
-        """#3173 / STIG V-222541: under the changed-character floor -> 400."""
+        """#3173: under the changed-character floor -> 400."""
         monkeypatch.setattr(
             app.state.settings, "password_min_changed", 8, raising=False
         )

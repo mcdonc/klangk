@@ -114,7 +114,7 @@ class PasswordPolicy(NamedTuple):
 
         Returns the same error string the server's 400 would carry when
         the edit distance between ``current`` and ``new`` is below
-        ``min_changed`` (STIG V-222541), else ``None``. Only the server
+        ``min_changed``, else ``None``. Only the server
         has both passwords at change time, so this is a fast-fail UX
         layer over the authoritative check.
         """
@@ -129,7 +129,7 @@ class PasswordPolicy(NamedTuple):
 
 
 def password_edit_distance(old: str, new: str) -> int:
-    """Levenshtein distance in code points (STIG V-222541, #3173).
+    """Levenshtein distance in code points (#3173).
 
     Mirrors ``klangk.auth.password_edit_distance`` on the server —
     duplicated rather than imported because the CLI must not depend on

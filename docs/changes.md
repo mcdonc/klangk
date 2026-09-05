@@ -615,8 +615,7 @@ sync` report a clear permission-denied error.
   [Environment Variables](reference/environment.md).
 - **`KLANGKD_PASSWORD_MIN_CHANGED` (#3173).** Minimum number of
   characters (edit distance) a self-service password change must alter
-  from the current password (STIG V-222541; set `8` for compliance).
-  Enforced on `POST /auth/change-password`; forgot-password resets and
+  from the current password. Enforced on `POST /auth/change-password`; forgot-password resets and
   admin-set passwords are exempt (no old plaintext is presented).
   `0` (the default) disables the gate. Reloadable on SIGHUP; advertised
   via `/api/v1/config` so the web and CLI change-password forms
