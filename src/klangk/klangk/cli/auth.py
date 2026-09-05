@@ -117,20 +117,43 @@ def oidc_browser_login(
     )
 
     token_holder: list[str | None] = [None]
+    email_holder: list[str | None] = [None]
     error_holder: list[str | None] = [None]
 
     class CallbackHandler(http.server.BaseHTTPRequestHandler):
         def do_GET(self):  # noqa: N802
             parsed = urlparse(self.path)
             params = parse_qs(parsed.query)
-            token = params.get("token", [None])[0]
-            if token:
-                token_holder[0] = token
+            # #3201: the redirect carries a one-time code, not the JWT;
+            # redeem it immediately for the session token so the JWT
+            # never touches a URL or browser history.
+            code = params.get("code", [None])[0]
+            if code:
+                try:
+                    resp = http_request(
+                        server_url,
+                        "POST",
+                        "/api/v1/auth/oidc/exchange",
+                        json={"code": code},
+                        timeout=15.0,
+                    )
+                except httpx.HTTPError:
+                    resp = None
+                if resp is not None and resp.status_code == 200:
+                    data = resp.json()
+                    token_holder[0] = data.get("access_token")
+                    email_holder[0] = data.get("email") or "unknown"
+                if token_holder[0]:
+                    self._send_page(
+                        200,
+                        "Login Successful",
+                        "You are now logged in. You can close this tab.",
+                        "#2e7d32",
+                    )
+                    return
+                error_holder[0] = "Login code exchange failed"
                 self._send_page(
-                    200,
-                    "Login Successful",
-                    "You are now logged in. You can close this tab.",
-                    "#2e7d32",
+                    400, "Login Failed", error_holder[0], "#c62828"
                 )
             else:
                 error = params.get("error", ["Unknown error"])[0]
@@ -182,15 +205,7 @@ margin:0;background:#1a1a2e;color:#e0e0e0">
 
     if token_holder[0]:
         token = token_holder[0]
-        # Decode the JWT to get the email
-        try:
-            payload = token.split(".")[1]
-            # Add padding
-            payload += "=" * (4 - len(payload) % 4)
-            claims = json.loads(base64.urlsafe_b64decode(payload))
-            email = claims.get("email", "unknown")
-        except Exception:
-            email = "unknown"
+        email = email_holder[0] or "unknown"
 
         state.set_credentials(server_url, email, token)
         state.save()

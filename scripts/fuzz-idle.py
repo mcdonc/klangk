@@ -482,9 +482,12 @@ class WsTerminal:
         self.frame_types: list[str] = []
 
     async def connect(self, timeout: float = BRINGUP_TIMEOUT) -> None:
+        # #3201: the JWT rides the handshake's subprotocol header, not
+        # the URL query string.
         self.ws = await websockets.connect(
-            f"{self.server.ws_base}/ws?token={self.token}",
+            f"{self.server.ws_base}/ws",
             max_size=2**20,
+            subprotocols=["bearer", self.token],
         )
         await self.ws.send(
             json.dumps({"cmd": "workspace_connect", "workspaceId": self.ws_id})

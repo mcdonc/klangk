@@ -7046,32 +7046,81 @@ class TestOidcBrowserLogin:
 
         return fake_open
 
+    def _patch_exchange(self, monkeypatch, token, email):
+        """Patch the one-time-code exchange POST (#3201): the callback
+        handler redeems the code server-side for the session token."""
+        resp = MagicMock(status_code=200)
+        resp.json.return_value = {"access_token": token, "email": email}
+        request = MagicMock(return_value=resp)
+        monkeypatch.setattr("klangk.cli.auth.http_request", request)
+        return request
+
     def test_success_saves_credentials(self, monkeypatch):
         from klangk.cli.auth import oidc_browser_login
 
+        token = self._token()
+        exchange = self._patch_exchange(monkeypatch, token, "user@example.com")
         capture: list[str] = []
         monkeypatch.setattr(
             "klangk.cli.auth.webbrowser.open",
-            self._drive_callback(f"token={self._token()}", capture),
+            self._drive_callback("code=one-time", capture),
         )
         state = CLIState()
         oidc_browser_login("http://srv", "prov", state)
         assert capture and "cli_redirect" in capture[0]
-        assert state.get_token("http://srv") == self._token()
+        assert state.get_token("http://srv") == token
+        # The code — not the JWT — rode the redirect URL.
+        exchange.assert_called_once()
+        assert exchange.call_args.kwargs["json"] == {"code": "one-time"}
 
-    def test_success_with_malformed_token_uses_unknown_email(
-        self, monkeypatch
-    ):
+    def test_success_uses_server_email(self, monkeypatch):
+        """#3201: the email comes from the exchange response, not a
+        client-side JWT decode."""
         from klangk.cli.auth import oidc_browser_login
 
-        bad_token = "hdr.not-valid-b64!.sig"
+        token = self._token()
+        self._patch_exchange(monkeypatch, token, "sso@example.com")
         monkeypatch.setattr(
             "klangk.cli.auth.webbrowser.open",
-            self._drive_callback(f"token={bad_token}", []),
+            self._drive_callback("code=one-time", []),
         )
         state = CLIState()
         oidc_browser_login("http://srv", "prov", state)
-        assert state.get_token("http://srv") == bad_token
+        assert state.get_token("http://srv") == token
+        assert state.get_email("http://srv") == "sso@example.com"
+
+    def test_failed_exchange_exits_1(self, monkeypatch):
+        from klangk.cli.auth import oidc_browser_login
+
+        resp = MagicMock(status_code=400)
+        resp.json.return_value = {"detail": "Invalid login code"}
+        monkeypatch.setattr(
+            "klangk.cli.auth.http_request", MagicMock(return_value=resp)
+        )
+        monkeypatch.setattr(
+            "klangk.cli.auth.webbrowser.open",
+            self._drive_callback("code=already-used", []),
+        )
+        with pytest.raises(SystemExit):
+            oidc_browser_login("http://srv", "prov", CLIState())
+
+    def test_exchange_network_error_exits_1(self, monkeypatch):
+        """A transport failure during the code exchange fails the login
+        (never a half-credentials state)."""
+        import httpx
+
+        from klangk.cli.auth import oidc_browser_login
+
+        monkeypatch.setattr(
+            "klangk.cli.auth.http_request",
+            MagicMock(side_effect=httpx.ConnectError("boom")),
+        )
+        monkeypatch.setattr(
+            "klangk.cli.auth.webbrowser.open",
+            self._drive_callback("code=one-time", []),
+        )
+        with pytest.raises(SystemExit):
+            oidc_browser_login("http://srv", "prov", CLIState())
 
     def test_error_callback_exits_1(self, monkeypatch):
         from klangk.cli.auth import oidc_browser_login

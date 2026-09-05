@@ -79,9 +79,11 @@ class WsClient extends ChangeNotifier {
     final token = _auth!.token!;
     final headers = await dpopHeadersFor('GET', _wsBaseUrl, token);
     final proof = headers['DPoP'];
-    final params = {'token': token, if (proof != null) 'dpop': proof};
+    // #3201: the token rides the subprotocol list, never the query;
+    // only the one-shot DPoP proof stays a query param (#3218).
     final base = Uri.tryParse(_wsBaseUrl) ?? Uri(path: '/ws');
-    return base.replace(queryParameters: params);
+    if (proof == null) return base;
+    return base.replace(queryParameters: {'dpop': proof});
   }
 
   WebSocketChannel? _channel;
@@ -136,9 +138,11 @@ class WsClient extends ChangeNotifier {
   /// Workspace ID to rejoin after reconnecting.
   String? _pendingWorkspaceId;
 
-  /// Override for testing to inject a fake channel factory.
+  /// Override for testing to inject a fake channel factory. Takes the
+  /// subprotocol list production sends (#3201: ['bearer', token]).
   @visibleForTesting
-  static WebSocketChannel Function(Uri uri)? testChannelFactory;
+  static WebSocketChannel Function(Uri uri, List<String> protocols)?
+      testChannelFactory;
 
   /// Override for testing to control reconnect backoff delay.
   @visibleForTesting
@@ -351,11 +355,23 @@ class WsClient extends ChangeNotifier {
   /// FailDelayManager may delay the connection by up to 60s after an unclean
   /// close — we just wait it out since retrying creates zombie connections.
   Future<void> _connectWs() async {
+    // #3201: browsers cannot set headers on a WS connect, so the token
+    // rides the handshake as a subprotocol entry (server echoes
+    // 'bearer') instead of a ?token= query param, which would land in
+    // proxy/server access logs.
+    final uri = await _wsUri();
+    final protocols = ['bearer', _auth!.token!];
     if (testChannelFactory != null) {
-      _channel = testChannelFactory!(await _wsUri());
+      _channel = testChannelFactory!(uri, protocols);
     } else {
       // coverage:ignore-start
-      _channel = WebSocketChannel.connect(await _wsUri());
+      debugPrint(
+        '[WsClient] WebSocketChannel.connect() start: ${DateTime.now()}',
+      );
+      _channel = WebSocketChannel.connect(uri, protocols: protocols);
+      debugPrint(
+        '[WsClient] WebSocketChannel.connect() returned: ${DateTime.now()}',
+      );
       // coverage:ignore-end
     }
 

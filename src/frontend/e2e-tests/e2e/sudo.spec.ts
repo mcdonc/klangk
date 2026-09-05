@@ -11,7 +11,8 @@ async function execInContainer(
   const wsUrl = API_BASE.replace("http://", "ws://");
 
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(`${wsUrl}/ws?token=${token}`);
+    // #3201: the JWT rides the WS subprotocol header, not the URL.
+    const ws = new WebSocket(`${wsUrl}/ws`, ["bearer", token]);
     const chunks: Buffer[] = [];
     let connected = false;
     let exitCode = 0;

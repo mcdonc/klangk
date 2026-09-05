@@ -512,13 +512,16 @@ class ConsentDeciderService extends ChangeNotifier {
 
   bool get connected => _connected;
 
-  /// Override for testing to inject a fake channel factory.
+  /// Override for testing to inject a fake channel factory. Takes the
+  /// subprotocol list production sends (#3201: ['bearer', token]).
   @visibleForTesting
-  static WebSocketChannel Function(Uri uri)? testChannelFactory;
+  static WebSocketChannel Function(Uri uri, List<String> protocols)?
+      testChannelFactory;
 
-  /// The consent-decider WS URL for this workspace: token as a query
-  /// param (mirroring [WsClient]) plus a one-shot DPoP proof parameter
-  /// when the token is bound (#3218).
+  /// The consent-decider WS URL for this workspace: auth rides the
+  /// handshake's subprotocol header (mirroring [WsClient]; #3201);
+  /// a one-shot DPoP proof rides a query parameter when the token is
+  /// bound (#3218).
   Future<String> wsUrl() async {
     final loc = Uri.base;
     final wsScheme = loc.scheme == 'https' ? 'wss' : 'ws';
@@ -527,7 +530,7 @@ class ConsentDeciderService extends ChangeNotifier {
     final headers = await dpopHeadersFor('GET', base, token);
     final proof = headers['DPoP'];
     final suffix = proof == null ? '' : '&dpop=$proof';
-    return '$base?workspace=$workspaceId&token=$token$suffix';
+    return '$base?workspace=$workspaceId$suffix';
   }
 
   /// Open the connection (idempotent: a no-op if already
@@ -552,14 +555,16 @@ class ConsentDeciderService extends ChangeNotifier {
   }
 
   Future<void> _openChannel() async {
+    // #3201: token as a WS subprotocol entry, not a query param.
     final url = await wsUrl();
+    final protocols = ['bearer', token];
     final factory = testChannelFactory;
     WebSocketChannel ch;
     if (factory != null) {
-      ch = factory(Uri.parse(url));
+      ch = factory(Uri.parse(url), protocols);
     } else {
       // coverage:ignore-start
-      ch = WebSocketChannel.connect(Uri.parse(url));
+      ch = WebSocketChannel.connect(Uri.parse(url), protocols: protocols);
       // coverage:ignore-end
     }
     _channel = ch;

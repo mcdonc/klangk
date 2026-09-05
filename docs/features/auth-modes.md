@@ -117,8 +117,9 @@ required from the caller:
   so no `klangk login` is ever needed — the first command after registering
   the server with `klangk login <server>` just works (and re-registration
   isn't: a saved token that 401s triggers the same auto-login fallback).
-- **Workspace terminals** (WebSocket) flow the token through the existing
-  `?token=` path unchanged.
+- **Workspace terminals** (WebSocket) flow the token through the
+  handshake's `Sec-WebSocket-Protocol` header, like every other WS
+  client (#3201).
 
 The freely-issued token is indistinguishable from a password-login token to
 the refresh and blocklist machinery — it reuses the standard `create_token`

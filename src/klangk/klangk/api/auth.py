@@ -136,16 +136,15 @@ async def register(
         base_path,
     )
     verification_token = request.app.state.auth.create_verification_token(
-        user_id
+        user_id, req.email
     )
     verification_url = (
         f"{proto}://{hostname}{base_path}/#/verify?token={verification_token}"
     )
     logger.info(
-        "Verification URL: %s/#/verify?token=%s...%s",
-        f"{proto}://{hostname}{base_path}",
-        verification_token[:8],
-        verification_token[-4:],
+        "Verification email queued for %s (token sha256=%s)",
+        req.email,
+        hashlib.sha256(verification_token.encode()).hexdigest()[:12],
     )
 
     # Insert user and send email in a transaction — if the email fails,
@@ -198,18 +197,40 @@ async def insert_user_or_race_400(
         ) from None
 
 
-@router.get("/auth/verify")
-async def verify_email(token: str, request: Request):
-    """Verify a user's email via the token from the verification link."""
-    user_id = request.app.state.auth.decode_verification_token(token)
-    if user_id is None:
+class VerifyRequest(BaseModel):
+    token: str
+
+
+@router.post("/auth/verify")
+async def verify_email(req: VerifyRequest, request: Request):
+    """Verify a user's email via the token from the verification link.
+
+    #3201: the token rides the request body, not the URL — a GET with a
+    ``?token=`` query string would put a bearer-granting credential in
+    proxy/server access logs. Redemption is one-time (#3201): the token
+    is bound to the address it was minted for, and an already-verified
+    row rejects it, so a second click (or a stolen link replayed after
+    the first use) cannot mint another session.
+    """
+    decoded = request.app.state.auth.decode_verification_token(req.token)
+    if decoded is None:
         raise HTTPException(
             status_code=400, detail="Invalid or expired verification token"
         )
-    updated = await request.app.state.model.users.verify_user(user_id)
+    user_id, token_email = decoded
+    # Atomic one-time redemption (#3201): the conditional UPDATE matches
+    # only an unverified row still carrying the minted-for address, so a
+    # replay (second click, stolen link) matches nothing and 400s.
+    updated = await request.app.state.model.users.verify_user(
+        user_id, token_email
+    )
     if not updated:
-        raise HTTPException(status_code=404, detail="User not found")
+        raise HTTPException(
+            status_code=400, detail="Invalid or expired verification token"
+        )
     user = await request.app.state.model.users.get_user_by_id(user_id)
+    if user is None:  # pragma: no cover — the row just transitioned
+        raise HTTPException(status_code=404, detail="User not found")
     # The auto-login must not resurrect a disabled account (#2588).
     auth.ensure_not_disabled(user)
     source_ip, user_agent = workstation(request)
@@ -363,7 +384,7 @@ async def resend_verification(
         request.headers, request.client.host if request.client else None
     )
     verification_token = request.app.state.auth.create_verification_token(
-        user["id"]
+        user["id"], user["email"]
     )
     verification_url = (
         f"{proto}://{hostname}{base_path}/#/verify?token={verification_token}"
@@ -400,6 +421,16 @@ async def deliver_reset_email(
         logger.exception("Failed to send password reset email to %s", email)
 
 
+def _reset_mint_inputs(user: dict | None) -> tuple[bool, str, str | None]:
+    """(sendable, subject, password_hash) for a forgot-password mint.
+
+    Unknown addresses still get a subject and a (discarded) binding so
+    the mint cost is identical on every path (#3114)."""
+    if user is None:
+        return False, str(uuid.uuid4()), None
+    return not user.get("disabled"), user["id"], user.get("password_hash")
+
+
 def schedule_reset_delivery(
     background_tasks: BackgroundTasks,
     request: Request,
@@ -416,23 +447,26 @@ def schedule_reset_delivery(
     branch ran. Only the existing-enabled path queues the background
     send; disabled accounts still get no email (#2588).
     """
-    sendable = user is not None and not user.get("disabled")
-    subject = user["id"] if user is not None else str(uuid.uuid4())
-    reset_token = request.app.state.auth.create_password_reset_token(subject)
-    if sendable:
-        hostname, proto, base_path = (
-            request.app.state.util.derive_hosting_info(
-                request.headers,
-                request.client.host if request.client else None,
-            )
-        )
-        reset_url = (
-            f"{proto}://{hostname}{base_path}"
-            f"/#/reset-password?token={reset_token}"
-        )
-        background_tasks.add_task(
-            deliver_reset_email, request.app.state.email, email, reset_url
-        )
+    sendable, subject, password_hash = _reset_mint_inputs(user)
+    # #3201: the token is bound to a digest of the current password hash,
+    # so the first successful reset (which rewrites the hash) consumes
+    # every outstanding token for the account — one-time, stateless.
+    reset_token = request.app.state.auth.create_password_reset_token(
+        subject,
+        request.app.state.auth.reset_token_binding(password_hash),
+    )
+    if not sendable:
+        return
+    hostname, proto, base_path = request.app.state.util.derive_hosting_info(
+        request.headers,
+        request.client.host if request.client else None,
+    )
+    reset_url = (
+        f"{proto}://{hostname}{base_path}/#/reset-password?token={reset_token}"
+    )
+    background_tasks.add_task(
+        deliver_reset_email, request.app.state.email, email, reset_url
+    )
 
 
 @router.post("/auth/forgot-password")
@@ -471,12 +505,18 @@ class ResetPasswordRequest(BaseModel):
 
 @router.post("/auth/reset-password")
 async def reset_password(req: ResetPasswordRequest, request: Request):
-    """Reset password using a token from the reset email."""
-    user_id = request.app.state.auth.decode_password_reset_token(req.token)
-    if user_id is None:
+    """Reset password using a token from the reset email.
+
+    Redemption checks the token's password-hash binding (#3201): a
+    token minted before an earlier reset no longer matches the row and
+    is rejected, making every reset link one-time.
+    """
+    decoded = request.app.state.auth.decode_password_reset_token(req.token)
+    if decoded is None:
         raise HTTPException(
             status_code=400, detail="Invalid or expired reset token"
         )
+    user_id, binding = decoded
     request.app.state.auth.validate_password(req.password)
     if user_id == model.AGENT_USER_ID:
         raise HTTPException(
@@ -489,6 +529,13 @@ async def reset_password(req: ResetPasswordRequest, request: Request):
     if user is None:  # pragma: no cover — a valid reset token names a
         # live user (the row is only gone if deleted mid-flight)
         raise HTTPException(status_code=404, detail="User not found")
+    if (
+        request.app.state.auth.reset_token_binding(user.get("password_hash"))
+        != binding
+    ):
+        raise HTTPException(
+            status_code=400, detail="Invalid or expired reset token"
+        )
     auth.ensure_not_disabled(user)
     # Self-service resets respect the minimum age (#3177) —
     # only admin-forced resets bypass it.
@@ -615,10 +662,9 @@ async def refresh_token(request: Request):
         raise HTTPException(status_code=401, detail="Not authenticated")
     token = authorization[7:]
     logger.info(
-        "REFRESH CALL ua=%s origin=%s referer=%s",
+        "REFRESH CALL ua=%s origin=%s",
         request.headers.get("user-agent", "?"),
         request.headers.get("origin", "?"),
-        request.headers.get("referer", "?"),
     )
     return await request.app.state.auth.refresh_token(
         token,
@@ -866,7 +912,9 @@ async def change_email(
     hostname, proto, base_path = request.app.state.util.derive_hosting_info(
         request.headers, request.client.host if request.client else None
     )
-    token = request.app.state.auth.create_verification_token(user["id"])
+    token = request.app.state.auth.create_verification_token(
+        user["id"], req.email
+    )
     url = f"{proto}://{hostname}{base_path}/#/verify?token={token}"
     await send_email(
         app.state.email.send_verification_email(req.email, url),
@@ -1321,13 +1369,20 @@ def _build_redirect_response(
     request: Request,
     provider_id: str,
     access_token: str,
+    email: str,
     cookie_data: dict,
 ) -> RedirectResponse:
-    """Build the final redirect response (CLI or web flow)."""
+    """Build the final redirect response (CLI or web flow).
+
+    #3201: neither flow places the session JWT in a URL. The callback
+    redirects a one-time, 60s code; the CLI/web completer redeems it
+    via ``POST /auth/oidc/exchange`` for the token.
+    """
     cli_redirect = cookie_data.get("cli_redirect")
+    code = request.app.state.auth.mint_login_code(access_token, email)
 
     if _valid_cli_redirect(cli_redirect):
-        redirect_url = f"{cli_redirect}?token={access_token}"
+        redirect_url = f"{cli_redirect}?code={code}"
     else:
         hostname, proto, base_path = (
             request.app.state.util.derive_hosting_info(
@@ -1336,14 +1391,34 @@ def _build_redirect_response(
             )
         )
         redirect_url = (
-            f"{proto}://{hostname}{base_path}"
-            f"/#/oidc-complete?token={access_token}"
+            f"{proto}://{hostname}{base_path}/#/oidc-complete?code={code}"
         )
 
     cookie_name = f"oidc_{provider_id}"
     response = RedirectResponse(url=redirect_url, status_code=302)
     response.delete_cookie(cookie_name, path="/")
     return response
+
+
+class OidcExchangeRequest(BaseModel):
+    code: str
+
+
+@router.post("/auth/oidc/exchange")
+async def oidc_exchange(req: OidcExchangeRequest, request: Request):
+    """Redeem a one-time OIDC login code for the session token (#3201).
+
+    The callback redirect carries only a single-use, 60-second code
+    (never the JWT itself); the completer — the frontend's
+    ``/#/oidc-complete`` page or the CLI's localhost callback — swaps
+    it for the access token here. Unknown, replayed, or expired codes
+    all fail identically with 400.
+    """
+    redeemed = request.app.state.auth.redeem_login_code(req.code)
+    if redeemed is None:
+        raise HTTPException(status_code=400, detail="Invalid login code")
+    token, email = redeemed
+    return {"access_token": token, "email": email}
 
 
 def _require_verified_email(provider, claims: dict) -> None:
@@ -1431,7 +1506,7 @@ async def oidc_callback(
     )
     await request.app.state.model.users.record_login(user["id"])
     return _build_redirect_response(
-        request, provider_id, access_token, cookie_data
+        request, provider_id, access_token, email, cookie_data
     )
 
 

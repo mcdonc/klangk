@@ -175,24 +175,31 @@ class TestConsentDeciderRegistryBroadcast:
 
 
 class _FakeWS:
-    """Minimal stand-in for a fastapi WebSocket for handler-level tests."""
+    """Minimal stand-in for a fastapi WebSocket for handler-level tests.
+
+    A ``token`` key in *params* is moved into the handshake's
+    ``Sec-WebSocket-Protocol`` header, mirroring the production client
+    contract (#3201: the JWT never rides the query string).
+    """
 
     def __init__(
         self, params: dict, incoming: list, headers: dict | None = None
     ):
-        self.query_params = params
-        self.headers = (
-            headers
-            if headers is not None
-            else {"user-agent": "fake-decider/1.0"}
+        token = params.pop("token", None)
+        merged = (
+            dict(headers) if headers else {"user-agent": "fake-decider/1.0"}
         )
+        if token is not None:
+            merged["sec-websocket-protocol"] = f"bearer, {token}"
         self.url = types.SimpleNamespace(path="/ws/consent-decider")
+        self.query_params = params
+        self.headers = merged
         self._incoming = iter(incoming)
         self.sent: list[str] = []
         self.accepted = False
         self.closed: tuple | None = None
 
-    async def accept(self) -> None:
+    async def accept(self, subprotocol: str | None = None) -> None:
         self.accepted = True
 
     async def close(self, code: int = 1000, reason: str | None = None) -> None:

@@ -1,7 +1,8 @@
 """WebSocket helpers for the super-E2E suite (#2561).
 
 Thin black-box client helpers speaking the same public WS protocol the
-shipped frontend uses: ``/ws?token=...`` through the appliance's
+shipped frontend uses: ``/ws`` with the JWT in the handshake
+``Sec-WebSocket-Protocol`` header (#3201) through the appliance's
 published port (caddy → UDS → klangkd — the real deployed data path).
 """
 
@@ -16,9 +17,18 @@ import websockets
 
 
 async def dial(appliance, token: str, path: str = "/ws"):
-    """Open an authenticated WS to the appliance (any endpoint path)."""
-    url = f"{appliance.url.replace('http://', 'ws://')}{path}?token={token}"
-    return await websockets.connect(url, max_size=2**20, open_timeout=30)
+    """Open an authenticated WS to the appliance (any endpoint path).
+
+    #3201: the JWT rides the handshake's subprotocol header, not the
+    URL query string (query strings land in proxy/server access logs).
+    """
+    url = f"{appliance.url.replace('http://', 'ws://')}{path}"
+    return await websockets.connect(
+        url,
+        max_size=2**20,
+        open_timeout=30,
+        subprotocols=["bearer", token],
+    )
 
 
 def _is_container_ready(msg: dict) -> bool:

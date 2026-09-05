@@ -308,6 +308,19 @@ operators or integrators to act when upgrading.
 
 ### Security
 
+- **Tokens removed from URLs (#3201).** Session JWTs no longer ride
+  URLs anywhere. WebSocket clients (browser and CLI) now authenticate
+  the handshake via the `Sec-WebSocket-Protocol` header instead of a
+  `?token=` query string; the OIDC callback redirects a one-time,
+  60-second code redeemed via `POST /api/v1/auth/oidc/exchange`; and
+  `POST /api/v1/auth/verify` (formerly GET) takes the verification
+  token in the body. Email-link tokens (verify/reset/invite) are now
+  strictly one-time — a replayed verification link or a reset link
+  minted before an earlier reset is rejected. Integrators connecting
+  to `/ws` or `/ws/consent-decider` must switch from the query param
+  to the `bearer` subprotocol, and any client of the verify endpoint
+  must POST. See the [token delivery policy](/features/authentication/#token-delivery-policy).
+
 - **`KLANGKD_SESSION_WORKSTATION_BINDING` (#3194).** Session workstation
   binding: replay protection for bearer JWTs. `off` (the default)
   keeps the previous behavior; `ip` binds each session to the network

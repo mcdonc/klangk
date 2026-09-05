@@ -1969,7 +1969,7 @@ class TestEgressSidecarWS:
         app.state.container_registry = types.SimpleNamespace(
             states={FULL_WS: state}
         )
-        ws = _FakeWS({"token": FULL_WS})
+        ws = _FakeWS({}, headers={"authorization": "Bearer sidecar-ws"})
         handler = asyncio.create_task(handle_egress_sidecar(ws, app))
         await ws.feed(json.dumps({"type": "activity"}))
         await asyncio.sleep(0.02)
@@ -1987,7 +1987,7 @@ class TestEgressSidecarWS:
 
         app, _ = _sidecar_app()
         app.state.container_registry = types.SimpleNamespace(states={})
-        ws = _FakeWS({"token": FULL_WS})
+        ws = _FakeWS({}, headers={"authorization": "Bearer sidecar-ws"})
         handler = asyncio.create_task(handle_egress_sidecar(ws, app))
         await ws.feed(json.dumps({"type": "activity"}))
         await asyncio.sleep(0.02)
@@ -2001,7 +2001,7 @@ class TestEgressSidecarWS:
         from klangk.wshandler.sidecar import handle_egress_sidecar
 
         app, _ = _sidecar_app()
-        ws = _FakeWS({"token": FULL_WS})
+        ws = _FakeWS({}, headers={"authorization": "Bearer sidecar-ws"})
         handler = asyncio.create_task(handle_egress_sidecar(ws, app))
         await ws.feed(
             json.dumps({"type": "drop_ack", "id": "ack-1", "ok": True})
@@ -2017,7 +2017,7 @@ class TestEgressSidecarWS:
         from klangk.wshandler.sidecar import handle_egress_sidecar
 
         app, _ = _sidecar_app(token_result=None)
-        ws = _FakeWS({"token": "bad"})
+        ws = _FakeWS({}, headers={"authorization": "Bearer bad"})
         await handle_egress_sidecar(ws, app)
         assert ws.closed == (4001, "Invalid token")
 
@@ -2025,7 +2025,7 @@ class TestEgressSidecarWS:
         from klangk.wshandler.sidecar import handle_egress_sidecar
 
         app, _ = _sidecar_app(token_result=auth.Auth.WORKSPACE_TOKEN_EXPIRED)
-        ws = _FakeWS({"token": "stale"})
+        ws = _FakeWS({}, headers={"authorization": "Bearer stale"})
         await handle_egress_sidecar(ws, app)
         assert ws.closed == (4002, "Token expired")
 
@@ -2037,7 +2037,7 @@ class TestEgressSidecarWS:
         fut: asyncio.Future = asyncio.get_event_loop().create_future()
         fut.set_result({"decision": "deny", "reason": "static"})
         coord.hold = AsyncMock(return_value=fut)
-        ws = _FakeWS({"token": "tok"})
+        ws = _FakeWS({}, headers={"authorization": "Bearer tok"})
         handler = asyncio.create_task(handle_egress_sidecar(ws, app))
         await ws.feed(
             json.dumps(
@@ -2071,7 +2071,7 @@ class TestEgressSidecarWS:
         app, coord = _sidecar_app()
         fut: asyncio.Future = asyncio.get_event_loop().create_future()
         coord.hold = AsyncMock(return_value=fut)
-        ws = _FakeWS({"token": "tok"})
+        ws = _FakeWS({}, headers={"authorization": "Bearer tok"})
         handler = asyncio.create_task(handle_egress_sidecar(ws, app))
         await ws.feed(
             json.dumps(
@@ -2101,7 +2101,7 @@ class TestEgressSidecarWS:
         fut: asyncio.Future = asyncio.get_event_loop().create_future()
         fut.set_result({"decision": "deny", "reason": "static"})
         coord.hold = AsyncMock(return_value=fut)
-        ws = _FakeWS({"token": "tok"})
+        ws = _FakeWS({}, headers={"authorization": "Bearer tok"})
         handler = asyncio.create_task(handle_egress_sidecar(ws, app))
         await ws.feed("not-json")
         await ws.feed(json.dumps({"type": "ping"}))
@@ -2141,7 +2141,7 @@ class TestEgressSidecarWS:
         app, coord = _sidecar_app()
         fut: asyncio.Future = asyncio.get_event_loop().create_future()
         coord.hold = AsyncMock(return_value=fut)
-        ws = _FakeWS({"token": "tok"})
+        ws = _FakeWS({}, headers={"authorization": "Bearer tok"})
         handler = asyncio.create_task(handle_egress_sidecar(ws, app))
         await ws.feed(
             json.dumps(

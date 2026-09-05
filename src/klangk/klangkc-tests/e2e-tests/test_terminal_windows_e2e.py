@@ -361,9 +361,10 @@ class _WebSession:
     async def connect(self):
         ws_url = self.base_url.replace("http://", "ws://")
         self._ctx = websockets.connect(
-            f"{ws_url}/ws?token={self.token}",
+            f"{ws_url}/ws",
             max_size=16 * 1024 * 1024,
             open_timeout=30,
+            subprotocols=["bearer", self.token],
         )
         self.ws = await self._ctx.__aenter__()
         await self.ws.send(
