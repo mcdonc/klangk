@@ -2223,6 +2223,12 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Workspace-create error responses (#3215).** A host-side
+  filesystem failure during workspace creation (unwritable data dir,
+  disk full) no longer echoes the raw OS message — which names host
+  paths — in a 400 body. It is now a 500 "Internal server error"
+  with the underlying error logged server-side.
+
 - **Files API error responses (#3150).** The workspace files routes
   (list/read/delete/rename/upload/download) no longer echo raw
   exception text — podman stderr, container paths, library messages —
