@@ -1,18 +1,19 @@
 """E2E tests for HTTPS serving with automatic TLS armed (#3192).
 
 Real-ACME issuance cannot run in CI (it needs a public DNS record and
-reachable ports 80/443), so these tests drive the **production machinery**
-— the real renderer, the real admin-API ``POST /load`` delivery, the real
-``CaddyWatchdog.reload/apply_pending_reload`` SIGHUP path, a real ``caddy``
-child — with two test-only substitutions on the rendered Caddyfile:
+reachable ports 80/443), so the serving tests arm the **internal
+issuer** — ``KLANGKD_TLS_ISSUER=internal``, a first-class production
+mode (#3192): Caddy self-generates the key + certificate for the armed
+name at runtime (the same listener/handshake/proxying surface ACME
+would produce, without a CA) and disables the HTTP→HTTPS redirect
+(whose :80 bind unprivileged CI runners cannot make). The rendered
+config is therefore the untouched production output.
 
-- ``tls internal`` — Caddy's internal issuer, which **self-generates**
-  the key + certificate for the armed FQDN at runtime (the same
-  listener/handshake/proxying surface ACME would produce, without a CA).
-- ``auto_https disable_redirects`` — the automatic HTTP→HTTPS redirect
-  binds :80 at config-load time, which unprivileged CI runners cannot
-  bind; disabling only the redirect keeps the rest of the armed config
-  (TLS listener, automation policy, storage) loadable everywhere.
+The one test-only substitution left is in the SIGHUP test's ACME-mode
+config, which injects ``auto_https disable_redirects`` (the redirect's
+:80 bind again) so the ACME automation policy — the thing under test
+— loads on unprivileged runners; issuance itself fails offline,
+harmlessly.
 
 What is covered:
 
@@ -80,34 +81,21 @@ def _armed_settings(
     return KlangkSettings(env)
 
 
-class _TestTLSRenderer(CaddyRenderer):
-    """The production renderer with test-only TLS substitutions.
+class _NoRedirectsRenderer(CaddyRenderer):
+    """ACME-mode armed renders + ``auto_https disable_redirects``.
 
-    ``internal_issuer`` adds ``tls internal`` (self-generated key, no CA).
-    Armed renders always get ``auto_https disable_redirects`` so the
-    config loads on unprivileged runners (the redirect's :80 bind is the
-    only eager privileged bind). Unarmed renders pass through untouched.
+    The only test-only substitution left (#3192): the automatic
+    HTTP→HTTPS redirect binds :80 at config-load time, which
+    unprivileged runners cannot bind. Internal-issuer renders need no
+    substitution at all — that mode disables the redirect natively.
     """
-
-    def __init__(self, app, *, internal_issuer: bool = True) -> None:
-        super().__init__(app)
-        self._internal_issuer = internal_issuer
 
     def render_config(self, upstream, admin_socket, *, full_global=True):
         cf = super().render_config(
             upstream, admin_socket, full_global=full_global
         )
-        if not self.auto_https_armed:
-            return cf
-        # The global block is always the first block; disarm-redirects is a
-        # global option, so it slots in right after the opening brace.
-        cf = cf.replace("{\n", "{\n\tauto_https disable_redirects\n", 1)
-        if self._internal_issuer:
-            anchor = f"https://{self.app.state.settings.tls_hostname}:"
-            site = next(
-                line for line in cf.splitlines() if line.startswith(anchor)
-            )
-            cf = cf.replace(f"{site}\n", f"{site}\n\ttls internal\n", 1)
+        if self.auto_https_armed and not self._internal_tls():
+            cf = cf.replace("{\n", "{\n\tauto_https disable_redirects\n", 1)
         return cf
 
 
@@ -151,7 +139,7 @@ class _TcpUpstreamWatchdog(CaddyWatchdog):
     override, so reload tests exercise the real flow.
     """
 
-    def __init__(self, app, renderer: _TestTLSRenderer) -> None:
+    def __init__(self, app, renderer: CaddyRenderer) -> None:
         super().__init__(app)
         self._renderer = renderer
         self._upstream_port = 0
@@ -176,16 +164,14 @@ class _CaddyChild:
     flows use.
     """
 
-    def __init__(self, settings, *, internal_issuer: bool = True) -> None:
+    def __init__(self, settings, renderer_cls=CaddyRenderer) -> None:
         self.settings = settings
         self.app = types.SimpleNamespace(
             state=types.SimpleNamespace(settings=settings)
         )
         self.admin_socket = settings.caddy_admin_socket
         self.state_dir = settings.state_dir
-        self._renderer = _TestTLSRenderer(
-            self.app, internal_issuer=internal_issuer
-        )
+        self._renderer = renderer_cls(self.app)
         self.proc: subprocess.Popen | None = None
         self.watchdog: CaddyWatchdog | None = None
 
@@ -249,8 +235,8 @@ def caddy_factory():
     """Start armed caddy children; stop them all on teardown."""
     children: list[_CaddyChild] = []
 
-    def _start(settings, *, internal_issuer: bool = True) -> _CaddyChild:
-        child = _CaddyChild(settings, internal_issuer=internal_issuer)
+    def _start(settings, renderer_cls=CaddyRenderer) -> _CaddyChild:
+        child = _CaddyChild(settings, renderer_cls=renderer_cls)
         child.start()
         children.append(child)
         return child
@@ -446,7 +432,9 @@ class TestArmedHttpsServing:
 
         state = str(tmp_path)
         port = free_port()
-        settings = _armed_settings(state, port)
+        settings = _armed_settings(
+            state, port, **{"KLANGKD_TLS_ISSUER": "internal"}
+        )
         echo_port = free_port()
         echo = _start_http_echo(echo_port)
         child = caddy_factory(settings)
@@ -496,7 +484,9 @@ class TestArmedHttpsServing:
 
         state = str(tmp_path)
         port = free_port()
-        settings = _armed_settings(state, port)
+        settings = _armed_settings(
+            state, port, **{"KLANGKD_TLS_ISSUER": "internal"}
+        )
         ws_port = free_port()
         ws = _start_ws_echo(ws_port)
         child = caddy_factory(settings)
@@ -528,7 +518,10 @@ class TestHostingHostnameWithTlsHostname:
         settings = _armed_settings(
             state,
             port,
-            **{"KLANGKD_HOSTING_HOSTNAME": PIN_AUTHORITY},
+            **{
+                "KLANGKD_TLS_ISSUER": "internal",
+                "KLANGKD_HOSTING_HOSTNAME": PIN_AUTHORITY,
+            },
         )
         echo_port = free_port()
         echo = _start_http_echo(echo_port)
@@ -559,7 +552,9 @@ class TestHostingHostnameWithTlsHostname:
 
             # Without the pin, the same headers derive the TLS identity —
             # the zero-extra-config automatic-TLS URL behavior.
-            unpinned = _armed_settings(state, port)
+            unpinned = _armed_settings(
+                state, port, **{"KLANGKD_TLS_ISSUER": "internal"}
+            )
             util2 = Util(
                 types.SimpleNamespace(
                     state=types.SimpleNamespace(settings=unpinned)
@@ -606,9 +601,10 @@ class TestSighupUpdatesCertConfiguration:
             fqdn="alpha.example.com",
             **{"KLANGKD_ACME_EMAIL": "one@example.com"},
         )
-        # No internal issuer here: the ACME automation policy + email are
-        # the thing under test (issuance itself fails offline — harmless).
-        child = caddy_factory(v1, internal_issuer=False)
+        # ACME mode: the automation policy + email are the thing under
+        # test (issuance itself fails offline — harmless); the renderer
+        # subclass only suppresses the :80 redirect bind.
+        child = caddy_factory(v1, renderer_cls=_NoRedirectsRenderer)
         wd = child.make_watchdog()
         try:
             wd.point_at(free_port())

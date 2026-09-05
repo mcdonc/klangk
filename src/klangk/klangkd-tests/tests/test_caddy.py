@@ -1749,3 +1749,87 @@ class TestAutoHttpsLogs:
             "automatic TLS could not be applied" in r.message
             for r in caplog.records
         )
+
+
+# ---------------------------------------------------------------------------
+# Internal TLS issuer (#3192: TLS hop behind an outer proxy)
+# ---------------------------------------------------------------------------
+
+
+def _internal_env(**extra) -> dict:
+    """Env arming TLS with the internal (self-generated) issuer."""
+    env = _armed_env(KLANGKD_TLS_ISSUER="internal")
+    env.update(extra)
+    return env
+
+
+class TestInternalTlsRenderer:
+    def test_internal_global_block(self):
+        """Internal mode: no auto_https off, no email (even when set), the
+        redirect disabled (the outer proxy owns :80; unprivileged binds
+        would fail), and the explicit storage path (the internal CA root
+        lives there)."""
+        s = make_settings(_internal_env(KLANGKD_ACME_EMAIL="ops@example.com"))
+        g = _renderer(s)._global_block("/d/sock")
+        assert "auto_https off" not in g
+        assert "auto_https disable_redirects" in g
+        assert "email" not in g
+        assert (
+            f"storage file_system {os.path.join(s.state_dir, 'caddy-storage')}"
+            in g
+        )
+
+    def test_internal_site_carries_tls_directive(self):
+        cf = _renderer(make_settings(_internal_env())).render_config(
+            "unix//s", "/d/sock"
+        )
+        assert "https://klangk.example.com:443 {\n\ttls internal\n" in cf
+        assert "http://:8995 {" in cf  # egress unchanged
+
+    def test_internal_predicate(self):
+        assert (
+            _renderer(make_settings(_internal_env()))._internal_tls() is True
+        )
+        assert _renderer(make_settings(_armed_env()))._internal_tls() is False
+        assert _renderer(make_settings({}))._internal_tls() is False
+
+    def test_acme_mode_has_no_disable_redirects(self):
+        g = _renderer(make_settings(_armed_env()))._global_block("/d/sock")
+        assert "disable_redirects" not in g
+
+    def test_unarmed_untouched_by_issuer(self):
+        """An issuer set without a hostname is inert config (warned) — the
+        render stays the exact plain-HTTP shape."""
+        s = make_settings(
+            {"KLANGKD_PORT": "8997", "KLANGKD_TLS_ISSUER": "internal"}
+        )
+        cf = _renderer(s).render_config("unix//s", "/d/sock")
+        assert "auto_https off" in cf
+        assert "tls internal" not in cf
+        assert "disable_redirects" not in cf
+
+    def test_internal_loopback_warning_mentions_proxy_not_acme(self, caplog):
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            _renderer(
+                make_settings(_internal_env(KLANGKD_LISTEN="127.0.0.1"))
+            )._browser_site("unix//s", "")
+        assert any("outer proxy" in r.message for r in caplog.records)
+        assert not any("ACME challenge" in r.message for r in caplog.records)
+
+    def test_acme_loopback_warning_mentions_acme(self, caplog):
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            _renderer(
+                make_settings(_armed_env(KLANGKD_LISTEN="127.0.0.1"))
+            )._browser_site("unix//s", "")
+        assert any("ACME challenge" in r.message for r in caplog.records)
+
+    def test_log_listeners_notes_internal(self, caplog):
+        import logging
+
+        with caplog.at_level(logging.INFO):
+            _wd(make_settings(_internal_env()))._log_listeners()
+        assert any("internal TLS" in r.message for r in caplog.records)

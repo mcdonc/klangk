@@ -606,6 +606,13 @@ class CaddyRenderer:
             "proxy (docs/deployment/behind-a-proxy.md)."
         )
 
+    def _internal_tls(self) -> bool:
+        """True when the armed listener uses the internal (self-generated)
+        certificate issuer — the TLS hop behind an outer proxy (#3192)."""
+        return (
+            self.app.state.settings.tls_issuer or ""
+        ).strip().lower() == "internal"
+
     def _plain_http_directive(self) -> list[str]:
         """``auto_https off`` — emitted only in unarmed (plain-HTTP) mode.
 
@@ -617,17 +624,24 @@ class CaddyRenderer:
         return ["	auto_https off"]
 
     def _auto_https_global_directives(self) -> list[str]:
-        """The armed-mode global directives (#3192): the CA account email
-        (when set) and an explicit certificate storage path under
+        """The armed-mode global directives (#3192).
+
+        Both issuers pin an explicit certificate storage path under
         ``state_dir`` so issued material survives restarts instead of
-        walking into CA rate limits with a fresh default-profile store."""
+        walking into CA rate limits (acme) or minting a fresh internal
+        CA that no outer proxy trusts (internal). ACME mode additionally
+        registers the CA account email when set; internal mode disables
+        the HTTP→HTTPS redirect — the outer proxy owns port 80, and the
+        bind would fail for an unprivileged service user anyway.
+        """
         directives: list[str] = []
-        email = (self.app.state.settings.acme_email or "").strip()
-        if email:
-            directives.append(f"	email {email}")
-        directives.append(
-            f"	storage file_system {self.caddy_storage_dir()}"
-        )
+        if self._internal_tls():
+            directives.append("\tauto_https disable_redirects")
+        else:
+            email = (self.app.state.settings.acme_email or "").strip()
+            if email:
+                directives.append(f"\temail {email}")
+        directives.append(f"\tstorage file_system {self.caddy_storage_dir()}")
         return directives
 
     def _bootstrap_block(self, admin_socket: str) -> str:
@@ -816,20 +830,25 @@ class CaddyRenderer:
         """The browser-listener site block (full mode only).
 
         Armed (``KLANGKD_TLS_HOSTNAME`` set, #3192) the site address is
-        ``https://<fqdn>:<port>`` so Caddy's automatic HTTPS manages the
-        certificate for the FQDN (ACME HTTP-01 / TLS-ALPN) and installs the
-        HTTP→HTTPS redirect on :80. Unarmed it stays ``http://:<port>`` —
-        byte-identical to the pre-#3192 render. Everything inside the block
-        (bind, request_body, CSP, ACLs, routes) is identical either way.
+        ``https://<host>:<port>`` so Caddy's automatic HTTPS manages the
+        certificate for the name (ACME HTTP-01 / TLS-ALPN for the default
+        issuer; a self-generated internal-CA certificate — the TLS hop
+        behind an outer proxy — for ``tls-issuer: internal``, which also
+        carries the ``tls internal`` site directive). Unarmed it stays
+        ``http://:<port>`` — byte-identical to the pre-#3192 render.
+        Everything else inside the block (bind, request_body, CSP, ACLs,
+        routes) is identical either way.
         """
         listen_addr = self.app.state.settings.listen
         port = self.app.state.settings.port
         fqdn = self.app.state.settings.tls_hostname
         if fqdn:
             site_addr = f"https://{fqdn}:{port}"
+            tls_line = "	tls internal\n" if self._internal_tls() else ""
             self._warn_loopback_listen_when_armed(listen_addr)
         else:
             site_addr = f"http://:{port}"
+            tls_line = ""
         hosted = self._build_hosted_block()
         if container_srcs_deny:
             deny_matcher = (
@@ -865,6 +884,7 @@ class CaddyRenderer:
         )
         return (
             f"{site_addr} {{\n"
+            f"{tls_line}"
             f"	bind {listen_addr}\n"
             f"	request_body {{\n"
             f"		max_size {self._max_body_size()}\n"
@@ -877,22 +897,31 @@ class CaddyRenderer:
         )
 
     def _warn_loopback_listen_when_armed(self, listen_addr: str) -> None:
-        """Warn when automatic TLS is armed but the listener stays
-        loopback-only — the HTTPS site would be unreachable off-host AND
-        the ACME challenge listeners (which reuse the site's address)
-        would be unreachable from the internet, so issuance fails too
-        (``KLANGKD_LISTEN`` defaults to ``127.0.0.1``; an internet-facing
-        deployment needs ``0.0.0.0`` or a specific interface, #3192)."""
-        if listen_addr.strip() in ("127.0.0.1", "::1", "localhost"):
+        """Warn when TLS is armed but the listener stays loopback-only
+        (#3192). Consequences differ by issuer: ACME additionally cannot
+        answer its challenge, while the internal issuer only loses
+        reachability from the outer proxy — which may be co-located on
+        the same host, so that shape is only warned about softly."""
+        if listen_addr.strip() not in ("127.0.0.1", "::1", "localhost"):
+            return
+        if self._internal_tls():
             logger.warning(
-                "KLANGKD_TLS_HOSTNAME is set (automatic TLS) but "
-                "KLANGKD_LISTEN is loopback-only (%s) — the HTTPS listener "
-                "is unreachable from other hosts and the ACME challenge "
-                "cannot be answered, so certificate issuance will fail. "
-                "Set KLANGKD_LISTEN (e.g. 0.0.0.0) for an internet-facing "
-                "deployment.",
+                "KLANGKD_TLS_HOSTNAME is set (internal TLS) but "
+                "KLANGKD_LISTEN is loopback-only (%s) — unreachable from "
+                "an outer proxy on another host. Set KLANGKD_LISTEN (e.g. "
+                "0.0.0.0) unless the proxy runs on this same host.",
                 listen_addr,
             )
+            return
+        logger.warning(
+            "KLANGKD_TLS_HOSTNAME is set (automatic TLS) but "
+            "KLANGKD_LISTEN is loopback-only (%s) — the HTTPS listener "
+            "is unreachable from other hosts and the ACME challenge "
+            "cannot be answered, so certificate issuance will fail. "
+            "Set KLANGKD_LISTEN (e.g. 0.0.0.0) for an internet-facing "
+            "deployment.",
+            listen_addr,
+        )
 
     # -- main renderer -----------------------------------------------------
 
@@ -1227,11 +1256,15 @@ class CaddyWatchdog:
         """Log which addresses Caddy is serving after a successful config load."""
         s = self.app.state.settings
         if s.port is not None:
-            scheme = (
-                f"https (automatic TLS, {s.tls_hostname})"
-                if s.tls_hostname
-                else "http"
-            )
+            if s.tls_hostname:
+                flavor = (
+                    "internal TLS"
+                    if (s.tls_issuer or "").strip() == "internal"
+                    else "automatic TLS"
+                )
+                scheme = f"https ({flavor}, {s.tls_hostname})"
+            else:
+                scheme = "http"
             logger.info(
                 "caddy ingress listening on %s:%s [%s]",
                 s.listen,
