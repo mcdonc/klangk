@@ -1,7 +1,8 @@
 # Audit Record Integrity
 
 klangk can tag its audit records — the `container_events` container
-lifecycle history and the `egress_consent` egress verdict trail — with
+lifecycle history, the `egress_consent` egress verdict trail, and the
+`audit_events` identity/privilege stream (#3205) — with
 an HMAC-SHA256 tag written at the same time as the row. The tag lets an
 **external** checker prove, later and off-host, that a row was not
 modified after klangk wrote it. klangkd itself only _writes_ tags; it
@@ -63,8 +64,8 @@ decided_by, revoked_at, revoked_by`
 Reimplementing verification only requires the standard library. The
 tagged payload is built as follows:
 
-1. Start with the table name: the literal string `container_events` or
-   `egress_consent`.
+1. Start with the table name: the literal string `container_events`,
+   `egress_consent`, or `audit_events`.
 2. For each covered column, in the fixed order above, append one part:
    - value is SQL `NULL` → the string `<column>=n`
    - otherwise → `s = str(value)` (Python `str()`) and the string

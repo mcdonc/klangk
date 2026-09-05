@@ -16,6 +16,7 @@ from fastapi import (
     Depends,
     HTTPException,
     Query,
+    Request,
     UploadFile,
 )
 from fastapi.responses import (
@@ -47,7 +48,7 @@ from ..workspace_settings import (
     validate_settings,
     validate_settings_patch,
 )
-from .common import get_app_dep
+from .common import get_app_dep, workstation
 from ..model import (
     EGRESS_MODE_DEFAULT,
     EGRESS_MODES,
@@ -1729,6 +1730,7 @@ GROUP_SHARE_PERMISSIONS = (
 async def add_workspace_member(
     workspace_id: str,
     body: AddMemberRequest,
+    request: Request,
     user: dict = Depends(
         acl.has_permission("share-workspace", workspace_resource)
     ),
@@ -1757,6 +1759,14 @@ async def add_workspace_member(
         )
     app.state.sockets.notify_user_workspaces_changed(user["id"])
     app.state.sockets.notify_user_workspaces_changed(target["id"])
+    await record_workspace_share_event(
+        app,
+        request,
+        user,
+        workspace_id,
+        "workspace.member.add",
+        {"member": target["id"], "email": target["email"]},
+    )
     return {
         "status": "shared",
         "user_id": target["id"],
@@ -1782,6 +1792,7 @@ async def _remove_principals(app, workspace_id: str, predicate) -> None:
 async def remove_workspace_member(
     workspace_id: str,
     member_id: str,
+    request: Request,
     user: dict = Depends(
         acl.has_permission("share-workspace", workspace_resource)
     ),
@@ -1797,6 +1808,14 @@ async def remove_workspace_member(
     )
     app.state.sockets.notify_user_workspaces_changed(user["id"])
     app.state.sockets.notify_user_workspaces_changed(member_id)
+    await record_workspace_share_event(
+        app,
+        request,
+        user,
+        workspace_id,
+        "workspace.member.remove",
+        {"member": member_id},
+    )
     return {"status": "removed"}
 
 
@@ -1891,6 +1910,7 @@ async def add_to_workspace_role(
     workspace_id: str,
     role: str,
     body: AddToRoleRequest,
+    request: Request,
     user: dict = Depends(ROLE_WRITE_GATE),
     app=Depends(get_app_dep),
 ):
@@ -1907,6 +1927,14 @@ async def add_to_workspace_role(
     await app.state.model.users.add_user_to_group(target["id"], group["id"])
     app.state.sockets.notify_user_workspaces_changed(user["id"])
     app.state.sockets.notify_user_workspaces_changed(target["id"])
+    await record_workspace_share_event(
+        app,
+        request,
+        user,
+        workspace_id,
+        "workspace.role.add",
+        {"role": role, "member": target["id"], "email": target["email"]},
+    )
     return {"ok": True}
 
 
@@ -1915,6 +1943,7 @@ async def remove_from_workspace_role(
     workspace_id: str,
     role: str,
     member_id: str,
+    request: Request,
     user: dict = Depends(ROLE_WRITE_GATE),
     app=Depends(get_app_dep),
 ):
@@ -1928,6 +1957,14 @@ async def remove_from_workspace_role(
     await app.state.model.users.remove_user_from_group(member_id, group["id"])
     app.state.sockets.notify_user_workspaces_changed(user["id"])
     app.state.sockets.notify_user_workspaces_changed(member_id)
+    await record_workspace_share_event(
+        app,
+        request,
+        user,
+        workspace_id,
+        "workspace.role.remove",
+        {"role": role, "member": member_id},
+    )
     return {"ok": True}
 
 
@@ -1963,6 +2000,7 @@ async def _add_to_role(app, workspace_id: str, user_id, role: str) -> None:
 async def change_workspace_role(
     workspace_id: str,
     body: ChangeRoleRequest,
+    request: Request,
     user: dict = Depends(ROLE_WRITE_GATE),
     app=Depends(get_app_dep),
 ):
@@ -1990,6 +2028,14 @@ async def change_workspace_role(
 
     app.state.sockets.notify_user_workspaces_changed(user["id"])
     app.state.sockets.notify_user_workspaces_changed(target["id"])
+    await record_workspace_share_event(
+        app,
+        request,
+        user,
+        workspace_id,
+        "workspace.role.change",
+        {"role": body.role, "member": target["id"], "email": body.email},
+    )
     return {"ok": True, "email": body.email, "role": body.role}
 
 
@@ -2019,10 +2065,41 @@ class AddGroupShareRequest(BaseModel):
     group_id: str
 
 
+async def record_workspace_share_event(
+    app,
+    request: Request,
+    actor: dict,
+    workspace_id: str,
+    event: str,
+    detail: dict,
+) -> None:
+    """Write one workspace share/role/ACL audit row (#3205).
+
+    The workspace-targeted twin of admin.py's ``record_admin_event``:
+    the actor is whoever holds the share permission (an owner sharing
+    their own workspace as often as an admin), the target is the
+    workspace, and the row carries the request's workstation metadata.
+    Best-effort — a share must not fail because its audit row could
+    not be written.
+    """
+    source_ip, user_agent = workstation(request)
+    await app.state.model.audit_events.record_best_effort(
+        event,
+        actor_id=actor["id"],
+        actor_email=actor["email"],
+        target_type="workspace",
+        target_id=workspace_id,
+        detail=detail,
+        source_ip=source_ip,
+        user_agent=user_agent,
+    )
+
+
 @router.post("/workspaces/{workspace_id}/groups")
 async def add_workspace_group(
     workspace_id: str,
     body: AddGroupShareRequest,
+    request: Request,
     user: dict = Depends(
         acl.has_permission("share-workspace", workspace_resource)
     ),
@@ -2043,6 +2120,14 @@ async def add_workspace_group(
             status_code=409,
             detail="This group already has access to the workspace",
         )
+    await record_workspace_share_event(
+        app,
+        request,
+        user,
+        workspace_id,
+        "workspace.group.add",
+        {"group_id": group["id"], "name": group["name"]},
+    )
     return {"status": "shared", "group_id": group["id"], "name": group["name"]}
 
 
@@ -2050,6 +2135,7 @@ async def add_workspace_group(
 async def remove_workspace_group(
     workspace_id: str,
     group_id: str,
+    request: Request,
     user: dict = Depends(
         acl.has_permission("share-workspace", workspace_resource)
     ),
@@ -2063,6 +2149,14 @@ async def remove_workspace_group(
             e["principal_type"] == PRINCIPAL_GROUP
             and e["group_id"] == group_id
         ),
+    )
+    await record_workspace_share_event(
+        app,
+        request,
+        user,
+        workspace_id,
+        "workspace.group.remove",
+        {"group_id": group_id},
     )
     return {"status": "removed"}
 
@@ -2093,6 +2187,7 @@ async def get_workspace_acl(
 async def replace_workspace_acl(
     workspace_id: str,
     entries: list[WorkspaceAclEntry],
+    request: Request,
     user: dict = Depends(
         acl.has_permission("share-advanced", workspace_resource)
     ),
@@ -2110,6 +2205,14 @@ async def replace_workspace_acl(
     await app.state.model.acl.replace_acl_entries(
         resource, serialize_acl_entries(entries)
     )
+    await record_workspace_share_event(
+        app,
+        request,
+        user,
+        workspace_id,
+        "acl.replace",
+        {"resource": resource, "entries": len(entries)},
+    )
     return await app.state.model.acl.get_acl_entries_resolved(resource)
 
 
@@ -2124,6 +2227,7 @@ class TransferOwnershipRequest(BaseModel):
 async def transfer_workspace_ownership(
     workspace_id: str,
     body: TransferOwnershipRequest,
+    request: Request,
     user: dict = Depends(
         acl.has_permission("transfer-workspace", workspace_resource)
     ),
@@ -2146,6 +2250,14 @@ async def transfer_workspace_ownership(
 
     app.state.sockets.notify_user_workspaces_changed(user["id"])
     app.state.sockets.notify_user_workspaces_changed(target["id"])
+    await record_workspace_share_event(
+        app,
+        request,
+        user,
+        workspace_id,
+        "workspace.transfer",
+        {"to": target["id"], "email": target["email"]},
+    )
     return ws
 
 

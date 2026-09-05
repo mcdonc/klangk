@@ -1327,6 +1327,19 @@ class KlangkSettings(BaseSettings):
     # a reload applies on the next sweep).
     container_events_retention_days: int = 90
     container_events_row_cap: int = 10000
+    # audit_events_retention_days / audit_events_row_cap (#3205): bound
+    # the ``audit_events`` identity/privilege audit table (account CRUD,
+    # group/ACL/role changes, login/logout, session revocation). Same
+    # two-pass prune as container_events: retention_days deletes rows
+    # older than the window; row_cap is a deploy-wide cap on total rows
+    # keeping the newest when exceeded. Login/logout events are far
+    # lower-volume than container transitions but are the table every
+    # incident review starts from, so the defaults are longer/larger
+    # than container_events'. 0 disables either knob. Swept hourly by
+    # the consent sweeper (once at startup); read live (SIGHUP
+    # reload-safe -- a reload applies on the next sweep).
+    audit_events_retention_days: int = 365
+    audit_events_row_cap: int = 100000
     # audit_fail_closed (#3154, security finding): refuse the
     # interactive API container transitions — POST start/stop/restart
     # and delete's stop (503 before any side effect) — and skip
@@ -2446,6 +2459,38 @@ class KlangkSettings(BaseSettings):
             v,
             "KLANGKD_CONTAINER_EVENTS_ROW_CAP",
             default=10000,
+        )
+
+    @field_validator("audit_events_retention_days", mode="before")
+    @classmethod
+    def _coerce_audit_events_retention_days(cls, v):
+        """Coerce + validate ``KLANGKD_AUDIT_EVENTS_RETENTION_DAYS``
+        (#3205).
+
+        Integer string (env) or int (YAML); ``None`` / empty -> the
+        default. Negative raises and aborts startup (a negative
+        retention window is a misconfiguration, not a "keep
+        everything" request -- that is ``0``).
+        """
+        return _coerce_prune_int(
+            v,
+            "KLANGKD_AUDIT_EVENTS_RETENTION_DAYS",
+            default=365,
+        )
+
+    @field_validator("audit_events_row_cap", mode="before")
+    @classmethod
+    def _coerce_audit_events_row_cap(cls, v):
+        """Coerce + validate ``KLANGKD_AUDIT_EVENTS_ROW_CAP`` (#3205).
+
+        Integer string (env) or int (YAML); ``None`` / empty -> the
+        default. Negative raises and aborts startup (``0`` disables
+        the cap).
+        """
+        return _coerce_prune_int(
+            v,
+            "KLANGKD_AUDIT_EVENTS_ROW_CAP",
+            default=100000,
         )
 
     @field_validator(

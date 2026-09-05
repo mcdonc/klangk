@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 
 from .acl import ACLModel
 from .base import Submodel
+from .audit_events import AuditEventsModel
 from .container_events import ContainerEventsModel
 from .egress_consent import EgressConsentModel
 from .server_schedules import ServerSchedulesModel
@@ -166,6 +167,7 @@ class Model:
         self.workspaces = WorkspacesModel(app)
         self.egress_consent = EgressConsentModel(app)
         self.container_events = ContainerEventsModel(app)
+        self.audit_events = AuditEventsModel(app)
         self.server_schedules = ServerSchedulesModel(app)
 
     def reconfigure(self, app) -> None:
@@ -181,6 +183,7 @@ class Model:
             self.workspaces,
             self.egress_consent,
             self.container_events,
+            self.audit_events,
             self.server_schedules,
         ):
             sub.reconfigure(app)
