@@ -29,6 +29,7 @@ from .. import (
     acl,
     auth,
     netfilter as netfilter_mod,
+    stepup,
     wshandler,
 )
 from ..exceptions import (
@@ -966,6 +967,7 @@ async def _stop_and_broadcast(
 @router.delete("/workspaces/{workspace_id}")
 async def delete_workspace(
     workspace_id: str,
+    request: Request,
     user: dict = Depends(
         acl.has_permission("delete-workspace", workspace_resource)
     ),
@@ -974,6 +976,11 @@ async def delete_workspace(
     workspace = await app.state.model.workspaces.get_workspace(workspace_id)
     if workspace is None:
         raise HTTPException(status_code=404, detail="Workspace not found")
+
+    # #3196: the takeover-class writes to a workspace you do not own
+    # (delete, raw ACL rewrite, transfer) carry the step-up gate;
+    # writes to your own workspace stay self-service.
+    await stepup.ensure_step_up_unless_owner(request, user, workspace)
 
     # Capture shared members before we tear down ACL entries, so we can
     # notify them (and the owner/deleter) that the workspace is gone.
@@ -1920,9 +1927,16 @@ async def add_to_workspace_role(
     user: dict = Depends(ROLE_WRITE_GATE),
     app=Depends(get_app_dep),
 ):
-    """Add a user to a workspace role group."""
+    """Add a user to a workspace role group.
+
+    A non-owner role write carries the step-up gate (#3196):
+    ``owners-<id>`` holds the ``*`` wildcard, so minting an owner is
+    the same takeover power as the raw ACL rewrite.
+    """
     if role not in ROLE_GROUP_SUFFIXES:
         raise HTTPException(status_code=400, detail=f"Invalid role: {role}")
+    workspace = await app.state.model.workspaces.get_workspace(workspace_id)
+    await stepup.ensure_step_up_unless_owner(request, user, workspace)
     group_name = f"{role}-{workspace_id}"
     group = await app.state.model.users.get_group_by_name(group_name)
     if group is None:
@@ -1956,6 +1970,10 @@ async def remove_from_workspace_role(
     """Remove a user from a workspace role group."""
     if role not in ROLE_GROUP_SUFFIXES:
         raise HTTPException(status_code=400, detail=f"Invalid role: {role}")
+    # A non-owner role write carries the step-up gate (#3196) —
+    # kicking the owner out of ``owners-<id>`` is a takeover too.
+    workspace = await app.state.model.workspaces.get_workspace(workspace_id)
+    await stepup.ensure_step_up_unless_owner(request, user, workspace)
     group_name = f"{role}-{workspace_id}"
     group = await app.state.model.users.get_group_by_name(group_name)
     if group is None:
@@ -2014,8 +2032,11 @@ async def change_workspace_role(
 
     If ``role`` is set, removes the user from all other roles and adds
     them to the target role.  If ``role`` is null, removes the user
-    from all roles.
+    from all roles. A non-owner change carries the step-up gate
+    (#3196): assigning ``owners`` mints the ``*`` wildcard.
     """
+    workspace = await app.state.model.workspaces.get_workspace(workspace_id)
+    await stepup.ensure_step_up_unless_owner(request, user, workspace)
     target = await app.state.model.users.get_user_by_identifier(body.email)
     if target is None:
         raise HTTPException(status_code=404, detail="User not found")
@@ -2205,8 +2226,13 @@ async def replace_workspace_acl(
     by #2946), not ``share-workspace``: rewriting the raw ACE list can
     grant ``*`` and add Deny entries — a power beyond inviting
     collaborators. Owners hold it via their ``*`` wildcard; migration
-    0017 backfilled it onto existing ``share`` holders.
+    0017 backfilled it onto existing ``share`` holders. A non-owner
+    rewrite additionally carries the step-up gate (#3196): it can
+    seize the workspace (grant ``*``, Deny the owner), so a hijacked
+    session must re-authenticate first.
     """
+    workspace = await app.state.model.workspaces.get_workspace(workspace_id)
+    await stepup.ensure_step_up_unless_owner(request, user, workspace)
     resource = f"/workspaces/{workspace_id}"
     await app.state.model.acl.replace_acl_entries(
         resource, serialize_acl_entries(entries)
@@ -2239,7 +2265,14 @@ async def transfer_workspace_ownership(
     ),
     app=Depends(get_app_dep),
 ):
-    """Transfer workspace ownership to another user."""
+    """Transfer workspace ownership to another user.
+
+    A transfer by a non-owner is an ownership takeover, so it carries
+    the step-up gate (#3196); the owner transferring their own
+    workspace stays self-service.
+    """
+    workspace = await app.state.model.workspaces.get_workspace(workspace_id)
+    await stepup.ensure_step_up_unless_owner(request, user, workspace)
     target = await app.state.model.users.get_user_by_identifier(body.email)
     if target is None:
         raise HTTPException(status_code=404, detail="User not found")

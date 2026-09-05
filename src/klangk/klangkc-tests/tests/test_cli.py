@@ -3153,6 +3153,185 @@ class TestClientRetryOn401:
         assert client.token == "refreshed"
 
 
+class TestClientStepUp:
+    """#3196: the sudo-mode retry in KlangkClient.request."""
+
+    @staticmethod
+    def _step_up_resp():
+        resp = MagicMock()
+        resp.status_code = 403
+        resp.json.return_value = {
+            "detail": {"error": "step_up_required", "message": "..."}
+        }
+        return resp
+
+    def test_is_step_up_required_true(self):
+        client = KlangkClient("http://test:8995", "token")
+        assert client._is_step_up_required(self._step_up_resp()) is True
+
+    def test_is_step_up_required_false_plain_detail(self):
+        client = KlangkClient("http://test:8995", "token")
+        resp = MagicMock()
+        resp.status_code = 403
+        resp.json.return_value = {"detail": "Permission denied"}
+        assert client._is_step_up_required(resp) is False
+
+    def test_is_step_up_required_false_other_status(self):
+        client = KlangkClient("http://test:8995", "token")
+        resp = MagicMock()
+        resp.status_code = 401
+        resp.json.return_value = {"detail": {"error": "step_up_required"}}
+        assert client._is_step_up_required(resp) is False
+
+    def test_is_step_up_required_false_non_json(self):
+        client = KlangkClient("http://test:8995", "token")
+        resp = MagicMock()
+        resp.status_code = 403
+        resp.json.side_effect = ValueError("no json")
+        assert client._is_step_up_required(resp) is False
+
+    def test_retry_after_successful_step_up(self):
+        client = KlangkClient(
+            "http://test:8995",
+            "token",
+            step_up_prompt=lambda failed=False: "pw",
+        )
+        ok = MagicMock()
+        ok.status_code = 200
+        calls = []
+
+        def fake_request(server, method, path, **kwargs):
+            calls.append((method, path))
+            if len(calls) == 1:
+                return self._step_up_resp()
+            if path == "/api/v1/auth/step-up":
+                return ok
+            return ok
+
+        with patch(
+            "klangk.cli.client.request_with_retry", side_effect=fake_request
+        ):
+            result = client.delete("/api/v1/users/some-id")
+        assert result.status_code == 200
+        assert calls == [
+            ("DELETE", "/api/v1/users/some-id"),
+            ("POST", "/api/v1/auth/step-up"),
+            ("DELETE", "/api/v1/users/some-id"),
+        ]
+
+    def test_cancelled_prompt_surfaces_403(self):
+        client = KlangkClient(
+            "http://test:8995",
+            "token",
+            step_up_prompt=lambda failed=False: None,
+        )
+        with patch(
+            "klangk.cli.client.request_with_retry",
+            return_value=self._step_up_resp(),
+        ) as m:
+            result = client.delete("/api/v1/users/some-id")
+        assert result.status_code == 403
+        assert m.call_count == 1
+
+    def test_wrong_password_surfaces_403_after_three_prompts(self):
+        """A wrong password re-prompts (flagged) up to three times,
+        then surfaces the original 403."""
+        client = KlangkClient("http://test:8995", "token")
+        refused = MagicMock()
+        refused.status_code = 401
+        prompts = []
+
+        def prompt(failed=False):
+            prompts.append(failed)
+            return "wrong"
+
+        client.step_up_prompt = prompt
+
+        def fake_request(server, method, path, **kwargs):
+            return (
+                refused
+                if path == "/api/v1/auth/step-up"
+                else self._step_up_resp()
+            )
+
+        with patch(
+            "klangk.cli.client.request_with_retry", side_effect=fake_request
+        ):
+            result = client.delete("/api/v1/users/some-id")
+        assert result.status_code == 403
+        assert prompts == [False, True, True]
+
+    def test_second_prompt_succeeds(self):
+        """Wrong then right: the second confirmation unlocks the
+        retry, with the failure flag propagated to the prompt."""
+        client = KlangkClient("http://test:8995", "token")
+        prompts = []
+
+        def prompt(failed=False):
+            prompts.append(failed)
+            return "wrong" if len(prompts) == 1 else "right"
+
+        client.step_up_prompt = prompt
+        refused = MagicMock()
+        refused.status_code = 401
+        ok = MagicMock()
+        ok.status_code = 200
+
+        def fake_request(server, method, path, **kwargs):
+            if path == "/api/v1/auth/step-up":
+                return refused if len(prompts) == 1 else ok
+            if not getattr(fake_request, "deleted_once", False):
+                fake_request.deleted_once = True
+                return self._step_up_resp()
+            return ok
+
+        with patch(
+            "klangk.cli.client.request_with_retry", side_effect=fake_request
+        ):
+            result = client.delete("/api/v1/users/some-id")
+        assert result.status_code == 200
+        assert prompts == [False, True]
+
+    def test_no_prompt_configured_surfaces_403(self):
+        client = KlangkClient("http://test:8995", "token")
+        with patch(
+            "klangk.cli.client.request_with_retry",
+            return_value=self._step_up_resp(),
+        ) as m:
+            result = client.delete("/api/v1/users/some-id")
+        assert result.status_code == 403
+        assert m.call_count == 1
+
+    def test_non_401_failure_stops_prompting(self):
+        """Only a wrong password (401) re-prompts: a disabled window
+        (400), lockout (429), or similar surfaces the original 403
+        after one prompt."""
+        client = KlangkClient("http://test:8995", "token")
+        prompts = []
+
+        def prompt(failed=False):
+            prompts.append(failed)
+            return "pw"
+
+        client.step_up_prompt = prompt
+        disabled = MagicMock()
+        disabled.status_code = 400
+
+        def fake_request(server, method, path, **kwargs):
+            return (
+                disabled
+                if path == "/api/v1/auth/step-up"
+                else self._step_up_resp()
+            )
+
+        with patch(
+            "klangk.cli.client.request_with_retry", side_effect=fake_request
+        ):
+            result = client.delete("/api/v1/users/some-id")
+        assert result.status_code == 403
+        assert prompts == [False]
+
+
 class TestWs4002Refresh:
     @pytest.mark.asyncio
     async def test_ws_4002_refresh_success(self):
@@ -7007,3 +7186,30 @@ class TestContextClientConstructor:
         client = context.client()
         assert client.server_url == "http://srv"
         assert client.token == "tok-1"
+
+    def test_client_wires_step_up_prompt(self, monkeypatch):
+        """#3196: the CLI's client carries an interactive step-up
+        prompt; an empty entry counts as cancel."""
+        import klangk.cli.context as context
+
+        st = CLIState()
+        st.set_credentials("http://srv", "u@x", "tok-1")
+        monkeypatch.setattr(context, "state_cache", st)
+        monkeypatch.setattr(context, "cfg_cache", CLIConfig())
+        monkeypatch.setattr(context, "server_override", None)
+        client = context.client()
+        assert client.step_up_prompt is not None
+        with patch(
+            "rich.prompt.Prompt.ask", return_value="the-password"
+        ) as ask:
+            assert client.step_up_prompt() == "the-password"
+        ask.assert_called_once()
+        with patch("rich.prompt.Prompt.ask", return_value=""):
+            assert client.step_up_prompt() is None
+        # A closed stdin (scripts) cancels instead of tracebacking.
+        with patch("rich.prompt.Prompt.ask", side_effect=EOFError):
+            assert client.step_up_prompt() is None
+        # A flagged retry changes the prompt message (#3196).
+        with patch("rich.prompt.Prompt.ask", return_value="pw") as retry_ask:
+            assert client.step_up_prompt(True) == "pw"
+        assert "incorrect" in retry_ask.call_args[0][0].lower()

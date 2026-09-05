@@ -329,6 +329,23 @@ operators or integrators to act when upgrading.
   after a browser restart, a session-restore reopen, or opening the app
   in a new tab.
 
+- **`KLANGKD_STEP_UP_WINDOW_MINUTES` (#3196).** Step-up (sudo-mode)
+  reauthentication for privileged writes: user/group/invitation
+  management, admin ACL rewrites, server schedules, volume deletes,
+  and takeover-class writes on workspaces you do not own (delete,
+  raw ACL rewrite, ownership transfer, role assignments) are refused
+  with a
+  machine-readable `403 step_up_required` until the session's owner
+  confirms their password via `POST /auth/step-up`; the confirmation
+  is per session (survives token refresh, dies with logout), has
+  login-grade lockout accounting, and is honored for the window;
+  refusals, confirmations, failed checks, and OIDC exemptions land in
+  the structured audit log (`step_up.*` events).
+  `0` (the default) disables the gate; `15` is the recommended value.
+  OIDC-managed accounts are exempt (audit-logged); the web client and
+  CLI prompt and retry automatically. Reloadable on SIGHUP. See
+  [Authentication](features/authentication.md).
+
 - **Consent-decider sockets are closed on token revocation (#3162).**
   The `/ws/consent-decider` connection now shares the #3152 revocation
   story: logging out, being evicted by the per-user session limit, or

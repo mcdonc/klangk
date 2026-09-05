@@ -300,10 +300,25 @@ CREATE_FIELDS = frozenset(
 
 
 class KlangkClient:
-    def __init__(self, server_url: str, token: str | None = None):
+    def __init__(
+        self,
+        server_url: str,
+        token: str | None = None,
+        step_up_prompt: Callable[[bool], str | None] | None = None,
+    ):
         self.server_url = server_url
         self.token = token
         self._refreshed = False  # guard against infinite retry loops
+        # #3196: sudo-mode support. When a privileged write is refused
+        # with the server's machine-readable ``step_up_required`` 403,
+        # this callback collects the user's password (or None to
+        # cancel), the client confirms it via POST /auth/step-up, and
+        # the original request is retried once. The callback receives
+        # whether the previous attempt failed so the prompt can say
+        # "incorrect password". Interactive commands wire a password
+        # prompt (cli.context.client); None (the default) surfaces the
+        # server's error detail unchanged.
+        self.step_up_prompt = step_up_prompt
 
     # --- HTTP helpers ---
 
@@ -338,25 +353,95 @@ class KlangkClient:
             return {"Authorization": f"Bearer {self.token}"}
         return {}
 
-    def request(self, method: str, path: str, **kwargs) -> httpx.Response:
+    @staticmethod
+    def _is_step_up_required(resp: httpx.Response) -> bool:
+        """True when *resp* is the machine-readable step-up 403 (#3196)."""
+        if resp.status_code != 403:
+            return False
+        try:
+            detail = resp.json().get("detail")
+        except ValueError:
+            return False
+        return isinstance(detail, dict) and detail.get("error") == (
+            "step_up_required"
+        )
+
+    def _step_up_response(self, password: str) -> int:
+        """POST the confirmation; the response status code (200
+        confirmed, 401 wrong password, anything else — disabled
+        window, lockout, server error — means prompting cannot help)."""
         resp = request_with_retry(
             self.server_url,
-            method,
-            path,
+            "POST",
+            "/api/v1/auth/step-up",
             headers=self._headers(),
-            **kwargs,
+            json={"password": password},
         )
+        return resp.status_code
+
+    def _prompt_and_confirm(self, failed: bool) -> int | None:
+        """One prompt + confirmation round: the POST status, or None
+        when the prompt was cancelled (stop prompting)."""
+        password = self.step_up_prompt(failed)
+        if not password:
+            return None
+        return self._step_up_response(password)
+
+    def _confirm_step_up(self) -> bool:
+        """Prompt for the password and confirm it with the server.
+
+        Returns True when the server stamped the confirmation (the
+        caller should retry its request). A wrong password (401)
+        re-prompts — with the failure flagged — up to three times; any
+        other outcome (cancelled prompt, disabled window, lockout,
+        network failure) stops prompting so the original 403 surfaces
+        via the caller's error handling.
+        """
+        if self.step_up_prompt is None:
+            return False
+        for failed in (False, True, True):
+            outcome = self._prompt_and_confirm(failed)
+            if outcome == 200:
+                return True
+            if outcome != 401:
+                return False
+        return False
+
+    def _step_up_retry(
+        self, method: str, path: str, resp: httpx.Response, **kwargs
+    ) -> httpx.Response:
+        """Retry *resp*'s request once after a successful step-up.
+
+        Returns the refusing response unchanged when it is not the
+        step-up 403, the prompt was cancelled, or the confirmation
+        failed — the caller's error handling then surfaces it.
+        """
+        if self._is_step_up_required(resp) and self._confirm_step_up():
+            return request_with_retry(
+                self.server_url,
+                method,
+                path,
+                headers=self._headers(),
+                **kwargs,
+            )
+        return resp
+
+    def request(self, method: str, path: str, **kwargs) -> httpx.Response:
+        def send() -> httpx.Response:
+            return request_with_retry(
+                self.server_url,
+                method,
+                path,
+                headers=self._headers(),
+                **kwargs,
+            )
+
+        resp = send()
         if resp.status_code == 401 and not self._refreshed:
             self._refreshed = True
             if self._try_refresh():
-                resp = request_with_retry(
-                    self.server_url,
-                    method,
-                    path,
-                    headers=self._headers(),
-                    **kwargs,
-                )
-        return resp
+                resp = send()
+        return self._step_up_retry(method, path, resp, **kwargs)
 
     def get(self, path: str, **kwargs) -> httpx.Response:
         return self.request("GET", path, **kwargs)

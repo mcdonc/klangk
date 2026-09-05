@@ -14,6 +14,7 @@ from pathlib import Path
 import typer
 import websockets
 from rich.console import Console
+from rich.prompt import Prompt
 
 from .auth import fetch_config, local_login, seed_config, UNREACHABLE
 from .client import KlangkClient
@@ -125,7 +126,38 @@ def server_url() -> str:
 
 
 def client() -> KlangkClient:
-    return KlangkClient(server_url(), state().get_token(server_url()))
+    """The CLI's client, wired with the interactive step-up prompt.
+
+    #3196: when the server refuses a privileged write with the
+    step-up 403, the user is asked for their password once, the client
+    confirms it via POST /auth/step-up, and the request is retried.
+    Commands run from a terminal, so a rich password prompt is
+    appropriate here. The TUI builds its own client WITHOUT one: it
+    runs requests on worker threads where a synchronous modal prompt
+    cannot be raised, so a gated write from the TUI (only non-owner
+    workspace operations — delete, ACL rewrite, transfer, role
+    writes) surfaces the server's 403 detail instead; the interactive
+    CLI (`klangk admin ...`, `klangk rm`) prompts normally. A closed
+    stdin (scripts) cancels the prompt rather than tracebacking.
+    """
+
+    def prompt_password(failed: bool = False) -> str | None:
+        message = (
+            "Password (re-authentication for this action)"
+            if not failed
+            else "Password incorrect — try again"
+        )
+        try:
+            entered = Prompt.ask(message, password=True)
+        except (EOFError, KeyboardInterrupt):
+            return None
+        return entered or None
+
+    return KlangkClient(
+        server_url(),
+        state().get_token(server_url()),
+        step_up_prompt=prompt_password,
+    )
 
 
 def resolve_or_exit(client, name: str):
