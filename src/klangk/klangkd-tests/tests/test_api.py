@@ -8852,13 +8852,13 @@ class TestFileRoutes:
                     headers=headers,
                 )
             assert resp.status_code == 403
-            assert "Permission denied" in resp.json()["detail"]
+            assert resp.json()["detail"] == "Permission denied"
         finally:
             self._cleanup(ws_id)
 
     async def test_list_files_find_error_returns_500(self, client, user):
-        """A non-permission find failure maps to 500 with the stderr text
-        (#2766)."""
+        """A non-permission find failure maps to 500 with a generic
+        body — the stderr text stays in the server log (#3150)."""
         headers = await _auth_headers(client)
         ws_id = await self._create_workspace(client, headers)
         try:
@@ -8873,7 +8873,7 @@ class TestFileRoutes:
                     headers=headers,
                 )
             assert resp.status_code == 500
-            assert "Too many levels" in resp.json()["detail"]
+            assert resp.json()["detail"] == "Internal server error"
         finally:
             self._cleanup(ws_id)
 
@@ -9041,7 +9041,7 @@ class TestFileRoutes:
                 },
             )
             assert resp.status_code == 400
-            assert "limit" in resp.json()["detail"]
+            assert resp.json()["detail"] == "Invalid path"
         finally:
             self._cleanup(ws_id)
 
@@ -9112,7 +9112,7 @@ class TestFileRoutes:
                     headers=headers,
                 )
             assert resp.status_code == 500
-            assert "Permission denied" in resp.json()["detail"]
+            assert resp.json()["detail"] == "Internal server error"
         finally:
             self._cleanup(ws_id)
 
@@ -9203,7 +9203,7 @@ class TestFileRoutes:
                     },
                 )
             assert resp.status_code == 500
-            assert "Permission denied" in resp.json()["detail"]
+            assert resp.json()["detail"] == "Internal server error"
         finally:
             self._cleanup(ws_id)
 
@@ -9806,7 +9806,7 @@ class TestFileRoutes:
                     files={"file": ("evil", b"bad", "text/plain")},
                 )
             assert resp.status_code == 500
-            assert "Read-only" in resp.json()["detail"]
+            assert resp.json()["detail"] == "Internal server error"
         finally:
             self._cleanup(ws_id)
 

@@ -60,13 +60,18 @@ def _files_http_error(
 ) -> HTTPException:
     """Translate a files-layer exception to its HTTP response (#2553).
 
-    The shared except-ladder of the file routes: ValueError -> 400 (the
-    caller's message), FileNotFoundError -> 404 (*not_found* wording
-    varies per route), FileExistsError -> 409, OSError -> 500. Routes
+    The shared except-ladder of the file routes: ValueError -> 400,
+    FileNotFoundError -> 404 (*not_found* wording varies per route),
+    FileExistsError -> 409, PermissionError -> 403, anything else ->
+    500. Response details are generic (#3150): the files layer's
+    exception messages carry podman stderr and container paths, which
+    must reach the operator's log, not the client — so each branch
+    logs the underlying error and returns a fixed wording. Routes
     with an extra case (or none of these) keep their own handling.
     """
     if isinstance(e, ValueError):
-        return HTTPException(status_code=400, detail=str(e))
+        logger.debug("files route rejected input: %s: %s", type(e).__name__, e)
+        return HTTPException(status_code=400, detail="Invalid path")
     if isinstance(e, FileNotFoundError):
         return HTTPException(status_code=404, detail=not_found)
     if isinstance(e, FileExistsError):
@@ -74,8 +79,10 @@ def _files_http_error(
             status_code=409, detail="Destination already exists"
         )
     if isinstance(e, PermissionError):
-        return HTTPException(status_code=403, detail=str(e))
-    return HTTPException(status_code=500, detail=str(e))
+        logger.debug("files route denied: %s", e)
+        return HTTPException(status_code=403, detail="Permission denied")
+    logger.error("files route failed: %s", e, exc_info=True)
+    return HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/workspaces/{workspace_id}/files")
@@ -106,7 +113,7 @@ async def read_file(
     try:
         content = await app.state.files.read_file(cid, path)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise _files_http_error(e) from None
     if content is None:
         raise HTTPException(
             status_code=404, detail="File not found or too large"
@@ -171,7 +178,7 @@ async def download_file(
     try:
         info = await app.state.files.stat_path(cid, path)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise _files_http_error(e) from None
     if info is None:
         raise HTTPException(status_code=404, detail="Path not found")
     name = sanitize_disposition_name(posixpath.basename(path) or "download")

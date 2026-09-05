@@ -2223,6 +2223,13 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Files API error responses (#3150).** The workspace files routes
+  (list/read/delete/rename/upload/download) no longer echo raw
+  exception text — podman stderr, container paths, library messages —
+  in 400/403/500 response bodies. They return generic messages
+  ("Invalid path", "Permission denied", "Internal server error") and
+  log the underlying error server-side instead.
+
 - **Parallel image-build tasks tolerate transient rootless-podman failures
   (#3168).** `klangk:build-workspace-image` and `klangk:build-network-sidecar`
   run in parallel and are a fresh machine's first rootless podman invocations;
