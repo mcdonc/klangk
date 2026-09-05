@@ -917,6 +917,20 @@ class KlangkSettings(BaseSettings):
     # window). Reloadable on SIGHUP (read live at issue/refresh/sweep
     # time).
     privileged_session_idle_timeout_minutes: int = 10
+    # Step-up (sudo-mode) reauthentication window (#3196): how many
+    # minutes a password confirmation at ``POST /auth/step-up`` keeps
+    # the session cleared for privileged admin writes (user/group/
+    # invitation management, raw ACL rewrites, server schedules, and
+    # non-owner workspace deletion). Inside the window those writes
+    # pass; outside it they fail with a machine-readable 403
+    # (``step_up_required``) until the password is confirmed again.
+    # 0 (the default) disables the gate — admin writes then pass on
+    # the ordinary bearer token alone, as before; 15 minutes is the
+    # recommended hardening value. Local-password accounts only —
+    # OIDC-only accounts have no klangk password to confirm and are
+    # exempt (each pass is audit-logged). Reloadable on SIGHUP (read
+    # live at check time).
+    step_up_window_minutes: int = 0
     # Dormant-account auto-disable (#2588). Accounts (except the system
     # agent and members of the admin group) whose newest activity
     # signal — last API access, last login, or creation — is older than
@@ -1772,6 +1786,7 @@ class KlangkSettings(BaseSettings):
         "inactivity_disable_days",
         "session_idle_timeout_minutes",
         "privileged_session_idle_timeout_minutes",
+        "step_up_window_minutes",
         "port_range_start",
         "websocket_msg_size_max",
         "api_rate_limit",
@@ -1822,6 +1837,8 @@ class KlangkSettings(BaseSettings):
             "session_idle_timeout_minutes",
             # Disables the privileged idle-window split (#3151).
             "privileged_session_idle_timeout_minutes",
+            # Disables the step-up (sudo-mode) gate (#3196).
+            "step_up_window_minutes",
             # Disables the per-user running-workspace cap (#2525).
             "max_running_workspaces_per_user",
             # Disables the per-workspace volume quota (#3153).
