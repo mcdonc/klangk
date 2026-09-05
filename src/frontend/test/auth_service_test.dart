@@ -506,6 +506,9 @@ void main() {
       expect(service.token, 'new-token');
       expect(service.isLoggedIn, isTrue);
       expect(service.loading, isFalse);
+      // #3193: the token must be persisted through the token store.
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString('klangk_jwt'), 'new-token');
     });
 
     test('failed login returns error message', () async {
@@ -871,6 +874,9 @@ void main() {
       await service.logout();
       expect(service.isLoggedIn, isFalse);
       expect(service.token, isNull);
+      // #3193: logout must destroy the persisted token.
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString('klangk_jwt'), isNull);
     });
 
     test('skips server call when already logged out (#2687)', () async {

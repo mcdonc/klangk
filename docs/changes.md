@@ -308,6 +308,13 @@ operators or integrators to act when upgrading.
 
 ### Security
 
+- **Session token storage (#3193).** The frontend now keeps the session
+  JWT in browser `sessionStorage` instead of `localStorage`, so closing
+  the tab or the browser ends the session instead of leaving a usable
+  token on disk. A token persisted by an older build is migrated on the
+  next load and removed from `localStorage`. Users must sign in again
+  after a browser restart.
+
 - **Consent-decider sockets are closed on token revocation (#3162).**
   The `/ws/consent-decider` connection now shares the #3152 revocation
   story: logging out, being evicted by the per-user session limit, or
