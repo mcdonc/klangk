@@ -65,9 +65,12 @@ def _files_http_error(
     FileExistsError -> 409, PermissionError -> 403, anything else ->
     500. Response details are generic (#3150): the files layer's
     exception messages carry podman stderr and container paths, which
-    must reach the operator's log, not the client — so each branch
-    logs the underlying error and returns a fixed wording. Routes
-    with an extra case (or none of these) keep their own handling.
+    must reach the operator's log, not the client. The branches whose
+    exceptions can carry raised-in text (400/403/500) log the
+    underlying error and return a fixed wording; the 404/409 branches
+    don't log — the files layer raises those with fixed server-
+    composed strings, so there is nothing to diagnose. Routes with an
+    extra case (or none of these) keep their own handling.
     """
     if isinstance(e, ValueError):
         logger.debug("files route rejected input: %s: %s", type(e).__name__, e)
@@ -79,7 +82,7 @@ def _files_http_error(
             status_code=409, detail="Destination already exists"
         )
     if isinstance(e, PermissionError):
-        logger.debug("files route denied: %s", e)
+        logger.info("files route denied: %s", e)
         return HTTPException(status_code=403, detail="Permission denied")
     logger.error("files route failed: %s", e, exc_info=True)
     return HTTPException(status_code=500, detail="Internal server error")
