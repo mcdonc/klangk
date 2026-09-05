@@ -17,7 +17,7 @@ import '../widgets/obscure_toggle.dart';
 import '../widgets/skeuo_tab.dart';
 import '../utils/system_agent.dart';
 import '../utils/validators.dart';
-import 'container_events_panel.dart';
+import 'events_tab.dart';
 import 'server_schedule_panel.dart';
 
 class AdminUsersPage extends StatefulWidget {
@@ -558,7 +558,7 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
       addTab(
         label: 'Events',
         icon: Icons.history,
-        view: const ContainerEventsPanel(),
+        view: const EventsTab(),
       );
     }
     // The Volumes tab (#2993): the deployment's instance-managed
