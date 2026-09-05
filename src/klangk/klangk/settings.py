@@ -1094,12 +1094,15 @@ class KlangkSettings(BaseSettings):
     # (#3192). "acme" (the default, also when unset): ACME issuance
     # (Let's Encrypt + ZeroSSL) for the public FQDN — the
     # internet-facing model. "internal": a self-generated certificate
-    # from the proxy's internal CA — the TLS hop behind an outer proxy:
-    # no public name, no ACME account, no ports 80/443, and the HTTP→
-    # HTTPS redirect is disabled (the outer proxy owns port 80). The
-    # internal root + leaf certificates live under the explicit storage
-    # path and renew automatically (short-lived leaves). Reloadable on
-    # SIGHUP. See docs/deployment/https-hosting.md.
+    # from the proxy's internal CA — the TLS hop behind an outer proxy.
+    # Any host name or IPv4 literal arms; the certificate is generated
+    # locally (no CA contact), caddy serves HTTPS on ``listen:port``
+    # only, and the HTTP→HTTPS redirect stays off (the outer proxy
+    # redirects; a redirect bind on port 80 would fail for an
+    # unprivileged service user). The internal root + issued
+    # certificates live under the explicit storage path and renew
+    # automatically (short-lived certificates). Reloadable on SIGHUP.
+    # See docs/deployment/https-hosting.md.
     tls_issuer: str | None = None
     # acme_email: the ACME account email (expiry notices, CA account
     # registration) used when ``tls_hostname`` arms automatic TLS

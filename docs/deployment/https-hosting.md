@@ -146,15 +146,15 @@ How this differs from automatic (ACME) TLS:
   like these because public certificate authorities only issue for
   registered public domain names; the internal CA issues a certificate
   for whatever name you configure.
-- **klangkd does not contact a certificate authority.** The
-  certificate is generated on this host, so this mode needs no public
-  DNS record and no ports exposed to the internet. `acme-email` is not
-  used (klangkd logs a warning if you set it).
-- **Ports 80 and 443 are not used.** The HTTPS listener binds
-  `listen:port`, same as any browser listener. Caddy does not start
-  its automatic HTTP-to-HTTPS redirect (which would otherwise try to
-  bind port 80 and fail when klangkd runs as an unprivileged user) —
-  the outer proxy is the one redirecting HTTP to HTTPS.
+- **The certificate is generated on this host.** klangkd talks to no
+  certificate authority, so this mode needs no public DNS record and
+  no ports exposed to the internet. (`acme-email` does nothing here;
+  klangkd logs a warning if you set it.)
+- **The HTTPS listener binds `listen:port`, and that is the only port
+  involved.** The automatic HTTP→HTTPS redirect stays off: your outer
+  proxy already sends browsers to HTTPS, and an enabled redirect would
+  try to bind port 80 — a bind that fails when klangkd runs as an
+  unprivileged user.
 - **Certificates are stored in `<state_dir>/caddy-storage`.** That
   directory holds the internal CA's root key and every certificate it
   issues. If the directory is lost, caddy creates a new CA on the next

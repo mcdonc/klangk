@@ -630,9 +630,10 @@ class CaddyRenderer:
         ``state_dir`` so issued material survives restarts instead of
         walking into CA rate limits (acme) or minting a fresh internal
         CA that no outer proxy trusts (internal). ACME mode additionally
-        registers the CA account email when set; internal mode disables
-        the HTTP→HTTPS redirect — the outer proxy owns port 80, and the
-        bind would fail for an unprivileged service user anyway.
+        registers the CA account email when set; internal mode keeps
+        the HTTP→HTTPS redirect off — the outer proxy redirects
+        browsers itself, and the redirect's port-80 bind would fail
+        for an unprivileged service user.
         """
         directives: list[str] = []
         if self._internal_tls():
