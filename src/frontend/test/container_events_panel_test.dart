@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -331,6 +332,85 @@ void main() {
       expect(tester.takeException(), isNull);
       expect(find.text('cid-0123456789abcdef'), findsOneWidget);
       expect(find.text('sidecar-ns-0123456789'), findsOneWidget);
+    });
+
+    testWidgets('a superseded slow response never overwrites a newer one',
+        (tester) async {
+      // Same race the audit panel guards against (#3217 review):
+      // double-Next or refresh-while-pending makes responses land out
+      // of issue order; the newest request's page must win.
+      final pending = <Completer<http.Response>>[];
+      testAuthHttpClientOverride =
+          _mockClient(_adminPermissions, (request) async {
+        if (request.url.path == '/api/v1/events/containers') {
+          final offset = request.url.queryParameters['offset'];
+          final completer = Completer<http.Response>();
+          pending.add(completer);
+          await completer.future;
+          return http.Response(
+            _eventsEnvelope([
+              _event('ws-$offset', workspaceName: 'page-$offset'),
+            ], total: 5),
+            200,
+          );
+        }
+        if (request.url.path == '/api/v1/users') {
+          return http.Response(
+            jsonEncode({
+              'users': <Map<String, dynamic>>[],
+              'page': 1,
+              'page_size': 10,
+              'total': 0,
+            }),
+            200,
+          );
+        }
+        if (request.url.path == '/api/v1/groups') {
+          return http.Response(jsonEncode([]), 200);
+        }
+        if (request.url.path == '/api/v1/server/schedule' &&
+            request.method == 'GET') {
+          return http.Response(jsonEncode({'schedules': []}), 200);
+        }
+        return http.Response('Not found', 404);
+      }, isAdmin: true);
+
+      await tester.binding.setSurfaceSize(const Size(1600, 900));
+      await tester.pumpWidget(buildPage());
+      // Permissions resolve asynchronously — pump until the mounted
+      // Events tab fires the container panel's initial load.
+      while (pending.isEmpty) {
+        await tester.pump(const Duration(milliseconds: 10));
+      }
+      pending.removeAt(0).complete(http.Response('', 200));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Events'));
+      await tester.pumpAndSettle();
+      expect(find.text('page-0'), findsOneWidget);
+
+      // Two quick Next taps -> two overlapping requests (offset 1,
+      // then 2 — paging advances by rows-on-page).
+      final next = find.ancestor(
+        of: find.byTooltip('Next page'),
+        matching: find.byType(IconButton),
+      );
+      await tester.tap(next);
+      await tester.pump();
+      await tester.tap(next);
+      await tester.pump();
+      expect(pending.length, 2);
+
+      // The newer (offset 2) response lands first...
+      pending.removeLast().complete(http.Response('', 200));
+      await tester.pumpAndSettle();
+      expect(find.text('page-2'), findsOneWidget);
+      expect(find.text('3–3 of 5'), findsOneWidget);
+
+      // ...then the stale (offset 1) one: it must be discarded.
+      pending.removeAt(0).complete(http.Response('', 200));
+      await tester.pumpAndSettle();
+      expect(find.text('page-2'), findsOneWidget);
+      expect(find.text('page-1'), findsNothing);
     });
 
     testWidgets('tab hidden without the permission', (tester) async {

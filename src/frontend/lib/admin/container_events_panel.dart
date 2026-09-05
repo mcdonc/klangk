@@ -38,6 +38,9 @@ class _ContainerEventsPanelState extends State<ContainerEventsPanel> {
   bool _loading = true;
   String? _error;
 
+  /// Monotonic load sequence — see [_load].
+  int _seq = 0;
+
   final _workspaceController = TextEditingController();
   String _workspaceQuery = '';
   Timer? _queryDebounce;
@@ -78,6 +81,12 @@ class _ContainerEventsPanelState extends State<ContainerEventsPanel> {
   }
 
   Future<void> _load({int offset = 0}) async {
+    // Monotonic load sequence: a superseded response (filter debounce,
+    // refresh, or paging while a request is in flight) must not
+    // overwrite the table — the last response to *land* is not
+    // necessarily the newest request (#3217 review, applied to the
+    // container stream too).
+    final seq = ++_seq;
     setState(() {
       _loading = true;
       _error = null;
@@ -92,7 +101,7 @@ class _ContainerEventsPanelState extends State<ContainerEventsPanel> {
       final auth = context.read<AuthService>();
       final resp = await auth
           .authGet('/api/v1/events/containers?${_encodeQuery(query)}');
-      if (!mounted) return;
+      if (!mounted || seq != _seq) return;
       if (resp.statusCode == 200) {
         final data = jsonDecode(resp.body) as Map<String, dynamic>;
         setState(() {
@@ -108,7 +117,7 @@ class _ContainerEventsPanelState extends State<ContainerEventsPanel> {
       }
     } catch (e) {
       debugPrint('[ContainerEventsPanel] load failed: $e');
-      if (mounted) {
+      if (mounted && seq == _seq) {
         setState(() {
           _error = 'Could not load events. Please try again.';
           _loading = false;

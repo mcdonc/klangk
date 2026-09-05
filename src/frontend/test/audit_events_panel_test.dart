@@ -468,8 +468,7 @@ void main() {
       expect(find.text('user event-row'), findsNothing);
     });
 
-    testWidgets('paging and filter changes collapse an open expansion',
-        (tester) async {
+    testWidgets('a filter change collapses an open expansion', (tester) async {
       serveAudit((limit, offset, event, actor, target) => http.Response(
             _auditEnvelope([
               _auditEvent(
@@ -596,6 +595,37 @@ void main() {
         find.byKey(const ValueKey('audit-actor-filter')),
       );
       expect(field.controller!.text, 'kept-filter');
+    });
+
+    testWidgets(
+        'the audit panel loads lazily — no request before first selection',
+        (tester) async {
+      // The keep-alive IndexedStack builds a subtab's panel only when
+      // first selected: visiting the Events tab must not fire an
+      // /events/audit request.
+      final requests = serveAudit(
+        (limit, offset, event, actor, target) =>
+            http.Response(_auditEnvelope([]), 200),
+        withPage: true,
+      );
+
+      await tester.binding.setSurfaceSize(const Size(1600, 900));
+      await tester.pumpWidget(buildPage());
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Events'));
+      await tester.pumpAndSettle();
+
+      expect(
+        requests.where((r) => r.url.path == '/api/v1/events/audit'),
+        isEmpty,
+      );
+
+      await tester.tap(find.text('Audit'));
+      await tester.pumpAndSettle();
+      expect(
+        requests.where((r) => r.url.path == '/api/v1/events/audit'),
+        isNotEmpty,
+      );
     });
 
     testWidgets('delegated auditor reaches the audit stream (#3217)',
