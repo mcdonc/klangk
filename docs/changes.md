@@ -621,14 +621,17 @@ sync` report a clear permission-denied error.
 
 ### Added
 
-- **`KLANGKD_SESSION_IDLE_TIMEOUT_MINUTES` (#3151).** Idle session
-  timeout (STIG V-222389/390): after this many minutes without an
-  authenticated HTTP request or WebSocket frame, a session's token
-  refresh is refused (and the token blocklisted) and its quiet
-  WebSocket is closed (4001 → client logout). Admins-group members get
-  the shorter privileged window (`min(window, 10)`); set `15` for the
-  STIG 15/10 split. Armed tokens are capped at the window. `0` (the
-  default) restores age-only expiry exactly. Reloadable on SIGHUP.
+- **`KLANGKD_SESSION_IDLE_TIMEOUT_MINUTES` /
+  `KLANGKD_PRIVILEGED_SESSION_IDLE_TIMEOUT_MINUTES` (#3151).** Idle
+  session timeout: after this many minutes without an authenticated
+  HTTP request or WebSocket frame, a session's token refresh is
+  refused (and the token blocklisted) and its quiet WebSocket is
+  closed (4001 → client logout). Admins-group members get the shorter
+  privileged window — the lesser of the general setting and
+  `KLANGKD_PRIVILEGED_SESSION_IDLE_TIMEOUT_MINUTES` (default `10`;
+  `0` turns the split off). Armed tokens are capped at the window.
+  `0` on the general setting (the default) restores age-only expiry
+  exactly. Both reloadable on SIGHUP.
 - **`KLANGKD_LOG_FORMAT` / `KLANGKD_LOG_FILE` (#3156).** New settings for
   SIEM/central-log forwarding. `KLANGKD_LOG_FORMAT`
   (`text`, the default, or `json`) switches the console log stream to one

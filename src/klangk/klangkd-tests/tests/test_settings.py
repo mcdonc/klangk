@@ -533,6 +533,29 @@ class TestConfigFile:
         with pytest.raises(Exception):
             make_settings({"KLANGKD_VOLUME_QUOTA_PER_WORKSPACE": "-1"})
 
+
+class TestPrivilegedSessionIdleSetting:
+    """KLANGKD_PRIVILEGED_SESSION_IDLE_TIMEOUT_MINUTES (#3151): the
+    admins-group window, its own setting; 0 turns the split off."""
+
+    def test_from_env(self):
+        s = make_settings(
+            {"KLANGKD_PRIVILEGED_SESSION_IDLE_TIMEOUT_MINUTES": "5"}
+        )
+        assert s.privileged_session_idle_timeout_minutes == 5
+
+    def test_zero_turns_split_off(self):
+        s = make_settings(
+            {"KLANGKD_PRIVILEGED_SESSION_IDLE_TIMEOUT_MINUTES": "0"}
+        )
+        assert s.privileged_session_idle_timeout_minutes == 0
+
+    def test_negative_aborts(self):
+        with pytest.raises(Exception):
+            make_settings(
+                {"KLANGKD_PRIVILEGED_SESSION_IDLE_TIMEOUT_MINUTES": "-1"}
+            )
+
     def test_container_pids_limit_from_env(self):
         s = make_settings({"KLANGKD_CONTAINER_PIDS_LIMIT": "512"})
         assert s.container_pids_limit == 512
@@ -2062,6 +2085,7 @@ class TestNumericSettingCoercion:
         assert s.max_sessions_per_user == 0
         assert s.inactivity_disable_days == 35
         assert s.session_idle_timeout_minutes == 0
+        assert s.privileged_session_idle_timeout_minutes == 10
         assert s.invite_expire_hours == 72
         assert s.access_token_hours == 24.0
         assert s.workspace_token_hours == 24.0
@@ -2083,6 +2107,7 @@ class TestNumericSettingCoercion:
             ("max_sessions_per_user", 0),
             ("inactivity_disable_days", 35),
             ("session_idle_timeout_minutes", 0),
+            ("privileged_session_idle_timeout_minutes", 10),
             ("invite_expire_hours", 72),
             ("port_range_start", 9000),
             ("websocket_msg_size_max", 16777216),

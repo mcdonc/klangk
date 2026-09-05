@@ -19,12 +19,13 @@ from klangk.wshandler.connection import Connection
 from klangk.wshandler.session import WebSocketState
 
 
-def _app(*, minutes=15):
-    """A minimal app with the armed/unarmed setting and stub auth."""
+def _app(*, minutes=15, privileged_minutes=10):
+    """A minimal app with the armed/unarmed settings and stub auth."""
     app = types.SimpleNamespace()
     app.state = types.SimpleNamespace()
     app.state.settings = types.SimpleNamespace(
-        session_idle_timeout_minutes=minutes
+        session_idle_timeout_minutes=minutes,
+        privileged_session_idle_timeout_minutes=privileged_minutes,
     )
     app.state.auth = types.SimpleNamespace(
         idle_window_minutes_for_user=AsyncMock(return_value=minutes)
@@ -79,6 +80,21 @@ class TestCloseIdleConnections:
         )
         assert closed == 0
         assert conn.sock.closed_with is None
+
+    async def test_prefilter_uses_general_when_split_off(self):
+        """privileged=0 turns the split off: the suspect pre-filter is
+        the general window, so a connection idle past it is judged even
+        though the (default) privileged window would be longer."""
+        app = _app(minutes=5, privileged_minutes=0)
+        app.state.auth.idle_window_minutes_for_user = AsyncMock(return_value=5)
+        state = WebSocketState(app)
+        conn = _conn(app, idle_secs=6 * 60)
+        state.connections[conn.sock] = conn
+        closed = await state.close_idle_connections(
+            app.state.auth.idle_window_minutes_for_user
+        )
+        assert closed == 1
+        assert conn.sock.closed_with == (4001, "Session idle timeout")
 
     async def test_window_resolved_per_user(self):
         """Suspects get their own (admin-aware) window: an admin at 11
@@ -180,6 +196,21 @@ class TestSessionIdleMonitor:
         # A one-minute window sweeps every 20s.
         assert (
             session_idle.SessionIdleMonitor(_app(minutes=1)).interval == 20.0
+        )
+        # A short privileged window speeds the sweep past what the
+        # general window alone would do (600/3 -> 60 vs 1/3*60 -> 20).
+        assert (
+            session_idle.SessionIdleMonitor(
+                _app(minutes=600, privileged_minutes=1)
+            ).interval
+            == 20.0
+        )
+        # Split off (0): the general window alone sets the cadence.
+        assert (
+            session_idle.SessionIdleMonitor(
+                _app(minutes=1, privileged_minutes=0)
+            ).interval
+            == 20.0
         )
 
     async def test_sweep_unarmed_is_noop(self):

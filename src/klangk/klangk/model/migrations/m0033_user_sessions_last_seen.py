@@ -3,8 +3,8 @@
 Adds two columns to ``user_sessions``:
 
 - ``last_seen_at`` — the session-level activity clock the refresh seam
-  checks against ``KLANGKD_SESSION_IDLE_TIMEOUT_MINUTES`` (STIG
-  V-222389/390). Unlike ``users.last_activity_at`` (per-user, feeds the
+  checks against ``KLANGKD_SESSION_IDLE_TIMEOUT_MINUTES``. Unlike
+  ``users.last_activity_at`` (per-user, feeds the
   days-scale dormant-account sweep), this is per-session and
   minutes-scale: stamped (throttled) by authenticated HTTP requests and
   WebSocket frames, never by the refresh endpoint itself (a refresh is

@@ -13,7 +13,6 @@ from typing import TYPE_CHECKING, Any
 
 from .. import model
 from ..acl import check_permission_inmemory, resource_ancestors
-from ..auth import PRIVILEGED_SESSION_IDLE_MINUTES
 from ..terminal import SERVICE_CMD_WINDOW
 from .window_watcher import WindowEventWatcher
 from .safe_websocket import SafeWebSocket, WS_ERRORS, broadcast_to_set
@@ -1092,10 +1091,15 @@ class WebSocketState:
 
     def _min_idle_secs(self) -> float:
         """Seconds after which a connection is an idle-window *suspect*
-        (#3151): the shortest window any user can have (the configured
-        window, or the privileged cap — whichever is smaller)."""
-        window = self.app.state.settings.session_idle_timeout_minutes
-        return min(window, PRIVILEGED_SESSION_IDLE_MINUTES) * 60
+        (#3151): the shortest window any user can have — the general
+        setting, or the privileged one when the split is on and
+        shorter."""
+        settings = self.app.state.settings
+        window = settings.session_idle_timeout_minutes
+        privileged = settings.privileged_session_idle_timeout_minutes
+        if 0 < privileged < window:
+            window = privileged
+        return window * 60
 
     async def reset_workspace(
         self, workspace_id: str, *, expected_container_id: str | None = None

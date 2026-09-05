@@ -2548,9 +2548,9 @@ class TestChangeExpiredPassword:
         )
         assert not a.password_expired(row)
 class TestSessionIdleTimeout:
-    """#3151: idle sessions terminate at the refresh seam (STIG
-    V-222389/390), with the privileged 15/10 window split and tokens
-    capped at the window."""
+    """#3151: idle sessions terminate at the refresh seam, with a
+    separately configurable privileged (admins-group) window and
+    tokens capped at the window."""
 
     def _armed(self):
         return _auth({"KLANGKD_SESSION_IDLE_TIMEOUT_MINUTES": "15"})
@@ -2711,6 +2711,44 @@ class TestSessionIdleTimeout:
         token = await a.issue_token(user["id"], user["email"])
         assert self._lifetime_minutes(a, token) <= 5
 
+    async def test_privileged_window_configurable(
+        self, user, admin_group, app_state, db
+    ):
+        """The privileged window is its own setting (#3151): admins
+        capped at the configured value, regular users untouched."""
+        a = _auth(
+            {
+                "KLANGKD_SESSION_IDLE_TIMEOUT_MINUTES": "30",
+                "KLANGKD_PRIVILEGED_SESSION_IDLE_TIMEOUT_MINUTES": "5",
+            }
+        )
+        await app_state.state.model.users.add_user_to_group(
+            user["id"], admin_group["id"]
+        )
+        assert a.effective_session_idle_minutes(True) == 5
+        assert a.effective_session_idle_minutes(False) == 30
+        token = await a.issue_token(user["id"], user["email"])
+        assert self._lifetime_minutes(a, token) <= 5
+
+    async def test_privileged_zero_disables_split(
+        self, user, admin_group, app_state, db
+    ):
+        """privileged=0 turns the split off: admins use the general
+        window (and are capped at it)."""
+        a = _auth(
+            {
+                "KLANGKD_SESSION_IDLE_TIMEOUT_MINUTES": "15",
+                "KLANGKD_PRIVILEGED_SESSION_IDLE_TIMEOUT_MINUTES": "0",
+            }
+        )
+        await app_state.state.model.users.add_user_to_group(
+            user["id"], admin_group["id"]
+        )
+        assert a.effective_session_idle_minutes(True) == 15
+        assert a.effective_session_idle_minutes(False) == 15
+        token = await a.issue_token(user["id"], user["email"])
+        assert 5 < self._lifetime_minutes(a, token) <= 15
+
     async def test_is_admin_resolution(self, user, admin_group, app_state, db):
         """The one-query admin check matches group membership."""
         users = app_state.state.model.users
@@ -2725,6 +2763,18 @@ class TestSessionIdleTimeout:
         armed = self._armed()
         assert armed.effective_session_idle_minutes(False) == 15
         assert armed.effective_session_idle_minutes(True) == 10
+        assert armed.shortest_session_idle_minutes == 10
+        assert (
+            self._armed_privileged_zero().shortest_session_idle_minutes == 15
+        )
+
+    def _armed_privileged_zero(self):
+        return _auth(
+            {
+                "KLANGKD_SESSION_IDLE_TIMEOUT_MINUTES": "15",
+                "KLANGKD_PRIVILEGED_SESSION_IDLE_TIMEOUT_MINUTES": "0",
+            }
+        )
 
 
 class TestSessionActivityStamping:

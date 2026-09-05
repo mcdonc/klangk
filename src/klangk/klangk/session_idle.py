@@ -1,6 +1,7 @@
 """Periodic WebSocket idle sweep for the session idle timeout (#3151).
 
-STIG V-222389/390 require terminating sessions after inactivity. The
+A login session nobody is using must not survive on proactive token
+refreshes alone. The
 HTTP half is enforced at the refresh seam (``Auth._reject_idle_session``);
 this loop is the WebSocket half: a socket that stops sending frames past
 the window is closed by the server (4001 → client logout), so a quiet WS
@@ -41,8 +42,14 @@ class SessionIdleMonitor(IntervalWorker):
 
     @property
     def interval(self) -> float:
-        """A third of the configured window, clamped to 5–60 seconds."""
-        window_secs = self.app.state.settings.session_idle_timeout_minutes * 60
+        """A third of the shortest window any user can have (the general
+        setting, or the privileged one when shorter), clamped 5–60s."""
+        settings = self.app.state.settings
+        window = settings.session_idle_timeout_minutes
+        privileged = settings.privileged_session_idle_timeout_minutes
+        if 0 < privileged < window:
+            window = privileged
+        window_secs = window * 60
         if window_secs <= 0:
             return MAX_SWEEP_INTERVAL
         return min(

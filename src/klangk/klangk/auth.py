@@ -63,14 +63,7 @@ _SALT_BYTES = 16
 # and keeps idle-poling clients off the write path.
 ACTIVITY_STAMP_INTERVAL = 60.0
 
-# STIG V-222389/390 split (#3151): privileged sessions terminate after
-# a shorter idle window than unprivileged ones. The privileged window
-# is the lesser of the configured unprivileged window and this cap —
-# ``KLANGKD_SESSION_IDLE_TIMEOUT_MINUTES=15`` (the STIG value) yields
-# 15 min for regular users and 10 for admins-group members.
-PRIVILEGED_SESSION_IDLE_MINUTES = 10
-
-# Ceiling on the per-JTI/per-session stamp-throttle dict (#3151):
+# How often the last-seen stamp throttle key dict is length-capped
 # sessions churn (every refresh mints a new JTI), so the dict is
 # length-capped the same way the rate-limit dicts are — insertion order
 # under a monotonic clock tracks first-stamp order, so the head is a
@@ -528,6 +521,12 @@ class Auth:
         """Configured idle-session window in minutes; 0 = off (#3151)."""
         return self.app.state.settings.session_idle_timeout_minutes
 
+    @property
+    def privileged_session_idle_timeout_minutes(self) -> int:
+        """The privileged (admins-group) window in minutes; 0 = no
+        privileged split — admins use the general window (#3151)."""
+        return self.app.state.settings.privileged_session_idle_timeout_minutes
+
     # --- secret / startup guard ---
 
     def jwt_secret_is_secure(self) -> bool:
@@ -834,16 +833,19 @@ class Auth:
     def effective_session_idle_minutes(self, is_admin: bool) -> int:
         """The idle-session window for a session owner (#3151).
 
-        Pure helper over the live setting: 0 (off) for everyone; else
-        the configured window for regular users and the lesser of it
-        and :data:`PRIVILEGED_SESSION_IDLE_MINUTES` for admins-group
-        members (STIG V-222390's shorter privileged window).
+        Pure helper over the live settings: 0 (off) for everyone; else
+        the general window for regular users, and for admins-group
+        members the lesser of it and
+        :attr:`privileged_session_idle_timeout_minutes` — unless that
+        is 0, which turns the privileged split off (admins then use
+        the general window).
         """
         window = self.session_idle_timeout_minutes
         if window <= 0:
             return 0
-        if is_admin:
-            return min(window, PRIVILEGED_SESSION_IDLE_MINUTES)
+        privileged = self.privileged_session_idle_timeout_minutes
+        if is_admin and privileged > 0:
+            return min(window, privileged)
         return window
 
     async def idle_window_minutes_for_user(self, user_id: str) -> int:
@@ -863,11 +865,25 @@ class Auth:
 
         One write per JTI per interval keeps idle-polling clients off
         the write path (the ``users.n_at`` pattern); the interval also
-        scales down with a short window so a 1-minute STIG window is
-        not starved by a 60-second stamp lag.
+        scales down with the shortest window any user can have — the
+        general window, or the privileged one when the split is on and
+        shorter — so a 1-minute window is not starved by a 60-second
+        stamp lag.
         """
-        window_secs = self.session_idle_timeout_minutes * 60
+        window = self.shortest_session_idle_minutes
+        window_secs = window * 60
         return min(ACTIVITY_STAMP_INTERVAL, window_secs / 4)
+
+    @property
+    def shortest_session_idle_minutes(self) -> int:
+        """The shortest idle window any user can have (#3151): the
+        general window, or the privileged one when the split is on
+        and shorter. 0 when the timeout is off."""
+        window = self.session_idle_timeout_minutes
+        privileged = self.privileged_session_idle_timeout_minutes
+        if 0 < privileged < window:
+            return privileged
+        return window
 
     def _stamp_throttle_due(self, key: str) -> bool:
         """Record a stamp attempt for *key*; True when a DB write is due.

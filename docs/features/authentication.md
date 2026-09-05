@@ -171,7 +171,7 @@ for how to verify the setup.
 Tokens expire by **age**, but clients refresh them proactively, so age
 alone never logs out a session nobody is using. Set
 `KLANGKD_SESSION_IDLE_TIMEOUT_MINUTES` (default `0` = off) to terminate
-sessions after **inactivity** instead (STIG V-222389/390):
+sessions after **inactivity** instead:
 
 - **Activity** is an authenticated HTTP request or an inbound WebSocket
   frame — including the web client's 60-second heartbeat, so a browser
@@ -186,7 +186,9 @@ sessions after **inactivity** instead (STIG V-222389/390):
   client surfaces at its next refresh within the window plus one
   refresh interval instead of coasting on a long-lived token.
 - `admins`-group members get the shorter **privileged window** — the
-  lesser of the setting and 10 minutes. `15` gives the STIG 15/10 split.
+  lesser of this setting and
+  `KLANGKD_PRIVILEGED_SESSION_IDLE_TIMEOUT_MINUTES` (default `10`;
+  `0` turns the split off, giving admins the general window).
 
 The window is read live at issue/refresh/sweep time, so a SIGHUP reload
 applies immediately. Arming it on an existing deployment judges sessions
