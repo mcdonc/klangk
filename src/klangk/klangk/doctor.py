@@ -526,21 +526,21 @@ _AUTO_HTTPS_PORTS = (80, 443)
 
 
 def port_bind_error(port: int) -> str | None:
-    """Why binding 0.0.0.0:<port> would fail, or None when it would work.
+    """Why the ACME port <port> would not bind, or None when it would.
 
-    Binds (and immediately closes) an IPv4 socket — the same bind Caddy's
-    auto-HTTPS listeners perform — so permission denials and conflicts
-    surface here instead of as a mid-boot ACME failure. IPv6 is not
-    probed (Caddy binds it alongside; the IPv4 result is the signal).
+    Binds (and immediately closes) an IPv4 socket on the privileged port
+    Caddy's auto-HTTPS listeners bind, so permission denials and
+    conflicts surface here instead of as a mid-boot ACME failure.
+    Probes loopback specifically: EACCES for a privileged port is
+    per-port (not per-interface), and a wildcard or loopback listener on
+    the port still collides — only a listener bound to a *different
+    specific* interface on the same port escapes the probe, a shape no
+    klangkd deployment creates. IPv6 is not probed (Caddy binds it
+    alongside; the IPv4 result is the signal).
     """
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
-        # The all-interfaces bind is the check itself: caddy's auto-HTTPS
-        # listeners bind 0.0.0.0:80/:443, so probing loopback would pass
-        # while caddy fails.
-        sock.bind(
-            ("0.0.0.0", port)
-        )  # lgtm[py/bind-socket-all-network-interfaces]
+        sock.bind(("127.0.0.1", port))
         return None
     except OSError as exc:
         return f"{port}: {exc.strerror or exc}"
