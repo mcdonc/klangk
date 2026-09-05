@@ -306,6 +306,7 @@ port: 8997
 | `max_sessions_per_user`                   | `0`                          | `KLANGKD_MAX_SESSIONS_PER_USER`                   |
 | `inactivity_disable_days`                 | `35`                         | `KLANGKD_INACTIVITY_DISABLE_DAYS`                 |
 | `session_idle_timeout_minutes`            | `0`                          | `KLANGKD_SESSION_IDLE_TIMEOUT_MINUTES`            |
+| `session_workstation_binding`             | `off`                        | `KLANGKD_SESSION_WORKSTATION_BINDING`             |
 | `disable_registration`                    |                              | `KLANGKD_DISABLE_REGISTRATION`                    |
 | `disable_invites`                         |                              | `KLANGKD_DISABLE_INVITES`                         |
 | `invite_expire_hours`                     | `72`                         | `KLANGKD_INVITE_EXPIRE_HOURS`                     |
@@ -334,6 +335,7 @@ port: 8997
 | `inactivity_disable_days`                 | `35`                         | `KLANGKD_INACTIVITY_DISABLE_DAYS`                 |
 | `session_idle_timeout_minutes`            | `0`                          | `KLANGKD_SESSION_IDLE_TIMEOUT_MINUTES`            |
 | `privileged_session_idle_timeout_minutes` | `10`                         | `KLANGKD_PRIVILEGED_SESSION_IDLE_TIMEOUT_MINUTES` |
+| `session_workstation_binding`             | `off`                        | `KLANGKD_SESSION_WORKSTATION_BINDING`             |
 | `disable_registration`                    |                              | `KLANGKD_DISABLE_REGISTRATION`                    |
 | `disable_invites`                         |                              | `KLANGKD_DISABLE_INVITES`                         |
 | `invite_expire_hours`                     | `72`                         | `KLANGKD_INVITE_EXPIRE_HOURS`                     |

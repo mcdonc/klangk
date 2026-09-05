@@ -72,6 +72,10 @@ async def ws_authenticate(
     (#3151) and so the connection can be targeted for closing when
     that token is later hard-revoked (#3152); ``exp`` (Unix epoch)
     lets the connection schedule its own close when the token expires.
+    With session binding armed (#3194), the connect is also checked
+    against the workstation the session was established from — a
+    token replayed from a different machine closes 4001 and its
+    session is revoked.
     """
     token = websocket.query_params.get("token")
     if not token:
@@ -87,23 +91,42 @@ async def ws_authenticate(
     except JWTError:
         await websocket.close(code=4001, reason="Invalid token")
         return None
-    user = await _user_or_close(websocket, a, payload)
+    workstation = ws_workstation(websocket, app)
+    user = await _user_or_close(websocket, a, payload, workstation)
     if user is None:
         return None
     return user, payload.get("jti"), payload.get("exp")
 
 
-async def _user_or_close(websocket: WebSocket, a, payload) -> dict | None:
+def ws_workstation(websocket: WebSocket, app) -> tuple[str | None, str | None]:
+    """The ``(ip, user_agent)`` a WebSocket connect presents (#3194).
+
+    Same resolver as HTTP requests (:meth:`Util.workstation`) — the
+    handshake headers and peer address, proxy-trust-aware — shared
+    with the consent-decider gate. Minimal test doubles may carry no
+    ``client``; that reads as an unknown peer (fail-open, like every
+    other unresolvable workstation).
+    """
+    client = getattr(websocket, "client", None)
+    host = client.host if client else None
+    headers = getattr(websocket, "headers", None)
+    return app.state.util.workstation(headers, host)
+
+
+async def _user_or_close(
+    websocket: WebSocket, a, payload, workstation
+) -> dict | None:
     """The authenticated user for a main-WS connect, or None after
     closing the socket.
 
-    Two refusal arms: an unknown user (4001) and a session under the
+    Three refusal arms: an unknown user (4001), a session under the
     must_change_password flag (4004, #3172 — the client must change
     the password first; 4004, not 4003, because the decider socket
     already uses 4003 for authz refusals, and duplicate close codes
-    are indistinguishable to clients, #3172 review).
+    are indistinguishable to clients, #3172 review), and a token
+    presented from a different workstation (4001, #3194).
     """
-    user = await a._user_from_valid_payload(payload)
+    user = await a._user_from_valid_payload(payload, workstation)
     if user is None:
         await websocket.close(code=4001, reason="Invalid token")
         return None

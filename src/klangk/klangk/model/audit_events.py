@@ -29,7 +29,10 @@ Event coverage (#3205):
   ``login.failed`` (a bad credential check, with the attempted
   identifier), ``logout``.
 - **Session revocation** — ``session.revoke`` (password-change
-  revocation and the max-sessions-per-user eviction).
+  revocation, the max-sessions-per-user eviction, and the
+  workstation-binding violation, #3194 — whose row carries the
+  presenting workstation as its source IP and no actor, the trigger
+  being an unknown presenter).
 
 Writes are best-effort by design (the #2915 posture): a failed audit
 write is logged and never fails the action it annotates — see

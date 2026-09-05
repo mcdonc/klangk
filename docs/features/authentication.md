@@ -166,6 +166,61 @@ records the proxy's address and no audit records are ever written — see
 [Behind a Reverse Proxy: concurrent-logon auditing](../deployment/behind-a-proxy.md#concurrent-logon-auditing-depends-on-the-proxy-chain)
 for how to verify the setup.
 
+## Session workstation binding (replay protection)
+
+Session JWTs are bearer tokens: by default (`off`), anyone who captures
+one can use it until it expires. Set `KLANGKD_SESSION_WORKSTATION_BINDING` to bind
+each session to the workstation it was established from, so a captured
+token **cannot be replayed from another machine**:
+
+| Mode     | Behavior                                                                 |
+| -------- | ------------------------------------------------------------------------ |
+| `off`    | No binding (the default) — any token holder may use it until expiry.     |
+| `ip`     | Requests must come from the same network as the session's establishment. |
+| `strict` | Like `ip`, and the `User-Agent` must also match.                         |
+
+Every authenticated HTTP request, token refresh, and WebSocket connect
+is checked against the session's recorded workstation (the effective
+client IP, proxy-trust-aware; two IPv6 addresses inside one /64 count
+as the same network, so address rotation does not kill roaming
+clients). A mismatch means the token left the machine it was issued
+to: the request is rejected (`401` / WebSocket close `4001`), the
+session is revoked, and an audit record names both workstations:
+
+```text
+audit: session binding violation: jti=<id> issued to ip=198.51.100.7 ua=klangk-cli/1.0, presented from ip=203.0.113.9 ua=klangk-cli/1.0; session revoked
+```
+
+The revocation is also recorded in the structured audit stream (#3205)
+as a `session.revoke` row (detail `reason: workstation-binding`, the
+bound workstation in the detail, the presenting one as the row's
+source IP), queryable via
+[`GET /api/v1/events/audit`](../reference/api-endpoints.md#get-apiv1eventsaudit)
+by holders of `manage-events`.
+
+The legitimate client shares the token with the thief, so it is logged
+out too and must re-authenticate — that is the point: a replayed token
+dies the moment it is used from elsewhere. Sessions with an unknown
+recorded IP (rows created before the workstation feature, or clients
+whose address cannot be resolved) are never rejected. The setting is
+reloadable on SIGHUP; arming it applies to existing sessions
+immediately.
+
+Trade-offs to weigh before arming `ip`/`strict`: a user whose network
+address legitimately changes mid-session (laptop moving between Wi-Fi
+and tethering, VPN toggles) is logged out and must log in again; in
+`strict` mode a browser update changes the `User-Agent` with the same
+effect. Users behind the same NAT as an attacker are not distinguished
+by `ip` mode — binding narrows the replay window to the same network,
+it does not eliminate same-NAT replay. Binding judges only what the
+workstation resolver can see: if a deployment resolves no client IPs
+at all (e.g. `KLANGKD_REJECT_PROXY_HEADERS` set while every client
+arrives as an unresolvable peer), every presentation reads as unknown
+and binding never rejects — verify the proxy chain forwards the real
+client IP (see
+[concurrent-logon auditing](#concurrent-logon-auditing)) when arming
+binding.
+
 ## Idle session timeout
 
 Tokens expire by **age**, but clients refresh them proactively, so age

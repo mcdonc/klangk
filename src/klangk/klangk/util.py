@@ -616,6 +616,23 @@ class Util:
                 return forwarded
         return _canonical_ip_or_raw(client_host)
 
+    def workstation(
+        self, headers=None, client_host: str | None = None
+    ) -> tuple[str | None, str | None]:
+        """The ``(source_ip, user_agent)`` a session is presented from.
+
+        The shared workstation resolver for session issuance (#2586)
+        and workstation binding enforcement (#3194): the IP is the
+        effective client address (proxy-trust-aware, as in
+        :meth:`effective_client_ip`), so a workstation identity cannot
+        be spoofed by a direct caller. Either value may be ``None``
+        (unknown) — the binding predicate treats unknown as
+        never-different, never same.
+        """
+        ip = self.effective_client_ip(headers, client_host)
+        agent = headers.get("user-agent") if headers is not None else None
+        return ip, agent or None
+
     def _forwarded_headers_trusted(
         self, headers, client_host: str | None
     ) -> bool:
