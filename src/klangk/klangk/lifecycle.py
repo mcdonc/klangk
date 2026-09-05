@@ -184,6 +184,11 @@ class Lifecycle:
         # strong references to the hook task while it drains.
         self.shutting_down: bool = False
         self._shutdown_tasks: set[asyncio.Task] = set()
+        # V-222585 (#3176): non-zero exit the GracefulExitServer must
+        # translate after the teardown completes (set on the failed
+        # SIGHUP-recovery path; death-by-SIGTERM alone reads as a
+        # "clean" exit to a Restart=on-failure supervisor).
+        self.forced_exit_status: int | None = None
 
     def reconfigure(self, app) -> None:
         self.app = app
@@ -975,6 +980,26 @@ class Lifecycle:
             )
         try:
             logger.info("%s: phase: drain (stopping workspaces)", name)
+            await self._drain_workspaces(name)
+        except Exception as exc:  # noqa: BLE001 — never block the exit
+            logger.warning(
+                "%s: drain phase failed (proceeding with exit): %s", name, exc
+            )
+        logger.info("%s: handing off to server exit", name)
+
+    async def _drain_workspaces(self, name: str) -> None:
+        """Drain phase with V-222585 escalation (#3176).
+
+        A drain that raised *or* verifiably under-stopped (stopped
+        fewer than the tracked containers) triggers the forced
+        backstop — per-container stop failures are swallowed by
+        ``drain_all_containers``, so the count is the only honest
+        failure signal — and the backstop's outcome is verified
+        against a fresh container listing.
+        """
+        registry = self.app.state.container_registry
+        expected = registry.tracked_container_count()
+        try:
             stopped = await registry.drain_all_containers(
                 reason="host shutdown"
             )
@@ -985,20 +1010,72 @@ class Lifecycle:
                 name,
                 exc,
             )
-            # V-222585: a graceful drain failure must not leave
-            # unsupervised containers — escalate to the forced
-            # shutdown path (podman stop + rm -f per container).
-            try:
-                await registry.shutdown()
-                logger.warning("%s: forced backstop completed", name)
-            except Exception:  # noqa: BLE001
-                logger.critical(
-                    "%s: forced backstop also failed; unsupervised "
-                    "containers may remain",
-                    name,
-                    exc_info=True,
-                )
-        logger.info("%s: handing off to server exit", name)
+            await self._forced_backstop(name)
+            return
+        if stopped < expected:
+            logger.warning(
+                "%s: drain stopped %d of %d tracked container(s); "
+                "attempting forced backstop",
+                name,
+                stopped,
+                expected,
+            )
+            await self._forced_backstop(name)
+
+    async def _forced_backstop(self, name: str) -> None:
+        """Forced shutdown backstop, verified (V-222585 / #3176).
+
+        Re-run the registry stop path, then verify against the live
+        container listing that nothing of this instance survives —
+        ``shutdown()`` swallows per-container failures too, so the
+        listing is the only trustworthy completion signal. Any path
+        that cannot prove no unsupervised containers remain logs
+        CRITICAL.
+        """
+        registry = self.app.state.container_registry
+        try:
+            await registry.shutdown()
+        except Exception:  # noqa: BLE001 — CRITICAL is the floor
+            logger.critical(
+                "%s: forced backstop failed; unsupervised containers "
+                "may remain",
+                name,
+                exc_info=True,
+            )
+            return
+        leftovers = await self._listed_leftovers(name)
+        if leftovers is None:
+            return  # already logged CRITICAL (could not verify)
+        if leftovers:
+            logger.critical(
+                "%s: %d container(s) still running after the forced "
+                "backstop (%s); unsupervised containers remain",
+                name,
+                len(leftovers),
+                ", ".join(leftovers),
+            )
+        else:
+            logger.warning(
+                "%s: forced backstop completed; verified no containers remain",
+                name,
+            )
+
+    async def _listed_leftovers(self, name: str) -> list[str] | None:
+        """This instance's still-listed containers, or ``None`` when
+        the listing itself failed (logged CRITICAL — the secure state
+        cannot be confirmed)."""
+        try:
+            return await (
+                self.app.state.container_registry.leftover_containers()
+            )
+        except Exception as exc:  # noqa: BLE001 — CRITICAL is the floor
+            logger.critical(
+                "%s: could not verify containers are stopped (%s); "
+                "unsupervised containers may remain",
+                name,
+                exc,
+            )
+            return None
 
     def on_sighup(self) -> None:
         """SIGHUP: schedule a graceful runtime restart.
@@ -1070,10 +1147,12 @@ class Lifecycle:
         Re-run ``startup()`` (idempotent by design). On success the node
         is serving and starting containers again. On failure, a live
         process that can neither restart its runtime nor serve workloads
-        would masquerade as healthy — exit(1) and let systemd/docker
-        restart us instead. Skipped entirely when a shutdown owns the
-        process (#2527 review): resurrecting the runtime during teardown
-        is exactly what the shutdown is undoing.
+        would masquerade as healthy — route the exit through the
+        graceful-stop hook and exit non-zero (1) after the teardown so a
+        Restart=on-failure supervisor restarts us instead. Skipped
+        entirely when a shutdown owns the process (#2527 review):
+        resurrecting the runtime during teardown is exactly what the
+        shutdown is undoing.
         """
         if self.shutting_down:
             logger.info("SIGHUP: restart recovery skipped; shutting down")
@@ -1093,7 +1172,11 @@ class Lifecycle:
             # teardown and orphans the proxy child), send ourselves
             # SIGTERM — the GracefulExitServer hook runs the hardened
             # teardown (proxy stop, container cleanup, DB dispose)
-            # before the process exits.
+            # before the process exits — and mark the exit so the
+            # server raises SystemExit(1) after the teardown instead of
+            # dying by the re-raised SIGTERM (143), which a
+            # Restart=on-failure supervisor treats as a clean exit.
+            self.forced_exit_status = 1
             os.kill(os.getpid(), signal.SIGTERM)
             return  # SIGTERM handler takes over
         logger.error(

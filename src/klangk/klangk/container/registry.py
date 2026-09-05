@@ -2442,6 +2442,26 @@ class ContainerRegistry(NetworkSidecarMixin):
         stopped += await self._sweep_drain_leftovers()
         return stopped
 
+    def tracked_container_count(self) -> int:
+        """Running containers a drain is expected to stop (V-222585,
+        #3176): the drain's own snapshot baseline, counted up front so
+        the caller can detect an under-stopping drain by outcome —
+        per-container stop failures never raise out of
+        ``drain_all_containers``."""
+        return sum(1 for state in self.states.values() if state.container_id)
+
+    async def leftover_containers(self) -> list[str]:
+        """Idents of this instance's containers still listed as
+        running (V-222585, #3176) — ground truth for verifying a
+        forced-backstop stop actually left nothing behind (the stop
+        path swallows per-container failures). Raises on a listing
+        failure so the caller can treat "cannot verify" as insecure.
+        """
+        containers = await self.app.state.podman.list_containers(
+            f"klangk.instance={self.app.state.util.instance_id()}"
+        )
+        return [ident for ident in map(container_ident, containers) if ident]
+
     async def _drain_one(self, ws_id: str, cid: str, reason: str) -> bool:
         """Notify + stop one workspace for a drain, with the same
         "stopped on purpose" broadcast as the /stop endpoint (clients

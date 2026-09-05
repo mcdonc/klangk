@@ -883,6 +883,16 @@ def make_graceful_exit_server(asgi_app):
         finally:
             for sig, handler in original_handlers.items():
                 signal_mod.signal(sig, handler)
+        # V-222585 (#3176): a failed-recovery exit is routed through
+        # this hook with a forced status — translate it here, after the
+        # lifespan teardown has fully run (uvicorn's shutdown completes
+        # inside the with-block above). Dying by the re-raised SIGTERM
+        # (143) instead would read as a "clean" exit to a
+        # Restart=on-failure supervisor, leaving the node down.
+        lifecycle = getattr(asgi_app.state, "lifecycle", None)
+        forced = getattr(lifecycle, "forced_exit_status", None)
+        if forced is not None:
+            raise SystemExit(forced)
         for captured_signal in reversed(self._captured_signals):
             signal_mod.raise_signal(captured_signal)
 

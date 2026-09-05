@@ -100,6 +100,40 @@ def _make_app_state(settings=None):
     return app_state
 
 
+def _lifespan_test_app():
+    """A FastAPI app wired like ``build_app`` for direct ``lifespan()``
+    tests (V-222585 teardown / fail-secure coverage): fresh state
+    objects sharing the fake app_state's registry, sockets, settings,
+    db, model, hooks, and lifecycle."""
+    app = FastAPI()
+    app_state = _make_app_state()
+    app.state.container_registry = app_state.state.container_registry
+    app.state.sockets = app_state.state.sockets
+    app.state.settings = app_state.state.settings
+    app.state.ssl_trust = app_state.state.ssl_trust
+    app.state.db = app_state.state.db
+    app.state.model = app_state.state.model
+    app.state.proxy_watchdog = caddy_mod.CaddyWatchdog(app)
+    app.state.consent_sweeper = consent.EgressConsentSweeper(app)
+    app.state.inactivity_sweeper = inactivity.InactivitySweeper(app)
+    app.state.memory_evictor = container.eviction.MemoryPressureEvictor(app)
+    app.state.consent_deciders = consent.ConsentDeciderRegistry(app)
+    app.state.consent_coordinator = consent.ConsentCoordinator(app)
+    app.state.sidecar_connections = sidecar_connections.SidecarConnections(app)
+    app.state.oidc = oidc.OIDC(app)
+    app.state.features = features.Features(app)
+    app.state.hooks = app_state.state.hooks
+    app.state.workspaces = workspaces.Workspaces(app)
+    app.state.email = emailsvc_mod.EmailService(app)
+    app.state.util = util_mod.Util(app)
+    app.state.auth = auth_mod.Auth(app)
+    app.state.lifecycle = app_state.state.lifecycle
+    app.state.server_scheduler = types.SimpleNamespace(
+        start=MagicMock(), stop=AsyncMock()
+    )
+    return app, app_state
+
+
 def _lifecycle(settings):
     """A ``Lifecycle`` whose app can reach ``model.acl``.
 
@@ -1436,7 +1470,8 @@ class TestGracefulShutdown:
         self, app_state, caplog
     ):
         """A drain exception triggers the forced backstop
-        (registry.shutdown) before exiting (V-222585)."""
+        (registry.shutdown, then a verified-clean listing) before
+        exiting (V-222585)."""
         import signal as signal_mod
 
         app_state = _make_app_state()
@@ -1455,6 +1490,12 @@ class TestGracefulShutdown:
                 new_callable=AsyncMock,
             ) as mock_shutdown,
             patch.object(
+                registry,
+                "leftover_containers",
+                new_callable=AsyncMock,
+                return_value=[],
+            ) as mock_leftovers,
+            patch.object(
                 app_state.state.sockets, "notify_host_shutdown"
             ) as mock_notify,
             caplog.at_level("WARNING"),
@@ -1463,8 +1504,11 @@ class TestGracefulShutdown:
         mock_notify.assert_called_once()
         assert any("drain failed" in r.message for r in caplog.records)
         mock_shutdown.assert_awaited_once()
+        mock_leftovers.assert_awaited_once()
         assert any(
-            "forced backstop completed" in r.message for r in caplog.records
+            "forced backstop completed; verified no containers remain"
+            in r.message
+            for r in caplog.records
         )
 
     async def test_drain_failure_backstop_also_fails_logs_critical(
@@ -1495,10 +1539,154 @@ class TestGracefulShutdown:
         ):
             await lc.graceful_shutdown(signal_num=signal_mod.SIGTERM)
         assert any(
-            "forced backstop also failed" in r.message
+            "forced backstop failed" in r.message and r.levelname == "CRITICAL"
+            for r in caplog.records
+        )
+
+    async def test_drain_understop_triggers_forced_backstop(
+        self, app_state, caplog
+    ):
+        """A drain that returns without raising but stopped fewer
+        containers than were tracked still triggers the backstop —
+        per-container stop failures are swallowed by
+        drain_all_containers, so the count is the only failure signal
+        (V-222585)."""
+        import signal as signal_mod
+
+        app_state = _make_app_state()
+        lc = app_state.state.lifecycle
+        registry = app_state.state.container_registry
+        with (
+            patch.object(registry, "tracked_container_count", return_value=2),
+            patch.object(
+                registry,
+                "drain_all_containers",
+                new_callable=AsyncMock,
+                return_value=1,
+            ),
+            patch.object(
+                registry, "shutdown", new_callable=AsyncMock
+            ) as mock_shutdown,
+            patch.object(
+                registry,
+                "leftover_containers",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch.object(app_state.state.sockets, "notify_host_shutdown"),
+            caplog.at_level("WARNING"),
+        ):
+            await lc.graceful_shutdown(signal_num=signal_mod.SIGTERM)
+        mock_shutdown.assert_awaited_once()
+        assert any("drain stopped 1 of 2" in r.message for r in caplog.records)
+        assert any(
+            "forced backstop completed" in r.message for r in caplog.records
+        )
+
+    async def test_backstop_leftover_containers_log_critical(
+        self, app_state, caplog
+    ):
+        """A backstop that "succeeds" while containers remain listed
+        is NOT success: the verification listing wins over the stop
+        path's swallowed failures and CRITICAL names the leftovers
+        (V-222585)."""
+        import signal as signal_mod
+
+        app_state = _make_app_state()
+        lc = app_state.state.lifecycle
+        registry = app_state.state.container_registry
+        with (
+            patch.object(
+                registry,
+                "drain_all_containers",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("drain exploded"),
+            ),
+            patch.object(
+                registry, "shutdown", new_callable=AsyncMock
+            ) as mock_shutdown,
+            patch.object(
+                registry,
+                "leftover_containers",
+                new_callable=AsyncMock,
+                return_value=["deadbeef1234", "cafef00d5678"],
+            ),
+            patch.object(app_state.state.sockets, "notify_host_shutdown"),
+            caplog.at_level("CRITICAL"),
+        ):
+            await lc.graceful_shutdown(signal_num=signal_mod.SIGTERM)
+        mock_shutdown.assert_awaited_once()
+        assert any(
+            "2 container(s) still running after the forced backstop"
+            in r.message
+            and "deadbeef1234" in r.message
             and r.levelname == "CRITICAL"
             for r in caplog.records
         )
+
+    async def test_backstop_verification_failure_logs_critical(
+        self, app_state, caplog
+    ):
+        """When the post-backstop listing itself fails, the secure
+        state cannot be confirmed — CRITICAL, never a silent exit
+        (V-222585)."""
+        import signal as signal_mod
+
+        app_state = _make_app_state()
+        lc = app_state.state.lifecycle
+        registry = app_state.state.container_registry
+        with (
+            patch.object(
+                registry,
+                "drain_all_containers",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("drain exploded"),
+            ),
+            patch.object(
+                registry, "shutdown", new_callable=AsyncMock
+            ) as mock_shutdown,
+            patch.object(
+                registry,
+                "leftover_containers",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("ps exploded"),
+            ),
+            patch.object(app_state.state.sockets, "notify_host_shutdown"),
+            caplog.at_level("CRITICAL"),
+        ):
+            await lc.graceful_shutdown(signal_num=signal_mod.SIGTERM)
+        mock_shutdown.assert_awaited_once()
+        assert any(
+            "could not verify containers are stopped" in r.message
+            and r.levelname == "CRITICAL"
+            for r in caplog.records
+        )
+
+    async def test_drain_phase_failure_does_not_block_exit(
+        self, app_state, caplog
+    ):
+        """An exception escaping the drain phase itself (e.g. the
+        baseline count raising) is logged and the exit proceeds —
+        never a wedged live server (V-222585)."""
+        import signal as signal_mod
+
+        app_state = _make_app_state()
+        lc = app_state.state.lifecycle
+        registry = app_state.state.container_registry
+        with (
+            patch.object(
+                registry,
+                "tracked_container_count",
+                side_effect=RuntimeError("states corrupted"),
+            ),
+            patch.object(
+                app_state.state.sockets, "notify_host_shutdown"
+            ) as mock_notify,
+            caplog.at_level("WARNING"),
+        ):
+            await lc.graceful_shutdown(signal_num=signal_mod.SIGTERM)
+        mock_notify.assert_called_once()
+        assert any("drain phase failed" in r.message for r in caplog.records)
 
     async def test_sighup_ignored_during_shutdown(self, app_state):
         """A HUP racing the shutdown is dropped, not scheduled —
@@ -1616,6 +1804,31 @@ class TestGracefulExitServer:
                         await asyncio.sleep(0)
                     server.handle_exit.assert_called_once_with(15, None)
                     assert lc._shutdown_tasks == set()
+
+    async def test_forced_exit_status_translates_to_systemexit(
+        self, app_state
+    ):
+        """A forced_exit_status set on the lifecycle (failed-recovery
+        path, V-222585) turns the context exit into SystemExit(1)
+        instead of re-raising the captured SIGTERM — death-by-signal
+        (143) reads as a "clean" exit to a Restart=on-failure
+        supervisor, which would leave the node down."""
+        import types as types_mod
+
+        app_state = _make_app_state()
+        app_state.state.lifecycle.forced_exit_status = 1
+        cls = self._server_cls(app_state)
+        server = types_mod.SimpleNamespace(
+            handle_exit=MagicMock(),
+            _captured_signals=[15],  # the self-SIGTERM, captured
+            force_exit=False,
+        )
+        with patch("signal.signal", return_value=MagicMock()):
+            gen = cls.capture_signals(server)
+            with pytest.raises(SystemExit) as excinfo:
+                with gen:
+                    pass
+        assert excinfo.value.code == 1
 
     async def test_hook_exception_logged_and_exit_still_fires(self, app_state):
         """A raising hook is logged by the done-callback (not swallowed
@@ -2187,38 +2400,8 @@ class TestMainEntryCallback2910:
     ):
         """An exception in one lifespan teardown step does not prevent
         the remaining steps from running (V-222585)."""
-        app = FastAPI()
-        app_state = _make_app_state()
-        app.state.container_registry = app_state.state.container_registry
-        app.state.sockets = app_state.state.sockets
-        app.state.settings = app_state.state.settings
-        app.state.ssl_trust = app_state.state.ssl_trust
-        app.state.db = app_state.state.db
-        app.state.model = app_state.state.model
-        app.state.proxy_watchdog = caddy_mod.CaddyWatchdog(app)
-        app.state.consent_sweeper = consent.EgressConsentSweeper(app)
-        app.state.inactivity_sweeper = inactivity.InactivitySweeper(app)
-        app.state.memory_evictor = container.eviction.MemoryPressureEvictor(
-            app
-        )
-        app.state.consent_deciders = consent.ConsentDeciderRegistry(app)
-        app.state.consent_coordinator = consent.ConsentCoordinator(app)
-        app.state.sidecar_connections = sidecar_connections.SidecarConnections(
-            app
-        )
-        app.state.oidc = oidc.OIDC(app)
-        app.state.features = features.Features(app)
-        app.state.hooks = app_state.state.hooks
-        app.state.workspaces = workspaces.Workspaces(app)
-        app.state.email = emailsvc_mod.EmailService(app)
-        app.state.util = util_mod.Util(app)
-        app.state.auth = auth_mod.Auth(app)
-        app.state.lifecycle = app_state.state.lifecycle
-        scheduler_stub = types.SimpleNamespace(
-            start=MagicMock(), stop=AsyncMock()
-        )
-        app.state.server_scheduler = scheduler_stub
-        registry = app_state.state.container_registry
+        app, wired = _lifespan_test_app()
+        registry = wired.state.container_registry
         with (
             patch.object(
                 registry,
@@ -2249,6 +2432,82 @@ class TestMainEntryCallback2910:
                 pass
         mock_shutdown.assert_awaited_once()
         mock_remove.assert_called_once()
+
+    @pytest.mark.parametrize(
+        ("break_step", "expected_exc"),
+        [
+            ("init_db", RuntimeError),
+            ("pid_conflict", SystemExit),
+            ("ssl_trust", RuntimeError),
+            ("logfire", RuntimeError),
+            ("seed", RuntimeError),
+            ("startup", RuntimeError),
+        ],
+    )
+    async def test_pre_yield_startup_failure_never_yields(
+        self, db, app_state, break_step, expected_exc
+    ):
+        """A failure at any pre-``yield`` lifespan step propagates
+        before the yield — the lifespan never starts serving, so
+        uvicorn's ``Server.startup`` marks the exit before creating any
+        listener: nothing is bound and no request is served (V-222585,
+        #3176 acceptance: fail secure on initialization failure)."""
+        app, wired = _lifespan_test_app()
+        registry = wired.state.container_registry
+        breaks = {
+            "init_db": lambda: patch.object(
+                app.state.model,
+                "init_db",
+                AsyncMock(side_effect=RuntimeError("db init failed")),
+            ),
+            "pid_conflict": lambda: patch.object(
+                util_mod.Util, "check_pid_file", return_value=999
+            ),
+            "ssl_trust": lambda: patch.object(
+                app.state.ssl_trust,
+                "apply_backend_ssl_trust",
+                MagicMock(side_effect=RuntimeError("ssl trust failed")),
+            ),
+            "logfire": lambda: patch(
+                "klangk.lifecycle.setup_logfire",
+                MagicMock(side_effect=RuntimeError("logfire failed")),
+            ),
+            "seed": lambda: patch(
+                "klangk.lifecycle.validate_and_seed",
+                AsyncMock(side_effect=RuntimeError("seed failed")),
+            ),
+            "startup": lambda: patch.object(
+                wired.state.lifecycle,
+                "startup",
+                AsyncMock(side_effect=RuntimeError("startup failed")),
+            ),
+        }
+        yielded = False
+        with (
+            patch.object(
+                registry,
+                "reap_instance_containers",
+                new_callable=AsyncMock,
+            ),
+            patch.object(
+                registry,
+                "reap_dead_owner_containers",
+                new_callable=AsyncMock,
+            ),
+            patch.object(registry, "start_cleanup_loop"),
+            patch.object(
+                util_mod.Util,
+                "check_pid_file",
+                return_value=None if break_step != "pid_conflict" else 999,
+            ),
+            patch.object(util_mod.Util, "write_pid_file"),
+            patch.object(util_mod.Util, "remove_pid_file"),
+            breaks[break_step](),
+        ):
+            with pytest.raises(expected_exc):
+                async with main.lifespan(app):
+                    yielded = True
+        assert not yielded
 
     async def test_recycle_runtime_runs_shutdown_then_startup(self, app_state):
         app_state = _make_app_state()
@@ -3102,6 +3361,7 @@ class TestMainEntryCallback2910:
             for _ in range(10):
                 await asyncio.sleep(0)
         mock_kill.assert_called_once_with(os.getpid(), signal.SIGTERM)
+        assert lc.forced_exit_status == 1
         assert any("recovery failed" in r.message for r in caplog.records)
 
     async def test_cancelled_restart_task_logs_quietly(self, app_state):
