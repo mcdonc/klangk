@@ -36,6 +36,7 @@ nav = [
     { "SSH Agent Forwarding" = "features/ssh-agent-forwarding.md" },
     { "GitHub HTTPS Authentication" = "features/github-authentication.md" },
     { "Debug Panel" = "features/debug-panel.md" },
+    { "Logging" = "features/logging.md" },
     { "Workspace Admission" = "features/admission.md" },
     { "Crash Recovery" = "features/crash-recovery.md" },
     { "Server Scheduling" = "features/server-scheduling.md" },
