@@ -467,8 +467,10 @@ def backend_env() -> dict:
     env = {k: v for k, v in os.environ.items() if not k.startswith("KLANGKD_")}
     # TEMP #3237 diagnostics: sidecar forged-RST debug lines (#2345)
     env["KLANGKNETWORK_EGRESS_DEBUG_RST"] = "1"
-    if Path("/usr/bin/podman").exists():
-        env["KLANGKD_PODMAN_BIN"] = "/usr/bin/podman"
+    # TEMP #3237 experiment: use the devenv (nix) podman like the backend
+    # e2e stack does, NOT the system podman — testing whether the
+    # deny-path RST delivery differs between podman builds on the stock
+    # runner (the backend e2e's nix-podman stack refuses fast there).
     return env
 
 
