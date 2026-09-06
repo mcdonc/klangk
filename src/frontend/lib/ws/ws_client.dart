@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:http/http.dart' as http;
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart' show baseUrl;
@@ -164,8 +165,54 @@ class WsClient extends ChangeNotifier {
   void connectForTest(WebSocketChannel channel) {
     _channel = channel;
     _connected = true;
-    notifyListeners();
+    _notify();
     _listenToChannel();
+  }
+
+  /// Notify listeners, deferred past the current frame when one is
+  /// mid-build. WS messages arrive as DOM events, and the web engine
+  /// splits a frame across tasks — a message landing between them
+  /// fires this from a handler while a route is building, and the
+  /// resulting mid-frame mark trips "setState() called during build"
+  /// (the debug error monitor surfaces it; the release-mode equivalent
+  /// silently drops the UI update). No binding (plain unit tests) or
+  /// an idle scheduler notifies immediately — ordinary event-driven
+  /// updates keep their timing.
+  /// The scheduler binding, or null when none is initialized (plain
+  /// unit tests construct WsClient with no binding; the uninitialized
+  /// getter throws under asserts — that case notifies synchronously).
+  SchedulerBinding? _scheduler() {
+    try {
+      return SchedulerBinding.instance;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Notify listeners, deferred past the frame only while one is in
+  /// the persistent-callbacks phase (build/layout/paint — where a
+  /// mark is illegal). WS messages arrive as DOM events, and the web
+  /// engine splits a frame across tasks — a message landing inside the
+  /// draw-frame task fires this from a handler mid-build, tripping
+  /// "setState() called during build" (the debug error monitor
+  /// surfaces it; the release-mode equivalent silently drops the UI
+  /// update). Every other phase (idle, animations, frame microtasks)
+  /// allows marking, so those notify immediately and keep their timing.
+  /// Set in dispose(): a deferred _notify (post-frame) must not fire
+  /// on a disposed notifier — the client can be torn down between the
+  /// mid-frame notify attempt and the frame's end.
+  bool _disposed = false;
+
+  void _notify() {
+    final binding = _scheduler();
+    if (binding == null ||
+        binding.schedulerPhase != SchedulerPhase.persistentCallbacks) {
+      notifyListeners();
+      return;
+    }
+    binding.addPostFrameCallback((_) {
+      if (!_disposed) notifyListeners();
+    });
   }
 
   final _errorController = StreamController<WsError>.broadcast();
@@ -407,7 +454,7 @@ class WsClient extends ChangeNotifier {
     _removeBeforeUnload = onBeforeUnload(() {
       _channel?.sink.close(1000, 'page unload'); // coverage:ignore-line
     });
-    notifyListeners();
+    _notify();
     _listenToChannel();
   }
 
@@ -443,7 +490,7 @@ class WsClient extends ChangeNotifier {
               .toList()
           : <Map<String, dynamic>>[];
       _serverScheduleController.add(_serverSchedules!);
-      notifyListeners();
+      _notify();
     },
     'server_schedule_fired': (json) {
       final action = json['action'] as String? ?? 'action';
@@ -485,7 +532,7 @@ class WsClient extends ChangeNotifier {
     if (_hostNotice == notice) return;
     _hostNotice = notice;
     if (notice != null) _hostNoticeController.add(notice);
-    notifyListeners();
+    _notify();
   }
 
   void _listenToChannel() {
@@ -545,7 +592,7 @@ class WsClient extends ChangeNotifier {
           _reconnecting = false;
           _reconnectAttempt = 0;
         }
-        notifyListeners();
+        _notify();
         if (authFailure) {
           _errorController.add(
             const WsError(message: 'Session expired, please log in again'),
@@ -579,7 +626,7 @@ class WsClient extends ChangeNotifier {
           _reconnecting = false;
           _reconnectAttempt = 0;
         }
-        notifyListeners();
+        _notify();
         if (authFailure) {
           _auth?.logout();
         } else {
@@ -605,25 +652,25 @@ class WsClient extends ChangeNotifier {
     // the equality guard).
     _hostNotice = null;
     _startHeartbeat();
-    notifyListeners();
+    _notify();
   }
 
   void _onTerminalWindows(Map<String, dynamic> json) {
     debugPrint('[WsClient] terminal_windows received: ${DateTime.now()}');
     final windows = json['windows'] as List? ?? [];
     terminalWindows = List<Map<String, dynamic>>.from(windows);
-    notifyListeners();
+    _notify();
   }
 
   void _onSharedTerminals(Map<String, dynamic> json) {
     final terminals = json['terminals'] as List? ?? [];
     sharedTerminals = List<Map<String, dynamic>>.from(terminals);
-    notifyListeners();
+    _notify();
   }
 
   void _onSharedTerminalDeleted(Map<String, dynamic> json) {
     _sharedTerminalDeletedController.add(json);
-    notifyListeners();
+    _notify();
   }
 
   void disconnect() {
@@ -640,7 +687,7 @@ class WsClient extends ChangeNotifier {
     _currentWorkspaceId = null;
     _containerReady = false; // see [containerReady] (#3000)
     _serverSchedules = null;
-    notifyListeners();
+    _notify();
   }
 
   void _send(Map<String, dynamic> msg) {
@@ -675,7 +722,7 @@ class WsClient extends ChangeNotifier {
     _containerReady = false; // see [#containerReady] (#3000)
     _send({'cmd': 'workspace_disconnect'});
     _currentWorkspaceId = null;
-    notifyListeners();
+    _notify();
   }
 
   void sendUiReady() {
@@ -795,12 +842,12 @@ class WsClient extends ChangeNotifier {
     if (_reconnectAttempt > 25) {
       _autoReconnect = false;
       _reconnecting = false;
-      notifyListeners();
+      _notify();
       return;
     }
 
     _reconnecting = true;
-    notifyListeners();
+    _notify();
     // coverage:ignore-start
     final delay = testBackoffOverride != null
         ? testBackoffOverride!(_reconnectAttempt)
@@ -854,7 +901,9 @@ class WsClient extends ChangeNotifier {
   }
 
   @override
+  @override
   void dispose() {
+    _disposed = true;
     _cancelReconnect();
     disconnect();
     _errorController.close();

@@ -533,6 +533,13 @@ class UsersModel(Submodel):
         Runs on the **caller's** transaction so it composes with a follow-up
         verification-email send (see the module-level docstring). Returns
         the generated handle.
+
+        #2569 parity with ``create_user``: the new user joins the
+        ``members`` group on the same transaction — the self-service
+        ``create-workspace`` grant is the members group's (#3137), and
+        both callers (self-registration and the admin invite) used to
+        skip the join ``create_user`` does, leaving such users unable
+        to create workspaces.
         """
         handle = await self.generate_handle(db, email)
         await db.execute(
@@ -540,6 +547,13 @@ class UsersModel(Submodel):
             " VALUES (?, ?, ?, 0, ?)",
             (user_id, email, password_hash, handle),
         )
+        members_gid = getattr(self.app.state, "members_group_id", None)
+        if members_gid:
+            await db.execute(
+                "INSERT OR IGNORE INTO user_groups (user_id, group_id,"
+                " source) VALUES (?, ?, 'manual')",
+                (user_id, members_gid),
+            )
         return handle
 
     async def get_user_handle(self, user_id: str) -> str | None:

@@ -718,6 +718,34 @@ class FlutterRun:
             self.log_path.read_text(errors="replace").splitlines()[-lines:]
         )
 
+    def stop_chrome(self) -> None:
+        """Close the Chrome window(s) this run opened — even when the
+        app beneath is wedged. Matched on the proxy-origin URL the
+        fmtk-chrome.sh wrapper rewrites into Chrome's command line,
+        plus the run's remote-debugging port; TERM, grace, KILL."""
+        patterns = [f"[c]hrome.*127.0.0.1:{PROXY_PORT}"]
+        cdp = self.cdp_port()
+        if cdp:
+            patterns.append(f"[c]hrome.*remote-debugging-port={cdp}")
+        pids = {pid for pattern in patterns for pid in pids_matching(pattern)}
+        for pid in pids:
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and pids:
+            live = {pid for pattern in patterns for pid in pids_matching(pattern)}
+            pids &= live
+            if not pids:
+                return
+            time.sleep(0.5)
+        for pid in pids:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
     def cdp_port(self) -> str:
         out = subprocess.run(
             ["pgrep", "-af", "chrome"], capture_output=True, text=True
@@ -728,6 +756,10 @@ class FlutterRun:
         return ""
 
     def stop(self) -> None:
+        # Close the browser window FIRST: a wedged app (dead isolate,
+        # hung boot) can keep flutter run from tearing its Chrome down,
+        # and a leftover window outlives every failure mode below.
+        self.stop_chrome()
         if self.proc and self.proc.poll() is None:
             os.killpg(self.proc.pid, signal.SIGTERM)
             try:
@@ -1050,6 +1082,23 @@ class FmtkClient:
             node = parents.get(id(node))
         raise FmtkError(f"no tappable node above label {label!r}")
 
+    def tap_button_exact(self, label: str) -> None:
+        """Tap the button whose labels carry ``label`` as a whole line.
+
+        Button semantics absorb Semantics-wrapper identifiers (only
+        text fields keep them), and substring matching collides with
+        siblings ('Restart' vs 'Restart now', 'Shut Down' vs 'Shut Down
+        Container') — exact-line matching is the deterministic form.
+        """
+        hits = [
+            node
+            for node in find_nodes(self.snapshot(), lambda n: node_type(n) == "button")
+            if label_has_line(node, label)
+        ]
+        if not hits:
+            raise FmtkError(f"no button labeled {label!r}")
+        self.tap(hits[0]["ref"])
+
     def wait_for_label(self, text: str, timeout: float = 30) -> dict:
         """Block until some node's label fields carry ``text``.
 
@@ -1092,12 +1141,17 @@ class FmtkClient:
         raise HarnessTimeout(f"identifier {identifier!r} never left the tree")
 
     def scroll_until_label(self, text: str, timeout: float = 60) -> None:
-        """Scroll down until ``text`` is labeled anywhere in the tree —
-        long forms (the settings panel's Danger Zone) keep their target
-        below the fold."""
+        """Scroll down until ``text`` is labeled by a node IN the
+        viewport — the snapshot lists off-screen nodes too, so a bare
+        label match can leave the target untappable."""
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            if find_label_nodes(self.snapshot(), text):
+            visible = [
+                node
+                for node in find_label_nodes(self.snapshot(), text)
+                if node.get("visibleInViewport")
+            ]
+            if visible:
                 return
             self.exec("scroll", {"direction": "down", "distance": 600})
             time.sleep(0.5)
@@ -1253,14 +1307,16 @@ class FmtkClient:
         return str(result)
 
     def terminal_send(self, text: str) -> str:
-        """Type AND execute raw input in the focused terminal."""
+        """Type AND execute raw input in the focused terminal. The body
+        is a bare statement — the trailing semicolon is required (the
+        evaluator does not append one)."""
         escaped = (
             text.replace("\\", "\\\\")
             .replace("$", "\\$")  # $ interpolates in the Dart literal
             .replace("'", "\\'")
             .replace("\n", "\\n")
         )
-        return self.terminal_eval(f"st!._terminal.sendText('{escaped}')")
+        return self.terminal_eval(f"st!._terminal.sendText('{escaped}');")
 
     def terminal_buffer(self) -> str:
         """The visible terminal buffer (plain, unwrapped, trimmed)."""
@@ -1275,6 +1331,15 @@ def node_labels(node: dict) -> list[str]:
     """Every human-string field a snapshot node may carry."""
     keys = ("label", "text", "value", "name", "title", "tooltip", "hint")
     return [str(node[k]) for k in keys if node.get(k)]
+
+
+def label_has_line(node: dict, text: str) -> bool:
+    """The node's labels carry ``text`` as a whole line (merged
+    semantics join labels with newlines — line equality stays exact)."""
+    for entry in node_labels(node):
+        if any(line == text for line in entry.split("\n")):
+            return True
+    return False
 
 
 def find_label_nodes(tree, text: str, exact: bool = False) -> list[dict]:

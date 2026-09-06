@@ -872,31 +872,25 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
           ? Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                // Identified for the fmtk e2e driver — FAB semantics
-                // never merge child labels, so labels alone cannot
-                // address them (the invite-fab pattern, #3233).
-                Semantics(
-                  container: true,
-                  identifier: 'import-workspace-fab',
-                  child: FloatingActionButton.small(
-                    heroTag: 'import',
-                    onPressed: _showImportDialog,
-                    tooltip: 'Import Workspace',
-                    child: const Icon(Icons.upload, semanticLabel: 'Import'),
-                  ),
+                // The icon semanticLabels surface as the FAB buttons'
+                // labels ('Import' / 'Create workspace') — enough for the
+                // fmtk driver. FloatingActionButton semantics never merge
+                // Semantics wrappers (identifiers do not survive), so
+                // wrapping adds nothing.
+                FloatingActionButton.small(
+                  heroTag: 'import',
+                  onPressed: _showImportDialog,
+                  tooltip: 'Import Workspace',
+                  child: const Icon(Icons.upload, semanticLabel: 'Import'),
                 ),
                 const SizedBox(height: 12),
-                Semantics(
-                  container: true,
-                  identifier: 'create-workspace-fab',
-                  child: FloatingActionButton(
-                    heroTag: 'create',
-                    onPressed: _createWorkspace,
-                    tooltip: 'New Workspace',
-                    child: const Icon(
-                      Icons.add,
-                      semanticLabel: 'Create workspace',
-                    ),
+                FloatingActionButton(
+                  heroTag: 'create',
+                  onPressed: _createWorkspace,
+                  tooltip: 'New Workspace',
+                  child: const Icon(
+                    Icons.add,
+                    semanticLabel: 'Create workspace',
                   ),
                 ),
               ],

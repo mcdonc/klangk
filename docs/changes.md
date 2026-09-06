@@ -3715,3 +3715,20 @@ users(id)`, so the decider handler passing the decider's email violated the
   app-bar Admin and Logout icons, the admin page's tab strip, and the
   workspace-list FABs now expose semantic labels, so assistive tech
   announces them by name instead of "button".
+
+- **Self-registered and invited users can create workspaces again
+  (#3234).** Both the self-registration and the admin-invite paths insert
+  their user rows without the `members`-group join that admin-created
+  users get, so such users held no `create-workspace` grant (the stock
+  self-service posture) and saw no create button. Both paths now join
+  `members` on creation, like every other user-creation route.
+
+- **Workspace-page dialogs no longer trip "setState() called during
+  build" (#3234).** A WebSocket event (container started or stopped,
+  workspace list changed) could arrive while a dialog route was
+  mid-build on the web client, marking the `WsClient` provider scope
+  mid-frame — a debug assertion, and in release mode a silently dropped
+  UI update for that event. `WsClient` now defers its listener
+  notification past the frame whenever one is in its build/layout/paint
+  phase; every other phase still notifies immediately. Found by the new
+  fmtk workspace-lifecycle suite.

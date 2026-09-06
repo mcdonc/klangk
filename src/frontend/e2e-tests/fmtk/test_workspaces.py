@@ -101,8 +101,10 @@ def register_fresh_user(harness, app) -> None:
 def create_workspace(app, name: str, idle: str | None = None) -> None:
     """Create via the create FAB + dialog (``idle`` fills the Idle
     Timeout field); the dialog closing and the name listing are the
-    assertions."""
-    app.tap_identifier("create-workspace-fab")
+    assertions. The FAB is tapped by its surfaced icon label — FAB
+    semantics swallow Semantics-wrapper identifiers, and the label
+    ('Create workspace') is unique among buttons on the page."""
+    app.tap_label("Create workspace")
     app.wait_for_text("New Workspace")
     app.enter_text_identifier("create-workspace-name", name)
     if idle is not None:
@@ -136,7 +138,7 @@ def terminal_marker(app, marker: str, timeout: float = 150) -> None:
             return
         if "NO-TERMINAL-STATE" in buffer:
             app.tap_labeled_exact("Terminal")
-        app.terminal_send(f"echo {marker}")
+        app.terminal_send(f"echo {marker}\n")
         time.sleep(3)
     raise AssertionError(f"terminal never echoed {marker!r}")
 
@@ -150,12 +152,13 @@ def own_workspace_id(harness, email: str, password: str, name: str) -> int:
 
 def delete_from_list(app, name: str) -> None:
     """Delete via the tile's trailing button + confirm dialog; the name
-    leaving the list is the assertion."""
+    leaving the list is the assertion. Buttons are addressed by exact
+    label — wrapper identifiers do not survive on buttons."""
     app.navigate("/workspaces")
     app.wait_for_text(name)
     app.tap_label(f"Delete {name}")
-    app.wait_for_identifier("workspace-delete-confirm")
-    app.tap_identifier("workspace-delete-confirm")
+    app.wait_for_text("This will delete the workspace")
+    app.tap_button_exact("Delete")
     app.wait_gone(name)
 
 
@@ -209,19 +212,34 @@ def test_open_workspace_terminal_works(harness, app):
     app.wait_for_label("Workspace status: running")
 
 
+def open_settings_pane(app) -> None:
+    """Switch to the Settings tab and wait for its first section. A
+    tab tap can race a concurrent WS-driven rebuild (container events
+    land while the workspace page is settling) — re-tap until the pane
+    actually mounts (selecting an already-selected tab is a no-op)."""
+    deadline = time.monotonic() + 45
+    while time.monotonic() < deadline:
+        app.tap_labeled_exact("Settings")
+        try:
+            app.wait_for_label("General", 5)
+            return
+        except FmtkError:
+            continue
+    raise FmtkError("Settings pane never mounted")
+
+
 def test_stop_and_restart_from_overlay(harness, app):
     open_workspace(app, LIFE_WS)
     # stop: Settings -> Danger Zone -> Shut Down Container -> confirm
-    app.tap_labeled_exact("Settings")
-    app.wait_for_label("General")
+    open_settings_pane(app)
     app.scroll_until_label("Shut Down Container")
-    app.tap_identifier("shutdown-container")
-    app.wait_for_identifier("shutdown-confirm")
-    app.tap_identifier("shutdown-confirm")
+    app.tap_button_exact("Shut Down Container")
+    app.wait_for_text("end all terminal sessions")
+    app.tap_button_exact("Shut Down")
     app.wait_for_identifier("container-stopped-overlay", 60)
     # start again from the overlay: spinner, then container_ready clears
     # it and the workspace is usable again (the stop -> start cycle)
-    app.tap_identifier("container-restart-button")
+    app.tap_button_exact("Restart")
     app.wait_identifier_gone("container-stopped-overlay", 120)
     terminal_marker(app, f"RST{RUN}")
     app.navigate("/workspaces")
@@ -230,8 +248,7 @@ def test_stop_and_restart_from_overlay(harness, app):
 
 def test_settings_edit_restarts_via_notice(harness, app):
     open_workspace(app, LIFE_WS)
-    app.tap_labeled_exact("Settings")
-    app.wait_for_label("General")
+    open_settings_pane(app)
     app.scroll_until_label("Idle Timeout (s)")
     app.enter_text_identifier("settings-idle-timeout", "0")
     app.scroll_until_label("Save")
@@ -267,9 +284,11 @@ def test_import_from_archive(harness, app):
             ),
         },
     )
-    app.tap_identifier("import-workspace-fab")
+    app.tap_label("Import")  # the import FAB (label-unique on the page)
     app.wait_for_text("Import Workspace")
-    app.tap_identifier("import-select-file")
+    # button semantics absorb wrapper identifiers (only text fields keep
+    # them) — address the picker and the submit by their exact labels
+    app.tap_button_exact("Select .tar.gz file")
     app.wait_for_text("workspace.tar.gz")  # the picked file rendered
     app.enter_text_identifier("import-workspace-name", IMP_WS)
     app.tap_label("Import")
@@ -282,9 +301,13 @@ def test_import_from_archive(harness, app):
 
 
 def test_per_user_home_roots_file_browser(harness, app):
-    original = harness.config.get("per_handle_home", False)
-    harness.backend.swap_settings({"per_handle_home": True}, apply="sighup")
-    harness.backend.wait_config_value("per_handle_home_available", True)
+    # Always restore the stock shared-home posture (False) rather than a
+    # captured original: earlier failed runs can leave a polluted yaml,
+    # and "restoring" to that would carry the pollution forward forever.
+    harness.backend.swap_settings(
+        {"per_handle_home": True}, apply="sighup", verify=False
+    )
+    harness.backend.wait_config_value("default_per_handle_home", True)
     try:
         at_login(harness, app)
         login_fresh(app)
@@ -304,8 +327,24 @@ def test_per_user_home_roots_file_browser(harness, app):
         delete_from_list(app, HOME_WS)
         app.logout()
     finally:
-        harness.backend.swap_settings({"per_handle_home": original}, apply="sighup")
-        harness.backend.wait_config_value("per_handle_home_available", False)
+        harness.backend.swap_settings(
+            {"per_handle_home": False}, apply="sighup", verify=False
+        )
+        harness.backend.wait_config_value("default_per_handle_home", False)
+
+
+def wait_default_image(harness, image: str, timeout: float = 30) -> None:
+    """Block until /api/v1/images carries ``image`` as the default — a
+    SIGHUP reload completes asynchronously and /config does not expose
+    image_name, so the picker endpoint is the gate."""
+    token = http_login(harness.backend.url, ADMIN_EMAIL, FIXTURE_PASSWORD)
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        status, images = http_api(harness.backend.url, token, "GET", "/api/v1/images")
+        if status == 200 and images.get("default") == image:
+            return
+        time.sleep(1)
+    raise AssertionError(f"default image never became {image!r}")
 
 
 def test_swapped_default_image_picked_up(harness, app):
@@ -314,13 +353,10 @@ def test_swapped_default_image_picked_up(harness, app):
         {"image_name": SWAP_IMAGE}, apply="sighup", verify=False
     )
     try:
-        # /config does not expose image_name — the picker endpoint does
-        token = http_login(harness.backend.url, ADMIN_EMAIL, FIXTURE_PASSWORD)
-        status, images = http_api(harness.backend.url, token, "GET", "/api/v1/images")
-        assert status == 200 and images["default"] == SWAP_IMAGE, images
+        wait_default_image(harness, SWAP_IMAGE)
         at_login(harness, app)
         app.login(ADMIN_EMAIL, FIXTURE_PASSWORD, expect_text="fmtk-verify")
-        app.tap_identifier("create-workspace-fab")
+        app.tap_label("Create workspace")
         app.wait_for_text("New Workspace")
         # the dialog preselects the swapped default; a workspace created
         # from this form resolves to it at start

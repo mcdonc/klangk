@@ -210,6 +210,7 @@ def test_workspace_suite_extensions():
         harness,
         (
             "def tap_labeled_exact",
+            "def tap_button_exact",
             "def wait_for_label",
             "def wait_for_identifier",
             "def wait_identifier_gone",
@@ -225,12 +226,12 @@ def test_workspace_suite_extensions():
     assert_wired(
         suite.read_text(),
         (
-            "create-workspace-fab",
-            "import-workspace-fab",
+            'tap_label("Create workspace")',
+            'tap_label("Import")',
+            "tap_button_exact",
             "testPickFileBytesOverride",
             "per_handle_home",
             "container-stopped-overlay",
-            "workspace-delete-confirm",
             "file-browser-path",
         ),
         "the workspace suite (#3234) must drive the instrumented UI",
