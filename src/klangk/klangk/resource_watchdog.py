@@ -11,9 +11,11 @@ surfaces, one poll loop:
   crossing the warn / critical thresholds emits
   ``resource.disk.warn`` / ``resource.disk.critical`` for the admin
   notifier; falling back below the recovery floor emits
-  ``resource.disk.recovered``. Events fire on state transitions only,
-  with a hysteresis band below the warn threshold, so usage hovering
-  at a boundary produces one alert per episode, not one per poll.
+  ``resource.disk.recovered``. Events fire on state transitions,
+  with hysteresis bands below both thresholds, so usage hovering at
+  a boundary produces one alert per episode, not one per poll — and
+  a still-degraded filesystem refreshes its alert once per throttle
+  window, so a swallowed transition dispatch is late, never lost.
 - **Audit pipeline degradation** (SV-222484 rule 97) — the
   audit-write-failure counters the write sites bump
   (``container_events`` on the container registry, ``audit_events``
@@ -33,8 +35,9 @@ re-arms the loop without a restart.
 import asyncio
 import logging
 import os
+import time
 
-from .notifier import notify_event
+from .notifier import THROTTLE_SECONDS, notify_event
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +59,17 @@ RECOVERED_EVENT = "resource.disk.recovered"
 # hysteresis band that keeps usage hovering at a boundary from
 # flapping events every poll.
 RECOVERY_GAP_PERCENT = 5.0
+
+# A persisting warn/critical state re-notifies at most this often — the
+# same window the notifier throttles delivery to, so a still-degraded
+# filesystem refreshes its alert once per window instead of relying
+# solely on the edge transition (whose single dispatch the throttle
+# can swallow).
+REFRESH_SECONDS = THROTTLE_SECONDS["resource.disk.critical"]
+
+# After a failed storage-root query, wait this long before retrying
+# (one ``podman info`` subprocess per cooldown, not per poll).
+GRAPH_ROOT_RETRY_SECONDS = 300.0
 
 # Floor for the poll interval so a misconfigured tiny value cannot
 # spin the loop hot (mirrors the eviction loop's floor).
@@ -80,25 +94,54 @@ def usage_percent(path: str) -> float:
 
 
 def classify(
-    usage: float, state: str, warn: float, critical: float, floor: float
+    usage: float,
+    state: str,
+    warn: float,
+    critical: float,
+    floor: float,
+    critical_floor: float,
 ) -> str:
     """The threshold state for one usage reading (percent used).
 
-    Entering ``warn`` / ``critical`` is immediate. Recovery to ``ok``
-    requires usage at or below *floor*; a reading between floor and
-    warn keeps the current state, so a boundary-hovering usage level
-    cannot flap events every poll — a degraded filesystem reports
-    ``ok`` only after genuinely recovering, not from an intermediate
-    dip. A reading between the thresholds eases ``critical`` to
-    ``warn`` (a real improvement, reported as such).
+    Entering ``warn`` / ``critical`` is immediate. Recovery has
+    hysteresis on both edges: a ``critical`` filesystem eases to
+    ``warn`` only at or below *critical_floor*, and any degraded
+    state reports ``ok`` only at or below *floor* (warn's band). A
+    reading inside either band keeps the current state, so usage
+    hovering at either boundary cannot flap events every poll — a
+    degraded filesystem reports ``ok`` only after genuinely
+    recovering, not from an intermediate dip.
     """
     if usage >= critical:
         return CRITICAL
+    if state == CRITICAL and usage > critical_floor:
+        return CRITICAL
+    return classify_below_critical(usage, state, warn, floor)
+
+
+def classify_below_critical(
+    usage: float, state: str, warn: float, floor: float
+) -> str:
+    """The warn-side classification (usage below the critical
+    threshold): warn at or above *warn*, ok at or below *floor*, the
+    current state inside the hysteresis band."""
     if usage >= warn:
         return WARN
     if usage <= floor:
         return OK
     return state
+
+
+def dedup_filesystems(
+    entries: list[tuple[int, str, float]],
+) -> list[tuple[int, str, float]]:
+    """Keep the first entry per device — several paths on one
+    filesystem are one monitored filesystem."""
+    filesystems: dict[int, tuple[int, str, float]] = {}
+    for entry in entries:
+        if entry[0] not in filesystems:
+            filesystems[entry[0]] = entry
+    return list(filesystems.values())
 
 
 class ResourceWatchdog:
@@ -111,25 +154,34 @@ class ResourceWatchdog:
     def __init__(self, app) -> None:
         self.app = app
         self._task: asyncio.Task | None = None
-        # st_dev -> threshold state (deduplicated by device).
+        # st_dev -> threshold state (deduplicated by device) / the
+        # monotonic clock of the last event dispatch (transitions and
+        # persistence refreshes both stamp it).
         self._states: dict[int, str] = {}
+        self._emitted_at: dict[int, float] = {}
         # audit table -> last-seen failure count / alerted-this-episode.
         self._audit_counts: dict[str, int] = {}
         self._audit_alerted: dict[str, bool] = {}
         # Paths warned about as unmeasurable (re-armed on recovery).
         self._warned_paths: set[str] = set()
         # Podman container-storage root, resolved once and cached
-        # (podman info is too slow to run every poll).
+        # (podman info is too slow to run every poll); a failed query
+        # retries after a cooldown.
         self._graph_root: str | None = None
-        self._graph_root_failed = False
+        self._graph_root_retry_at = 0.0
 
     def reconfigure(self, app) -> None:
         """Swap the app reference (SIGHUP reload). Clears the cached
-        container-storage root so a changed podman configuration
-        re-resolves."""
+        container-storage root (so a changed podman configuration
+        re-resolves immediately), the unmeasurable-path warnings, and
+        the disk states — the next cycle re-evaluates every filesystem
+        against the new thresholds from ``ok``."""
         self.app = app
         self._graph_root = None
-        self._graph_root_failed = False
+        self._graph_root_retry_at = 0.0
+        self._states.clear()
+        self._emitted_at.clear()
+        self._warned_paths.clear()
 
     # --- settings (read live) ---
 
@@ -147,8 +199,16 @@ class ResourceWatchdog:
 
     @property
     def _floor(self) -> float:
-        """Recovery floor: usage at or below this reports recovered."""
-        return self._warn_percent - RECOVERY_GAP_PERCENT
+        """Recovery floor: usage at or below this reports recovered.
+        Clamped at 0 — a warn threshold below the gap must not make
+        recovery unreachable (usage can never go negative)."""
+        return max(0.0, self._warn_percent - RECOVERY_GAP_PERCENT)
+
+    @property
+    def _critical_floor(self) -> float:
+        """The critical→warn easing floor (same gap, clamped at 0 —
+        usage can never go negative)."""
+        return max(0.0, self._critical_percent - RECOVERY_GAP_PERCENT)
 
     @property
     def _poll_interval(self) -> float:
@@ -234,6 +294,7 @@ class ResourceWatchdog:
         kept — degradation that happened while disabled is detected on
         the next growth after re-enabling."""
         self._states.clear()
+        self._emitted_at.clear()
         self._audit_alerted.clear()
 
     async def sweep(self) -> None:
@@ -270,21 +331,22 @@ class ResourceWatchdog:
 
         Monitored: the data directory (the audit records storage), any
         ``disk_watchdog_paths`` entries, and the podman
-        container-storage root (resolved once, cached). Deduplicated by
-        device — several paths on one filesystem are one monitored
-        filesystem, reported under the first path (the data directory
-        wins over the storage root when they share a filesystem).
+        container-storage root. The configured paths are measured
+        first (synchronous statvfs — the startup sweep answers for the
+        data directory without waiting on the storage-root query), the
+        root last. Deduplicated by device — several paths on one
+        filesystem are one monitored filesystem, reported under the
+        first path (the data directory wins over the storage root when
+        they share a filesystem).
         """
         paths = [self.app.state.settings.data_dir, *self._extra_paths]
+        entries = [e for e in map(self._measure, paths) if e is not None]
         root = await self.resolve_graph_root()
         if root:
-            paths.append(root)
-        filesystems: dict[int, tuple[int, str, float]] = {}
-        for path in paths:
-            entry = self._measure(path)
-            if entry is not None and entry[0] not in filesystems:
-                filesystems[entry[0]] = entry
-        return list(filesystems.values())
+            entry = self._measure(root)
+            if entry is not None:
+                entries.append(entry)
+        return dedup_filesystems(entries)
 
     def _measure(self, path: str) -> tuple[int, str, float] | None:
         """``(device, path, usage%)`` for one path; None when the path
@@ -307,7 +369,9 @@ class ResourceWatchdog:
         return device, path, usage
 
     def step_filesystem(self, device: int, path: str, usage: float) -> None:
-        """One threshold evaluation; emits only on a state transition."""
+        """One threshold evaluation; emits on a state transition, and
+        — while a degraded state persists — once per refresh window
+        (see :meth:`refresh_due`)."""
         state = self._states.get(device, OK)
         new = classify(
             usage,
@@ -315,13 +379,30 @@ class ResourceWatchdog:
             self._warn_percent,
             self._critical_percent,
             self._floor,
+            self._critical_floor,
         )
         self._states[device] = new
-        if new != state:
+        if new != state or self.refresh_due(device, new):
+            self._emitted_at[device] = time.monotonic()
             self.emit_disk_event(new, path, usage)
 
+    def refresh_due(self, device: int, state: str) -> bool:
+        """True when a persisting degraded state should re-notify.
+
+        Transitions are edge-triggered and the notifier throttles
+        delivery with a stamp-at-dispatch window — a transition whose
+        dispatch fell inside another episode's window is swallowed
+        with no retry. A still-degraded filesystem therefore refreshes
+        its alert once per window, so the worst case is a late alert,
+        never a permanently lost one.
+        """
+        if state == OK:
+            return False
+        last = self._emitted_at.get(device, 0.0)
+        return time.monotonic() - last >= REFRESH_SECONDS
+
     def emit_disk_event(self, state: str, path: str, usage: float) -> None:
-        """Notify + log one disk state transition (#3250 fan-out)."""
+        """Notify + log one disk event (transition or refresh)."""
         event = EVENT_BY_STATE.get(state, RECOVERED_EVENT)
         level = logging.INFO if state == OK else logging.WARNING
         logger.log(
@@ -348,28 +429,39 @@ class ResourceWatchdog:
     async def resolve_graph_root(self) -> str | None:
         """The podman container-storage root, resolved once and cached.
 
-        One ``podman info`` subprocess per process lifetime (re-tried
-        after a settings reload — reconfigure clears the cache). An
-        unresolvable root (no podman state, a remote machine whose
-        storage path does not exist on this host, a failed query) is
-        logged once and means the configured paths alone are
-        monitored."""
-        if self._graph_root or self._graph_root_failed:
+        One ``podman info`` subprocess per success (cached for the
+        process lifetime; re-resolved after a settings reload —
+        reconfigure clears the cache). A failed query (no podman
+        state, a remote machine whose storage path does not exist on
+        this host, a transient podman startup race) starts a cooldown:
+        the configured paths alone are monitored until the next retry
+        one :data:`GRAPH_ROOT_RETRY_SECONDS` later — never a permanent
+        degradation from one transient failure.
+        """
+        if self._graph_root:
             return self._graph_root
+        if time.monotonic() < self._graph_root_retry_at:
+            return None
         podman = getattr(self.app.state, "podman", None)
         if podman is None:
-            self._graph_root_failed = True
+            self._defer_graph_root_retry()
             return None
         root = await self._query_graph_root(podman)
         if root is None:
-            self._graph_root_failed = True
+            self._defer_graph_root_retry()
             logger.info(
                 "Resource watchdog: podman storage root unavailable; "
-                "monitoring the configured paths only"
+                "monitoring the configured paths only (retrying in "
+                "%ds)",
+                int(GRAPH_ROOT_RETRY_SECONDS),
             )
             return None
         self._graph_root = root
         return root
+
+    def _defer_graph_root_retry(self) -> None:
+        """Schedule the next storage-root query one cooldown out."""
+        self._graph_root_retry_at = time.monotonic() + GRAPH_ROOT_RETRY_SECONDS
 
     async def _query_graph_root(self, podman) -> str | None:
         """One ``podman info`` query for the storage root; None on any
@@ -406,10 +498,10 @@ class ResourceWatchdog:
 
     def step_audit(self, table: str, count: int) -> None:
         """Edge-detect counter growth. The first poll is a baseline;
-        new failures in a later window emit one ``audit.failure`` (the
-        notifier throttles per table, shared with the write sites'
-        own events); continued growth stays quiet until a clean window
-        re-arms detection."""
+        failures new since the last check emit one ``audit.failure``
+        (the notifier throttles per table, shared with the write
+        sites' own events); continued growth stays quiet until a
+        clean window re-arms detection."""
         previous = self._audit_counts.get(table)
         self._audit_counts[table] = count
         grew = previous is not None and count > previous
@@ -421,7 +513,7 @@ class ResourceWatchdog:
         self._audit_alerted[table] = True
         logger.warning(
             "Audit pipeline degradation: %d new %s write failure(s) "
-            "this window (%d total)",
+            "since the last check (%d total)",
             count - previous,
             table,
             count,

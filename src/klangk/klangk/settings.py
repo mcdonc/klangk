@@ -1413,12 +1413,17 @@ class KlangkSettings(BaseSettings):
     # container-storage root, and any disk_watchdog_paths entries,
     # deduplicated by device. Usage crossing the thresholds emits
     # resource.disk.warn / resource.disk.critical notifications on
-    # state transitions only (recovery requires falling
-    # RECOVERY_GAP_PERCENT points below the warn threshold, so a
-    # boundary-hovering usage level cannot flap alerts); crossing back
-    # emits resource.disk.recovered. Detection failure is loud in the
-    # log and never blocks anything. All fields read live off settings
-    # every poll: reloadable on SIGHUP (#1587).
+    # state transitions (recovery requires falling
+    # RECOVERY_GAP_PERCENT points below the threshold — bands below
+    # both — so a boundary-hovering usage level cannot flap alerts,
+    # and a persisting degraded state refreshes once per throttle
+    # window); crossing back emits resource.disk.recovered.
+    # disk_watchdog_enabled turns the whole watchdog off — the disk
+    # thresholds AND the audit-degradation summarizer (the write
+    # sites' own per-failure audit.failure events still fire; see
+    # notifier.py). Detection failure is loud in the log and never
+    # blocks anything. All fields read live off settings every poll:
+    # reloadable on SIGHUP (#1587).
     disk_watchdog_enabled: bool = True
     disk_watchdog_warn_percent: float = 75.0
     disk_watchdog_critical_percent: float = 90.0

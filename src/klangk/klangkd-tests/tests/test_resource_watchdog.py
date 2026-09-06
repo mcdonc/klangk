@@ -10,6 +10,7 @@ and the lifecycle wiring.
 
 import asyncio
 import logging
+import time
 import types
 from unittest.mock import AsyncMock, Mock
 
@@ -23,6 +24,7 @@ from klangk.resource_watchdog import (
     CRITICAL,
     OK,
     RECOVERY_GAP_PERCENT,
+    REFRESH_SECONDS,
     WARN,
     ResourceWatchdog,
     classify,
@@ -95,19 +97,23 @@ class TestClassify:
             (91.0, OK, CRITICAL),  # deep crossing goes straight critical
             (91.0, WARN, CRITICAL),  # warn -> critical
             (76.0, WARN, WARN),  # sustained warn is no transition
-            (73.0, WARN, WARN),  # hysteresis band keeps warn
+            (73.0, WARN, WARN),  # warn hysteresis band keeps warn
             (69.0, WARN, OK),  # at/below floor recovers
-            (73.0, CRITICAL, CRITICAL),  # band keeps critical
+            (73.0, CRITICAL, CRITICAL),  # warn band keeps critical
             (69.0, CRITICAL, OK),  # critical recovers only fully
             (50.0, CRITICAL, OK),
+            # Critical-boundary hysteresis: readings between the
+            # critical floor and the critical threshold hold CRITICAL
+            # (an 89.9/90.1 oscillation cannot flap warn/critical).
+            (89.9, CRITICAL, CRITICAL),
+            (86.0, CRITICAL, CRITICAL),
+            (84.0, CRITICAL, WARN),  # at/below the critical floor eases
+            (88.0, OK, WARN),  # never-critical reading between thresholds
         ],
     )
     def test_transitions(self, usage, state, expected):
-        # Defaults 75/90; floor 70 = warn - gap.
-        assert (
-            classify(usage, state, 75.0, 90.0, 75.0 - RECOVERY_GAP_PERCENT)
-            == expected
-        )
+        # Defaults 75/90; floors 70/85 = thresholds - gap.
+        assert classify(usage, state, 75.0, 90.0, 70.0, 85.0) == expected
 
     def test_recovery_gap_value(self):
         assert RECOVERY_GAP_PERCENT == 5.0
@@ -175,6 +181,10 @@ class TestStepFilesystem:
         wd.step_filesystem(8, "/other", 73.0)
         wd.step_filesystem(8, "/other", 80.0)
         spy.notify_admins.assert_not_called()
+        # A persisting healthy state never refreshes.
+        wd.step_filesystem(9, "/healthy", 50.0)
+        wd.step_filesystem(9, "/healthy", 51.0)
+        spy.notify_admins.assert_not_called()
 
     def test_critical_easing_to_warn_emits_warn(self):
         """Usage between the thresholds after critical is a real
@@ -211,6 +221,58 @@ class TestStepFilesystem:
         wd.step_filesystem(7, "/data", 55.0)
         assert spy.notify_admins.call_count == 1
         assert kwargs_of(spy)["detail"]["warn_percent"] == 50.0
+
+    def test_floors_clamped_at_zero(self):
+        """A warn/critical threshold below the hysteresis gap must not
+        make recovery unreachable (usage can never go negative) — the
+        floors clamp at 0, so an emptied filesystem recovers."""
+        wd, spy = self._wd(
+            {
+                "KLANGKD_DISK_WATCHDOG_WARN_PERCENT": "3",
+                "KLANGKD_DISK_WATCHDOG_CRITICAL_PERCENT": "4",
+            }
+        )
+        assert wd._floor == 0.0
+        assert wd._critical_floor == 0.0
+        wd.step_filesystem(7, "/data", 3.5)  # -> warn
+        wd.step_filesystem(7, "/data", 0.0)  # emptied -> recovered
+        args, _ = spy.notify_admins.call_args
+        assert args[0] == "resource.disk.recovered"
+
+    def test_persisting_state_refreshes_once_per_window(self):
+        """A still-degraded filesystem re-notifies once per refresh
+        window, so a transition whose dispatch the notifier throttled
+        away is late, never lost (the #3206 review swallow case)."""
+        wd, spy = self._wd()
+        wd.step_filesystem(7, "/data", 91.0)  # transition -> critical
+        spy.notify_admins.reset_mock()
+        # Same state, inside the window: quiet.
+        wd.step_filesystem(7, "/data", 92.0)
+        spy.notify_admins.assert_not_called()
+        # Same state, past the window: refresh.
+        wd._emitted_at[7] = time.monotonic() - REFRESH_SECONDS - 1
+        wd.step_filesystem(7, "/data", 92.0)
+        args, kwargs = spy.notify_admins.call_args
+        assert args[0] == "resource.disk.critical"
+        assert kwargs["detail"]["usage_percent"] == 92.0
+
+    def test_refill_inside_window_alerts_via_refresh(self):
+        """warn -> recovered -> refill inside the throttle window: the
+        transition dispatch may be throttled, but the persisting state
+        refreshes past the window — no permanently lost alert."""
+        wd, spy = self._wd()
+        wd.step_filesystem(7, "/data", 76.0)  # warn (stamps the bucket)
+        wd.step_filesystem(7, "/data", 65.0)  # recovered
+        wd.step_filesystem(7, "/data", 80.0)  # refill: transition fires
+        spy.notify_admins.reset_mock()
+        assert wd._states[7] == WARN
+        # Within the refresh window nothing new fires...
+        wd.step_filesystem(7, "/data", 81.0)
+        spy.notify_admins.assert_not_called()
+        # ...past it, the still-warn state re-alerts.
+        wd._emitted_at[7] = time.monotonic() - REFRESH_SECONDS - 1
+        wd.step_filesystem(7, "/data", 81.0)
+        assert spy.notify_admins.call_count == 1
 
 
 def kwargs_of(spy, call=0):
@@ -332,29 +394,74 @@ class TestGraphRoot:
         ) in result
         assert podman.run.await_count == 1
 
-    async def test_query_failure_is_logged_once_not_retried(self, caplog):
+    async def test_resolved_root_unmeasurable_is_skipped(
+        self, monkeypatch, caplog
+    ):
+        """A remote podman machine's storage path (resolved but absent
+        on this host) is skipped — warned once, configured paths
+        still monitored."""
+        wd, app, podman = self._wd_with_podman(
+            (0, "/var/lib/containers/storage\n", "")
+        )
+        data = app.state.settings.data_dir
+        monkeypatch.setattr("os.stat", lambda path: FakeStat(1))
+
+        def statvfs_by_path(path):
+            if path == data:
+                return FakeVfs(10.0)
+            raise OSError(2, "no such file")
+
+        monkeypatch.setattr("os.statvfs", statvfs_by_path)
+        with caplog.at_level(
+            logging.WARNING, logger="klangk.resource_watchdog"
+        ):
+            result = await wd.monitored_filesystems()
+        assert [entry[:2] for entry in result] == [(1, data)]
+        assert "cannot measure" in caplog.text
+
+    async def test_query_failure_retries_after_cooldown(self, caplog):
+        """A failed query is not a permanent degradation: one retry
+        per cooldown window (the _measure re-arm posture)."""
         wd, app, podman = self._wd_with_podman((125, "", "boom"))
         with caplog.at_level(logging.INFO, logger="klangk.resource_watchdog"):
             assert await wd.resolve_graph_root() is None
+            # Inside the cooldown: no new subprocess.
             assert await wd.resolve_graph_root() is None
-        assert podman.run.await_count == 1
-        assert "storage root unavailable" in caplog.text
+            assert podman.run.await_count == 1
+            assert "storage root unavailable" in caplog.text
+            # Past the cooldown: retried.
+            wd._graph_root_retry_at = time.monotonic() - 1
+            assert await wd.resolve_graph_root() is None
+        assert podman.run.await_count == 2
+
+    async def test_transient_failure_recovers_on_retry(self):
+        """The boot race (podman socket not up yet) heals: the retry
+        after the cooldown caches the root."""
+        wd, app, podman = self._wd_with_podman((125, "", "boom"))
+        assert await wd.resolve_graph_root() is None
+        podman.run = AsyncMock(
+            return_value=(0, "/var/lib/containers/storage\n", "")
+        )
+        wd._graph_root_retry_at = time.monotonic() - 1
+        assert await wd.resolve_graph_root() == "/var/lib/containers/storage"
+        assert wd._graph_root == "/var/lib/containers/storage"
 
     async def test_empty_output_means_unavailable(self):
         wd, app, podman = self._wd_with_podman((0, "\n", ""))
         assert await wd.resolve_graph_root() is None
-        assert wd._graph_root_failed
+        assert wd._graph_root_retry_at > time.monotonic()
 
     async def test_spawn_error_means_unavailable(self):
         wd, app, podman = self._wd_with_podman(run_raises=True)
         assert await wd.resolve_graph_root() is None
+        assert wd._graph_root_retry_at > time.monotonic()
 
     async def test_absent_podman_state_is_unavailable(self):
         wd, _ = make_wd()  # no podman on the state
         assert await wd.resolve_graph_root() is None
-        assert wd._graph_root_failed
+        assert wd._graph_root_retry_at > time.monotonic()
 
-    async def test_reconfigure_clears_the_cache(self):
+    async def test_reconfigure_clears_the_cache_and_cooldown(self):
         wd, app, podman = self._wd_with_podman(
             (0, "/var/lib/containers/storage\n", "")
         )
@@ -362,6 +469,17 @@ class TestGraphRoot:
         wd.reconfigure(app)
         await wd.resolve_graph_root()
         assert podman.run.await_count == 2
+
+    async def test_reconfigure_retries_past_failure_immediately(self):
+        """A reload (SIGHUP) clears the cooldown too, so an operator
+        can force a retry without waiting out the window."""
+        wd, app, podman = self._wd_with_podman((125, "", "boom"))
+        assert await wd.resolve_graph_root() is None
+        podman.run = AsyncMock(
+            return_value=(0, "/var/lib/containers/storage\n", "")
+        )
+        wd.reconfigure(app)  # cooldown cleared
+        assert await wd.resolve_graph_root() == "/var/lib/containers/storage"
 
 
 # --- audit surface ---
@@ -460,12 +578,14 @@ class TestLoop:
     async def test_disabled_resets_remembered_states(self, monkeypatch):
         wd, app = make_wd({"KLANGKD_DISK_WATCHDOG_ENABLED": "false"})
         wd._states[1] = CRITICAL
+        wd._emitted_at[1] = 123.0
         wd._audit_alerted["container_events"] = True
         monkeypatch.setattr(
             "klangk.resource_watchdog.MIN_POLL_INTERVAL_SECONDS", 0.001
         )
         await run_briefly(wd, seconds=0.05)
         assert wd._states == {}
+        assert wd._emitted_at == {}
         assert wd._audit_alerted == {}
 
     async def test_enabled_loop_checks_disk(self, monkeypatch):
@@ -525,11 +645,23 @@ class TestLoop:
 
 
 class TestReconfigure:
-    def test_swaps_app(self):
+    def test_swaps_app_and_clears_remembered_state(self):
+        """A SIGHUP reload re-evaluates every filesystem fresh: states,
+        emission clocks, unmeasurable-path warnings, and the cached
+        storage root all reset (audit counter baselines stay — growth
+        across the reload is still detected)."""
         wd, _ = make_wd()
+        wd._states[1] = CRITICAL
+        wd._emitted_at[1] = 123.0
+        wd._warned_paths.add("/gone")
+        wd._audit_counts["container_events"] = 5
         new_app = types.SimpleNamespace(state=types.SimpleNamespace())
         wd.reconfigure(new_app)
         assert wd.app is new_app
+        assert wd._states == {}
+        assert wd._emitted_at == {}
+        assert wd._warned_paths == set()
+        assert wd._audit_counts == {"container_events": 5}
 
 
 # --- lifecycle wiring ---

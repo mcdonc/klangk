@@ -77,9 +77,12 @@ audit log:
   default) or the critical threshold (90%) sends
   `resource.disk.warn` / `resource.disk.critical`; falling back below
   the recovery floor sends `resource.disk.recovered`. Events fire on
-  transitions only, so a slowly filling disk produces one alert per
-  episode per filesystem, not one per check — see
-  `KLANGKD_DISK_WATCHDOG_*`
+  transitions — hysteresis bands below both thresholds keep usage
+  hovering at a boundary at its current state — and a filesystem
+  that stays degraded refreshes its alert once per 5 minutes, so a
+  slowly filling disk produces one alert per episode per filesystem,
+  not one per check, and no alert is permanently lost to the
+  throttle. See `KLANGKD_DISK_WATCHDOG_*`
   ([Environment Variables](../reference/environment.md)).
 
 Two delivery channels are available, and both can be on at once:
@@ -109,11 +112,11 @@ host produces one alert per condition rather than a flood.
 
 The resource watchdog (#3206) adds a second detection layer over the
 audit-failure write sites: it watches the audit-write-failure counters
-themselves, and a check window that observed new failures sends one
-`audit.failure` summary naming the table and the count. The summary
-shares the per-table 5-minute throttle with the write-time events, so
-a sustained storm produces one alert per window from either layer,
-never both. Fail-closed audit refusals (`KLANGKD_AUDIT_FAIL_CLOSED`)
+themselves, and a check that observed new failures since the last one
+sends one `audit.failure` summary naming the table and the count. The
+summary shares the per-table 5-minute throttle with the write-time
+events, so a sustained storm produces one alert per window from either
+layer, never both. Fail-closed audit refusals (`KLANGKD_AUDIT_FAIL_CLOSED`)
 pass the same counters, so a start or stop refused because its audit
 row could not be written is detected as well.
 

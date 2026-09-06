@@ -742,9 +742,6 @@ sync` report a clear permission-denied error.
   are truncated at 2048 characters. The HMAC tag column set is
   unchanged, so offsite verification recipes keep working (see
   [Audit Record Integrity](/reference/audit-integrity)).
-
-
-
 - **Disk-capacity and audit-degradation detection (#3206).** The
   resource watchdog checks the filesystems holding the data directory
   (the audit records storage), podman container storage, and any
