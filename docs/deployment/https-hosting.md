@@ -224,9 +224,8 @@ second, in this order (#3276):
    outer proxy's value through and drops the header it would otherwise
    derive from a client-chosen `Host` for every other peer), else
 3. the `Host` header, kept only when it names an address klangkd
-   itself serves — loopback on the browser port, this chapter's
-   `tls-hostname`, or the `KLANGKD_LISTEN` address on the browser
-   port, else
+   itself serves — loopback, this chapter's `tls-hostname`, or the
+   `KLANGKD_LISTEN` IP-literal address on the browser port, else
 4. the floor `localhost:<KLANGKD_PORT>` (also what an unvalidated
    `Host` collapses to, and the no-request value, e.g. a CLI
    handshake).
@@ -234,10 +233,10 @@ second, in this order (#3276):
 A client chooses the `Host` it sends, so klangkd never lets an
 unvalidated value become the authority of a password-reset link, a
 verification link, an invite, or the OIDC redirect. A deployment whose
-browsers reach klangkd by a name that appears nowhere in its own
+browsers reach klangkd by an identity that appears nowhere in its own
 configuration (for example `KLANGKD_LISTEN=0.0.0.0` reached by DNS
-name) pins `hosting-hostname` so those URLs name the real public
-address.
+name, or a hostname `listen` value) pins `hosting-hostname` so those
+URLs name the real public address.
 
 The scheme and subpath follow the same shape: `KLANGKD_HOSTING_PROTO`
 over a trusted `X-Forwarded-Proto`, and `KLANGKD_HOSTING_BASE_PATH`

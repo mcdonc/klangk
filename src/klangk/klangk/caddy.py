@@ -1039,11 +1039,19 @@ class CaddyRenderer:
         construction as a *trusted forwarded* value. The trusted handle
         passes a trusted outer proxy's ``X-Forwarded-Host`` through
         untouched, so behind-a-proxy deployments keep deriving the public
-        name with zero extra configuration. ``remote_ip`` keys on the
-        immediate peer (ignores ``trusted_proxies``), the same primitive
-        the container deny uses.
+        name with zero extra configuration. Under
+        ``KLANGKD_REJECT_PROXY_HEADERS`` the trusted handle deletes the
+        header too — the hard trust-off override strips forwarded headers
+        from every peer at the proxy as well as at the backend.
+        ``remote_ip`` keys on the immediate peer (ignores
+        ``trusted_proxies``), the same primitive the container deny uses.
         """
         peers = " ".join(self._trusted_proxy_cidrs())
+        trusted_delete = (
+            "			header_up -X-Forwarded-Host\n"
+            if self._reject_proxy_headers()
+            else ""
+        )
         return (
             f"	@notTrustedPeer not remote_ip {peers}\n"
             "	handle @notTrustedPeer {\n"
@@ -1057,6 +1065,7 @@ class CaddyRenderer:
             f"{deny_guard}"
             f"		reverse_proxy {upstream} {{\n"
             f"{self._common_rp_headers()}\n"
+            f"{trusted_delete}"
             "		}\n"
             "	}\n"
         )

@@ -868,15 +868,24 @@ class TestRenderConfig:
         cf = _renderer(s).render_config("unix//s", self.ADMIN)
         assert "@notTrustedPeer not remote_ip 127.0.0.1 ::1" in cf
         assert "handle @notTrustedPeer {" in cf
-        assert "header_up -X-Forwarded-Host" in cf
+        assert cf.count("header_up -X-Forwarded-Host") == 1
         # The trusted fallback handle proxies without the deletion.
-        trusted = cf[
-            cf.index(
-                "\thandle {\n".replace("\\t", "\t").replace("\\n", "\n")
-            ) :
-        ]
+        trusted = cf[cf.index("\thandle {\n") :]
         assert "header_up -X-Forwarded-Host" not in trusted
         assert trusted.count("reverse_proxy") >= 1
+
+    def test_browser_catch_all_reject_mode_deletes_everywhere(self):
+        """Under KLANGKD_REJECT_PROXY_HEADERS the trusted handle deletes
+        X-Forwarded-Host too — the hard trust-off override strips the
+        header from every peer at the proxy, matching the backend."""
+        s = make_settings(
+            {
+                "KLANGKD_PORT": "8997",
+                "KLANGKD_REJECT_PROXY_HEADERS": "1",
+            }
+        )
+        cf = _renderer(s).render_config("unix//s", self.ADMIN)
+        assert cf.count("header_up -X-Forwarded-Host") == 2
 
     def test_browser_catch_all_trust_uses_configured_cidrs(self):
         """The peer-trust split keys on KLANGKD_TRUSTED_PROXY_CIDRS — an

@@ -317,27 +317,44 @@ def _port_names_listener(port: str | None, configured: str | None) -> bool:
     return port == configured
 
 
-def _is_wildcard_address(addr: str) -> bool:
-    """True for the all-interfaces bind addresses (``0.0.0.0``, ``::``).
+def _served_authority_names(
+    tls_hostname: str | None, listen: str | None
+) -> list[str]:
+    """The names from klangkd's configuration a request's Host may
+    validate against (#3276): the armed TLS hostname, plus the listener
+    address when it is a specific IP literal.
 
-    A wildcard names every interface at once, so it cannot serve as a
-    URL authority to validate a request's Host against (#3276)."""
+    A hostname ``KLANGKD_LISTEN`` value validates nothing — a DNS name
+    can rebind, so only an address the operator wrote as a literal names
+    an authority (the armed TLS name is the one deliberate exception:
+    arming it means the deployment is reachable by that certified name).
+    A wildcard bind (``0.0.0.0``, ``::``) names every interface at once
+    and validates nothing either.
+    """
+    names = []
+    tls = (tls_hostname or "").strip().lower()
+    if tls:
+        names.append(tls)
+    names.extend(_listener_authority_address(listen))
+    return names
+
+
+def _listener_authority_address(listen: str | None) -> list[str]:
+    """The listener address as a one-element URL-authority list — only
+    when it is a specific IP literal; otherwise empty."""
+    addr = (listen or "").strip().lower()
+    if addr and _is_specific_ip_literal(addr):
+        return [addr]
+    return []
+
+
+def _is_specific_ip_literal(addr: str) -> bool:
+    """True when *addr* parses as an IP literal that names one
+    interface's address — not the all-interfaces wildcard."""
     try:
-        return ipaddress.ip_address(addr).is_unspecified
+        return not ipaddress.ip_address(addr).is_unspecified
     except ValueError:
         return False
-
-
-def _served_authority_names(*configured: str | None) -> list[str]:
-    """The non-empty, non-wildcard names from klangkd's configuration a
-    request's Host may validate against (#3276): the armed TLS hostname
-    and the listener address, normalized to lowercase."""
-    names = []
-    for raw in configured:
-        name = (raw or "").strip().lower()
-        if name and not _is_wildcard_address(name):
-            names.append(name)
-    return names
 
 
 def _canonical_ip_or_raw(candidate: str | None) -> str | None:
@@ -570,12 +587,12 @@ class Util:
     # verification/reset/OIDC links).
     #
     # #3276: the plain Host header is likewise untrusted input. It is kept
-    # only when it names an authority klangkd itself serves (loopback on
-    # the browser port, the armed TLS name, or the listener's own address);
-    # anything else collapses to the localhost floor — and the managed
-    # Caddy deletes the X-Forwarded-Host it would otherwise derive from a
-    # client-chosen Host for untrusted peers (caddy.py), so that header
-    # only ever carries a trusted outer proxy's value.
+    # only when it names an authority klangkd itself serves (loopback, the
+    # armed TLS name, or the listener's IP-literal address); anything else
+    # collapses to the localhost floor — and the managed Caddy deletes the
+    # X-Forwarded-Host it would otherwise derive from a client-chosen Host
+    # for untrusted peers (caddy.py), so that header only ever carries a
+    # trusted outer proxy's value.
     #
     # KLANGKD_TRUSTED_PROXY_CIDRS: comma-separated CIDRs/IPs to trust
     # (default "127.0.0.1,::1").
@@ -837,10 +854,10 @@ class Util:
         The client chooses the Host it sends, so an unvalidated value is a
         poisoning vector for every URL built from the request — password
         reset and verification emails, invites, the OIDC redirect. Kept
-        values: the synthetic local forms (#2732 — loopback hosts on the
-        configured browser port) and hosts naming the deployment's
-        configured authority: the armed TLS name
-        (``KLANGKD_TLS_HOSTNAME``) or the listener's own non-wildcard
+        values: the synthetic local forms (#2732 — loopback hosts,
+        portless or carrying the configured browser port) and hosts
+        naming the deployment's configured authority: the armed TLS name
+        (``KLANGKD_TLS_HOSTNAME``) or the listener's own IP-literal
         address (``KLANGKD_LISTEN``) on the configured port.
         """
         if host and self._host_names_served_authority(host):
@@ -860,7 +877,7 @@ class Util:
 
     def _names_configured_authority(self, host: str, port: str | None) -> bool:
         """True when *host*/*port* name the armed TLS hostname or the
-        non-wildcard listener address, on the configured browser port."""
+        listener's IP-literal address, on the configured browser port."""
         settings = self.app.state.settings
         names = _served_authority_names(settings.tls_hostname, settings.listen)
         return any(

@@ -610,26 +610,41 @@ class TestDeriveHostingInfo:
         assert b == "/klangk"
 
     def test_host_header_used_when_it_names_the_listener(self):
-        """Direct access: a Host that names the configured listener is used
-        verbatim, port included (#3276).
+        """Direct access: a Host that names the listener's IP-literal
+        address is used verbatim, port included (#3276).
 
-        KLANGKD_LISTEN names the interface the browser listener binds, so a
-        Host naming it (with the browser port) carries real deployment
-        intent — the port the browser hit rides along unmodified, and no
-        port is synthesized from KLANGKD_EGRESS_PORT (internal wiring, not
-        the public port).
+        The browser listener binds that address, so a Host naming it (with
+        the browser port) carries real deployment intent — the port the
+        browser hit rides along unmodified, and no port is synthesized
+        from KLANGKD_EGRESS_PORT (internal wiring, not the public port).
         """
         u = _util(
             {
                 "KLANGKD_EGRESS_PORT": "8995",
+                "KLANGKD_LISTEN": "10.1.2.3",
+                "KLANGKD_PORT": "8997",
+            }
+        )
+        h, p, b = u.derive_hosting_info(
+            {"host": "10.1.2.3:8997"}, "203.0.113.7"
+        )
+        assert h == "10.1.2.3:8997"
+        assert p == "http"
+        assert b == ""
+
+    def test_hostname_listen_validates_nothing(self):
+        """A hostname KLANGKD_LISTEN is not a URL authority (#3276): a
+        DNS name can rebind, so only an address the operator wrote as a
+        literal validates. Deployments bound by name pin
+        KLANGKD_HOSTING_HOSTNAME instead."""
+        u = _util(
+            {
                 "KLANGKD_LISTEN": "myhost",
                 "KLANGKD_PORT": "8997",
             }
         )
-        h, p, b = u.derive_hosting_info({"host": "myhost:8997"}, "203.0.113.7")
-        assert h == "myhost:8997"
-        assert p == "http"
-        assert b == ""
+        h, _, _ = u.derive_hosting_info({"host": "myhost:8997"}, "203.0.113.7")
+        assert h == "localhost:8997"
 
     def test_host_not_naming_served_authority_falls_back(self):
         """#3276: a Host the deployment does not serve never reaches URL
@@ -866,8 +881,9 @@ class TestHostNamesServedAuthority:
         assert h == "localhost:443"
 
     def test_specific_listen_ip_is_served_authority(self):
-        """A Host naming the bound interface's own address (on the browser
-        port) names the listener — honored even from an untrusted peer."""
+        """A Host naming the bound interface's own IP-literal address (on
+        the browser port) names the listener — honored even from an
+        untrusted peer."""
         u = _util(
             {
                 "KLANGKD_PORT": "8997",

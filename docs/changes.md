@@ -35,6 +35,26 @@ operators or integrators to act when upgrading.
 
 ### Breaking
 
+- **Host-header validation changes URL derivation for name-accessed
+  deployments (#3276).** A request's `Host` header is now kept for URL
+  construction (reset/verification emails, invitations, the OIDC
+  redirect, hosted-app URLs) only when it names an address klangkd
+  itself serves: loopback, the armed `KLANGKD_TLS_HOSTNAME` name, or
+  the `KLANGKD_LISTEN` IP-literal address on the browser port. Every
+  other Host value falls back to `localhost` (`localhost:<KLANGKD_PORT>`
+  when the browser listener is armed). **Migration:** a deployment whose
+  browsers reach klangkd by any other identity — `KLANGKD_LISTEN=0.0.0.0`
+  reached by DNS name or a public IP, a hostname `KLANGKD_LISTEN` value,
+  or an outer proxy that is not listed in
+  `KLANGKD_TRUSTED_PROXY_CIDRS` — must set `KLANGKD_HOSTING_HOSTNAME`
+  after upgrading. Without the pin those deployments see `localhost`
+  links in email, hosted-app URLs naming `localhost` inside containers,
+  and OIDC login failures (the derived `redirect_uri` no longer matches
+  the IdP registration). Loopback access, automatic-TLS deployments (the
+  TLS name validates), and outer-proxy deployments with
+  `KLANGKD_TRUSTED_PROXY_CIDRS` configured are unaffected. See
+  [HTTPS Hosting](deployment/https-hosting.md#public-urls-tls-hostname-vs-hosting-hostname).
+
 - **Token-in-URL removal changes client contracts (#3201).**
   Anything connecting to `/ws` or `/ws/consent-decider` must switch
   from the `?token=` query param to the `bearer` WebSocket subprotocol
@@ -328,24 +348,17 @@ operators or integrators to act when upgrading.
   `manage-groups`; other authenticated callers get the manual-only
   view. Explicit `source=manual` and `source=workspace-role` filters
   work as before for every authenticated caller.
-- **Host-header validation for URL construction (#3276).** A request's
-  plain `Host` header is now kept for URL construction (password-reset
-  and verification emails, invitations, the OIDC redirect, hosted-app
-  URLs) only when it names an address klangkd itself serves: loopback on
-  the browser port, the armed `KLANGKD_TLS_HOSTNAME` name, or the
-  `KLANGKD_LISTEN` address on the browser port. Any other Host value
-  falls back to `localhost:<KLANGKD_PORT>`, and the managed Caddy drops
-  the `X-Forwarded-Host` it would otherwise derive from a client-chosen
-  `Host` for peers outside `KLANGKD_TRUSTED_PROXY_CIDRS` — closing a
-  silent account-takeover vector where one direct request with a forged
-  `Host` poisoned the emailed reset link. **Migration:** a deployment
-  whose browsers reach klangkd by a name that appears nowhere in its own
-  configuration (for example `KLANGKD_LISTEN=0.0.0.0` reached by DNS
-  name, previously served by the unvalidated `Host`) must set
-  `KLANGKD_HOSTING_HOSTNAME` so links name the public address; outer-proxy
-  deployments with `KLANGKD_TRUSTED_PROXY_CIDRS` configured are
-  unaffected. See
-  [HTTPS Hosting](deployment/https-hosting.md#public-urls-tls-hostname-vs-hosting-hostname).
+- **Host-header poisoning of reset/verify links and the OIDC redirect
+  (#3276).** The plain `Host` header of a request is no longer used
+  verbatim as the authority of URLs klangkd builds (password-reset and
+  verification emails, invitations, the OIDC web-flow redirect,
+  hosted-app URLs): it validates against the deployment's own
+  configuration and otherwise falls back to `localhost`, and the managed
+  Caddy stops deriving `X-Forwarded-Host` from a client-chosen `Host`
+  for peers outside `KLANGKD_TRUSTED_PROXY_CIDRS`. One direct request
+  with a forged `Host` can therefore no longer poison the emailed reset
+  link (silent account takeover). Operators of name-accessed deployments
+  must set `KLANGKD_HOSTING_HOSTNAME` — see the Breaking entry.
 
 - **Bind-mount re-validation at container start (#3278).** A mount's
   host-path source is now checked against
