@@ -723,10 +723,15 @@ async def refresh_token(request: Request):
         request.headers.get("user-agent", "?"),
         request.headers.get("origin", "?"),
     )
+    # The pair feeds binding enforcement (#3194); the method/referer
+    # feed the session-limit eviction row a refresh can mint (#3255).
+    source_ip, user_agent, method, referer = request_metadata(request)
     return await request.app.state.auth.refresh_token(
         token,
-        request_metadata(request)[:2],
+        (source_ip, user_agent),
         proof=request.headers.get("dpop"),
+        method=method,
+        referer=referer,
     )
 
 

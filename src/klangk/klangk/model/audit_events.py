@@ -10,11 +10,10 @@ action-specific context (never secrets: no passwords, no tokens), and
 the per-request HTTP metadata the issue called out — the effective
 client IP, user agent (#3205), HTTP method, and Referer (#3255,
 SV-222447). Rows written before #3255 read NULL for method/referer,
-as do rows with no HTTP request behind them — WebSocket-path
-revocations and background sweeps — and the workstation-binding
-``session.revoke`` row, which records only the presenting workstation
-pair because the binding violation is judged on workstation identity
-alone (the WebSocket and HTTP paths present it identically).
+and so does the workstation-binding ``session.revoke`` row, which
+records only the presenting workstation pair — the binding violation
+(#3194) is judged on workstation identity alone, which the WebSocket
+and HTTP paths present identically.
 
 Event coverage (#3205):
 
@@ -145,10 +144,9 @@ class AuditEventsModel(Submodel):
         """Insert one audit event row, HMAC-tagged when configured.
 
         *method* / *referer* are the #3255 request fields
-        (SV-222447); both ``None`` for rows with no HTTP request
-        behind them (WS-path rows, background sweeps, the
-        workstation-binding violation row). Raises on a DB failure;
-        callers that must not fail on an audit problem use
+        (SV-222447); both ``None`` for rows written before #3255 and
+        for the workstation-binding violation row. Raises on a DB
+        failure; callers that must not fail on an audit problem use
         :meth:`record_best_effort` instead.
         """
         created_at = time.time()

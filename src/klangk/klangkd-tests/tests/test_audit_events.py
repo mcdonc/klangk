@@ -772,8 +772,14 @@ class TestSelfServiceAudit:
         change = (await _events(api_app, "user.password.change"))[0]
         assert change["actor_id"] == user["id"]
         assert change["detail"] == {"via": "self-service"}
+        assert change["method"] == "POST"
+        assert change["referer"] is None  # the test client sends none
         revoke = (await _events(api_app, "session.revoke"))[0]
         assert revoke["detail"]["reason"] == "password-change"
+        # The forced revocation is minted by the same request — its row
+        # carries the same request metadata (#3255 review 2).
+        assert revoke["method"] == "POST"
+        assert revoke["source_ip"] is not None
 
     async def test_change_email_records_event(self, api_client, api_app, user):
         from klangk import emailsvc as emailsvc_mod

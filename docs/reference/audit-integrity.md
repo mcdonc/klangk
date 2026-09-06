@@ -64,7 +64,7 @@ decided_by, revoked_at, revoked_by`
 target_id, detail, source_ip, user_agent, created_at`
 
 The `audit_events` `method` and `referer` columns (#3255,
-migration 0036) are recorded on the row but deliberately **not**
+migration 0038) are recorded on the row but deliberately **not**
 covered by the tag: this column list is a published contract, and
 extending it would
 make every row written before #3255 fail re-computation under the

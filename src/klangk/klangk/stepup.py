@@ -202,7 +202,20 @@ async def confirm_step_up_password(
             detail="Account is managed by your identity provider",
         )
     email = user["email"]
-    attempt_info = await app.state.auth.check_login_lockout(email)
+    # Lockout accounting with the request's own metadata (#3255): the
+    # locked-out ``login.failed`` row a 429 mints must name where the
+    # guess came from, like every other login-gated path.
+    host = request.client.host if request.client else None
+    source_ip, user_agent, method, referer = app.state.util.request_metadata(
+        request.headers, host, request.method
+    )
+    attempt_info = await app.state.auth.check_login_lockout(
+        email,
+        source_ip=source_ip,
+        user_agent=user_agent,
+        method=method,
+        referer=referer,
+    )
     if not await auth.verify_login_password(user, password):
         await _audit(request, user, "step_up.failed", path="step-up")
         await app.state.auth.record_login_failure(email, attempt_info)

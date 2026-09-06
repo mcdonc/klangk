@@ -2299,8 +2299,15 @@ class Auth:
             await self._swap_token(jti, exp, user_id, new_token)
             # Binding a pre-#2585 token INSERTS a session row (the
             # swap re-keys one), so the cap must hold here too — the
-            # same reason refresh enforces (#2585 review).
-            await self._enforce_session_limit(user_id)
+            # same reason refresh enforces (#2585 review). The
+            # eviction row carries the binding request's metadata.
+            await self._enforce_session_limit(
+                user_id,
+                source_ip=source_ip,
+                user_agent=user_agent,
+                method=method,
+                referer=referer,
+            )
             await self.app.state.model.audit_events.record_best_effort(
                 "session.bind",
                 actor_id=user_id,
@@ -2322,11 +2329,33 @@ class Auth:
         except JWTError:
             raise HTTPException(status_code=401, detail="Invalid token")
 
+    async def _enforce_limit_with_presentation(
+        self,
+        user_id: str,
+        workstation: tuple[str | None, str | None] | None,
+        method: str | None = None,
+        referer: str | None = None,
+    ) -> None:
+        """Session-limit enforcement carrying the presenting request's
+        metadata (#3255): an eviction row minted by a refresh names
+        the workstation pair the refresh presented (unknown when no
+        pair was resolved) plus its method/referer."""
+        ip, agent = workstation if workstation is not None else (None, None)
+        await self._enforce_session_limit(
+            user_id,
+            source_ip=ip,
+            user_agent=agent,
+            method=method,
+            referer=referer,
+        )
+
     async def refresh_token(
         self,
         token: str,
         workstation: tuple[str | None, str | None] | None = None,
         proof: str | None = None,
+        method: str | None = None,
+        referer: str | None = None,
     ) -> TokenResponse:
         """Exchange a valid access token for a new one.
 
@@ -2380,8 +2409,11 @@ class Auth:
             await self._swap_token(jti, exp, user_id, new_token)
             # Refreshing a pre-#2585 token (no row) INSERTS one; enforce
             # so the cap holds on every path that adds a session row,
-            # not just logins (#2585 review).
-            await self._enforce_session_limit(user_id)
+            # not just logins (#2585 review). The eviction row carries
+            # the presenting request's metadata (#3255).
+            await self._enforce_limit_with_presentation(
+                user_id, workstation, method, referer
+            )
             return TokenResponse(
                 access_token=new_token,
                 must_change_password=user.get("must_change_password", False),
