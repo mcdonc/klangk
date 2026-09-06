@@ -431,6 +431,10 @@ class TestAuditWriteFailureVisibility3154:
     async def test_best_effort_failure_bumps_counter(
         self, app_state, db, registry
     ):
+        from unittest.mock import Mock
+
+        spy = Mock()
+        app_state.state.notifier = spy
         with patch.object(
             app_state.state.model.container_events,
             "record",
@@ -440,6 +444,11 @@ class TestAuditWriteFailureVisibility3154:
                 "ws-a", "cid-1", EVENT_START, cause=CAUSE_API
             )
         assert registry.audit_write_failures == 1
+        # The same failure alerts the SA/ISSO stream (#3250,
+        # SV-222484/485), naming the source table.
+        args, kwargs = spy.notify_admins.call_args
+        assert args[0] == "audit.failure"
+        assert kwargs["detail"] == {"table": "container_events"}
 
     async def test_finalize_failure_bumps_counter(self, app_state, db):
         registry = app_state.state.container_registry

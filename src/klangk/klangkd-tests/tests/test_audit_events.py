@@ -215,10 +215,15 @@ class TestAuditEventsModel:
     async def test_record_best_effort_swallows_failure(
         self, app_state, db, caplog
     ):
-        """A failed audit write is logged, never raised (#3205)."""
+        """A failed audit write is logged, never raised (#3205) — and
+        alerts the SA/ISSO stream as audit.failure (#3250,
+        SV-222484/485)."""
         import logging
+        from unittest.mock import Mock
 
         events = app_state.state.model.audit_events
+        spy = Mock()
+        app_state.state.notifier = spy
         with patch.object(
             events,
             "record",
@@ -230,6 +235,10 @@ class TestAuditEventsModel:
                 await events.record_best_effort("login")
         assert "audit_events write failed" in caplog.text
         assert await events.count_events() == 0
+        args, kwargs = spy.notify_admins.call_args
+        assert args[0] == "audit.failure"
+        assert kwargs["detail"]["table"] == "audit_events"
+        assert kwargs["detail"]["failed_event"] == "login"
 
 
 class TestAuthChokePoints:

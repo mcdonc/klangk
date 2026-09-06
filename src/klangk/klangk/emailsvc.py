@@ -271,6 +271,22 @@ class EmailService:
         else:
             await self.send_via_sendmail(msg)
 
+    async def send_plain(self, to: str, subject: str, body: str) -> None:
+        """Send a plain-text administrative email (no template).
+
+        The admin notifier's channel (#3250): rides the same transport
+        (SMTP or sendmail) and From/Reply-To headers as the templated
+        auth emails, without needing a per-event template directory.
+        """
+        cfg = self.smtp_config()
+        msg = EmailMessage()
+        msg["Subject"] = subject
+        msg["From"] = cfg["from_addr"] or cfg["user"] or "noreply@localhost"
+        msg["To"] = to
+        msg.set_content(body)
+        self._set_headers(msg)
+        await self._send(msg)
+
     async def send_verification_email(
         self, to: str, verification_url: str
     ) -> None:

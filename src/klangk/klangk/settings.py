@@ -74,6 +74,13 @@ from klangk.util import run_cmd_value
 # there, next to the rotating handler that consumes them (#3156).
 from klangk.logger import ROTATE_WHENS
 
+# notifier.py imports nothing from settings (it reads fields off
+# app.state.settings at call time), so this top-level import is
+# cycle-safe. The canonical notification event names live there, next
+# to the emit sites; the admin_notify_events validator checks against
+# them (#3250).
+from klangk.notifier import DEFAULT_NOTIFY_EVENTS
+
 from pydantic_settings.sources.providers.env import parse_env_vars
 
 logger = logging.getLogger(__name__)
@@ -1633,6 +1640,22 @@ class KlangkSettings(BaseSettings):
     sendmail_path: str | None = "sendmail"
     email_templates_dir: str = ""
 
+    # --- Admin notifications (#3250) ---
+    # SA/ISSO notification recipients (email channel). Empty = the
+    # email channel is off. Delivered through the same SMTP/sendmail
+    # transport as the auth emails (emailsvc).
+    admin_notification_emails: list[str] | None = None
+    # Webhook channel: one JSON POST per notification, short timeout,
+    # no retries. None = the channel is off.
+    admin_notification_webhook_url: str | None = None
+    # Which event types notify (the allowlist). None = every supported
+    # event (DEFAULT_NOTIFY_EVENTS in notifier.py); an explicit list
+    # narrows it. Blank/empty input means None — the default allowlist
+    # — so blanking the env var cannot silently disable notifications;
+    # the channels are the master switch. Unknown names abort startup —
+    # a typo would silently disable a security notification.
+    admin_notify_events: list[str] | None = None
+
     # --- Legal / support links ---
     terms_url: str = ""
     privacy_url: str = ""
@@ -2204,6 +2227,34 @@ class KlangkSettings(BaseSettings):
                 "host port)."
             )
         return v
+
+    @field_validator("admin_notification_emails", mode="before")
+    @classmethod
+    def _coerce_admin_notification_emails(cls, v):
+        """Accept a comma-separated string (env var) or a native list
+        (YAML); None/empty → None (email channel off). See #3250."""
+        if v is None:
+            return None
+        items = _setting_items(v, "KLANGKD_ADMIN_NOTIFICATION_EMAILS")
+        return items or None
+
+    @field_validator("admin_notify_events", mode="before")
+    @classmethod
+    def _coerce_admin_notify_events(cls, v):
+        """Accept a comma-separated string (env var) or a native list
+        (YAML) of event names. A blank env string means None — the
+        default allowlist — so blanking the variable cannot silently
+        disable notifications. A native list stays explicit: YAML
+        ``admin_notify_events: []`` is notifications-off (the channels
+        stay configured but no event notifies). Unknown names abort
+        startup via :func:`_reject_unknown_notify_events` (#3250)."""
+        if v is None:
+            return None
+        items = _setting_items(v, "KLANGKD_ADMIN_NOTIFY_EVENTS")
+        _reject_unknown_notify_events(items)
+        if isinstance(v, str):
+            return items or None
+        return items
 
     @field_validator("smtp_port", mode="before")
     @classmethod
@@ -2881,6 +2932,22 @@ def _setting_items(v, label: str, *, stringify: bool = True) -> list:
         f"{label}={v!r} must be a list or "
         f"a comma-separated string (got {type(v).__name__})."
     )
+
+
+def _reject_unknown_notify_events(items: list) -> None:
+    """Raise when an allowlist entry names no emittable event (#3250).
+
+    A typo in KLANGKD_ADMIN_NOTIFY_EVENTS would silently disable that
+    notification — the netfilter_default_domains posture says a safety
+    control's malformed value fails loudly instead.
+    """
+    unknown = [item for item in items if item not in DEFAULT_NOTIFY_EVENTS]
+    if unknown:
+        raise ValueError(
+            f"KLANGKD_ADMIN_NOTIFY_EVENTS contains unknown event"
+            f" name(s): {unknown}. Supported events:"
+            f" {sorted(DEFAULT_NOTIFY_EVENTS)}."
+        )
 
 
 def _str_setting_items(value: str) -> list[str]:

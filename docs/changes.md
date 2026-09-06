@@ -718,6 +718,19 @@ sync` report a clear permission-denied error.
 
 ### Added
 
+- **Admin notifications (#3250).** SA/ISSO notification of
+  security-relevant events: account lifecycle (create, register,
+  update, delete, unlock, disable, enable — including the inactivity
+  sweep's auto-disables and SSO JIT-provisioned accounts), credential
+  and group-membership changes, failed audit-trail writes, and
+  memory-capacity start refusals. Delivered as email via
+  `KLANGKD_ADMIN_NOTIFICATION_EMAILS` (the SMTP/sendmail transport the
+  auth emails use) and/or one JSON POST per event to
+  `KLANGKD_ADMIN_NOTIFICATION_WEBHOOK_URL`; with neither set,
+  notifications are off. `KLANGKD_ADMIN_NOTIFY_EVENTS` narrows the
+  event allowlist (default: every supported event). See the
+  [admin management docs](/features/admin-management/#notifications).
+
 - **`KLANGKD_TRUSTED_CA_DIR` (#3198).** Operator-managed approved CA
   baseline for runtime SSL trust: when set, only CAs whose SHA-256
   fingerprint appears among that directory's `.pem`/`.crt` certs are

@@ -18,10 +18,29 @@ import logging
 
 from klangk import wshandler
 from klangk.interval import IntervalWorker
+from klangk.notifier import notify_event
 
 logger = logging.getLogger(__name__)
 
 SWEEP_INTERVAL = 3600.0
+
+
+def notify_sweep_disables(app, days: int, disabled: list) -> None:
+    """One SA/ISSO notification for a sweep's disable batch (#3250).
+
+    One message per sweep — not one per account — so a batch of
+    dormant accounts lands as a single SV-222419 notification. No
+    actor: this is a system action.
+    """
+    notify_event(
+        app,
+        "user.disable",
+        detail={
+            "via": "inactivity",
+            "days": days,
+            "users": [u["email"] for u in disabled],
+        },
+    )
 
 
 class InactivitySweeper(IntervalWorker):
@@ -74,3 +93,7 @@ class InactivitySweeper(IntervalWorker):
                 days,
                 ", ".join(u["email"] for u in disabled),
             )
+            # One SA/ISSO notification for the whole batch (#3250,
+            # SV-222419): the sweeper's silent auto-disable is exactly
+            # what an ISSO wants to hear about.
+            notify_sweep_disables(self.app, days, disabled)

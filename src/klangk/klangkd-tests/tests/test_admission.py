@@ -18,7 +18,7 @@ runtime failures (500).
 """
 
 import types
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -414,6 +414,33 @@ class TestHostMemoryGate:
         assert "1.2 GB available" in msg
         assert "workspace wants 9.0 GB" in msg  # 8g limit + 1g reserve
         assert "Stop an idle workspace" in msg
+
+    async def test_refusal_notifies_sa(self, app_state, db, user):
+        """#3250 (SV-222668): a memory-refused start alerts the SA/ISSO
+        stream with the measured shortfall."""
+        ws = await app_state.state.workspaces.create_workspace(
+            user["id"], "admit-notify"
+        )
+        spy = Mock()
+        app_state.state.notifier = spy
+        with (
+            patch.object(
+                app_state.state.settings, "admission_memory_enabled", True
+            ),
+            patch(
+                "klangk.container.admission.available_memory_bytes",
+                return_value=int(1.2 * GIB),
+            ),
+        ):
+            with pytest.raises(WorkspaceCapacityError):
+                await app_state.state.container_registry.admission.admit(
+                    _spec(ws["id"])
+                )
+        args, kwargs = spy.notify_admins.call_args
+        assert args[0] == "resource.low"
+        assert kwargs["detail"]["reason"] == "host-memory"
+        assert kwargs["detail"]["available"] == "1.2 GB"
+        assert kwargs["detail"]["workspace_id"] == ws["id"]
 
     async def test_margin_unset_fits_bare_limit(self, app_state, db, user):
         ws = await app_state.state.workspaces.create_workspace(

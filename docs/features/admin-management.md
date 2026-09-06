@@ -51,3 +51,50 @@ recycle actually do):
   server snapshot, so changes made elsewhere appear immediately.
 - **Cancel a schedule** — each row has a cancel button with a confirm
   step; cancelling clears the countdown clients see.
+
+## Notifications
+
+Klangk can notify designated recipients (a System Administrator and
+Information System Security Officer — SA/ISSO — in STIG terms) when
+security-relevant events happen, in real time rather than only in the
+audit log:
+
+- **Account lifecycle** — a user is created (by an admin, by
+  self-registration, by invitation, or automatically on a first SSO
+  login), updated, deleted, unlocked, disabled, or re-enabled. Disables
+  triggered automatically by the inactivity sweep notify too, as one
+  message per sweep.
+- **Credential and identity changes** — password, email, and handle
+  changes, including self-service ones, and group membership changes.
+- **Audit failures** — a failed audit-trail write alerts immediately;
+  an unwritable audit table must not fail silently.
+- **Capacity refusals** — a workspace start refused because host memory
+  cannot fit the workspace's memory limit.
+
+Two delivery channels are available, and both can be on at once:
+
+- **Email** — `KLANGKD_ADMIN_NOTIFICATION_EMAILS` holds a
+  comma-separated recipient list. Messages go out through the same
+  SMTP or sendmail transport as the verification and invitation emails
+  ([Email settings](../reference/environment.md)).
+- **Webhook** — `KLANGKD_ADMIN_NOTIFICATION_WEBHOOK_URL` receives one
+  JSON POST per notification with the event name, timestamp, actor,
+  target, detail, and source IP. Delivery is one attempt with a short
+  timeout; there are no retries.
+
+With neither channel configured, notifications are off — this is the
+default. `KLANGKD_ADMIN_NOTIFY_EVENTS` narrows the allowlist of event
+types that notify (the default is all of them); an unknown event name
+in that list aborts startup so a typo cannot silently disable a
+notification. A config-file `admin_notify_events: []` turns event
+notifications off while leaving the channels configured — the
+deliberate off switch (blanking the environment variable instead
+restores the default allowlist). Persistent conditions (`audit.failure`,
+`resource.low`) notify at most once every 5 minutes — `audit.failure`
+once per source table (`audit_events` and `container_events` alert
+independently) — so a degraded audit table or a full host produces one
+alert per condition rather than a flood.
+
+Notification delivery is best-effort: a failed email or webhook call
+is logged as a warning and never fails or delays the action that
+triggered it.

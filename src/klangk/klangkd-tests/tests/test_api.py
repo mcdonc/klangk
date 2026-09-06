@@ -109,6 +109,12 @@ async def app(db, temp_data_dir):
     app.state.hooks = hooks_mod.Hooks(app)
     app.state.files = files_mod.Files(app)
     app.state.email = emailsvc_mod.EmailService(app)
+    # #3250: SA/ISSO notifier — the lifecycle routes notify through it
+    # (no channels configured by default, so it no-ops unless a test
+    # configures one or spies on it).
+    from klangk.notifier import AdminNotifier
+
+    app.state.notifier = AdminNotifier(app)
     app.state.util = util_mod.Util(app)
     # #1365: create/update workspace validation reaches the netfilter
     # hooks-dir resolver.
