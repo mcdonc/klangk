@@ -20,7 +20,7 @@ from klangk import (
     ssl_trust,
     util as util_mod,
 )
-from klangk.container.spec import nix_binds
+from klangk.container.spec import ensure_volumes, nix_binds
 from klangk.model.container_events import CAUSE_API, CAUSE_DRAIN
 from _helpers import make_settings
 
@@ -4082,6 +4082,26 @@ class TestValidateMountSpec:
         assert err is not None
         assert "unknown option" in err.lower()
 
+    def test_nul_in_source_rejected(self):
+        """#3278: a NUL byte in the source is refused at the settings
+        gate with a clean 400-shaped error — previously the realpath
+        call raised an unhandled ValueError (a 500)."""
+        err = self.registry.validate_mount_spec("/ho\x00st:/container")
+        assert err is not None
+        assert "contains a NUL byte" in err
+
+    def test_nul_in_destination_rejected(self):
+        """#3278: a NUL byte in the destination is refused too —
+        podman argv strings are NUL-terminated, so the spec could
+        never have been carried to the runtime (previously it passed
+        both gates and crashed argv assembly at start)."""
+        err = self.registry.validate_mount_spec("/host:/cont\x00ainer")
+        assert err is not None
+        assert "contains a NUL byte" in err
+        err = self.registry.validate_mount_spec("my-vol:/data\x00")
+        assert err is not None
+        assert "contains a NUL byte" in err
+
     def test_named_volume_leading_dash_rejected(self):
         """#3018: a leading-dash source is parsed as a flag by the podman
         CLI (``podman volume create --opt=...``) — rejected at the mount
@@ -4312,6 +4332,93 @@ class TestProtectedPaths:
             err = self.registry.validate_mount_spec(f"{link}:/mnt/data")
             assert err is not None
             assert "allowed root" in err.lower()
+
+
+class TestBindMountStartGate:
+    """#3278: the start path re-runs the settings gate's bind-source
+    containment (protected paths, allowed roots, realpath) immediately
+    before the podman argv is built — the #3018 posture, bind side."""
+
+    def setup_method(self):
+        app_state = _make_app_state()
+        self.app = app_state
+        self.registry = app_state.state.container_registry
+
+    def _allow(self, monkeypatch, roots):
+        monkeypatch.setattr(
+            self.app.state.settings, "allowed_mount_roots", roots
+        )
+
+    async def test_outside_roots_refused_at_start(self, monkeypatch):
+        """The issue's repro 1 (hardened deploy): /etc passes the old
+        existence-only check; with roots configured that don't contain
+        it, the start gate refuses it."""
+        self._allow(monkeypatch, "/opt/allowed")
+        with pytest.raises(ValueError, match="allowed root"):
+            await ensure_volumes(self.app, ["/etc:/x"], "ws", None)
+
+    async def test_bind_refused_when_roots_unset(self):
+        """#3153 deny-by-default also holds at start: with no roots
+        configured, every bind source is refused — a row that reached
+        the DB without the API gate starts nothing."""
+        with pytest.raises(ValueError, match="bind mounts are disabled"):
+            await ensure_volumes(self.app, ["/etc:/x"], "ws", None)
+
+    async def test_data_dir_refused_at_start(self, tmp_path):
+        """The deploy's own data dir is protected at start too — the
+        protected-path check runs before the roots question."""
+        ws_dir = tmp_path / "workspaces"
+        ws_dir.mkdir()
+        with pytest.raises(ValueError, match="protected host path"):
+            await ensure_volumes(self.app, [f"{ws_dir}:/loot"], "ws", None)
+
+    async def test_symlink_swap_refused_at_start(self, tmp_path, monkeypatch):
+        """The issue's repro 2: a source validated under an allowed root,
+        then swapped for a symlink to /, is refused at start —
+        realpath resolves through the swap before containment."""
+        root = tmp_path / "allowed"
+        share = root / "share"
+        root.mkdir()
+        share.mkdir()
+        share.rmdir()
+        share.symlink_to("/")
+        self._allow(monkeypatch, str(root))
+        with pytest.raises(ValueError, match="allowed root"):
+            await ensure_volumes(self.app, [f"{share}:/x"], "ws", None)
+
+    async def test_bind_under_root_passes_at_start(self, monkeypatch):
+        """A real directory under a configured root still starts. The
+        root lives outside the test's tmp_path — that IS the data dir,
+        and mounting under it is refused as protected."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory(prefix="mount-start-") as d:
+            share = Path(d) / "share"
+            share.mkdir()
+            self._allow(monkeypatch, d)
+            await ensure_volumes(self.app, [f"{share}:/x"], "ws", None)
+
+    async def test_start_container_refuses_symlink_escaped_mount(
+        self, workspace, monkeypatch
+    ):
+        """Full start: the refusal fires before any podman argv is
+        built — create_container is never reached."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory(prefix="mount-start-") as d:
+            share = Path(d) / "share"
+            share.symlink_to("/")
+            self._allow(monkeypatch, d)
+            with patch_podman(self.registry) as p:
+                with pytest.raises(ValueError, match="allowed root"):
+                    await self.registry.start_container(
+                        container.ContainerStartSpec(
+                            workspace["id"],
+                            "/tmp/home",
+                            extra_mounts=[f"{share}:/x"],
+                        )
+                    )
+            p.create_container.assert_not_awaited()
 
 
 class TestExtraMountsVolumeCreation:
@@ -4561,6 +4668,9 @@ class TestExtraMountsVolumeCreation:
     ):
         """Bind mounts (starting with /) are not treated as volumes."""
         monkeypatch.setattr("os.path.exists", lambda p: True)
+        monkeypatch.setattr(
+            self.registry.app.state.settings, "allowed_mount_roots", "/home"
+        )
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 container.ContainerStartSpec(
@@ -4574,6 +4684,9 @@ class TestExtraMountsVolumeCreation:
     async def test_mount_with_multiple_colons(self, workspace, monkeypatch):
         """Mount spec with options (host:container:ro) — source starts with /."""
         monkeypatch.setattr("os.path.exists", lambda p: True)
+        monkeypatch.setattr(
+            self.registry.app.state.settings, "allowed_mount_roots", "/data"
+        )
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 container.ContainerStartSpec(
@@ -4602,6 +4715,12 @@ class TestExtraMountsVolumeCreation:
     ):
         """A mount source containing slashes is a bind mount, not a volume."""
         monkeypatch.setattr("os.path.exists", lambda p: True)
+        # './relative/...' resolves against the cwd — allow that root.
+        monkeypatch.setattr(
+            self.registry.app.state.settings,
+            "allowed_mount_roots",
+            os.path.realpath("."),
+        )
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 container.ContainerStartSpec(
@@ -4631,23 +4750,18 @@ class TestExtraMountsVolumeCreation:
                 )
             )
 
-    async def test_mount_source_with_special_characters(
-        self, workspace, monkeypatch
-    ):
-        """Mount source with special/binary-like chars is a bind mount."""
-        monkeypatch.setattr("os.path.exists", lambda p: True)
-        with patch_podman(self.registry) as p:
-            await self.registry.start_container(
-                container.ContainerStartSpec(
-                    workspace["id"],
-                    "/tmp/home",
-                    extra_mounts=[
-                        "/path/with spaces\x00and\x01binary:/work/bad"
-                    ],
-                )
-            )
-        # Has leading /, so treated as bind mount
-        p.inspect_volume.assert_not_awaited()
+    async def test_nul_in_spec_refused_at_start(self):
+        """A NUL byte anywhere in the spec (source or destination) is
+        refused at start with a clean error — podman argv strings are
+        NUL-terminated, so the spec could never have been carried to
+        the runtime anyway. Runs before the named/bind dispatch, so
+        both mount kinds are covered."""
+        for spec_str in (
+            "/path/with spaces\x00and\x01binary:/work/bad",
+            "my-vol:/work/bad\x00",
+        ):
+            with pytest.raises(ValueError, match="contains a NUL byte"):
+                await ensure_volumes(self.registry.app, [spec_str], "ws", None)
 
     async def test_missing_bind_mount_source_rejected(self, workspace):
         """A bind mount with a non-existent source path is refused."""

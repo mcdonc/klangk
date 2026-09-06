@@ -318,6 +318,21 @@ operators or integrators to act when upgrading.
 
 ### Security
 
+- **Bind-mount re-validation at container start (#3278).** A mount's
+  host-path source is now checked against
+  `KLANGKD_ALLOWED_MOUNT_ROOTS` and the protected-path blocklist every
+  time a workspace container is created, not only when the mount is
+  saved. A source that changed after it was saved (for example, a
+  directory under an allowed root replaced by a symlink pointing
+  elsewhere) — or a mount row that reached the database without the
+  settings gate — is refused with a clear start error instead of
+  mounting an arbitrary host path into the container. Mount specs
+  containing a NUL byte (in the source or the destination) are also
+  refused at both gates; a saved bind mount on a deploy with no
+  allowed roots configured now fails at start — configure the roots
+  or remove the mount. See
+  [Mount security](features/workspaces.md#mount-security).
+
 - **Tokens removed from URLs (#3201).** Session JWTs no longer ride
   URLs anywhere. WebSocket clients (browser and CLI) now authenticate
   the handshake via the `Sec-WebSocket-Protocol` header instead of a
@@ -810,7 +825,6 @@ sync` report a clear permission-denied error.
   stream's first `user.disable` rows, since an admin's disable/enable
   toggle records inside its `user.update` row. The sweep's
   auto-disables surface in the audit and merged events views.
-
 
 - **Admin notifications (#3250).** SA/ISSO notification of
   security-relevant events: account lifecycle (create, register,

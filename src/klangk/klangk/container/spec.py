@@ -116,6 +116,96 @@ def valid_volume_name(name: str) -> bool:
     return True
 
 
+# Host paths that must never be mounted into a workspace container
+# (#508): the container-runtime sockets — mounting one is container
+# escape by any workspace owner. Compared after realpath, so a symlink
+# to a socket (and the ``/var/run`` → ``/run`` alias) resolves first.
+_PROTECTED_PATHS = [
+    "/var/run/docker.sock",
+    "/run/docker.sock",
+    "/run/podman/podman.sock",
+]
+
+
+def _resolved_under_root(resolved: str, roots) -> bool:
+    """True when a resolved path equals or lives under an allowed root."""
+    return any(
+        resolved == root or resolved.startswith(root + "/") for root in roots
+    )
+
+
+def bind_roots(app) -> list[str]:
+    """Configured ``KLANGKD_ALLOWED_MOUNT_ROOTS``, each realpath'd."""
+    return [
+        os.path.realpath(p)
+        for p in split_csv(app.state.settings.allowed_mount_roots)
+    ]
+
+
+def mount_spec_nul_error(spec: str) -> str | None:
+    """Error for a mount spec containing a NUL byte, else None.
+
+    Podman argv strings are NUL-terminated, so such a spec could never
+    reach the runtime (#3278) — it must be refused with a clean error
+    at each gate (settings update and container start) instead of
+    crashing argv assembly. Checked on the whole spec, so a NUL in the
+    destination (``/src:/de\x00st``) is caught too."""
+    if "\x00" in spec:
+        return f"Invalid mount {spec!r}: contains a NUL byte"
+    return None
+
+
+def _protected_bind_error(app, spec: str, resolved: str) -> str | None:
+    """Error when a resolved bind source hits a protected host path.
+
+    The blocklist is the runtime sockets plus the deploy's data dir
+    (each realpath'd before the prefix compare, so symlinks and the
+    ``/var/run`` → ``/run`` alias resolve first)."""
+    data_dir = os.path.realpath(app.state.settings.data_dir)
+    for blocked in map(os.path.realpath, (*_PROTECTED_PATHS, data_dir)):
+        if resolved == blocked or resolved.startswith(blocked + "/"):
+            return f"Invalid mount {spec!r}: source is a protected host path"
+    return None
+
+
+def validate_bind_source(app, spec: str, source: str) -> str | None:
+    """Bind-source containment (#3278) — the one implementation behind
+    both gates: the settings-update validator
+    (``ContainerRegistry._validate_bind_source``) and the start-time
+    re-check in ``_ensure_one_volume``.
+
+    A bind source is acceptable only when its ``realpath`` (symlinks
+    resolved, #508) is not a protected host path and lives under a
+    configured ``KLANGKD_ALLOWED_MOUNT_ROOTS`` root — deny-by-default
+    (#3153): with no roots configured, user bind mounts are disabled
+    entirely and only named volumes may be mounted. The start gate
+    re-runs this as late as possible (the #3018 posture) so a row that
+    reached the DB without the API gate — or a source swapped for a
+    symlink after validation — is refused immediately before the
+    podman argv is built, instead of mounting an arbitrary host path
+    into the workspace container. NUL bytes are refused by the
+    spec-level check (``mount_spec_nul_error``) at each gate before
+    this runs.
+    """
+    resolved = os.path.realpath(source)
+    error = _protected_bind_error(app, spec, resolved)
+    if error:
+        return error
+    roots = bind_roots(app)
+    if not roots:
+        return (
+            f"Invalid mount {spec!r}: bind mounts are disabled on "
+            "this deploy (KLANGKD_ALLOWED_MOUNT_ROOTS is unset); "
+            "only named volumes may be mounted"
+        )
+    if _resolved_under_root(resolved, roots):
+        return None
+    return (
+        f"Invalid mount {spec!r}: bind mount source must be "
+        f"under an allowed root ({', '.join(roots)})"
+    )
+
+
 @dataclass(slots=True)
 class ContainerStartSpec:
     """Parameters for :meth:`ContainerRegistry.start_container` (#2566).
@@ -482,6 +572,13 @@ async def _ensure_one_volume(
     app, workspace_id: str, podman, mount_spec: str
 ) -> None:
     """Create/validate the source of one extra mount."""
+    # NUL gate first, before either arm: a spec with a NUL byte in it
+    # (source or destination) could never reach podman's argv
+    # (NUL-terminated strings) — refuse it with a clean start error
+    # instead of an argv crash (#3278).
+    error = mount_spec_nul_error(mount_spec)
+    if error:
+        raise ValueError(error)
     source = mount_spec.split(":")[0]
     if is_named_volume(source):
         # Defense in depth (#3018): validate_mount_spec already
@@ -496,8 +593,26 @@ async def _ensure_one_volume(
                 "[a-zA-Z0-9_.-], and be at most 64 chars)"
             )
         await _ensure_named_volume(app, workspace_id, podman, source)
-    elif not os.path.exists(source):
+        return
+    _validate_bind_mount(app, mount_spec, source)
+
+
+def _validate_bind_mount(app, mount_spec: str, source: str) -> None:
+    """Start-gate validation of one bind mount (#3278): existence,
+    then the SAME containment the settings gate enforces — realpath
+    under an allowed root, never a protected path.
+
+    Update-time validation is an unbounded window before the mount
+    happens: a source swapped for a symlink in the meantime (or a row
+    that reached the DB without the API gate) must be refused here,
+    immediately before the podman argv is built, rather than mount an
+    arbitrary host path.
+    """
+    if not os.path.exists(source):
         raise ValueError(f"Bind mount source does not exist: {source}")
+    error = validate_bind_source(app, mount_spec, source)
+    if error:
+        raise ValueError(error)
 
 
 async def ensure_volumes(

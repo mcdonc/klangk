@@ -57,7 +57,9 @@ from .sidecar import (
 from .spec import (
     ContainerStartSpec,
     SHARED_HOME,
+    bind_roots,
     is_named_volume,
+    mount_spec_nul_error,
     split_csv,
     valid_volume_name,
     build_create_kwargs,
@@ -66,6 +68,7 @@ from .spec import (
     ensure_volumes,
     image_pull_policy,
     nix_binds,
+    validate_bind_source,
 )
 
 logger = logging.getLogger(__name__)
@@ -81,12 +84,6 @@ _VALID_MOUNT_OPTIONS = {
     "cached",
     "delegated",
 }
-
-_PROTECTED_PATHS = [
-    "/var/run/docker.sock",
-    "/run/docker.sock",
-    "/run/podman/podman.sock",
-]
 
 
 def pid_alive(pid: int) -> bool:
@@ -195,13 +192,6 @@ async def remove_stale_container(
             stale_id[:12],
             del_exc,
         )
-
-
-def _resolved_under_root(resolved: str, roots) -> bool:
-    """True when a resolved path equals or lives under an allowed root."""
-    return any(
-        resolved == root or resolved.startswith(root + "/") for root in roots
-    )
 
 
 def _labeled_workspace_ident(c: dict) -> str | None:
@@ -344,10 +334,7 @@ class ContainerRegistry(NetworkSidecarMixin):
 
     @property
     def allowed_mount_roots(self) -> list[str]:
-        return [
-            os.path.realpath(p)
-            for p in split_csv(self.app.state.settings.allowed_mount_roots)
-        ]
+        return bind_roots(self.app)
 
     @property
     def port_range_start(self) -> int:
@@ -384,16 +371,6 @@ class ContainerRegistry(NetworkSidecarMixin):
         """Resolve the workspace-image pull policy from settings."""
         return image_pull_policy(self.app)
 
-    def _is_protected(self, source: str) -> bool:
-        """True if source is a protected host path that must never be mounted."""
-        resolved = os.path.realpath(source)
-        data_dir = os.path.realpath(self.app.state.settings.data_dir)
-        for blocked in [*_PROTECTED_PATHS, data_dir]:
-            blocked = os.path.realpath(blocked)
-            if resolved == blocked or resolved.startswith(blocked + "/"):
-                return True
-        return False
-
     def _validate_mount_shape(self, spec: str, parts: list[str]) -> str | None:
         """Structural checks: 2-3 parts, non-empty source, absolute dest."""
         if len(parts) < 2 or len(parts) > 3:
@@ -420,17 +397,28 @@ class ContainerRegistry(NetworkSidecarMixin):
     def validate_mount_spec(self, spec: str) -> str | None:
         """Validate a container mount spec string."""
         parts = spec.split(":")
-        error = self._validate_mount_shape(spec, parts)
+        error = self._validate_spec_structure(spec, parts)
         if error:
             return error
-        if len(parts) == 3:
-            error = self._validate_mount_options(spec, parts[2])
-            if error:
-                return error
         source = parts[0]
         if is_named_volume(source):
             return self._validate_named_volume_source(spec, source)
         return self._validate_bind_source(spec, source)
+
+    def _validate_spec_structure(
+        self, spec: str, parts: list[str]
+    ) -> str | None:
+        """Spec-level checks that do not depend on the source: NUL
+        bytes (a spec that could never reach podman's argv, #3278),
+        shape, and option syntax."""
+        error = mount_spec_nul_error(spec) or self._validate_mount_shape(
+            spec, parts
+        )
+        if error:
+            return error
+        if len(parts) == 3:
+            return self._validate_mount_options(spec, parts[2])
+        return None
 
     def _validate_named_volume_source(
         self, spec: str, source: str
@@ -448,28 +436,12 @@ class ContainerRegistry(NetworkSidecarMixin):
         )
 
     def _validate_bind_source(self, spec: str, source: str) -> str | None:
-        """A bind source must not be a protected host path, and —
-        deny-by-default (#3153) — must live under a configured
-        `KLANGKD_ALLOWED_MOUNT_ROOTS` root. With no roots configured,
-        user bind mounts are disabled entirely; only named volumes
-        may be mounted."""
-        if self._is_protected(source):
-            return f"Invalid mount {spec!r}: source is a protected host path"
-        roots = self.allowed_mount_roots
-        if not roots:
-            return (
-                f"Invalid mount {spec!r}: bind mounts are disabled on "
-                "this deploy (KLANGKD_ALLOWED_MOUNT_ROOTS is unset); "
-                "only named volumes may be mounted"
-            )
-        resolved = os.path.realpath(source)
-        if _resolved_under_root(resolved, roots):
-            return None
-        allowed = ", ".join(roots)
-        return (
-            f"Invalid mount {spec!r}: bind mount source must be "
-            f"under an allowed root ({allowed})"
-        )
+        """Bind-source containment at the settings gate: delegated to
+        :func:`klangk.container.spec.validate_bind_source`, the one
+        implementation shared with the start-time re-check in
+        ``_ensure_one_volume`` (#3278), so the two gates can never
+        drift."""
+        return validate_bind_source(self.app, spec, source)
 
     def validate_mounts(self, mounts: list[str]) -> str | None:
         """Validate a list of mount specs. Returns first error or None."""
