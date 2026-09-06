@@ -110,11 +110,20 @@ async def audit_status(app=Depends(get_app_dep)):
     # the audit trail losing rows and verify the mode without reading
     # the journal. Public like /health: the counters carry no user
     # data, and an assessor must be able to probe the mode
-    # unauthenticated.
-    return {
+    # unauthenticated. #3252: when audit forwarding is configured, the
+    # same surface reports the forwarder's health — a down target is
+    # an audit-delivery degradation. Unconfigured forwarding adds no
+    # key (the response stays byte-identical to before #3252).
+    body = {
         "write_failures": app.state.container_registry.audit_write_failures,
         "fail_closed": app.state.settings.audit_fail_closed,
     }
+    forwarder = getattr(app.state, "audit_forwarder", None)
+    if forwarder is not None:
+        forwarding = await forwarder.status()
+        if forwarding.get("enabled"):
+            body["forwarding"] = forwarding
+    return body
 
 
 @root_router.get("/empty")

@@ -129,6 +129,11 @@ async def app(db, temp_data_dir):
     from klangk import server_schedule as server_schedule_mod
 
     app.state.server_scheduler = server_schedule_mod.ServerScheduler(app)
+    # #3252: audit forwarder — the lifespan worker start/stop paths
+    # reach it (inert: no target configured in these tests).
+    from klangk.audit_forward import AuditForwarder
+
+    app.state.audit_forwarder = AuditForwarder(app)
     # #1572: wire DB + Model so converted domains (tokens,
     # login_attempts, invitations, ports) reached via app.state.model.*
     # resolve the same per-test DB.

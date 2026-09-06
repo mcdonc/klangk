@@ -300,7 +300,6 @@ async def _decider_dpop_gate(
 async def _decider_user_or_refuse(
     websocket: WebSocket, a, payload, workstation
 ):
-
     """The authenticated user for a decider registration, or None
     after refusing the handshake.
 

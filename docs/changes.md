@@ -718,6 +718,20 @@ sync` report a clear permission-denied error.
 
 ### Added
 
+- **Built-in audit-record forwarding (#3252).** Opt-in native
+  forwarding of the audit records themselves to a SIEM —
+  `KLANGKD_AUDIT_FORWARD_URL` (JSON POST batches to an HTTPS
+  endpoint, with an optional `KLANGKD_AUDIT_FORWARD_HEADER` auth
+  header) and/or `KLANGKD_AUDIT_FORWARD_SYSLOG` (RFC 5424 over
+  TCP/TLS). Every new row of the three audit tables ships in order,
+  at-least-once, resuming from a persisted cursor after a restart; a
+  down target queues rows in the tables and retries with its own
+  backoff (a healthy second target keeps its cadence), surfacing on
+  `/audit` under `forwarding`. With neither set, nothing
+  is read or sent. Both are SIGHUP-reloadable and validated at
+  startup. See
+  [Logging](features/logging.md#built-in-audit-record-forwarding).
+
 - **Admin notifications (#3250).** SA/ISSO notification of
   security-relevant events: account lifecycle (create, register,
   update, delete, unlock, disable, enable — including the inactivity

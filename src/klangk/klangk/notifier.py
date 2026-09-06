@@ -38,7 +38,7 @@ import logging
 import time
 from datetime import datetime, timezone
 
-import httpx
+from .webhook import post_json
 
 logger = logging.getLogger(__name__)
 
@@ -263,14 +263,14 @@ class AdminNotifier:
                 )
 
     async def deliver_via_webhook(self, payload: dict) -> None:
-        """POST the event as JSON; short timeout, no retries."""
+        """POST the event as JSON; short timeout, no retries. Shares
+        the :func:`klangk.webhook.post_json` transport with the
+        audit-record forwarder (#3252)."""
         url = self.webhook_url()
         if url is None:
             return
         try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                resp = await client.post(url, json=payload)
-                resp.raise_for_status()
+            await post_json(url, payload)
         except Exception:  # noqa: BLE001 — best-effort by design
             logger.warning(
                 "admin notification webhook %s failed (event %s)",

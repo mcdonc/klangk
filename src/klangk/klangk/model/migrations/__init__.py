@@ -83,6 +83,8 @@ from klangk.model.migrations import m0032_must_change_password
 from klangk.model.migrations import m0033_user_sessions_last_seen
 from klangk.model.migrations import m0034_audit_events
 from klangk.model.migrations import m0035_user_sessions_step_up
+from klangk.model.migrations import m0036_audit_forward_state
+from klangk.model.migrations import m0037_audit_forward_cursors
 from klangk.model.migrations.base import Migration
 
 __all__ = ["MIGRATIONS", "Migration", "run_migrations"]
@@ -126,6 +128,8 @@ MIGRATIONS: list[Migration] = [
     m0033_user_sessions_last_seen.migration,
     m0034_audit_events.migration,
     m0035_user_sessions_step_up.migration,
+    m0036_audit_forward_state.migration,
+    m0037_audit_forward_cursors.migration,
 ]
 
 

@@ -806,6 +806,7 @@ class Lifecycle:
         "acl",
         "email",
         "notifier",
+        "audit_forwarder",
         "util",
         "lifecycle",
         "server_scheduler",
@@ -1296,6 +1297,12 @@ def start_background_workers(app: FastAPI) -> None:
     server_scheduler = getattr(app.state, "server_scheduler", None)
     if server_scheduler is not None:
         server_scheduler.start()
+    # #3252: audit-record forwarder — started after the sweepers so a
+    # slow target can never delay them. Guarded like the scheduler for
+    # minimal test apps.
+    audit_forwarder = getattr(app.state, "audit_forwarder", None)
+    if audit_forwarder is not None:
+        audit_forwarder.start()
 
 
 async def stop_background_workers(app: FastAPI) -> None:
@@ -1311,6 +1318,9 @@ async def stop_background_workers(app: FastAPI) -> None:
     await app.state.consent_coordinator.stop()
     await app.state.consent_deciders.stop()
     await app.state.sidecar_connections.stop()
+    audit_forwarder = getattr(app.state, "audit_forwarder", None)
+    if audit_forwarder is not None:
+        await audit_forwarder.stop()
     await app.state.proxy_watchdog.stop()
 
 
