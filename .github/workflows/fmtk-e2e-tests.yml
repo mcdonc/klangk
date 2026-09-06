@@ -10,18 +10,11 @@ on:
         default: stock
   push:
     branches: [release/**]
-  pull_request:
-    paths:
-      - "src/klangk/**"
-      - "src/frontend/e2e-tests/fmtk/**"
-      - "scripts/fmtk-up.sh"
-      - "scripts/fmtk-down.sh"
-      - "scripts/fmtk-chrome.sh"
-      - "scripts/fmtk-seed.py"
-      - "devenv.nix"
-      - "devenv.yaml"
-      - ".github/workflows/fmtk-e2e-tests.yml"
-      - ".github/actions/e2e-suite/**"
+  # The suite runs on manual dispatch and release-branch pushes only —
+  # no pull_request trigger: until the #3264 flake is fixed, a PR-triggered
+  # run can red any backend PR through the src/klangk/** paths filter
+  # (#3266). Validate a PR branch by dispatching this workflow on it;
+  # re-add the trigger together with the #3264 fix.
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
@@ -45,36 +38,19 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: dorny/paths-filter@v4
-        id: filter
-        with:
-          filters: |
-            e2e:
-              - 'src/klangk/**'
-              - 'src/frontend/e2e-tests/fmtk/**'
-              - 'scripts/fmtk-up.sh'
-              - 'scripts/fmtk-down.sh'
-              - 'scripts/fmtk-chrome.sh'
-              - 'scripts/fmtk-seed.py'
-              - 'devenv.nix'
-              - 'devenv.yaml'
-              - '.github/workflows/fmtk-e2e-tests.yml'
-              - '.github/actions/e2e-suite/**'
-
-      # Stock runners only (see backend-e2e-tests.yml); skipped when the
-      # paths filter found no e2e-relevant changes.
+      # Stock runners only (see backend-e2e-tests.yml).
       - uses: ./.github/actions/devenv-setup
-        if: inputs.runner != 'nix' && steps.filter.outputs.e2e == 'true'
+        if: inputs.runner != 'nix'
 
       - uses: ./.github/actions/e2e-suite
         with:
-          run: ${{ steps.filter.outputs.e2e }}
+          run: "true"
           suite: test-fmtk-e2e
           suite-name: fmtk
           build-tasks: ""
 
       - name: Upload harness logs
-        if: always() && steps.filter.outputs.e2e == 'true'
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: fmtk-e2e-logs
