@@ -55,4 +55,11 @@ if [[ -n ${FMTK_CHROME_FLAGS:-} ]]; then
   args+=("${extra_flags[@]}")
 fi
 
+# Per-stack profile dir (fmtk e2e harness, #3238): rides the command
+# line so the harness can target THIS stack's browser window by pattern
+# when sibling harnesses run their own chromes on the same host.
+if [[ -n ${FMTK_CHROME_PROFILE:-} ]]; then
+  args+=("--user-data-dir=$FMTK_CHROME_PROFILE")
+fi
+
 exec "$chrome_bin" --no-first-run --no-default-browser-check "${args[@]}"

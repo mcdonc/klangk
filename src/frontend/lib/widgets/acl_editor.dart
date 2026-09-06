@@ -282,6 +282,7 @@ class AclEditorState extends State<AclEditor> {
                   DropdownButtonFormField<String>(
                     isExpanded: true,
                     initialValue: selectedUserId,
+                    hint: const Text('Select user'),
                     decoration: const InputDecoration(
                       labelText: 'User',
                       border: OutlineInputBorder(),
@@ -301,6 +302,7 @@ class AclEditorState extends State<AclEditor> {
                   DropdownButtonFormField<String>(
                     isExpanded: true,
                     initialValue: selectedGroupId,
+                    hint: const Text('Select group'),
                     decoration: const InputDecoration(
                       labelText: 'Group',
                       border: OutlineInputBorder(),
@@ -539,8 +541,14 @@ class AclEditorState extends State<AclEditor> {
               const SizedBox(width: 4),
               InkWell(
                 onTap: () => _removeEntry(i),
-                child:
-                    const Icon(Icons.close, size: 16, color: KColors.textMuted),
+                child: Icon(
+                  Icons.close,
+                  size: 16,
+                  color: KColors.textMuted,
+                  // Named for assistive tech and the fmtk e2e driver (the
+                  // row's remove affordance otherwise carries no label).
+                  semanticLabel: 'Remove entry $principal $permission',
+                ),
               ),
             ],
           ),

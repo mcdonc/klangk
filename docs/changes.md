@@ -3818,6 +3818,14 @@ users(id)`, so the decider handler passing the decider's email violated the
   workspace-list FABs now expose semantic labels, so assistive tech
   announces them by name instead of "button".
 
+- **Sharing controls name themselves for screen readers (#3238).** The
+  role buckets' add-user buttons ("Add to collaborators", …), each
+  member chip's delete affordance ("Remove user@example.com"), and every
+  ACL entry row's remove icon now expose semantic labels, and the
+  Add-ACE dialog's user/group pickers carry a placeholder ("Select
+  user") while empty — assistive tech announces every sharing control
+  by name.
+
 - **Terminal tab-strip controls name themselves for screen readers
   (#3235).** The new-terminal `+` button, each tab's close icon, and
   the unshare broadcast icon now expose semantic labels, and shared

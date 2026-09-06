@@ -190,6 +190,9 @@ def test_harness_auth_suite_extensions():
         harness,
         (
             "class SmtpSink",
+            # RFC 5321 dot-unstuffing — a stuffed dot at a JWT separator
+            # corrupts the extracted link token (#3238)
+            'if line.startswith(b".."):\n                line = line[1:]',
             '"smtp_host"',
             "def navigate",
             "def auth_eval",
@@ -305,6 +308,50 @@ def test_network_suite_extensions():
         ),
         "the network suite (#3237) must drive the banner, the panel, "
         "and the terminal-outcome loop",
+    )
+
+
+def test_sharing_suite_extensions():
+    """The sharing suite (#3238) drives the Sharing tab's role buckets,
+    the advanced ACL editor, and the permission gates through the
+    instrumented labels."""
+    suite = _REPO_ROOT / "src/frontend/e2e-tests/fmtk/test_sharing.py"
+    assert suite.is_file(), "the sharing suite (#3238) is missing"
+    assert_wired(
+        suite.read_text(),
+        (
+            "tap_overlay_labeled_exact",
+            'tap_labeled_exact("Add to spectators")',
+            'f"Remove {FRESH_EMAIL}"',
+            'f"Remove entry {email} {permission}"',
+            '"share-workspace"',
+            '"Access to this workspace has been revoked"',
+            '"Permission denied"',
+            '"Re-authentication required"',
+            "step_up_window_minutes",
+            '"admins"',
+        ),
+        "the sharing suite (#3238) must drive the buckets, the editor, and the gates",
+    )
+    panel = (
+        _REPO_ROOT / "src/frontend/lib/workspace/workspace_sharing_panel.dart"
+    ).read_text()
+    assert_wired(
+        panel,
+        (
+            "semanticLabel: 'Add to ${roleName}'",
+            "semanticLabel: 'Remove ${m['email']}'",
+        ),
+        "the sharing panel instrumentation (#3238) must stay wired in",
+    )
+    editor = (_REPO_ROOT / "src/frontend/lib/widgets/acl_editor.dart").read_text()
+    assert_wired(
+        editor,
+        (
+            "semanticLabel: 'Remove entry $principal $permission'",
+            "hint: const Text('Select user')",
+        ),
+        "the ACL editor instrumentation (#3238) must stay wired in",
     )
 
 

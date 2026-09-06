@@ -330,7 +330,13 @@ class WorkspaceSharingPanelState extends State<WorkspaceSharingPanel> {
                 const Spacer(),
                 if (widget.canEditAcl)
                   IconButton(
-                    icon: const Icon(Icons.person_add, size: 16),
+                    icon: Icon(
+                      Icons.person_add,
+                      size: 16,
+                      // Named for assistive tech and the fmtk e2e driver
+                      // (icon-only buttons carry no semantic label).
+                      semanticLabel: 'Add to ${roleName}',
+                    ),
                     onPressed: () => _showAddDialog(roleName),
                     padding: EdgeInsets.zero,
                     constraints: const BoxConstraints(
@@ -373,7 +379,14 @@ class WorkspaceSharingPanelState extends State<WorkspaceSharingPanel> {
                         m['email'] as String,
                         style: const TextStyle(fontSize: 11),
                       ),
-                      deleteIcon: const Icon(Icons.close, size: 14),
+                      deleteIcon: Icon(
+                        Icons.close,
+                        size: 14,
+                        // Named for assistive tech and the fmtk e2e driver
+                        // (the chip's delete affordance otherwise carries
+                        // no label).
+                        semanticLabel: 'Remove ${m['email']}',
+                      ),
                       onDeleted: widget.canEditAcl
                           ? () => _removeFromRole(roleName, m['id'] as String)
                           : null,
