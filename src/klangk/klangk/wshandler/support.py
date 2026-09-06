@@ -53,8 +53,10 @@ def ws_bearer_token(websocket) -> str | None:
     subprotocols are requested). The **last** entry that is not the
     ``bearer`` marker is the token: a future client negotiating an
     application subprotocol ahead of the pair (``json, bearer, <jwt>``)
-    still parses correctly, and a lone ``[<jwt>]`` offer works too.
-    ``None`` when no token was offered.
+    still parses correctly, and a lone ``[<jwt>]`` offer works too —
+    but an application subprotocol appended *after* the pair
+    (``bearer, <jwt>, json``) would misparse; shipped clients send
+    exactly ``["bearer", token]``. ``None`` when no token was offered.
     """
     offered = websocket.headers.get("sec-websocket-protocol", "")
     entries = [e.strip() for e in offered.split(",")]

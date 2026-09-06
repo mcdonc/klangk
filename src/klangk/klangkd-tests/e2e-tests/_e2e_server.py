@@ -747,7 +747,11 @@ async def ws_connect(server: dict[str, Any], path: str, **kwargs: Any):
     query = dict(parse_qsl(parts.query))
     token = query.pop("token", None)
     if token is not None:
-        kwargs.setdefault("subprotocols", ["bearer", token])
+        subprotocols = kwargs.setdefault("subprotocols", ["bearer", token])
+        if subprotocols != ["bearer", token]:
+            raise ValueError(
+                "ws_connect: pass the token via ?token=, not subprotocols="
+            )
     target = urlunsplit(("", "", parts.path, urlencode(query), ""))
     if server["uds_path"] is not None:
         return await websockets.unix_connect(
