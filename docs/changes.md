@@ -351,6 +351,16 @@ operators or integrators to act when upgrading.
   attacker (silent account takeover). Name-accessed deployments must set
   `KLANGKD_HOSTING_HOSTNAME`; see the Breaking entry.
 
+- **Workspace import decompression bounds (#3284).** The import
+  endpoint bounds the archive's decompressed payload, not just the
+  compressed upload: a `workspace.json` member beyond 1 MB is rejected
+  with 413 (previously it accumulated unbounded in memory — a small
+  crafted archive could OOM klangkd), and the `home/` tree is
+  pre-scanned and rejected with 413 when it would exceed the free
+  space on the workspace volume (2 GB kept in reserve) or the new
+  `import_max_uncompressed_mb` cap (`KLANGKD_IMPORT_MAX_UNCOMPRESSED_MB`).
+  Large legitimate imports succeed whenever the volume has room.
+
 - **Bind-mount re-validation at container start (#3278).** A mount's
   host-path source is now checked against
   `KLANGKD_ALLOWED_MOUNT_ROOTS` and the protected-path blocklist every

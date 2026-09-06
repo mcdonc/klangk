@@ -1758,6 +1758,12 @@ class KlangkSettings(BaseSettings):
 
     # --- File upload ---
     file_upload_size_max: int | None = 524288000
+    # Cap (MB) on the uncompressed payload a single workspace import may
+    # demand (#3284): the decompressed home/ tree is pre-scanned and the
+    # import is refused with 413 past the cap. None = only the workspace
+    # volume's free space (minus a 2 GB reserve) bounds an import — the
+    # correctness bound; this knob is the multi-tenant fairness layer.
+    import_max_uncompressed_mb: int | None = None
 
     # --- Feature / feature config (#1659) ---
     # A config-file source for feature-declared dynamic keys (the keys the
@@ -2147,6 +2153,7 @@ class KlangkSettings(BaseSettings):
         "websocket_msg_size_max",
         "api_rate_limit",
         "file_upload_size_max",
+        "import_max_uncompressed_mb",
         "hosted_ports_per_workspace",
         "memory_eviction_sustain_polls",
         "max_running_workspaces_per_user",
