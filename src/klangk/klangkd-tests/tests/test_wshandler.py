@@ -12930,10 +12930,12 @@ class TestWsDpopGate:
             user["email"],
             jkt=dpop_mod.jwk_thumbprint(jwk),
         )
-        params = {"token": token}
+        params = {}
         if dpop_param is not None:
             params["dpop"] = dpop_param
-        websocket = _mock_raw_sock(query_params=params)
+        websocket = _mock_raw_sock(
+            headers=_auth_headers(token), query_params=params
+        )
         websocket.url = types.SimpleNamespace(path="/ws")
         return a, private, jwk, token, websocket
 

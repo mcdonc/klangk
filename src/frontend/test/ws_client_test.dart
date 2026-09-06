@@ -1782,8 +1782,10 @@ void main() {
       testDpopBackendOverride = FakeDpopBackend(proof: 'ws-proof');
       final channel = _FakeWebSocketChannel();
       Uri? seen;
-      WsClient.testChannelFactory = (uri) {
+      List<String>? seenProtocols;
+      WsClient.testChannelFactory = (uri, protocols) {
         seen = uri;
+        seenProtocols = protocols;
         return channel;
       };
 
@@ -1794,7 +1796,10 @@ void main() {
       await Future.delayed(Duration.zero);
 
       expect(seen, isNotNull);
-      expect(seen!.queryParameters['token'], bound);
+      // #3201: the token rides the subprotocol list, never the query;
+      // only the one-shot DPoP proof stays a query param (#3218).
+      expect(seenProtocols, ['bearer', bound]);
+      expect(seen!.queryParameters.containsKey('token'), isFalse);
       expect(seen!.queryParameters['dpop'], 'ws-proof');
       WsClient.testChannelFactory = null;
       client.dispose();
@@ -1805,8 +1810,10 @@ void main() {
       testDpopBackendOverride = FakeDpopBackend(proof: 'ws-proof');
       final channel = _FakeWebSocketChannel();
       Uri? seen;
-      WsClient.testChannelFactory = (uri) {
+      List<String>? seenProtocols;
+      WsClient.testChannelFactory = (uri, protocols) {
         seen = uri;
+        seenProtocols = protocols;
         return channel;
       };
 
@@ -1816,7 +1823,8 @@ void main() {
       client.updateAuth(auth);
       await Future.delayed(Duration.zero);
 
-      expect(seen!.queryParameters['token'], 'plain-token');
+      expect(seenProtocols, ['bearer', 'plain-token']);
+      expect(seen!.queryParameters.containsKey('token'), isFalse);
       expect(seen!.queryParameters.containsKey('dpop'), isFalse);
       WsClient.testChannelFactory = null;
       client.dispose();

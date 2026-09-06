@@ -308,6 +308,7 @@ class TestWsAuthenticateJti:
         token = await a.issue_token(user["id"], user["email"])
         ws = types.SimpleNamespace(
             headers={"sec-websocket-protocol": f"bearer, {token}"},
+            query_params={},
             url=types.SimpleNamespace(path="/ws"),
             close=AsyncMock(),
         )
@@ -325,6 +326,7 @@ class TestWsAuthenticateJti:
 
         ws = types.SimpleNamespace(
             headers={"sec-websocket-protocol": "bearer, garbage"},
+            query_params={},
             close=AsyncMock(),
         )
         assert await ws_authenticate(ws, app_state) is None
