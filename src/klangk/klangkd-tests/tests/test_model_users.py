@@ -98,7 +98,21 @@ async def test_link_oidc_and_external_id_and_verify(users):
     assert await users.verify_user("missing", "d@x.com") is False
 
 
+async def _arm_members_group(users) -> str:
+    """Create + arm the members group on the ``users`` fixture's app
+    state (the plain ``app_state`` fixture does not seed it — only
+    ``admin_group`` does). Returns the group id."""
+    group = await users.get_group_by_name("members")
+    if group is None:
+        group = await users.create_group(
+            "members", description="All regular users"
+        )
+    users.app.state.members_group_id = group["id"]
+    return group["id"]
+
+
 async def test_insert_unverified_user(users):
+    members_gid = await _arm_members_group(users)
     async with users.app.state.db.transaction() as db:
         handle = await users.insert_unverified_user(
             db, "uid-uv", "uv@x.com", "hash"
@@ -107,6 +121,27 @@ async def test_insert_unverified_user(users):
     fetched = await users.get_user_by_email("uv@x.com")
     assert fetched["id"] == "uid-uv"
     assert fetched["verified"] is False
+    # #2569 parity with create_user: the registrant joins the members
+    # group on the caller's transaction — the self-service
+    # create-workspace grant (#3137) depends on it.
+    member_ids = [m["id"] for m in await users.get_group_members(members_gid)]
+    assert "uid-uv" in member_ids
+
+
+async def test_insert_unverified_user_without_members_group(users):
+    """A boot that has not seeded members_group_id (pre-#2569 database
+    rebooting) still inserts the user — the join is skipped, not fatal."""
+    await _arm_members_group(users)
+    users.app.state.members_group_id = None
+    async with users.app.state.db.transaction() as db:
+        await users.insert_unverified_user(db, "uid-uv2", "uv2@x.com", "hash")
+    fetched = await users.get_user_by_email("uv2@x.com")
+    assert fetched["id"] == "uid-uv2"
+    members = await users.get_group_by_name("members")
+    member_ids = [
+        m["id"] for m in await users.get_group_members(members["id"])
+    ]
+    assert "uid-uv2" not in member_ids
 
 
 async def test_create_group_and_lookup(users):

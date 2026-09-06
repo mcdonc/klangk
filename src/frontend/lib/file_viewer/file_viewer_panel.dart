@@ -1,10 +1,14 @@
 import 'dart:convert';
 import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+
 import '../auth/dpop.dart';
 import '../ws/ws_client.dart';
+
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
+
 import '../utils/web_helpers_stub.dart'
     if (dart.library.js_interop) '../utils/web_helpers_web.dart';
 import 'file_upload.dart';
@@ -168,10 +172,7 @@ class FileViewerPanelState extends State<FileViewerPanel> {
 
   /// Headers for one authenticated file-API request: the Bearer token
   /// plus a DPoP proof when that token is bound (#3218).
-  Future<Map<String, String>> _headersFor(
-    String method,
-    String url,
-  ) async {
+  Future<Map<String, String>> _headersFor(String method, String url) async {
     final headers = <String, String>{
       if (widget.authToken != null)
         'Authorization': 'Bearer ${widget.authToken}',
@@ -434,9 +435,7 @@ class FileViewerPanelState extends State<FileViewerPanel> {
     } catch (e) {
       debugPrint('Delete error: $e');
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(
+        ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Could not delete. Please try again.')),
         );
       }
@@ -492,9 +491,8 @@ class FileViewerPanelState extends State<FileViewerPanel> {
         // listing was cached). Drop the stale entry and inform the user.
         _invalidateCurrent();
         _loadFiles(force: true);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('"$name" no longer exists')),
-        );
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('"$name" no longer exists')));
       } else {
         if (mounted) {
           final body = jsonDecode(response.body);
@@ -510,9 +508,7 @@ class FileViewerPanelState extends State<FileViewerPanel> {
     } catch (e) {
       debugPrint('Rename error: $e');
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(
+        ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Could not rename. Please try again.')),
         );
       }
@@ -534,9 +530,9 @@ class FileViewerPanelState extends State<FileViewerPanel> {
         _invalidateCurrent();
         _loadFiles(force: true);
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('"$name" no longer exists')),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text('"$name" no longer exists')));
         }
         return;
       }
@@ -553,9 +549,7 @@ class FileViewerPanelState extends State<FileViewerPanel> {
     } catch (e) {
       debugPrint('Download error: $e');
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(
+        ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('Could not download. Please try again.'),
           ),
@@ -701,13 +695,33 @@ class FileViewerPanelState extends State<FileViewerPanel> {
         children: [
           InkWell(
             onTap: () => _navigateTo(widget.userHome ?? '/'),
-            child: const Icon(Icons.home, size: 16),
+            child: const Icon(
+              Icons.home,
+              size: 16,
+              // Named for assistive tech and the fmtk e2e driver.
+              semanticLabel: 'Go to home directory',
+            ),
           ),
           const SizedBox(width: 4),
-          Expanded(child: _buildBreadcrumbs()),
+          Expanded(
+            // The breadcrumbs are a RichText (invisible to semantic
+            // snapshots); carry the current path as a labeled node for
+            // assistive tech and the fmtk e2e driver — the per-user-home
+            // assertion reads it (#3234).
+            child: Semantics(
+              container: true,
+              identifier: 'file-browser-path',
+              label: 'Current directory: $_currentPath',
+              child: _buildBreadcrumbs(),
+            ),
+          ),
           if (_currentPath != '/')
             IconButton(
-              icon: const Icon(Icons.arrow_upward, size: 28),
+              icon: const Icon(
+                Icons.arrow_upward,
+                size: 28,
+                semanticLabel: 'Up one directory',
+              ),
               onPressed: () {
                 final lastSlash = _currentPath.lastIndexOf('/');
                 final parent =
@@ -718,7 +732,11 @@ class FileViewerPanelState extends State<FileViewerPanel> {
               tooltip: 'Up',
             ),
           IconButton(
-            icon: const Icon(Icons.refresh, size: 28),
+            icon: const Icon(
+              Icons.refresh,
+              size: 28,
+              semanticLabel: 'Refresh file list',
+            ),
             onPressed: () => _loadFiles(force: true),
             iconSize: 28,
           ),
@@ -762,10 +780,7 @@ class FileViewerPanelState extends State<FileViewerPanel> {
       },
       child: ListTile(
         dense: true,
-        leading: Icon(
-          isDir ? Icons.folder : Icons.insert_drive_file,
-          size: 18,
-        ),
+        leading: Icon(isDir ? Icons.folder : Icons.insert_drive_file, size: 18),
         title: Text(name, style: const TextStyle(fontSize: 13)),
         subtitle: isDir
             ? null
@@ -815,9 +830,7 @@ class FileViewerPanelState extends State<FileViewerPanel> {
           child: Text(
             'Cannot list this directory:\n$_listError',
             textAlign: TextAlign.center,
-            style: TextStyle(
-              color: Theme.of(context).colorScheme.error,
-            ),
+            style: TextStyle(color: Theme.of(context).colorScheme.error),
           ),
         ),
       );

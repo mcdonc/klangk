@@ -126,6 +126,15 @@ def http_api(base: str, token: str, method: str, path: str, body=None):
             return exc.code, raw
 
 
+def http_download(base: str, token: str, path: str) -> bytes:
+    """Raw-bytes authenticated GET (exports are tar.gz streams, not JSON)."""
+    req = urllib.request.Request(
+        base + path, headers={"Authorization": f"Bearer {token}"}
+    )
+    with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as resp:
+        return resp.read()
+
+
 def http_login(base: str, email: str, password: str) -> str:
     """POST /auth/login; returns the access token (raises on failure)."""
     status, body = http_api(
@@ -709,6 +718,34 @@ class FlutterRun:
             self.log_path.read_text(errors="replace").splitlines()[-lines:]
         )
 
+    def stop_chrome(self) -> None:
+        """Close the Chrome window(s) this run opened — even when the
+        app beneath is wedged. Matched on the proxy-origin URL the
+        fmtk-chrome.sh wrapper rewrites into Chrome's command line,
+        plus the run's remote-debugging port; TERM, grace, KILL."""
+        patterns = [f"[c]hrome.*127.0.0.1:{PROXY_PORT}"]
+        cdp = self.cdp_port()
+        if cdp:
+            patterns.append(f"[c]hrome.*remote-debugging-port={cdp}")
+        pids = {pid for pattern in patterns for pid in pids_matching(pattern)}
+        for pid in pids:
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and pids:
+            live = {pid for pattern in patterns for pid in pids_matching(pattern)}
+            pids &= live
+            if not pids:
+                return
+            time.sleep(0.5)
+        for pid in pids:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
     def cdp_port(self) -> str:
         out = subprocess.run(
             ["pgrep", "-af", "chrome"], capture_output=True, text=True
@@ -719,6 +756,10 @@ class FlutterRun:
         return ""
 
     def stop(self) -> None:
+        # Close the browser window FIRST: a wedged app (dead isolate,
+        # hung boot) can keep flutter run from tearing its Chrome down,
+        # and a leftover window outlives every failure mode below.
+        self.stop_chrome()
         if self.proc and self.proc.poll() is None:
             os.killpg(self.proc.pid, signal.SIGTERM)
             try:
@@ -1017,6 +1058,105 @@ class FmtkClient:
             target = max(bar, key=lambda n: (n.get("bounds") or {}).get("right", -1))
         self.tap(target["ref"])
 
+    # --- label / identifier locators (#3234) -----------------------------
+
+    def tap_labeled_exact(self, label: str) -> None:
+        """Tap the nearest tappable node at or above the node whose label
+        carries ``label`` as a whole line.
+
+        A list tile's title text is not itself tappable (the tap lives on
+        the tile semantics above it), and substring matching would hit
+        the tile's own ``Delete <name>`` trailing button — so the label
+        match is line-exact and the climb starts at the labeled node.
+        Tabs, segments and tiles all resolve through this.
+        """
+        tree = self.snapshot()
+        hits = find_label_nodes(tree, label, exact=True)
+        if not hits:
+            raise FmtkError(f"no snapshot node labeled {label!r}")
+        parents = parent_map(tree)
+        node: dict | None = hits[0]
+        while node is not None:
+            if "tap" in (node.get("actions") or []):
+                return self.tap(node["ref"])
+            node = parents.get(id(node))
+        raise FmtkError(f"no tappable node above label {label!r}")
+
+    def tap_button_exact(self, label: str) -> None:
+        """Tap the button whose labels carry ``label`` as a whole line.
+
+        Button semantics absorb Semantics-wrapper identifiers (only
+        text fields keep them), and substring matching collides with
+        siblings ('Restart' vs 'Restart now', 'Shut Down' vs 'Shut Down
+        Container') — exact-line matching is the deterministic form.
+        """
+        hits = [
+            node
+            for node in find_nodes(self.snapshot(), lambda n: node_type(n) == "button")
+            if label_has_line(node, label)
+        ]
+        if not hits:
+            raise FmtkError(f"no button labeled {label!r}")
+        self.tap(hits[0]["ref"])
+
+    def wait_for_label(self, text: str, timeout: float = 30) -> dict:
+        """Block until some node's label fields carry ``text``.
+
+        Semantic labels (icon ``semanticLabel``s, ``Semantics(label:)``
+        wrappers) are not text-kind nodes, so ``wait_for``'s text
+        predicate cannot see them — e.g. the list tile's
+        ``Workspace status:`` state.
+        """
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            hits = find_label_nodes(self.snapshot(), text)
+            if hits:
+                return hits[0]
+            time.sleep(1)
+        raise HarnessTimeout(f"no node label carries {text!r}")
+
+    def identifier_node(self, identifier: str) -> dict | None:
+        hits = find_nodes(self.snapshot(), lambda n: n.get("identifier") == identifier)
+        return hits[0] if hits else None
+
+    def wait_for_identifier(self, identifier: str, timeout: float = 30) -> dict:
+        """Block until the instrumented node (``Semantics(identifier:)``)
+        is in the tree."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            node = self.identifier_node(identifier)
+            if node:
+                return node
+            time.sleep(1)
+        raise HarnessTimeout(f"no node with identifier {identifier!r}")
+
+    def wait_identifier_gone(self, identifier: str, timeout: float = 60) -> None:
+        """Block until the instrumented node leaves the tree (an overlay
+        the server cleared, a dialog that closed)."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if self.identifier_node(identifier) is None:
+                return
+            time.sleep(1)
+        raise HarnessTimeout(f"identifier {identifier!r} never left the tree")
+
+    def scroll_until_label(self, text: str, timeout: float = 60) -> None:
+        """Scroll down until ``text`` is labeled by a node IN the
+        viewport — the snapshot lists off-screen nodes too, so a bare
+        label match can leave the target untappable."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            visible = [
+                node
+                for node in find_label_nodes(self.snapshot(), text)
+                if node.get("visibleInViewport")
+            ]
+            if visible:
+                return
+            self.exec("scroll", {"direction": "down", "distance": 600})
+            time.sleep(0.5)
+        raise HarnessTimeout(f"{text!r} never appeared while scrolling")
+
     # --- hash-route navigation + in-app evaluation (per AGENTS.md) ------
 
     def navigate(self, path: str) -> None:
@@ -1159,17 +1299,24 @@ class FmtkClient:
                 "libraryUri": self.TERMINAL_LIBRARY,
             },
         )
+        # the evaluate envelope wraps the value in {'result': ...} — the
+        # same unwrap auth_eval applies, or every buffer read comes back
+        # as a dict repr
+        if isinstance(result, dict) and "result" in result:
+            return str(result["result"])
         return str(result)
 
     def terminal_send(self, text: str) -> str:
-        """Type AND execute raw input in the focused terminal."""
+        """Type AND execute raw input in the focused terminal. The body
+        is a bare statement — the trailing semicolon is required (the
+        evaluator does not append one)."""
         escaped = (
             text.replace("\\", "\\\\")
             .replace("$", "\\$")  # $ interpolates in the Dart literal
             .replace("'", "\\'")
             .replace("\n", "\\n")
         )
-        return self.terminal_eval(f"st!._terminal.sendText('{escaped}')")
+        return self.terminal_eval(f"st!._terminal.sendText('{escaped}');")
 
     def terminal_buffer(self) -> str:
         """The visible terminal buffer (plain, unwrapped, trimmed)."""
@@ -1184,6 +1331,49 @@ def node_labels(node: dict) -> list[str]:
     """Every human-string field a snapshot node may carry."""
     keys = ("label", "text", "value", "name", "title", "tooltip", "hint")
     return [str(node[k]) for k in keys if node.get(k)]
+
+
+def label_has_line(node: dict, text: str) -> bool:
+    """The node's labels carry ``text`` as a whole line (merged
+    semantics join labels with newlines — line equality stays exact)."""
+    for entry in node_labels(node):
+        if any(line == text for line in entry.split("\n")):
+            return True
+    return False
+
+
+def find_label_nodes(tree, text: str, exact: bool = False) -> list[dict]:
+    """Nodes whose label fields carry ``text`` — as a whole line
+    (``exact``) or as a substring of any line. Merged semantics join
+    labels with newlines, so line-wise matching keeps exact hits exact."""
+
+    def matches(node: dict) -> bool:
+        for entry in node_labels(node):
+            for line in entry.split("\n"):
+                if line == text if exact else text in line:
+                    return True
+        return False
+
+    return find_nodes(tree, matches)
+
+
+def parent_map(tree) -> dict:
+    """``id(node) -> parent node`` over the snapshot tree — the climb
+    from a labeled node to its tappable ancestor needs parent links the
+    nodes themselves do not carry."""
+    parents: dict = {}
+
+    def link(node, parent) -> None:
+        if isinstance(node, dict):
+            parents[id(node)] = parent
+            for child in node.get("children") or []:
+                link(child, node)
+        elif isinstance(node, list):
+            for child in node:
+                link(child, parent)
+
+    link(tree, None)
+    return parents
 
 
 def node_type(node: dict) -> str:

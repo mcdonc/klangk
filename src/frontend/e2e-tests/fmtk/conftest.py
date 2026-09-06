@@ -19,17 +19,41 @@ under CI or without DISPLAY). Run via the ``test-fmtk-e2e`` devenv script.
 from __future__ import annotations
 
 import os
+import signal
 
 import pytest
 
 from fmtkharness import Harness
 
 
+def _install_teardown_handlers(harness: Harness) -> dict:
+    """An aborted run (SIGTERM / Ctrl-C at the process level) must still
+    close the browser: the session teardown never runs when the process
+    dies on a signal, so re-raise after tearing down."""
+
+    def handler(signum, frame):
+        harness.teardown()
+        signal.signal(signum, signal.SIG_DFL)
+        os.kill(os.getpid(), signum)
+
+    saved = {}
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        saved[sig] = signal.signal(sig, handler)
+    return saved
+
+
+def _restore_handlers(saved: dict) -> None:
+    for sig, previous in saved.items():
+        signal.signal(sig, previous)
+
+
 @pytest.fixture(scope="session")
 def harness() -> Harness:
     instance = Harness()
     instance.boot(fresh=os.environ.get("FMTK_E2E_FRESH") == "1")
+    saved = _install_teardown_handlers(instance)
     yield instance
+    _restore_handlers(saved)
     instance.teardown()
 
 
