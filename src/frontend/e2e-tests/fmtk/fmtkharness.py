@@ -259,6 +259,14 @@ class SmtpSink:
             line = await reader.readline()
             if line.rstrip(b"\r\n") == b".":
                 return b"".join(lines).decode(errors="replace")
+            # RFC 5321 dot-unstuffing: the sender doubles a leading dot
+            # on every DATA line, and a quoted-printable soft-wrap can
+            # land a link token's segment on a line starting with the
+            # JWT's '.' separator — keeping the stuffed dot corrupts the
+            # extracted token (the 5-digit side-by-side port overrides
+            # shift the wrap onto that boundary; #3238).
+            if line.startswith(b".."):
+                line = line[1:]
             lines.append(line)
 
     def wait_for_message(self, needle: str, timeout: float = 30) -> str:
@@ -315,11 +323,21 @@ class Backend:
             return False
 
     def ensure(self) -> None:
-        """Adopt a healthy scratch backend or launch a fresh one."""
+        """Adopt a healthy scratch backend or launch a fresh one.
+
+        A backend whose ingress caddy is mid-restart (crash backoff, a
+        machine under memory pressure) answers no health probe for a
+        few seconds — poll for a window before treating the port's
+        listener as a foreign process."""
         STATE_DIR.mkdir(parents=True, exist_ok=True)
-        if self.is_ours_and_healthy():
-            self.config = read_config_yaml()
-            return
+        deadline = time.monotonic() + 45
+        while time.monotonic() < deadline:
+            if self.is_ours_and_healthy():
+                self.config = read_config_yaml()
+                return
+            if not self.pids() and not ports_busy([BACKEND_PORT, EGRESS_PORT]):
+                break  # genuinely gone — launch below
+            time.sleep(2)
         if ports_busy([BACKEND_PORT, EGRESS_PORT]):
             raise FmtkError(
                 f"port {BACKEND_PORT}/{EGRESS_PORT} in use by something else — "
@@ -515,8 +533,16 @@ class Proxy:
             return False
 
     def ensure(self) -> None:
-        if self.is_ours_and_healthy():
-            return
+        # A poll window before declaring the port foreign: the probe
+        # routes through the scratch backend, whose ingress caddy can be
+        # mid-restart for a few seconds (see Backend.ensure).
+        deadline = time.monotonic() + 45
+        while time.monotonic() < deadline:
+            if self.is_ours_and_healthy():
+                return
+            if not pids_matching(self.pattern) and not ports_busy([PROXY_PORT]):
+                break  # genuinely gone — start below
+            time.sleep(2)
         if ports_busy([PROXY_PORT]):
             raise FmtkError(f"port {PROXY_PORT} in use — run fmtk-down")
         self.config_path.write_text(
@@ -585,6 +611,12 @@ class FlutterRun:
     def chrome_env(self) -> dict:
         env = dict(os.environ)
         env["CHROME_EXECUTABLE"] = str(REPO_ROOT / "scripts/fmtk-chrome.sh")
+        # A per-stack profile dir: it rides Chrome's command line, so
+        # stop_chrome can target OUR browser window by pattern even when
+        # sibling harnesses run their own chromes on this host — the old
+        # bare remote-debugging-port fallback matched ANY chrome and
+        # cross-fired on the neighbors (#3238).
+        env["FMTK_CHROME_PROFILE"] = str(STATE_DIR / "chrome-profile")
         if headless_requested():
             env["FMTK_CHROME_FLAGS"] = (
                 "--headless=new --no-sandbox --disable-gpu "
@@ -732,12 +764,15 @@ class FlutterRun:
     def stop_chrome(self) -> None:
         """Close the Chrome window(s) this run opened — even when the
         app beneath is wedged. Matched on the proxy-origin URL the
-        fmtk-chrome.sh wrapper rewrites into Chrome's command line,
-        plus the run's remote-debugging port; TERM, grace, KILL."""
-        patterns = [f"[c]hrome.*127.0.0.1:{PROXY_PORT}"]
-        cdp = self.cdp_port()
-        if cdp:
-            patterns.append(f"[c]hrome.*remote-debugging-port={cdp}")
+        fmtk-chrome.sh wrapper rewrites into Chrome's command line and
+        on the per-stack profile dir the wrapper adds — never on a bare
+        remote-debugging port, which is ambiguous across the sibling
+        harnesses a host may run side by side (#3232, #3238). TERM,
+        grace, KILL."""
+        patterns = [
+            f"[c]hrome.*127.0.0.1:{PROXY_PORT}",
+            f"[c]hrome.*{STATE_DIR}/chrome-profile",
+        ]
         pids = {pid for pattern in patterns for pid in pids_matching(pattern)}
         for pid in pids:
             try:
@@ -756,15 +791,6 @@ class FlutterRun:
                 os.kill(pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
-
-    def cdp_port(self) -> str:
-        out = subprocess.run(
-            ["pgrep", "-af", "chrome"], capture_output=True, text=True
-        ).stdout
-        for line in out.splitlines():
-            if "remote-debugging-port=" in line:
-                return line.split("remote-debugging-port=")[1].split()[0]
-        return ""
 
     def stop(self) -> None:
         # Close the browser window FIRST: a wedged app (dead isolate,
