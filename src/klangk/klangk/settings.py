@@ -86,6 +86,12 @@ from klangk.logger import ROTATE_WHENS
 # them (#3250).
 from klangk.notifier import DEFAULT_NOTIFY_EVENTS
 
+# resource_watchdog likewise imports nothing from settings (notifier
+# + stdlib only), so its RECOVERY_GAP_PERCENT — the hysteresis band
+# the disk-watchdog threshold validator enforces room for — is
+# cycle-safe to import here too (#3206).
+from klangk.resource_watchdog import RECOVERY_GAP_PERCENT
+
 from pydantic_settings.sources.providers.env import parse_env_vars
 
 logger = logging.getLogger(__name__)
@@ -2214,18 +2220,24 @@ class KlangkSettings(BaseSettings):
     def _validate_disk_watchdog_thresholds(self) -> "KlangkSettings":
         """Disk thresholds must be usable percentages in order (#3206).
 
-        Both must sit in (0, 100] — usage is a percentage of capacity,
-        and a warn threshold at/below zero would alert on a healthy
-        disk. Warn must not exceed critical — an inverted pair would
-        make the warn state unreachable. Equal values are tolerated
-        (operator explicitly chooses OK↔critical with no intermediate
-        warn event).
+        Both must sit in [RECOVERY_GAP_PERCENT, 100] — usage is a
+        percentage of capacity, and the warn threshold needs room for
+        the hysteresis band below it: a warn smaller than the gap
+        would push the recovery floor below 0%, where usage can never
+        reach, leaving a degraded filesystem stuck (an at/below-zero
+        warn would additionally alert on a healthy disk). Warn must
+        not exceed critical — an inverted pair would make the warn
+        state unreachable. Equal values are tolerated (operator
+        explicitly chooses OK↔critical with no intermediate warn
+        event).
         """
         warn = self.disk_watchdog_warn_percent
         critical = self.disk_watchdog_critical_percent
-        if not 0 < warn <= 100:
+        if not RECOVERY_GAP_PERCENT <= warn <= 100:
             raise ValueError(
-                f"disk_watchdog_warn_percent={warn!r} must be in (0, 100]."
+                f"disk_watchdog_warn_percent={warn!r} must be in "
+                f"[{RECOVERY_GAP_PERCENT}, 100] — the recovery "
+                "hysteresis band needs room below the warn threshold."
             )
         if not warn <= critical <= 100:
             raise ValueError(

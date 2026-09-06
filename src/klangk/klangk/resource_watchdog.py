@@ -13,9 +13,10 @@ surfaces, one poll loop:
   notifier; falling back below the recovery floor emits
   ``resource.disk.recovered``. Events fire on state transitions,
   with hysteresis bands below both thresholds, so usage hovering at
-  a boundary produces one alert per episode, not one per poll — and
-  a still-degraded filesystem refreshes its alert once per throttle
-  window, so a swallowed transition dispatch is late, never lost.
+  a boundary produces one alert per episode, not one per poll — an
+  undelivered dispatch is retried on later polls, a still-degraded
+  filesystem refreshes its alert once per throttle window, so an
+  episode edge is late in the worst case, never lost.
 - **Audit pipeline degradation** (SV-222484 rule 97) — the
   audit-write-failure counters the write sites bump
   (``container_events`` on the container registry, ``audit_events``
@@ -64,8 +65,12 @@ RECOVERY_GAP_PERCENT = 5.0
 # same window the notifier throttles delivery to, so a still-degraded
 # filesystem refreshes its alert once per window instead of relying
 # solely on the edge transition (whose single dispatch the throttle
-# can swallow).
-REFRESH_SECONDS = THROTTLE_SECONDS["resource.disk.critical"]
+# can swallow). The widest degraded-event window: a refresh must not
+# fire before the notifier's throttle would admit it.
+REFRESH_SECONDS = max(
+    THROTTLE_SECONDS[name]
+    for name in ("resource.disk.warn", "resource.disk.critical")
+)
 
 # After a failed storage-root query, wait this long before retrying
 # (one ``podman info`` subprocess per cooldown, not per poll).
@@ -144,6 +149,22 @@ def dedup_filesystems(
     return list(filesystems.values())
 
 
+def audit_failure_counts(app) -> dict[str, int]:
+    """``{table: count}`` for every audit-write-failure counter on the
+    app state (#3206). Guarded for minimal app states (no registry /
+    model wired) — an absent subsystem's counter is simply absent. The
+    ``/audit`` status surface reports the same numbers."""
+    counts: dict[str, int] = {}
+    registry = getattr(app.state, "container_registry", None)
+    if registry is not None:
+        counts["container_events"] = registry.audit_write_failures
+    model = getattr(app.state, "model", None)
+    events = getattr(model, "audit_events", None)
+    if events is not None:
+        counts["audit_events"] = events.write_failures
+    return counts
+
+
 class ResourceWatchdog:
     """App-state owned detection loop for operational resource
     conditions (#3206). Follows the state-object ownership rule:
@@ -156,9 +177,12 @@ class ResourceWatchdog:
         self._task: asyncio.Task | None = None
         # st_dev -> threshold state (deduplicated by device) / the
         # monotonic clock of the last event dispatch (transitions and
-        # persistence refreshes both stamp it).
+        # persistence refreshes both stamp it) / the state of a
+        # transition whose dispatch the notifier throttled away,
+        # retried on later polls.
         self._states: dict[int, str] = {}
         self._emitted_at: dict[int, float] = {}
+        self._pending: dict[int, str] = {}
         # audit table -> last-seen failure count / alerted-this-episode.
         self._audit_counts: dict[str, int] = {}
         self._audit_alerted: dict[str, bool] = {}
@@ -181,6 +205,7 @@ class ResourceWatchdog:
         self._graph_root_retry_at = 0.0
         self._states.clear()
         self._emitted_at.clear()
+        self._pending.clear()
         self._warned_paths.clear()
 
     # --- settings (read live) ---
@@ -200,15 +225,15 @@ class ResourceWatchdog:
     @property
     def _floor(self) -> float:
         """Recovery floor: usage at or below this reports recovered.
-        Clamped at 0 — a warn threshold below the gap must not make
-        recovery unreachable (usage can never go negative)."""
-        return max(0.0, self._warn_percent - RECOVERY_GAP_PERCENT)
+        The validator guarantees warn >= RECOVERY_GAP_PERCENT, so this
+        never goes below 0."""
+        return self._warn_percent - RECOVERY_GAP_PERCENT
 
     @property
     def _critical_floor(self) -> float:
-        """The critical→warn easing floor (same gap, clamped at 0 —
-        usage can never go negative)."""
-        return max(0.0, self._critical_percent - RECOVERY_GAP_PERCENT)
+        """The critical→warn easing floor (same gap; the validator
+        guarantees critical >= warn >= the gap, so never below 0)."""
+        return self._critical_percent - RECOVERY_GAP_PERCENT
 
     @property
     def _poll_interval(self) -> float:
@@ -291,10 +316,12 @@ class ResourceWatchdog:
         """Clear remembered conditions while disabled, so re-enabling
         evaluates fresh: a disk that filled while disabled alerts on
         the first poll after re-enabling. Audit counter baselines are
-        kept — degradation that happened while disabled is detected on
-        the next growth after re-enabling."""
+        kept — failures that accumulated while disabled are detected
+        on the first poll after re-enabling (the baseline predates
+        them, so the growth is visible immediately)."""
         self._states.clear()
         self._emitted_at.clear()
+        self._pending.clear()
         self._audit_alerted.clear()
 
     async def sweep(self) -> None:
@@ -371,7 +398,8 @@ class ResourceWatchdog:
     def step_filesystem(self, device: int, path: str, usage: float) -> None:
         """One threshold evaluation; emits on a state transition, and
         — while a degraded state persists — once per refresh window
-        (see :meth:`refresh_due`)."""
+        (see :meth:`refresh_due`). A dispatch the notifier throttled
+        away is retried on later polls (:meth:`retry_pending`)."""
         state = self._states.get(device, OK)
         new = classify(
             usage,
@@ -384,25 +412,58 @@ class ResourceWatchdog:
         self._states[device] = new
         if new != state or self.refresh_due(device, new):
             self._emitted_at[device] = time.monotonic()
-            self.emit_disk_event(new, path, usage)
+            self._record_dispatch(
+                device, new, self.emit_disk_event(new, path, usage)
+            )
+            return
+        self.retry_pending(device, path, usage)
+
+    def _record_dispatch(
+        self, device: int, state: str, dispatched: bool
+    ) -> None:
+        """Track an undelivered transition for retry: episode edges
+        must land — a swallowed warn entry is refreshed by persistence,
+        but a swallowed recovery would otherwise never be re-sent."""
+        if dispatched:
+            self._pending.pop(device, None)
+        else:
+            self._pending[device] = state
+
+    def retry_pending(self, device: int, path: str, usage: float) -> None:
+        """Re-dispatch a transition the notifier throttled away.
+
+        The throttle admits at most one delivery per event per window,
+        so an episode edge that landed inside another episode's window
+        is dropped with no retry of its own — until this retries it
+        into an expired window (worst case: one window late). Only the
+        still-current state is retried; a newer transition has already
+        rewritten the pending entry."""
+        pending = self._pending.get(device)
+        if pending is None:
+            return
+        if self.emit_disk_event(pending, path, usage):
+            self._pending.pop(device, None)
+            self._emitted_at[device] = time.monotonic()
 
     def refresh_due(self, device: int, state: str) -> bool:
         """True when a persisting degraded state should re-notify.
 
         Transitions are edge-triggered and the notifier throttles
         delivery with a stamp-at-dispatch window — a transition whose
-        dispatch fell inside another episode's window is swallowed
-        with no retry. A still-degraded filesystem therefore refreshes
-        its alert once per window, so the worst case is a late alert,
-        never a permanently lost one.
+        dispatch fell inside another episode's window is retried
+        (:meth:`retry_pending`), and a still-degraded filesystem
+        refreshes its alert once per window — the worst case is a late
+        alert, never a permanently lost one.
         """
         if state == OK:
             return False
         last = self._emitted_at.get(device, 0.0)
         return time.monotonic() - last >= REFRESH_SECONDS
 
-    def emit_disk_event(self, state: str, path: str, usage: float) -> None:
-        """Notify + log one disk event (transition or refresh)."""
+    def emit_disk_event(self, state: str, path: str, usage: float) -> bool:
+        """Notify + log one disk event (transition, refresh, or retry).
+        Returns whether the notification dispatched (#3206 retry
+        semantics)."""
         event = EVENT_BY_STATE.get(state, RECOVERED_EVENT)
         level = logging.INFO if state == OK else logging.WARNING
         logger.log(
@@ -414,7 +475,7 @@ class ResourceWatchdog:
             self._warn_percent,
             self._critical_percent,
         )
-        notify_event(
+        return notify_event(
             self.app,
             event,
             detail={
@@ -465,10 +526,14 @@ class ResourceWatchdog:
 
     async def _query_graph_root(self, podman) -> str | None:
         """One ``podman info`` query for the storage root; None on any
-        failure."""
+        failure. Short timeout — a wedged podman socket must not delay
+        the first sweep's data-directory evaluation by the default
+        30s (a failure merely starts the retry cooldown)."""
         try:
             rc, out, _err = await podman.run(
-                ["info", "--format", "{{.Store.GraphRoot}}"], check=False
+                ["info", "--format", "{{.Store.GraphRoot}}"],
+                check=False,
+                timeout=5.0,
             )
         except Exception:  # noqa: BLE001 — best-effort resolution
             return None
@@ -481,20 +546,8 @@ class ResourceWatchdog:
     def check_audit(self) -> None:
         """One audit-pipeline pass: growth in either write-failure
         counter is a detected condition."""
-        for table, count in self._audit_counters():
+        for table, count in audit_failure_counts(self.app).items():
             self.step_audit(table, count)
-
-    def _audit_counters(self):
-        """``(table, count)`` for each audit-write-failure counter.
-        Guarded for minimal app states (no registry / model wired) —
-        an absent counter is simply not watched."""
-        registry = getattr(self.app.state, "container_registry", None)
-        if registry is not None:
-            yield "container_events", registry.audit_write_failures
-        model = getattr(self.app.state, "model", None)
-        events = getattr(model, "audit_events", None)
-        if events is not None:
-            yield "audit_events", events.write_failures
 
     def step_audit(self, table: str, count: int) -> None:
         """Edge-detect counter growth. The first poll is a baseline;

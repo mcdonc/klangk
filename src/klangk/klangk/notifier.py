@@ -97,7 +97,7 @@ def hold_task(task) -> None:
     task.add_done_callback(PENDING_TASKS.discard)
 
 
-def notify_event(app, event: str, **fields) -> None:
+def notify_event(app, event: str, **fields) -> bool:
     """Guarded ``notify_admins``: a no-op when *app* has no notifier.
 
     Production wires ``app.state.notifier`` in ``build_app``; minimal
@@ -106,6 +106,12 @@ def notify_event(app, event: str, **fields) -> None:
     guard in lifecycle (#2762). Every emit site goes through here so
     no call path depends on the full state shape.
 
+    Returns whether a delivery task was created — ``False`` when no
+    notifier is wired, the event was gated off (allowlist, channels,
+    throttle), or dispatch failed. Callers that need eventual delivery
+    (the resource watchdog's transition events, #3206) use this to
+    retry; everyone else ignores it.
+
     Never raises — including from inside the caller's own ``except``
     block (the audit-failure sites): a dispatch problem must not mask
     or replace the exception it annotates.
@@ -113,13 +119,14 @@ def notify_event(app, event: str, **fields) -> None:
     try:
         notifier = getattr(app.state, "notifier", None)
         if notifier is not None:
-            notifier.notify_admins(event, **fields)
+            return bool(notifier.notify_admins(event, **fields))
     except Exception:  # noqa: BLE001 — best-effort by contract
         logger.warning(
             "admin notification dispatch for %s failed",
             event,
             exc_info=True,
         )
+    return False
 
 
 class AdminNotifier:
@@ -217,8 +224,14 @@ class AdminNotifier:
         target_id: str | None = None,
         detail: dict | None = None,
         source_ip: str | None = None,
-    ) -> None:
+    ) -> bool:
         """Fan one event out to every configured channel. Never raises.
+
+        Returns ``True`` when a delivery task was created; ``False``
+        when the event was gated off (allowlist, channels, throttle) or
+        there was no running event loop to deliver on — the caller can
+        use the result to retry an event that must eventually land
+        (#3206's transition events do).
 
         Fire-and-forget: delivery is a detached background task, so a
         slow SMTP handshake or an unreachable webhook never delays the
@@ -226,7 +239,7 @@ class AdminNotifier:
         """
         key = self.throttle_key(event, detail)
         if not self.should_notify(event, key):
-            return
+            return False
         payload = {
             "event": event,
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -244,6 +257,8 @@ class AdminNotifier:
                 "admin notification for %s dropped: no running event loop",
                 event,
             )
+            return False
+        return True
 
     # --- delivery ---
 

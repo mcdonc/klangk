@@ -127,11 +127,13 @@ def row_to_dict(row) -> dict:
 class AuditEventsModel(Submodel):
     """CRUD for the ``audit_events`` table."""
 
-    # Total failed writes through record_best_effort, in-memory only
-    # (zeroed on restart). The degradation counter the resource
-    # watchdog watches (#3206) — mirrors
-    # container_registry.audit_write_failures.
-    write_failures: int = 0
+    def __init__(self, app) -> None:
+        super().__init__(app)
+        # Total failed writes through record_best_effort, in-memory
+        # only (zeroed on restart). The degradation counter the
+        # resource watchdog watches and /audit reports (#3206) —
+        # mirrors container_registry.audit_write_failures.
+        self.write_failures = 0
 
     async def record(
         self,

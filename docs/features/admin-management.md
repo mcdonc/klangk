@@ -77,7 +77,7 @@ audit log:
   default) or the critical threshold (90%) sends
   `resource.disk.warn` / `resource.disk.critical`; falling back below
   the recovery floor sends `resource.disk.recovered`. Events fire on
-  transitions — hysteresis bands below both thresholds keep usage
+  transitions — hysteresis bands below both thresholds hold usage
   hovering at a boundary at its current state — and a filesystem
   that stays degraded refreshes its alert once per 5 minutes, so a
   slowly filling disk produces one alert per episode per filesystem,

@@ -222,23 +222,6 @@ class TestStepFilesystem:
         assert spy.notify_admins.call_count == 1
         assert kwargs_of(spy)["detail"]["warn_percent"] == 50.0
 
-    def test_floors_clamped_at_zero(self):
-        """A warn/critical threshold below the hysteresis gap must not
-        make recovery unreachable (usage can never go negative) — the
-        floors clamp at 0, so an emptied filesystem recovers."""
-        wd, spy = self._wd(
-            {
-                "KLANGKD_DISK_WATCHDOG_WARN_PERCENT": "3",
-                "KLANGKD_DISK_WATCHDOG_CRITICAL_PERCENT": "4",
-            }
-        )
-        assert wd._floor == 0.0
-        assert wd._critical_floor == 0.0
-        wd.step_filesystem(7, "/data", 3.5)  # -> warn
-        wd.step_filesystem(7, "/data", 0.0)  # emptied -> recovered
-        args, _ = spy.notify_admins.call_args
-        assert args[0] == "resource.disk.recovered"
-
     def test_persisting_state_refreshes_once_per_window(self):
         """A still-degraded filesystem re-notifies once per refresh
         window, so a transition whose dispatch the notifier throttled
@@ -277,6 +260,23 @@ class TestStepFilesystem:
 
 def kwargs_of(spy, call=0):
     return spy.notify_admins.call_args_list[call].kwargs
+
+
+def patch_dispatch(monkeypatch, results):
+    """Patch the watchdog's notify_event with a scripted dispatcher.
+
+    *results* is consumed one bool per dispatch (True = the notifier
+    created a delivery task — the #3206 retry signal); the event names
+    are returned for assertions.
+    """
+    calls = []
+
+    def fake(app, event, **fields):
+        calls.append(event)
+        return results[min(len(calls) - 1, len(results) - 1)]
+
+    monkeypatch.setattr("klangk.resource_watchdog.notify_event", fake)
+    return calls
 
 
 class TestMonitoredFilesystems:
@@ -644,6 +644,55 @@ class TestLoop:
         assert "cycle failed" in caplog.text
 
 
+class TestDispatchRetry:
+    """Undelivered transitions (the notifier throttled the dispatch)
+    are retried on later polls until they land (#3206 second review)."""
+
+    def test_undelivered_transition_is_retried(self, monkeypatch):
+        wd, _ = make_wd()
+        calls = patch_dispatch(monkeypatch, [False, True])
+        wd.step_filesystem(7, "/data", 91.0)  # critical, swallowed
+        assert 7 in wd._pending
+        wd.step_filesystem(7, "/data", 92.0)  # no transition -> retry lands
+        assert calls == ["resource.disk.critical", "resource.disk.critical"]
+        assert 7 not in wd._pending
+
+    def test_retry_keeps_pending_until_delivered(self, monkeypatch):
+        wd, _ = make_wd()
+        calls = patch_dispatch(monkeypatch, [False, False, True])
+        wd.step_filesystem(7, "/data", 76.0)  # warn, swallowed
+        wd.step_filesystem(7, "/data", 77.0)  # retry, still swallowed
+        wd.step_filesystem(7, "/data", 78.0)  # retry lands
+        assert len(calls) == 3
+        assert 7 not in wd._pending
+
+    def test_second_recovery_inside_window_lands_via_retry(self, monkeypatch):
+        """Two episode ends inside one throttle window: the second
+        recovery dispatch is swallowed by the notifier and retried
+        until it lands, so the operator's last word is never a stale
+        warn."""
+        wd, _ = make_wd()
+        calls = patch_dispatch(monkeypatch, [True, True, True, False, True])
+        wd.step_filesystem(7, "/data", 76.0)  # warn delivered
+        wd.step_filesystem(7, "/data", 65.0)  # recovered delivered
+        wd.step_filesystem(7, "/data", 80.0)  # refill: warn delivered
+        wd.step_filesystem(7, "/data", 64.0)  # recovery swallowed
+        assert wd._states[7] == OK
+        assert 7 in wd._pending
+        wd.step_filesystem(7, "/data", 63.0)  # healthy poll -> retry lands
+        assert calls.count("resource.disk.recovered") == 3
+        assert 7 not in wd._pending
+
+    def test_newer_transition_replaces_pending(self, monkeypatch):
+        wd, _ = make_wd()
+        calls = patch_dispatch(monkeypatch, [False, True])
+        wd.step_filesystem(7, "/data", 76.0)  # warn swallowed -> pending
+        wd.step_filesystem(7, "/data", 91.0)  # critical transition delivers
+        assert 7 not in wd._pending
+        wd.step_filesystem(7, "/data", 92.0)  # no stale retry fires
+        assert len(calls) == 2
+
+
 class TestReconfigure:
     def test_swaps_app_and_clears_remembered_state(self):
         """A SIGHUP reload re-evaluates every filesystem fresh: states,
@@ -753,6 +802,12 @@ class TestSettings:
         )
         assert settings.disk_watchdog_critical_percent == 90.0
 
+    def test_warn_at_the_gap_floor_is_accepted(self):
+        """The smallest legal warn — exactly the hysteresis gap — puts
+        the recovery floor at 0 (emptied filesystem recovers)."""
+        settings = make_settings({"KLANGKD_DISK_WATCHDOG_WARN_PERCENT": "5"})
+        assert settings.disk_watchdog_warn_percent == 5.0
+
     @pytest.mark.parametrize(
         "env",
         [
@@ -761,11 +816,11 @@ class TestSettings:
                 "KLANGKD_DISK_WATCHDOG_WARN_PERCENT": "90",
                 "KLANGKD_DISK_WATCHDOG_CRITICAL_PERCENT": "75",
             },
-            # warn at zero
+            # warn below the hysteresis gap — recovery would be
+            # unreachable (the floor would sit below 0% usage)
+            {"KLANGKD_DISK_WATCHDOG_WARN_PERCENT": "4"},
             {"KLANGKD_DISK_WATCHDOG_WARN_PERCENT": "0"},
-            # warn above 100
             {"KLANGKD_DISK_WATCHDOG_WARN_PERCENT": "101"},
-            # critical above 100
             {"KLANGKD_DISK_WATCHDOG_CRITICAL_PERCENT": "101"},
         ],
     )

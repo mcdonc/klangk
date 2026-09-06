@@ -220,18 +220,23 @@ class TestHealth:
     async def test_audit_endpoint_reports_audit_state(self, client, app):
         """#3154: audit-write failures and the fail-closed
         mode are visible on /audit so an operator or assessor can see
-        the audit trail losing rows and verify the mode."""
+        the audit trail losing rows and verify the mode. #3206: the
+        identity-audit table's counter reports beside the container
+        one."""
         resp = await client.get("/audit")
         assert resp.status_code == 200
         assert resp.json() == {
             "write_failures": 0,
+            "identity_write_failures": 0,
             "fail_closed": False,
         }
         app.state.settings.audit_fail_closed = True
         app.state.container_registry.audit_write_failures = 3
+        app.state.model.audit_events.write_failures = 5
         resp = await client.get("/audit")
         assert resp.json() == {
             "write_failures": 3,
+            "identity_write_failures": 5,
             "fail_closed": True,
         }
 

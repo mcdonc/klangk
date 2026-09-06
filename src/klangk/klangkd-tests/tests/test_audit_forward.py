@@ -966,17 +966,36 @@ class TestAuditEndpoint:
         api_app.state.audit_forwarder = AuditForwarder(api_app)
         resp = await api_client.get("/audit")
         assert resp.status_code == 200
-        assert resp.json() == {"write_failures": 0, "fail_closed": False}
+        assert resp.json() == {
+            "write_failures": 0,
+            "identity_write_failures": 0,
+            "fail_closed": False,
+        }
 
     async def test_no_forwarder_at_all_keeps_legacy_shape(
         self, api_app, api_client
     ):
         """A minimal app without the forwarder state (the getattr
-        guard) answers with the pre-#3252 body."""
+        guard) answers with the counters + mode only."""
         del api_app.state.audit_forwarder
         resp = await api_client.get("/audit")
         assert resp.status_code == 200
-        assert resp.json() == {"write_failures": 0, "fail_closed": False}
+        assert resp.json() == {
+            "write_failures": 0,
+            "identity_write_failures": 0,
+            "fail_closed": False,
+        }
+
+    async def test_identity_write_failures_surface(self, api_app, api_client):
+        """#3206: the audit_events write-failure counter is reported
+        beside the container one — both serve SV-222484."""
+        api_app.state.model.audit_events.write_failures = 7
+        api_app.state.container_registry.audit_write_failures = 2
+        resp = await api_client.get("/audit")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["write_failures"] == 2
+        assert body["identity_write_failures"] == 7
 
     async def test_forwarding_status_when_configured(
         self, api_app, api_client

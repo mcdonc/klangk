@@ -278,9 +278,26 @@ class TestNotifyAdmins:
     async def test_gated_off_creates_no_task(self):
         notifier, app = _notifier()  # no channels
         with patch.object(AdminNotifier, "deliver", AsyncMock()) as deliver:
-            notifier.notify_admins("user.create")
+            assert notifier.notify_admins("user.create") is False
             await asyncio.sleep(0)
         deliver.assert_not_called()
+
+    async def test_dispatch_result_reports_delivery_task(self):
+        """#3206: callers that must eventually deliver (the resource
+        watchdog's retries) read the dispatch result."""
+        notifier, _ = _notifier(
+            {"KLANGKD_ADMIN_NOTIFICATION_EMAILS": "sa@x.com"}
+        )
+        with patch.object(AdminNotifier, "deliver", AsyncMock()):
+            assert notifier.notify_admins("user.create") is True
+            await asyncio.sleep(0)
+
+    def test_no_loop_dispatch_reports_failure(self):
+        notifier, _ = _notifier(
+            {"KLANGKD_ADMIN_NOTIFICATION_EMAILS": "sa@x.com"}
+        )
+        # No running event loop: dropped, reported as not dispatched.
+        assert notifier.notify_admins("user.create") is False
 
     async def test_delivers_in_background_with_payload(self):
         notifier, _ = _notifier(
@@ -488,17 +505,27 @@ class TestRenderBody:
 class TestNotifyEventHelper:
     def test_app_without_notifier_is_a_noop(self):
         app = types.SimpleNamespace(state=types.SimpleNamespace())
-        notify_event(app, "user.create")  # must not raise
+        assert notify_event(app, "user.create") is False
 
     def test_app_with_notifier_fans_out(self):
-        notifier = Mock()
+        notifier = Mock(return_value=True)
         app = types.SimpleNamespace(
             state=types.SimpleNamespace(notifier=notifier)
         )
-        notify_event(app, "user.unlock", detail={"email": "u@x.com"})
+        assert notify_event(app, "user.unlock", detail={"email": "u@x.com"})
         notifier.notify_admins.assert_called_once_with(
             "user.unlock", detail={"email": "u@x.com"}
         )
+
+    def test_notifier_false_result_passes_through(self):
+        """A throttled/gated dispatch reports False through the helper
+        (#3206 retry semantics)."""
+        notifier = Mock()
+        notifier.notify_admins = Mock(return_value=False)
+        app = types.SimpleNamespace(
+            state=types.SimpleNamespace(notifier=notifier)
+        )
+        assert notify_event(app, "user.create") is False
 
 
 class TestNotifyEventHelperRaiseSafety:
