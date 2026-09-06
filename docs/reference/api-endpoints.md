@@ -536,9 +536,17 @@ login/logout/failed-login, and session revocation. Query params:
 Each item carries the acting principal (`actor_id` / `actor_email` —
 denormalized so attribution survives the actor's deletion), the target
 (`target_type` / `target_id`), a read-only JSON `detail` blob
-(action-specific context; never passwords or tokens), and the request's
-`source_ip` / `user_agent` for correlation with client activity. The
-HMAC integrity tag (#3174) is never sent on the wire.
+(action-specific context; never passwords or tokens), and the
+request's `source_ip` / `user_agent` for correlation with client
+activity. Since #3255 (SV-222447) every HTTP-minted row also records
+the request's HTTP `method` (`GET`/`POST`/…) and `referer` header —
+the method distinguishes a read from a state change on the same
+endpoint, and the Referer shows which surface issued the request
+(null for rows written before the field existed and for the
+workstation-binding violation row, which records only the presenting
+workstation pair; stored Referer values are truncated at 2048
+characters). The HMAC integrity tag (#3174) is never sent on the
+wire.
 
 **Auth:** JWT required. User must have the `manage-events` permission on `/events`
 (the same grant as the container history — the `/events` resource governs
@@ -559,6 +567,8 @@ No request body.
       "detail": { "via": "password" },
       "source_ip": "203.0.113.7",
       "user_agent": "klangk-cli/1.0",
+      "method": "POST",
+      "referer": "https://klangk.example/login",
       "created_at": 1759200000.0
     }
   ],

@@ -25,6 +25,11 @@ T = TypeVar("T")
 # (resource path extraction). Defined here to avoid circular imports.
 API_PREFIX = "/api/v1"
 
+# Storage cap for the Referer recorded on an audit row (#3255,
+# SV-222447): the header is attacker-controllable and unbounded, so
+# anything past this many characters is truncated at capture time.
+REFERER_STORE_MAX = 2048
+
 logger = logging.getLogger(__name__)
 
 
@@ -632,6 +637,28 @@ class Util:
         ip = self.effective_client_ip(headers, client_host)
         agent = headers.get("user-agent") if headers is not None else None
         return ip, agent or None
+
+    def request_metadata(
+        self, headers, client_host: str | None, method: str
+    ) -> tuple[str | None, str | None, str | None, str | None]:
+        """The ``(source_ip, user_agent, method, referer)`` an audit
+        row records about its request (#3255, SV-222447).
+
+        The #2586 workstation pair (same proxy-trust-aware resolution
+        as :meth:`workstation`) plus the HTTP method and the
+        ``Referer`` header — the two fields the STIG rule adds to the
+        per-request audit picture. *method* is the request's own verb
+        (``GET``/``POST``/…, always known for an HTTP request). The
+        stored Referer is capped at :data:`REFERER_STORE_MAX`
+        characters — the header is attacker-controllable and unbounded,
+        so a value past the cap is truncated, not stored whole. A
+        missing or empty Referer stays ``None``.
+        """
+        ip, agent = self.workstation(headers, client_host)
+        referer = headers.get("referer") if headers is not None else None
+        if referer:
+            referer = referer[:REFERER_STORE_MAX]
+        return ip, agent, method, referer or None
 
     def _forwarded_headers_trusted(
         self, headers, client_host: str | None

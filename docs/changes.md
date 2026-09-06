@@ -732,6 +732,17 @@ sync` report a clear permission-denied error.
   startup. See
   [Logging](features/logging.md#built-in-audit-record-forwarding).
 
+- **Audit event HTTP method and Referer (#3255).** Every
+  `audit_events` row minted from an HTTP request now records the
+  request's method and `Referer` header alongside the existing client
+  IP and user agent (SV-222447), and `GET /api/v1/events/audit` serves
+  both fields. Rows written before this change read null for the new
+  fields, as does the workstation-binding violation row, which
+  records only the presenting workstation pair. Stored Referer values
+  are truncated at 2048 characters. The HMAC tag column set is
+  unchanged, so offsite verification recipes keep working (see
+  [Audit Record Integrity](/reference/audit-integrity)).
+
 - **Admin notifications (#3250).** SA/ISSO notification of
   security-relevant events: account lifecycle (create, register,
   update, delete, unlock, disable, enable — including the inactivity

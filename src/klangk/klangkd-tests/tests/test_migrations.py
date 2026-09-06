@@ -98,6 +98,7 @@ class TestRunner:
             (35, "0035_user_sessions_step_up"),
             (36, "0036_audit_forward_state"),
             (37, "0037_audit_forward_cursors"),
+            (38, "0038_audit_events_method_referer"),
         ]
         async with aiosqlite.connect(str(app_state.state.db.db_path)) as db:
             assert await _recorded(db) == expected
@@ -205,6 +206,7 @@ class TestRunner:
                 (35, "0035_user_sessions_step_up"),
                 (36, "0036_audit_forward_state"),
                 (37, "0037_audit_forward_cursors"),
+                (38, "0038_audit_events_method_referer"),
             ]
 
     async def test_m0008_agent_identity_and_human_collision(
@@ -3570,5 +3572,56 @@ class TestM0037AuditForwardCursors:
             )
             cur = await db.execute("SELECT id FROM audit_events ORDER BY id")
             assert [r[0] for r in await cur.fetchall()] == [1, 3]
+        finally:
+            await db.__aexit__(None, None, None)
+
+
+class TestM0038AuditEventsMethodReferer:
+    """m0038 adds the #3255 request fields (`method`, `referer`) to
+    `audit_events` (SV-222447): a pre-#3255 table gains both columns,
+    and its existing rows read NULL for them."""
+
+    async def _old_shape_db(self, tmp_path):
+        """A pre-#3255 audit_events table (m0034's shape) with one
+        pre-migration row already in it."""
+        db = aiosqlite.connect(str(tmp_path / "m0038.db"))
+        await db.__aenter__()
+        await db.execute("""
+            CREATE TABLE audit_events (
+                id INTEGER PRIMARY KEY,
+                event TEXT NOT NULL,
+                actor_id TEXT,
+                actor_email TEXT,
+                target_type TEXT,
+                target_id TEXT,
+                detail TEXT,
+                source_ip TEXT,
+                user_agent TEXT,
+                created_at REAL NOT NULL,
+                hmac TEXT
+            )
+        """)
+        await db.execute(
+            "INSERT INTO audit_events (event, source_ip, user_agent,"
+            " created_at) VALUES ('login', '10.0.0.1', 'ua', 1000.0)"
+        )
+        await db.commit()
+        return db
+
+    async def test_adds_columns_and_old_rows_read_null(self, tmp_path):
+        db = await self._old_shape_db(tmp_path)
+        try:
+            from klangk.model.migrations import (
+                m0038_audit_events_method_referer,
+            )
+
+            await m0038_audit_events_method_referer.migration.apply(db)
+            info = await db.execute("PRAGMA table_info(audit_events)")
+            cols = {r[1] for r in await info.fetchall()}
+            assert {"method", "referer"} <= cols
+            cursor = await db.execute(
+                "SELECT event, method, referer FROM audit_events"
+            )
+            assert await cursor.fetchone() == ("login", None, None)
         finally:
             await db.__aexit__(None, None, None)

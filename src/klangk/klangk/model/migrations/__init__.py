@@ -85,6 +85,7 @@ from klangk.model.migrations import m0034_audit_events
 from klangk.model.migrations import m0035_user_sessions_step_up
 from klangk.model.migrations import m0036_audit_forward_state
 from klangk.model.migrations import m0037_audit_forward_cursors
+from klangk.model.migrations import m0038_audit_events_method_referer
 from klangk.model.migrations.base import Migration
 
 __all__ = ["MIGRATIONS", "Migration", "run_migrations"]
@@ -130,6 +131,7 @@ MIGRATIONS: list[Migration] = [
     m0035_user_sessions_step_up.migration,
     m0036_audit_forward_state.migration,
     m0037_audit_forward_cursors.migration,
+    m0038_audit_events_method_referer.migration,
 ]
 
 

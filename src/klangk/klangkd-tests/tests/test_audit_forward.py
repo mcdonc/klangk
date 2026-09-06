@@ -61,6 +61,10 @@ async def _seed_audit_events(app, count, first=1):
             "user.create",
             actor_id=f"u{i}",
             detail={"n": i} if i % 2 else None,
+            # #3255 fields on the first seed: the forwarded record must
+            # carry whatever the table carries (shared column list).
+            method="POST" if i == first else None,
+            referer="https://klangk.example/admin" if i == first else None,
         )
 
 
@@ -307,6 +311,12 @@ class TestModel:
         assert [row["forward_cursor"] for row in events] == [1, 2, 3]
         assert events[0]["detail"] == {"n": 1}  # odd ids seeded a detail
         assert events[1]["detail"] is None  # even ids seeded detail=None
+        # The #3255 request fields ride the shared column list into the
+        # forwarded record shape (#3259 × #3255).
+        assert events[0]["method"] == "POST"
+        assert events[0]["referer"] == "https://klangk.example/admin"
+        assert events[1]["method"] is None
+        assert events[1]["referer"] is None
 
         containers = await forward_model.rows_after("container_events", 0, 50)
         assert len(containers) == 1

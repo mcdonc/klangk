@@ -647,6 +647,7 @@ class TestHelpers:
             app=app,
             url=types.SimpleNamespace(path="/gated"),
             client=None,
+            method="POST",
             headers={"authorization": authorization} if authorization else {},
         )
 

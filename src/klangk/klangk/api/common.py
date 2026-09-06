@@ -88,19 +88,28 @@ async def workspace_resource(request: Request, user: dict) -> str:
     return f"/workspaces/{workspace_id}"
 
 
-def workstation(request: Request) -> tuple[str | None, str | None]:
-    """The ``(source_ip, user_agent)`` a session is established from (#2586).
+def request_metadata(
+    request: Request,
+) -> tuple[str | None, str | None, str | None, str | None]:
+    """The ``(source_ip, user_agent, method, referer)`` an audit row
+    records about its request (#3255, SV-222447).
 
-    Thin request-flavored wrapper over :meth:`Util.workstation` (the
-    one resolver shared with binding enforcement, #3194): the IP is
-    the effective client address, resolved proxy-trust-aware
-    (``X-Real-IP``/``X-Forwarded-For`` honored only behind a trusted
-    proxy), so a workstation identity cannot be spoofed by a direct
-    caller. Both values may be ``None`` (unknown) — the audit and
-    binding layers treat unknown as never-different, never same.
+    Every HTTP audit emit captures its per-request metadata here —
+    one helper, one shape. The IP and user agent are the #2586
+    session pair (resolved proxy-trust-aware over
+    :meth:`Util.workstation`, so a workstation identity cannot be
+    spoofed by a direct caller); the method and Referer complete the
+    STIG rule 60 picture. The stored Referer is capped at
+    :data:`klangk.util.REFERER_STORE_MAX` characters. Values may be
+    ``None`` (unknown) except the method, which every HTTP request
+    carries; rows written before #3255 read as NULL for both new
+    fields, as does the workstation-binding violation row (judged on
+    the workstation pair alone).
     """
-    return request.app.state.util.workstation(
-        request.headers, request.client.host if request.client else None
+    return request.app.state.util.request_metadata(
+        request.headers,
+        request.client.host if request.client else None,
+        request.method,
     )
 
 

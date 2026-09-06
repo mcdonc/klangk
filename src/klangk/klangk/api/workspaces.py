@@ -49,7 +49,7 @@ from ..workspace_settings import (
     validate_settings,
     validate_settings_patch,
 )
-from .common import get_app_dep, workstation
+from .common import get_app_dep, request_metadata
 from ..model import (
     EGRESS_MODE_DEFAULT,
     EGRESS_MODES,
@@ -2105,11 +2105,11 @@ async def record_workspace_share_event(
     The workspace-targeted twin of admin.py's ``record_admin_event``:
     the actor is whoever holds the share permission (an owner sharing
     their own workspace as often as an admin), the target is the
-    workspace, and the row carries the request's workstation metadata.
+    workspace, and the row carries the request's HTTP metadata.
     Best-effort — a share must not fail because its audit row could
     not be written.
     """
-    source_ip, user_agent = workstation(request)
+    source_ip, user_agent, method, referer = request_metadata(request)
     await app.state.model.audit_events.record_best_effort(
         event,
         actor_id=actor["id"],
@@ -2119,6 +2119,8 @@ async def record_workspace_share_event(
         detail=detail,
         source_ip=source_ip,
         user_agent=user_agent,
+        method=method,
+        referer=referer,
     )
 
 

@@ -911,6 +911,8 @@ class Auth:
         *,
         source_ip: str | None = None,
         user_agent: str | None = None,
+        method: str | None = None,
+        referer: str | None = None,
     ) -> dict | None:
         """Raise 429 if *lockout_key* is currently locked out.
 
@@ -940,6 +942,8 @@ class Auth:
                 },
                 source_ip=source_ip,
                 user_agent=user_agent,
+                method=method,
+                referer=referer,
             )
             raise HTTPException(status_code=429, detail=msg)
         return attempt_info
@@ -1147,6 +1151,8 @@ class Auth:
         *,
         source_ip: str | None = None,
         user_agent: str | None = None,
+        method: str | None = None,
+        referer: str | None = None,
         via: str = "password",
     ) -> str:
         """Mint an access token AND register it as a session (#2585).
@@ -1168,7 +1174,8 @@ class Auth:
         Every mint is also one ``login`` row in the ``audit_events``
         stream (#3205), tagged with *via* — the path that
         authenticated the caller (password, oidc, invite, …) — and the
-        workstation metadata above.
+        workstation metadata above plus the request's method/referer
+        (#3255) when the minting path had an HTTP request behind it.
         """
         token = await self.create_capped_token(user_id, email)
         payload = self.decode_token(token)
@@ -1184,7 +1191,11 @@ class Auth:
         )
         await self._audit_concurrent_logons(user_id, email, source_ip)
         await self._enforce_session_limit(
-            user_id, source_ip=source_ip, user_agent=user_agent
+            user_id,
+            source_ip=source_ip,
+            user_agent=user_agent,
+            method=method,
+            referer=referer,
         )
         await self.app.state.model.audit_events.record_best_effort(
             "login",
@@ -1195,6 +1206,8 @@ class Auth:
             detail={"via": via},
             source_ip=source_ip,
             user_agent=user_agent,
+            method=method,
+            referer=referer,
         )
         return token
 
@@ -1286,6 +1299,8 @@ class Auth:
         *,
         source_ip: str | None = None,
         user_agent: str | None = None,
+        method: str | None = None,
+        referer: str | None = None,
     ) -> None:
         """Blocklist then delete the given (oldest-first) session rows.
 
@@ -1325,6 +1340,8 @@ class Auth:
             },
             source_ip=source_ip,
             user_agent=user_agent,
+            method=method,
+            referer=referer,
         )
 
     async def _enforce_session_limit(
@@ -1333,6 +1350,8 @@ class Auth:
         *,
         source_ip: str | None = None,
         user_agent: str | None = None,
+        method: str | None = None,
+        referer: str | None = None,
     ) -> None:
         """Revoke the user's oldest sessions past the configured cap.
 
@@ -1353,6 +1372,8 @@ class Auth:
                 limit,
                 source_ip=source_ip,
                 user_agent=user_agent,
+                method=method,
+                referer=referer,
             )
 
     async def record_activity(self, user_id: str) -> None:
@@ -1585,6 +1606,8 @@ class Auth:
         req: ChangeExpiredPasswordRequest,
         source_ip: str | None,
         user_agent: str | None,
+        method: str | None = None,
+        referer: str | None = None,
     ) -> dict:
         """Resolve and gate a change-expired-password caller.
 
@@ -1600,7 +1623,11 @@ class Auth:
         )
         lockout_key = user["email"] if user else req.identifier
         attempt_info = await self.check_login_lockout(
-            lockout_key, source_ip=source_ip, user_agent=user_agent
+            lockout_key,
+            source_ip=source_ip,
+            user_agent=user_agent,
+            method=method,
+            referer=referer,
         )
         await self._reject_bad_credentials(
             user,
@@ -1609,6 +1636,8 @@ class Auth:
             attempt_info,
             source_ip=source_ip,
             user_agent=user_agent,
+            method=method,
+            referer=referer,
         )
         if not user.get("verified"):
             raise HTTPException(
@@ -1630,6 +1659,8 @@ class Auth:
         *,
         source_ip: str | None = None,
         user_agent: str | None = None,
+        method: str | None = None,
+        referer: str | None = None,
     ) -> TokenResponse:
         """Replace an expired password and mint the session (#3177).
 
@@ -1642,7 +1673,7 @@ class Auth:
         clients finish in one round trip.
         """
         user = await self._authenticated_expired_user(
-            req, source_ip, user_agent
+            req, source_ip, user_agent, method, referer
         )
         self.validate_password_min_age(user)
         self.validate_password(req.new_password)
@@ -1664,12 +1695,16 @@ class Auth:
             detail={"via": "expired-password"},
             source_ip=source_ip,
             user_agent=user_agent,
+            method=method,
+            referer=referer,
         )
         token = await self.issue_token(
             user["id"],
             user["email"],
             source_ip=source_ip,
             user_agent=user_agent,
+            method=method,
+            referer=referer,
             via="expired-password",
         )
         await self.app.state.model.users.record_login(user["id"])
@@ -1682,6 +1717,8 @@ class Auth:
         *,
         source_ip: str | None = None,
         user_agent: str | None = None,
+        method: str | None = None,
+        referer: str | None = None,
     ) -> RegisterResult:
         if not self.registration_enabled():
             raise HTTPException(
@@ -1718,6 +1755,8 @@ class Auth:
             detail={"email": user["email"], "verified": verified},
             source_ip=source_ip,
             user_agent=user_agent,
+            method=method,
+            referer=referer,
         )
         token = None
         if verified:
@@ -1726,6 +1765,8 @@ class Auth:
                 user["email"],
                 source_ip=source_ip,
                 user_agent=user_agent,
+                method=method,
+                referer=referer,
                 via="register",
             )
             await self.app.state.model.users.record_login(user["id"])
@@ -1742,6 +1783,8 @@ class Auth:
         *,
         source_ip: str | None = None,
         user_agent: str | None = None,
+        method: str | None = None,
+        referer: str | None = None,
     ) -> None:
         """401 unless a real password hash matched; records the failure
         on the lockout key. A failed credential check is also one
@@ -1758,6 +1801,8 @@ class Auth:
                 detail={"identifier": lockout_key[:AUDIT_IDENTIFIER_MAX]},
                 source_ip=source_ip,
                 user_agent=user_agent,
+                method=method,
+                referer=referer,
             )
             await self.record_login_failure(lockout_key, attempt_info)
             raise HTTPException(status_code=401, detail="Invalid credentials")
@@ -1768,6 +1813,8 @@ class Auth:
         *,
         source_ip: str | None = None,
         user_agent: str | None = None,
+        method: str | None = None,
+        referer: str | None = None,
     ) -> TokenResponse:
         # Resolve the user by email or handle (#616).
         user = await self.app.state.model.users.get_user_by_identifier(
@@ -1784,7 +1831,11 @@ class Auth:
         # expensive step below is verify_password's PBKDF2, run in a
         # worker thread so the event loop is not blocked).
         attempt_info = await self.check_login_lockout(
-            lockout_key, source_ip=source_ip, user_agent=user_agent
+            lockout_key,
+            source_ip=source_ip,
+            user_agent=user_agent,
+            method=method,
+            referer=referer,
         )
         await self._reject_bad_credentials(
             user,
@@ -1793,6 +1844,8 @@ class Auth:
             attempt_info,
             source_ip=source_ip,
             user_agent=user_agent,
+            method=method,
+            referer=referer,
         )
         if not user.get("verified"):
             raise HTTPException(
@@ -1814,6 +1867,8 @@ class Auth:
             user["email"],
             source_ip=source_ip,
             user_agent=user_agent,
+            method=method,
+            referer=referer,
             via="password",
         )
         # Stamp after minting, matching every other session-issuing site
@@ -2211,6 +2266,8 @@ class Auth:
         workstation: tuple[str | None, str | None] | None = None,
         source_ip: str | None = None,
         user_agent: str | None = None,
+        method: str | None = None,
+        referer: str | None = None,
     ) -> TokenResponse:
         """Swap an unbound session token for one DPoP-bound to *jwk*.
 
@@ -2242,8 +2299,15 @@ class Auth:
             await self._swap_token(jti, exp, user_id, new_token)
             # Binding a pre-#2585 token INSERTS a session row (the
             # swap re-keys one), so the cap must hold here too — the
-            # same reason refresh enforces (#2585 review).
-            await self._enforce_session_limit(user_id)
+            # same reason refresh enforces (#2585 review). The
+            # eviction row carries the binding request's metadata.
+            await self._enforce_session_limit(
+                user_id,
+                source_ip=source_ip,
+                user_agent=user_agent,
+                method=method,
+                referer=referer,
+            )
             await self.app.state.model.audit_events.record_best_effort(
                 "session.bind",
                 actor_id=user_id,
@@ -2253,6 +2317,8 @@ class Auth:
                 detail={"via": "dpop"},
                 source_ip=source_ip,
                 user_agent=user_agent,
+                method=method,
+                referer=referer,
             )
             return TokenResponse(
                 access_token=new_token,
@@ -2263,11 +2329,33 @@ class Auth:
         except JWTError:
             raise HTTPException(status_code=401, detail="Invalid token")
 
+    async def _enforce_limit_with_presentation(
+        self,
+        user_id: str,
+        workstation: tuple[str | None, str | None] | None,
+        method: str | None = None,
+        referer: str | None = None,
+    ) -> None:
+        """Session-limit enforcement carrying the presenting request's
+        metadata (#3255): an eviction row minted by a refresh names
+        the workstation pair the refresh presented (unknown when no
+        pair was resolved) plus its method/referer."""
+        ip, agent = workstation if workstation is not None else (None, None)
+        await self._enforce_session_limit(
+            user_id,
+            source_ip=ip,
+            user_agent=agent,
+            method=method,
+            referer=referer,
+        )
+
     async def refresh_token(
         self,
         token: str,
         workstation: tuple[str | None, str | None] | None = None,
         proof: str | None = None,
+        method: str | None = None,
+        referer: str | None = None,
     ) -> TokenResponse:
         """Exchange a valid access token for a new one.
 
@@ -2321,8 +2409,11 @@ class Auth:
             await self._swap_token(jti, exp, user_id, new_token)
             # Refreshing a pre-#2585 token (no row) INSERTS one; enforce
             # so the cap holds on every path that adds a session row,
-            # not just logins (#2585 review).
-            await self._enforce_session_limit(user_id)
+            # not just logins (#2585 review). The eviction row carries
+            # the presenting request's metadata (#3255).
+            await self._enforce_limit_with_presentation(
+                user_id, workstation, method, referer
+            )
             return TokenResponse(
                 access_token=new_token,
                 must_change_password=user.get("must_change_password", False),

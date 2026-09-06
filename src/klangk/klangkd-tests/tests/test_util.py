@@ -908,6 +908,54 @@ class TestEffectiveClientIp:
         assert u.effective_client_ip(h, None) == "203.0.113.7"
 
 
+class TestRequestMetadata:
+    """The audit-row request capture (#3255, SV-222447): the #2586
+    workstation pair plus the HTTP method and Referer, with the
+    Referer capped at REFERER_STORE_MAX characters."""
+
+    def _hdr(self, **kw):
+        return kw
+
+    def test_pair_method_and_referer_resolve_together(self):
+        u = _util({})
+        h = self._hdr(
+            **{
+                "x-real-ip": "203.0.113.7",
+                "user-agent": "pytest",
+                "referer": "https://klangk.example/login",
+            }
+        )
+        assert u.request_metadata(h, "127.0.0.1", "POST") == (
+            "203.0.113.7",
+            "pytest",
+            "POST",
+            "https://klangk.example/login",
+        )
+
+    def test_missing_referer_and_agent_stay_none(self):
+        u = _util({})
+        assert u.request_metadata(self._hdr(), "10.0.0.5", "GET") == (
+            "10.0.0.5",
+            None,
+            "GET",
+            None,
+        )
+
+    def test_empty_referer_header_stays_none(self):
+        """An empty Referer header is no Referer — None, not ''."""
+        u = _util({})
+        h = self._hdr(referer="")
+        assert u.request_metadata(h, "10.0.0.5", "GET")[3] is None
+
+    def test_long_referer_truncated_at_the_cap(self):
+        from klangk.util import REFERER_STORE_MAX
+
+        u = _util({})
+        h = self._hdr(referer="x" * (REFERER_STORE_MAX + 5000))
+        referer = u.request_metadata(h, "10.0.0.5", "POST")[3]
+        assert len(referer) == REFERER_STORE_MAX
+
+
 # --- client_is_loopback (moved from test_wshandler.py, #1503) ---
 # Powers the none-mode /auth/local self-defense (#1374). Must admit a real
 # loopback browser, admit a request proxied by the proxy (peer loopback, real
