@@ -811,7 +811,6 @@ sync` report a clear permission-denied error.
   toggle records inside its `user.update` row. The sweep's
   auto-disables surface in the audit and merged events views.
 
-
 - **Admin notifications (#3250).** SA/ISSO notification of
   security-relevant events: account lifecycle (create, register,
   update, delete, unlock, disable, enable — including the inactivity
@@ -3802,6 +3801,11 @@ users(id)`, so the decider handler passing the decider's email violated the
   tabs carry a full `handle:window` label instead of the truncated
   display name — assistive tech announces every strip control by
   name.
+
+- **Long email addresses no longer overflow the Settings page
+  (#3237).** The account row's email now shrinks with an ellipsis
+  when it does not fit; previously a long address pushed the row
+  past the page edge.
 
 - **Self-registered and invited users can create workspaces again
   (#3234).** Both the self-registration and the admin-invite paths insert

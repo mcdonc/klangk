@@ -71,12 +71,19 @@ class _SettingsPageState extends State<SettingsPage> {
                       color: KColors.textSecondary,
                     ),
                     const SizedBox(width: 12),
-                    Text(
-                      email,
-                      style: const TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.w700,
-                        color: KColors.textSecondary,
+                    // Expanded: a long email must shrink (with an
+                    // ellipsis) instead of overflowing the row — the
+                    // handle chip after it stays whole.
+                    Expanded(
+                      child: Text(
+                        email,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w700,
+                          color: KColors.textSecondary,
+                        ),
                       ),
                     ),
                     if (_currentHandle != null &&

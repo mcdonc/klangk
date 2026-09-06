@@ -23,9 +23,10 @@ concurrency:
 jobs:
   # fmtk-driven browser e2e (#3232/#3231): boots the fmtk-up scratch stack
   # (headless Chrome under CI — no DISPLAY) and drives the debug frontend
-  # through the fmtk CLI. No image build needed: the smoke-level suites
-  # compile from source via `flutter run --debug` and do not start
-  # workspace containers (suites that do will pass build-tasks).
+  # through the fmtk CLI. The frontend compiles from source via
+  # `flutter run --debug`; the suites start real workspace containers, so
+  # CI builds the workspace image and the network sidecar (interactive
+  # egress fail-closes without the sidecar) before running them.
   test-fmtk-e2e:
     runs-on: ${{ inputs.runner == 'nix' && 'nix' || 'ubuntu-latest' }}
     timeout-minutes: 60
@@ -47,7 +48,6 @@ jobs:
           run: "true"
           suite: test-fmtk-e2e
           suite-name: fmtk
-          build-tasks: ""
 
       - name: Upload harness logs
         if: always()
