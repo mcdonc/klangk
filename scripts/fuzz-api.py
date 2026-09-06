@@ -104,6 +104,19 @@ def fuzz_int(rng: random.Random):
     return rng.choice(generators)()
 
 
+def fuzz_float(rng: random.Random):
+    """Return a random float-ish value — epoch-seconds windows, edge
+    magnitudes, sometimes an int or a wrong type."""
+    generators = [
+        lambda: rng.random() * 2_000_000_000,  # plausible epoch seconds
+        lambda: 0.0,
+        lambda: -1.0,
+        lambda: 1e18,
+        lambda: rng.randint(0, 100),  # ints are valid floats too
+    ]
+    return rng.choice(generators)()
+
+
 def fuzz_value(rng: random.Random):
     """Return a random value of any JSON type."""
     generators = [
@@ -250,6 +263,7 @@ def fuzz_query(rng: random.Random, params: dict[str, str]) -> dict:
         "string": fuzz_string,
         "uuid": fuzz_uuid,
         "int": fuzz_int,
+        "float": fuzz_float,
     }
     for key, kind in params.items():
         if rng.random() < 0.15:
@@ -558,6 +572,23 @@ ENDPOINTS: list[tuple[str, str, dict | None, dict | None]] = [
         f"{P}/events/containers",
         None,
         {"limit": "int", "offset": "int", "workspace_id": "string"},
+    ),
+    # Time-correlated merged stream (#3251): the three-table merge with
+    # the same paging envelope plus the time window (`since`/`until`
+    # epoch floats), `actor`/`workspace`/`event` substring filters.
+    (
+        "GET",
+        f"{P}/events",
+        None,
+        {
+            "limit": "int",
+            "offset": "int",
+            "since": "float",
+            "until": "float",
+            "actor": "string",
+            "workspace": "string",
+            "event": "string",
+        },
     ),
     # Identity/privilege audit stream (#3205): same paging envelope,
     # with `event`/`actor`/`target` substring filters.
