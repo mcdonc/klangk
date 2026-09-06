@@ -8,6 +8,7 @@ import 'package:provider/provider.dart';
 
 import 'auth_service.dart';
 import 'pending_redirect.dart';
+import 'web_client.dart';
 import '../branding.dart';
 import '../utils/page_title.dart';
 import '../utils/validators.dart';
@@ -40,6 +41,13 @@ class _LoginPageState extends State<LoginPage> {
   List<Map<String, dynamic>> _oidcProviders = [];
   String _authModes = 'password';
 
+  /// #3230: the binding-JWK query param for OIDC login navigations.
+  /// Null until loaded on web builds (the buttons stay disabled for
+  /// those milliseconds so no login can race ahead of the key and
+  /// mint a refused session); non-web builds never wait.
+  String? _oidcBindingParam;
+  bool _oidcBindingReady = !isWebClient;
+
   bool get _showPasswordForm => _authModes != 'oidc' && _authModes != 'none';
 
   @override
@@ -47,6 +55,16 @@ class _LoginPageState extends State<LoginPage> {
     super.initState();
     setPageTitle('Login');
     _loadConfig();
+    _loadOidcBindingParam();
+  }
+
+  Future<void> _loadOidcBindingParam() async {
+    final param = await oidcBindingParam();
+    if (!mounted) return;
+    setState(() {
+      _oidcBindingParam = param;
+      _oidcBindingReady = true;
+    });
   }
 
   Future<void> _loadConfig() async {
@@ -159,11 +177,21 @@ class _LoginPageState extends State<LoginPage> {
             child: OutlinedButton.icon(
               icon: const Icon(Icons.login),
               label: Text('Log in with ${provider['display_name']}'),
-              onPressed: () {
-                final id = provider['id'];
-                final url = '${baseUrl}/api/v1/auth/oidc/$id/login';
-                navigateTo(url);
-              },
+              onPressed: _oidcBindingReady
+                  ? () {
+                      final id = provider['id'];
+                      var url = '${baseUrl}/api/v1/auth/oidc/$id/login';
+                      // #3230: ride the binding key so the callback mint
+                      // is born bound — no unbound window even for OIDC.
+                      // A key-less web build rides the explicit `none`.
+                      final param = _oidcBindingParam;
+                      if (param != null) {
+                        url =
+                            '$url?binding_jwk=${Uri.encodeQueryComponent(param)}';
+                      }
+                      navigateTo(url);
+                    }
+                  : null,
             ),
           ),
         ),

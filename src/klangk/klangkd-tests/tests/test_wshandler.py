@@ -12913,6 +12913,50 @@ class TestTokenExpiryTimer:
         await conn.cleanup()
         assert conn._expiry_task is None
 
+    async def test_retarget_expiry_rearms_for_replacement_token(self):
+        """#3230: a rotation re-arms the close task for the new token —
+        the old (earlier) expiry no longer closes the socket."""
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock)
+        conn.token_exp = time.time() - 1
+        conn._expiry_task = None
+        conn.retarget_expiry(time.time() + 3600)
+        await asyncio.sleep(0.05)
+        sock.close.assert_not_awaited()
+        # The follow-up expiry still fires for the new token's exp.
+        conn.retarget_expiry(time.time() - 1)
+        await asyncio.sleep(0.05)
+        sock.close.assert_awaited_once_with(code=4002, reason="Token expired")
+
+    async def test_retarget_expiry_none_disarms_timer(self):
+        """A replacement without an expiry (test doubles) disarms."""
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock)
+        conn.token_exp = time.time() - 1
+        conn._expiry_task = None
+        conn.retarget_expiry(None)
+        assert conn._expiry_task is None
+        await asyncio.sleep(0.05)
+        sock.close.assert_not_awaited()
+
+    async def test_state_reattach_moves_jti_and_expiry(self):
+        """#3230: WebSocketState.reattach_jti with a new exp updates a
+        real connection's jti AND re-arms its close task."""
+        app_state = _make_app_state()
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock, app_state=app_state)
+        conn.jti = "old-jti"
+        conn.token_exp = time.time() - 1
+        conn._expiry_task = None
+        app_state.state.sockets.connections["c1"] = conn
+        moved = app_state.state.sockets.reattach_jti(
+            "old-jti", "new-jti", new_exp=time.time() + 3600
+        )
+        assert moved == 1
+        assert conn.jti == "new-jti"
+        await asyncio.sleep(0.05)
+        sock.close.assert_not_awaited()
+
 
 # --- DPoP gate on the main WS handshake (#3218) ------------------------------
 

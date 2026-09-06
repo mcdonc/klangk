@@ -264,7 +264,7 @@ async def _decider_authenticate(websocket: WebSocket, app, _hs_mark):
     if user is None:
         return None
     _hs_mark("token")
-    return user, payload.get("jti")
+    return user, payload.get("jti"), a.ws_expiry(payload)
 
 
 async def _decode_decider_token(websocket: WebSocket, a, token: str):
@@ -441,7 +441,7 @@ async def handle_consent_decider(websocket: WebSocket, app) -> None:
     authed = await _decider_authenticate(websocket, app, _hs_mark)
     if authed is None:
         return
-    user, jti = authed
+    user, jti, token_exp = authed
     workspace = websocket.query_params.get("workspace")
     if workspace is None:
         # #2976: consent is strictly a workspace concern -- there is no
@@ -468,7 +468,13 @@ async def handle_consent_decider(websocket: WebSocket, app) -> None:
     email = user.get("email")
     try:
         registry.register(
-            decider_id, workspace, email, safe_ws, jti=jti, user_id=user["id"]
+            decider_id,
+            workspace,
+            email,
+            safe_ws,
+            jti=jti,
+            user_id=user["id"],
+            exp=token_exp,
         )
         # Register BEFORE reading the snapshot: a hold created between the two
         # is then delivered twice (once live via fanout, once from the

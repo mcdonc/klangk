@@ -8,8 +8,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:klangk_frontend/auth/auth_service.dart';
 import 'package:klangk_frontend/auth/login_page.dart';
 import 'package:klangk_frontend/auth/pending_redirect.dart';
+import 'package:klangk_frontend/auth/web_client.dart';
+import 'package:klangk_frontend/auth/dpop.dart' show testDpopBackendOverride;
 import 'package:klangk_frontend/branding.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
+import 'dpop_test_helpers.dart';
 
 void main() {
   setUp(() {
@@ -731,6 +734,33 @@ void main() {
       await tester.tap(find.text('Log in with Test IdP'));
       await tester.pumpAndSettle();
       // No crash — navigateTo stub is a no-op
+    });
+
+    testWidgets('web build rides the binding key on the OIDC URL (#3230)',
+        (tester) async {
+      addTearDown(() => testWebClient = false);
+      testWebClient = true;
+      testDpopBackendOverride = FakeDpopBackend();
+      addTearDown(() => testDpopBackendOverride = null);
+      testConfigHttpClientOverride = _configClient(
+        oidcProviders: [
+          {'id': 'test', 'display_name': 'Test IdP'},
+        ],
+        authModes: 'both',
+      );
+      await tester.pumpWidget(buildLoginPage());
+      // Let the async binding-param load settle before the tap — the
+      // button stays disabled until then, so no login can outrun the
+      // key.
+      await tester.pumpAndSettle();
+      final button = tester.widget<OutlinedButton>(
+        find.widgetWithText(OutlinedButton, 'Log in with Test IdP'),
+      );
+      expect(button.enabled, isTrue);
+      await tester.tap(find.text('Log in with Test IdP'));
+      await tester.pumpAndSettle();
+      // navigateTo is a no-op stub; the covered branch is the URL
+      // construction with the binding param (lcov pins the line).
     });
   });
 }

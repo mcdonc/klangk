@@ -355,6 +355,21 @@ operators or integrators to act when upgrading.
   the previous unbound behavior. See
   [Authentication: DPoP session-token binding](features/authentication.md#dpop-session-token-binding-xss-theft-protection).
 
+- **`KLANGKD_WEB_BIND_GRACE_SECONDS` (#3230).** Sessions minted for
+  the web client are now **born DPoP-bound**: the SPA's minting
+  requests carry its public binding JWK (`Klangk-Binding-Jwk`; an
+  OIDC login URL carries it into the state cookie, a key-less web
+  build rides an explicit `none`, and a web flow arriving without it
+  is refused at the callback before any exchange), so there is no
+  unbound window to read, sabotage, or bind-first with a substituted
+  key. Every WebSocket — main and consent-decider alike — is armed to
+  close at its token's expiry and re-armed on rotation. This setting
+  is the deadline backstop for tokens that nonetheless mint unbound:
+  still unbound past it (default `300` seconds; `0` disables), the
+  session is refused with 401 everywhere until re-login. CLI/TUI
+  sessions are unmarked and unaffected. See
+  [Authentication: DPoP session-token binding](features/authentication.md#dpop-session-token-binding-xss-theft-protection).
+
 - **CSP: hash-allowed inline scripts + Trusted Types (#3219).** The
   served `Content-Security-Policy` drops `'unsafe-inline'` from
   `script-src`: the inline `<script>` blocks of the built frontend's

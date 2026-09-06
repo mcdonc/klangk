@@ -36,6 +36,9 @@ class _OidcCompletePageState extends State<OidcCompletePage> {
     }
     final auth = context.read<AuthService>();
     try {
+      // #3230: no mint marker here — the OIDC callback already minted
+      // the token (marked as a web session there, via the flow's lack of
+      // a CLI redirect); the exchange only redeems the one-time code.
       final resp = await auth.authPost(
         '/api/v1/auth/oidc/exchange',
         body: jsonEncode({'code': widget.code}),

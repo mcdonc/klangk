@@ -65,6 +65,52 @@ class TestConsentDeciderRegistry:
         # deregister of unknown id is a no-op
         reg.deregister("nope")
 
+    async def test_expired_token_closes_decider_socket(self):
+        """#3230: a decider registered with an already-passed token
+        expiry (or bind deadline) has its socket closed 4002 —
+        egress-verdict authority must not outlive the credential."""
+        import time as time_mod
+
+        reg = ConsentDeciderRegistry(_app())
+        sock = AsyncMock()
+        reg.register(
+            "d1",
+            WS,
+            "a@x",
+            sock,
+            jti="j1",
+            user_id="u1",
+            exp=time_mod.time() - 1,
+        )
+        await asyncio.sleep(0.05)
+        sock.close.assert_awaited_once_with(code=4002, reason="Token expired")
+
+    async def test_reattach_rearms_expiry(self):
+        """#3230: a token rotation moves the decider onto the new JTI
+        AND re-arms its close task for the replacement token's expiry
+        — the old (earlier) deadline no longer closes the socket."""
+        import time as time_mod
+
+        reg = ConsentDeciderRegistry(_app())
+        sock = AsyncMock()
+        reg.register(
+            "d1",
+            WS,
+            "a@x",
+            sock,
+            jti="j1",
+            user_id="u1",
+            exp=time_mod.time() - 1,
+        )
+        moved = reg.reattach_jti("j1", "j2", new_exp=time_mod.time() + 3600)
+        await asyncio.sleep(0.05)
+        assert moved == 1
+        sock.close.assert_not_awaited()
+        # The follow-up expiry still fires for the new token's exp.
+        reg.reattach_jti("j2", "j3", new_exp=time_mod.time() - 1)
+        await asyncio.sleep(0.05)
+        sock.close.assert_awaited_once_with(code=4002, reason="Token expired")
+
     async def test_multiple_deciders_same_workspace(self):
         reg = ConsentDeciderRegistry(_app())
         reg.register("d1", WS, "a@x", _FakeSock())
@@ -281,6 +327,9 @@ def _ws_app(
         decode_token=decode_mock,
         _user_from_valid_payload=AsyncMock(return_value=payload_result),
         check_dpop=MagicMock(return_value=None),
+        # #3230: the decider gate resolves the socket's expiry via
+        # ws_expiry; None keeps the old no-timer behavior in tests.
+        ws_expiry=MagicMock(return_value=None),
     )
     app.state.acl = types.SimpleNamespace(
         get_principals=AsyncMock(
@@ -1015,9 +1064,10 @@ class TestConsentDeciderWSJti:
         app = _ws_app({"id": "u1", "email": "a@x"})
         ws = _FakeWS({"token": "tok"}, [])
         result = await _decider_authenticate(ws, app, lambda label: None)
-        authed_user, jti = result
+        authed_user, jti, token_exp = result
         assert authed_user["id"] == "u1"
         assert jti == "jti-decoded"
+        assert token_exp is None  # #3230: the mock gate yields no expiry
         assert ws.closed is None  # authenticated, not refused
 
     async def test_decider_gate_resolves_presenting_workstation(self):
@@ -1084,6 +1134,7 @@ class TestConsentDeciderWSJti:
                 sock,
                 jti=None,
                 user_id=None,
+                exp=None,
             ):
                 recorded.append((jti, user_id))
                 super().register(
@@ -1093,6 +1144,7 @@ class TestConsentDeciderWSJti:
                     sock,
                     jti=jti,
                     user_id=user_id,
+                    exp=exp,
                 )
 
         app.state.consent_deciders = RecordingRegistry(app)

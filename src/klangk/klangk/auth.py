@@ -139,6 +139,32 @@ def password_class_counts(password: str) -> dict[str, int]:
 
 security = HTTPBearer(auto_error=False)
 
+#: The request header marking a session-minting request as coming from
+#: the web SPA (#3230). Sessions minted for the web client carry a DPoP
+#: bind deadline (the ``wbd`` claim): if the session is not bound to a
+#: key within the grace window, every later use is refused — a script
+#: in the page can read the unbound JWT and sabotage the bind calls,
+#: but the exfiltrated token dies at the deadline. CLI/TUI requests send
+#: no such header and stay unbound indefinitely by design. The header
+#: cannot be abused to loosen anyone's session: it only tightens the
+#: sender's own session's requirements.
+WEB_CLIENT_HEADER = "klangk-web-client"
+
+#: The request header carrying the SPA's public DPoP binding JWK on a
+#: minting request (#3230): base64url of the compact JSON ``{kty, crv,
+#: x, y}``. A marked mint carries this so the token is **born bound**
+#: (``cnf.jkt`` from the first byte) — there is no unbound window for a
+#: page script to read, sabotage, or bind-first with its own key. The
+#: header value is validated server-side exactly like ``POST
+#: /auth/bind``'s body JWK.
+BINDING_JWK_HEADER = "klangk-binding-jwk"
+
+#: The JWT claim carrying a web-minted session's DPoP bind deadline as
+#: a Unix-epoch float (#3230) — mint time plus
+#: ``KLANGKD_WEB_BIND_GRACE_SECONDS``. Carried unchanged across refresh
+#: and bind swaps so a rotation can never reset it.
+BIND_DEADLINE_CLAIM = "wbd"
+
 
 # ---------------------------------------------------------------------------
 # Pure helpers (no config) — module-level
@@ -654,6 +680,12 @@ class Auth:
         return self.app.state.settings.privileged_session_idle_timeout_minutes
 
     @property
+    def web_bind_grace_seconds(self) -> int:
+        """How long a web-minted session may stay unbound, in seconds;
+        0 = no deadline (#3230)."""
+        return self.app.state.settings.web_bind_grace_seconds
+
+    @property
     def session_workstation_binding(self) -> str:
         """The session-binding mode: off | ip | strict (#3194).
 
@@ -1097,6 +1129,7 @@ class Auth:
         email: str,
         expire_hours: float | None = None,
         jkt: str | None = None,
+        web_deadline: float | None = None,
     ) -> str:
         """Mint an access token, optionally overriding the lifetime.
 
@@ -1104,7 +1137,10 @@ class Auth:
         window demands (#3151) — see :meth:`create_capped_token`.
         *jkt* (when given) is an RFC 7638 thumbprint: the token then
         carries ``cnf.jkt`` and every use must present a DPoP proof
-        signed by the matching key (#3218).
+        signed by the matching key (#3218). *web_deadline* (when
+        given) is the #3230 bind deadline for a web-minted session —
+        carried unchanged by every later swap (refresh, bind) so a
+        rotation never resets the clock.
         """
         lifetime = (
             self.token_expire_hours if expire_hours is None else expire_hours
@@ -1121,10 +1157,16 @@ class Auth:
         }
         if jkt is not None:
             payload["cnf"] = {"jkt": jkt}
+        if web_deadline is not None:
+            payload[BIND_DEADLINE_CLAIM] = web_deadline
         return jwt.encode(payload, self.secret, algorithm=self.algorithm)
 
     async def create_capped_token(
-        self, user_id: str, email: str, jkt: str | None = None
+        self,
+        user_id: str,
+        email: str,
+        jkt: str | None = None,
+        web_deadline: float | None = None,
     ) -> str:
         """Mint an access token capped at the owner's idle window (#3151).
 
@@ -1134,14 +1176,19 @@ class Auth:
         and the (admin-aware) window. The client's 80%-of-lifetime
         refresh schedule then surfaces it at the refresh seam within
         the window. Unarmed → the plain configured lifetime. *jkt*
-        carries a DPoP binding through a refresh (#3218).
+        carries a DPoP binding through a refresh (#3218);
+        *web_deadline* carries the #3230 bind deadline through it.
         """
         window_hours = (await self.idle_window_minutes_for_user(user_id)) / 60
         lifetime = self.token_expire_hours
         if window_hours > 0:
             lifetime = min(lifetime, window_hours)
         return self.create_token(
-            user_id, email, expire_hours=lifetime, jkt=jkt
+            user_id,
+            email,
+            expire_hours=lifetime,
+            jkt=jkt,
+            web_deadline=web_deadline,
         )
 
     async def issue_token(
@@ -1154,6 +1201,8 @@ class Auth:
         method: str | None = None,
         referer: str | None = None,
         via: str = "password",
+        web_client: bool = False,
+        jkt: str | None = None,
     ) -> str:
         """Mint an access token AND register it as a session (#2585).
 
@@ -1173,11 +1222,19 @@ class Auth:
 
         Every mint is also one ``login`` row in the ``audit_events``
         stream (#3205), tagged with *via* — the path that
-        authenticated the caller (password, oidc, invite, …) — and the
-        workstation metadata above plus the request's method/referer
+        authenticated the caller (password, oidc, invite, …) — the
+        workstation metadata above, and the request's method/referer
         (#3255) when the minting path had an HTTP request behind it.
+        *web_client* (the SPA marks its minting requests, #3230) bakes
+        the DPoP bind deadline into the token: an unbound web-minted
+        session stops working at the deadline.
         """
-        token = await self.create_capped_token(user_id, email)
+        token = await self.create_capped_token(
+            user_id,
+            email,
+            jkt=jkt,
+            web_deadline=self._web_deadline(web_client),
+        )
         payload = self.decode_token(token)
         expires_at = datetime.fromtimestamp(
             payload["exp"], tz=timezone.utc
@@ -1661,6 +1718,8 @@ class Auth:
         user_agent: str | None = None,
         method: str | None = None,
         referer: str | None = None,
+        web_client: bool = False,
+        jkt: str | None = None,
     ) -> TokenResponse:
         """Replace an expired password and mint the session (#3177).
 
@@ -1706,6 +1765,8 @@ class Auth:
             method=method,
             referer=referer,
             via="expired-password",
+            web_client=web_client,
+            jkt=jkt,
         )
         await self.app.state.model.users.record_login(user["id"])
         return TokenResponse(access_token=token)
@@ -1719,6 +1780,8 @@ class Auth:
         user_agent: str | None = None,
         method: str | None = None,
         referer: str | None = None,
+        web_client: bool = False,
+        jkt: str | None = None,
     ) -> RegisterResult:
         if not self.registration_enabled():
             raise HTTPException(
@@ -1768,6 +1831,8 @@ class Auth:
                 method=method,
                 referer=referer,
                 via="register",
+                web_client=web_client,
+                jkt=jkt,
             )
             await self.app.state.model.users.record_login(user["id"])
         return RegisterResult(
@@ -1815,6 +1880,8 @@ class Auth:
         user_agent: str | None = None,
         method: str | None = None,
         referer: str | None = None,
+        web_client: bool = False,
+        jkt: str | None = None,
     ) -> TokenResponse:
         # Resolve the user by email or handle (#616).
         user = await self.app.state.model.users.get_user_by_identifier(
@@ -1870,6 +1937,8 @@ class Auth:
             method=method,
             referer=referer,
             via="password",
+            web_client=web_client,
+            jkt=jkt,
         )
         # Stamp after minting, matching every other session-issuing site
         # (#2583): if minting fails, no login is recorded.
@@ -1952,27 +2021,35 @@ class Auth:
         await self.app.state.model.sessions.replace_session(
             jti, user_id, new_payload["jti"], new_expires_at
         )
-        self._retarget_refreshed_sockets(jti, new_payload["jti"])
+        self._retarget_refreshed_sockets(
+            jti, new_payload["jti"], new_exp=self.ws_expiry(new_payload)
+        )
         # The old JTI is dead — drop its stamp-throttle entry (#3151)
         # so the dict tracks live sessions, not history.
         self.session_stamps.pop(f"jti:{jti}", None)
 
-    def _retarget_refreshed_sockets(self, old_jti: str, new_jti: str) -> None:
+    def _retarget_refreshed_sockets(
+        self, old_jti: str, new_jti: str, new_exp: float | None = None
+    ) -> None:
         """Move live WS connections onto the refreshed token's JTI (#3152).
 
         Keeps ``conn.jti`` equal to the session row's current JTI so a
         later hard revocation (logout, eviction) still finds the socket
         the refreshed session is using — for the main ``/ws``
         connections and the consent-decider registrations alike
-        (#3162). Minimal app states (tests) may not wire ``sockets`` or
-        ``consent_deciders`` — then there is nothing to retarget.
+        (#3162). *new_exp* re-arms each socket's expiry close task for
+        the replacement token (#3230) so a rotation never leaves a
+        socket closing at the OLD token's expiry (or bind deadline)
+        mid-session. Minimal app states (tests) may not wire
+        ``sockets`` or ``consent_deciders`` — then there is nothing to
+        retarget.
         """
         sockets = getattr(self.app.state, "sockets", None)
         if sockets is not None:
-            sockets.reattach_jti(old_jti, new_jti)
+            sockets.reattach_jti(old_jti, new_jti, new_exp=new_exp)
         deciders = getattr(self.app.state, "consent_deciders", None)
         if deciders is not None:
-            deciders.reattach_jti(old_jti, new_jti)
+            deciders.reattach_jti(old_jti, new_jti, new_exp=new_exp)
 
     async def _expired_token_response(
         self, token: str, workstation=None
@@ -2198,6 +2275,72 @@ class Auth:
         jkt = (payload.get("cnf") or {}).get("jkt")
         return jkt if isinstance(jkt, str) else None
 
+    def ws_expiry(self, payload: dict) -> float | None:
+        """When a WebSocket connection authenticated by *payload* must
+        close: the token's ``exp``, or — for a still-unbound web-minted
+        session — the sooner of the two (#3230).
+
+        The deadline is otherwise enforced only at connect; a socket
+        opened inside the grace window would otherwise coast to the
+        token's natural expiry. Arming the connection's existing
+        expiry timer at the deadline closes it in-band.
+        """
+        exp = payload.get("exp")
+        deadline = payload.get(BIND_DEADLINE_CLAIM)
+        bound = self.token_binding(payload) is not None
+        if (
+            not bound
+            and isinstance(deadline, (int, float))
+            and isinstance(exp, (int, float))
+            and deadline < exp
+        ):
+            return deadline
+        return exp
+
+    def _web_deadline(self, web_client: bool) -> float | None:
+        """The #3230 bind deadline for a web-minted session; None for
+        CLI/TUI mints and when the grace window is disabled (0)."""
+        if not web_client or self.web_bind_grace_seconds <= 0:
+            return None
+        return time.time() + self.web_bind_grace_seconds
+
+    def bind_deadline_expired(self, payload: dict) -> bool:
+        """True when an unbound web-minted session is past its DPoP bind
+        deadline (#3230).
+
+        Bound tokens never expire this way — presenting a valid proof
+        *is* the bound state. Tokens without the claim (CLI/TUI, and
+        web mints under a disabled grace window) never expire this way
+        either.
+        """
+        if self.token_binding(payload) is not None:
+            return False
+        deadline = payload.get(BIND_DEADLINE_CLAIM)
+        if not isinstance(deadline, (int, float)):
+            return False
+        return time.time() > deadline
+
+    def enforce_bind_deadline(self, payload: dict) -> None:
+        """Raise 401 when *payload* is a web-minted session that never
+        DPoP-bound within its grace window (#3230).
+
+        The choke-point form of :meth:`bind_deadline_expired`: the HTTP
+        dependencies and the refresh seam call this; the WebSocket
+        gate uses the boolean form so it can close the socket (4001)
+        instead. The 401 makes the client drop the token and
+        re-login, re-entering the bind flow under attacker-free
+        conditions — or surfacing the sabotage.
+        """
+        if self.bind_deadline_expired(payload):
+            logger.info(
+                "token reject: WEB SESSION UNBOUND PAST DPoP BIND "
+                "DEADLINE -> client logout + re-login"
+            )
+            raise HTTPException(
+                status_code=401,
+                detail="Session expired: DPoP binding required",
+            )
+
     def check_dpop(
         self, proof, method: str, path: str, access_token: str, payload: dict
     ) -> str | None:
@@ -2295,6 +2438,7 @@ class Auth:
                 email,
                 expire_hours=remaining_hours,
                 jkt=jkt,
+                web_deadline=payload.get(BIND_DEADLINE_CLAIM),
             )
             await self._swap_token(jti, exp, user_id, new_token)
             # Binding a pre-#2585 token INSERTS a session row (the
@@ -2381,6 +2525,8 @@ class Auth:
             if not all([user_id, email, jti, exp]):
                 raise HTTPException(status_code=401, detail="Invalid token")
 
+            self.enforce_bind_deadline(payload)
+
             await self._reject_replayed_refresh(
                 jti, exp, workstation, user_id=user_id
             )
@@ -2404,7 +2550,10 @@ class Auth:
             await self.record_activity(user_id)
 
             new_token = await self.create_capped_token(
-                user_id, email, jkt=self.token_binding(payload)
+                user_id,
+                email,
+                jkt=self.token_binding(payload),
+                web_deadline=payload.get(BIND_DEADLINE_CLAIM),
             )
             await self._swap_token(jti, exp, user_id, new_token)
             # Refreshing a pre-#2585 token (no row) INSERTS one; enforce
@@ -2454,7 +2603,7 @@ class Auth:
             return None
         if await self._token_revoked(jti):
             return None
-        if await self._ws_binding_rejected(payload, workstation):
+        if await self._ws_session_rejected(payload, workstation):
             return None
         user = await self.app.state.model.users.get_user_by_id(user_id)
         reason = self._ws_token_reject_reason(user)
@@ -2467,6 +2616,19 @@ class Auth:
         await self.record_activity(user_id)
         await self.record_session_activity(jti)
         return user
+
+    async def _ws_session_rejected(self, payload, workstation) -> bool:
+        """True when the session-level gates refuse a WebSocket auth:
+        a web-minted session past its DPoP bind deadline (#3230), or a
+        workstation-binding mismatch (#3194 — which also revokes and
+        logs inside :meth:`_ws_binding_rejected`)."""
+        if self.bind_deadline_expired(payload):
+            logger.info(
+                "token reject: WEB SESSION UNBOUND PAST DPoP BIND "
+                "DEADLINE -> WS will close 4001 -> client logout"
+            )
+            return True
+        return await self._ws_binding_rejected(payload, workstation)
 
     def _ws_token_reject_reason(self, user: dict | None) -> str | None:
         """Why a WS auth must reject *user*; ``None`` when acceptable.
@@ -2536,6 +2698,7 @@ async def _authenticated_user(request: Request, credentials) -> dict:
         credentials.credentials,
         payload,
     )
+    request.app.state.auth.enforce_bind_deadline(payload)
     user_id = payload.get("sub")
     jti = payload.get("jti")
     if None in (user_id, jti):
@@ -2572,6 +2735,7 @@ async def _optional_user(request: Request, credentials) -> dict | None:
         credentials.credentials,
         payload,
     )
+    request.app.state.auth.enforce_bind_deadline(payload)
     user_id = payload.get("sub")
     jti = payload.get("jti")
     if None in (user_id, jti):

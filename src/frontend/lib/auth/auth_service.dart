@@ -11,6 +11,7 @@ import 'dpop.dart';
 import 'password_policy.dart';
 import 'pending_redirect.dart';
 import 'token_store.dart';
+import 'web_client.dart';
 
 /// Override for testing — set to intercept all HTTP calls in AuthService.
 http.Client? testAuthHttpClientOverride;
@@ -86,6 +87,18 @@ class AuthService extends ChangeNotifier {
   bool _mustChangePassword = false;
   Timer? _permissionTimer;
   Timer? _refreshTimer;
+
+  /// #3230: retries a transiently failed DPoP bind every 30s while a
+  /// web session sits unbound. The server refuses unbound web-minted
+  /// tokens after ``KLANGKD_WEB_BIND_GRACE_SECONDS`` (default 300s); the
+  /// retry keeps a benign failure inside the window instead of waiting
+  /// for the next token refresh (which may be hours away). Cancels on
+  /// logout, successful bind, and dispose.
+  Timer? _bindRetryTimer;
+
+  /// The bind-retry cadence; overridable in tests.
+  @visibleForTesting
+  static Duration bindRetryInterval = const Duration(seconds: 30);
 
   String? get token => _token;
   bool get isLoggedIn => _token != null;
@@ -323,7 +336,8 @@ class AuthService extends ChangeNotifier {
   /// browser profile) is unusable — every proof would fail — so it is
   /// dropped and the user re-logs in. An unbound token (minted before
   /// #3218, or a bind that failed mid-session) is bound now, so the
-  /// upgrade path heals on the first app load.
+  /// upgrade path heals on the first app load; a web build whose heal
+  /// fails re-attempts on the #3230 retry timer.
   Future<void> _restoreBinding() async {
     if (_token == null) return;
     final hasKey = await dpopBackend.ensureKey();
@@ -339,16 +353,25 @@ class AuthService extends ChangeNotifier {
       if (bound != null && bound != _token) {
         _token = bound;
         await writeToken(bound);
+      } else if (!tokenIsBound(_token!)) {
+        _scheduleBindRetry();
       }
     }
   }
+
+  /// #3230: the HTTP status of the last bind attempt (null on success
+  /// or a network error). A 4xx refusal is permanent — retrying every
+  /// 30s cannot fix an already-bound or invalid-key state.
+  int? _lastBindStatus;
 
   /// Exchange [token] for a DPoP-bound replacement (#3218).
   ///
   /// Returns the bound token, or null when binding is unavailable
   /// (non-web / insecure context), the server refuses, or the call
-  /// fails. The caller keeps the unbound token — the session works as
-  /// before (CLI-equivalent posture) and the next refresh retries.
+  /// fails. The caller keeps the unbound token — on web builds the
+  /// server limits how long that lasts (#3230: an unbound web-minted
+  /// session is refused after the bind grace window, so the user
+  /// re-logs in; the retry timer re-attempts in the meantime).
   Future<String?> _tryBind(String token) async {
     if (tokenIsBound(token)) return token;
     final jwk = await dpopBackend.publicJwk();
@@ -362,6 +385,7 @@ class AuthService extends ChangeNotifier {
         },
         body: jsonEncode({'jwk': jwk}),
       );
+      _lastBindStatus = response.statusCode;
       if (response.statusCode == 200) {
         return (jsonDecode(response.body)['access_token']) as String?;
       }
@@ -370,6 +394,7 @@ class AuthService extends ChangeNotifier {
         '${response.statusCode} ${response.body}',
       );
     } catch (e) {
+      _lastBindStatus = null;
       debugPrint('[AuthService] DPoP bind failed: $e');
     }
     return null;
@@ -434,12 +459,19 @@ class AuthService extends ChangeNotifier {
     await writeToken(token);
     // Bind the fresh token to the browser's non-extractable key right
     // away (#3218): the unbound token exists in JS-readable form only
-    // for this instant. On any bind failure the unbound token stays
-    // valid and the next refresh re-attempts.
+    // for this instant. On any bind failure the unbound token keeps
+    // working — on web builds only until the server's #3230 bind
+    // deadline; the retry timer below re-attempts inside the window.
     final bound = await _tryBind(token);
+    // The bind await can straddle a logout: never write a token the
+    // session has moved past (#3230 review — same guard as _retryBind).
+    if (_token != token) return;
     if (bound != null && bound != token) {
+      _stopBindRetry();
       _token = bound;
       await writeToken(bound);
+    } else if (!tokenIsBound(token)) {
+      _scheduleBindRetry();
     }
     // Re-fetch config now that we have a token, so authenticated-only
     // fields (e.g. the netfilter deploy allow-list, #1365) are picked up
@@ -453,6 +485,43 @@ class AuthService extends ChangeNotifier {
   /// Save a token from email verification (public for VerifyPage).
   Future<void> saveTokenFromVerification(String token) async {
     await _saveToken(token);
+  }
+
+  /// #3230: retry a failed bind every 30s while a web session is
+  /// unbound (see [_bindRetryTimer]). A successful retry persists the
+  /// bound replacement; a still-unbound session re-arms the timer —
+  /// the server enforces the deadline regardless, so the loop ends
+  /// either bound or logged out. A session that cannot ever bind
+  /// (no key — insecure-context build) stops retrying instead of
+  /// spinning on a no-op.
+  Future<void> _retryBind() async {
+    if (_token == null || tokenBound) return;
+    final token = _token!;
+    final bound = await _tryBind(token);
+    // The await can straddle a logout or a newer mint: never resurrect
+    // a token the session has moved past (or dropped).
+    if (_token != token) return;
+    if (bound != null && bound != token) {
+      _bindRetryTimer?.cancel();
+      _token = bound;
+      await writeToken(bound);
+      return;
+    }
+    if (await dpopBackend.publicJwk() == null) return;
+    final status = _lastBindStatus;
+    if (status != null && status >= 400 && status < 500) return;
+    _scheduleBindRetry();
+  }
+
+  void _scheduleBindRetry() {
+    _bindRetryTimer?.cancel();
+    if (!isWebClient || _token == null) return;
+    _bindRetryTimer = Timer(bindRetryInterval, _retryBind);
+  }
+
+  void _stopBindRetry() {
+    _bindRetryTimer?.cancel();
+    _bindRetryTimer = null;
   }
 
   Future<void> _clearToken() async {
@@ -470,6 +539,7 @@ class AuthService extends ChangeNotifier {
     // same-user "resume where you were" behavior after a token expiry.
     pendingRedirect = null;
     _stopPermissionRefresh();
+    _stopBindRetry();
     await clearToken();
     notifyListeners();
   }
@@ -485,11 +555,16 @@ class AuthService extends ChangeNotifier {
   /// their own requests outside the `http` package (streaming export,
   /// uploads, file fetches) use this instead of assembling Bearer
   /// headers by hand, so bound sessions keep proving possession.
+  /// [mint] adds the web-client marker for session-minting calls
+  /// (#3230) — the server then bakes the DPoP bind deadline into the
+  /// token it returns.
   Future<Map<String, String>> authHeadersFor(
     String method,
-    String path,
-  ) async {
+    String path, {
+    bool mint = false,
+  }) async {
     final headers = Map<String, String>.of(_authHeaders);
+    if (mint) headers.addAll(await mintHeaders());
     if (_token == null) return headers;
     final proof = await dpopBackend.createProof(
       method: method,
@@ -515,7 +590,10 @@ class AuthService extends ChangeNotifier {
     try {
       final response = await _client.post(
         Uri.parse('$_baseUrl/api/v1/auth/register'),
-        headers: {'Content-Type': 'application/json'},
+        headers: {
+          'Content-Type': 'application/json',
+          ...await mintHeaders(),
+        },
         body: jsonEncode({'email': email, 'password': password}),
       );
       if (response.statusCode == 200) {
@@ -544,7 +622,10 @@ class AuthService extends ChangeNotifier {
     try {
       final response = await _client.post(
         Uri.parse('$_baseUrl/api/v1/auth/login'),
-        headers: {'Content-Type': 'application/json'},
+        headers: {
+          'Content-Type': 'application/json',
+          ...await mintHeaders(),
+        },
         body: jsonEncode({'identifier': email, 'password': password}),
       );
       if (response.statusCode == 200) {
@@ -572,6 +653,7 @@ class AuthService extends ChangeNotifier {
     try {
       final response = await _client.post(
         Uri.parse('$_baseUrl/api/v1/auth/local'),
+        headers: await mintHeaders(),
       );
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
@@ -712,11 +794,12 @@ class AuthService extends ChangeNotifier {
     return response;
   }
 
-  Future<http.Response> authPost(String path, {String? body}) async {
+  Future<http.Response> authPost(String path,
+      {String? body, bool mint = false}) async {
     final response = await _withStepUp(
       () async => await _client.post(
         Uri.parse('$_baseUrl$path'),
-        headers: await authHeadersFor('POST', path),
+        headers: await authHeadersFor('POST', path, mint: mint),
         body: body,
       ),
     );
@@ -840,6 +923,7 @@ class AuthService extends ChangeNotifier {
   @override
   void dispose() {
     _refreshTimer?.cancel();
+    _stopBindRetry();
     _stopPermissionRefresh();
     super.dispose();
   }

@@ -59,12 +59,16 @@ def _b64url_encode(raw: bytes) -> str:
 
 
 def _is_ec_p256(jwk: dict) -> bool:
-    """True for an EC JWK on the P-256 curve with both coordinates."""
+    """True for an EC JWK on the P-256 curve with usable coordinates.
+
+    The coordinates must be base64url *strings* — numeric or nested
+    values produce no usable key yet used to yield a thumbprint a
+    token could be bound to (and then never proven, #3230 round-3)."""
     if jwk.get("kty") != "EC":
         return False
     if jwk.get("crv") != _EC_CURVE:
         return False
-    return "x" in jwk and "y" in jwk
+    return isinstance(jwk.get("x"), str) and isinstance(jwk.get("y"), str)
 
 
 def jwk_thumbprint(jwk: dict) -> str | None:

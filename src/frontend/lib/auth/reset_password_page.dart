@@ -54,6 +54,7 @@ class _ResetPasswordPageState extends State<ResetPasswordPage> {
           'token': widget.token,
           'password': _passwordController.text,
         }),
+        mint: true,
       );
       if (!mounted) return;
       if (resp.statusCode == 200) {

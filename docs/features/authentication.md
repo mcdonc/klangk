@@ -391,30 +391,64 @@ for legal notices or terms-of-service acknowledgements. See
 ## DPoP session-token binding (XSS theft protection)
 
 Web sessions bind their JWT to a key the browser refuses to export
-(#3218). After any login, the web client registers the public half of a
-WebCrypto ECDSA P-256 keypair (`POST /api/v1/auth/bind`) and receives a
-replacement token carrying the key's RFC 7638 thumbprint in `cnf.jkt`.
-The private half is held as a non-extractable `CryptoKey` in IndexedDB,
-so no script — injected or first-party — can read it. Every
-authenticated request (a `DPoP` header) and every WebSocket connect
-(a one-shot `dpop` query parameter) must then present a fresh proof
-signed by that key: a stolen bound token is useless without it, and a
-script running in a live tab can act as the user but cannot steal a
-credential that outlives the reload.
+(#3218). The web client generates a WebCrypto ECDSA P-256 keypair
+whose private half is held non-extractable in IndexedDB, and every
+session mint is **born bound**: the SPA's minting requests (login,
+register, verify, reset, invite, local) carry the public half
+(base64url JWK in the `Klangk-Binding-Jwk` header), so the token
+carries the key's RFC 7638 thumbprint in `cnf.jkt` from the first
+byte. OIDC logins ride the key on the login URL into the state
+cookie (a top-level navigation cannot carry headers), and the
+callback mint is born bound the same way. Every authenticated
+request (a `DPoP` header) and every WebSocket connect (a one-shot
+`dpop` query parameter) must present a fresh proof signed by that
+key: a stolen bound token is useless without it, and the key cannot
+be read by any script — an XSS can act as the user while the tab is
+live, but cannot steal a credential that outlives the reload. With
+born-bound mints there is no unbound window at all — nothing to
+read, sabotage, or bind-first with a substituted key (#3230).
 
-What this deliberately is **not**: a guarantee that no unbound token
-ever exists. Binding is best-effort at the browser — between mint and
-bind, and on any session whose bind never completes (network failure,
-server refusal, or an in-page attacker sabotaging the bind calls), the
-token stays usable and JS-readable exactly as before #3218. CLI and TUI
-clients are always unbound and unaffected. Closing that residual
-window server-side is tracked in #3230.
+The **bind deadline** is the backstop. On the header paths a bare
+marker without a usable key is rejected with 400, so stripping the
+key from the SPA's request yields a failed login, not a weaker
+token. On the OIDC path the key rides the login URL; a web flow
+whose navigation lost it is refused at the callback, and a web
+build that cannot bind at all (plain HTTP to a remote host) rides
+an explicit `none` so its session is minted unmarked and keeps the
+pre-#3230 behavior. A token that nonetheless carries a `wbd`
+claim — mint time plus `KLANGKD_WEB_BIND_GRACE_SECONDS`, default
+300 seconds, `0` disables — is refused everywhere once past the
+deadline while still unbound: every API request, token refresh,
+bind call, and WebSocket connect answers 401, and every established
+socket (main and consent-decider alike) is armed to close at the
+deadline, not at the token's natural expiry. The deadline is a
+signed claim and survives refresh and bind swaps unchanged — and a
+rotation re-arms the live sockets for the replacement token — so
+no rotation can reset it. The re-login re-enters the bind flow
+under attacker-free conditions, or surfaces the sabotage. A
+transient bind failure on the web is retried every 30 seconds
+inside the window; a failure that outlives the window costs a
+re-login, not the session's secrecy. CLI and TUI clients are always
+unmarked and unaffected — their tokens keep working indefinitely.
+
+What remains deliberately out of model: a script able to _rewrite
+the minting request or login navigation itself_ (swap or strip its
+binding key, or force the `none` marker) is not stopped by any of
+this. On the password flows that script reads the login credentials
+out of the same request; on OIDC the credential is the IdP's own
+HttpOnly session — but either way a script alive in the page at
+login time owns the resulting session, whatever it is minted with.
+The controls here bound the attacker who arrives _after_ the
+session was minted.
 
 Operational notes:
 
 - **Secure context required.** WebCrypto (`crypto.subtle`) exists only
-  on HTTPS or localhost. A plain-HTTP remote deployment silently keeps
-  the previous unbound behavior.
+  on HTTPS or localhost. A web build served over plain HTTP to a remote
+  host cannot bind and knows it: it stops marking its minting requests,
+  so those sessions keep the unbound, pre-#3230 behavior — the same
+  insecure-transport exposure the whole session already has there.
+  Serve the web client over HTTPS to get the bound posture.
 - **Clock skew matters now.** Proofs older (or further ahead) than
   `PROOF_WINDOW_SECONDS` (300) are rejected. A workstation whose clock
   drifts more than ~5 minutes sees every authenticated request fail
@@ -429,3 +463,7 @@ Operational notes:
   proof could be replayed exactly once, within its window, and only
   alongside the token itself — the same exposure as the
   token-in-URL issue tracked in #3201).
+- **The bind deadline is baked per token.** It is read from
+  `KLANGKD_WEB_BIND_GRACE_SECONDS` at mint time (reloadable on SIGHUP);
+  sessions minted before a change keep the deadline they were minted
+  with.

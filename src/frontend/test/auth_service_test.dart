@@ -7,6 +7,7 @@ import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:klangk_frontend/auth/auth_service.dart';
 import 'package:klangk_frontend/auth/pending_redirect.dart';
+import 'package:klangk_frontend/auth/web_client.dart';
 import 'package:klangk_frontend/branding.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 
@@ -1975,6 +1976,269 @@ void main() {
       );
       expect(refresh.headers['DPoP'], 'proof-value');
       expect(refresh.headers['Authorization'], 'Bearer $bound');
+    });
+  });
+
+  group('oidcBindingParam tri-state (#3230)', () {
+    setUp(() {
+      testWebClient = true;
+    });
+
+    tearDown(() {
+      testWebClient = false;
+      testDpopBackendOverride = null;
+    });
+
+    test('null off-web — no param on desktop/CLI flows', () async {
+      testWebClient = false;
+      expect(await oidcBindingParam(), isNull);
+    });
+
+    test("'none' when the web build cannot bind (insecure context)", () async {
+      testDpopBackendOverride = FakeDpopBackend(hasKey: false);
+      expect(await oidcBindingParam(), 'none');
+    });
+
+    test('base64url JWK when binding-capable', () async {
+      testDpopBackendOverride = FakeDpopBackend();
+      final param = await oidcBindingParam();
+      expect(param, isNotNull);
+      final padded =
+          param!.padRight(param.length + (4 - param.length % 4) % 4, '=');
+      final jwk = jsonDecode(utf8.decode(base64Url.decode(padded)));
+      expect(jwk['kty'], 'EC');
+      expect(jwk['crv'], 'P-256');
+      expect(jwk.containsKey('d'), isFalse);
+    });
+  });
+
+  group('AuthService web mint marking + bind retry (#3230)', () {
+    setUp(() {
+      testDpopBackendOverride = FakeDpopBackend(proof: 'proof-value');
+      AuthService.bindRetryInterval = const Duration(milliseconds: 10);
+    });
+
+    tearDown(() {
+      testDpopBackendOverride = null;
+      testWebClient = false;
+      AuthService.bindRetryInterval = const Duration(seconds: 30);
+    });
+
+    test('login sends the web-client marker on web builds', () async {
+      testWebClient = true;
+      final requests = <http.Request>[];
+      testAuthHttpClientOverride = _bindableClient(
+        requests,
+        bindResponse: _bindOk,
+      );
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+      await service.login('user', 'pass');
+      final login = requests.firstWhere(
+        (r) => r.url.path == '/api/v1/auth/login',
+      );
+      expect(login.headers['klangk-web-client'], '1');
+      service.dispose();
+    });
+
+    test('login ships the binding JWK so the mint is born bound (#3230)',
+        () async {
+      testWebClient = true;
+      final requests = <http.Request>[];
+      testAuthHttpClientOverride = _bindableClient(
+        requests,
+        bindResponse: _bindOk,
+      );
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+      await service.login('user', 'pass');
+      final login = requests.firstWhere(
+        (r) => r.url.path == '/api/v1/auth/login',
+      );
+      final raw = login.headers['klangk-binding-jwk'];
+      expect(raw, isNotNull);
+      // Base64url compact JSON of the public EC JWK.
+      final padded = raw!.padRight(raw.length + (4 - raw.length % 4) % 4, '=');
+      final jwk = jsonDecode(utf8.decode(base64Url.decode(padded)));
+      expect(jwk['kty'], 'EC');
+      expect(jwk['crv'], 'P-256');
+      expect(jwk.containsKey('d'), isFalse);
+      service.dispose();
+    });
+
+    test('login sends no marker off-web (CLI-equivalent posture)', () async {
+      final requests = <http.Request>[];
+      testAuthHttpClientOverride = _bindableClient(
+        requests,
+        bindResponse: _bindOk,
+      );
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+      await service.login('user', 'pass');
+      final login = requests.firstWhere(
+        (r) => r.url.path == '/api/v1/auth/login',
+      );
+      expect(login.headers.containsKey('klangk-web-client'), isFalse);
+      service.dispose();
+    });
+
+    test('authHeadersFor(mint: true) carries the marker on web only', () async {
+      testAuthHttpClientOverride = _emptyConfigClient();
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+
+      testWebClient = true;
+      final marked = await service.authHeadersFor(
+        'POST',
+        '/api/v1/auth/verify',
+        mint: true,
+      );
+      expect(marked['Klangk-Web-Client'], '1');
+
+      testWebClient = false;
+      final unmarked = await service.authHeadersFor(
+        'POST',
+        '/api/v1/auth/verify',
+        mint: true,
+      );
+      expect(unmarked.containsKey('Klangk-Web-Client'), isFalse);
+      service.dispose();
+    });
+
+    test('local login and register carry the marker on web', () async {
+      testWebClient = true;
+      final requests = <http.Request>[];
+      testAuthHttpClientOverride = MockClient((request) async {
+        requests.add(request);
+        final path = request.url.path;
+        if (path == '/api/v1/auth/local') {
+          return http.Response(
+            jsonEncode({'access_token': 'plain-token', 'email': 'x@y'}),
+            200,
+          );
+        }
+        if (path == '/api/v1/auth/register') {
+          return http.Response(
+            jsonEncode({
+              'status': 'pending_verification',
+              'access_token': 'plain-token',
+            }),
+            200,
+          );
+        }
+        if (path == '/api/v1/auth/bind') {
+          return _bindOk();
+        }
+        if (path == '/api/v1/config' || path == '/api/v1/my-permissions') {
+          return http.Response('{}', 200);
+        }
+        return http.Response('Not found', 404);
+      });
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+      await service.localLogin();
+      await service.register('a@b.c', 'pass1234');
+      expect(
+        requests
+            .firstWhere((r) => r.url.path == '/api/v1/auth/local')
+            .headers['klangk-web-client'],
+        '1',
+      );
+      expect(
+        requests
+            .firstWhere((r) => r.url.path == '/api/v1/auth/register')
+            .headers['klangk-web-client'],
+        '1',
+      );
+      service.dispose();
+    });
+
+    test('no marker when the web build cannot bind (insecure context)',
+        () async {
+      testWebClient = true;
+      testDpopBackendOverride = FakeDpopBackend(hasKey: false);
+      final requests = <http.Request>[];
+      testAuthHttpClientOverride = _bindableClient(
+        requests,
+        bindResponse: _bindOk,
+      );
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+      await service.login('user', 'pass');
+      final login = requests.firstWhere(
+        (r) => r.url.path == '/api/v1/auth/login',
+      );
+      expect(login.headers.containsKey('klangk-web-client'), isFalse);
+      service.dispose();
+    });
+
+    test('failed bind on web retries on the cadence until bound', () async {
+      testWebClient = true;
+      var bindCalls = 0;
+      final requests = <http.Request>[];
+      testAuthHttpClientOverride = MockClient((request) async {
+        requests.add(request);
+        final path = request.url.path;
+        if (path == '/api/v1/auth/login') {
+          return http.Response(
+              jsonEncode({'access_token': 'plain-token'}), 200);
+        }
+        if (path == '/api/v1/auth/bind') {
+          bindCalls++;
+          // Fail twice, then heal — a transient bind failure must not
+          // strand the web session unbound until the server deadline.
+          if (bindCalls <= 2) {
+            return http.Response('server busy', 503);
+          }
+          return _bindOk();
+        }
+        if (path == '/api/v1/config' || path == '/api/v1/my-permissions') {
+          return http.Response('{}', 200);
+        }
+        return http.Response('Not found', 404);
+      });
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+      await service.login('user', 'pass');
+      expect(service.token, 'plain-token');
+      // Let two retry cycles fire (10ms each).
+      await Future.delayed(const Duration(milliseconds: 80));
+      expect(bindCalls, greaterThanOrEqualTo(3));
+      expect(service.token, _boundSwap());
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString('klangk_jwt'), _boundSwap());
+      service.dispose();
+    });
+
+    test('bind retry loop stops once bound', () async {
+      testWebClient = true;
+      var bindCalls = 0;
+      testAuthHttpClientOverride = MockClient((request) async {
+        final path = request.url.path;
+        if (path == '/api/v1/auth/login') {
+          return http.Response(
+              jsonEncode({'access_token': 'plain-token'}), 200);
+        }
+        if (path == '/api/v1/auth/bind') {
+          bindCalls++;
+          return http.Response('server busy', 503);
+        }
+        if (path == '/api/v1/config' || path == '/api/v1/my-permissions') {
+          return http.Response('{}', 200);
+        }
+        return http.Response('Not found', 404);
+      });
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+      await service.login('user', 'pass');
+      // All binds fail; the timer re-arms each cycle.
+      await Future.delayed(const Duration(milliseconds: 60));
+      final failing = bindCalls;
+      expect(failing, greaterThanOrEqualTo(2));
+      service.dispose();
+      // After dispose the timer is cancelled — the count freezes.
+      await Future.delayed(const Duration(milliseconds: 60));
+      expect(bindCalls, failing);
     });
   });
 }

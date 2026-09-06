@@ -39,7 +39,9 @@ from klangk.model.container_events import (
     EVENT_START,
     EVENT_STOP,
 )
-from _helpers import make_settings
+import base64
+
+from _helpers import make_binding_key, make_settings
 from klangk.wshandler.session import WebSocketState
 import types
 
@@ -15147,7 +15149,15 @@ class TestOIDCLogin:
         sc = SimpleCookie()
         sc.load(resp.headers["set-cookie"])
         data = json_mod.loads(sc["oidc_test"].value)
-        assert set(data) == {"state", "verifier", "cli_redirect"}
+        # #3230: binding_jwk joins the cookie — the SPA's key for a
+        # born-bound callback mint (None when the navigation carried
+        # none, e.g. a CLI-initiated flow or a key-less build).
+        assert set(data) == {
+            "state",
+            "verifier",
+            "cli_redirect",
+            "binding_jwk",
+        }
 
 
 class TestOIDCCallback:
@@ -15186,11 +15196,22 @@ class TestOIDCCallback:
             AsyncMock(return_value=default_claims),
         )
         # Set the state cookie
+        # #3230: the SPA always rides its binding key on the login
+        # navigation, so the default web-flow cookie carries one (a
+        # fresh valid P-256 JWK) and the callback mint is born bound;
+        # tests wanting the key-less or refusal paths build their own
+        # cookie_data.
+        _, jwk = make_binding_key()
         cookie_data = json_mod.dumps(
             {
                 "state": "test-state",
                 "verifier": "test-verifier",
                 "cli_redirect": None,
+                "binding_jwk": base64.urlsafe_b64encode(
+                    json_mod.dumps(jwk).encode()
+                )
+                .rstrip(b"=")
+                .decode(),
             }
         )
         return provider, cookie_data
@@ -15453,11 +15474,17 @@ class TestOIDCCallback:
                 }
             ),
         )
+        _, jwk = make_binding_key()
         cookie_data = json_mod.dumps(
             {
                 "state": "s",
                 "verifier": "v",
                 "cli_redirect": "https://evil.com/steal",
+                "binding_jwk": base64.urlsafe_b64encode(
+                    json_mod.dumps(jwk).encode()
+                )
+                .rstrip(b"=")
+                .decode(),
             }
         )
         client.cookies.set("oidc_test", cookie_data)
@@ -15519,11 +15546,19 @@ class TestOIDCCallback:
             "http://localhost:@attacker.example/steal",
             "http://127.0.0.1:80@attacker.example/steal",
         ):
+            # #3230: the web-flow fallback mints born bound, so the
+            # (attacker-tampered) cookie also carries the SPA's key.
+            _, jwk = make_binding_key()
             cookie_data = json_mod.dumps(
                 {
                     "state": "s",
                     "verifier": "v",
                     "cli_redirect": payload,
+                    "binding_jwk": base64.urlsafe_b64encode(
+                        json_mod.dumps(jwk).encode()
+                    )
+                    .rstrip(b"=")
+                    .decode(),
                 }
             )
             client.cookies.set("oidc_test", cookie_data)
@@ -15579,12 +15614,18 @@ class TestOIDCCallback:
                 }
             ),
         )
+        _, jwk = make_binding_key()
         cookie_data = json_mod.dumps(
             {
                 "state": "s",
                 "verifier": "v",
                 "redirect_uri": "https://attacker.example/steal",
                 "cli_redirect": None,
+                "binding_jwk": base64.urlsafe_b64encode(
+                    json_mod.dumps(jwk).encode()
+                )
+                .rstrip(b"=")
+                .decode(),
             }
         )
         client.cookies.set("oidc_test", cookie_data)
@@ -15649,11 +15690,17 @@ class TestOIDCCallback:
                 )
             ),
         )
+        _, jwk = make_binding_key()
         cookie_data = json_mod.dumps(
             {
                 "state": "s",
                 "verifier": "v",
                 "cli_redirect": None,
+                "binding_jwk": base64.urlsafe_b64encode(
+                    json_mod.dumps(jwk).encode()
+                )
+                .rstrip(b"=")
+                .decode(),
             }
         )
         client.cookies.set("oidc_test", cookie_data)
@@ -15679,11 +15726,17 @@ class TestOIDCCallback:
             "exchange_code",
             AsyncMock(return_value={"access_token": "at"}),
         )
+        _, jwk = make_binding_key()
         cookie_data = json_mod.dumps(
             {
                 "state": "s",
                 "verifier": "v",
                 "cli_redirect": None,
+                "binding_jwk": base64.urlsafe_b64encode(
+                    json_mod.dumps(jwk).encode()
+                )
+                .rstrip(b"=")
+                .decode(),
             }
         )
         client.cookies.set("oidc_test", cookie_data)
@@ -15717,11 +15770,17 @@ class TestOIDCCallback:
             "validate_id_token",
             AsyncMock(side_effect=Exception("bad token")),
         )
+        _, jwk = make_binding_key()
         cookie_data = json_mod.dumps(
             {
                 "state": "s",
                 "verifier": "v",
                 "cli_redirect": None,
+                "binding_jwk": base64.urlsafe_b64encode(
+                    json_mod.dumps(jwk).encode()
+                )
+                .rstrip(b"=")
+                .decode(),
             }
         )
         client.cookies.set("oidc_test", cookie_data)
@@ -15753,11 +15812,17 @@ class TestOIDCCallback:
             "validate_id_token",
             AsyncMock(return_value={"sub": "s"}),  # no email
         )
+        _, jwk = make_binding_key()
         cookie_data = json_mod.dumps(
             {
                 "state": "s",
                 "verifier": "v",
                 "cli_redirect": None,
+                "binding_jwk": base64.urlsafe_b64encode(
+                    json_mod.dumps(jwk).encode()
+                )
+                .rstrip(b"=")
+                .decode(),
             }
         )
         client.cookies.set("oidc_test", cookie_data)
@@ -16024,11 +16089,22 @@ class TestOIDCCallbackAgentGuard:
             "validate_id_token",
             AsyncMock(return_value=default_claims),
         )
+        # #3230: the SPA always rides its binding key on the login
+        # navigation, so the default web-flow cookie carries one (a
+        # fresh valid P-256 JWK) and the callback mint is born bound;
+        # tests wanting the key-less or refusal paths build their own
+        # cookie_data.
+        _, jwk = make_binding_key()
         cookie_data = json_mod.dumps(
             {
                 "state": "test-state",
                 "verifier": "test-verifier",
                 "cli_redirect": None,
+                "binding_jwk": base64.urlsafe_b64encode(
+                    json_mod.dumps(jwk).encode()
+                )
+                .rstrip(b"=")
+                .decode(),
             }
         )
         return provider, cookie_data

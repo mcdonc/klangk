@@ -42,6 +42,7 @@ class _VerifyPageState extends State<VerifyPage> {
       final response = await auth.authPost(
         '/api/v1/auth/verify',
         body: jsonEncode({'token': widget.token}),
+        mint: true,
       );
       // The await above can straddle an unmount (e.g. the router's
       // refreshListenable redirecting a already-tokened user off this

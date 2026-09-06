@@ -105,7 +105,7 @@ async def ws_authenticate(
     user = await _user_or_close(websocket, a, payload, workstation)
     if user is None:
         return None
-    return user, payload.get("jti"), payload.get("exp")
+    return user, payload.get("jti"), a.ws_expiry(payload)
 
 
 async def _decode_socket_token(websocket: WebSocket, a, token: str):
