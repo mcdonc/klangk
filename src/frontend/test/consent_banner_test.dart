@@ -44,6 +44,16 @@ class _FakeSink extends Fake implements WebSocketSink {
   Future close([int? code, String? reason]) async {}
 }
 
+/// A channel whose handshake never opens (#3289): `ready` fails the way a
+/// pre-accept HTTP 403 refusal does.
+class _RefusedChannel extends Fake implements WebSocketChannel {
+  @override
+  int? get closeCode => null;
+
+  @override
+  Future<void> get ready => Future.error(WebSocketChannelException('refused'));
+}
+
 ConsentDeciderService _serviceWithChannel(_FakeChannel channel) {
   ConsentDeciderService.testChannelFactory = (_, __) => channel;
   return ConsentDeciderService(
@@ -408,6 +418,29 @@ void main() {
     await tester.pump(); // flush onDone -> notifyListeners -> rebuild
     await tester.pump();
     expect(find.text('reconnecting…'), findsOneWidget);
+    svc.dispose();
+  });
+
+  testWidgets('surfaces a refused handshake instead of the flap (#3289)', (
+    tester,
+  ) async {
+    ConsentDeciderService.testChannelFactory = (_, __) => _RefusedChannel();
+    final svc = ConsentDeciderService(
+      workspaceId: 'ws',
+      token: 't',
+      reconnectDelays: const [Duration(minutes: 5)],
+      clock: () =>
+          DateTime.fromMillisecondsSinceEpoch(2000 * 1000, isUtc: true),
+    );
+    await svc.connect(); // handshake refused — never connected
+    await tester.pumpWidget(_wrap(ConsentBanner(service: svc)));
+    await tester.pumpAndSettle();
+    // The banner renders the refusal (even with nothing pending) rather
+    // than claiming the decider is live or endlessly "reconnecting…".
+    expect(find.text('The server refused this decider connection'),
+        findsOneWidget);
+    expect(find.textContaining('Pending egress consent'), findsNothing);
+    expect(find.text('reconnecting…'), findsNothing);
     svc.dispose();
   });
 }

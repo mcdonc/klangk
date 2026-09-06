@@ -47,8 +47,9 @@ const Map<String, String> _durationLabels = {
 
 /// A banner over the workspace body showing held egress requests + actions.
 ///
-/// Renders nothing when there are no pending requests (and the service isn't
-/// in an auth-failed state), so a static-mode or idle workspace sees no UI.
+/// Renders nothing when there are no pending requests (and the service
+/// isn't in an auth-failed or handshake-refused state), so a static-mode or
+/// idle workspace sees no UI.
 class ConsentBanner extends StatefulWidget {
   const ConsentBanner({super.key, required this.service});
 
@@ -94,6 +95,21 @@ class _ConsentBannerState extends State<ConsentBanner> {
           dense: true,
           leading: Icon(Icons.lock_outline, size: 20),
           title: Text('Consent session expired — please log in again'),
+        ),
+      );
+    }
+    // #3289: a handshake the server refused (missing egress-consent
+    // permission, static egress mode, expired session) is a distinct state
+    // from a drop — the banner surfaces the refusal instead of flapping
+    // "reconnecting…", since held requests can neither be seen nor decided
+    // here and auto-deny on their hold timeout.
+    if (service.refused) {
+      return const _BannerSurface(
+        child: ListTile(
+          dense: true,
+          leading: Icon(Icons.link_off, size: 20),
+          title: Text('The server refused this decider connection'),
+          subtitle: Text('Held connections are auto-denied'),
         ),
       );
     }

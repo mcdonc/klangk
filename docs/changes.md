@@ -2528,6 +2528,16 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   paths — in a 400 body. It is now a 500 "Internal server error"
   with the underlying error logged server-side.
 
+- **Consent decider connection state (#3289).** The web consent-decider
+  client now reports "connected" only after the WebSocket handshake
+  completes. A handshake the server refuses (missing `egress-consent`
+  permission, static egress mode, expired session) previously looked like
+  an endless connect/disconnect cycle with no reason; the consent banner
+  now shows "The server refused this decider connection" and the rules
+  panel header shows "refused", and a verdict clicked before the
+  handshake completes shows the disconnected flash instead of being
+  written to a connection that never opened.
+
 - **Files API error responses (#3150).** The workspace files routes
   (list/read/delete/rename/upload/download) no longer echo raw
   exception text — podman stderr, container paths, library messages —
