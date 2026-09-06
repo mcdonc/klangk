@@ -7499,6 +7499,28 @@ class TestContainerBranchGaps2834:
             pass
         sweeps.assert_awaited_once()
 
+    async def test_sweep_due_helpers_advance_only_when_due(self):
+        # The throttle contract of the loop's due-wrappers, asserted
+        # directly: a pass inside ORPHAN_TOKEN_SWEEP_INTERVAL neither
+        # re-runs the sweep nor advances the timestamp (the loop-based
+        # tests above exercise the same arm, but their coverage rides
+        # on task scheduling under xdist).
+        idle = self.registry.idle
+        sweeps = AsyncMock()
+        vols = AsyncMock()
+        self.registry.sweep_orphaned_sidecar_tokens = sweeps
+        self.registry.sweep_orphaned_volumes = vols
+        now = 1000.0
+        assert await idle._sweep_tokens_if_due(self.registry, 0.0, now) == now
+        assert await idle._sweep_volumes_if_due(self.registry, 0.0, now) == now
+        soon = now + 1.0
+        assert await idle._sweep_tokens_if_due(self.registry, now, soon) == now
+        assert (
+            await idle._sweep_volumes_if_due(self.registry, now, soon) == now
+        )
+        sweeps.assert_awaited_once()
+        vols.assert_awaited_once()
+
     # --- spec ---
 
     def test_hosting_floor_partial_values_get_floors(self):

@@ -39,13 +39,17 @@ Event coverage (#3205):
   presenting workstation as its source IP and no actor, the trigger
   being an unknown presenter).
 - **Data-level file operations** (#3257, ASD-STIG SV-222471/472) —
-  ``file.download`` (a workspace archive export, and a per-file or
-  per-directory download through the files API), ``file.upload``
+  ``file.download`` (a workspace archive export, a per-file or
+  per-directory download through the files API, and a text read via
+  ``/files/content`` — the same ``files-download`` gate, marked
+  ``via: content`` in the detail), ``file.upload``
   (a workspace archive import), ``file.write`` (in-workspace writes
-  through the files API: upload, rename, delete). Each row carries
+  through the files API: upload, rename), ``file.delete`` (a delete
+  through the files API). Each row carries
   the workspace as its target and the path and byte size in
   ``detail`` (the size is omitted where meaningless — rename, delete,
-  directory downloads). Terminal I/O and container-internal changes
+  directory downloads; the export's size is a pre-flight estimate).
+  Terminal I/O and container-internal changes
   stay out (#3257 out-of-scope: the PTY byte stream is the user's
   own session; the container filesystem is opaque to the daemon).
 

@@ -859,8 +859,9 @@ class TestSelfServiceAudit:
 
 class TestFileAudit:
     """Data-level file events (#3257): archive export/import and the
-    in-workspace files API each leave a file.* audit row with actor,
-    workspace target, path, and byte size."""
+    in-workspace files API (downloads, text reads, uploads, renames,
+    deletes) each leave a file.* audit row with actor, workspace
+    target, path, and byte size."""
 
     CID = "cid-audit-files"
 
@@ -1001,12 +1002,36 @@ class TestFileAudit:
                 )
             assert resp.status_code == 200
             rows = await _events(api_app, "file.download")
+            assert len(rows) == 1
             row = rows[0]
             assert row["target_id"] == ws_id
             assert row["detail"] == {
                 "path": "/home/klangk/dl.txt",
                 "size": 11,
             }
+        finally:
+            self._cleanup(api_app, ws_id)
+
+    async def test_missing_download_records_nothing(
+        self, api_client, api_app, user
+    ):
+        """A 404 download (the stat finds nothing) leaves no audit row
+        — no transfer began."""
+        headers, ws_id = await self._workspace(api_client, api_app)
+        try:
+            with patch.object(
+                _mock_pod,
+                "exec_container",
+                new_callable=AsyncMock,
+                return_value=(1, "", "No such file"),
+            ):
+                resp = await api_client.get(
+                    f"/api/v1/workspaces/{ws_id}/files/download"
+                    "?path=/home/klangk/nope.txt",
+                    headers=headers,
+                )
+            assert resp.status_code == 404
+            assert await _events(api_app, "file.download") == []
         finally:
             self._cleanup(api_app, ws_id)
 
@@ -1041,12 +1066,52 @@ class TestFileAudit:
                     headers=headers,
                 )
             assert resp.status_code == 200
-            row = (await _events(api_app, "file.download"))[0]
+            rows = await _events(api_app, "file.download")
+            assert len(rows) == 1
+            row = rows[0]
             assert row["detail"] == {"path": "/home/klangk"}
         finally:
             self._cleanup(api_app, ws_id)
 
-    async def test_rename_and_delete_record_file_write(
+    async def test_content_read_records_file_download(
+        self, api_client, api_app, user
+    ):
+        """A text read through /files/content is data access behind the
+        same files-download gate as the byte stream — its own row,
+        marked via: content (#3257 review)."""
+        headers, ws_id = await self._workspace(api_client, api_app)
+        try:
+            with patch.object(
+                _mock_pod,
+                "exec_container",
+                new_callable=AsyncMock,
+                side_effect=[
+                    (0, "regular file\t16", ""),  # stat
+                    (0, "file contents!!", ""),  # cat
+                ],
+            ):
+                resp = await api_client.get(
+                    f"/api/v1/workspaces/{ws_id}/files/content"
+                    "?path=/home/klangk/notes.txt",
+                    headers=headers,
+                )
+            assert resp.status_code == 200
+            rows = await _events(api_app, "file.download")
+            assert len(rows) == 1
+            row = rows[0]
+            assert row["actor_id"] == user["id"]
+            assert row["target_id"] == ws_id
+            # The size is the decoded content's byte count, not the
+            # stat's (which read 16 here).
+            assert row["detail"] == {
+                "path": "/home/klangk/notes.txt",
+                "size": 15,
+                "via": "content",
+            }
+        finally:
+            self._cleanup(api_app, ws_id)
+
+    async def test_rename_records_file_write_and_delete_records_file_delete(
         self, api_client, api_app, user
     ):
         headers, ws_id = await self._workspace(api_client, api_app)
@@ -1081,16 +1146,18 @@ class TestFileAudit:
                 )
                 assert deleted.status_code == 200
             rows = await _events(api_app, "file.write")
-            # Newest first: the delete row lands on top of the rename.
-            assert len(rows) == 2
-            delete_row, rename_row = rows
+            assert len(rows) == 1
+            rename_row = rows[0]
             assert rename_row["detail"] == {
                 "path": "/home/klangk/b.txt",
                 "from": "/home/klangk/a.txt",
             }
-            assert delete_row["detail"] == {"path": "/home/klangk/b.txt"}
-            assert delete_row["target_id"] == ws_id
-            assert delete_row["actor_id"] == user["id"]
+            assert rename_row["target_id"] == ws_id
+            assert rename_row["actor_id"] == user["id"]
+            deletes = await _events(api_app, "file.delete")
+            assert len(deletes) == 1
+            assert deletes[0]["detail"] == {"path": "/home/klangk/b.txt"}
+            assert deletes[0]["target_id"] == ws_id
         finally:
             self._cleanup(api_app, ws_id)
 

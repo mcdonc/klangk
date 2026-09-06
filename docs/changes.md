@@ -771,15 +771,16 @@ sync` report a clear permission-denied error.
   `identity_write_failures`. Thresholds and interval are
   `KLANGKD_DISK_WATCHDOG_*`, reloadable on SIGHUP.
 - **Data-level file audit events (#3257).** Workspace archive
-  exports/imports and downloads, uploads, renames, and deletes
-  through the files API now leave audit rows in the `audit_events`
-  stream: `file.download`, `file.upload`, and `file.write`, each with
-  actor, workspace, path, and byte size (ASD-STIG SV-222471/472).
-  File rows are bounded by their own retention bucket under
-  `KLANGKD_AUDIT_EVENTS_ROW_CAP`, so file traffic cannot evict
-  account/privilege history. Visible in the admin Events view with
-  the file icon and path in the detail expansion. Terminal I/O and
-  container-internal changes stay out of scope by design.
+  exports/imports, file downloads and text reads, uploads, renames,
+  and deletes through the files API now leave audit rows in the
+  `audit_events` stream: `file.download`, `file.upload`,
+  `file.write`, and `file.delete`, each with actor, workspace, path,
+  and byte size (ASD-STIG SV-222471/472; an export's size is a
+  pre-flight estimate). File rows are bounded by their own row-cap
+  bucket under `KLANGKD_AUDIT_EVENTS_ROW_CAP`, so file traffic cannot
+  evict account/privilege history. Visible in the admin Events view
+  with the file icon and path in the detail expansion. Terminal I/O
+  and container-internal changes stay out of scope by design.
 
 - **Admin notifications (#3250).** SA/ISSO notification of
   security-relevant events: account lifecycle (create, register,

@@ -1373,14 +1373,17 @@ async def export_workspace(
     # workspace archive is the trail an exfiltration review starts
     # from. The size is the pre-flight estimate the client's progress
     # display uses — the streamed archive is never materialized
-    # server-side, so exact byte counts are not observable here.
+    # server-side, so exact byte counts are not observable here. The
+    # name is truncated at the basename limit like the import's — a
+    # workspace name is attacker-minted text with no length cap
+    # (#3257 review).
     await record_workspace_event(
         app,
         request,
         user,
         workspace_id,
         "file.download",
-        {"path": f"{safe_name}.tar.gz", "size": estimated_compressed},
+        {"path": f"{safe_name}.tar.gz"[:255], "size": estimated_compressed},
     )
     return StreamingResponse(
         _stream(),
@@ -1662,8 +1665,11 @@ async def _create_from_archive(
 
 def _upload_audit_name(file: UploadFile) -> str:
     """The import row's audit path (#3257): the upload's filename, a
-    fixed placeholder when the client sent none."""
-    return file.filename or "archive.tar.gz"
+    fixed placeholder when the client sent none. Truncated at the
+    filesystem basename limit — the string is client-chosen, and the
+    audit stream bounds attacker-minted text (the ``login.failed``
+    identifier precedent, ``AUDIT_IDENTIFIER_MAX``)."""
+    return (file.filename or "archive.tar.gz")[:255]
 
 
 @router.post("/workspaces/import")
@@ -2141,18 +2147,6 @@ async def record_workspace_share_event(
 
     The workspace-targeted twin of admin.py's ``record_admin_event``:
     the actor is whoever holds the share permission (an owner sharing
-async def record_workspace_share_event(
-    app,
-    request: Request,
-    actor: dict,
-    workspace_id: str,
-    event: str,
-    detail: dict,
-) -> None:
-    """Write one workspace share/role/ACL audit row (#3205).
-
-    The workspace-targeted twin of admin.py's ``record_admin_event``:
-    the actor is whoever holds the share permission (an owner sharing
     their own workspace as often as an admin). Delegates to
     ``common.record_workspace_event`` — the same emit path the
     data-level file events use (#3257) — so the row carries the
@@ -2162,7 +2156,6 @@ async def record_workspace_share_event(
     """
     await record_workspace_event(
         app, request, actor, workspace_id, event, detail
-    )
     )
 
 

@@ -1533,7 +1533,7 @@ class KlangkSettings(BaseSettings):
     # the ``audit_events`` identity/privilege audit table (account CRUD,
     # group/ACL/role changes, login/logout, session revocation) and its
     # data-level file events (#3257: file.download / file.upload /
-    # file.write). Same two-pass prune as container_events:
+    # file.write / file.delete). Same two-pass prune as container_events:
     # retention_days deletes rows older than the window; row_cap is a
     # deploy-wide cap applied per class (login.failed rows and file.*
     # rows each get their own bucket) keeping the newest when exceeded.

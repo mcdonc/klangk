@@ -426,16 +426,53 @@ void main() {
       expect(find.textContaining('1048576'), findsOneWidget);
     });
 
-    testWidgets('non-file events render no path row', (tester) async {
+    testWidgets('file.delete renders a destructive chip, not green',
+        (tester) async {
+      serveAudit((limit, offset, event, actor, target) => http.Response(
+            _auditEnvelope([
+              _auditEvent(
+                11,
+                event: 'file.delete',
+                actorEmail: 'admin@example.com',
+                targetType: 'workspace',
+                targetId: 'ws-7',
+                detail: {'path': '/home/klangk/gone.txt'},
+              ),
+            ], total: 1),
+            200,
+          ));
+
+      await pumpPanel(tester);
+
+      // The existing suffix rule (.delete → red) covers the new kind —
+      // a destructive file event must not read green (#3257 review).
+      final chip = find
+          .ancestor(
+            of: find.text('file.delete'),
+            matching: find.byType(Container),
+          )
+          .first;
+      final decoration = tester.widget<Container>(chip).decoration;
+      expect(decoration, isA<BoxDecoration>());
+      expect((decoration as BoxDecoration).color, KColors.accentRed);
+    });
+
+    testWidgets(
+        'non-file events render no path row — even with a path detail key',
+        (tester) async {
+      // login.failed rows carry `path: "resend-verification"` naming
+      // the auth flow, not a file (#3205/#2618); the icon row keys on
+      // the event kind, so that key must not render as a file path
+      // (#3257 review).
       serveAudit((limit, offset, event, actor, target) => http.Response(
             _auditEnvelope([
               _auditEvent(
                 4,
-                event: 'user.update',
-                actorEmail: 'admin@example.com',
+                event: 'login.failed',
                 targetId: 'u-2',
                 detail: {
-                  'fields': ['handle']
+                  'identifier': 'someone@example.com',
+                  'path': 'resend-verification',
                 },
               ),
             ], total: 1),
@@ -443,12 +480,16 @@ void main() {
           ));
 
       await pumpPanel(tester);
-      await tester.tap(find.text('user.update'));
+      await tester.tap(find.text('login.failed'));
       await tester.pumpAndSettle();
 
       expect(find.byKey(const ValueKey('audit-event-detail')), findsOneWidget);
       expect(find.byKey(const ValueKey('audit-event-path')), findsNothing);
       expect(find.byIcon(Icons.insert_drive_file), findsNothing);
+      expect(
+        find.textContaining('"resend-verification"'),
+        findsOneWidget,
+      );
     });
 
     testWidgets('null detail renders a placeholder, not an error',

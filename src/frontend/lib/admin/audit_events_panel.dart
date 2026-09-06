@@ -10,8 +10,8 @@
 /// gate (see [AdminUsersPage]); the `/events` ACL resource governs
 /// both streams, so no separate permission wiring exists. The
 /// data-level file events (#3257) — `file.download`, `file.upload`,
-/// `file.write` — render here like any other row; their detail
-/// expansion shows the file icon and the audited path.
+/// `file.write`, `file.delete` — render here like any other row; their
+/// detail expansion shows the file icon and the audited path.
 library;
 
 import 'dart:async';
@@ -369,7 +369,12 @@ class _AuditEventsPanelState extends State<AuditEventsPanel> {
     final detailJson = detail == null
         ? '—'
         : const JsonEncoder.withIndent('  ').convert(detail);
-    final filePath = detail is Map && detail['path'] is String
+    // File events only (#3257): the icon row keys on the event kind,
+    // not the presence of a `path` detail key — `login.failed` rows
+    // carry `path: "resend-verification"` naming the auth flow, not
+    // a file (#3205/#2618), and must not render as a file path.
+    final isFileEvent = (row['event'] as String? ?? '').startsWith('file.');
+    final filePath = isFileEvent && detail is Map && detail['path'] is String
         ? detail['path'] as String
         : null;
     Widget field(String label, String value) {
