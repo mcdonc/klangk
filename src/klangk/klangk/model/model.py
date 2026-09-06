@@ -170,10 +170,8 @@ class Model:
         self.egress_consent = EgressConsentModel(app)
         self.container_events = ContainerEventsModel(app)
         self.audit_events = AuditEventsModel(app)
-        self.audit_events = AuditEventsModel(app)
         self.audit_forward = AuditForwardModel(app)
         self.merged_events = MergedEventsModel(app)
-        self.server_schedules = ServerSchedulesModel(app)
         self.server_schedules = ServerSchedulesModel(app)
 
     def reconfigure(self, app) -> None:
@@ -189,7 +187,6 @@ class Model:
             self.workspaces,
             self.egress_consent,
             self.container_events,
-            self.audit_events,
             self.audit_events,
             self.audit_forward,
             self.merged_events,

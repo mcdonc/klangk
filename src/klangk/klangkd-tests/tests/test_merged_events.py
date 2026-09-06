@@ -339,6 +339,49 @@ class TestMergedEventsModel:
         assert len(rows) == 1
         assert rows[0]["source"] == "audit"
 
+    async def test_same_timestamp_tie_break_is_deterministic(
+        self, app_state, db, user
+    ):
+        """Rows sharing an instant order by source, then id (newest
+        first within a source) — the tie-break pagination rests on."""
+        merged = app_state.state.model.merged_events
+        ws = await app_state.state.model.workspaces.create_workspace(
+            user["id"], "tie-ws"
+        )
+        consent = await app_state.state.model.egress_consent.create_request(
+            ws["id"], "tie.example"
+        )
+        when = 1234.5
+        await _retimestamp(
+            app_state,
+            "egress_consent",
+            consent["id"],
+            when,
+            column="requested_at",
+        )
+        first = await app_state.state.model.container_events.record(
+            ws["id"], EVENT_START, CAUSE_API
+        )
+        await _retimestamp(app_state, "container_events", first, when)
+        second = await app_state.state.model.container_events.record(
+            ws["id"], EVENT_STOP, CAUSE_API
+        )
+        await _retimestamp(app_state, "container_events", second, when)
+        await app_state.state.model.audit_events.record(
+            "login", actor_id=user["id"]
+        )
+        a1 = (await app_state.state.model.audit_events.list_events(limit=1))[0]
+        await _retimestamp(app_state, "audit_events", a1["id"], when)
+        rows = await merged.list_events()
+        # Same instant: audit < container < egress alphabetically, and
+        # within one source the higher id (newer insert) reads first.
+        assert [(r["source"], r["id"]) for r in rows[:3]] == [
+            ("audit", a1["id"]),
+            ("container", second),
+            ("container", first),
+        ]
+        assert rows[3]["source"] == "egress"
+
     async def test_rows_by_ids_empty_short_circuits(self, app_state, db):
         model = app_state.state.model
         assert await model.audit_events.rows_by_ids([]) == {}

@@ -540,9 +540,12 @@ row — a consent row is named `egress.<decision>`, timestamped by its
 `requested_at`, and attributed to its decider/revoker when a human
 has acted on it. Query params: `limit` (1–200, default 50),
 `offset`, `since` / `until` (inclusive epoch seconds), `actor`
-(actor id or email substring), `workspace` (exact workspace id or a
-workspace-name substring), and `event` (event-name substring).
-`workspace_name` and `actor_email` are resolved for display.
+(actor id or email substring; a consent row matches when the actor
+is its decider **or** its revoker, while the summary row names the
+revoker for a revoked verdict — the `data` blob carries both),
+`workspace` (exact workspace id or a workspace-name substring), and
+`event` (event-name substring). `workspace_name` and `actor_email`
+are resolved for display.
 
 **Auth:** JWT required. User must have the `manage-events`
 permission on `/events` (the same grant as the two per-table views).

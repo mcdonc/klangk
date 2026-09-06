@@ -324,6 +324,37 @@ void main() {
       expect(find.textContaining('tilrestart'), findsOneWidget);
     });
 
+    testWidgets('revoked and denied egress verdicts read red', (tester) async {
+      serveEvents((limit, offset, event, actor, workspace) => http.Response(
+            _mergedEnvelope([
+              _mergedEvent('egress', 'c-8', event: 'egress.revoked'),
+              _mergedEvent('egress', 'c-9', event: 'egress.allowed'),
+            ], total: 2),
+            200,
+          ));
+
+      await pumpPanel(tester);
+
+      // The revoked verdict's chip shares the negative color with
+      // denied/expired rows; the plain allow stays positive. The chip
+      // paints via its BoxDecoration, so walk the ancestors for the
+      // first boxed one.
+      Color chipColor(String text) {
+        for (final element in find
+            .ancestor(of: find.text(text), matching: find.byType(Container))
+            .evaluate()) {
+          final decoration = (element.widget as Container).decoration;
+          if (decoration is BoxDecoration && decoration.color != null) {
+            return decoration.color!;
+          }
+        }
+        fail('no colored chip ancestor for $text');
+      }
+
+      expect(chipColor('egress.revoked'), KColors.accentRed);
+      expect(chipColor('egress.allowed'), KColors.accentGreen);
+    });
+
     testWidgets('empty state', (tester) async {
       serveEvents(
         (limit, offset, event, actor, workspace) => http.Response(

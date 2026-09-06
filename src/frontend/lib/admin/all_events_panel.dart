@@ -350,8 +350,11 @@ class _AllEventsPanelState extends State<AllEventsPanel> {
   /// plus the resolved correlation fields.
   Widget _detailArea(Map<String, dynamic> row) {
     final data = row['data'];
-    final dataJson =
-        data == null ? '—' : const JsonEncoder.withIndent('  ').convert(data);
+    // An empty map is a row pruned between the backend's union read
+    // and its detail fetch — nothing left to show.
+    final dataJson = data == null || (data is Map && data.isEmpty)
+        ? '—'
+        : const JsonEncoder.withIndent('  ').convert(data);
     Widget field(String label, String value) {
       return Padding(
         padding: const EdgeInsets.only(bottom: 4),
@@ -429,13 +432,14 @@ class _AllEventsPanelState extends State<AllEventsPanel> {
   }
 
   /// Failure/destruction events read red (login.failed, *.delete,
-  /// *.remove, *.revoke, egress.denied/expired), everything else
-  /// green — the binary chip coloring of the sibling panels.
+  /// *.remove, *.revoke/.revoked, egress.denied/expired), everything
+  /// else green — the binary chip coloring of the sibling panels.
   Widget _eventChip(String event) {
     final negative = event.endsWith('.failed') ||
         event.endsWith('.delete') ||
         event.endsWith('.remove') ||
         event.endsWith('.revoke') ||
+        event.endsWith('.revoked') ||
         event.endsWith('.denied') ||
         event.endsWith('.expired');
     return Container(
