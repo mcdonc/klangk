@@ -255,34 +255,6 @@ def held_until_banner(app, host: str) -> str:
     raise AssertionError(f"{host} was never held (three attempts)")
 
 
-def _dump_sidecar_diag(host: str) -> None:
-    """TEMP #3237 diagnostics: the sidecar's RST-debug lines + rules."""
-    import subprocess
-
-    ps = subprocess.run(
-        ["podman", "ps", "--format", "{{.Names}}", "-q"],
-        capture_output=True,
-        text=True,
-        timeout=15,
-    ).stdout.split()
-    for name in ps:
-        if "klangk-net" in name:
-            logs = subprocess.run(
-                ["podman", "logs", "--tail", "80", name],
-                capture_output=True,
-                text=True,
-                timeout=15,
-            ).stdout
-            print(f"SIDECAR-LOGS {name}:", logs[-4000:])
-            rules = subprocess.run(
-                ["podman", "exec", name, "iptables-save"],
-                capture_output=True,
-                text=True,
-                timeout=15,
-            ).stdout
-            print(f"SIDECAR-RULES {name}:", rules[-3000:])
-
-
 def verdict(app, decision: str, host: str) -> int:
     """The full loop for one host: hold, decide from the banner, and
     return the curl exit code the terminal sees."""
@@ -300,11 +272,7 @@ def verdict(app, decision: str, host: str) -> int:
             app.tap_labeled_exact(decision)
             continue
         break
-    try:
-        return wait_exit_code(app, tag)
-    except AssertionError:
-        _dump_sidecar_diag(host)
-        raise
+    return wait_exit_code(app, tag)
 
 
 def choose_duration(app, host: str, item: str) -> None:
@@ -330,6 +298,9 @@ def choose_duration(app, host: str, item: str) -> None:
 
 
 def open_network_tab(app) -> None:
+    # the tab renders with the consent service's init, which can lag the
+    # page mount on a slow box — wait for the tab before tapping it
+    app.wait_for_text("Network", 30000)
     app.tap_labeled_exact("Network")
     app.wait_for_text("Egress consent rules")
 
