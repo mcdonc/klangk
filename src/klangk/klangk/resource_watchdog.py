@@ -14,7 +14,9 @@ surfaces, one poll loop:
   ``resource.disk.recovered``. Events fire on state transitions,
   with hysteresis bands below both thresholds, so usage hovering at
   a boundary produces one alert per episode, not one per poll — an
-  undelivered dispatch is retried on later polls, a still-degraded
+  undelivered dispatch is retried on later polls (while the event
+  could ever dispatch: with no channel configured or the event off
+  the allowlist there is nothing to wait for), a still-degraded
   filesystem refreshes its alert once per throttle window, so an
   episode edge is late in the worst case, never lost.
 - **Audit pipeline degradation** (SV-222484 rule 97) — the
@@ -195,18 +197,34 @@ class ResourceWatchdog:
         self._graph_root_retry_at = 0.0
 
     def reconfigure(self, app) -> None:
-        """Swap the app reference (SIGHUP reload). Clears the cached
-        container-storage root (so a changed podman configuration
-        re-resolves immediately), the unmeasurable-path warnings, and
-        the disk states — the next cycle re-evaluates every filesystem
-        against the new thresholds from ``ok``."""
+        """Swap the app reference (SIGHUP reload). The cached
+        container-storage root and its cooldown always reset (a
+        changed podman configuration re-resolves immediately), and
+        the unmeasurable-path warnings re-arm. The disk states reset
+        only when a threshold actually changed — an unrelated reload
+        must not re-alert already-degraded filesystems (the notifier's
+        throttle clocks reset on reload too, so nothing else would
+        suppress the re-alert)."""
+        thresholds_changed = self._thresholds_changed(app)
         self.app = app
         self._graph_root = None
         self._graph_root_retry_at = 0.0
-        self._states.clear()
-        self._emitted_at.clear()
-        self._pending.clear()
         self._warned_paths.clear()
+        if thresholds_changed:
+            self._states.clear()
+            self._emitted_at.clear()
+            self._pending.clear()
+
+    def _thresholds_changed(self, new_app) -> bool:
+        """Whether the reload moved a disk threshold (the only change
+        that needs the remembered states re-evaluated from ``ok``)."""
+        old = self.app.state.settings
+        new = new_app.state.settings
+        return (
+            old.disk_watchdog_warn_percent != new.disk_watchdog_warn_percent
+            or old.disk_watchdog_critical_percent
+            != new.disk_watchdog_critical_percent
+        )
 
     # --- settings (read live) ---
 
@@ -357,11 +375,11 @@ class ResourceWatchdog:
         """``(device, path, usage%)`` for every monitored filesystem.
 
         Monitored: the data directory (the audit records storage), any
-        ``disk_watchdog_paths`` entries, and the podman
-        container-storage root. The configured paths are measured
-        first (synchronous statvfs — the startup sweep answers for the
-        data directory without waiting on the storage-root query), the
-        root last. Deduplicated by device — several paths on one
+        ``disk_watchdog_paths`` entries, and the podman container-storage
+        root. The configured paths are measured first (synchronous
+        statvfs, before the storage-root query's await), the root last;
+        the evaluation still runs over the full set, so the first sweep
+        waits out the root query (bounded by its short timeout). Deduplicated by device — several paths on one
         filesystem are one monitored filesystem, reported under the
         first path (the data directory wins over the storage root when
         they share a filesystem).
@@ -423,11 +441,37 @@ class ResourceWatchdog:
     ) -> None:
         """Track an undelivered transition for retry: episode edges
         must land — a swallowed warn entry is refreshed by persistence,
-        but a swallowed recovery would otherwise never be re-sent."""
-        if dispatched:
+        but a swallowed recovery would otherwise never be re-sent. A
+        dispatch that can never succeed (see :meth:`_event_dispatchable`)
+        is treated as done — retrying it every poll would only log."""
+        if dispatched or not self._event_dispatchable(
+            EVENT_BY_STATE.get(state, RECOVERED_EVENT)
+        ):
             self._pending.pop(device, None)
         else:
             self._pending[device] = state
+
+    def _event_dispatchable(self, event: str) -> bool:
+        """True when a retry could ever land: the notifier is wired,
+        the event is allowlisted, and a channel is configured.
+
+        This deliberately does NOT consult the throttle — waiting out
+        the throttle window is exactly what the retry exists for. With
+        no channels configured (the default deployment) or the event
+        removed from ``admin_notify_events``, an undelivered dispatch
+        is an operator decision, not a transient condition; the retry
+        loop must not re-log it every poll forever.
+        """
+        notifier = getattr(self.app.state, "notifier", None)
+        if notifier is None:
+            return False
+        try:
+            return (
+                event in notifier.notify_events()
+                and notifier.channels_configured()
+            )
+        except Exception:  # noqa: BLE001 — best-effort probe
+            return False
 
     def retry_pending(self, device: int, path: str, usage: float) -> None:
         """Re-dispatch a transition the notifier throttled away.
@@ -437,12 +481,17 @@ class ResourceWatchdog:
         is dropped with no retry of its own — until this retries it
         into an expired window (worst case: one window late). Only the
         still-current state is retried; a newer transition has already
-        rewritten the pending entry."""
+        rewritten the pending entry, and an event that could never
+        dispatch (allowlist/channels) is dropped rather than retried.
+        """
         pending = self._pending.get(device)
         if pending is None:
             return
-        if self.emit_disk_event(pending, path, usage):
+        event = EVENT_BY_STATE.get(pending, RECOVERED_EVENT)
+        delivered = self.emit_disk_event(pending, path, usage)
+        if delivered or not self._event_dispatchable(event):
             self._pending.pop(device, None)
+        if delivered:
             self._emitted_at[device] = time.monotonic()
 
     def refresh_due(self, device: int, state: str) -> bool:

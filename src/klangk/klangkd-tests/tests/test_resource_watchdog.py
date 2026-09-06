@@ -279,6 +279,18 @@ def patch_dispatch(monkeypatch, results):
     return calls
 
 
+def dispatchable_notifier(
+    *, allowlist=frozenset(DEFAULT_NOTIFY_EVENTS), channels=True
+):
+    """A notifier stub whose allowlist/channels admit the disk events
+    — the structural dispatchability the retry machinery consults
+    (:meth:`ResourceWatchdog._event_dispatchable`)."""
+    return types.SimpleNamespace(
+        notify_events=lambda: allowlist,
+        channels_configured=lambda: channels,
+    )
+
+
 class TestMonitoredFilesystems:
     async def test_deduplicates_paths_sharing_a_device(self, monkeypatch):
         wd, app = make_wd()
@@ -646,10 +658,15 @@ class TestLoop:
 
 class TestDispatchRetry:
     """Undelivered transitions (the notifier throttled the dispatch)
-    are retried on later polls until they land (#3206 second review)."""
+    are retried on later polls until they land — but only while the
+    event could ever dispatch (#3206 second and third reviews)."""
+
+    def _wd(self, **notifier_kwargs):
+        wd, app = make_wd(notifier=dispatchable_notifier(**notifier_kwargs))
+        return wd
 
     def test_undelivered_transition_is_retried(self, monkeypatch):
-        wd, _ = make_wd()
+        wd = self._wd()
         calls = patch_dispatch(monkeypatch, [False, True])
         wd.step_filesystem(7, "/data", 91.0)  # critical, swallowed
         assert 7 in wd._pending
@@ -658,7 +675,7 @@ class TestDispatchRetry:
         assert 7 not in wd._pending
 
     def test_retry_keeps_pending_until_delivered(self, monkeypatch):
-        wd, _ = make_wd()
+        wd = self._wd()
         calls = patch_dispatch(monkeypatch, [False, False, True])
         wd.step_filesystem(7, "/data", 76.0)  # warn, swallowed
         wd.step_filesystem(7, "/data", 77.0)  # retry, still swallowed
@@ -666,12 +683,76 @@ class TestDispatchRetry:
         assert len(calls) == 3
         assert 7 not in wd._pending
 
+    def test_no_notifier_means_no_retry(self, monkeypatch):
+        """Channels can never dispatch without a notifier: the
+        swallowed dispatch is treated as done, not retried every poll
+        forever (the third review's noise defect)."""
+        wd, _ = make_wd()  # no notifier on the state
+        calls = patch_dispatch(monkeypatch, [False, False])
+        wd.step_filesystem(7, "/data", 91.0)
+        assert 7 not in wd._pending
+        wd.step_filesystem(7, "/data", 92.0)
+        assert len(calls) == 1  # no retry fired
+
+    def test_channels_off_means_no_retry(self, monkeypatch):
+        """The default deployment: a notifier with no channels. The
+        transition logs once and is never retried."""
+        wd = self._wd(channels=False)
+        calls = patch_dispatch(monkeypatch, [False, False])
+        wd.step_filesystem(7, "/data", 91.0)
+        assert 7 not in wd._pending
+        wd.step_filesystem(7, "/data", 92.0)
+        assert len(calls) == 1
+
+    def test_allowlist_exclusion_means_no_retry(self, monkeypatch):
+        """An operator who removed the disk events from the allowlist
+        made an explicit choice; the retry loop must not re-log the
+        dispatch attempt every poll against it."""
+        wd = self._wd(allowlist=frozenset({"user.create"}))
+        calls = patch_dispatch(monkeypatch, [False, False])
+        wd.step_filesystem(7, "/data", 91.0)
+        assert 7 not in wd._pending
+        wd.step_filesystem(7, "/data", 92.0)
+        assert len(calls) == 1
+
+    def test_retry_stops_when_allowlist_shrinks_mid_episode(self, monkeypatch):
+        """A reload that removes the event mid-episode also ends the
+        retry loop (checked at retry time, not just entry time)."""
+        wd = self._wd()
+        calls = patch_dispatch(monkeypatch, [False, False])
+        wd.step_filesystem(7, "/data", 91.0)  # swallowed, retryable
+        assert 7 in wd._pending
+        wd.app.state.notifier = dispatchable_notifier(
+            allowlist=frozenset({"user.create"})
+        )
+        wd.step_filesystem(7, "/data", 92.0)  # retry, then drop
+        assert 7 not in wd._pending
+        assert len(calls) == 2
+
+    def test_broken_notifier_probe_means_no_retry(self, monkeypatch):
+        """A notifier whose allowlist probe raises is treated as
+        undispatchable (the guarded-helper posture — never a crash out
+        of the poll loop)."""
+
+        def broken():
+            raise RuntimeError("settings gone")
+
+        notifier = types.SimpleNamespace(
+            notify_events=broken, channels_configured=lambda: True
+        )
+        wd, _ = make_wd(notifier=notifier)
+        calls = patch_dispatch(monkeypatch, [False, False])
+        wd.step_filesystem(7, "/data", 91.0)
+        assert 7 not in wd._pending
+        wd.step_filesystem(7, "/data", 92.0)
+        assert len(calls) == 1
+
     def test_second_recovery_inside_window_lands_via_retry(self, monkeypatch):
         """Two episode ends inside one throttle window: the second
         recovery dispatch is swallowed by the notifier and retried
         until it lands, so the operator's last word is never a stale
         warn."""
-        wd, _ = make_wd()
+        wd = self._wd()
         calls = patch_dispatch(monkeypatch, [True, True, True, False, True])
         wd.step_filesystem(7, "/data", 76.0)  # warn delivered
         wd.step_filesystem(7, "/data", 65.0)  # recovered delivered
@@ -684,7 +765,7 @@ class TestDispatchRetry:
         assert 7 not in wd._pending
 
     def test_newer_transition_replaces_pending(self, monkeypatch):
-        wd, _ = make_wd()
+        wd = self._wd()
         calls = patch_dispatch(monkeypatch, [False, True])
         wd.step_filesystem(7, "/data", 76.0)  # warn swallowed -> pending
         wd.step_filesystem(7, "/data", 91.0)  # critical transition delivers
@@ -692,24 +773,89 @@ class TestDispatchRetry:
         wd.step_filesystem(7, "/data", 92.0)  # no stale retry fires
         assert len(calls) == 2
 
+    async def test_pending_survives_unmeasurable_polls(self, monkeypatch):
+        """A swallowed transition whose path goes unmeasurable waits:
+        sweeps skip the device entirely (no transition, no retry), and
+        the retry resumes when the path measures again."""
+        wd, app = make_wd(notifier=dispatchable_notifier())
+        calls = patch_dispatch(monkeypatch, [False, True])
+        wd.step_filesystem(7, "/data", 91.0)  # critical, swallowed
+
+        def boom(path):
+            raise OSError(5, "I/O error")
+
+        monkeypatch.setattr("os.statvfs", boom)
+        monkeypatch.setattr(
+            wd, "resolve_graph_root", AsyncMock(return_value=None)
+        )
+        await wd.check_disk()  # the path is unmeasurable this poll
+        assert 7 in wd._pending
+        assert len(calls) == 1
+        monkeypatch.setattr("os.stat", lambda path: FakeStat(7))
+        monkeypatch.setattr("os.statvfs", lambda path: FakeVfs(95.0))
+        await wd.check_disk()  # measurable again: the retry lands
+        assert 7 not in wd._pending
+        assert len(calls) == 2
+
+    def test_refresh_failure_requeues_pending(self, monkeypatch):
+        """A due refresh that is itself swallowed must re-set the
+        pending entry (not lose it) — the next poll's retry still
+        owns the episode edge."""
+        wd = self._wd()
+        calls = patch_dispatch(monkeypatch, [False, False, True])
+        wd.step_filesystem(7, "/data", 76.0)  # warn swallowed -> pending
+        wd._emitted_at[7] = time.monotonic() - REFRESH_SECONDS - 1
+        wd.step_filesystem(7, "/data", 77.0)  # refresh fires, swallowed
+        assert 7 in wd._pending
+        wd.step_filesystem(7, "/data", 78.0)  # retry lands
+        assert 7 not in wd._pending
+        assert len(calls) == 3
+
 
 class TestReconfigure:
-    def test_swaps_app_and_clears_remembered_state(self):
-        """A SIGHUP reload re-evaluates every filesystem fresh: states,
-        emission clocks, unmeasurable-path warnings, and the cached
-        storage root all reset (audit counter baselines stay — growth
-        across the reload is still detected)."""
+    def _wd_with_state(self):
         wd, _ = make_wd()
         wd._states[1] = CRITICAL
         wd._emitted_at[1] = 123.0
         wd._warned_paths.add("/gone")
         wd._audit_counts["container_events"] = 5
-        new_app = types.SimpleNamespace(state=types.SimpleNamespace())
+        return wd
+
+    def test_unrelated_reload_keeps_disk_states(self):
+        """A reload that did not move a threshold must not re-alert
+        already-degraded filesystems: states, emission clocks, and
+        pending retries survive; audit baselines always survive (the
+        third review's SIGHUP re-alert defect)."""
+        wd = self._wd_with_state()
+        wd._pending[1] = CRITICAL
+        new_app = types.SimpleNamespace(
+            state=types.SimpleNamespace(settings=make_settings({}))
+        )
+        wd.reconfigure(new_app)
+        assert wd.app is new_app
+        assert wd._states == {1: CRITICAL}
+        assert wd._emitted_at == {1: 123.0}
+        assert wd._pending == {1: CRITICAL}
+        assert wd._warned_paths == set()
+        assert wd._audit_counts == {"container_events": 5}
+
+    def test_threshold_change_re_evaluates_fresh(self):
+        """A reload that moved a threshold resets the disk states —
+        every filesystem is re-classified from ``ok`` against the new
+        thresholds."""
+        wd = self._wd_with_state()
+        new_app = types.SimpleNamespace(
+            state=types.SimpleNamespace(
+                settings=make_settings(
+                    {"KLANGKD_DISK_WATCHDOG_WARN_PERCENT": "80"}
+                )
+            )
+        )
         wd.reconfigure(new_app)
         assert wd.app is new_app
         assert wd._states == {}
         assert wd._emitted_at == {}
-        assert wd._warned_paths == set()
+        assert wd._pending == {}
         assert wd._audit_counts == {"container_events": 5}
 
 
