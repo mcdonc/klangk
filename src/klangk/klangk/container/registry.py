@@ -57,8 +57,9 @@ from .sidecar import (
 from .spec import (
     ContainerStartSpec,
     SHARED_HOME,
-    _bind_roots,
+    bind_roots,
     is_named_volume,
+    mount_spec_nul_error,
     split_csv,
     valid_volume_name,
     build_create_kwargs,
@@ -333,7 +334,7 @@ class ContainerRegistry(NetworkSidecarMixin):
 
     @property
     def allowed_mount_roots(self) -> list[str]:
-        return _bind_roots(self.app)
+        return bind_roots(self.app)
 
     @property
     def port_range_start(self) -> int:
@@ -396,17 +397,28 @@ class ContainerRegistry(NetworkSidecarMixin):
     def validate_mount_spec(self, spec: str) -> str | None:
         """Validate a container mount spec string."""
         parts = spec.split(":")
-        error = self._validate_mount_shape(spec, parts)
+        error = self._validate_spec_structure(spec, parts)
         if error:
             return error
-        if len(parts) == 3:
-            error = self._validate_mount_options(spec, parts[2])
-            if error:
-                return error
         source = parts[0]
         if is_named_volume(source):
             return self._validate_named_volume_source(spec, source)
         return self._validate_bind_source(spec, source)
+
+    def _validate_spec_structure(
+        self, spec: str, parts: list[str]
+    ) -> str | None:
+        """Spec-level checks that do not depend on the source: NUL
+        bytes (a spec that could never reach podman's argv, #3278),
+        shape, and option syntax."""
+        error = mount_spec_nul_error(spec) or self._validate_mount_shape(
+            spec, parts
+        )
+        if error:
+            return error
+        if len(parts) == 3:
+            return self._validate_mount_options(spec, parts[2])
+        return None
 
     def _validate_named_volume_source(
         self, spec: str, source: str

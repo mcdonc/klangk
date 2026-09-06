@@ -134,12 +134,25 @@ def _resolved_under_root(resolved: str, roots) -> bool:
     )
 
 
-def _bind_roots(app) -> list[str]:
+def bind_roots(app) -> list[str]:
     """Configured ``KLANGKD_ALLOWED_MOUNT_ROOTS``, each realpath'd."""
     return [
         os.path.realpath(p)
         for p in split_csv(app.state.settings.allowed_mount_roots)
     ]
+
+
+def mount_spec_nul_error(spec: str) -> str | None:
+    """Error for a mount spec containing a NUL byte, else None.
+
+    Podman argv strings are NUL-terminated, so such a spec could never
+    reach the runtime (#3278) — it must be refused with a clean error
+    at each gate (settings update and container start) instead of
+    crashing argv assembly. Checked on the whole spec, so a NUL in the
+    destination (``/src:/de\x00st``) is caught too."""
+    if "\x00" in spec:
+        return f"Invalid mount {spec!r}: contains a NUL byte"
+    return None
 
 
 def _protected_bind_error(app, spec: str, resolved: str) -> str | None:
@@ -170,18 +183,15 @@ def validate_bind_source(app, spec: str, source: str) -> str | None:
     reached the DB without the API gate — or a source swapped for a
     symlink after validation — is refused immediately before the
     podman argv is built, instead of mounting an arbitrary host path
-    into the workspace container.
+    into the workspace container. NUL bytes are refused by the
+    spec-level check (``mount_spec_nul_error``) at each gate before
+    this runs.
     """
-    try:
-        resolved = os.path.realpath(source)
-    except ValueError:
-        # Embedded NUL etc.: not a usable host path, and podman's argv
-        # (NUL-terminated strings) could never carry it anyway.
-        return f"Invalid mount {spec!r}: source is not a valid host path"
+    resolved = os.path.realpath(source)
     error = _protected_bind_error(app, spec, resolved)
     if error:
         return error
-    roots = _bind_roots(app)
+    roots = bind_roots(app)
     if not roots:
         return (
             f"Invalid mount {spec!r}: bind mounts are disabled on "
@@ -562,6 +572,13 @@ async def _ensure_one_volume(
     app, workspace_id: str, podman, mount_spec: str
 ) -> None:
     """Create/validate the source of one extra mount."""
+    # NUL gate first, before either arm: a spec with a NUL byte in it
+    # (source or destination) could never reach podman's argv
+    # (NUL-terminated strings) — refuse it with a clean start error
+    # instead of an argv crash (#3278).
+    error = mount_spec_nul_error(mount_spec)
+    if error:
+        raise ValueError(error)
     source = mount_spec.split(":")[0]
     if is_named_volume(source):
         # Defense in depth (#3018): validate_mount_spec already
@@ -577,13 +594,20 @@ async def _ensure_one_volume(
             )
         await _ensure_named_volume(app, workspace_id, podman, source)
         return
-    # Bind source (#3278): existence, then the SAME containment the
-    # settings gate enforces — realpath under an allowed root, never a
-    # protected path. Update-time validation is an unbounded window
-    # before the mount happens: a source swapped for a symlink in the
-    # meantime (or a row that reached the DB without the API gate)
-    # must be refused here, immediately before the podman argv is
-    # built, rather than mount an arbitrary host path.
+    _validate_bind_mount(app, mount_spec, source)
+
+
+def _validate_bind_mount(app, mount_spec: str, source: str) -> None:
+    """Start-gate validation of one bind mount (#3278): existence,
+    then the SAME containment the settings gate enforces — realpath
+    under an allowed root, never a protected path.
+
+    Update-time validation is an unbounded window before the mount
+    happens: a source swapped for a symlink in the meantime (or a row
+    that reached the DB without the API gate) must be refused here,
+    immediately before the podman argv is built, rather than mount an
+    arbitrary host path.
+    """
     if not os.path.exists(source):
         raise ValueError(f"Bind mount source does not exist: {source}")
     error = validate_bind_source(app, mount_spec, source)

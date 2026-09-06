@@ -4082,6 +4082,26 @@ class TestValidateMountSpec:
         assert err is not None
         assert "unknown option" in err.lower()
 
+    def test_nul_in_source_rejected(self):
+        """#3278: a NUL byte in the source is refused at the settings
+        gate with a clean 400-shaped error — previously the realpath
+        call raised an unhandled ValueError (a 500)."""
+        err = self.registry.validate_mount_spec("/ho\x00st:/container")
+        assert err is not None
+        assert "contains a NUL byte" in err
+
+    def test_nul_in_destination_rejected(self):
+        """#3278: a NUL byte in the destination is refused too —
+        podman argv strings are NUL-terminated, so the spec could
+        never have been carried to the runtime (previously it passed
+        both gates and crashed argv assembly at start)."""
+        err = self.registry.validate_mount_spec("/host:/cont\x00ainer")
+        assert err is not None
+        assert "contains a NUL byte" in err
+        err = self.registry.validate_mount_spec("my-vol:/data\x00")
+        assert err is not None
+        assert "contains a NUL byte" in err
+
     def test_named_volume_leading_dash_rejected(self):
         """#3018: a leading-dash source is parsed as a flag by the podman
         CLI (``podman volume create --opt=...``) — rejected at the mount
@@ -4329,7 +4349,7 @@ class TestBindMountStartGate:
             self.app.state.settings, "allowed_mount_roots", roots
         )
 
-    async def test_protected_path_refused_at_start(self, monkeypatch):
+    async def test_outside_roots_refused_at_start(self, monkeypatch):
         """The issue's repro 1 (hardened deploy): /etc passes the old
         existence-only check; with roots configured that don't contain
         it, the start gate refuses it."""
@@ -4730,26 +4750,18 @@ class TestExtraMountsVolumeCreation:
                 )
             )
 
-    async def test_mount_source_with_special_characters(
-        self, workspace, monkeypatch
-    ):
-        """A source with NUL bytes is not a usable host path — refused
-        with a clean error (#3278): podman's argv is NUL-terminated, so
-        it could never have carried this source anyway."""
-        monkeypatch.setattr("os.path.exists", lambda p: True)
-        with patch_podman(self.registry) as p:
-            with pytest.raises(ValueError, match="not a valid host path"):
-                await self.registry.start_container(
-                    container.ContainerStartSpec(
-                        workspace["id"],
-                        "/tmp/home",
-                        extra_mounts=[
-                            "/path/with spaces\x00and\x01binary:/work/bad"
-                        ],
-                    )
-                )
-        # Has leading /, so treated as bind mount — never as a volume
-        p.inspect_volume.assert_not_awaited()
+    async def test_nul_in_spec_refused_at_start(self):
+        """A NUL byte anywhere in the spec (source or destination) is
+        refused at start with a clean error — podman argv strings are
+        NUL-terminated, so the spec could never have been carried to
+        the runtime anyway. Runs before the named/bind dispatch, so
+        both mount kinds are covered."""
+        for spec_str in (
+            "/path/with spaces\x00and\x01binary:/work/bad",
+            "my-vol:/work/bad\x00",
+        ):
+            with pytest.raises(ValueError, match="contains a NUL byte"):
+                await ensure_volumes(self.registry.app, [spec_str], "ws", None)
 
     async def test_missing_bind_mount_source_rejected(self, workspace):
         """A bind mount with a non-existent source path is refused."""

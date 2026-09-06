@@ -321,12 +321,16 @@ operators or integrators to act when upgrading.
 - **Bind-mount re-validation at container start (#3278).** A mount's
   host-path source is now checked against
   `KLANGKD_ALLOWED_MOUNT_ROOTS` and the protected-path blocklist every
-  time a workspace starts, not only when the mount is saved. A source
-  that changed after it was saved (for example, a directory under an
-  allowed root replaced by a symlink pointing elsewhere) — or a mount
-  row that reached the database without the settings gate — is now
-  refused with a clear start error instead of mounting an arbitrary
-  host path into the container. See
+  time a workspace container is created, not only when the mount is
+  saved. A source that changed after it was saved (for example, a
+  directory under an allowed root replaced by a symlink pointing
+  elsewhere) — or a mount row that reached the database without the
+  settings gate — is refused with a clear start error instead of
+  mounting an arbitrary host path into the container. Mount specs
+  containing a NUL byte (in the source or the destination) are also
+  refused at both gates; a saved bind mount on a deploy with no
+  allowed roots configured now fails at start — configure the roots
+  or remove the mount. See
   [Mount security](features/workspaces.md#mount-security).
 
 - **Tokens removed from URLs (#3201).** Session JWTs no longer ride
