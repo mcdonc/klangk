@@ -498,9 +498,9 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     return types;
   }
 
-  (List<SkeuoTab>, List<Widget>) _buildTabsAndViews() {
+  (List<Widget>, List<Widget>) _buildTabsAndViews() {
     final pendingCount = _invitationsPending;
-    final tabs = <SkeuoTab>[];
+    final tabs = <Widget>[];
     final views = <Widget>[];
 
     void addTab({
@@ -511,12 +511,19 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     }) {
       final idx = tabs.length;
       tabs.add(
-        SkeuoTab(
+        // Named for assistive tech and the fmtk e2e driver: SkeuoTab is a
+        // bare GestureDetector, and a merging Semantics (no container)
+        // lands the label on the tappable node itself.
+        Semantics(
           label: label,
-          icon: icon,
-          isSelected: _selectedIndex == idx,
-          badge: badge,
-          onTap: () => setState(() => _selectedIndex = idx),
+          button: true,
+          child: SkeuoTab(
+            label: label,
+            icon: icon,
+            isSelected: _selectedIndex == idx,
+            badge: badge,
+            onTap: () => setState(() => _selectedIndex = idx),
+          ),
         ),
       );
       views.add(view);
@@ -598,7 +605,7 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
           heroTag: 'add',
           onPressed: _addUser,
           tooltip: 'Add user',
-          child: const Icon(Icons.person_add),
+          child: const Icon(Icons.person_add, semanticLabel: 'Add user'),
         ),
       'invitations' ||
       'groups' ||
@@ -929,7 +936,7 @@ class _GroupsTabState extends State<_GroupsTab> {
         heroTag: 'add-group',
         onPressed: _createGroup,
         tooltip: 'Create group',
-        child: const Icon(Icons.group_add),
+        child: const Icon(Icons.group_add, semanticLabel: 'Create group'),
       ),
       body: Column(
         children: [
@@ -1410,11 +1417,15 @@ class _InvitationsTabState extends State<_InvitationsTab> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      floatingActionButton: FloatingActionButton(
-        heroTag: 'invite',
-        onPressed: _inviteUser,
-        tooltip: 'Invite user',
-        child: const Icon(Icons.mail_outline),
+      floatingActionButton: Semantics(
+        container: true,
+        identifier: 'invite-fab',
+        child: FloatingActionButton(
+          heroTag: 'invite',
+          onPressed: _inviteUser,
+          tooltip: 'Invite user',
+          child: const Icon(Icons.mail_outline),
+        ),
       ),
       body: Column(
         children: [
@@ -2100,21 +2111,25 @@ class _InviteUserDialogState extends State<_InviteUserDialog> {
               'An email will be sent with a link to set their password and create an account.',
             ),
             const SizedBox(height: 16),
-            TextField(
-              controller: _emailController,
-              decoration: InputDecoration(
-                labelText: 'Email',
-                labelStyle: labelStyle,
-                floatingLabelStyle: labelStyle,
-                floatingLabelBehavior: FloatingLabelBehavior.always,
-                border: const OutlineInputBorder(),
-                errorText: emailError,
+            Semantics(
+              container: true,
+              identifier: 'invite-email',
+              child: TextField(
+                controller: _emailController,
+                decoration: InputDecoration(
+                  labelText: 'Email',
+                  labelStyle: labelStyle,
+                  floatingLabelStyle: labelStyle,
+                  floatingLabelBehavior: FloatingLabelBehavior.always,
+                  border: const OutlineInputBorder(),
+                  errorText: emailError,
+                ),
+                autofocus: true,
+                onChanged: (_) => setState(() {}),
+                onSubmitted: (_) {
+                  if (canInvite) Navigator.pop(context, email);
+                },
               ),
-              autofocus: true,
-              onChanged: (_) => setState(() {}),
-              onSubmitted: (_) {
-                if (canInvite) Navigator.pop(context, email);
-              },
             ),
           ],
         ),
@@ -2125,9 +2140,13 @@ class _InviteUserDialogState extends State<_InviteUserDialog> {
           style: TextButton.styleFrom(foregroundColor: KColors.accentRed),
           child: const Text('Cancel'),
         ),
-        FilledButton(
-          onPressed: canInvite ? () => Navigator.pop(context, email) : null,
-          child: const Text('Send Invitation'),
+        Semantics(
+          container: true,
+          identifier: 'invite-send',
+          child: FilledButton(
+            onPressed: canInvite ? () => Navigator.pop(context, email) : null,
+            child: const Text('Send Invitation'),
+          ),
         ),
       ],
     );

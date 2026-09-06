@@ -17,6 +17,10 @@ the ``fmtk-verify`` workspace's Sharing panel:
   fmtk-coder         coders role group          Coders bucket
   fmtk-spectator     spectators role group      Spectators bucket; no
                                                 Sharing tab
+  fmtk-mustchange    (none; keeps the admin    forced password-change
+                     must-change flag set)     flow (#3233, #3172)
+  fmtk-reset         (none)                    forgot/reset password
+                                                flow (#3233)
   ================== ==========================  =========================
 
 The workspace is created with fmtk-admin's own token, so fmtk-admin holds
@@ -44,6 +48,11 @@ FIXTURES = (
     "fmtk-collaborator",
     "fmtk-coder",
     "fmtk-spectator",
+    # auth-suite fixtures (#3233): must-change keeps the admin-set flag
+    # (forced-change flow arms its password per run via the admin API);
+    # reset exercises the forgot/reset-password flow.
+    "fmtk-mustchange",
+    "fmtk-reset",
 )
 # fixture user suffix -> workspace role group (bucket membership)
 ROLE_MEMBERSHIPS = {
@@ -51,6 +60,9 @@ ROLE_MEMBERSHIPS = {
     "fmtk-coder": "coders",
     "fmtk-spectator": "spectators",
 }
+# fixtures whose admin-created must-change flag stays SET (the forced-
+# change flow needs a user that logs in straight into /change-password)
+KEEP_MUST_CHANGE = {"fmtk-mustchange"}
 
 
 def api(base: str, token: str, method: str, path: str, body=None):
@@ -134,7 +146,8 @@ def ensure_users(base: str, token: str) -> dict[str, str]:
     for name in FIXTURES:
         email = f"{name}@example.com"
         user_id = ids.get(email) or create_fixture_user(base, token, email)
-        clear_must_change(base, token, user_id, email)
+        if name not in KEEP_MUST_CHANGE:
+            clear_must_change(base, token, user_id, email)
         ids[email] = user_id
     return ids
 
@@ -234,7 +247,10 @@ def main() -> None:
         "  fmtk-collaborator@example.com   -> collaborators bucket\n"
         "  fmtk-coder@example.com          -> coders bucket\n"
         "  fmtk-spectator@example.com      -> spectators bucket, no Sharing"
-        " tab"
+        " tab\n"
+        "  fmtk-mustchange@example.com     -> login lands on forced"
+        " password change\n"
+        "  fmtk-reset@example.com          -> forgot/reset password flow"
     )
 
 

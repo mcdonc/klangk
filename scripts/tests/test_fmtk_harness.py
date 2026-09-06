@@ -156,10 +156,47 @@ def test_seed_matrix_wiring():
 def test_seed_clears_must_change_password():
     """Admin-created users carry must_change_password (#3172), which
     refuses every API call but the change flow — the seed must clear it
-    for every fixture user on every run or fixture logins dead-end."""
+    for every fixture user on every run or fixture logins dead-end —
+    EXCEPT fmtk-mustchange, the forced-change fixture (#3233), whose
+    flag is the point."""
     seed = _SEED.read_text()
     assert '"must_change_password": False' in seed, (
         "the seed must PATCH must_change_password off for fixture users"
+    )
+    assert 'KEEP_MUST_CHANGE = {"fmtk-mustchange"}' in seed, (
+        "the forced-change fixture must keep its admin-set flag (#3233)"
+    )
+    for fixture in ("fmtk-mustchange", "fmtk-reset"):
+        assert f'"{fixture}"' in seed, f"{fixture} must be seeded (#3233)"
+
+
+def assert_wired(source: str, needles: tuple[str, ...], why: str) -> None:
+    """Every ``needle`` must appear in ``source`` (drop-in wiring pins)."""
+    for needle in needles:
+        assert needle in source, f"{why}: {needle!r} missing"
+
+
+def test_harness_auth_suite_extensions():
+    """The auth-suite harness pieces (#3233) — SMTP sink for email-token
+    flows, hash-route navigation, auth-service evaluation, admin API —
+    must stay wired into the harness."""
+    harness = (_REPO_ROOT / "src/frontend/e2e-tests/fmtk/fmtkharness.py").read_text()
+    assert_wired(
+        harness,
+        (
+            "class SmtpSink",
+            '"smtp_host"',
+            "def navigate",
+            "def auth_eval",
+            "def logout",
+            "def force_password_change",
+        ),
+        "the auth-suite harness pieces (#3233) must stay wired in",
+    )
+    suite = _REPO_ROOT / "src/frontend/e2e-tests/fmtk/test_auth.py"
+    assert suite.is_file(), "the auth suite (#3233) is missing"
+    assert "token_for(" in suite.read_text(), (
+        "the auth suite must drive email-token flows via the sink"
     )
 
 

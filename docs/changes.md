@@ -3702,3 +3702,16 @@ users(id)`, so the decider handler passing the decider's email violated the
   back to denying all RFC1918 peers — a host container run with a
   published port (`docker run -p 8997:8997`) refused every browser/API
   request with 403. Found by the new super-E2E suite.
+
+- **Step-up (sudo mode) works again on the web client, and its retry no
+  longer crashes (#3233).** The step-up password POST now carries the
+  DPoP proof like every other authed call, so an elevated action
+  (e.g. sending an admin invitation) no longer fails with 401 on every
+  attempt. Retrying after a wrong password also no longer throws "controller
+  used after being disposed" — the dialog now owns its text controller for
+  its full lifetime. Both found by the new fmtk e2e auth suite.
+
+- **Icon-only buttons name themselves for screen readers (#3233).** The
+  app-bar Admin and Logout icons, the admin page's tab strip, and the
+  workspace-list FABs now expose semantic labels, so assistive tech
+  announces them by name instead of "button".

@@ -27,6 +27,25 @@ BANNER_BODY = "swapped live over SIGHUP"
 
 
 def test_harness_smoke(harness, app):
+    original_title = harness.config.get("login_banner_title", "")
+    original_banner = harness.config.get("login_banner", "")
+    try:
+        _smoke_phases(harness, app)
+    finally:
+        # The banner persists in the adopted backend's config; a leftover
+        # consent dialog would mask the login form for the next suite's
+        # logins (each suite only dismisses the banner interactively).
+        harness.backend.swap_settings(
+            {
+                "login_banner_title": original_title,
+                "login_banner": original_banner,
+            },
+            apply="sighup",
+            verify=False,
+        )
+
+
+def _smoke_phases(harness, app) -> None:
     # --- phase 1: app booted to the login surface -----------------------
     app.wait_for_login_page()
 

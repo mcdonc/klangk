@@ -57,8 +57,14 @@ class AppBarActions extends StatelessWidget {
           ),
         if (context.watch<AuthService>().canAdminSection)
           IconButton(
-            icon:
-                const Icon(Icons.manage_accounts, color: KColors.textSecondary),
+            icon: const Icon(
+              Icons.manage_accounts,
+              color: KColors.textSecondary,
+              // Named for assistive tech and the fmtk e2e driver (icon-only
+              // buttons otherwise carry no semantic label; tooltips do
+              // not surface in the semantic tree).
+              semanticLabel: 'Admin',
+            ),
             tooltip: 'Admin',
             onPressed: onAdminPressed ?? () => context.go('/admin/users'),
           ),
@@ -74,7 +80,11 @@ class AppBarActions extends StatelessWidget {
             onPressed: () => openUrl(Branding.supportHref),
           ),
         IconButton(
-          icon: const Icon(Icons.logout, color: KColors.textSecondary),
+          icon: const Icon(
+            Icons.logout,
+            color: KColors.textSecondary,
+            semanticLabel: 'Logout',
+          ),
           tooltip: 'Logout',
           onPressed: onLogoutPressed ??
               () async {

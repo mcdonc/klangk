@@ -835,14 +835,15 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
                   heroTag: 'import',
                   onPressed: _showImportDialog,
                   tooltip: 'Import Workspace',
-                  child: const Icon(Icons.upload),
+                  child: const Icon(Icons.upload, semanticLabel: 'Import'),
                 ),
                 const SizedBox(height: 12),
                 FloatingActionButton(
                   heroTag: 'create',
                   onPressed: _createWorkspace,
                   tooltip: 'New Workspace',
-                  child: const Icon(Icons.add),
+                  child:
+                      const Icon(Icons.add, semanticLabel: 'Create workspace'),
                 ),
               ],
             )
