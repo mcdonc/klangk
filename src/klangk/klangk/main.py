@@ -92,6 +92,7 @@ from . import (
     nix,
     podman,
     netfilter,
+    notifier as notifier_mod,
     sidecar_connections,
     ssl_trust,
     terminal,
@@ -312,6 +313,11 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     # Jinja template env (previously module-level functions reading
     # resolve_env_value at call time).
     app.state.email = emailsvc.EmailService(app)
+    # #3250: AdminNotifier(app_state) owns SA/ISSO notification fan-out
+    # (email + webhook) for account lifecycle, audit-failure, and
+    # capacity events. Reads its settings live; inert until a channel
+    # is configured.
+    app.state.notifier = notifier_mod.AdminNotifier(app)
     # #1503: Util(app_state) owns the proxy-trust / forwarded-header logic,
     # hosting-info derivation, and customize-dir resolver (previously
     # module-level functions + import-time globals in util.py).

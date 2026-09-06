@@ -805,6 +805,7 @@ class Lifecycle:
         "agents",
         "acl",
         "email",
+        "notifier",
         "util",
         "lifecycle",
         "server_scheduler",

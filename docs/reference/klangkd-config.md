@@ -175,6 +175,20 @@ smtp_password: "file:/run/secrets/smtp-pw"
 smtp_from: noreply@example.com
 smtp_use_tls: true
 
+# --- Admin notifications (#3250) ---
+# SA/ISSO recipients for account lifecycle and audit alerts. Both
+# channels are optional; with neither set, notifications are off.
+admin_notification_emails:
+  - isso@example.com
+  - sa@example.com
+admin_notification_webhook_url: https://hooks.example.com/klangk
+# Narrow the allowlist (defaults to every supported event):
+# admin_notify_events:
+#   - user.create
+#   - user.delete
+#   - user.disable
+#   - user.enable
+
 # --- Branding ---
 product_name: "My Platform"
 brand_color: "#1565C0"
@@ -499,6 +513,14 @@ rewrite its ACL. Failures are logged, never fatal. Reloaded on SIGHUP.
 | `smtp_use_tls`        | `true`     | `KLANGKD_SMTP_USE_TLS`        |
 | `sendmail_path`       | `sendmail` | `KLANGKD_SENDMAIL_PATH`       |
 | `email_templates_dir` |            | `KLANGKD_EMAIL_TEMPLATES_DIR` |
+
+### Admin notifications
+
+| Key                              | Default               | Env var                                  |
+| -------------------------------- | --------------------- | ---------------------------------------- |
+| `admin_notification_emails`      |                       | `KLANGKD_ADMIN_NOTIFICATION_EMAILS`      |
+| `admin_notification_webhook_url` |                       | `KLANGKD_ADMIN_NOTIFICATION_WEBHOOK_URL` |
+| `admin_notify_events`            | every supported event | `KLANGKD_ADMIN_NOTIFY_EVENTS`            |
 
 ### Legal / support links
 

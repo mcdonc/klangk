@@ -355,6 +355,7 @@ async def app_state(temp_data_dir):
     from klangk.container import ContainerRegistry
     from klangk.emailsvc import EmailService
     from klangk.nix import Nix
+    from klangk.notifier import AdminNotifier
     from klangk.util import Util
     from klangk.workspaces import Workspaces
 
@@ -373,6 +374,9 @@ async def app_state(temp_data_dir):
     state.container_registry = registry
     state.workspaces = Workspaces(app)
     state.email = EmailService(app)
+    # #3250: the admission gate and audit-failure paths notify on the
+    # same owned instance the real build_app wires.
+    state.notifier = AdminNotifier(app)
     state.util = Util(app)
     # #2201: Workspaces.delete_workspace reaches state.nix (no-op when disabled).
     state.nix = Nix(app)

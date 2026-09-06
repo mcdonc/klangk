@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import types
 import pytest
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 from klangk import inactivity
 
@@ -28,6 +28,9 @@ def _app(*, days=35, disable_inactive=None):
         )
     )
     app.state.sockets = types.SimpleNamespace(disconnect_user=AsyncMock())
+    # #3250: the sweep notifies on a non-empty disable result; the
+    # spy doubles as the assertion surface in the disable tests.
+    app.state.notifier = Mock()
     return app
 
 
@@ -153,6 +156,28 @@ class TestInactivitySweeper:
         assert "gone@example.com" in caplog.text
         app.state.sockets.disconnect_user.assert_awaited_once_with(
             "u1", code=4001, reason="Account disabled"
+        )
+
+    async def test_disabled_users_notify_sa_isso(self):
+        """#3250 (SV-222419): a non-empty sweep result notifies the
+        SA/ISSO stream once — the batch in one message, no actor
+        (system action), via=inactivity in the detail."""
+        app = _app(
+            disable_inactive=AsyncMock(
+                return_value=[
+                    {"id": "u1", "email": "gone@example.com"},
+                    {"id": "u2", "email": "away@example.com"},
+                ]
+            )
+        )
+        await inactivity.InactivitySweeper(app).sweep()
+        app.state.notifier.notify_admins.assert_called_once_with(
+            "user.disable",
+            detail={
+                "via": "inactivity",
+                "days": 35,
+                "users": ["gone@example.com", "away@example.com"],
+            },
         )
 
     async def test_disabled_users_deciders_are_kicked(self):

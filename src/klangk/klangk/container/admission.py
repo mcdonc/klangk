@@ -50,6 +50,7 @@ import re
 import time
 
 from ..exceptions import WorkspaceCapacityError
+from ..notifier import notify_event as notifier_notify_event
 from .eviction import (
     available_fraction,
     cgroup_memory_headroom,
@@ -527,6 +528,19 @@ class AdmissionControl:
         margin = self.margin_bytes
         needed = limit_bytes + margin
         if available < needed:
+            # SV-222668: a start refused for host-capacity reasons
+            # alerts the SA (#3250) — throttled, so a full host alerts
+            # once per window, not once per refused start.
+            notifier_notify_event(
+                self.app,
+                "resource.low",
+                detail={
+                    "reason": "host-memory",
+                    "available": format_size(available),
+                    "needed": format_size(needed),
+                    "workspace_id": workspace_id,
+                },
+            )
             raise WorkspaceCapacityError(
                 f"host at capacity: {format_size(available)} available, "
                 f"workspace wants {format_size(needed)} "

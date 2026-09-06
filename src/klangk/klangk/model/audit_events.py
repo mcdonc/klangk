@@ -60,6 +60,7 @@ import time
 
 from .audit_hmac import compute_audit_event_hmac
 from .base import Submodel, resolve_prune_now
+from ..notifier import notify_event
 
 logger = logging.getLogger(__name__)
 
@@ -189,6 +190,22 @@ class AuditEventsModel(Submodel):
             await self.record(event, **kwargs)
         except Exception as e:  # noqa: BLE001 — audit is best-effort
             logger.warning("audit_events write failed (%s): %s", event, e)
+            # SV-222484/485: a degraded identity audit stream must alert
+            # the SA in real time, not just log (#3250). This is the one
+            # deliberate notifier reach from the model layer — the
+            # write's failure site is here, and every API-layer caller
+            # funnels through it. The guarded helper is a no-op on
+            # minimal test app states; notify_admins never raises (and
+            # never writes an audit row, so this cannot recurse).
+            notify_event(
+                self.app,
+                "audit.failure",
+                detail={
+                    "table": "audit_events",
+                    "failed_event": event,
+                    "error": str(e),
+                },
+            )
 
     async def list_events(
         self,

@@ -563,3 +563,40 @@ class TestTemplateEnvReset:
         assert svc._env is not None
         svc.reset_template_env()
         assert svc._env is None
+
+
+class TestSendPlain:
+    """The admin notifier's email channel (#3250) — message assembly
+    only; the SMTP/sendmail transports are covered above."""
+
+    async def test_builds_and_sends_plain_message(self):
+        svc = _email_service(
+            {
+                "KLANGKD_SMTP_FROM": "klangk@x.com",
+                "KLANGKD_SMTP_REPLY_TO": "ops@x.com",
+            }
+        )
+        sent = []
+
+        async def capture(msg):
+            sent.append(msg)
+
+        with patch.object(svc, "_send", AsyncMock(side_effect=capture)):
+            await svc.send_plain("sa@x.com", "[klangk] event", "line1\nline2")
+        msg = sent[0]
+        assert msg["Subject"] == "[klangk] event"
+        assert msg["From"] == "klangk@x.com"
+        assert msg["To"] == "sa@x.com"
+        assert msg["Reply-To"] == "ops@x.com"
+        assert "line1" in msg.get_content()
+
+    async def test_from_falls_back_to_user_then_local(self):
+        svc = _email_service({"KLANGKD_SMTP_USER": "smtpuser@x.com"})
+        sent = []
+
+        async def capture(msg):
+            sent.append(msg)
+
+        with patch.object(svc, "_send", AsyncMock(side_effect=capture)):
+            await svc.send_plain("sa@x.com", "s", "b")
+        assert sent[0]["From"] == "smtpuser@x.com"

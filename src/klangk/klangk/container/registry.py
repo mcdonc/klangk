@@ -18,6 +18,7 @@ import time
 from .. import podman
 from .. import fips as fips_mod
 from ..exceptions import AuditWriteError, NodeDrainingError
+from ..notifier import notify_event
 from ..model.workspaces import EGRESS_MODE_ALLOW, EGRESS_MODE_INTERACTIVE
 from ..model.container_events import (
     CAUSE_DRAIN,
@@ -1208,8 +1209,20 @@ class ContainerRegistry(NetworkSidecarMixin):
         return self.app.state.settings.audit_fail_closed
 
     def _count_audit_write_failure(self) -> None:
-        """Bump the /audit audit-write-failure counter (#3154)."""
+        """Bump the /audit audit-write-failure counter (#3154).
+
+        The single choke point every container_events write failure
+        passes through, so it is also the SA/ISSO alert site
+        (SV-222484/485, #3250): the notification is throttled (one per
+        window), fire-and-forget, and — like the counter — never fails
+        the caller.
+        """
         self.audit_write_failures += 1
+        notify_event(
+            self.app,
+            "audit.failure",
+            detail={"table": "container_events"},
+        )
 
     async def prewrite_audit_event(
         self,

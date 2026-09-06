@@ -36,6 +36,7 @@ from .. import (
 from ..settings import parse_bool_setting
 from ..util import API_PREFIX
 from .common import get_app_dep, workstation
+from ..notifier import notify_event as notifier_notify_event
 from .common import (
     send_email,
 )
@@ -172,6 +173,14 @@ async def register(
         detail={"email": req.email, "verified": False},
         source_ip=reg_ip,
         user_agent=reg_ua,
+    )
+    notifier_notify_event(
+        app,
+        "user.register",
+        target_type="user",
+        target_id=user_id,
+        detail={"email": req.email, "verified": False},
+        source_ip=reg_ip,
     )
     return {"status": "pending_verification", "email": req.email}
 
@@ -563,6 +572,16 @@ async def reset_password(req: ResetPasswordRequest, request: Request):
         source_ip=source_ip,
         user_agent=user_agent,
     )
+    notifier_notify_event(
+        request.app,
+        "user.password.change",
+        actor_id=user_id,
+        actor_email=user["email"],
+        target_type="user",
+        target_id=user_id,
+        detail={"via": "password-reset"},
+        source_ip=source_ip,
+    )
     # Auto-login after reset
     token = await request.app.state.auth.issue_token(
         user_id,
@@ -678,9 +697,7 @@ async def bind_session_token(
     request: Request,
     req: auth.BindRequest,
     user: dict = Depends(auth.get_current_user_allow_forced_change),
-    credentials: HTTPAuthorizationCredentials | None = Depends(
-        auth.security
-    ),
+    credentials: HTTPAuthorizationCredentials | None = Depends(auth.security),
 ):
     """Swap the caller's session token for one DPoP-bound to a key.
 
@@ -783,6 +800,16 @@ async def change_password(
         detail={"via": "self-service"},
         source_ip=source_ip,
         user_agent=user_agent,
+    )
+    notifier_notify_event(
+        request.app,
+        "user.password.change",
+        actor_id=user["id"],
+        actor_email=user["email"],
+        target_type="user",
+        target_id=user["id"],
+        detail={"via": "self-service"},
+        source_ip=source_ip,
     )
     await request.app.state.model.audit_events.record_best_effort(
         "session.revoke",
@@ -906,6 +933,16 @@ async def change_email(
         source_ip=source_ip,
         user_agent=user_agent,
     )
+    notifier_notify_event(
+        app,
+        "user.email.change",
+        actor_id=user["id"],
+        actor_email=user["email"],
+        target_type="user",
+        target_id=user["id"],
+        detail={"email": req.email},
+        source_ip=source_ip,
+    )
     # Mark as unverified and send verification email
     await app.state.model.users.mark_unverified(user["id"])
 
@@ -957,6 +994,16 @@ async def change_handle(
         detail={"handle": req.handle},
         source_ip=source_ip,
         user_agent=user_agent,
+    )
+    notifier_notify_event(
+        app,
+        "user.handle.change",
+        actor_id=user["id"],
+        actor_email=user["email"],
+        target_type="user",
+        target_id=user["id"],
+        detail={"handle": req.handle},
+        source_ip=source_ip,
     )
     return {"status": "updated", "handle": req.handle}
 
@@ -1109,8 +1156,18 @@ async def accept_invite(req: AcceptInviteRequest, request: Request):
     await request.app.state.model.invitations.mark_invitation_accepted(
         invitation_id
     )
-
+    # The invited account's creation notifies the SA/ISSO stream under
+    # the same user.create name as the other creation paths (#3250);
+    # the registrant is unauthenticated, so there is no actor.
     source_ip, user_agent = workstation(request)
+    notifier_notify_event(
+        request.app,
+        "user.create",
+        target_type="user",
+        target_id=user["id"],
+        detail={"email": email, "via": "invite"},
+        source_ip=source_ip,
+    )
     access_token = await request.app.state.auth.issue_token(
         user["id"],
         user["email"],
@@ -1356,13 +1413,25 @@ async def _find_or_create_user(app, provider_id, sub, email):
         await users.link_oidc_identity(existing["id"], provider_id, sub)
         return existing
 
-    return await users.create_user(
+    user = await users.create_user(
         email=email,
         password_hash=None,
         verified=True,
         provider=provider_id,
         external_id=sub,
     )
+    # JIT-provisioned account creation notifies the SA/ISSO stream
+    # under the same user.create name as the other creation paths
+    # (#3250). No actor: the account did not exist before this login,
+    # and the IdP — not a klangk principal — vouched for the identity.
+    notifier_notify_event(
+        app,
+        "user.create",
+        target_type="user",
+        target_id=user["id"],
+        detail={"email": email, "via": "oidc"},
+    )
+    return user
 
 
 def _build_redirect_response(
