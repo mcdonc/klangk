@@ -2242,15 +2242,19 @@ class KlangkSettings(BaseSettings):
     @classmethod
     def _coerce_admin_notify_events(cls, v):
         """Accept a comma-separated string (env var) or a native list
-        (YAML) of event names; None/blank → None (the default
-        allowlist — blanking the var cannot silently disable
-        notifications). Unknown names abort startup via
-        :func:`_reject_unknown_notify_events`. See #3250."""
+        (YAML) of event names. A blank env string means None — the
+        default allowlist — so blanking the variable cannot silently
+        disable notifications. A native list stays explicit: YAML
+        ``admin_notify_events: []`` is notifications-off (the channels
+        stay configured but no event notifies). Unknown names abort
+        startup via :func:`_reject_unknown_notify_events` (#3250)."""
         if v is None:
             return None
         items = _setting_items(v, "KLANGKD_ADMIN_NOTIFY_EVENTS")
         _reject_unknown_notify_events(items)
-        return items or None
+        if isinstance(v, str):
+            return items or None
+        return items
 
     @field_validator("smtp_port", mode="before")
     @classmethod

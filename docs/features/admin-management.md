@@ -86,7 +86,10 @@ With neither channel configured, notifications are off — this is the
 default. `KLANGKD_ADMIN_NOTIFY_EVENTS` narrows the allowlist of event
 types that notify (the default is all of them); an unknown event name
 in that list aborts startup so a typo cannot silently disable a
-notification. Persistent conditions (`audit.failure`, `resource.low`)
+notification. A config-file `admin_notify_events: []` turns event
+notifications off while leaving the channels configured — the
+deliberate off switch (blanking the environment variable instead
+restores the default allowlist). Persistent conditions (`audit.failure`, `resource.low`)
 notify at most once per event name every 5 minutes, so a degraded
 audit table or a full host produces one alert rather than a flood.
 

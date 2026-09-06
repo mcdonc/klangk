@@ -86,10 +86,21 @@ def notify_event(app, event: str, **fields) -> None:
     omit it, exactly like the ``getattr(app.state, "hooks", None)``
     guard in lifecycle (#2762). Every emit site goes through here so
     no call path depends on the full state shape.
+
+    Never raises — including from inside the caller's own ``except``
+    block (the audit-failure sites): a dispatch problem must not mask
+    or replace the exception it annotates.
     """
-    notifier = getattr(app.state, "notifier", None)
-    if notifier is not None:
-        notifier.notify_admins(event, **fields)
+    try:
+        notifier = getattr(app.state, "notifier", None)
+        if notifier is not None:
+            notifier.notify_admins(event, **fields)
+    except Exception:  # noqa: BLE001 — best-effort by contract
+        logger.warning(
+            "admin notification dispatch for %s failed",
+            event,
+            exc_info=True,
+        )
 
 
 class AdminNotifier:
@@ -122,7 +133,9 @@ class AdminNotifier:
 
     def notify_events(self) -> frozenset[str]:
         """The allowlist: every supported event when unset, else the
-        operator's explicit list (possibly empty = notifications off)."""
+        operator's explicit list — an empty native list (YAML
+        ``admin_notify_events: []``) is notifications-off, while a
+        blank env string restores the default allowlist."""
         raw = self.app.state.settings.admin_notify_events
         if raw is None:
             return frozenset(DEFAULT_NOTIFY_EVENTS)
@@ -132,8 +145,19 @@ class AdminNotifier:
         """True when at least one delivery channel is configured."""
         return bool(self.recipients() or self.webhook_url())
 
-    def throttle_allows(self, event: str) -> bool:
-        """Throttle gate: True when *event* may notify now.
+    def throttle_key(self, event: str, detail: dict | None) -> str:
+        """One throttle bucket per event — and, when the detail names a
+        source ``table``, per table: a container_events write storm must
+        not mask the first audit_events degradation alert (and vice
+        versa) under the shared 300s window (#3250 review).
+        """
+        table = (detail or {}).get("table")
+        if table is None:
+            return event
+        return f"{event}:{table}"
+
+    def throttle_allows(self, event: str, key: str) -> bool:
+        """Throttle gate: True when *key* may notify now.
 
         Non-throttled events always pass. A throttled event passes at
         most once per window; passing stamps the clock.
@@ -142,20 +166,20 @@ class AdminNotifier:
         if window <= 0:
             return True
         now = time.monotonic()
-        last = self.last_notified.get(event)
+        last = self.last_notified.get(key)
         if last is not None and now - last < window:
             return False
-        self.last_notified[event] = now
+        self.last_notified[key] = now
         return True
 
-    def should_notify(self, event: str) -> bool:
+    def should_notify(self, event: str, key: str) -> bool:
         """True when *event* is allowlisted, a channel exists, and the
-        throttle permits it."""
+        throttle permits *key*."""
         if event not in self.notify_events():
             return False
         if not self.channels_configured():
             return False
-        return self.throttle_allows(event)
+        return self.throttle_allows(event, key)
 
     # --- entrypoint ---
 
@@ -176,7 +200,8 @@ class AdminNotifier:
         slow SMTP handshake or an unreachable webhook never delays the
         action being notified (which has already succeeded).
         """
-        if not self.should_notify(event):
+        key = self.throttle_key(event, detail)
+        if not self.should_notify(event, key):
             return
         payload = {
             "event": event,
@@ -207,7 +232,16 @@ class AdminNotifier:
 
     async def deliver_via_email(self, payload: dict) -> None:
         """Send the event to every configured recipient."""
-        for to in self.recipients():
+        try:
+            recipients = self.recipients()
+        except Exception:  # noqa: BLE001 — settings read, best-effort
+            logger.warning(
+                "admin notification recipients unreadable (event %s)",
+                payload["event"],
+                exc_info=True,
+            )
+            return
+        for to in recipients:
             subject = f"[klangk] admin event: {payload['event']}"
             try:
                 await self.app.state.email.send_plain(
@@ -239,18 +273,23 @@ class AdminNotifier:
             )
 
 
+# (field, human label) pairs for the email body — explicit labels,
+# not key.title() (which renders "Source Ip").
+_BODY_FIELDS = (
+    ("timestamp", "Timestamp"),
+    ("actor_email", "Actor"),
+    ("target_type", "Target type"),
+    ("target_id", "Target id"),
+    ("source_ip", "Source IP"),
+)
+
+
 def render_notification_body(payload: dict) -> str:
     """Plain-text body for the email channel — one line per field."""
     lines = [f"Event: {payload['event']}"]
-    for key in (
-        "timestamp",
-        "actor_email",
-        "target_type",
-        "target_id",
-        "source_ip",
-    ):
+    for key, label in _BODY_FIELDS:
         if payload.get(key) is not None:
-            lines.append(f"{key.replace('_', ' ').title()}: {payload[key]}")
+            lines.append(f"{label}: {payload[key]}")
     if payload.get("detail"):
         lines.append(f"Detail: {payload['detail']}")
     lines.append("")

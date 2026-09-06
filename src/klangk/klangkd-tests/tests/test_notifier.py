@@ -129,6 +129,31 @@ class TestGates:
         notifier, _ = _notifier({"KLANGKD_ADMIN_NOTIFY_EVENTS": "user.create"})
         assert notifier.notify_events() == frozenset({"user.create"})
 
+    def test_native_empty_list_is_explicitly_off(self, tmp_path):
+        """YAML ``admin_notify_events: []`` silences every event while
+        the channels stay configured — the deliberate off switch (the
+        blank env string cannot do this, fail-safe)."""
+        config = tmp_path / "k.yaml"
+        config.write_text(
+            "state_dir: " + str(tmp_path / "state") + "\n"
+            "data_dir: " + str(tmp_path / "data") + "\n"
+            "admin_notification_emails:\n"
+            "  - sa@x.com\n"
+            "admin_notify_events: []\n"
+        )
+        settings = KlangkSettings(
+            env={"KLANGKD_DATA_DIR": str(tmp_path / "data")},
+            config_file=str(config),
+        )
+        app = types.SimpleNamespace(
+            state=types.SimpleNamespace(settings=settings)
+        )
+        app.state.email = types.SimpleNamespace(send_plain=AsyncMock())
+        notifier = AdminNotifier(app)
+        assert notifier.channels_configured()
+        assert notifier.notify_events() == frozenset()
+        assert not notifier.should_notify("user.create", "user.create")
+
     def test_blank_allowlist_falls_back_to_defaults(self):
         """Blanking the env var must not silently disable notifications:
         empty input → None → the default allowlist. The channels are the
@@ -139,7 +164,7 @@ class TestGates:
     def test_no_channels_means_no_notify(self):
         notifier, _ = _notifier()
         assert not notifier.channels_configured()
-        assert not notifier.should_notify("user.create")
+        assert not notifier.should_notify("user.create", "user.create")
 
     def test_event_outside_allowlist_means_no_notify(self):
         notifier, _ = _notifier(
@@ -149,20 +174,20 @@ class TestGates:
             }
         )
         assert notifier.channels_configured()
-        assert not notifier.should_notify("user.delete")
+        assert not notifier.should_notify("user.delete", "user.delete")
 
     def test_email_channel_alone_suffices(self):
         notifier, _ = _notifier(
             {"KLANGKD_ADMIN_NOTIFICATION_EMAILS": "sa@x.com"}
         )
         assert notifier.channels_configured()
-        assert notifier.should_notify("user.create")
+        assert notifier.should_notify("user.create", "user.create")
 
     def test_webhook_channel_alone_suffices(self):
         notifier, _ = _notifier(
             {"KLANGKD_ADMIN_NOTIFICATION_WEBHOOK_URL": "https://hook.x/e"}
         )
-        assert notifier.should_notify("user.create")
+        assert notifier.should_notify("user.create", "user.create")
 
 
 class TestThrottle:
@@ -170,28 +195,48 @@ class TestThrottle:
         notifier, _ = _notifier(
             {"KLANGKD_ADMIN_NOTIFICATION_EMAILS": "sa@x.com"}
         )
-        assert notifier.throttle_allows("user.create")
-        assert notifier.throttle_allows("user.create")
+        assert notifier.throttle_allows("user.create", "user.create")
+        assert notifier.throttle_allows("user.create", "user.create")
 
     def test_persistent_condition_throttled_per_window(self):
         notifier, _ = _notifier(
             {"KLANGKD_ADMIN_NOTIFICATION_EMAILS": "sa@x.com"}
         )
-        assert notifier.throttle_allows("audit.failure")
+        assert notifier.throttle_allows("audit.failure", "audit.failure")
         # Within the window: blocked.
-        assert not notifier.throttle_allows("audit.failure")
+        assert not notifier.throttle_allows("audit.failure", "audit.failure")
         # Past the window: allowed again.
         notifier.last_notified["audit.failure"] = time.monotonic() - 301
-        assert notifier.throttle_allows("audit.failure")
+        assert notifier.throttle_allows("audit.failure", "audit.failure")
+
+    async def test_audit_failure_throttled_per_source_table(self):
+        """One bucket per table: a container_events storm must not mask
+        the first audit_events degradation alert (#3250 review)."""
+        notifier, _ = _notifier(
+            {"KLANGKD_ADMIN_NOTIFICATION_EMAILS": "sa@x.com"}
+        )
+        with patch.object(AdminNotifier, "deliver", AsyncMock()) as d:
+            notifier.notify_admins(
+                "audit.failure", detail={"table": "container_events"}
+            )
+            notifier.notify_admins(
+                "audit.failure", detail={"table": "audit_events"}
+            )
+            # Same table again — throttled.
+            notifier.notify_admins(
+                "audit.failure", detail={"table": "container_events"}
+            )
+            await asyncio.sleep(0)
+        assert d.await_count == 2
 
     def test_reconfigure_resets_throttle_clock(self):
         notifier, app = _notifier(
             {"KLANGKD_ADMIN_NOTIFICATION_EMAILS": "sa@x.com"}
         )
-        assert notifier.throttle_allows("resource.low")
-        assert not notifier.throttle_allows("resource.low")
+        assert notifier.throttle_allows("resource.low", "resource.low")
+        assert not notifier.throttle_allows("resource.low", "resource.low")
         notifier.reconfigure(app)
-        assert notifier.throttle_allows("resource.low")
+        assert notifier.throttle_allows("resource.low", "resource.low")
 
 
 class TestNotifyAdmins:
@@ -283,6 +328,23 @@ class TestEmailChannel:
         assert email.send_plain.await_count == 2
         assert "admin notification email" in caplog.text
 
+    async def test_unreadable_recipients_are_logged_not_raised(self, caplog):
+        """The settings read itself is guarded: a broken config object
+        logs and returns rather than killing the deliver task."""
+
+        class exploding_settings:
+            @property
+            def admin_notification_emails(self):
+                raise RuntimeError("settings unreadable")
+
+        app = types.SimpleNamespace(
+            state=types.SimpleNamespace(settings=exploding_settings())
+        )
+        notifier = AdminNotifier(app)
+        with caplog.at_level("WARNING"):
+            await notifier.deliver_via_email({"event": "user.create"})
+        assert "recipients unreadable" in caplog.text
+
 
 class TestWebhookChannel:
     async def test_disabled_channel_posts_nothing(self):
@@ -361,8 +423,8 @@ class TestRenderBody:
             }
         )
         assert "Event: user.delete" in body
-        assert "Actor Email: admin@x.com" in body
-        assert "Source Ip: 10.0.0.9" in body
+        assert "Actor: admin@x.com" in body
+        assert "Source IP: 10.0.0.9" in body
         assert "Detail: {'email': 'gone@x.com'}" in body
         assert "KLANGKD_ADMIN_NOTIFICATION_" in body
 
@@ -398,6 +460,25 @@ class TestNotifyEventHelper:
         notifier.notify_admins.assert_called_once_with(
             "user.unlock", detail={"email": "u@x.com"}
         )
+
+
+class TestNotifyEventHelperRaiseSafety:
+    def test_broken_notifier_never_raises(self, caplog):
+        """The helper is called from inside except blocks (the
+        audit-failure sites); its own failure must be swallowed so it
+        cannot mask the exception it annotates."""
+        notifier = Mock()
+        notifier.notify_admins.side_effect = RuntimeError("boom")
+        app = types.SimpleNamespace(
+            state=types.SimpleNamespace(notifier=notifier)
+        )
+        with caplog.at_level("WARNING"):
+            notify_event(app, "audit.failure")  # must not raise
+        assert "dispatch for audit.failure failed" in caplog.text
+
+    def test_stateless_app_never_raises(self):
+        app = types.SimpleNamespace()
+        notify_event(app, "user.create")  # no .state at all
 
 
 class TestRouteEmitSites:

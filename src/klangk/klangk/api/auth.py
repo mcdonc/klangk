@@ -36,7 +36,7 @@ from .. import (
 from ..settings import parse_bool_setting
 from ..util import API_PREFIX
 from .common import get_app_dep, workstation
-from ..notifier import notify_event as notifier_notify_event
+from ..notifier import notify_event
 from .common import (
     send_email,
 )
@@ -174,7 +174,7 @@ async def register(
         source_ip=reg_ip,
         user_agent=reg_ua,
     )
-    notifier_notify_event(
+    notify_event(
         app,
         "user.register",
         target_type="user",
@@ -572,7 +572,7 @@ async def reset_password(req: ResetPasswordRequest, request: Request):
         source_ip=source_ip,
         user_agent=user_agent,
     )
-    notifier_notify_event(
+    notify_event(
         request.app,
         "user.password.change",
         actor_id=user_id,
@@ -801,7 +801,7 @@ async def change_password(
         source_ip=source_ip,
         user_agent=user_agent,
     )
-    notifier_notify_event(
+    notify_event(
         request.app,
         "user.password.change",
         actor_id=user["id"],
@@ -933,7 +933,7 @@ async def change_email(
         source_ip=source_ip,
         user_agent=user_agent,
     )
-    notifier_notify_event(
+    notify_event(
         app,
         "user.email.change",
         actor_id=user["id"],
@@ -995,7 +995,7 @@ async def change_handle(
         source_ip=source_ip,
         user_agent=user_agent,
     )
-    notifier_notify_event(
+    notify_event(
         app,
         "user.handle.change",
         actor_id=user["id"],
@@ -1160,7 +1160,7 @@ async def accept_invite(req: AcceptInviteRequest, request: Request):
     # the same user.create name as the other creation paths (#3250);
     # the registrant is unauthenticated, so there is no actor.
     source_ip, user_agent = workstation(request)
-    notifier_notify_event(
+    notify_event(
         request.app,
         "user.create",
         target_type="user",
@@ -1424,7 +1424,7 @@ async def _find_or_create_user(app, provider_id, sub, email):
     # under the same user.create name as the other creation paths
     # (#3250). No actor: the account did not exist before this login,
     # and the IdP — not a klangk principal — vouched for the identity.
-    notifier_notify_event(
+    notify_event(
         app,
         "user.create",
         target_type="user",

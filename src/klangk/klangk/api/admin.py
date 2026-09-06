@@ -22,7 +22,7 @@ from .. import (
 )
 from ..server_schedule import resolve_fire_at
 from .common import get_app_dep, workstation
-from ..notifier import notify_event as notifier_notify_event
+from ..notifier import notify_event
 from ..model import (
     ACTION_ALLOW,
     AgentPrincipalError,
@@ -74,7 +74,7 @@ async def record_admin_event(
     # funneled through here (user CRUD, group/ACL changes) gets one
     # hook instead of per-route wiring. Fire-and-forget — never fails
     # the action (which has already succeeded).
-    notifier_notify_event(
+    notify_event(
         app,
         event,
         actor_id=admin["id"],
@@ -583,7 +583,7 @@ async def update_user(
         # STIG rules distinguish them (SV-222419 / SV-222422), and the
         # audit stream records the toggle only inside user.update
         # (#3250).
-        notifier_notify_event(
+        notify_event(
             app,
             "user.disable" if req.disabled else "user.enable",
             actor_id=admin["id"],
@@ -591,6 +591,7 @@ async def update_user(
             target_type="user",
             target_id=user_id,
             detail={"email": user["email"]},
+            source_ip=workstation(request)[0],
         )
     changed = [
         f for f in _UPDATABLE_USER_FIELDS if getattr(req, f) is not None
