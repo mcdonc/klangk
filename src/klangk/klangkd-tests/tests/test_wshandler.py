@@ -13015,3 +13015,36 @@ class TestWsDpopGate:
         ws.close.assert_awaited_once_with(
             code=4001, reason="Invalid DPoP proof"
         )
+
+    async def test_prefixed_htu_accepted_behind_trusted_prefix(self, user):
+        """#3287: a subpath deployment's browser mints the htu with the
+        base path; a trusted X-Forwarded-Prefix on the handshake lets
+        the gate strip it."""
+        from _helpers import make_dpop_proof
+
+        a, private, jwk, token, ws = self._bound_socket(user)
+        ws.headers["x-forwarded-prefix"] = "/klangk"
+        ws.client = types.SimpleNamespace(host="127.0.0.1")
+        ws.query_params["dpop"] = make_dpop_proof(
+            private, jwk, method="GET", uri="wss://h/klangk/ws", token=token
+        )
+        result = await ws_authenticate(ws, _make_app_state())
+        assert result is not None
+        ws.close.assert_not_awaited()
+
+    async def test_prefixed_htu_rejected_from_untrusted_peer(self, user):
+        """The same forwarded header from a peer outside the trust set
+        must not loosen the comparison (#3287)."""
+        from _helpers import make_dpop_proof
+
+        a, private, jwk, token, ws = self._bound_socket(user)
+        ws.headers["x-forwarded-prefix"] = "/klangk"
+        ws.client = types.SimpleNamespace(host="203.0.113.9")
+        ws.query_params["dpop"] = make_dpop_proof(
+            private, jwk, method="GET", uri="wss://h/klangk/ws", token=token
+        )
+        result = await ws_authenticate(ws, _make_app_state())
+        assert result is None
+        ws.close.assert_awaited_once_with(
+            code=4001, reason="Invalid DPoP proof"
+        )

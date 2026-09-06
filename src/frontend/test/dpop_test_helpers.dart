@@ -22,12 +22,17 @@ String boundToken({String jkt = 'jkt-1'}) {
 }
 
 /// A programmable [DpopBackend] mirroring the web backend's semantics:
-/// proofs are produced only for bound tokens.
+/// proofs are produced only for bound tokens. Records the last htu it
+/// was asked to mint, so tests can assert the backend-visible path
+/// (#3287).
 class FakeDpopBackend implements DpopBackend {
   FakeDpopBackend({this.hasKey = true, this.proof = 'proof-value'});
 
   final bool hasKey;
   final String proof;
+
+  /// The `uri` of the most recent createProof call (null before any).
+  String? lastUri;
   Map<String, dynamic>? jwk = const {
     'kty': 'EC',
     'crv': 'P-256',
@@ -46,6 +51,8 @@ class FakeDpopBackend implements DpopBackend {
     required String method,
     required String uri,
     required String accessToken,
-  }) async =>
-      hasKey && tokenIsBound(accessToken) ? proof : null;
+  }) async {
+    lastUri = uri;
+    return hasKey && tokenIsBound(accessToken) ? proof : null;
+  }
 }

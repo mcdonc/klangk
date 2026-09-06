@@ -120,6 +120,19 @@ async def _decode_socket_token(websocket: WebSocket, a, token: str):
         return None
 
 
+def ws_hosting_base_path(websocket, app) -> str:
+    """The hosting base path this connect's DPoP comparison tolerates
+    (#3287): the pinned ``KLANGKD_HOSTING_BASE_PATH``, else the trusted
+    ``X-Forwarded-Prefix`` — resolved from the handshake headers and the
+    connection peer, same resolver as the HTTP gates. Shared with the
+    consent-decider gate."""
+    client = getattr(websocket, "client", None)
+    return app.state.util.hosting_base_path_for(
+        getattr(websocket, "headers", None),
+        client.host if client else None,
+    )
+
+
 async def _dpop_gate(
     websocket: WebSocket, app, token: str, payload: dict
 ) -> bool:
@@ -129,7 +142,9 @@ async def _dpop_gate(
     the same compact proof the HTTP ``DPoP`` header carries (its jti
     is single-use and its ath binds it to this exact token, so its
     presence in the URL leaks nothing reusable). Unbound tokens
-    (CLI/TUI, pre-#3218 clients) pass untouched.
+    (CLI/TUI, pre-#3218 clients) pass untouched. A proof whose htu
+    path carries the live hosting base path verifies too — the
+    subpath-deployment form (#3287).
     """
     reason = app.state.auth.check_dpop(
         websocket.query_params.get("dpop"),
@@ -137,6 +152,7 @@ async def _dpop_gate(
         websocket.url.path,
         token,
         payload,
+        base_path=ws_hosting_base_path(websocket, app),
     )
     if reason is None:
         return True

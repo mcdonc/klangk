@@ -24,7 +24,10 @@ is replay-blocked for the freshness window, and its ``ath`` claim binds
 it to the exact access token it accompanies. The ``htu`` check compares
 the URI's *path* (query and scheme/host are ignored) so deployments
 behind the Caddy reverse proxy — where the app may see a different
-scheme or port than the browser used — do not reject honest proofs.
+scheme or port than the browser used — do not reject honest proofs; the
+live hosting base path is additionally stripped from the htu path before
+the comparison, so a subpath deployment's proofs (``htu`` carrying the
+outer proxy's prefix, the request path without it) verify too (#3287).
 """
 
 import base64
@@ -194,11 +197,55 @@ def _htu_path(htu) -> str | None:
         return None
 
 
-def _claim_reason(payload: dict, method: str, path: str, token: str):
+def strip_hosting_prefix(path: str | None, base_path: str) -> str | None:
+    """*path* with one leading *base_path* segment removed (#3287).
+
+    A subpath deployment's browser mints proof ``htu`` paths that still
+    carry the outer proxy's prefix (the client builds them from ``<base
+    href>``), while the backend compares against the prefix-stripped path
+    it sees. Stripping the live hosting base path — the same prefix
+    :meth:`klangk.util.Util.derive_hosting_info` re-attaches when building
+    external URLs — from the proof's htu path before the comparison makes
+    both forms verify. Only a whole-segment match is removed: ``/klangk``
+    never strips from ``/klangkland/api``. ``None`` passes through (a bad
+    htu must stay bad), and an empty or slash-only base path is a no-op
+    (a root deployment needs no tolerance).
+
+    The tolerance cannot turn a proof for one request into a proof for
+    another: the stripped htu must still equal the request path exactly,
+    and only the presenter of an already-bound key can mint a proof at
+    all — a forged ``X-Forwarded-Prefix`` merely widens its *own*
+    request's accepted htu spelling, never anyone else's.
+    """
+    if path is None:
+        return path
+    base = "/" + base_path.strip("/")
+    if len(base) == 1:
+        return path
+    if path == base:
+        return ""
+    if path.startswith(base + "/"):
+        return path[len(base) :]
+    return path
+
+
+def _uri_reason(payload: dict, path: str, base_path: str) -> str | None:
+    """None when the htu names *path* — bare or behind *base_path*."""
+    htu = _htu_path(payload.get("htu"))
+    if htu == path:
+        return None
+    if strip_hosting_prefix(htu, base_path) == path:
+        return None
+    return "uri mismatch"
+
+
+def _claim_reason(
+    payload: dict, method: str, path: str, token: str, base_path: str = ""
+):
     """Binding claims: the proof names this request and this token."""
     if payload.get("htm") != method:
         return "method mismatch"
-    if _htu_path(payload.get("htu")) != path:
+    if _uri_reason(payload, path, base_path) is not None:
         return "uri mismatch"
     if payload.get("ath") != access_token_hash(token):
         return "token hash mismatch"
@@ -260,11 +307,15 @@ def verify_proof(
     expected_jkt: str,
     now: float,
     replay: dict,
+    base_path: str = "",
 ) -> str | None:
     """Verify a DPoP proof; None on success, a reason string on failure.
 
     *replay* is the caller-owned JTI→expiry map (the live server keeps
     one on ``app.state.auth``); a winning proof's JTI is recorded in it.
+    *base_path* is the live hosting base path of the request (#3287): a
+    proof whose ``htu`` path carries it ahead of *path* verifies too —
+    the subpath-deployment form an outer proxy strips before forwarding.
     """
     if not isinstance(proof, str):
         return "missing proof"
@@ -274,7 +325,7 @@ def verify_proof(
     header, payload, signature = decoded
     for reason in (
         _header_reason(header, expected_jkt),
-        _claim_reason(payload, method, path, access_token),
+        _claim_reason(payload, method, path, access_token, base_path),
         _freshness_reason(payload, now, replay),
     ):
         if reason is not None:
