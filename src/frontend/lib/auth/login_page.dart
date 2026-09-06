@@ -8,6 +8,7 @@ import 'package:provider/provider.dart';
 
 import 'auth_service.dart';
 import 'pending_redirect.dart';
+import 'web_client.dart';
 import '../branding.dart';
 import '../utils/page_title.dart';
 import '../utils/validators.dart';
@@ -40,6 +41,11 @@ class _LoginPageState extends State<LoginPage> {
   List<Map<String, dynamic>> _oidcProviders = [];
   String _authModes = 'password';
 
+  /// #3230: the binding-JWK query param for OIDC login navigations
+  /// (null when this build must not mark its mints). Loaded async at
+  /// mount; the buttons render with or without it.
+  String? _oidcBindingParam;
+
   bool get _showPasswordForm => _authModes != 'oidc' && _authModes != 'none';
 
   @override
@@ -47,6 +53,13 @@ class _LoginPageState extends State<LoginPage> {
     super.initState();
     setPageTitle('Login');
     _loadConfig();
+    _loadOidcBindingParam();
+  }
+
+  Future<void> _loadOidcBindingParam() async {
+    final param = await oidcBindingParam();
+    if (!mounted || param == null) return;
+    setState(() => _oidcBindingParam = param);
   }
 
   Future<void> _loadConfig() async {
@@ -161,7 +174,13 @@ class _LoginPageState extends State<LoginPage> {
               label: Text('Log in with ${provider['display_name']}'),
               onPressed: () {
                 final id = provider['id'];
-                final url = '${baseUrl}/api/v1/auth/oidc/$id/login';
+                var url = '${baseUrl}/api/v1/auth/oidc/$id/login';
+                // #3230: ride the binding key so the callback mint is
+                // born bound — no unbound window even for OIDC.
+                if (_oidcBindingParam != null) {
+                  url =
+                      '$url?binding_jwk=${Uri.encodeQueryComponent(_oidcBindingParam!)}';
+                }
                 navigateTo(url);
               },
             ),

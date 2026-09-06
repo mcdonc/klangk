@@ -15142,7 +15142,15 @@ class TestOIDCLogin:
         sc = SimpleCookie()
         sc.load(resp.headers["set-cookie"])
         data = json_mod.loads(sc["oidc_test"].value)
-        assert set(data) == {"state", "verifier", "cli_redirect"}
+        # #3230: binding_jwk joins the cookie — the SPA's key for a
+        # born-bound callback mint (None when the navigation carried
+        # none, e.g. a CLI-initiated flow or a key-less build).
+        assert set(data) == {
+            "state",
+            "verifier",
+            "cli_redirect",
+            "binding_jwk",
+        }
 
 
 class TestOIDCCallback:

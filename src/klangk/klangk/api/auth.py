@@ -1,6 +1,7 @@
 """Authentication routes: register/verify/login/logout, password and email/handle changes, resend-verification, forgot/reset-password, refresh, accept-invite, the proxy auth_request workspace-token validator, and the OIDC login/callback flows (merged from the former oidc_auth submodule)."""
 
 import asyncio
+import base64
 import hashlib
 import json
 import logging
@@ -28,6 +29,7 @@ from sqlalchemy.exc import IntegrityError as SAIntegrityError
 
 from .. import (
     auth,
+    dpop as dpop_mod,
     model,
     oidc,
     stepup,
@@ -53,6 +55,52 @@ def web_client_mint(request: Request) -> bool:
     bind deadline. CLI/TUI requests send no marker and their sessions
     stay unbound indefinitely by design."""
     return request.headers.get(auth.WEB_CLIENT_HEADER) == "1"
+
+
+def _decode_binding_jwk(raw: str | None):
+    """The public JWK dict from a base64url compact-JSON binding-key
+    value (#3230), or None when absent/undecodable."""
+    if not isinstance(raw, str) or not raw:
+        return None
+    try:
+        jwk = json.loads(base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)))
+    except (ValueError, json.JSONDecodeError):
+        return None
+    return jwk if isinstance(jwk, dict) else None
+
+
+def _mint_binding_jkt(request: Request) -> str | None:
+    """The thumbprint of the SPA's binding JWK header, or None when the
+    header is absent; 400 when it is present but not a valid public
+    EC P-256 JWK (base64url compact JSON, same rules as ``/auth/bind``
+    body JWK)."""
+    raw = request.headers.get(auth.BINDING_JWK_HEADER)
+    if raw is None:
+        return None
+    jkt = dpop_mod.validate_public_jwk(_decode_binding_jwk(raw))
+    if jkt is None:
+        raise HTTPException(status_code=400, detail="Invalid binding key")
+    return jkt
+
+
+def web_mint_binding(request: Request) -> tuple[bool, str | None]:
+    """``(web_client, jkt)`` for a session-minting request (#3230).
+
+    An unmarked request (CLI/TUI) mints exactly as before. A marked
+    request must present a valid binding JWK — the token is then
+    **born bound** to the SPA's key (``cnf.jkt`` from mint) and carries
+    the bind deadline. There is no unbound window to read, sabotage,
+    or bind-first with a substituted key: a script that appears after
+    the mint never sees a token it could own. A marker without a
+    usable key is a 400, so a page script cannot strip the key from
+    the SPA's request and receive a merely-deadline-limited token.
+    """
+    if not web_client_mint(request):
+        return False, None
+    jkt = _mint_binding_jkt(request)
+    if jkt is None:
+        raise HTTPException(status_code=400, detail="Invalid binding key")
+    return True, jkt
 
 
 @router.get("/auth/verify-workspace-token")
@@ -118,6 +166,7 @@ async def register(
     if parse_bool_setting(request.app.state.settings.test_mode):
         # Test mode: auto-verify so E2E tests get immediate access
         source_ip, user_agent, method, referer = request_metadata(request)
+        web_client, jkt = web_mint_binding(request)
         result = await request.app.state.auth.register(
             req,
             verified=True,
@@ -125,7 +174,8 @@ async def register(
             user_agent=user_agent,
             method=method,
             referer=referer,
-            web_client=web_client_mint(request),
+            web_client=web_client,
+            jkt=jkt,
         )
         return result
 
@@ -257,6 +307,7 @@ async def verify_email(req: VerifyRequest, request: Request):
     # The auto-login must not resurrect a disabled account (#2588).
     auth.ensure_not_disabled(user)
     source_ip, user_agent, method, referer = request_metadata(request)
+    web_client, jkt = web_mint_binding(request)
     access_token = await request.app.state.auth.issue_token(
         user_id,
         user["email"],
@@ -265,7 +316,8 @@ async def verify_email(req: VerifyRequest, request: Request):
         method=method,
         referer=referer,
         via="email-verify",
-        web_client=web_client_mint(request),
+        web_client=web_client,
+        jkt=jkt,
     )
     await request.app.state.model.users.record_login(user_id)
     return {"status": "verified", "access_token": access_token}
@@ -624,6 +676,7 @@ async def reset_password(req: ResetPasswordRequest, request: Request):
         source_ip=source_ip,
     )
     # Auto-login after reset
+    web_client, jkt = web_mint_binding(request)
     token = await request.app.state.auth.issue_token(
         user_id,
         user["email"],
@@ -632,7 +685,8 @@ async def reset_password(req: ResetPasswordRequest, request: Request):
         method=method,
         referer=referer,
         via="password-reset",
-        web_client=web_client_mint(request),
+        web_client=web_client,
+        jkt=jkt,
     )
     await request.app.state.model.users.record_login(user_id)
     return {"status": "reset", "access_token": token}
@@ -648,13 +702,15 @@ async def login(
             status_code=403, detail="Password login is disabled"
         )
     source_ip, user_agent, method, referer = request_metadata(request)
+    web_client, jkt = web_mint_binding(request)
     return await request.app.state.auth.login(
         req,
         source_ip=source_ip,
         user_agent=user_agent,
         method=method,
         referer=referer,
-        web_client=web_client_mint(request),
+        web_client=web_client,
+        jkt=jkt,
     )
 
 
@@ -707,6 +763,7 @@ async def local_login(request: Request):
     # A disabled default account must not mint a session (#2588).
     auth.ensure_not_disabled(user)
     source_ip, user_agent, method, referer = request_metadata(request)
+    web_client, jkt = web_mint_binding(request)
     token = await request.app.state.auth.issue_token(
         user["id"],
         user["email"],
@@ -715,7 +772,8 @@ async def local_login(request: Request):
         method=method,
         referer=referer,
         via="local",
-        web_client=web_client_mint(request),
+        web_client=web_client,
+        jkt=jkt,
     )
     await request.app.state.model.users.record_login(user["id"])
     return LocalLoginResponse(access_token=token, email=user["email"])
@@ -960,13 +1018,15 @@ async def change_expired_password(
             status_code=403, detail="Password login is disabled"
         )
     source_ip, user_agent, method, referer = request_metadata(request)
+    web_client, jkt = web_mint_binding(request)
     return await request.app.state.auth.change_expired_password(
         req,
         source_ip=source_ip,
         user_agent=user_agent,
         method=method,
         referer=referer,
-        web_client=web_client_mint(request),
+        web_client=web_client,
+        jkt=jkt,
     )
 
 
@@ -1245,6 +1305,7 @@ async def accept_invite(req: AcceptInviteRequest, request: Request):
         detail={"email": email, "via": "invite"},
         source_ip=source_ip,
     )
+    web_client, jkt = web_mint_binding(request)
     access_token = await request.app.state.auth.issue_token(
         user["id"],
         user["email"],
@@ -1253,7 +1314,8 @@ async def accept_invite(req: AcceptInviteRequest, request: Request):
         method=method,
         referer=referer,
         via="invite",
-        web_client=web_client_mint(request),
+        web_client=web_client,
+        jkt=jkt,
     )
     await request.app.state.model.users.record_login(user["id"])
     return {"status": "accepted", "access_token": access_token}
@@ -1301,11 +1363,31 @@ def _valid_cli_redirect(url: str | None) -> bool:
 # --- OIDC endpoints ---
 
 
+def _validate_login_params(cli_redirect: str | None, binding_jwk) -> None:
+    """400 on an impermissible login-navigation parameter (#936/#3230).
+
+    Both values ride the (unsigned) state cookie and are re-validated
+    at callback time; this fails fast so a malformed link surfaces at
+    the navigation, not after the IdP round trip.
+    """
+    if cli_redirect and not _valid_cli_redirect(cli_redirect):
+        raise HTTPException(
+            status_code=400, detail="cli_redirect must be localhost"
+        )
+    if (
+        binding_jwk
+        and dpop_mod.validate_public_jwk(_decode_binding_jwk(binding_jwk))
+        is None
+    ):
+        raise HTTPException(status_code=400, detail="Invalid binding key")
+
+
 @router.get("/auth/oidc/{provider_id}/login")
 async def oidc_login(
     provider_id: str,
     request: Request,
     cli_redirect: str | None = None,
+    binding_jwk: str | None = None,
 ):
     """Redirect to the OIDC IdP for authentication."""
     oidc_inst = request.app.state.oidc
@@ -1316,12 +1398,7 @@ async def oidc_login(
     if provider is None:
         raise HTTPException(status_code=404, detail="Unknown OIDC provider")
 
-    # Validate cli_redirect is localhost only (re-checked at callback,
-    # since the state cookie storing it is unsigned — see #936).
-    if cli_redirect and not _valid_cli_redirect(cli_redirect):
-        raise HTTPException(
-            status_code=400, detail="cli_redirect must be localhost"
-        )
+    _validate_login_params(cli_redirect, binding_jwk)
 
     verifier, challenge = oidc.generate_pkce()
     state = secrets.token_urlsafe(32)
@@ -1342,6 +1419,7 @@ async def oidc_login(
             "state": state,
             "verifier": verifier,
             "cli_redirect": cli_redirect,
+            "binding_jwk": binding_jwk,
         }
     )
     response.set_cookie(
@@ -1646,9 +1724,12 @@ async def oidc_callback(
         await request.app.state.oidc.sync_oidc_groups(user["id"], hook_groups)
 
     source_ip, user_agent, method, referer = request_metadata(request)
-    source_ip, user_agent = workstation(request)
     # #3230: the web flow (no cli_redirect) mints a bind-deadline
-    # token; the CLI's localhost-redirect flow mints an unmarked one.
+    # token, born bound to the SPA's key when the login navigation
+    # carried one; the CLI's localhost-redirect flow mints an
+    # unmarked one.
+    cli_flow = _valid_cli_redirect(cookie_data.get("cli_redirect"))
+    binding_jwk = None if cli_flow else cookie_data.get("binding_jwk")
     access_token = await request.app.state.auth.issue_token(
         user["id"],
         email,
@@ -1657,7 +1738,8 @@ async def oidc_callback(
         method=method,
         referer=referer,
         via="oidc",
-        web_client=not _valid_cli_redirect(cookie_data.get("cli_redirect")),
+        web_client=not cli_flow,
+        jkt=dpop_mod.validate_public_jwk(_decode_binding_jwk(binding_jwk)),
     )
     await request.app.state.model.users.record_login(user["id"])
     return _build_redirect_response(

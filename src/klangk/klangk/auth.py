@@ -150,6 +150,15 @@ security = HTTPBearer(auto_error=False)
 #: sender's own session's requirements.
 WEB_CLIENT_HEADER = "klangk-web-client"
 
+#: The request header carrying the SPA's public DPoP binding JWK on a
+#: minting request (#3230): base64url of the compact JSON ``{kty, crv,
+#: x, y}``. A marked mint carries this so the token is **born bound**
+#: (``cnf.jkt`` from the first byte) — there is no unbound window for a
+#: page script to read, sabotage, or bind-first with its own key. The
+#: header value is validated server-side exactly like ``POST
+#: /auth/bind``'s body JWK.
+BINDING_JWK_HEADER = "klangk-binding-jwk"
+
 #: The JWT claim carrying a web-minted session's DPoP bind deadline as
 #: a Unix-epoch float (#3230) — mint time plus
 #: ``KLANGKD_WEB_BIND_GRACE_SECONDS``. Carried unchanged across refresh
@@ -1193,6 +1202,7 @@ class Auth:
         referer: str | None = None,
         via: str = "password",
         web_client: bool = False,
+        jkt: str | None = None,
     ) -> str:
         """Mint an access token AND register it as a session (#2585).
 
@@ -1222,6 +1232,7 @@ class Auth:
         token = await self.create_capped_token(
             user_id,
             email,
+            jkt=jkt,
             web_deadline=self._web_deadline(web_client),
         )
         payload = self.decode_token(token)
@@ -1708,6 +1719,7 @@ class Auth:
         method: str | None = None,
         referer: str | None = None,
         web_client: bool = False,
+        jkt: str | None = None,
     ) -> TokenResponse:
         """Replace an expired password and mint the session (#3177).
 
@@ -1754,6 +1766,7 @@ class Auth:
             referer=referer,
             via="expired-password",
             web_client=web_client,
+            jkt=jkt,
         )
         await self.app.state.model.users.record_login(user["id"])
         return TokenResponse(access_token=token)
@@ -1768,6 +1781,7 @@ class Auth:
         method: str | None = None,
         referer: str | None = None,
         web_client: bool = False,
+        jkt: str | None = None,
     ) -> RegisterResult:
         if not self.registration_enabled():
             raise HTTPException(
@@ -1818,6 +1832,7 @@ class Auth:
                 referer=referer,
                 via="register",
                 web_client=web_client,
+                jkt=jkt,
             )
             await self.app.state.model.users.record_login(user["id"])
         return RegisterResult(
@@ -1866,6 +1881,7 @@ class Auth:
         method: str | None = None,
         referer: str | None = None,
         web_client: bool = False,
+        jkt: str | None = None,
     ) -> TokenResponse:
         # Resolve the user by email or handle (#616).
         user = await self.app.state.model.users.get_user_by_identifier(
@@ -1922,6 +1938,7 @@ class Auth:
             referer=referer,
             via="password",
             web_client=web_client,
+            jkt=jkt,
         )
         # Stamp after minting, matching every other session-issuing site
         # (#2583): if minting fails, no login is recorded.
@@ -2249,6 +2266,28 @@ class Auth:
         """The DPoP thumbprint a token is bound to, or None (#3218)."""
         jkt = (payload.get("cnf") or {}).get("jkt")
         return jkt if isinstance(jkt, str) else None
+
+    def ws_expiry(self, payload: dict) -> float | None:
+        """When a WebSocket connection authenticated by *payload* must
+        close: the token's ``exp``, or — for a still-unbound web-minted
+        session — the sooner of the two (#3230).
+
+        The deadline is otherwise enforced only at connect; a socket
+        opened inside the grace window would otherwise coast to the
+        token's natural expiry. Arming the connection's existing
+        expiry timer at the deadline closes it in-band.
+        """
+        exp = payload.get("exp")
+        deadline = payload.get(BIND_DEADLINE_CLAIM)
+        bound = self.token_binding(payload) is not None
+        if (
+            not bound
+            and isinstance(deadline, (int, float))
+            and isinstance(exp, (int, float))
+            and deadline < exp
+        ):
+            return deadline
+        return exp
 
     def _web_deadline(self, web_client: bool) -> float | None:
         """The #3230 bind deadline for a web-minted session; None for

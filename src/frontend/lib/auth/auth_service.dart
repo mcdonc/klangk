@@ -456,6 +456,9 @@ class AuthService extends ChangeNotifier {
     // working — on web builds only until the server's #3230 bind
     // deadline; the retry timer below re-attempts inside the window.
     final bound = await _tryBind(token);
+    // The bind await can straddle a logout: never write a token the
+    // session has moved past (#3230 review — same guard as _retryBind).
+    if (_token != token) return;
     if (bound != null && bound != token) {
       _stopBindRetry();
       _token = bound;
@@ -481,22 +484,29 @@ class AuthService extends ChangeNotifier {
   /// unbound (see [_bindRetryTimer]). A successful retry persists the
   /// bound replacement; a still-unbound session re-arms the timer —
   /// the server enforces the deadline regardless, so the loop ends
-  /// either bound or logged out.
+  /// either bound or logged out. A session that cannot ever bind
+  /// (no key — insecure-context build) stops retrying instead of
+  /// spinning on a no-op.
   Future<void> _retryBind() async {
     if (_token == null || tokenBound) return;
-    final bound = await _tryBind(_token!);
-    if (bound != null && bound != _token) {
+    final token = _token!;
+    final bound = await _tryBind(token);
+    // The await can straddle a logout or a newer mint: never resurrect
+    // a token the session has moved past (or dropped).
+    if (_token != token) return;
+    if (bound != null && bound != token) {
       _bindRetryTimer?.cancel();
       _token = bound;
       await writeToken(bound);
       return;
     }
+    if (await dpopBackend.publicJwk() == null) return;
     _scheduleBindRetry();
   }
 
   void _scheduleBindRetry() {
     _bindRetryTimer?.cancel();
-    if (!isWebClient) return;
+    if (!isWebClient || _token == null) return;
     _bindRetryTimer = Timer(bindRetryInterval, _retryBind);
   }
 

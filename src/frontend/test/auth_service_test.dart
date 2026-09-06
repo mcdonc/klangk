@@ -2008,6 +2008,31 @@ void main() {
       service.dispose();
     });
 
+    test('login ships the binding JWK so the mint is born bound (#3230)',
+        () async {
+      testWebClient = true;
+      final requests = <http.Request>[];
+      testAuthHttpClientOverride = _bindableClient(
+        requests,
+        bindResponse: _bindOk,
+      );
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+      await service.login('user', 'pass');
+      final login = requests.firstWhere(
+        (r) => r.url.path == '/api/v1/auth/login',
+      );
+      final raw = login.headers['klangk-binding-jwk'];
+      expect(raw, isNotNull);
+      // Base64url compact JSON of the public EC JWK.
+      final padded = raw!.padRight(raw.length + (4 - raw.length % 4) % 4, '=');
+      final jwk = jsonDecode(utf8.decode(base64Url.decode(padded)));
+      expect(jwk['kty'], 'EC');
+      expect(jwk['crv'], 'P-256');
+      expect(jwk.containsKey('d'), isFalse);
+      service.dispose();
+    });
+
     test('login sends no marker off-web (CLI-equivalent posture)', () async {
       final requests = <http.Request>[];
       testAuthHttpClientOverride = _bindableClient(

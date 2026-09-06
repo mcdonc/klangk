@@ -391,36 +391,41 @@ for legal notices or terms-of-service acknowledgements. See
 ## DPoP session-token binding (XSS theft protection)
 
 Web sessions bind their JWT to a key the browser refuses to export
-(#3218). After any login, the web client registers the public half of a
-WebCrypto ECDSA P-256 keypair (`POST /api/v1/auth/bind`) and receives a
-replacement token carrying the key's RFC 7638 thumbprint in `cnf.jkt`.
-The private half is held as a non-extractable `CryptoKey` in IndexedDB,
-so no script — injected or first-party — can read it. Every
-authenticated request (a `DPoP` header) and every WebSocket connect
-(a one-shot `dpop` query parameter) must then present a fresh proof
-signed by that key: a stolen bound token is useless without it, and a
-script running in a live tab can act as the user but cannot steal a
-credential that outlives the reload.
+(#3218). The web client generates a WebCrypto ECDSA P-256 keypair
+whose private half is held non-extractable in IndexedDB, and every
+session mint is **born bound**: the SPA's minting requests (login,
+register, verify, reset, invite, local) carry the public half
+(base64url JWK in the `Klangk-Binding-Jwk` header), so the token
+carries the key's RFC 7638 thumbprint in `cnf.jkt` from the first
+byte. OIDC logins ride the key on the login URL into the state
+cookie (a top-level navigation cannot carry headers), and the
+callback mint is born bound the same way. Every authenticated
+request (a `DPoP` header) and every WebSocket connect (a one-shot
+`dpop` query parameter) must present a fresh proof signed by that
+key: a stolen bound token is useless without it, and the key cannot
+be read by any script — an XSS can act as the user while the tab is
+live, but cannot steal a credential that outlives the reload. With
+born-bound mints there is no unbound window at all — nothing to
+read, sabotage, or bind-first with a substituted key (#3230).
 
-What this deliberately is **not**: a guarantee that no unbound token
-ever exists during the bind grace window. Binding is still best-effort
-at the browser for those first moments — between mint and bind, and on
-any session whose bind has not completed yet, the token stays usable
-and JS-readable exactly as before #3218. But the window is no longer
-attacker-extendable (#3230): sessions minted for the web client carry
-a bind deadline (mint time plus `KLANGKD_WEB_BIND_GRACE_SECONDS`,
-default 300 seconds), and a web session that is still unbound past the
-deadline is refused everywhere — every API request, token refresh,
-bind call, and WebSocket connect answers 401 until the user logs in
-again. The re-login re-enters the bind flow under attacker-free
-conditions, or surfaces the sabotage: a script reading the unbound
-JWT while making every bind call fail now holds a credential that
-dies within minutes. The deadline is a signed claim inside the token
-and survives refresh and bind swaps unchanged, so no rotation can
-reset it. CLI and TUI clients are always unmarked and unaffected —
-their tokens keep working indefinitely. A transient bind failure on
-the web is retried every 30 seconds inside the window; a failure that
-outlives the window costs a re-login, not the session's secrecy.
+The **bind deadline** is the backstop for the paths that can still
+mint unbound: an OIDC login whose navigation lost the binding key
+(a key-less build, or a script stripping the param), or a mint
+request whose key header was stripped (a bare marker is rejected
+with 400, so stripping yields a failed login, not a weaker token).
+Such a token carries a `wbd` claim — mint time plus
+`KLANGKD_WEB_BIND_GRACE_SECONDS`, default 300 seconds — and a
+session still unbound past the deadline is refused everywhere:
+every API request, token refresh, bind call, and WebSocket connect
+answers 401 (established sockets close at the deadline, not at the
+token's natural expiry) until the user logs in again. The deadline
+is a signed claim and survives refresh and bind swaps unchanged, so
+no rotation can reset it. The re-login re-enters the bind flow under
+attacker-free conditions, or surfaces the sabotage. A transient
+bind failure on the web is retried every 30 seconds inside the
+window; a failure that outlives the window costs a re-login, not
+the session's secrecy. CLI and TUI clients are always unmarked and
+unaffected — their tokens keep working indefinitely.
 
 Operational notes:
 
