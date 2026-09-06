@@ -4,8 +4,10 @@ SV-222447 (rule 60) asks the audit record to carry the request's
 HTTP method and ``Referer`` alongside the client IP and user agent
 already recorded (#3205). Two nullable TEXT columns: rows written
 before this migration read NULL for both — the same posture as
-untagged HMAC rows — and rows minted off the HTTP path (WebSocket-side
-revocations) record NULL because no HTTP request backs them.
+untagged HMAC rows — and so do rows with no HTTP request behind them
+(WebSocket-path revocations, background sweeps) and the
+workstation-binding violation row, which records only the presenting
+workstation pair (#3194).
 
 The HMAC tag's column set (``_AE_HMAC_COLUMNS``) deliberately does not
 grow with them: the offsite-verification contract published in

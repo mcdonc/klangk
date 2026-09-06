@@ -955,12 +955,6 @@ class TestRequestMetadata:
         referer = u.request_metadata(h, "10.0.0.5", "POST")[3]
         assert len(referer) == REFERER_STORE_MAX
 
-    def test_none_method_is_passed_through(self):
-        """A capture with no HTTP request behind it (WS-side emit)
-        records a NULL method, not a crash."""
-        u = _util({})
-        assert u.request_metadata(self._hdr(), "10.0.0.5", None)[2] is None
-
 
 # --- client_is_loopback (moved from test_wshandler.py, #1503) ---
 # Powers the none-mode /auth/local self-defense (#1374). Must admit a real

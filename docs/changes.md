@@ -737,9 +737,11 @@ sync` report a clear permission-denied error.
   request's method and `Referer` header alongside the existing client
   IP and user agent (SV-222447), and `GET /api/v1/events/audit` serves
   both fields. Rows written before this change read null for the new
-  fields, as do rows minted off the HTTP path (WebSocket-side
-  revocations). Stored Referer values are truncated at 2 KB. The HMAC
-  tag column set is unchanged, so offsite verification recipes keep
+  fields, as do rows with no HTTP request behind them (WebSocket-path
+  revocations, background sweeps) and the workstation-binding
+  violation row, which records only the presenting workstation pair.
+  Stored Referer values are truncated at 2048 characters. The HMAC tag
+  column set is unchanged, so offsite verification recipes keep
   working (see
   [Audit Record Integrity](/reference/audit-integrity)).
 

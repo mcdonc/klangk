@@ -862,6 +862,8 @@ async def change_password(
         detail={"reason": "password-change"},
         source_ip=source_ip,
         user_agent=user_agent,
+        method=method,
+        referer=referer,
     )
     return {"status": "updated"}
 

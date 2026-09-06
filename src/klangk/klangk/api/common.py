@@ -103,8 +103,9 @@ def request_metadata(
     :data:`klangk.util.REFERER_STORE_MAX` characters. Values may be
     ``None`` (unknown) except the method, which every HTTP request
     carries; rows written before #3255 read as NULL for both new
-    fields, and rows minted off the HTTP path (WebSocket-side
-    revocations) record NULL method/referer.
+    fields, as do rows with no HTTP request behind them (WS-path
+    revocations, background sweeps) and the workstation-binding
+    violation row (judged on the workstation pair alone).
     """
     return request.app.state.util.request_metadata(
         request.headers,

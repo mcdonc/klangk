@@ -542,10 +542,12 @@ activity. Since #3255 (SV-222447) every HTTP-minted row also records
 the request's HTTP `method` (`GET`/`POST`/…) and `referer` header —
 the method distinguishes a read from a state change on the same
 endpoint, and the Referer shows which surface issued the request
-(null for rows written before the field existed or minted off the
-HTTP path, e.g. WebSocket-side revocations; stored Referer values
-are truncated at 2 KB). The HMAC integrity tag (#3174) is never sent
-on the wire.
+(null for rows written before the field existed, for rows with no
+HTTP request behind them — WebSocket-path revocations, background
+sweeps — and for the workstation-binding violation row, which
+records only the presenting workstation pair; stored Referer values
+are truncated at 2048 characters). The HMAC integrity tag (#3174) is
+never sent on the wire.
 
 **Auth:** JWT required. User must have the `manage-events` permission on `/events`
 (the same grant as the container history — the `/events` resource governs

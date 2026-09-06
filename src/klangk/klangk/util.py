@@ -652,13 +652,13 @@ class Util:
         stored Referer is capped at :data:`REFERER_STORE_MAX`
         characters — the header is attacker-controllable and unbounded,
         so a value past the cap is truncated, not stored whole. A
-        missing Referer stays ``None``.
+        missing or empty Referer stays ``None``.
         """
         ip, agent = self.workstation(headers, client_host)
         referer = headers.get("referer") if headers is not None else None
         if referer:
             referer = referer[:REFERER_STORE_MAX]
-        return ip, agent, method or None, referer or None
+        return ip, agent, method, referer or None
 
     def _forwarded_headers_trusted(
         self, headers, client_host: str | None
