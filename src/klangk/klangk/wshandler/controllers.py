@@ -1190,7 +1190,10 @@ class TerminalController:
         # affects this client, not other connections to the same workspace.
         session_name = self._grouped_session_name()
         # Prefer @N window_id (stable); fall back to index for compat.
-        target: int | str = self._window_target(msg)
+        target: int | str | None = self._window_target(msg)
+        if target is None:
+            send_error(self._conn.sock, "window_id or index required")
+            return
         try:
             await self._conn.app.state.terminal.select_window(
                 self._conn.container_id,
@@ -1212,7 +1215,10 @@ class TerminalController:
 
         session_name = self.tmux_session_name()
         # Prefer @N window_id (stable); fall back to index for compat (#1965).
-        target: int | str = self._window_target(msg)
+        target: int | str | None = self._window_target(msg)
+        if target is None:
+            send_error(self._conn.sock, "window_id or index required")
+            return
         try:
             terminal = self._conn.app.state.terminal
             windows = await terminal.list_windows(
@@ -1241,7 +1247,12 @@ class TerminalController:
             return
 
         session_name = self.tmux_session_name()
-        index = msg.get("index", 0)
+        # Prefer @N window_id (stable); fall back to index for
+        # compat — the same resolution close_window uses (#3288).
+        target: int | str | None = self._window_target(msg)
+        if target is None:
+            send_error(self._conn.sock, "window_id or index required")
+            return
         name = msg.get("name", "")
         if not name:
             send_error(self._conn.sock, "Name required")
@@ -1250,7 +1261,7 @@ class TerminalController:
             await self._conn.app.state.terminal.rename_window(
                 self._conn.container_id,
                 session_name,
-                index,
+                target,
                 name,
             )
             windows = await self._conn.app.state.terminal.list_windows(
@@ -1387,9 +1398,16 @@ class TerminalController:
         return self.tmux_session_name()
 
     @staticmethod
-    def _window_target(msg: dict) -> int | str:
-        """Prefer @N window_id (stable); fall back to index for compat."""
-        return msg.get("window_id") or msg.get("index", 0)
+    def _window_target(msg: dict) -> int | str | None:
+        """Prefer @N window_id (stable); fall back to index for compat.
+
+        None when the frame carries neither field — callers refuse
+        rather than act on a defaulted window 0 (#3288).
+        """
+        window_id = msg.get("window_id")
+        if window_id:
+            return window_id
+        return msg.get("index")
 
     async def forward_output(self, session: TerminalSession) -> None:
         """Forward terminal output to the frontend via WebSocket."""

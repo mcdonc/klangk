@@ -908,10 +908,10 @@ class KlangkClient:
         )
 
     async def rename_terminal(
-        self, name: str, index: int, new_name: str
+        self, name: str, window_id: str, new_name: str
     ) -> list[dict]:
-        """Rename terminal window at *index* in workspace *name*; return list."""
-        return await self.terminals(name, rename=(index, new_name))
+        """Rename terminal window *window_id* in workspace *name*; return list."""
+        return await self.terminals(name, rename=(window_id, new_name))
 
     async def _maybe_close_window(
         self, conn, windows: list[dict], close_window_id
@@ -947,12 +947,12 @@ class KlangkClient:
     ) -> list[dict]:
         """Rename the requested window; the refreshed window list."""
         if rename is not None and windows:
-            idx, new_name = rename
+            window_id, new_name = rename
             await conn.send(
                 json.dumps(
                     {
                         "cmd": "terminal_rename_window",
-                        "index": idx,
+                        "window_id": window_id,
                         "name": new_name,
                     }
                 )
@@ -967,7 +967,7 @@ class KlangkClient:
         close_window_id: str | None = None,
         create_window: bool = False,
         window_name: str | None = None,
-        rename: tuple[int, str] | None = None,
+        rename: tuple[str, str] | None = None,
     ) -> list[dict]:
         try:
             ws = self.resolve_workspace(name)

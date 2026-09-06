@@ -139,12 +139,12 @@ class TerminalTabsView extends StatelessWidget {
                             ),
                             onClose: windows.length > 1
                                 ? () => wsClient.sendTerminalCloseWindow(
-                                      w['index'] as int,
+                                      w['id'] as String? ?? '',
                                     )
                                 : null,
                             onRename: (newName) =>
                                 wsClient.sendTerminalRenameWindow(
-                              w['index'] as int,
+                              w['id'] as String? ?? '',
                               newName,
                             ),
                             onToggleShare: _toggleShareHandler(w),

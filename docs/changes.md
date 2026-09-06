@@ -2520,6 +2520,15 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   Playwright suite that runs the browser flow behind a
   prefix-stripping proxy at `/klangk/`.
 
+- **Terminal close/rename target by window id (#3288).** The web UI
+  and the CLI now send the stable tmux window id (`window_id`) when
+  closing or renaming a terminal tab, and the server's rename handler
+  accepts `window_id` the same way close already did. A stale list can
+  no longer close or rename the wrong window when another member's
+  action shifts window indexes between sync and click. Index-only
+  frames keep working (compat with older clients), and a frame with
+  neither field is refused instead of acting on window 0.
+
 - **File viewer and WebSocket error messages (#3227).** A transport
   failure while listing a workspace directory or opening a file, and
   socket/parse errors on the workspace WebSocket, no longer show the

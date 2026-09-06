@@ -954,10 +954,13 @@ class Terminal:
         self,
         container_id: str,
         session_name: str,
-        index: int,
+        target: int | str,
         name: str,
     ) -> None:
         """Rename a tmux window.
+
+        *target* can be a window index (int), window name (str), or
+        window id (``@N`` string — preferred, globally unique).
 
         Raises ``ValueError`` if *name* contains unsafe characters.
         Window names are display-only, so duplicate names are permitted —
@@ -971,7 +974,7 @@ class Terminal:
             [
                 "rename-window",
                 "-t",
-                _window_target(session_name, index),
+                _window_target(session_name, target),
                 name,
             ],
         )

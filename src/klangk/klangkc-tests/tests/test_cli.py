@@ -2258,16 +2258,16 @@ class TestKlangkClient:
             "klangk.cli.transport.websockets.connect",
             return_value=mock_ws,
         ):
-            windows = asyncio.run(client.rename_terminal("alpha", 1, "ci"))
+            windows = asyncio.run(client.rename_terminal("alpha", "@1", "ci"))
         assert len(windows) == 2
         assert windows[1]["name"] == "ci"
-        # Verify terminal_rename_window was sent with index + name
+        # Verify terminal_rename_window was sent with the stable id + name
         sent = [json.loads(c.args[0]) for c in mock_ws.send.call_args_list]
         rename_cmds = [
             s for s in sent if s.get("cmd") == "terminal_rename_window"
         ]
         assert len(rename_cmds) == 1
-        assert rename_cmds[0]["index"] == 1
+        assert rename_cmds[0]["window_id"] == "@1"
         assert rename_cmds[0]["name"] == "ci"
 
     def test_list_workspaces_parses_response(self):

@@ -1115,6 +1115,21 @@ class TestRenameWindow:
             ["rename-window", "-t", "sess:0", "build"],
         )
 
+    async def test_renames_window_by_id(self):
+        # A @N window id stays session-qualified (grouped-session safety,
+        # #1883) — the same resolution select_window uses (#3288).
+        with patch.object(
+            _terminal,
+            "tmux_command",
+            return_value="",
+        ) as mock_cmd:
+            await _terminal.rename_window("cid", "sess", "@3", "build")
+        mock_cmd.assert_called_once_with(
+            "cid",
+            "sess",
+            ["rename-window", "-t", "sess:@3", "build"],
+        )
+
     async def test_rejects_shell_injection(self):
         with pytest.raises(ValueError, match="only contain"):
             await _terminal.rename_window("cid", "sess", 0, "';rm -rf /;'")
