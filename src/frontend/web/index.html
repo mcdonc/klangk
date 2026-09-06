@@ -27,6 +27,16 @@
             if (window.trustedTypes && trustedTypes.createPolicy) {
               trustedTypes.createPolicy(name, {
                 createScriptURL: function (s) {
+                  if (s !== s.trim() || /[\t\r\n]/.test(s)) {
+                    // The URL parser strips leading/trailing C0-space and
+                    // ALL interior tabs/newlines — a smuggled absolute
+                    // URL could hide there (" \t//evil.com/x.js"). This
+                    // origin never produces such strings.
+                    throw new TypeError(
+                      "klangk default Trusted Types policy: refused script URL " +
+                        s,
+                    );
+                  }
                   if (s.indexOf("\\") !== -1 || s.indexOf("//") === 0) {
                     // Protocol-relative URLs are scheme-less yet
                     // cross-origin, and backslashes confuse URL parsing —

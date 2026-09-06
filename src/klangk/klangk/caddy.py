@@ -328,7 +328,8 @@ def csp_policy(frontend_dir: str | Path) -> str:
     viewer itself runs from a plain same-origin file (the build-generated
     ``worker-tt.js``, no blob), but Flutter's loader builds skwasm workers
     from in-page Blobs, and the wasm build is due back (it is temporarily
-    switched to dart2js), so ``blob:`` keeps that path legal. ``require-trusted-types-for 'script'`` (#3219) closes the
+    switched to dart2js), so ``blob:`` keeps that path legal.
+    ``require-trusted-types-for 'script'`` (#3219) closes the
     DOM-based XSS sinks (``innerHTML`` & co., string ``script.src``, string
     ``eval``): they only accept TrustedTypes values routed through a
     policy. Two sanctioned policies cover the shipped frontend — the

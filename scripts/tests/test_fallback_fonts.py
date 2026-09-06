@@ -69,14 +69,17 @@ def test_manifest_matches_engine_set():
 
     Needs a Flutter SDK carrying engine sources (the devenv/nix layout at
     ``<sdk>/engine/src/flutter/lib/web_ui``); the stock CI runners of
-    ``scripts/tests`` have no Flutter, so those skip loudly — the drift
-    this catches is introduced by toolchain bumps, which are cut from a
-    devenv shell where the test runs.
+    ``scripts/tests`` have no Flutter, so those skip loudly. The drift
+    this catches is introduced by Flutter/toolchain bumps — which are
+    cut from a devenv shell where this test runs — so the operational
+    rule is: after a toolchain bump, run ``scripts/tests`` in devenv (or
+    dispatch the scripts-tests job on the self-hosted ``nix`` runner)
+    before merging.
     """
     vendor, hashes = _manifest_hashes()
     try:
         urls = set(vendor.engine_font_urls(vendor.flutter_sdk("flutter")))
-    except SystemExit as exc:
+    except (SystemExit, OSError) as exc:
         pytest.skip(f"no Flutter SDK with engine sources on PATH ({exc})")
     assert urls == set(hashes), (
         f"engine set drifted from the vendored manifest: "

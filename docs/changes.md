@@ -698,7 +698,8 @@ sync` report a clear permission-denied error.
 
 - **Self-contained frontend fallback fonts (#3228).** The web UI
   bundles the Flutter engine's complete fallback-font set (the Noto
-  script/emoji families plus Roboto, ~22 MB of woff2 parts) under
+  script/emoji families, plus Roboto for the engine's boot-time default
+  path, ~22 MB of woff2 parts) under
   `assets/fallback-fonts/` and points the engine's
   `fontFallbackBaseUrl` at that same-origin mirror from
   `web/flutter_bootstrap.js`. Codepoints the bundled UI fonts lack

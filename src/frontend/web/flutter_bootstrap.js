@@ -2,8 +2,8 @@
 {{flutter_js}}
 
 // First-party fallback fonts (#3228). The web engine's font fallback
-// service lazily fetches Noto script/emoji fallback fonts (and the
-// boot-time Roboto) from configuration.fontFallbackBaseUrl — by default
+// service lazily fetches Noto script/emoji fallback fonts (and, when the
+// app's FontManifest carries no Roboto family, a boot-time Roboto) from configuration.fontFallbackBaseUrl — by default
 // https://fonts.gstatic.com/s/, which the served CSP blocks. Point it at
 // the vendored same-origin mirror instead (the exact gstatic URL layout,
 // produced by scripts/vendor_flutter_fallback_fonts.py), so missing-glyph

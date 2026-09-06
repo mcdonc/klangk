@@ -104,8 +104,13 @@ async function initResourceBuffer(page: Page) {
 }
 
 // True when a vendored fallback-font part was served from this origin —
-// proves the engine's fallback chain resolved locally (it always fetches
-// Roboto at boot, so this is deterministic even before any CJK renders).
+// proves the engine's fallback chain resolved locally. There is no
+// deterministic boot-time trigger: the flutter tool bundles a Roboto
+// family in FontManifest (uses-material-design), so the engine skips its
+// boot-time Roboto download entirely — the ONLY trigger is missing-glyph
+// text actually rendering (the CJK terminal step below). Keep this
+// assertion downstream of that step; hoisting it above the terminal phase
+// turns it into a guaranteed timeout.
 async function fetchedFallbackFont(page: Page): Promise<boolean> {
   return page.evaluate(() =>
     performance
@@ -176,8 +181,9 @@ test.describe("CSP / Trusted Types (#3219)", () => {
       // file makes the engine's font fallback chain fire for codepoints
       // the bundled fonts lack (#3228): with the vendored set they resolve
       // same-origin, and a regression back to fonts.gstatic.com is a hard
-      // CSP-violation failure above. (Seeding the text and cat-ing it
-      // avoids keyboard-event quirks with non-ASCII input.)
+      // CSP-violation failure above. The seeded-file `cat` is the real
+      // guarantee (keyboard delivery of non-ASCII is unreliable); the
+      // echoed literal is just extra pressure in the same render.
       await seedFile(
         request,
         workspaceId,
@@ -226,16 +232,13 @@ test.describe("CSP / Trusted Types (#3219)", () => {
         `/#/workspace/${workspaceId}?file=${encodeURIComponent("/home/klangk/doc.pdf")}`,
         { waitUntil: "load" },
       );
-      await page.waitForTimeout(4000);
 
       // The two TT sinks the review found: the pdfium_client.js asset
       // must have loaded (plain-string script.src) and the wasm Worker
-      // must have been constructed (blob: URL) — both fail under a
-      // Trusted Types regression. The deep-link goto reloads the document
-      // (playwright goto is a real navigation even for a hash URL), so
-      // poll instead of sleeping a fixed budget: the unminified bundle's
-      // boot + viewer mount routinely exceeds any fixed wait on a loaded
-      // runner.
+      // must have been constructed — both fail under a Trusted Types
+      // regression. Poll instead of sleeping a fixed budget: the
+      // unminified bundle's boot + viewer mount routinely exceeds any
+      // fixed wait on a loaded runner.
       await expect
         .poll(() => page.evaluate(() => (window as any).__workerCount ?? 0), {
           timeout: 60_000,

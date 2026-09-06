@@ -123,8 +123,11 @@ def store_part(url: str, data: bytes, hashes: dict[str, str]) -> None:
     """Write one part to its final path atomically and record its hash."""
     dest = TARGET_DIR / url
     dest.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(dir=dest.parent, delete=False) as tmp:
+    tmp = tempfile.NamedTemporaryFile(dir=dest.parent, delete=False)
+    try:
         tmp.write(data)
+    finally:
+        tmp.close()
     Path(tmp.name).replace(dest)
     hashes[url] = hashlib.sha256(data).hexdigest()
 
@@ -177,7 +180,7 @@ def expected_problems(urls: list[str], hashes: dict[str, str]) -> list[str]:
 
 
 def extra_woff2_files(urls: list[str]) -> set[str]:
-    """Vendored woff2 files absent from the engine set."""
+    """Vendored woff2 files absent from the reference URL set."""
     on_disk = {
         str(p.relative_to(TARGET_DIR))
         for p in TARGET_DIR.rglob("*")
@@ -190,7 +193,7 @@ def check_tree(urls: list[str], hashes: dict[str, str]) -> list[str]:
     """Verify the vendored tree against the URL set and the manifest."""
     problems = expected_problems(urls, hashes)
     problems.extend(
-        f"not in engine set: {url}" for url in sorted(extra_woff2_files(urls))
+        f"not in reference set: {url}" for url in sorted(extra_woff2_files(urls))
     )
     return problems
 
