@@ -1009,14 +1009,7 @@ class CaddyRenderer:
             "		}\n"
             "	}\n"
         )
-        catch_all = (
-            "	handle {\n"
-            f"{deny_guard}"
-            f"		reverse_proxy {upstream} {{\n"
-            f"{self._common_rp_headers()}\n"
-            "		}\n"
-            "	}\n"
-        )
+        catch_all = self._browser_catch_all(upstream, deny_guard)
         return (
             f"{site_addr} {{\n"
             f"{tls_line}"
@@ -1029,6 +1022,43 @@ class CaddyRenderer:
             f"{hosted}"
             f"{auth_local}"
             f"{catch_all}}}\n"
+        )
+
+    def _browser_catch_all(self, upstream: str, deny_guard: str) -> str:
+        """The browser-site catch-all, split by immediate-peer trust (#3276).
+
+        Both handles keep the shared header bundle and the container-source
+        deny. The untrusted handle — a peer outside
+        ``KLANGKD_TRUSTED_PROXY_CIDRS``, i.e. every direct browser or
+        attacker when no outer proxy is configured — additionally deletes
+        ``X-Forwarded-Host`` before proxying. Caddy's ``reverse_proxy``
+        derives that header from the client-chosen ``Host`` for untrusted
+        peers, and the backend honors ``X-Forwarded-Host`` arriving from
+        its own trusted peer (this proxy): without the delete, one direct
+        request with a forged Host would reach reset/verify/invite/OIDC URL
+        construction as a *trusted forwarded* value. The trusted handle
+        passes a trusted outer proxy's ``X-Forwarded-Host`` through
+        untouched, so behind-a-proxy deployments keep deriving the public
+        name with zero extra configuration. ``remote_ip`` keys on the
+        immediate peer (ignores ``trusted_proxies``), the same primitive
+        the container deny uses.
+        """
+        peers = " ".join(self._trusted_proxy_cidrs())
+        return (
+            f"	@notTrustedPeer not remote_ip {peers}\n"
+            "	handle @notTrustedPeer {\n"
+            f"{deny_guard}"
+            f"		reverse_proxy {upstream} {{\n"
+            f"{self._common_rp_headers()}\n"
+            "			header_up -X-Forwarded-Host\n"
+            "		}\n"
+            "	}\n"
+            "	handle {\n"
+            f"{deny_guard}"
+            f"		reverse_proxy {upstream} {{\n"
+            f"{self._common_rp_headers()}\n"
+            "		}\n"
+            "	}\n"
         )
 
     def _warn_loopback_listen_when_armed(self, listen_addr: str) -> None:

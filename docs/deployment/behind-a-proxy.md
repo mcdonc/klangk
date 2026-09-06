@@ -109,7 +109,7 @@ These override the forwarded-header values. Set them when the outer
 proxy does not send `X-Forwarded-Host` or `X-Forwarded-Proto`.
 
 For the full derivation order — pin, trusted forwarded headers,
-`Host`, floor — and how this differs from `KLANGKD_TLS_HOSTNAME`
+validated `Host`, floor — and how this differs from `KLANGKD_TLS_HOSTNAME`
 (automatic TLS on an internet-facing klangkd), see
 [HTTPS Hosting](https-hosting.md#public-urls-tls-hostname-vs-hosting-hostname).
 

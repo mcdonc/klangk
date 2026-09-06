@@ -858,6 +858,50 @@ class TestRenderConfig:
         assert "@containerSrc remote_ip 10.89.0.0/24" in cf
         assert "respond @containerSrc 403" in cf
 
+    def test_browser_catch_all_splits_by_peer_trust(self):
+        """#3276: the catch-all proxies untrusted and trusted peers through
+        separate handles; the untrusted one deletes X-Forwarded-Host (caddy
+        derives it from the client-chosen Host for untrusted peers, and the
+        backend trusts that header from this proxy) while the trusted one
+        passes a trusted outer proxy's value through untouched."""
+        s = make_settings({"KLANGKD_PORT": "8997"})
+        cf = _renderer(s).render_config("unix//s", self.ADMIN)
+        assert "@notTrustedPeer not remote_ip 127.0.0.1 ::1" in cf
+        assert "handle @notTrustedPeer {" in cf
+        assert "header_up -X-Forwarded-Host" in cf
+        # The trusted fallback handle proxies without the deletion.
+        trusted = cf[
+            cf.index(
+                "\thandle {\n".replace("\\t", "\t").replace("\\n", "\n")
+            ) :
+        ]
+        assert "header_up -X-Forwarded-Host" not in trusted
+        assert trusted.count("reverse_proxy") >= 1
+
+    def test_browser_catch_all_trust_uses_configured_cidrs(self):
+        """The peer-trust split keys on KLANGKD_TRUSTED_PROXY_CIDRS — an
+        outer proxy in the configured set keeps its X-Forwarded-Host."""
+        s = make_settings(
+            {
+                "KLANGKD_PORT": "8997",
+                "KLANGKD_TRUSTED_PROXY_CIDRS": "127.0.0.1,::1,10.0.0.0/8",
+            }
+        )
+        cf = _renderer(s).render_config("unix//s", self.ADMIN)
+        assert "@notTrustedPeer not remote_ip 127.0.0.1 ::1 10.0.0.0/8" in cf
+
+    def test_browser_catch_all_deny_in_both_handles(self):
+        """The container-source deny guards both trust handles (a container
+        peer must be refused whichever branch routes it)."""
+        s = make_settings(
+            {
+                "KLANGKD_PORT": "8997",
+                "KLANGKD_CONTAINER_SUBNETS": "10.89.0.0/24",
+            }
+        )
+        cf = _renderer(s).render_config("unix//s", self.ADMIN)
+        assert cf.count("respond @containerSrc 403") == 2
+
     def test_browser_deny_uses_immediate_peer_matcher(self):
         """Regression guard (#1546): the container-source *deny matcher* keys
         on ``remote_ip`` (immediate peer, ignores trusted_proxies), never

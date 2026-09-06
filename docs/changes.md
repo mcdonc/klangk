@@ -328,6 +328,25 @@ operators or integrators to act when upgrading.
   `manage-groups`; other authenticated callers get the manual-only
   view. Explicit `source=manual` and `source=workspace-role` filters
   work as before for every authenticated caller.
+- **Host-header validation for URL construction (#3276).** A request's
+  plain `Host` header is now kept for URL construction (password-reset
+  and verification emails, invitations, the OIDC redirect, hosted-app
+  URLs) only when it names an address klangkd itself serves: loopback on
+  the browser port, the armed `KLANGKD_TLS_HOSTNAME` name, or the
+  `KLANGKD_LISTEN` address on the browser port. Any other Host value
+  falls back to `localhost:<KLANGKD_PORT>`, and the managed Caddy drops
+  the `X-Forwarded-Host` it would otherwise derive from a client-chosen
+  `Host` for peers outside `KLANGKD_TRUSTED_PROXY_CIDRS` — closing a
+  silent account-takeover vector where one direct request with a forged
+  `Host` poisoned the emailed reset link. **Migration:** a deployment
+  whose browsers reach klangkd by a name that appears nowhere in its own
+  configuration (for example `KLANGKD_LISTEN=0.0.0.0` reached by DNS
+  name, previously served by the unvalidated `Host`) must set
+  `KLANGKD_HOSTING_HOSTNAME` so links name the public address; outer-proxy
+  deployments with `KLANGKD_TRUSTED_PROXY_CIDRS` configured are
+  unaffected. See
+  [HTTPS Hosting](deployment/https-hosting.md#public-urls-tls-hostname-vs-hosting-hostname).
+
 - **Bind-mount re-validation at container start (#3278).** A mount's
   host-path source is now checked against
   `KLANGKD_ALLOWED_MOUNT_ROOTS` and the protected-path blocklist every
