@@ -561,6 +561,7 @@ No request body.
       "created_at": 1759200000.0,
       "event": "start",
       "actor_id": "uuid",
+      "actor_type": "user",
       "actor_email": "user@example.com",
       "workspace_id": "uuid",
       "workspace_name": "my-ws",

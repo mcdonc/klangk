@@ -391,8 +391,9 @@ class TestMergedEventsModel:
 
 class TestMergedEventsAPI:
     async def _seed(self, app_state, user):
-        """One row in each table tied to one actor + workspace (three
-        rows total — the admin's own login adds a fourth audit row)."""
+        """Rows in each table tied to one actor + workspace, plus the
+        sweep's actor-less user.disable row (four rows total — the
+        admin's own login adds a fifth audit row)."""
         ws = await app_state.state.model.workspaces.create_workspace(
             user["id"], "api-ws"
         )
@@ -412,27 +413,47 @@ class TestMergedEventsAPI:
         await app_state.state.model.egress_consent.decide(
             consent["id"], DECISION_ALLOWED, user["id"]
         )
+        # The inactivity sweep's row shape (#3251 review): the audit
+        # stream's only user.disable writer, actor-less.
+        await app_state.state.model.audit_events.record_best_effort(
+            "user.disable",
+            target_type="user",
+            target_id=user["id"],
+            detail={"via": "inactivity", "days": 35, "email": user["email"]},
+        )
         return ws
 
     async def test_lists_merged_stream_for_admin(
         self, api_client, api_app, admin_user
     ):
-        await self._seed(api_app, admin_user)
+        ws = await self._seed(api_app, admin_user)
         headers = await _admin_login(api_client)
         resp = await api_client.get("/api/v1/events", headers=headers)
         assert resp.status_code == 200
         body = resp.json()
         sources = {i["source"] for i in body["items"]}
         assert sources == {"audit", "container", "egress"}
-        # Three seeded rows + the admin's own login row.
-        assert body["total"] == 4
+        # Four seeded rows + the admin's own login row.
+        assert body["total"] == 5
         for item in body["items"]:
             assert "hmac" not in item
             assert "hmac" not in item["data"]
-            if item["source"] == "audit" and item["event"] == "login":
-                continue
-            assert item["workspace_name"] == "api-ws"
-            assert item["actor_email"] == admin_user["email"]
+            if item["workspace_id"] == ws["id"]:
+                assert item["workspace_name"] == "api-ws"
+            if item["actor_id"] == admin_user["id"]:
+                assert item["actor_email"] == admin_user["email"]
+        # The sweep's actor-less user.disable row surfaces (its
+        # actor_type stays None — no human acted).
+        sweep = next(i for i in body["items"] if i["event"] == "user.disable")
+        assert sweep["source"] == "audit"
+        assert sweep["actor_id"] is None
+        assert sweep["actor_type"] is None
+        assert sweep["data"]["detail"]["via"] == "inactivity"
+        # #3255's HTTP metadata rides the login row's data blob through
+        # the merge (shared column list — nothing positional to break).
+        login = next(i for i in body["items"] if i["event"] == "login")
+        assert login["data"]["method"] == "POST"
+        assert "referer" in login["data"]
 
     async def test_actor_filter_across_sources(
         self, api_client, api_app, admin_user
@@ -466,7 +487,7 @@ class TestMergedEventsAPI:
             params={"until": now},
             headers=headers,
         )
-        assert resp.json()["total"] == 4
+        assert resp.json()["total"] == 5
 
     async def test_pagination_envelope(self, api_client, api_app, admin_user):
         await self._seed(api_app, admin_user)
@@ -479,7 +500,7 @@ class TestMergedEventsAPI:
         body = resp.json()
         assert body["limit"] == 2
         assert body["offset"] == 1
-        assert body["total"] == 4
+        assert body["total"] == 5
         assert len(body["items"]) == 2
 
     async def test_requires_manage_events(self, api_client, user):

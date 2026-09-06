@@ -806,9 +806,10 @@ sync` report a clear permission-denied error.
 
 - **Inactivity sweep disables are audited (#3251).** The
   dormant-account sweep now writes one `user.disable` row per
-  disabled account (`via=inactivity` in the detail), matching the
-  admin toggle's rows, so the sweep's auto-disables surface in the
-  audit and merged events views.
+  disabled account (`via=inactivity` in the detail) — the audit
+  stream's first `user.disable` rows, since an admin's disable/enable
+  toggle records inside its `user.update` row. The sweep's
+  auto-disables surface in the audit and merged events views.
 
 
 - **Admin notifications (#3250).** SA/ISSO notification of

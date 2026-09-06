@@ -31,6 +31,7 @@ Map<String, dynamic> _mergedEvent(
   String source,
   dynamic id, {
   String event = 'login',
+  String? actorType,
   String? actorId,
   String? actorEmail,
   String? workspaceId,
@@ -44,6 +45,7 @@ Map<String, dynamic> _mergedEvent(
       'created_at': createdAt,
       'event': event,
       'actor_id': actorId,
+      'actor_type': actorType,
       'actor_email': actorEmail,
       'workspace_id': workspaceId,
       'workspace_name': workspaceName,
@@ -205,6 +207,40 @@ void main() {
       expect(find.text('admin@example.com'), findsNWidgets(2));
       expect(find.text('u-1'), findsOneWidget);
       expect(find.text('1–3 of 3'), findsOneWidget);
+    });
+
+    testWidgets('system and agent rows label by classification',
+        (tester) async {
+      serveEvents((limit, offset, event, actor, workspace) => http.Response(
+            _mergedEnvelope([
+              _mergedEvent(
+                'container',
+                3,
+                event: 'stop',
+                actorType: 'system',
+                workspaceId: 'ws-1',
+                workspaceName: 'sys-ws',
+              ),
+              _mergedEvent(
+                'container',
+                4,
+                event: 'start',
+                actorType: 'agent',
+                actorId: 'agent-user-id',
+                workspaceId: 'ws-1',
+                workspaceName: 'sys-ws',
+              ),
+            ], total: 2),
+            200,
+          ));
+
+      await pumpPanel(tester);
+
+      // Mirrors the Containers subtab's labels instead of reading as
+      // anonymous / a resolved email.
+      expect(find.text('system'), findsOneWidget);
+      expect(find.text('system agent'), findsOneWidget);
+      expect(find.text('anonymous'), findsNothing);
     });
 
     testWidgets('next/prev page through the merged stream', (tester) async {

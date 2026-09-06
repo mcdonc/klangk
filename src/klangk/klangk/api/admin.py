@@ -1292,14 +1292,15 @@ async def _merged_workspace_names(app, rows: list[dict]) -> dict:
 
 def _needs_email_lookup(row: dict, emails: dict) -> bool:
     """Whether a merged row's actor needs a users-table email lookup:
-    it has an actor, arrived without a denormalized email (audit rows
-    carry one; container and egress rows do not), and has not been
-    resolved on this page yet."""
-    actor_id = row["actor_id"]
+    it is a human actor (``actor_type='user'`` — every branch's
+    projection only stamps it on a set actor id, so system/agent
+    rows and actor-less rows never match), and it arrived without a
+    denormalized email (audit rows carry one; container and egress
+    rows do not) that has not been resolved on this page yet."""
     return (
-        actor_id is not None
+        row.get("actor_type") == "user"
         and not row["actor_email"]
-        and actor_id not in emails
+        and row["actor_id"] not in emails
     )
 
 

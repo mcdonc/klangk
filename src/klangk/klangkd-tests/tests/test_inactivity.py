@@ -162,10 +162,11 @@ class TestInactivitySweeper:
         )
 
     async def test_disabled_users_write_audit_rows(self):
-        """#3251 review: the sweep's disables leave the same
-        ``user.disable`` trail the admin toggle writes — one row per
-        account, no actor (system action), via=inactivity in the
-        detail — so every events view (audit, merged) surfaces them."""
+        """#3251 review: the sweep's disables leave a ``user.disable``
+        trail — one row per account, no actor (system action),
+        via=inactivity in the detail — the audit stream's first
+        `user.disable` rows (an admin's toggle records inside
+        `user.update`), so every events view surfaces them."""
         app = _app(
             disable_inactive=AsyncMock(
                 return_value=[

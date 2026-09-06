@@ -135,11 +135,16 @@ class _AllEventsPanelState extends State<AllEventsPanel> {
         '${localizations.formatTimeOfDay(TimeOfDay.fromDateTime(dt))}';
   }
 
-  /// The row's actor label: email when one is known (denormalized on
-  /// audit rows, resolved by the backend elsewhere), the raw id
-  /// otherwise, 'anonymous' when nobody acted (a pending consent
-  /// request, an unauthenticated login.failed).
+  /// The row's actor label, mirroring the Containers subtab's
+  /// classification: 'system' for system-caused rows, 'system agent'
+  /// for the fixed agent identity, then email when one is known
+  /// (denormalized on audit rows, resolved by the backend elsewhere),
+  /// the raw id otherwise, and 'anonymous' when nobody acted (a
+  /// pending consent request, an unauthenticated login.failed).
   String _actorLabel(Map<String, dynamic> row) {
+    final type = row['actor_type'] as String?;
+    if (type == 'system') return 'system';
+    if (type == 'agent') return 'system agent';
     final id = row['actor_id'] as String?;
     final email = row['actor_email'] as String?;
     if (email != null && email.isNotEmpty) return email;

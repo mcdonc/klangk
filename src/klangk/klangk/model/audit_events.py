@@ -18,9 +18,10 @@ and HTTP paths present identically.
 Event coverage (#3205):
 
 - **Account CRUD** — ``user.register``, ``user.create`` (admin,
-  invite-accept, OIDC JIT), ``user.update`` (admin), ``user.delete``
-  (admin), ``user.unlock``, ``user.disable`` / ``user.enable`` (the
-  admin toggle and the inactivity sweep's auto-disables, #2588),
+  invite-accept, OIDC JIT), ``user.update`` (admin — a disable/enable
+  toggle records here, ``fields`` naming ``disabled``),
+  ``user.delete`` (admin), ``user.unlock``, the inactivity sweep's
+  ``user.disable`` rows (#2588 — the only ``user.disable`` writer),
   ``user.password.change``, ``user.email.change``,
   ``user.handle.change``.
 - **Privilege changes** — ``group.create`` / ``group.update`` /

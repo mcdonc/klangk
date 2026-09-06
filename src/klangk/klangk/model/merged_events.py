@@ -40,6 +40,8 @@ SOURCE_EGRESS = "egress"
 # keeps its native type per branch (INTEGER for the two event tables,
 # the TEXT uuid for consent rows); the page ordering never compares
 # ids across branches because the ``source`` tiebreak runs first.
+# ``actor_type`` is the container table's native classification;
+# audit and egress actors are always human (``user``) when present.
 _PAGE_COLUMNS = (
     "source",
     "row_id",
@@ -48,23 +50,30 @@ _PAGE_COLUMNS = (
     "actor_id",
     "actor_email",
     "workspace_id",
+    "actor_type",
 )
 
 _AUDIT_SELECT = (
     "SELECT 'audit' AS source, id AS row_id, created_at, event,"
     " actor_id, actor_email,"
     " CASE WHEN target_type = 'workspace' THEN target_id END"
-    " AS workspace_id FROM audit_events"
+    " AS workspace_id,"
+    " CASE WHEN actor_id IS NOT NULL THEN 'user' END AS actor_type"
+    " FROM audit_events"
 )
 _CONTAINER_SELECT = (
     "SELECT 'container' AS source, id AS row_id, created_at, event,"
-    " actor_id, NULL AS actor_email, workspace_id FROM container_events"
+    " actor_id, NULL AS actor_email, workspace_id, actor_type"
+    " FROM container_events"
 )
 _EGRESS_SELECT = (
     "SELECT 'egress' AS source, id AS row_id, requested_at AS"
     " created_at, 'egress.' || decision AS event,"
     " COALESCE(revoked_by, decided_by) AS actor_id,"
-    " NULL AS actor_email, workspace_id FROM egress_consent"
+    " NULL AS actor_email, workspace_id,"
+    " CASE WHEN COALESCE(revoked_by, decided_by) IS NOT NULL"
+    " THEN 'user' END AS actor_type"
+    " FROM egress_consent"
 )
 
 # A workspace filter narrows workspace-carrying tables by exact id or
@@ -286,5 +295,6 @@ class MergedEventsModel(Submodel):
             "actor_id": entry["actor_id"],
             "actor_email": entry["actor_email"],
             "workspace_id": entry["workspace_id"],
+            "actor_type": entry["actor_type"],
             "data": {k: v for k, v in data.items() if k != "hmac"},
         }
