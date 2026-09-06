@@ -194,6 +194,8 @@ class TerminalTabsView extends StatelessWidget {
                                 w.length > 3 ? '${w.substring(0, 3)}…' : w;
                             return '$he:$we';
                           }(),
+                          semanticLabel:
+                              'Shared:${s['handle'] ?? '?'}:${s['window_name'] ?? '?'}',
                           tooltip:
                               '${s['handle'] ?? '?'}:${s['window_name'] ?? '?'}',
                           active: activeSharedTerminal != null &&
@@ -237,6 +239,11 @@ class TerminalTabsView extends StatelessWidget {
 class _TerminalTab extends StatefulWidget {
   final String name;
   final String? tooltip;
+
+  /// Explicit semantics label for screen readers and the fmtk e2e driver
+  /// (shared tabs render a truncated ``handle:win`` name — this carries
+  /// the full identity).
+  final String? semanticLabel;
   final bool active;
   final bool shared;
   final bool readOnly;
@@ -253,6 +260,7 @@ class _TerminalTab extends StatefulWidget {
     required this.active,
     required this.onTap,
     this.tooltip,
+    this.semanticLabel,
     this.shared = false,
     this.readOnly = false,
     this.isShared = false,
@@ -358,118 +366,125 @@ class _TerminalTabState extends State<_TerminalTab> {
             onSecondaryTap: _showContextMenu,
             child: SizedBox(
               width: 120,
-              child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-                decoration: BoxDecoration(
-                  color: widget.active
-                      ? KColors.bgSurface
-                      : _hovered
-                          ? KColors.bgOverlay
-                          : Colors.transparent,
-                  borderRadius: BorderRadius.circular(4),
-                  border: widget.active
-                      ? Border.all(color: KColors.borderMuted, width: 0.5)
-                      : null,
-                ),
-                child: Row(
-                  children: [
-                    // Icon for the agent's service tab (distinct from
-                    // regular shared windows) (#1159).
-                    if (widget.shared && widget.isService) ...[
-                      Icon(
-                        widget.readOnly ? Icons.lock_outlined : Icons.terminal,
-                        size: 12,
-                        color: widget.active
-                            ? KColors.accentCyan
-                            : KColors.accentCyan.withValues(alpha: 0.6),
-                      ),
-                      const SizedBox(width: 4),
-                    ] else if (widget.shared) ...[
-                      // Icon for other users' shared tabs (left of name)
-                      Icon(
-                        widget.readOnly
-                            ? Icons.lock_outlined
-                            : Icons.edit_outlined,
-                        size: 12,
-                        color: widget.active
-                            ? KColors.accentAmber
-                            : Colors.white38,
-                      ),
-                      const SizedBox(width: 4),
-                    ],
-                    // Broadcast icon for own tabs that are actively shared
-                    // — click to unshare
-                    if (!widget.shared && widget.isShared) ...[
-                      GestureDetector(
-                        onTap: widget.onToggleShare,
-                        child: const MouseRegion(
-                          cursor: SystemMouseCursors.click,
-                          child: Tooltip(
-                            message: 'Unshare',
-                            child: Icon(
-                              Icons.cell_tower,
-                              size: 12,
-                              color: KColors.accentCyan,
+              child: Semantics(
+                label: widget.semanticLabel,
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: widget.active
+                        ? KColors.bgSurface
+                        : _hovered
+                            ? KColors.bgOverlay
+                            : Colors.transparent,
+                    borderRadius: BorderRadius.circular(4),
+                    border: widget.active
+                        ? Border.all(color: KColors.borderMuted, width: 0.5)
+                        : null,
+                  ),
+                  child: Row(
+                    children: [
+                      // Icon for the agent's service tab (distinct from
+                      // regular shared windows) (#1159).
+                      if (widget.shared && widget.isService) ...[
+                        Icon(
+                          widget.readOnly
+                              ? Icons.lock_outlined
+                              : Icons.terminal,
+                          size: 12,
+                          color: widget.active
+                              ? KColors.accentCyan
+                              : KColors.accentCyan.withValues(alpha: 0.6),
+                        ),
+                        const SizedBox(width: 4),
+                      ] else if (widget.shared) ...[
+                        // Icon for other users' shared tabs (left of name)
+                        Icon(
+                          widget.readOnly
+                              ? Icons.lock_outlined
+                              : Icons.edit_outlined,
+                          size: 12,
+                          color: widget.active
+                              ? KColors.accentAmber
+                              : Colors.white38,
+                        ),
+                        const SizedBox(width: 4),
+                      ],
+                      // Broadcast icon for own tabs that are actively shared
+                      // — click to unshare
+                      if (!widget.shared && widget.isShared) ...[
+                        GestureDetector(
+                          onTap: widget.onToggleShare,
+                          child: const MouseRegion(
+                            cursor: SystemMouseCursors.click,
+                            child: Tooltip(
+                              message: 'Unshare',
+                              child: Icon(
+                                Icons.cell_tower,
+                                size: 12,
+                                color: KColors.accentCyan,
+                                semanticLabel: 'Unshare',
+                              ),
                             ),
                           ),
                         ),
-                      ),
-                      const SizedBox(width: 4),
-                    ],
-                    Expanded(
-                      child: Text(
-                        widget.name,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: widget.active
-                              ? FontWeight.w600
-                              : FontWeight.normal,
-                          color: widget.active
-                              ? KColors.textPrimary
-                              : _hovered
-                                  ? Colors.white70
-                                  : KColors.textSecondary,
-                        ),
-                      ),
-                    ),
-                    // Viewer count
-                    if (widget.viewers.isNotEmpty) ...[
-                      const SizedBox(width: 4),
-                      Icon(
-                        Icons.visibility,
-                        size: 10,
-                        color: Colors.white38,
-                      ),
-                      const SizedBox(width: 2),
-                      Text(
-                        '${widget.viewers.length}',
-                        style: const TextStyle(
-                          fontSize: 10,
-                          color: Colors.white38,
-                        ),
-                      ),
-                    ],
-                    if (widget.onClose != null) ...[
-                      const SizedBox(width: 4),
-                      MouseRegion(
-                        cursor: SystemMouseCursors.click,
-                        child: GestureDetector(
-                          onTap: widget.onClose,
-                          child: Icon(
-                            Icons.close,
-                            size: 12,
-                            color: _hovered
-                                ? Colors.white70
-                                : widget.active
-                                    ? Colors.white38
-                                    : Colors.transparent,
+                        const SizedBox(width: 4),
+                      ],
+                      Expanded(
+                        child: Text(
+                          widget.name,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: widget.active
+                                ? FontWeight.w600
+                                : FontWeight.normal,
+                            color: widget.active
+                                ? KColors.textPrimary
+                                : _hovered
+                                    ? Colors.white70
+                                    : KColors.textSecondary,
                           ),
                         ),
                       ),
+                      // Viewer count
+                      if (widget.viewers.isNotEmpty) ...[
+                        const SizedBox(width: 4),
+                        Icon(
+                          Icons.visibility,
+                          size: 10,
+                          color: Colors.white38,
+                        ),
+                        const SizedBox(width: 2),
+                        Text(
+                          '${widget.viewers.length}',
+                          style: const TextStyle(
+                            fontSize: 10,
+                            color: Colors.white38,
+                          ),
+                        ),
+                      ],
+                      if (widget.onClose != null) ...[
+                        const SizedBox(width: 4),
+                        MouseRegion(
+                          cursor: SystemMouseCursors.click,
+                          child: GestureDetector(
+                            onTap: widget.onClose,
+                            child: Icon(
+                              Icons.close,
+                              size: 12,
+                              semanticLabel: 'Close ${widget.name}',
+                              color: _hovered
+                                  ? Colors.white70
+                                  : widget.active
+                                      ? Colors.white38
+                                      : Colors.transparent,
+                            ),
+                          ),
+                        ),
+                      ],
                     ],
-                  ],
+                  ),
                 ),
               ),
             ),
@@ -535,6 +550,7 @@ class _TabIconButtonState extends State<_TabIconButton> {
               widget.icon,
               size: 14,
               color: _hovered ? Colors.white : Colors.white54,
+              semanticLabel: widget.tooltip,
             ),
           ),
         ),
