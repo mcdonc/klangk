@@ -38,6 +38,20 @@ Event coverage (#3205):
   workstation-binding violation, #3194 — whose row carries the
   presenting workstation as its source IP and no actor, the trigger
   being an unknown presenter).
+- **Data-level file operations** (#3257, ASD-STIG SV-222471/472) —
+  ``file.download`` (a workspace archive export, a per-file or
+  per-directory download through the files API, and a text read via
+  ``/files/content`` — the same ``files-download`` gate, marked
+  ``via: content`` in the detail), ``file.upload``
+  (a workspace archive import), ``file.write`` (in-workspace writes
+  through the files API: upload, rename), ``file.delete`` (a delete
+  through the files API). Each row carries
+  the workspace as its target and the path and byte size in
+  ``detail`` (the size is omitted where meaningless — rename, delete,
+  directory downloads; the export's size is a pre-flight estimate).
+  Terminal I/O and container-internal changes
+  stay out (#3257 out-of-scope: the PTY byte stream is the user's
+  own session; the container filesystem is opaque to the daemon).
 
 Writes are best-effort by design (the #2915 posture): a failed audit
 write is logged and never fails the action it annotates — see
@@ -52,9 +66,9 @@ Retention/bounding mirrors ``container_events`` (#2924):
 deploy-wide row cap (``audit_events_row_cap``), keeping the newest —
 swept hourly by the consent sweeper. The row cap is applied **per
 class**: unauthenticated ``login.failed`` rows (the only class an
-anonymous caller can mint) get their own bucket, so a spray of failed
-logins can evict at most other ``login.failed`` rows — never the
-genuine account/privilege history an incident review starts from.
+anonymous caller can mint) and the high-frequency ``file.*`` rows
+(#3257) each get their own bucket, so neither can evict the genuine
+account/privilege history an incident review starts from.
 An admin-facing paged view is
 ``GET /api/v1/events/audit`` (``manage-events``).
 """
@@ -78,6 +92,19 @@ logger = logging.getLogger(__name__)
 _EVENT_COLUMNS = (
     "id, event, actor_id, actor_email, target_type, target_id,"
     " detail, source_ip, user_agent, method, referer, created_at, hmac"
+)
+
+
+# The row-cap classes (#3205, #3257): each predicate names one bucket
+# that is capped independently of the others under
+# ``audit_events_row_cap``. ``login.failed`` is the only class an
+# anonymous caller can mint, and ``file.*`` rows are the highest-
+# frequency class — a flood in either evicts only its own bucket,
+# never the account/privilege history an incident review starts from.
+_ROW_CAP_CLASSES = (
+    "event NOT LIKE 'file.%' AND event != 'login.failed'",
+    "event = 'login.failed'",
+    "event LIKE 'file.%'",
 )
 
 
@@ -299,12 +326,13 @@ class AuditEventsModel(Submodel):
 
     async def _prune_row_cap(self, row_cap: int) -> int:
         """Deploy-wide cap, applied per class: delete the oldest rows
-        over the cap in each bucket, keeping the newest (the same
-        tie-break :meth:`list_events` uses). The unauthenticated
-        ``login.failed`` class is capped separately from everything
-        else so it cannot evict privileged-action history."""
+        over the cap in each bucket of ``_ROW_CAP_CLASSES``, keeping
+        the newest (the same tie-break :meth:`list_events` uses). The
+        unauthenticated ``login.failed`` class and the ``file.*`` class
+        are capped separately from everything else so neither can
+        evict privileged-action history."""
         deleted = 0
-        for predicate in ("event != 'login.failed'", "event = 'login.failed'"):
+        for predicate in _ROW_CAP_CLASSES:
             async with self.app.state.db.transaction() as db:
                 cursor = await db.execute(
                     "DELETE FROM audit_events WHERE id IN"

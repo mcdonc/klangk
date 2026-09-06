@@ -530,7 +530,15 @@ see [Auth Modes](../features/auth-modes.md).
 Paged identity/privilege audit history (#3205), newest first, from the
 `audit_events` table: account create/update/delete, group and ACL
 changes, workspace role assignments and transfers,
-login/logout/failed-login, and session revocation. Query params:
+login/logout/failed-login, session revocation, and the data-level
+file events (#3257) — `file.download` (a workspace archive export, a
+per-file/directory download, or a text read via `/files/content`,
+marked `via: content`), `file.upload` (a workspace archive
+import), `file.write` (an upload or rename through the files API),
+and `file.delete` (a delete through the files API) — each carrying
+the path and byte size in `detail` (the size is omitted where
+meaningless — rename, delete, directory downloads; an export's size
+is a pre-flight estimate). Query params:
 `limit` (1–200, default 50), `offset`, and optional `event`, `actor`
 (matches actor id or email), and `target` (target id) substring filters.
 Each item carries the acting principal (`actor_id` / `actor_email` —
@@ -882,6 +890,9 @@ No request body. Returns `StreamingResponse` (`.tar.gz` binary stream).
 Headers: `Content-Disposition: attachment; filename="<name>.tar.gz"`,
 `X-Estimated-Size: <bytes>`.
 
+Each export writes a `file.download` audit row (#3257) with the actor,
+workspace, archive name, and the size estimate as its byte size.
+
 ---
 
 ### GET `/api/v1/workspaces/{id}/files`
@@ -919,6 +930,11 @@ running container (returns 409 if stopped).
 permissions on `/workspaces/{id}`. Query param: `path` (absolute
 container path).
 
+Each read writes a `file.download` audit row (#3257) — the text read
+sits behind the same `files-download` gate as the byte-stream download
+and moves the same file data to the client; its detail carries
+`"via": "content"` and the decoded content's byte count.
+
 No request body.
 
 ```json
@@ -939,6 +955,10 @@ path).
 
 No request body. Returns a streamed `application/octet-stream` (single
 file) or `application/gzip` (directory archive).
+
+Each download writes a `file.download` audit row (#3257) with the
+actor, workspace, path, and byte size (file rows only — a directory
+stream's size is not observable up front).
 
 ---
 
@@ -1659,6 +1679,10 @@ role would collide).
 Create a new workspace from a previously exported `.tar.gz` archive.
 Environment variables are sanitized during import.
 
+Each import writes a `file.upload` audit row (#3257) with the actor,
+the created workspace, the upload's filename, and the streamed byte
+count.
+
 **Auth:** JWT required. Multipart form upload: `file` (`.tar.gz` archive),
 optional `name` form field.
 
@@ -1699,6 +1723,9 @@ permissions on `/workspaces/{id}`.
 { "path": "/home/klangk/new.py", "status": "renamed" }
 ```
 
+Each rename writes a `file.write` audit row (#3257) carrying the new
+path and the old one in `from`.
+
 ---
 
 ### POST `/api/v1/workspaces/{id}/files/upload`
@@ -1713,6 +1740,9 @@ optional `path` query param (absolute container path).
 ```json
 { "path": "/home/klangk/uploads/file.txt", "status": "uploaded" }
 ```
+
+Each upload writes a `file.write` audit row (#3257) with the actor,
+workspace, saved path, and byte count.
 
 ---
 
@@ -2059,6 +2089,9 @@ running container (returns 409 if stopped). Query param: `path`
 
 **Auth:** JWT required. User must have both `files` and `files-write`
 permissions on `/workspaces/{id}`.
+
+Each delete writes a `file.delete` audit row (#3257) with the actor,
+workspace, and the removed path.
 
 No request body.
 

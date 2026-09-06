@@ -381,6 +381,117 @@ void main() {
       expect(find.byKey(const ValueKey('audit-event-detail')), findsNothing);
     });
 
+    testWidgets('file events show the file icon and path in the detail',
+        (tester) async {
+      serveAudit((limit, offset, event, actor, target) => http.Response(
+            _auditEnvelope([
+              _auditEvent(
+                9,
+                event: 'file.download',
+                actorEmail: 'exfil@example.com',
+                targetType: 'workspace',
+                targetId: 'ws-42',
+                detail: {
+                  'path': 'secret-ws.tar.gz',
+                  'size': 1048576,
+                },
+                sourceIp: '203.0.113.9',
+                userAgent: 'klangk-cli/1.0',
+              ),
+            ], total: 1),
+            200,
+          ));
+
+      await pumpPanel(tester);
+
+      // The chip renders like any other (non-negative: green).
+      expect(find.text('file.download'), findsOneWidget);
+      expect(find.byKey(const ValueKey('audit-event-detail')), findsNothing);
+
+      await tester.tap(find.text('file.download'));
+      await tester.pumpAndSettle();
+
+      // The file-icon path row, plus the size in the raw detail JSON.
+      final pathRow = find.byKey(const ValueKey('audit-event-path'));
+      expect(pathRow, findsOneWidget);
+      expect(
+        find.descendant(
+            of: pathRow, matching: find.byIcon(Icons.insert_drive_file)),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: pathRow, matching: find.text('secret-ws.tar.gz')),
+        findsOneWidget,
+      );
+      expect(find.textContaining('1048576'), findsOneWidget);
+    });
+
+    testWidgets('file.delete renders a destructive chip, not green',
+        (tester) async {
+      serveAudit((limit, offset, event, actor, target) => http.Response(
+            _auditEnvelope([
+              _auditEvent(
+                11,
+                event: 'file.delete',
+                actorEmail: 'admin@example.com',
+                targetType: 'workspace',
+                targetId: 'ws-7',
+                detail: {'path': '/home/klangk/gone.txt'},
+              ),
+            ], total: 1),
+            200,
+          ));
+
+      await pumpPanel(tester);
+
+      // The existing suffix rule (.delete → red) covers the new kind —
+      // a destructive file event must not read green (#3257 review).
+      final chip = find
+          .ancestor(
+            of: find.text('file.delete'),
+            matching: find.byType(Container),
+          )
+          .first;
+      final decoration = tester.widget<Container>(chip).decoration;
+      expect(decoration, isA<BoxDecoration>());
+      expect((decoration as BoxDecoration).color, KColors.accentRed);
+    });
+
+    testWidgets(
+        'non-file events render no path row — even with a path detail key',
+        (tester) async {
+      // login.failed rows carry `path: "resend-verification"` naming
+      // the auth flow, not a file (#3205/#2618); the icon row keys on
+      // the event kind, so that key must not render as a file path
+      // (#3257 review).
+      serveAudit((limit, offset, event, actor, target) => http.Response(
+            _auditEnvelope([
+              _auditEvent(
+                4,
+                event: 'login.failed',
+                targetId: 'u-2',
+                detail: {
+                  'identifier': 'someone@example.com',
+                  'path': 'resend-verification',
+                },
+              ),
+            ], total: 1),
+            200,
+          ));
+
+      await pumpPanel(tester);
+      await tester.tap(find.text('login.failed'));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('audit-event-detail')), findsOneWidget);
+      expect(find.byKey(const ValueKey('audit-event-path')), findsNothing);
+      expect(find.byIcon(Icons.insert_drive_file), findsNothing);
+      expect(
+        find.textContaining('"resend-verification"'),
+        findsOneWidget,
+      );
+    });
+
     testWidgets('null detail renders a placeholder, not an error',
         (tester) async {
       serveAudit((limit, offset, event, actor, target) => http.Response(
