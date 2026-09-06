@@ -7650,10 +7650,18 @@ class TestUserGroupEndpoints:
         authenticated caller gets the manual-only view — another
         user's workspace id (in role-group names) and workspace name
         are not pageable through /groups."""
-        headers = await _auth_headers(client)
-        await app_state.state.model.workspaces.create_workspace_with_acl(
-            user["id"], "merger-dossier-384ac4"
+        # A second user owns the probe workspace — the cross-user
+        # threat the issue describes. Created via the model: the
+        # workspace-creation endpoint is not under test here.
+        other = await app_state.state.model.users.create_user(
+            "leak-owner@example.com",
+            auth_mod.hash_password("ownerpass"),
+            verified=True,
         )
+        await app_state.state.model.workspaces.create_workspace_with_acl(
+            other["id"], "merger-dossier-384ac4"
+        )
+        headers = await _auth_headers(client)
         resp = await client.get(
             "/api/v1/groups?page_size=200", headers=headers
         )

@@ -812,11 +812,14 @@ async def default_groups_source(app, user: dict) -> str | None:
 
     A caller holding ``manage-groups`` keeps the show-all default —
     the admin Groups tab's role-group chip reads it. Every other
-    authenticated caller gets ``manual``: the seeded workspace-role
-    rows stay behind the permission their management lives behind,
-    so workspace ids (in the role-group names) are not pageable by
-    any signed-in user. An explicit ``source=…`` query parameter is
-    unaffected — it is honored as given.
+    authenticated caller gets ``manual``: on the default listing the
+    seeded workspace-role rows (whose names carry workspace ids) are
+    visible only through the permission their management lives
+    behind. An explicit ``source=workspace-role`` query parameter
+    still serves those rows to any authenticated caller — their
+    descriptions carry the role only, never the workspace name; a
+    description a manage-groups holder writes into a role group
+    after seeding is served as written to those readers.
     """
     principals = await app.state.acl.get_principals(user["id"])
     if await app.state.acl.check_permission(
@@ -844,12 +847,13 @@ async def list_groups(
 
     Returns the paged envelope ``{groups, page, page_size, total}``
     (#2750). ``source=manual`` hides the seeded per-workspace role
-    groups; ``source=workspace-role`` shows only them. The default
-    (no ``source``) shows all rows only for callers holding
-    ``manage-groups``; everyone else gets the manual-only view
-    (#3283) — the role-group rows carry workspace ids and have no
-    cross-user reader. Writes (create/edit/delete, members) on this
-    tree are gated ``manage-groups``.
+    groups; ``source=workspace-role`` shows only them (served to any
+    authenticated caller — the descriptions carry the role only,
+    never a workspace name, #3283). The default (no ``source``)
+    shows all rows only for callers holding ``manage-groups``;
+    everyone else gets the manual-only view. Writes
+    (create/edit/delete, members) on this tree are gated
+    ``manage-groups``.
     """
     if source is not None and source not in GROUP_SOURCES:
         raise HTTPException(
