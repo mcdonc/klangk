@@ -20,6 +20,7 @@ from test_api import _admin_login, _auth_headers, _mock_pod
 from httpx import ASGITransport, AsyncClient
 from klangk import auth as klangk_auth
 from klangk.model.audit_events import filter_clause, row_to_dict
+from klangk.model.db import LIKE_ESCAPE
 
 # test_api's app fixture, re-bound under a module-local name: pytest
 # registers it here (fixture discovery walks the module namespace) and
@@ -53,7 +54,7 @@ class TestFilterClause:
 
     def test_event_only(self):
         where, params = filter_clause("login", None, None)
-        assert where == " WHERE event LIKE '%' || ? || '%'"
+        assert where == (" WHERE event LIKE '%' || ? || '%'" + LIKE_ESCAPE)
         assert params == ["login"]
 
     def test_actor_only_matches_id_or_email(self):
@@ -63,13 +64,20 @@ class TestFilterClause:
 
     def test_target_only(self):
         where, params = filter_clause(None, None, "ws-1")
-        assert where == " WHERE target_id LIKE '%' || ? || '%'"
+        assert where == (" WHERE target_id LIKE '%' || ? || '%'" + LIKE_ESCAPE)
         assert params == ["ws-1"]
 
     def test_all_three_join_with_and(self):
         where, params = filter_clause("login", "u1", "ws-1")
         assert where.count("AND") == 2
         assert len(params) == 4
+
+    def test_wildcards_are_escaped(self):
+        # #3280: %/_/\ in filter text match literally, and every LIKE
+        # carries the ESCAPE clause.
+        where, params = filter_clause("100%", "a_b", "c\\d")
+        assert params == ["100\\%", "a\\_b", "a\\_b", "c\\\\d"]
+        assert where.count(LIKE_ESCAPE) == 4
 
 
 class TestAuditEventsModel:

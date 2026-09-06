@@ -236,7 +236,8 @@ Query parameters:
 
 - `page` (default 1), `page_size` (default 10, max 200)
 - `sort` (`name` | `created`), `order` (`asc` | `desc`)
-- `q` — substring filter on name
+- `q` — substring filter on name (matched literally — `%` and `_`
+  are characters, not wildcards)
 - `source` — `manual` (hide the seeded per-workspace role groups) or
   `workspace-role` (show only them); omitted shows all
 
@@ -544,7 +545,9 @@ has acted on it. Query params: `limit` (1–200, default 50),
 is its decider **or** its revoker, while the summary row names the
 revoker for a revoked verdict — the `data` blob carries both),
 `workspace` (exact workspace id or a workspace-name substring), and
-`event` (event-name substring). `workspace_name` and `actor_email`
+`event` (event-name substring). Substring filters match filter text
+literally (`%` and `_` are characters, not wildcards).
+`workspace_name` and `actor_email`
 are resolved for display.
 
 **Auth:** JWT required. User must have the `manage-events`
@@ -602,7 +605,8 @@ the path and byte size in `detail` (the size is omitted where
 meaningless — rename, delete, directory downloads; an export's size
 is a pre-flight estimate). Query params:
 `limit` (1–200, default 50), `offset`, and optional `event`, `actor`
-(matches actor id or email), and `target` (target id) substring filters.
+(matches actor id or email), and `target` (target id) substring filters
+(matched literally — `%` and `_` are characters, not wildcards).
 Each item carries the acting principal (`actor_id` / `actor_email` —
 denormalized so attribution survives the actor's deletion), the target
 (`target_type` / `target_id`), a read-only JSON `detail` blob
@@ -657,7 +661,8 @@ Paged container start/stop history (#2923), newest first, from the
 `/events` resource (the Audit stream is `GET /events/audit`, #3205).
 Renamed from `GET /events` when the resource gained its second stream. Query params: `limit` (1–200,
 default 50), `offset`, and either `workspace` (an exact workspace id or
-a workspace-name substring) or the legacy exact-match `workspace_id` to
+a workspace-name substring, matched literally) or the legacy exact-match
+`workspace_id` to
 narrow to one workspace. Items carry the acting principal
 (`actor_type` user/agent/system + `actor_id`), the `cause`
 (api, idle_timeout, eviction, drain, …), the podman correlation ids
@@ -744,7 +749,9 @@ workspaces or adding group members.
 **Auth:** JWT required. User must have the `search-users` permission on
 `/users` (seeded Allow for Authenticated — distinct from
 `manage-users`, so picker surfaces work for non-admins). Query param:
-`q` (search string, min length 1).
+`q` (search string, min length 1). The needle is a literal prefix
+match on the email or handle — `%` and `_` in `q` are matched as
+characters, not as `LIKE` wildcards.
 
 No request body.
 
@@ -796,7 +803,8 @@ No request body.
 | `page_size` | int    | `10`      | `1`–`200` (clamped)                  |
 | `sort`      | string | `created` | `name` \| `created` (else `created`) |
 | `order`     | string | `desc`    | `asc` \| `desc`                      |
-| `q`         | string | (none)    | substring match, case-insensitive    |
+| `q`         | string | (none)    | substring match, case-insensitive;   |
+|             |        |           | `%` and `_` match literally          |
 
 `q` matches the volume name, the owning workspace's name, or any
 workspace name using the volume.
@@ -846,7 +854,8 @@ both shapes.
 Sorting is whitelisted (`created`→`created_at`, `name`→`name`) with an `id`
 tiebreaker so offset pagination is deterministic. `q` matches anywhere in
 the name (`LIKE '%q%'`), not just a prefix, and is applied before pagination
-so `has_more`/`next_offset` reflect the filtered set.
+so `has_more`/`next_offset` reflect the filtered set. Filter text matches
+literally — `%` and `_` in `q` are characters, not wildcards.
 
 ```json
 [
@@ -905,7 +914,7 @@ No request body.
 
 **Query params (optional, pagination):** same `?limit=` / `?offset=` as
 `GET /api/v1/workspaces`, plus `?sort=name|created`, `?order=asc|desc`, and
-`?q=<substring>` (name substring). Without params returns a bare list, with
+`?q=<substring>` (name substring, matched literally). Without params returns a bare list, with
 params returns the `{ items, has_more, next_offset }` envelope.
 
 Workspace objects use the same shape as

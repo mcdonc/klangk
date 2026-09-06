@@ -82,6 +82,7 @@ import time
 
 from .audit_hmac import compute_audit_event_hmac
 from .base import Submodel, resolve_prune_now
+from .db import LIKE_ESCAPE, sql_like_escape
 from ..notifier import notify_event
 
 logger = logging.getLogger(__name__)
@@ -117,25 +118,29 @@ def filter_clause(
     """WHERE clause + params narrowing event reads.
 
     All three filters are optional substrings (SQLite ``LIKE`` — ASCII
-    case-insensitive, ``%``/``_`` wildcards not escaped, the same
-    convention as the other admin filters): ``event`` matches the event
-    name, ``actor`` matches the actor id *or* email, ``target``
-    matches the target id. An empty string means no filter.
+    case-insensitive; ``%`` and ``_`` in the filter text match
+    literally, the escaped-pattern convention of every admin filter
+    (#3280)): ``event`` matches the event name, ``actor`` matches the
+    actor id *or* email, ``target`` matches the target id. An empty
+    string means no filter.
     """
     conditions: list[str] = []
     params: list = []
     if event:
-        conditions.append("event LIKE '%' || ? || '%'")
-        params.append(event)
+        conditions.append("event LIKE '%' || ? || '%'" + LIKE_ESCAPE)
+        params.append(sql_like_escape(event))
     if actor:
         conditions.append(
-            "(actor_id LIKE '%' || ? || '%' OR actor_email LIKE"
-            " '%' || ? || '%')"
+            "(actor_id LIKE '%' || ? || '%'"
+            + LIKE_ESCAPE
+            + " OR actor_email LIKE '%' || ? || '%'"
+            + LIKE_ESCAPE
+            + ")"
         )
-        params.extend([actor, actor])
+        params.extend([sql_like_escape(actor), sql_like_escape(actor)])
     if target:
-        conditions.append("target_id LIKE '%' || ? || '%'")
-        params.append(target)
+        conditions.append("target_id LIKE '%' || ? || '%'" + LIKE_ESCAPE)
+        params.append(sql_like_escape(target))
     if not conditions:
         return "", []
     return " WHERE " + " AND ".join(conditions), params

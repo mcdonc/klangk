@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 
 from ..exceptions import ConfigurationError
 from .base import Submodel
+from .db import LIKE_ESCAPE, sql_like_escape
 from .egress_consent import consent_rows_for_actor
 
 
@@ -333,8 +334,8 @@ def _group_filter_clause(q: str | None, source: str | None) -> tuple:
     where_parts: list[str] = []
     params: list = []
     if q:
-        where_parts.append("name LIKE ?")
-        params.append(f"%{q}%")
+        where_parts.append("name LIKE ?" + LIKE_ESCAPE)
+        params.append(f"%{sql_like_escape(q)}%")
     if source is not None:
         where_parts.append("source = ?")
         params.append(source)
@@ -995,8 +996,8 @@ class UsersModel(Submodel):
             where_clause = ""
             params: list = []
             if q:
-                where_clause = " WHERE email LIKE ?"
-                params.append(f"%{q}%")
+                where_clause = " WHERE email LIKE ?" + LIKE_ESCAPE
+                params.append(f"%{sql_like_escape(q)}%")
 
             count_cursor = await db.execute(
                 f"SELECT COUNT(*) AS c FROM users{where_clause}",
@@ -1360,12 +1361,21 @@ class UsersModel(Submodel):
         }
 
     async def search_users(self, query: str, limit: int = 10) -> list[dict]:
-        """Search users by email or handle prefix (#616)."""
+        """Search users by email or handle prefix (#616).
+
+        ``%`` and ``_`` in *query* match literally (#3280): the needle
+        is escaped, so a wildcard query cannot widen the prefix match
+        into a directory dump.
+        """
+        needle = f"{sql_like_escape(query)}%"
         rows = await self.app.state.db.fetchall(
             "SELECT id, email, handle FROM users"
-            " WHERE email LIKE ? OR handle LIKE ?"
-            " ORDER BY email LIMIT ?",
-            (f"{query}%", f"{query}%", limit),
+            " WHERE email LIKE ?"
+            + LIKE_ESCAPE
+            + " OR handle LIKE ?"
+            + LIKE_ESCAPE
+            + " ORDER BY email LIMIT ?",
+            (needle, needle, limit),
         )
         return [
             {

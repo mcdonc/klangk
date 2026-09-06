@@ -303,6 +303,16 @@ class TestMergedEventsModel:
         )
         assert denied_rows == []
 
+    async def test_event_filter_wildcards_are_literal(self, app_state, db):
+        # #3280: a lone % must not act as a match-everything wildcard
+        # over the recorded history.
+        merged = app_state.state.model.merged_events
+        await app_state.state.model.audit_events.record(
+            "login.failed", actor_id=None
+        )
+        assert await merged.list_events(MergedEventFilters(event="%")) == []
+        assert await merged.count_events(MergedEventFilters(event="%")) == 0
+
     async def test_pagination_across_the_merge(self, app_state, db, user):
         merged = app_state.state.model.merged_events
         ws = await app_state.state.model.workspaces.create_workspace(

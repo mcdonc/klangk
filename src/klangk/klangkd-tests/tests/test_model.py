@@ -2552,6 +2552,14 @@ class TestDB:
         assert str(db.db_path).endswith("klangk.db")
         assert db.engine is None
 
+    def test_sql_like_escape(self):
+        """sql_like_escape neutralizes the LIKE wildcards and the
+        escape char itself (#3280); plain text passes through."""
+        from klangk.model.db import sql_like_escape
+
+        assert sql_like_escape("plain") == "plain"
+        assert sql_like_escape("100%_a\\b") == "100\\%\\_a\\\\b"
+
 
 class TestUsersBackstopBranches:
     """Cover backstop branches not reached by app code (now on the

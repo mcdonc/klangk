@@ -27,6 +27,7 @@ import time
 
 from .audit_hmac import compute_container_event_hmac
 from .base import Submodel, resolve_prune_now
+from .db import LIKE_ESCAPE, sql_like_escape
 from .users import AGENT_USER_ID
 
 logger = logging.getLogger(__name__)
@@ -99,16 +100,19 @@ def workspace_filter_clause(
     an exact workspace-id match or a workspace whose *name* contains the
     text, so typing either narrows the history. It wins over the legacy
     exact ``workspace_id`` param when both are sent. Name matching is
-    SQLite ``LIKE`` — ASCII case-insensitive, ``%``/``_`` wildcards not
-    escaped (the same convention as the other admin filters). An empty
-    string for either param means no filter, so a degenerate
-    ``?workspace=`` cannot silently narrow the audit history.
+    SQLite ``LIKE`` — ASCII case-insensitive, with ``%`` and ``_`` in
+    the filter text matched literally (the escaped-pattern convention
+    of every admin filter, #3280). An empty string for either param
+    means no filter, so a degenerate ``?workspace=`` cannot silently
+    narrow the audit history.
     """
     if workspace:
         return (
             " WHERE (workspace_id = ? OR workspace_id IN"
-            " (SELECT id FROM workspaces WHERE name LIKE '%' || ? || '%'))",
-            [workspace, workspace],
+            " (SELECT id FROM workspaces WHERE name LIKE '%' || ? || '%'"
+            + LIKE_ESCAPE
+            + "))",
+            [workspace, sql_like_escape(workspace)],
         )
     if workspace_id:
         return " WHERE workspace_id = ?", [workspace_id]

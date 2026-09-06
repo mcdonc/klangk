@@ -11,6 +11,7 @@ import uuid
 from datetime import datetime, timezone
 
 from .base import Submodel
+from .db import LIKE_ESCAPE, sql_like_escape
 
 
 # Whitelisted sort columns for the admin invitations list. Values are the
@@ -114,8 +115,8 @@ class InvitationsModel(Submodel):
             where_clause = ""
             params: list = []
             if q:
-                where_clause = " WHERE i.email LIKE ?"
-                params.append(f"%{q}%")
+                where_clause = " WHERE i.email LIKE ?" + LIKE_ESCAPE
+                params.append(f"%{sql_like_escape(q)}%")
 
             count_cursor = await db.execute(
                 f"SELECT COUNT(*) AS c FROM invitations i{where_clause}",

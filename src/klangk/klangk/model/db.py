@@ -245,3 +245,21 @@ class DB:
         async with self.transaction() as db:
             cursor = await db.execute(query, params)
             return list(await cursor.fetchall())
+
+
+# Appended to every parameterized LIKE in the model layer, pairing
+# with sql_like_escape below (#3280).
+LIKE_ESCAPE = " ESCAPE '\\'"
+
+
+def sql_like_escape(text: str) -> str:
+    """Escape ``%``, ``_`` and ``\\`` so *text* matches literally in a
+    parameterized SQLite ``LIKE`` pattern.
+
+    Every ``LIKE`` whose pattern comes from a request binds an escaped
+    value and carries ``LIKE_ESCAPE``, so ``%`` and ``_`` typed by a
+    caller match literally instead of acting as wildcards (#3280).
+    Literal patterns (fixed suffixes, migration constants) need no
+    escaping.
+    """
+    return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
