@@ -509,6 +509,10 @@ The fixture (seeded by `fmtk-up`, or standalone via
 - `fmtk-coder@example.com` — coders bucket member.
 - `fmtk-spectator@example.com` — spectators bucket member; NO Sharing
   tab.
+- `fmtk-mustchange@example.com` — keeps the admin-set must-change flag;
+  the auth e2e suite re-arms its password per run via the admin API
+  (#3233).
+- `fmtk-reset@example.com` — forgot/reset-password flow target (#3233).
 
 Each fixture opens the workspace page: fmtk-admin via its owner wildcard,
 the role members because every role group carries `join-workspace` — the

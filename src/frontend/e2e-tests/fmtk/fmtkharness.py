@@ -26,12 +26,15 @@ Env knobs (all optional, defaults match fmtk-up):
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
+import quopri
 import re
 import shutil
 import signal
 import subprocess
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -65,6 +68,15 @@ DEFAULT_CONFIG = {
     "default_password": "admin123abc",
     # fmtk drives machine-speed /api bursts from one IP
     "api_rate_limit": "0",
+    # ...and deliberate wrong-password scenarios (login failure modes,
+    # step-up retries) every run: the default 5-failure lockout would
+    # brick admin logins against a kept backend after a few runs
+    "login_lockout_failures": "0",
+    # Outbound email (verification / reset / invite tokens) goes to the
+    # harness's in-process SMTP sink; the port is written at boot.
+    "smtp_host": "127.0.0.1",
+    "smtp_use_tls": "false",
+    "smtp_from": "fmtk@example.com",
     "state_dir": str(STATE_DIR / "klangk"),
     "data_dir": str(STATE_DIR / "klangk/data"),
 }
@@ -88,6 +100,44 @@ class HarnessTimeout(FmtkError):
 def http_get_json(url: str) -> dict:
     with urllib.request.urlopen(url, timeout=HTTP_TIMEOUT) as resp:
         return json.loads(resp.read().decode())
+
+
+def http_api(base: str, token: str, method: str, path: str, body=None):
+    """One JSON API call; returns (status, parsed-json-or-text)."""
+    data = None if body is None else json.dumps(body).encode()
+    req = urllib.request.Request(
+        base + path,
+        data=data,
+        method=method,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as resp:
+            raw = resp.read().decode()
+            return resp.status, json.loads(raw) if raw else None
+    except urllib.error.HTTPError as exc:
+        raw = exc.read().decode()
+        try:
+            return exc.code, json.loads(raw)
+        except ValueError:
+            return exc.code, raw
+
+
+def http_login(base: str, email: str, password: str) -> str:
+    """POST /auth/login; returns the access token (raises on failure)."""
+    status, body = http_api(
+        base,
+        "",
+        "POST",
+        "/api/v1/auth/login",
+        {"identifier": email, "password": password},
+    )
+    if status != 200:
+        raise FmtkError(f"http login as {email} failed ({status}): {body}")
+    return body["access_token"]
 
 
 def wait_http(url: str, name: str, timeout: float) -> None:
@@ -123,6 +173,110 @@ def write_config_yaml(cfg: dict) -> None:
     config_yaml_path().write_text(
         yaml.safe_dump(cfg, sort_keys=False, default_flow_style=False)
     )
+
+
+class SmtpSink:
+    """Minimal in-process SMTP capture server (stdio asyncio; no deps).
+
+    klangkd's emailsvc (aiosmtplib) needs a real SMTP peer to hand the
+    verification / reset / invitation tokens to. The sink accepts any
+    dialogue shape aiosmtplib sends, stores every DATA payload, and the
+    tests fish ``#/route?token=...`` URLs back out — email-token flows
+    without an SMTP dependency.
+    """
+
+    def __init__(self) -> None:
+        self.messages: list[str] = []
+        self._server: asyncio.Server | None = None
+        self._thread: threading.Thread | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+
+    def start(self) -> int:
+        """Serve on an ephemeral localhost port (daemon thread); the port."""
+        started = threading.Event()
+        self._loop = asyncio.new_event_loop()
+        self._thread = threading.Thread(
+            target=self._serve, args=(started,), daemon=True
+        )
+        self._thread.start()
+        if not started.wait(10):
+            raise FmtkError("SMTP sink did not start within 10s")
+        assert self._server is not None
+        return self._server.sockets[0].getsockname()[1]
+
+    def _serve(self, started: threading.Event) -> None:
+        assert self._loop is not None
+        asyncio.set_event_loop(self._loop)
+
+        async def run() -> None:
+            self._server = await asyncio.start_server(
+                self._handle_client, "127.0.0.1", 0
+            )
+            started.set()
+            async with self._server:
+                await self._server.serve_forever()
+
+        self._loop.run_until_complete(run())
+
+    async def _handle_client(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
+        writer.write(b"220 fmtk-sink ESMTP\r\n")
+        while True:
+            line = await reader.readline()
+            if not line:
+                break
+            upper = line.strip().upper()
+            if upper.startswith(b"DATA"):
+                # 354 for the command (the body follows), 250 only after
+                # the terminating dot — aiosmtplib fails the whole send
+                # otherwise, which rolls back e.g. registration
+                writer.write(b"354 end with <CR><LF>.<CR><LF>\r\n")
+                await writer.drain()
+                self.messages.append(await self._read_body(reader))
+                writer.write(b"250 ok\r\n")
+            elif upper.startswith(b"QUIT"):
+                writer.write(b"221 bye\r\n")
+                await writer.drain()
+                break
+            else:
+                writer.write(b"250 ok\r\n")
+            await writer.drain()
+        writer.close()
+
+    async def _read_body(self, reader: asyncio.StreamReader) -> str:
+        lines: list[bytes] = []
+        while True:
+            line = await reader.readline()
+            if line.rstrip(b"\r\n") == b".":
+                return b"".join(lines).decode(errors="replace")
+            lines.append(line)
+
+    def wait_for_message(self, needle: str, timeout: float = 30) -> str:
+        """Block until a captured message contains ``needle`` (latest
+        wins — a re-sent token supersedes earlier ones)."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            for message in reversed(self.messages):
+                if needle in message:
+                    return message
+            time.sleep(1)
+        raise HarnessTimeout(f"no captured email contains {needle!r}")
+
+    def token_for(self, route: str, needle: str) -> str:
+        """The ``#/route?token=...`` token from the message with ``needle``."""
+        message = self.wait_for_message(needle)
+        # The text part is quoted-printable: ``=`` encodes as ``=3D`` and
+        # long lines soft-wrap with ``=`` + newline mid-token — decode
+        # the whole body before extracting, or the token carries an
+        # ``3D`` prefix and the server rejects it as invalid.
+        body = quopri.decodestring(message.encode("utf-8", "replace")).decode(
+            errors="replace"
+        )
+        match = re.search(rf"#/{route}\?token=([A-Za-z0-9_.\-]+)", body)
+        if not match:
+            raise FmtkError(f"no #/{route}?token link in message: {body!r}")
+        return match.group(1)
 
 
 class Backend:
@@ -220,15 +374,22 @@ class Backend:
             pass  # exited between the poll and the kill
 
     def swap_settings(
-        self, changes: dict, apply: str = "sighup", timeout: float = 120
+        self,
+        changes: dict,
+        apply: str = "sighup",
+        timeout: float = 120,
+        verify: bool = True,
     ) -> dict:
         """Rewrite config keys and make the server pick them up.
 
         ``apply``: "sighup" (reloadable settings — in-place reload),
         "restart" (deploy-time settings — full process restart), or
         "none" (write only — nothing is applied to the running server,
-        so nothing is awaited; the next boot reads the file). Returns the
-        current /api/v1/config payload.
+        so nothing is awaited; the next boot reads the file).
+        ``verify``: block on /api/v1/config reflecting the change — pass
+        False for keys the endpoint does not expose (jwt_secret,
+        step_up_window_minutes, …); those swaps are asserted behaviorally
+        by the test instead. Returns the current /api/v1/config payload.
         """
         self.config.update(changes)
         write_config_yaml(self.config)
@@ -239,8 +400,25 @@ class Backend:
         else:
             return self.api_config()
         self.wait_healthy()
-        self.wait_config_reflects(changes, timeout)
+        if verify:
+            self.wait_config_reflects(changes, timeout)
         return self.api_config()
+
+    def wait_config_value(self, key: str, value, timeout: float = 30) -> None:
+        """Block until /api/v1/config carries ``key == value``.
+
+        A SIGHUP reload completes asynchronously — swap_settings can
+        return while the old settings are still being served, so a test
+        that re-mounts a page right after a swap would let the page's
+        one-shot config fetch read the stale value. Gate on the endpoint
+        before driving the UI.
+        """
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if self.api_config().get(key) == value:
+                return
+            time.sleep(0.5)
+        raise HarnessTimeout(f"/api/v1/config[{key}] never became {value!r}")
 
     def wait_config_reflects(self, changes: dict, timeout: float) -> None:
         """Block until /api/v1/config carries the swapped values.
@@ -286,6 +464,17 @@ def backend_env() -> dict:
 def ports_busy(ports: list[str]) -> bool:
     out = subprocess.run(["ss", "-tln"], capture_output=True, text=True).stdout
     return any(f":{port} " in line for port in ports for line in out.splitlines())
+
+
+def port_holders(port: str) -> list[int]:
+    """PIDs listening on ``port`` (same-user sockets; ss -tlnp)."""
+    out = subprocess.run(["ss", "-tlnp"], capture_output=True, text=True).stdout
+    holders: list[int] = []
+    for line in out.splitlines():
+        if f":{port} " not in line:
+            continue
+        holders.extend(int(pid) for pid in re.findall(r"pid=(\d+)", line))
+    return holders
 
 
 class Proxy:
@@ -371,6 +560,7 @@ class FlutterRun:
         self.log_path = STATE_DIR / "flutter-e2e.log"
         self.vm_uri = ""
         self.log_offset = 0
+        self.launch_serial = 0
 
     def chrome_env(self) -> dict:
         env = dict(os.environ)
@@ -382,7 +572,7 @@ class FlutterRun:
             )
         return env
 
-    def flutter_args(self) -> list[str]:
+    def flutter_args(self, url_suffix: str = "") -> list[str]:
         args = [
             "run",
             "--debug",
@@ -393,13 +583,29 @@ class FlutterRun:
             "--web-port",
             FLUTTER_PORT,
         ]
+        # Boot the app AT a URL (the fmtk-chrome.sh wrapper rewrites the
+        # dev-server origin to the proxy and preserves the path/hash):
+        # the pre-auth deep-link UX — e.g. /#/settings — where the router
+        # redirects at boot and the login page renders with the
+        # pending-redirect message (#3233).
+        if url_suffix:
+            args += [
+                "--web-launch-url",
+                f"http://127.0.0.1:{FLUTTER_PORT}{url_suffix}",
+            ]
         pkg_config = REPO_ROOT / "src/frontend/.dart_tool/package_config.json"
         lock = REPO_ROOT / "src/frontend/pubspec.lock"
         if pkg_config.exists() and not newer(pkg_config, lock):
             args.append("--no-pub")
         return args
 
-    def launch(self) -> None:
+    def launch(self, url_suffix: str = "") -> None:
+        if port_holders(FLUTTER_PORT):
+            raise FmtkError(
+                f"port {FLUTTER_PORT} is already in use — a leftover dev "
+                "server would make this launch retry the bind forever; "
+                "stop it first (stop()/wipe())"
+            )
         self.vm_uri = ""
         # Append (restart_app must not truncate earlier phases out of the CI
         # artifact), and remember where this launch's output starts —
@@ -407,7 +613,7 @@ class FlutterRun:
         self.log_offset = self.log_path.stat().st_size if self.log_path.exists() else 0
         log = open(self.log_path, "ab")
         self.proc = subprocess.Popen(
-            ["flutter", *self.flutter_args()],
+            ["flutter", *self.flutter_args(url_suffix)],
             cwd=REPO_ROOT / "src/frontend",
             env=self.chrome_env(),
             stdout=log,
@@ -419,6 +625,48 @@ class FlutterRun:
         except FmtkError:
             self.stop()  # a failed boot must not leak the flutter process
             raise
+        self.wait_toolkit()
+
+    def adopt(self) -> bool:
+        """Adopt a still-healthy app from a previous run (fast re-runs).
+
+        The dev server holds our port and the log carries the last VM
+        URI; a toolkit ping proves the app answers. Anything else (dead
+        app, bind-failed leftover) returns False so the caller stops and
+        relaunches.
+        """
+        if not self.log_path.exists() or not port_holders(FLUTTER_PORT):
+            return False
+        data = self.log_path.read_bytes()
+        match = re.search(rb"ws://\S+/ws", data)
+        if not match:
+            return False
+        self.vm_uri = match.group(0).decode()
+        self.log_offset = len(data)
+        self.proc = None
+        try:
+            self.wait_toolkit(timeout=15)
+            return True
+        except HarnessTimeout:
+            self.vm_uri = ""
+            return False
+
+    def wait_toolkit(self, timeout: float = 90) -> None:
+        """Block until the toolkit answers (dwds isolate attached).
+
+        The VM URI appears in the log before dwds attaches the app
+        isolate — driving any earlier gets "No Flutter isolate found"
+        (the first navigate of a session reliably loses that race).
+        """
+        client = FmtkClient(self)
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                client.exec("get_app_errors", {"count": 1})
+                return
+            except FmtkError:
+                time.sleep(2)
+        raise HarnessTimeout("fmtk toolkit never answered after boot")
 
     def wait_vm_uri(self) -> None:
         deadline = time.monotonic() + VM_URI_TIMEOUT
@@ -429,11 +677,26 @@ class FlutterRun:
                     f"tail of {self.log_path}:\n{self.tail()}"
                 )
             if self.log_path.exists():
-                fresh = self.log_path.read_text(errors="replace")[self.log_offset :]
+                # Slice BYTES, then decode: stat().st_size is bytes, but
+                # flutter's output carries multi-byte chars (emoji, box
+                # drawing), so a str slice at a byte offset lands past
+                # the end and never matches — the silent multi-minute
+                # stall this guard replaced.
+                fresh = self.log_path.read_bytes()[self.log_offset :].decode(
+                    errors="replace"
+                )
                 match = re.search(r"ws://\S+/ws", fresh)
                 if match:
                     self.vm_uri = match.group(0)
                     return
+                # A failed compile leaves the flutter PROCESS alive
+                # (retrying) — without this check the 600s deadline is
+                # the only way out.
+                if re.search(r"Failed to compile|^\S+\.dart:\d+:.*Error", fresh):
+                    raise FmtkError(
+                        "flutter run failed to compile — log tail:\n"
+                        + "\n".join(fresh.splitlines()[-15:])
+                    )
             time.sleep(2)
         raise HarnessTimeout(
             f"no Dart VM Service in {self.log_path} after {VM_URI_TIMEOUT}s"
@@ -462,6 +725,24 @@ class FlutterRun:
                 self.proc.wait(timeout=15)
             except subprocess.TimeoutExpired:
                 os.killpg(self.proc.pid, signal.SIGKILL)
+        # The dev server's port must be free before the next launch: the
+        # flutter tool daemon can outlive its process group still holding
+        # the socket, and a replacement launch then retries the bind
+        # forever with no output — a silent 10-minute stall. Kill whoever
+        # holds the port (ours by construction: our port override) and
+        # fail loudly if it never drains.
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            holders = port_holders(FLUTTER_PORT)
+            if not holders:
+                return
+            for pid in holders:
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            time.sleep(0.5)
+        raise FmtkError(f"port {FLUTTER_PORT} still in use after stopping flutter run")
 
 
 def newer(a: Path, b: Path) -> bool:
@@ -477,6 +758,7 @@ class FmtkClient:
 
     def __init__(self, flutter: "FlutterRun") -> None:
         self.flutter = flutter
+        self.nav_serial = 0
 
     @property
     def vm_uri(self) -> str:
@@ -554,8 +836,23 @@ class FmtkClient:
         except FmtkError:
             return False
 
+    def wait_gone(self, text: str, timeout: float = 10) -> None:
+        """Block until ``text`` leaves the tree. has_text only waits for
+        APPEARANCE — asserting a config swap's effect on already-rendered
+        UI must wait for the removal instead."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if not self.has_text(text, 500):
+                return
+            time.sleep(0.5)
+        raise HarnessTimeout(f"{text!r} never left the semantic tree")
+
     def tap(self, ref: str) -> None:
-        self.exec("tap_widget", {"ref": ref})
+        """Tap a ref; a structured failure (e.g. web_gesture_not_supported
+        for a node without the tap action) must fail the test, not no-op."""
+        result = self.exec("tap_widget", {"ref": ref})
+        if isinstance(result, dict) and result.get("success") is False:
+            raise FmtkError(f"tap_widget failed on {ref}: {result}")
 
     def enter_text(self, ref: str, text: str) -> None:
         self.exec("enter_text", {"ref": ref, "text": text})
@@ -568,7 +865,10 @@ class FmtkClient:
 
     def ref_for_label(self, label: str, node_kind: str | None = None) -> str:
         def matches(node: dict) -> bool:
-            if label not in node_labels(node):
+            # substring match: merged semantics routinely double labels
+            # ('Invitations\nInvitations' — a wrapping Semantics label plus
+            # the child Text), and exact equality would never find them
+            if not any(label in str(entry) for entry in node_labels(node)):
                 return False
             return node_kind is None or node_type(node) == node_kind
 
@@ -594,6 +894,197 @@ class FmtkClient:
         self.tap_label("Log In")
         self.wait_for_text(expect_text)
 
+    def logout(self) -> None:
+        """Tap the app-bar logout icon (its tooltip is the semantic
+        label; icon-only fallback: the rightmost button — logout is the
+        last app-bar action) and wait for the login surface."""
+        if self.has_text("Log In", 2000):
+            return  # already logged out
+        try:
+            self.tap_label("Logout")
+        except FmtkError:
+            self.tap_rightmost_button()
+        self.wait_for_login_page()
+
+    def tap_rightmost_button(self) -> None:
+        """Tap the button with the greatest right edge (ties: topmost).
+
+        The app-bar's actions sit at the far right edge of the top bar,
+        so the rightmost button overall is its last icon (logout).
+        """
+        self.tap_button_from_right(0)
+
+    def tap_identifier(self, identifier: str) -> None:
+        """Tap the node carrying ``identifier`` — or, when the identifier
+        wraps a control (Semantics container), the tappable node inside
+        it. Identifiers are the deterministic locator for instrumented
+        widgets (``Semantics(identifier: ...)``) where labels do not
+        merge (FABs, dialogs)."""
+        nodes = find_nodes(self.snapshot(), lambda n: n.get("identifier") == identifier)
+        if not nodes:
+            raise FmtkError(f"no snapshot node with identifier {identifier!r}")
+        target = nodes[0]
+        if "tap" in (target.get("actions") or []):
+            self.tap(target["ref"])
+            return
+        descendants = self.descendants_with_tap(target)
+        if not descendants:
+            raise FmtkError(f"node {identifier!r} has no tappable descendant")
+        self.tap(descendants[0]["ref"])
+
+    def descendants_with_tap(self, node: dict) -> list[dict]:
+        found: list[dict] = []
+        refs = {c["ref"] for c in (node.get("children") or [])}
+        if not refs:
+            return found
+        candidates = find_nodes(self.snapshot(), lambda n: n.get("ref") in refs)
+        for candidate in candidates:
+            if "tap" in (candidate.get("actions") or []):
+                found.append(candidate)
+            found.extend(self.descendants_with_tap(candidate))
+        return found
+
+    def enter_text_identifier(self, identifier: str, text: str) -> None:
+        """Type into the text field at/below the identifier node."""
+        nodes = find_nodes(self.snapshot(), lambda n: n.get("identifier") == identifier)
+        if not nodes:
+            raise FmtkError(f"no snapshot node with identifier {identifier!r}")
+        fields = find_nodes(
+            self.snapshot(),
+            lambda n: (
+                node_type(n) == "textField"
+                and (
+                    n.get("ref") == nodes[0].get("ref")
+                    or self.is_descendant(n, nodes[0])
+                )
+            ),
+        )
+        if not fields:
+            raise FmtkError(f"no text field under identifier {identifier!r}")
+        self.enter_text(fields[0]["ref"], text)
+
+    def is_descendant(self, node: dict, ancestor: dict) -> bool:
+        parent_refs = {c["ref"] for c in (ancestor.get("children") or [])}
+        if node.get("ref") in parent_refs:
+            return True
+        return any(
+            self.is_descendant(node, candidate)
+            for candidate in find_nodes(
+                self.snapshot(), lambda n: n.get("ref") in parent_refs
+            )
+        )
+
+    def tap_lowest_button(self) -> None:
+        """Tap the lowest button in the screen's right edge (a corner FAB).
+
+        FloatingActionButton semantics never merge child labels — icon
+        semanticLabels and Semantics wrappers alike — so corner FABs are
+        addressed positionally. Constrained to the right edge because
+        long lists put row buttons below the FAB's top.
+        """
+        buttons = find_nodes(self.snapshot(), lambda n: node_type(n) == "button")
+        if not buttons:
+            raise FmtkError("no buttons visible for tap_lowest_button")
+        right_edge = max((n.get("bounds") or {}).get("right", 0) for n in buttons)
+        corner = [
+            n
+            for n in buttons
+            if (n.get("bounds") or {}).get("right", 0) >= right_edge - 160
+            and "tap" in (n.get("actions") or [])
+        ]
+        if not corner:
+            raise FmtkError("no tappable corner button found")
+        target = max(corner, key=lambda n: (n.get("bounds") or {}).get("top", -1))
+        self.tap(target["ref"])
+
+    def tap_button_from_right(self, index: int) -> None:
+        """Tap the app-bar button ``index`` places from the right edge.
+
+        Icon-only app-bar actions carry no semantic label (tooltips are
+        not exposed), so they are addressed positionally among the
+        topmost buttons: 0 = logout (rightmost), 1 = admin, …
+        """
+        buttons = find_nodes(self.snapshot(), lambda n: node_type(n) == "button")
+        if not buttons:
+            raise FmtkError("no buttons visible for tap_button_from_right")
+        top = min((n.get("bounds") or {}).get("top", 0) for n in buttons)
+        bar = [n for n in buttons if (n.get("bounds") or {}).get("top", 0) <= top + 120]
+        if len(bar) <= index:
+            raise FmtkError(f"app-bar has {len(bar)} buttons, need index {index}")
+        target = max(bar, key=lambda n: (n.get("bounds") or {}).get("right", -1))
+        for _ in range(index):
+            bar.remove(target)
+            target = max(bar, key=lambda n: (n.get("bounds") or {}).get("right", -1))
+        self.tap(target["ref"])
+
+    # --- hash-route navigation + in-app evaluation (per AGENTS.md) ------
+
+    def navigate(self, path: str) -> None:
+        """Hash-route the driven tab to ``#/path`` via navigateTo.
+
+        Only the hash differs, so the app keeps running — Flutter's hash
+        browser-history listener hands the new location to GoRouter. This
+        is how email-token links (verify / reset / accept-invite) reach
+        their pages without a page reload (evaluate cannot import GoRouter
+        itself; navigateTo is in scope from the login page's library).
+
+        A full-page navigation is NOT usable here: reloading the tab kills
+        the dwds isolate and fmtk loses the app — to observe boot-time
+        effects (pre-auth deep links), use ``Harness.restart_app(at_path=)``.
+        """
+        escaped = path.replace("\\", "\\\\").replace("'", "\\'")
+        self.exec(
+            "evaluate_dart_expression",
+            {
+                "expression": (
+                    f"navigateTo('http://127.0.0.1:{PROXY_PORT}/#{escaped}')"
+                ),
+                "libraryUri": "package:klangk_frontend/auth/login_page.dart",
+            },
+        )
+
+    AUTH_LIBRARY = "package:klangk_frontend/app.dart"
+    AUTH_WALK_TEMPLATE = """
+() {{
+  AuthService? auth;
+  void walk(Element el) {{
+    if (auth != null) return;
+    if (el is StatefulElement) {{
+      try {{
+        auth = Provider.of<AuthService>(el, listen: false);
+        return;
+      }} catch (_) {{}}
+    }}
+    el.visitChildElements((c) => walk(c));
+  }}
+  walk(WidgetsBinding.instance.rootElement!);
+  if (auth == null) return 'NO-AUTH';
+  {body}
+}}()
+"""
+
+    def auth_eval(self, body: str) -> object:
+        """Evaluate against the app's live :class:`AuthService`.
+
+        Walks the tree for any stateful element the MultiProvider
+        actually covers (the root View element sits ABOVE it and must be
+        skipped; Provider.of from a covered element never throws) and
+        runs ``body`` with ``auth!`` bound to the service. ``app.dart``'s
+        library scope carries provider's ``Provider.of`` plus the
+        widgets imports the walk needs. Bodies must be complete
+        statements — the evaluator does not append semicolons.
+        """
+        data = self.exec(
+            "evaluate_dart_expression",
+            {
+                "expression": self.AUTH_WALK_TEMPLATE.format(body=body),
+                "libraryUri": self.AUTH_LIBRARY,
+            },
+        )
+        if isinstance(data, dict) and "result" in data:
+            return data["result"]
+        return data
+
     def dismiss_login_banner(self) -> None:
         if self.has_text("I Accept", 3000):
             self.tap_label("I Accept")
@@ -610,9 +1101,28 @@ class FmtkClient:
         raise HarnessTimeout("login page never appeared")
 
     def app_errors(self) -> list:
+        """Uncaught Flutter errors, minus known framework routing noise."""
         data = self.exec("get_app_errors", {"count": 20})
         errors = data.get("errors", data) if isinstance(data, dict) else data
-        return errors or []
+        return [
+            error
+            for error in (errors or [])
+            if not self.is_framework_noise(str(error.get("message", "")))
+        ]
+
+    # Framework artifacts of routing a Router app outside a cold boot —
+    # go_router has already routed correctly; these are the Navigator's
+    # legacy fallbacks complaining (booting at a deep link: initialRoute;
+    # an in-tab hash change: didPushRouteInformation -> pushNamed).
+    # Visible only under the debug error monitor; real app errors still
+    # fail the drain untouched.
+    FRAMEWORK_NOISE = (
+        "Could not navigate to initial route",
+        "Could not find a generator for route",
+    )
+
+    def is_framework_noise(self, message: str) -> bool:
+        return any(pattern in message for pattern in self.FRAMEWORK_NOISE)
 
     def hot_restart(self) -> None:
         """dwds hot restart. Fails with a chrome-devtools error against
@@ -705,6 +1215,7 @@ class Harness:
         self.backend = Backend()
         self.proxy = Proxy(self.backend)
         self.flutter = FlutterRun()
+        self.smtp = SmtpSink()
 
     @property
     def client(self) -> FmtkClient:
@@ -712,11 +1223,15 @@ class Harness:
             raise FmtkError("flutter run not launched (call boot() first)")
         return FmtkClient(self.flutter)
 
-    def restart_app(self) -> None:
+    def restart_app(self, at_path: str | None = None) -> None:
         """Stop and relaunch the debug app (fresh main() -> config
         re-fetch). The deterministic substitute for dwds hot restart,
         which fails against the proxied debug origin (chrome devtools
         error); the incremental debug rebuild keeps it to ~15-30s.
+
+        ``at_path`` boots the app AT ``#/path`` (the pre-auth deep-link
+        UX — a full-page hash navigation inside a running tab kills the
+        dwds isolate, so booting there is the only reliable way).
 
         The app-error monitor is a rolling window that a restart would
         silently clear — drain it first so errors from the outgoing app
@@ -724,16 +1239,41 @@ class Harness:
         errors = self.client.app_errors()
         if errors:
             raise FmtkError(f"app errors before restart_app: {errors}")
+        url_suffix = ""
+        if at_path is not None:
+            self.flutter.launch_serial += 1
+            url_suffix = f"/?e2e_boot={self.flutter.launch_serial}#{at_path}"
         self.flutter.stop()
-        self.flutter.launch()
+        self.flutter.launch(url_suffix)
 
     def boot(self, fresh: bool = False) -> None:
         if fresh:
             self.wipe()
         self.backend.ensure()
+        # The sink's port is ephemeral, so the SMTP settings are rewritten
+        # on every boot and reloaded over SIGHUP (emailsvc reads live off
+        # settings — no restart needed, adopted or fresh).
+        self.config["smtp_port"] = str(self.smtp.start())
+        # Same for the lockout disable when adopting a backend whose yaml
+        # predates it (fresh stacks get it via DEFAULT_CONFIG): a locked
+        # admin from earlier runs would fail every login for 15 minutes.
+        self.config.setdefault("login_lockout_failures", "0")
+        write_config_yaml(self.config)
+        self.backend.sighup()
+        self.backend.wait_healthy()
         self.proxy.ensure()
         seed(self.backend.url)
-        self.flutter.launch()
+        # Adopt a healthy app from a previous run (FMTK_E2E_KEEP_APP=1
+        # skips stopping it in teardown) — re-runs then skip the ~90s
+        # flutter boot entirely. Anything stale falls back to a fresh
+        # launch (stop() drains the port first).
+        if not self.flutter.adopt():
+            self.flutter.stop()
+            self.flutter.launch()
+
+    @property
+    def config(self) -> dict:
+        return self.backend.config
 
     def wipe(self) -> None:
         """Stop OUR stack — backend + proxy by config-path-scoped patterns,
@@ -750,6 +1290,12 @@ class Harness:
         for pattern in patterns:
             for pid in pids_matching(pattern):
                 os.kill(pid, signal.SIGTERM)
+        for port in (FLUTTER_PORT, PROXY_PORT, BACKEND_PORT, EGRESS_PORT):
+            for pid in port_holders(port):
+                try:
+                    os.kill(pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
         time.sleep(2)
         for pattern in patterns:
             for pid in pids_matching(pattern):
@@ -757,8 +1303,47 @@ class Harness:
                     os.kill(pid, signal.SIGKILL)
                 except ProcessLookupError:
                     pass
+        for port in (FLUTTER_PORT, PROXY_PORT, BACKEND_PORT, EGRESS_PORT):
+            for pid in port_holders(port):
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
         shutil.rmtree(STATE_DIR, ignore_errors=True)
 
     def teardown(self) -> None:
-        """Stop the flutter run; keep backend + proxy for fast re-runs."""
-        self.flutter.stop()
+        """Stop the flutter run; keep backend + proxy for fast re-runs.
+
+        FMTK_E2E_KEEP_APP=1 also keeps the app running — the next run
+        adopts it (boot() pings it first) instead of paying the boot.
+        """
+        if os.environ.get("FMTK_E2E_KEEP_APP") != "1":
+            self.flutter.stop()
+
+    # --- admin-side setup (HTTP, not UI) --------------------------------
+
+    def admin_api(self, method: str, path: str, body: dict | None = None):
+        """One API call as the scratch default admin; (status, json)."""
+        token = http_login(
+            self.backend.url,
+            self.config["default_user"],
+            self.config["default_password"],
+        )
+        return http_api(self.backend.url, token, method, path, body)
+
+    def force_password_change(self, email: str, password: str) -> None:
+        """(Re)arm a user for the forced-change flow: admin-set password
+        implies ``must_change_password`` (#3172). Idempotent across runs
+        — the caller passes a run-unique password, so the history check
+        never trips."""
+        status, listing = self.admin_api("GET", "/api/v1/users?page_size=100")
+        if status != 200:
+            raise FmtkError(f"user listing failed ({status}): {listing}")
+        user_id = next((u["id"] for u in listing["users"] if u["email"] == email), None)
+        if user_id is None:
+            raise FmtkError(f"{email} is not seeded")
+        status, body = self.admin_api(
+            "PATCH", f"/api/v1/users/{user_id}", {"password": password}
+        )
+        if status != 200:
+            raise FmtkError(f"admin password set for {email} failed: {body}")

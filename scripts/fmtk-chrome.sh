@@ -36,7 +36,12 @@ proxy_port="${FMTK_PROXY_PORT:-8124}"
 for arg in "$@"; do
   case "$arg" in
   http://127.0.0.1:${flutter_port}* | http://localhost:${flutter_port}*)
-    arg="http://127.0.0.1:${proxy_port}/#/"
+    # Keep whatever path/query/hash the URL carried: the fmtk e2e
+    # harness boots the app AT a deep link via --web-launch-url
+    # (#3233), and dropping the suffix would land every boot on /.
+    rest="${arg#http://127.0.0.1:"${flutter_port}"}"
+    rest="${rest#/}"
+    arg="http://127.0.0.1:${proxy_port}/${rest}"
     ;;
   esac
   args+=("$arg")
