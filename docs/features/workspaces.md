@@ -147,8 +147,14 @@ has access at a glance.
 
 ## Mount security
 
-Workspace bind mounts are validated at create and edit time. Two
-protections apply regardless of `KLANGKD_ALLOWED_MOUNT_ROOTS`:
+Workspace bind mounts are validated at create and edit time, and
+the same check runs again every time the workspace starts —
+immediately before klangkd builds the container command (#3278). A
+source that changed after it was saved (for example, a directory
+under an allowed root replaced by a symlink pointing elsewhere) is
+refused with a clear start error instead of mounting whatever it
+now points at. Two protections apply regardless of
+`KLANGKD_ALLOWED_MOUNT_ROOTS`:
 
 **Protected paths** — the following host paths are always blocked,
 even if they fall under an allowed root:
