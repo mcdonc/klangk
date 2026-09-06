@@ -28,6 +28,7 @@ from fmtkharness import (
     FmtkError,
     find_nodes,
     node_type,
+    wait_for_fields,
 )
 
 RUN = uuid.uuid4().hex[:6]
@@ -82,7 +83,7 @@ def test_wrong_password_shows_error_not_navigation(harness, app):
 def test_register_verify_and_resend(harness, app):
     at_login(harness, app)
     app.tap_label("Need an account? Create one")
-    fields = walk_fields(app)
+    fields = wait_for_fields(app, "Create Account")
     app.enter_text(fields[0]["ref"], REGISTERED_EMAIL)
     app.enter_text(fields[1]["ref"], REGISTERED_PW)
     app.tap_label("Create Account")
@@ -103,7 +104,7 @@ def test_register_verify_and_resend(harness, app):
 def test_forgot_and_reset_password(harness, app):
     at_login(harness, app)
     app.tap_label("Forgot password?")
-    fields = walk_fields(app)
+    fields = wait_for_fields(app, "Send Reset Link")
     app.enter_text(fields[0]["ref"], RESET_EMAIL)
     app.tap_label("Send Reset Link")
     app.wait_for_text("we sent a password reset link")
@@ -298,7 +299,7 @@ def test_registration_toggle_and_policy_swap(harness, app):
         app.wait_for_login_page()
         app.dismiss_login_banner()
         app.tap_label("Need an account? Create one")
-        fields = walk_fields(app)
+        fields = wait_for_fields(app, "Create Account")
         app.enter_text(fields[0]["ref"], f"fmtk-len{RUN}@example.com")
         app.enter_text(fields[1]["ref"], "tenchars!!")
         app.tap_label("Create Account")
