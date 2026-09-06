@@ -1387,6 +1387,17 @@ def find_nodes(tree, predicate) -> list[dict]:
     return found
 
 
+def wait_for_fields(app, marker: str) -> list[dict]:
+    """Wait for the page marker, then return its text fields in reading
+    order (#3264): a snapshot taken between a navigation tap and the route
+    swap returns the *old* page's fields, and text typed into them dies
+    with that page when the new one mounts — the caller must hand us a
+    marker that only the target page shows (a submit button's label is a
+    reliable one)."""
+    app.wait_for_text(marker)
+    return find_nodes(app.snapshot(), lambda n: node_type(n) == "textField")
+
+
 def walk_nodes(node, predicate, found: list) -> None:
     if isinstance(node, dict):
         if "ref" in node and predicate(node):

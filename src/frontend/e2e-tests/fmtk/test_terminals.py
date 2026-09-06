@@ -48,10 +48,9 @@ from fmtkharness import (
     FIXTURE_PASSWORD,
     FmtkError,
     find_label_nodes,
-    find_nodes,
     http_api,
     http_login,
-    node_type,
+    wait_for_fields,
 )
 
 RUN = uuid.uuid4().hex[:6]
@@ -65,11 +64,6 @@ SPECTATOR_EMAIL = "fmtk-spectator@example.com"
 
 
 # --- shared driving helpers (suite-local; harness keeps primitives) ----
-
-
-def walk_fields(app) -> list[dict]:
-    """The visible text fields, in reading order."""
-    return find_nodes(app.snapshot(), lambda n: node_type(n) == "textField")
 
 
 def at_login(harness, app) -> None:
@@ -89,7 +83,7 @@ def at_login(harness, app) -> None:
 def register_user(harness, app, email: str, password: str) -> None:
     """Register + email-verify; the auto-login lands on the empty list."""
     app.tap_label("Need an account? Create one")
-    fields = walk_fields(app)
+    fields = wait_for_fields(app, "Create Account")
     app.enter_text(fields[0]["ref"], email)
     app.enter_text(fields[1]["ref"], password)
     app.tap_label("Create Account")

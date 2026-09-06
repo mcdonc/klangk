@@ -37,11 +37,10 @@ from fmtkharness import (
     ADMIN_EMAIL,
     FIXTURE_PASSWORD,
     FmtkError,
-    find_nodes,
     http_api,
     http_login,
     node_labels,
-    node_type,
+    wait_for_fields,
 )
 
 RUN = uuid.uuid4().hex[:6]
@@ -59,11 +58,6 @@ SWAP_IMAGE = "localhost/klangk-workspace:2026.09.05-7422a6cfd"
 
 
 # --- shared driving helpers (suite-local; harness keeps primitives) ----
-
-
-def walk_fields(app) -> list[dict]:
-    """The visible text fields, in reading order."""
-    return find_nodes(app.snapshot(), lambda n: node_type(n) == "textField")
 
 
 def at_login(harness, app) -> None:
@@ -88,7 +82,7 @@ def register_fresh_user(harness, app) -> None:
     """Register + email-verify the run-unique user; the auto-login lands
     on the empty owned list (the issue's Done-when starting point)."""
     app.tap_label("Need an account? Create one")
-    fields = walk_fields(app)
+    fields = wait_for_fields(app, "Create Account")
     app.enter_text(fields[0]["ref"], FRESH_EMAIL)
     app.enter_text(fields[1]["ref"], FRESH_PW)
     app.tap_label("Create Account")
