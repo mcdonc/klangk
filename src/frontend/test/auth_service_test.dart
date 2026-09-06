@@ -1979,6 +1979,39 @@ void main() {
     });
   });
 
+  group('oidcBindingParam tri-state (#3230)', () {
+    setUp(() {
+      testWebClient = true;
+    });
+
+    tearDown(() {
+      testWebClient = false;
+      testDpopBackendOverride = null;
+    });
+
+    test('null off-web — no param on desktop/CLI flows', () async {
+      testWebClient = false;
+      expect(await oidcBindingParam(), isNull);
+    });
+
+    test("'none' when the web build cannot bind (insecure context)", () async {
+      testDpopBackendOverride = FakeDpopBackend(hasKey: false);
+      expect(await oidcBindingParam(), 'none');
+    });
+
+    test('base64url JWK when binding-capable', () async {
+      testDpopBackendOverride = FakeDpopBackend();
+      final param = await oidcBindingParam();
+      expect(param, isNotNull);
+      final padded =
+          param!.padRight(param.length + (4 - param.length % 4) % 4, '=');
+      final jwk = jsonDecode(utf8.decode(base64Url.decode(padded)));
+      expect(jwk['kty'], 'EC');
+      expect(jwk['crv'], 'P-256');
+      expect(jwk.containsKey('d'), isFalse);
+    });
+  });
+
   group('AuthService web mint marking + bind retry (#3230)', () {
     setUp(() {
       testDpopBackendOverride = FakeDpopBackend(proof: 'proof-value');
