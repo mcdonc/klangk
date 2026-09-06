@@ -980,6 +980,21 @@ class KlangkSettings(BaseSettings):
     # window). Reloadable on SIGHUP (read live at issue/refresh/sweep
     # time).
     privileged_session_idle_timeout_minutes: int = 10
+    # The DPoP bind grace window for web-minted sessions (#3230), in
+    # seconds. Sessions minted for the web client (the SPA marks its
+    # minting requests with the ``Klangk-Web-Client`` header) carry a
+    # bind deadline: if the session has not been DPoP-bound within
+    # this many seconds of mint, every later use — API request, token
+    # refresh, WebSocket connect — is refused with 401 until the user
+    # re-logs in (the re-login re-enters the bind flow). This closes
+    # the attacker-extendable mint-to-bind window of #3218: a script
+    # in the page can read the unbound JWT and sabotage every bind
+    # call, but the token it exfiltrates stops working at the deadline.
+    # CLI/TUI sessions are unmarked and stay unbound indefinitely by
+    # design. 0 disables the deadline entirely (the pre-#3230
+    # best-effort binding). Reloadable on SIGHUP (read live at mint
+    # time; the deadline is baked into each newly minted token).
+    web_bind_grace_seconds: int = 300
     # Session workstation binding (#3194): replay protection for
     # bearer JWTs. ``off`` (the default) — any holder of a token may
     # use it until expiry, as before. ``ip`` — every authenticated
@@ -2090,6 +2105,7 @@ class KlangkSettings(BaseSettings):
         "session_idle_timeout_minutes",
         "privileged_session_idle_timeout_minutes",
         "step_up_window_minutes",
+        "web_bind_grace_seconds",
         "port_range_start",
         "websocket_msg_size_max",
         "api_rate_limit",
@@ -2142,6 +2158,8 @@ class KlangkSettings(BaseSettings):
             "privileged_session_idle_timeout_minutes",
             # Disables the step-up (sudo-mode) gate (#3196).
             "step_up_window_minutes",
+            # Disables the web-session DPoP bind deadline (#3230).
+            "web_bind_grace_seconds",
             # Disables the per-user running-workspace cap (#2525).
             "max_running_workspaces_per_user",
             # Disables the per-workspace volume quota (#3153).

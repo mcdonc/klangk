@@ -46,6 +46,15 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def web_client_mint(request: Request) -> bool:
+    """True when a session-minting request comes from the web SPA
+    (#3230): the SPA marks its mint calls with the
+    ``Klangk-Web-Client`` header, so the minted token carries the DPoP
+    bind deadline. CLI/TUI requests send no marker and their sessions
+    stay unbound indefinitely by design."""
+    return request.headers.get(auth.WEB_CLIENT_HEADER) == "1"
+
+
 @router.get("/auth/verify-workspace-token")
 async def verify_workspace_token(request: Request):
     """Validate a workspace JWT. Used by the proxy auth_request to gate
@@ -116,6 +125,7 @@ async def register(
             user_agent=user_agent,
             method=method,
             referer=referer,
+            web_client=web_client_mint(request),
         )
         return result
 
@@ -255,6 +265,7 @@ async def verify_email(req: VerifyRequest, request: Request):
         method=method,
         referer=referer,
         via="email-verify",
+        web_client=web_client_mint(request),
     )
     await request.app.state.model.users.record_login(user_id)
     return {"status": "verified", "access_token": access_token}
@@ -621,6 +632,7 @@ async def reset_password(req: ResetPasswordRequest, request: Request):
         method=method,
         referer=referer,
         via="password-reset",
+        web_client=web_client_mint(request),
     )
     await request.app.state.model.users.record_login(user_id)
     return {"status": "reset", "access_token": token}
@@ -642,6 +654,7 @@ async def login(
         user_agent=user_agent,
         method=method,
         referer=referer,
+        web_client=web_client_mint(request),
     )
 
 
@@ -702,6 +715,7 @@ async def local_login(request: Request):
         method=method,
         referer=referer,
         via="local",
+        web_client=web_client_mint(request),
     )
     await request.app.state.model.users.record_login(user["id"])
     return LocalLoginResponse(access_token=token, email=user["email"])
@@ -952,6 +966,7 @@ async def change_expired_password(
         user_agent=user_agent,
         method=method,
         referer=referer,
+        web_client=web_client_mint(request),
     )
 
 
@@ -1238,6 +1253,7 @@ async def accept_invite(req: AcceptInviteRequest, request: Request):
         method=method,
         referer=referer,
         via="invite",
+        web_client=web_client_mint(request),
     )
     await request.app.state.model.users.record_login(user["id"])
     return {"status": "accepted", "access_token": access_token}
@@ -1630,6 +1646,9 @@ async def oidc_callback(
         await request.app.state.oidc.sync_oidc_groups(user["id"], hook_groups)
 
     source_ip, user_agent, method, referer = request_metadata(request)
+    source_ip, user_agent = workstation(request)
+    # #3230: the web flow (no cli_redirect) mints a bind-deadline
+    # token; the CLI's localhost-redirect flow mints an unmarked one.
     access_token = await request.app.state.auth.issue_token(
         user["id"],
         email,
@@ -1638,6 +1657,7 @@ async def oidc_callback(
         method=method,
         referer=referer,
         via="oidc",
+        web_client=not _valid_cli_redirect(cookie_data.get("cli_redirect")),
     )
     await request.app.state.model.users.record_login(user["id"])
     return _build_redirect_response(

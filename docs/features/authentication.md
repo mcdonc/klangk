@@ -403,18 +403,33 @@ script running in a live tab can act as the user but cannot steal a
 credential that outlives the reload.
 
 What this deliberately is **not**: a guarantee that no unbound token
-ever exists. Binding is best-effort at the browser — between mint and
-bind, and on any session whose bind never completes (network failure,
-server refusal, or an in-page attacker sabotaging the bind calls), the
-token stays usable and JS-readable exactly as before #3218. CLI and TUI
-clients are always unbound and unaffected. Closing that residual
-window server-side is tracked in #3230.
+ever exists during the bind grace window. Binding is still best-effort
+at the browser for those first moments — between mint and bind, and on
+any session whose bind has not completed yet, the token stays usable
+and JS-readable exactly as before #3218. But the window is no longer
+attacker-extendable (#3230): sessions minted for the web client carry
+a bind deadline (mint time plus `KLANGKD_WEB_BIND_GRACE_SECONDS`,
+default 300 seconds), and a web session that is still unbound past the
+deadline is refused everywhere — every API request, token refresh,
+bind call, and WebSocket connect answers 401 until the user logs in
+again. The re-login re-enters the bind flow under attacker-free
+conditions, or surfaces the sabotage: a script reading the unbound
+JWT while making every bind call fail now holds a credential that
+dies within minutes. The deadline is a signed claim inside the token
+and survives refresh and bind swaps unchanged, so no rotation can
+reset it. CLI and TUI clients are always unmarked and unaffected —
+their tokens keep working indefinitely. A transient bind failure on
+the web is retried every 30 seconds inside the window; a failure that
+outlives the window costs a re-login, not the session's secrecy.
 
 Operational notes:
 
 - **Secure context required.** WebCrypto (`crypto.subtle`) exists only
-  on HTTPS or localhost. A plain-HTTP remote deployment silently keeps
-  the previous unbound behavior.
+  on HTTPS or localhost. A web build served over plain HTTP to a remote
+  host cannot bind and knows it: it stops marking its minting requests,
+  so those sessions keep the unbound, pre-#3230 behavior — the same
+  insecure-transport exposure the whole session already has there.
+  Serve the web client over HTTPS to get the bound posture.
 - **Clock skew matters now.** Proofs older (or further ahead) than
   `PROOF_WINDOW_SECONDS` (300) are rejected. A workstation whose clock
   drifts more than ~5 minutes sees every authenticated request fail
@@ -429,3 +444,7 @@ Operational notes:
   proof could be replayed exactly once, within its window, and only
   alongside the token itself — the same exposure as the
   token-in-URL issue tracked in #3201).
+- **The bind deadline is baked per token.** It is read from
+  `KLANGKD_WEB_BIND_GRACE_SECONDS` at mint time (reloadable on SIGHUP);
+  sessions minted before a change keep the deadline they were minted
+  with.

@@ -355,6 +355,22 @@ operators or integrators to act when upgrading.
   the previous unbound behavior. See
   [Authentication: DPoP session-token binding](features/authentication.md#dpop-session-token-binding-xss-theft-protection).
 
+- **`KLANGKD_WEB_BIND_GRACE_SECONDS` (#3230).** Closes the
+  attacker-extendable mint-to-bind window of the DPoP feature
+  (#3218): sessions minted for the web client now carry a signed bind
+  deadline (mint time plus this many seconds, default `300`), and a
+  web session that is still not DPoP-bound past the deadline is
+  refused with 401 on every API request, token refresh, bind call,
+  and WebSocket connect until the user logs in again. A page script
+  that reads the unbound JWT while sabotaging the bind calls now
+  holds a credential that dies within minutes; the deadline survives
+  refresh and bind swaps unchanged, so no rotation can reset it. The
+  web client retries a transiently failed bind every 30 seconds
+  inside the window. CLI/TUI sessions are unmarked and stay unbound
+  indefinitely; `0` restores the pre-#3230 best-effort binding.
+  Reloadable on SIGHUP. See
+  [Authentication: DPoP session-token binding](features/authentication.md#dpop-session-token-binding-xss-theft-protection).
+
 - **CSP: hash-allowed inline scripts + Trusted Types (#3219).** The
   served `Content-Security-Policy` drops `'unsafe-inline'` from
   `script-src`: the inline `<script>` blocks of the built frontend's
