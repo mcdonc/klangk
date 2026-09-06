@@ -3776,6 +3776,13 @@ users(id)`, so the decider handler passing the decider's email violated the
   workspace-list FABs now expose semantic labels, so assistive tech
   announces them by name instead of "button".
 
+- **Terminal tab-strip controls name themselves for screen readers
+  (#3235).** The new-terminal `+` button, each tab's close icon, and
+  the unshare broadcast icon now expose semantic labels, and shared
+  tabs carry a full `handle:window` label instead of the truncated
+  display name — assistive tech announces every strip control by
+  name.
+
 - **Self-registered and invited users can create workspaces again
   (#3234).** Both the self-registration and the admin-invite paths insert
   their user rows without the `members`-group join that admin-created

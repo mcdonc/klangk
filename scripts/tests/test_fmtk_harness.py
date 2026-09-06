@@ -238,6 +238,43 @@ def test_workspace_suite_extensions():
     )
 
 
+def test_terminal_suite_extensions():
+    """The terminal suite (#3235) drives the canvas terminal through
+    the GhosttyTerminalState eval (buffer assertions, never the widget
+    tree) and the instrumented tab-strip labels."""
+    suite = _REPO_ROOT / "src/frontend/e2e-tests/fmtk/test_terminals.py"
+    assert suite.is_file(), "the terminal suite (#3235) is missing"
+    assert_wired(
+        suite.read_text(),
+        (
+            "terminal_buffer",
+            "terminal_send",
+            "terminal_eval",
+            "jsonEncode(st!.widget.wsClient.terminalWindows)",
+            "jsonEncode(st!.widget.wsClient.sharedTerminals)",
+            'tap_labeled_exact("New terminal")',
+            "Close ",
+            "Shared:",
+            "debug_dump_focus_tree",
+            "allow_sudo",
+        ),
+        "the terminal suite (#3235) must drive the buffer and the instrumented strip",
+    )
+    strip = (
+        _REPO_ROOT / "src/frontend/lib/workspace/terminal_tabs_view.dart"
+    ).read_text()
+    assert_wired(
+        strip,
+        (
+            "semanticLabel: widget.tooltip",
+            "semanticLabel: 'Close ${widget.name}'",
+            "semanticLabel: 'Unshare'",
+            "semanticLabel:",
+        ),
+        "the terminal strip instrumentation (#3235) must stay wired in",
+    )
+
+
 def test_agents_documents_the_harness():
     agents = _AGENTS.read_text()
     assert "fmtk-up" in agents, "AGENTS.md must point at the fmtk-up harness"
