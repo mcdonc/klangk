@@ -1405,6 +1405,29 @@ class KlangkSettings(BaseSettings):
     memory_eviction_recovery_percent: float = 15.0
     memory_eviction_sustain_polls: int = 3
     memory_eviction_poll_interval: float = 10.0
+    # --- Disk-capacity detection (#3206) ---
+    # disk_watchdog_*: the operational detection layer under #3250's
+    # admin notifications. Every disk_watchdog_poll_interval seconds,
+    # statvfs the filesystems holding the data directory (the audit
+    # records storage — SV-222483's alert surface), the podman
+    # container-storage root, and any disk_watchdog_paths entries,
+    # deduplicated by device. Usage crossing the thresholds emits
+    # resource.disk.warn / resource.disk.critical notifications on
+    # state transitions only (recovery requires falling
+    # RECOVERY_GAP_PERCENT points below the warn threshold, so a
+    # boundary-hovering usage level cannot flap alerts); crossing back
+    # emits resource.disk.recovered. Detection failure is loud in the
+    # log and never blocks anything. All fields read live off settings
+    # every poll: reloadable on SIGHUP (#1587).
+    disk_watchdog_enabled: bool = True
+    disk_watchdog_warn_percent: float = 75.0
+    disk_watchdog_critical_percent: float = 90.0
+    disk_watchdog_poll_interval: float = 60.0
+    # Extra filesystems to monitor (any path on each filesystem
+    # suffices — e.g. a backup mount). Comma-separated env var or YAML
+    # list; a path on an already-monitored filesystem (same device) is
+    # ignored.
+    disk_watchdog_paths: list[str] | None = None
     hosted_ports_per_workspace: int | None = 5
     # netfilter_enabled: master on/off switch for per-workspace egress
     # filtering (#1774). Defaults to True — together with the defaulted
@@ -2182,6 +2205,40 @@ class KlangkSettings(BaseSettings):
             )
         return self
 
+    @model_validator(mode="after")
+    def _validate_disk_watchdog_thresholds(self) -> "KlangkSettings":
+        """Disk thresholds must be usable percentages in order (#3206).
+
+        Both must sit in (0, 100] — usage is a percentage of capacity,
+        and a warn threshold at/below zero would alert on a healthy
+        disk. Warn must not exceed critical — an inverted pair would
+        make the warn state unreachable. Equal values are tolerated
+        (operator explicitly chooses OK↔critical with no intermediate
+        warn event).
+        """
+        warn = self.disk_watchdog_warn_percent
+        critical = self.disk_watchdog_critical_percent
+        if not 0 < warn <= 100:
+            raise ValueError(
+                f"disk_watchdog_warn_percent={warn!r} must be in (0, 100]."
+            )
+        if not warn <= critical <= 100:
+            raise ValueError(
+                f"disk_watchdog_critical_percent={critical!r} must be in "
+                f"[disk_watchdog_warn_percent={warn!r}, 100]."
+            )
+        return self
+
+    @field_validator("disk_watchdog_paths", mode="before")
+    @classmethod
+    def _coerce_disk_watchdog_paths(cls, v):
+        """Accept a comma-separated string (env var) or a native list
+        (YAML); None/empty → None (no extra paths). See #3206."""
+        if v is None:
+            return None
+        items = _setting_items(v, "KLANGKD_DISK_WATCHDOG_PATHS")
+        return items or None
+
     @field_validator("password_history_count", mode="after")
     @classmethod
     def _cap_password_history(cls, v):
@@ -2359,6 +2416,9 @@ class KlangkSettings(BaseSettings):
         "memory_eviction_threshold_percent",
         "memory_eviction_recovery_percent",
         "memory_eviction_poll_interval",
+        "disk_watchdog_warn_percent",
+        "disk_watchdog_critical_percent",
+        "disk_watchdog_poll_interval",
         "quiesce_timeout",
         mode="before",
     )

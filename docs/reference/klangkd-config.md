@@ -454,6 +454,11 @@ override it per-workspace (`settings.idle_timeout` — see
 | `memory_eviction_recovery_percent`  | `15`                            | `KLANGKD_MEMORY_EVICTION_RECOVERY_PERCENT`  |
 | `memory_eviction_sustain_polls`     | `3`                             | `KLANGKD_MEMORY_EVICTION_SUSTAIN_POLLS`     |
 | `memory_eviction_poll_interval`     | `10` (floored at 1)             | `KLANGKD_MEMORY_EVICTION_POLL_INTERVAL`     |
+| `disk_watchdog_enabled`             | `true`                          | `KLANGKD_DISK_WATCHDOG_ENABLED`             |
+| `disk_watchdog_warn_percent`        | `75`                            | `KLANGKD_DISK_WATCHDOG_WARN_PERCENT`        |
+| `disk_watchdog_critical_percent`    | `90`                            | `KLANGKD_DISK_WATCHDOG_CRITICAL_PERCENT`    |
+| `disk_watchdog_poll_interval`       | `60` (floored at 1)             | `KLANGKD_DISK_WATCHDOG_POLL_INTERVAL`       |
+| `disk_watchdog_paths`               |                                 | `KLANGKD_DISK_WATCHDOG_PATHS`               |
 | `container_pids_limit`              | `16384`                         | `KLANGKD_CONTAINER_PIDS_LIMIT`              |
 | `container_tmp_size`                | `2g`                            | `KLANGKD_CONTAINER_TMP_SIZE`                |
 | `container_events_retention_days`   | `90`                            | `KLANGKD_CONTAINER_EVENTS_RETENTION_DAYS`   |

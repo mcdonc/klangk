@@ -127,6 +127,12 @@ def row_to_dict(row) -> dict:
 class AuditEventsModel(Submodel):
     """CRUD for the ``audit_events`` table."""
 
+    # Total failed writes through record_best_effort, in-memory only
+    # (zeroed on restart). The degradation counter the resource
+    # watchdog watches (#3206) — mirrors
+    # container_registry.audit_write_failures.
+    write_failures: int = 0
+
     async def record(
         self,
         event: str,
@@ -207,6 +213,7 @@ class AuditEventsModel(Submodel):
         try:
             await self.record(event, **kwargs)
         except Exception as e:  # noqa: BLE001 — audit is best-effort
+            self.write_failures += 1
             logger.warning("audit_events write failed (%s): %s", event, e)
             # SV-222484/485: a degraded identity audit stream must alert
             # the SA in real time, not just log (#3250). This is the one

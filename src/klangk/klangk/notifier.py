@@ -28,9 +28,12 @@ and a full host alerts once, not on every occurrence.
 The event names mirror the identity audit stream (``user.create``,
 ``user.update``, …, #3205) so an operator can correlate a
 notification with its ``audit_events`` row. ``user.disable`` /
-``user.enable`` / ``audit.failure`` / ``resource.low`` are
-notifier-only names (the audit stream records disable toggles under
-``user.update``).
+``user.enable`` are notifier-only names (the audit stream records
+disable toggles under ``user.update``). The resource-watchdog names
+(``resource.disk.warn`` / ``resource.disk.critical`` /
+``resource.disk.recovered``, #3206) are transition-based — one event
+per threshold episode, per monitored filesystem (the throttle key
+includes the detail's ``path``).
 """
 
 import asyncio
@@ -64,13 +67,24 @@ DEFAULT_NOTIFY_EVENTS = (
     "group.member.remove",
     "audit.failure",
     "resource.low",
+    "resource.disk.warn",
+    "resource.disk.critical",
+    "resource.disk.recovered",
 )
 
 # Persistent conditions re-fire at the source on every occurrence (a
 # failed audit write, a refused start); notify at most once per window
 # per throttle key (see AdminNotifier.throttle_key) so the recipients
-# get one alert, not a storm (#3250).
-THROTTLE_SECONDS = {"audit.failure": 300, "resource.low": 300}
+# get one alert, not a storm (#3250). The disk transitions (#3206) are
+# edge-triggered already, but a deep usage oscillation across the
+# hysteresis band could still flap — the same window bounds it.
+THROTTLE_SECONDS = {
+    "audit.failure": 300,
+    "resource.low": 300,
+    "resource.disk.warn": 300,
+    "resource.disk.critical": 300,
+    "resource.disk.recovered": 300,
+}
 
 # Fire-and-forget tasks are held here so the event loop cannot garbage
 # collect a deliver task mid-flight (the asyncio docs' keep-alive set).
@@ -152,14 +166,17 @@ class AdminNotifier:
 
     def throttle_key(self, event: str, detail: dict | None) -> str:
         """One throttle bucket per event — and, when the detail names a
-        source ``table``, per table: a container_events write storm must
-        not mask the first audit_events degradation alert (and vice
-        versa) under the shared 300s window (#3250 review).
+        source ``table``, per table, or a monitored filesystem
+        ``path``, per path: a container_events write storm must not
+        mask the first audit_events degradation alert (and vice
+        versa), and one full filesystem must not mask another's first
+        alert under the shared window (#3250 review, #3206).
         """
-        table = (detail or {}).get("table")
-        if table is None:
+        detail = detail or {}
+        scope = detail.get("table") or detail.get("path")
+        if scope is None:
             return event
-        return f"{event}:{table}"
+        return f"{event}:{scope}"
 
     def throttle_allows(self, event: str, key: str) -> bool:
         """Throttle gate: True when *key* may notify now.

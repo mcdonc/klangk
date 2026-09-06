@@ -230,6 +230,40 @@ class TestThrottle:
             await asyncio.sleep(0)
         assert d.await_count == 2
 
+    async def test_disk_events_throttled_per_filesystem(self):
+        """One bucket per monitored path (#3206): one full filesystem
+        must not mask another filesystem's first alert."""
+        notifier, _ = _notifier(
+            {"KLANGKD_ADMIN_NOTIFICATION_EMAILS": "sa@x.com"}
+        )
+        with patch.object(AdminNotifier, "deliver", AsyncMock()) as d:
+            notifier.notify_admins(
+                "resource.disk.critical", detail={"path": "/data"}
+            )
+            notifier.notify_admins(
+                "resource.disk.critical", detail={"path": "/srv/storage"}
+            )
+            # Same path again — throttled.
+            notifier.notify_admins(
+                "resource.disk.critical", detail={"path": "/data"}
+            )
+            await asyncio.sleep(0)
+        assert d.await_count == 2
+
+    def test_throttle_key_prefers_table_over_path(self):
+        """A detail naming both scopes buckets by the table (the audit
+        stream's canonical scope)."""
+        notifier, _ = _notifier()
+        assert (
+            notifier.throttle_key(
+                "audit.failure", {"table": "t", "path": "/p"}
+            )
+            == "audit.failure:t"
+        )
+        assert notifier.throttle_key("resource.disk.warn", None) == (
+            "resource.disk.warn"
+        )
+
     def test_reconfigure_resets_throttle_clock(self):
         notifier, app = _notifier(
             {"KLANGKD_ADMIN_NOTIFICATION_EMAILS": "sa@x.com"}
