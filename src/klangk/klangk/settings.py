@@ -57,6 +57,11 @@ from pydantic import (
 
 # netfilter.py is pure-stdlib (no settings import), so this top-level import
 # is cycle-safe. Used by the netfilter_default_domains field validator below.
+from klangk.audit_forward import (
+    parse_syslog_target,
+    validate_forward_header,
+    validate_forward_url,
+)
 from klangk.netfilter import parse_allowed_domains
 
 # Same for model.workspaces' normalize_classification_banner (model imports
@@ -1501,6 +1506,29 @@ class KlangkSettings(BaseSettings):
     # surfaced on /audit. Read live (SIGHUP reload applies without a
     # restart).
     audit_fail_closed: bool = False
+    # --- Audit-record forwarding (#3252) ---
+    # Opt-in native forwarding of every new row of the three audit
+    # tables (audit_events, container_events, egress_consent) to a
+    # SIEM target, so the records reach a different system with no
+    # host-side shipper (STIG SV-222481/482). Two target families,
+    # both validated at startup (a malformed target aborts boot) and
+    # both read live per sweep (SIGHUP-reloadable):
+    # audit_forward_url — an http(s) JSON endpoint; one POST per batch
+    # of records (see klangk/webhook.py + audit_forward.py). Use
+    # https:// for any target off the host. None = off.
+    audit_forward_url: str | None = None
+    # audit_forward_syslog — an RFC 5424 receiver as
+    # tcp://host[:port] / tls://host[:port] (ports default 514/6514).
+    # One newline-framed line per record; the full record is the JSON
+    # message. None = off. Both targets may be configured; each
+    # receives every record.
+    audit_forward_syslog: str | None = None
+    # audit_forward_header — one optional HTTP header sent with every
+    # URL-target POST, as ``Name: value`` (e.g. an Authorization
+    # header for a collector that requires one — Splunk HEC:
+    # "Authorization: Splunk <token>"). Validated at startup; applies
+    # to the URL target only (the syslog transport carries no header).
+    audit_forward_header: str | None = None
     # Container resource limits (#34): deploy-wide CPU / memory / PIDs caps
     # passed to every workspace container as podman --cpus / --memory /
     # --pids-limit. Ships with protective defaults (2 CPUs / 8g / 16384 PIDs,
@@ -2255,6 +2283,61 @@ class KlangkSettings(BaseSettings):
         if isinstance(v, str):
             return items or None
         return items
+
+    @field_validator("audit_forward_url", mode="before")
+    @classmethod
+    def _coerce_audit_forward_url(cls, v):
+        """Blank → None (forwarding off); a set value must be an
+        http(s) URL string with a host — startup aborts otherwise
+        (#3252, the fail-loud posture for safety-control config)."""
+        if v is None:
+            return None
+        if not isinstance(v, str):
+            raise ValueError(
+                f"KLANGKD_AUDIT_FORWARD_URL={v!r} must be a URL string."
+            )
+        value = v.strip()
+        if not value:
+            return None
+        validate_forward_url(value)
+        return value
+
+    @field_validator("audit_forward_syslog", mode="before")
+    @classmethod
+    def _coerce_audit_forward_syslog(cls, v):
+        """Blank → None (forwarding off); a set value must parse as a
+        tcp/tls syslog target — startup aborts otherwise (#3252)."""
+        if v is None:
+            return None
+        if not isinstance(v, str):
+            raise ValueError(
+                "KLANGKD_AUDIT_FORWARD_SYSLOG"
+                f"={v!r} must be a tcp:// or tls:// target string."
+            )
+        value = v.strip()
+        if not value:
+            return None
+        parse_syslog_target(value)
+        return value
+
+    @field_validator("audit_forward_header", mode="before")
+    @classmethod
+    def _coerce_audit_forward_header(cls, v):
+        """Blank → None (no header); a set value must be a single
+        ``Name: value`` header with a valid token name — startup
+        aborts otherwise (#3252)."""
+        if v is None:
+            return None
+        if not isinstance(v, str):
+            raise ValueError(
+                f"KLANGKD_AUDIT_FORWARD_HEADER={v!r} must be a"
+                " 'Name: value' header string."
+            )
+        value = v.strip()
+        if not value:
+            return None
+        validate_forward_header(value)
+        return value
 
     @field_validator("smtp_port", mode="before")
     @classmethod

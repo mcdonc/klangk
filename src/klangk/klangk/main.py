@@ -75,6 +75,7 @@ import klangk.logger  # noqa: F401
 
 from . import (
     acl,
+    audit_forward as audit_forward_mod,
     auth,
     container,
     consent,
@@ -318,6 +319,10 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     # capacity events. Reads its settings live; inert until a channel
     # is configured.
     app.state.notifier = notifier_mod.AdminNotifier(app)
+    # #3252: audit-record forwarder — ships every new row of the three
+    # audit tables to KLANGKD_AUDIT_FORWARD_URL / _SYSLOG. Reads its
+    # settings live per sweep; inert until a target is configured.
+    app.state.audit_forwarder = audit_forward_mod.AuditForwarder(app)
     # #1503: Util(app_state) owns the proxy-trust / forwarded-header logic,
     # hosting-info derivation, and customize-dir resolver (previously
     # module-level functions + import-time globals in util.py).

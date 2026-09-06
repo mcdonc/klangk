@@ -364,7 +364,11 @@ class TestWebhookChannel:
         payload = {"event": "user.create", "detail": {}}
         with patch("httpx.AsyncClient", return_value=ctx):
             await notifier.deliver_via_webhook(payload)
-        client.post.assert_awaited_once_with("https://hook.x/e", json=payload)
+        # The shared post_json transport (#3252) always passes the
+        # optional headers kwarg (None for the notifier's channel).
+        client.post.assert_awaited_once_with(
+            "https://hook.x/e", json=payload, headers=None
+        )
         resp.raise_for_status.assert_called_once_with()
 
     async def test_failure_is_logged_not_raised(self, caplog):

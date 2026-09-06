@@ -189,6 +189,15 @@ admin_notification_webhook_url: https://hooks.example.com/klangk
 #   - user.disable
 #   - user.enable
 
+# --- Audit-record forwarding (#3252) ---
+# Ship every new row of the three audit tables to a SIEM. Both targets
+# are optional; each receives every record. With neither set, the
+# forwarder is off.
+# audit_forward_url: https://siem.example.com/ingest
+# Optional auth header for the URL target:
+# audit_forward_header: "Authorization: Bearer hec-token"
+# audit_forward_syslog: tls://siem.example.com:6514
+
 # --- Branding ---
 product_name: "My Platform"
 brand_color: "#1565C0"
@@ -521,6 +530,16 @@ rewrite its ACL. Failures are logged, never fatal. Reloaded on SIGHUP.
 | `admin_notification_emails`      |                       | `KLANGKD_ADMIN_NOTIFICATION_EMAILS`      |
 | `admin_notification_webhook_url` |                       | `KLANGKD_ADMIN_NOTIFICATION_WEBHOOK_URL` |
 | `admin_notify_events`            | every supported event | `KLANGKD_ADMIN_NOTIFY_EVENTS`            |
+
+### Audit forwarding
+
+| Key                    | Default | Env var                        |
+| ---------------------- | ------- | ------------------------------ |
+| `audit_forward_url`    |         | `KLANGKD_AUDIT_FORWARD_URL`    |
+| `audit_forward_syslog` |         | `KLANGKD_AUDIT_FORWARD_SYSLOG` |
+| `audit_forward_header` |         | `KLANGKD_AUDIT_FORWARD_HEADER` |
+
+See [Logging — built-in audit-record forwarding](../features/logging.md#built-in-audit-record-forwarding) for target setup and failure behavior.
 
 ### Legal / support links
 

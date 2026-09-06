@@ -96,6 +96,8 @@ class TestRunner:
             (33, "0033_user_sessions_last_seen"),
             (34, "0034_audit_events"),
             (35, "0035_user_sessions_step_up"),
+            (36, "0036_audit_forward_state"),
+            (37, "0037_audit_forward_cursors"),
         ]
         async with aiosqlite.connect(str(app_state.state.db.db_path)) as db:
             assert await _recorded(db) == expected
@@ -201,6 +203,8 @@ class TestRunner:
                 (33, "0033_user_sessions_last_seen"),
                 (34, "0034_audit_events"),
                 (35, "0035_user_sessions_step_up"),
+                (36, "0036_audit_forward_state"),
+                (37, "0037_audit_forward_cursors"),
             ]
 
     async def test_m0008_agent_identity_and_human_collision(
@@ -3462,5 +3466,109 @@ class TestM0034AuditEvents:
 
             await m0034_audit_events.migration.apply(db)
             await m0034_audit_events.migration.apply(db)  # idempotent
+        finally:
+            await db.__aexit__(None, None, None)
+
+
+class TestM0037AuditForwardCursors:
+    """Migration 0037 (#3252): no-reuse forwarding cursors — the two
+    event tables get AUTOINCREMENT ids, egress_consent gets the
+    trigger-assigned forward_seq, and ids survive the rebuild."""
+
+    async def _migrated(self, tmp_path):
+        db = aiosqlite.connect(str(tmp_path / "m0037.db"))
+        await db.__aenter__()
+        try:
+            from klangk.model.migrations import (
+                m0019_container_events,
+                m0030_audit_hmac,
+                m0034_audit_events,
+                m0037_audit_forward_cursors,
+            )
+
+            from klangk.model.schema import init_egress_consent_table
+
+            await init_egress_consent_table(db)
+            await m0019_container_events.migration.apply(db)
+            await m0030_audit_hmac.migration.apply(db)
+            await m0034_audit_events.migration.apply(db)
+            await m0037_audit_forward_cursors.migration.apply(db)
+            return db
+        except BaseException:
+            await db.__aexit__(None, None, None)
+            raise
+
+    async def test_event_tables_are_autoincrement(self, tmp_path):
+        db = await self._migrated(tmp_path)
+        try:
+            for table in ("audit_events", "container_events"):
+                cur = await db.execute(
+                    "SELECT sql FROM sqlite_master"
+                    f" WHERE type='table' AND name='{table}'"
+                )
+                sql = (await cur.fetchone())[0]
+                assert "AUTOINCREMENT" in sql, table
+        finally:
+            await db.__aexit__(None, None, None)
+
+    async def test_consent_forward_seq_trigger_and_backfill(self, tmp_path):
+        db = await self._migrated(tmp_path)
+        try:
+            await db.execute(
+                "INSERT INTO egress_consent"
+                " (id, workspace_id, dest_host, decision, requested_at)"
+                " VALUES ('r1', 'w', 'a.example', 'pending', 1.0)"
+            )
+            await db.execute(
+                "INSERT INTO egress_consent"
+                " (id, workspace_id, dest_host, decision, requested_at)"
+                " VALUES ('r2', 'w', 'b.example', 'pending', 2.0)"
+            )
+            cur = await db.execute(
+                "SELECT id, forward_seq FROM egress_consent"
+                " ORDER BY forward_seq"
+            )
+            assert await cur.fetchall() == [("r1", 1), ("r2", 2)]
+            # Ignored (dedup) inserts consume no sequence numbers.
+            await db.execute(
+                "INSERT OR IGNORE INTO egress_consent"
+                " (id, workspace_id, dest_host, decision, requested_at)"
+                " VALUES ('r2', 'w', 'b.example', 'pending', 3.0)"
+            )
+            await db.execute(
+                "INSERT INTO egress_consent"
+                " (id, workspace_id, dest_host, decision, requested_at)"
+                " VALUES ('r3', 'w', 'c.example', 'pending', 4.0)"
+            )
+            cur = await db.execute(
+                "SELECT forward_seq FROM egress_consent WHERE id = 'r3'"
+            )
+            assert (await cur.fetchone())[0] == 3
+        finally:
+            await db.__aexit__(None, None, None)
+
+    async def test_rebuild_preserves_rows_and_ids(self, tmp_path):
+        db = await self._migrated(tmp_path)
+        try:
+            await db.execute(
+                "INSERT INTO audit_events"
+                " (event, actor_id, created_at) VALUES"
+                " ('user.create', 'u1', 1.0),"
+                " ('user.delete', 'u2', 2.0)"
+            )
+            cur = await db.execute(
+                "SELECT id, event FROM audit_events ORDER BY id"
+            )
+            rows = await cur.fetchall()
+            assert [r[1] for r in rows] == ["user.create", "user.delete"]
+            # AUTOINCREMENT's sequence is seeded past the copied max,
+            # so the next insert does not reuse a deleted id.
+            await db.execute("DELETE FROM audit_events WHERE id = 2")
+            await db.execute(
+                "INSERT INTO audit_events (event, actor_id, created_at)"
+                " VALUES ('user.update', 'u3', 3.0)"
+            )
+            cur = await db.execute("SELECT id FROM audit_events ORDER BY id")
+            assert [r[0] for r in await cur.fetchall()] == [1, 3]
         finally:
             await db.__aexit__(None, None, None)

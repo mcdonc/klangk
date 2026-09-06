@@ -133,6 +133,12 @@ def _lifespan_test_app():
     app.state.server_scheduler = types.SimpleNamespace(
         start=MagicMock(), stop=AsyncMock()
     )
+    # #3252: the lifespan worker start/stop paths reach the audit
+    # forwarder (stubbed like the scheduler — the sweep loop itself is
+    # under test in test_audit_forward.py).
+    app.state.audit_forwarder = types.SimpleNamespace(
+        start=MagicMock(), stop=AsyncMock()
+    )
     return app, app_state
 
 
@@ -1028,6 +1034,12 @@ class TestLifespan:
             start=MagicMock(), stop=AsyncMock()
         )
         app.state.server_scheduler = scheduler_stub
+        # #3252: the forwarder stub — the lifespan starts/stops it like
+        # the scheduler (the sweep loop itself is under test in
+        # test_audit_forward.py).
+        app.state.audit_forwarder = types.SimpleNamespace(
+            start=MagicMock(), stop=AsyncMock()
+        )
         registry = app_state.state.container_registry
         with (
             patch.object(
@@ -4277,6 +4289,15 @@ class TestBuildApp:
 
         app = main.build_app(make_settings({}))
         assert isinstance(app.state.proxy_watchdog, CaddyWatchdog)
+
+    def test_build_app_wires_audit_forwarder(self):
+        """#3252: the audit-record forwarder is an owned state object —
+        present on every build_app app (inert until a target is
+        configured)."""
+        from klangk.audit_forward import AuditForwarder
+
+        app = main.build_app(make_settings({}))
+        assert isinstance(app.state.audit_forwarder, AuditForwarder)
 
     def test_build_app_warns_when_frontend_dir_absent(self, caplog):
         """build_app warns when frontend_dir doesn't exist (#1600).

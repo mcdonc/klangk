@@ -19,8 +19,9 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
 from .acl import ACLModel
-from .base import Submodel
 from .audit_events import AuditEventsModel
+from .audit_forward import AuditForwardModel
+from .base import Submodel
 from .container_events import ContainerEventsModel
 from .egress_consent import EgressConsentModel
 from .server_schedules import ServerSchedulesModel
@@ -168,6 +169,7 @@ class Model:
         self.egress_consent = EgressConsentModel(app)
         self.container_events = ContainerEventsModel(app)
         self.audit_events = AuditEventsModel(app)
+        self.audit_forward = AuditForwardModel(app)
         self.server_schedules = ServerSchedulesModel(app)
 
     def reconfigure(self, app) -> None:
@@ -184,6 +186,7 @@ class Model:
             self.egress_consent,
             self.container_events,
             self.audit_events,
+            self.audit_forward,
             self.server_schedules,
         ):
             sub.reconfigure(app)
