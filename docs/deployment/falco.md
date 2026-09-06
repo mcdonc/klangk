@@ -1,11 +1,15 @@
 # Falco Exec Audit
 
 Falco is a host-wide syscall monitor. Run as a privileged container next to
-the klangk host container, it records every command execution (`execve`,
-`execveat`) on the machine — including commands typed in klangk workspace
-terminals — to a JSON file that an unprivileged consumer can read back.
-This chapter documents the verified deployment procedure and the field
-semantics a consumer can rely on (#2780).
+the klangk host container (see [Running with Docker](docker.md)), it records
+every command execution (`execve`, `execveat`) on the machine — including
+commands typed in klangk workspace terminals — to a JSON file that an
+unprivileged consumer can read back. This chapter documents the verified
+deployment procedure and the field semantics a consumer can rely on (#2780).
+Together with the [Audit Record Integrity](../reference/audit-integrity.md)
+records klangkd writes itself, it gives the deployment two complementary
+trails: internal, HMAC-tagged application events, and an external,
+kernel-level syscall stream.
 
 The verification ran Falco 0.44.1 (modern eBPF engine, no kernel module or
 driver download) on the deployment host alongside a klangk host container
@@ -14,10 +18,10 @@ running a workspace through the web terminal.
 ## Run the Falco container
 
 The container needs `--privileged` (the eBPF engine loads BPF programs and
-opens per-CPU ring buffers) and a read-only view of host `/proc`, `/sys`,
-and `/dev` for container enrichment and machine identity. `--pid=host`
-runs Falco in the host PID namespace so its BPF iterators can enumerate
-existing threads at startup — the same shape the Falco Helm chart uses.
+opens per-CPU ring buffers) and a view of the host's `/proc` and `/sys`
+(read-only, under `/host/...` inside the container) plus `/dev` for
+device-based enrichment. `--pid=host` runs Falco in the host PID
+namespace, matching the hostPID shape the Falco Helm chart deploys with.
 
 ```bash
 mkdir -p /opt/falco/rules.d /opt/falco/out
@@ -36,10 +40,12 @@ docker run -d --name falco \
   falcosecurity/falco:0.44.1
 ```
 
-Mounting `/var/run/docker.sock` read-only lets Falco's container engine
-resolve Docker container names and images. It is optional; without it,
-enrichment falls back to cgroup-path parsing and still yields container
-ids, but `container.name` stays empty for Docker containers.
+The `/var/run/docker.sock` mount hands Falco the full Docker API — the
+ability to inspect and control every container the daemon runs. The
+container is already `--privileged`, so the mount adds no capability it
+lacks, but it can be dropped: without it, enrichment falls back to
+cgroup-path parsing and still yields container ids; `container.name`
+stays empty for Docker containers.
 
 ## Configuration
 
@@ -127,11 +133,10 @@ Drop into `/opt/falco/rules.d/klangk-exec.yaml`:
 Host processes carry `container.id=host`; keep them in the stream so a
 failed enrichment shows up as an unlabeled event instead of a silent gap.
 Note that `proc.cmdline` reflects the kernel's `argv`: shell builtins
-(`echo`, `cd`) never appear because no `execve` occurs, and BusyBox
-`ash` runs many applets in-process (fork without `execve`), so those do
-not appear either — a workspace terminal runs `bash`, where `echo` is a
-builtin but `ls`, `cat`, `true` (via `exec /bin/true`), `setsid`, etc.
-all surface.
+(`echo`, `cd`) never appear because no `execve` occurs, and some minimal
+shells (BusyBox `ash` builds with standalone-applet mode) fork applets
+in-process without `execve`. A workspace terminal runs `bash`, where
+`ls`, `cat`, `true` (via `exec /bin/true`), `setsid`, etc. all surface.
 
 ## Verified field semantics (workspace containers)
 
@@ -171,11 +176,11 @@ container, and matched against the Falco stream. Results:
   uid 1000 inside the workspace) maps to uid 1000 on the host through
   both user namespaces, and Falco reports 1000.
 - **Bare-metal klangkd is different.** When klangkd runs directly on the
-  host (devenv, packaged binary), its rootless-podman workspace
-  containers get their own cgroup scopes and Falco's cgroup parsing
-  enriches them with the workspace container's own (12-char truncated)
-  id — `container.name` stays empty because Falco cannot reach the
-  rootless podman socket.
+  host (devenv, [packaged binary](packaged.md)), its rootless-podman
+  workspace containers get their own cgroup scopes and Falco's cgroup
+  parsing enriches them with the workspace container's own (12-char
+  truncated) id — `container.name` stays empty because Falco cannot reach
+  the rootless podman socket.
 
 ## Consumption channel
 
@@ -186,15 +191,23 @@ file from an unprivileged container (no capabilities, `--user 1000`)
 mounted `-v /opt/falco/out:/falco:ro`. Falco performs no rotation; the
 consumer tails and rotates.
 
+The default `0644` suits the unprivileged klangkd consumer; tighten the
+host-side permissions on `/opt/falco/out` if wider host access is a
+concern. Treat the file as sensitive regardless: `proc.cmdline` records
+full argv, so tokens or passwords passed on a command line inside any
+container land in the stream.
+
 Each line carries `time`, `rule`, `output_fields` (the structured
 fields the rule named: `container.id`, `proc.vpid`, `proc.pid`,
 `user.uid`, `proc.cmdline`, `proc.pcmdline`, `proc.exepath`), and the
 metrics snapshots arrive on the same file as `"rule": "Falco internal:
 metrics snapshot"` lines.
 
-Falco also offers a gRPC output (`grpc_output`, Unix socket) — richer
-streaming semantics, at the cost of more moving parts. It stayed
-unconfigured in this verification; the JSON file is the verified channel.
+Falco's other streaming channel is `http_output` — a webhook POST per
+alert. It suits a falcosidekick-style collector; it stayed unconfigured
+in this verification, and the JSON file is the verified channel. (The
+gRPC output that predated it was removed in Falco 0.44.0 — configuring
+`grpc_output` aborts startup on this version.)
 
 ## Livelock: stall watchdog is mandatory
 
@@ -208,7 +221,9 @@ CPU but did not prevent it.
 
 Falco emits no owned heartbeat, so treat the metrics snapshot as one:
 with `metrics.interval: 10s`, a consumer that sees no snapshot line (and
-no event) for a few intervals declares the feed dead. On the deployment
+no event) for 120 s — twelve missed snapshots — declares the feed dead.
+This premise requires `metrics` to stay enabled: with it disabled, an
+idle-but-healthy feed writes nothing and looks stalled. On the deployment
 host, run a watchdog that restarts the container when the output file
 goes stale — coverage resumes in seconds:
 
@@ -219,7 +234,11 @@ set -u
 while true; do
   sleep 30
   [ "$(docker inspect -f '{{.State.Running}}' falco 2>/dev/null)" = "true" ] || continue
-  age=$(( $(date +%s) - $(stat -c %Y /opt/falco/out/events.json 2>/dev/null || echo 0) ))
+  if [ ! -f /opt/falco/out/events.json ]; then
+    echo "$(date -u +%FT%TZ) events.json missing (rotated away?), waiting" >> /opt/falco/watchdog.log
+    continue
+  fi
+  age=$(( $(date +%s) - $(stat -c %Y /opt/falco/out/events.json) ))
   if [ "$age" -gt 120 ]; then
     echo "$(date -u +%FT%TZ) falco stalled (${age}s), restarting" >> /opt/falco/watchdog.log
     docker restart falco

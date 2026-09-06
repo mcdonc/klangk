@@ -733,6 +733,16 @@ sync` report a clear permission-denied error.
 
 ### Added
 
+- **Falco exec audit guide (#2780).** New deployment chapter
+  (`docs/deployment/falco.md`) documenting the verified procedure for
+  running Falco 0.44.1 as a privileged container that captures every
+  `execve`/`execveat` host-wide — including commands typed in klangk
+  workspace terminals — to a JSON file an unprivileged consumer reads via
+  a read-only bind mount. Records the verified field semantics
+  (`proc.vpid` matches tmux `#{pane_pid}`; `container.id` enriches to the
+  host container in the nested shape) and the mandatory livelock
+  watchdog (falco#3822).
+
 - **Built-in audit-record forwarding (#3252).** Opt-in native
   forwarding of the audit records themselves to a SIEM —
   `KLANGKD_AUDIT_FORWARD_URL` (JSON POST batches to an HTTPS
