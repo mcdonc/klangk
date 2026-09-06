@@ -57,7 +57,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 from jose import ExpiredSignatureError, JWTError
 
 from .safe_websocket import SafeWebSocket, SlowClientError
-from .dispatch import ws_workstation
+from .dispatch import ws_hosting_base_path, ws_workstation
 from .support import ws_bearer_token, ws_echo_subprotocol
 from ..model.egress_consent import (
     DECISION_ALLOWED,
@@ -283,13 +283,15 @@ async def _decider_dpop_gate(
     websocket: WebSocket, app, token, payload
 ) -> bool:
     """DPoP proof gate for the decider handshake (#3218) — mirrors the
-    main socket's ``_dpop_gate`` (one-shot ``dpop`` query parameter)."""
+    main socket's ``_dpop_gate`` (one-shot ``dpop`` query parameter),
+    including the hosting-base-path tolerance (#3287)."""
     reason = app.state.auth.check_dpop(
         websocket.query_params.get("dpop"),
         "GET",
         websocket.url.path,
         token,
         payload,
+        base_path=ws_hosting_base_path(websocket, app),
     )
     if reason is None:
         return True

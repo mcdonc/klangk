@@ -2507,6 +2507,19 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Subpath deployments work with DPoP-bound web sessions (#3287).**
+  On a deployment served under a base path (`hosting-base-path` /
+  `X-Forwarded-Prefix`), the web client's DPoP proofs carried the
+  prefix in their `htu` while the server compared against the
+  prefix-stripped path — every authenticated request and both
+  WebSocket connects returned `401 Invalid DPoP proof: uri mismatch`,
+  making the web UI unusable. The client now mints proofs over the
+  backend-visible path, and the server tolerates its own configured or
+  trusted-forwarded base path ahead of the compared path, so
+  already-deployed frontends work without a rebuild. Covered by a new
+  Playwright suite that runs the browser flow behind a
+  prefix-stripping proxy at `/klangk/`.
+
 - **File viewer and WebSocket error messages (#3227).** A transport
   failure while listing a workspace directory or opening a file, and
   socket/parse errors on the workspace WebSocket, no longer show the

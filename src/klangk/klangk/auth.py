@@ -2342,14 +2342,23 @@ class Auth:
             )
 
     def check_dpop(
-        self, proof, method: str, path: str, access_token: str, payload: dict
+        self,
+        proof,
+        method: str,
+        path: str,
+        access_token: str,
+        payload: dict,
+        base_path: str = "",
     ) -> str | None:
         """Verify a DPoP proof for *payload*; None = OK / not bound.
 
         Unbound tokens (no ``cnf.jkt``) verify trivially — CLI/TUI and
         every pre-#3218 client keeps working untouched; the web client
         binds its tokens at login, so a browser session always carries
-        the claim.
+        the claim. *base_path* is the live hosting base path of the
+        request (#3287): a proof whose ``htu`` path carries it ahead of
+        *path* verifies too — the subpath-deployment form an outer
+        proxy strips before forwarding.
         """
         jkt = self.token_binding(payload)
         if jkt is None:
@@ -2362,13 +2371,22 @@ class Auth:
             expected_jkt=jkt,
             now=time.time(),
             replay=self.dpop_replay,
+            base_path=base_path,
         )
 
     def enforce_dpop(
-        self, proof, method: str, path: str, access_token: str, payload: dict
+        self,
+        proof,
+        method: str,
+        path: str,
+        access_token: str,
+        payload: dict,
+        base_path: str = "",
     ) -> None:
         """Raise 401 unless a bound token presents a valid DPoP proof."""
-        reason = self.check_dpop(proof, method, path, access_token, payload)
+        reason = self.check_dpop(
+            proof, method, path, access_token, payload, base_path
+        )
         if reason is not None:
             raise HTTPException(
                 status_code=401, detail=f"Invalid DPoP proof: {reason}"
@@ -2500,6 +2518,7 @@ class Auth:
         proof: str | None = None,
         method: str | None = None,
         referer: str | None = None,
+        base_path: str = "",
     ) -> TokenResponse:
         """Exchange a valid access token for a new one.
 
@@ -2514,7 +2533,9 @@ class Auth:
         is revoked and refused here too — the refresh seam is the one
         place a headless stolen-token client must eventually surface.
         A DPoP-bound token (#3218) must prove possession to rotate,
-        and the replacement keeps the binding.
+        and the replacement keeps the binding. *base_path* is the
+        presenting request's live hosting base path (#3287), tolerated
+        ahead of the refresh path in the proof's ``htu``.
         """
         try:
             payload = self.decode_token(token)
@@ -2536,7 +2557,12 @@ class Auth:
                 return cached
 
             self.enforce_dpop(
-                proof, "POST", "/api/v1/auth/refresh", token, payload
+                proof,
+                "POST",
+                "/api/v1/auth/refresh",
+                token,
+                payload,
+                base_path,
             )
 
             user = await self._require_active_user(user_id)
@@ -2686,6 +2712,17 @@ class Auth:
 # ---------------------------------------------------------------------------
 
 
+def _dpop_base_path(request: Request) -> str:
+    """The hosting base path this request's DPoP comparison tolerates
+    (#3287): the pinned ``KLANGKD_HOSTING_BASE_PATH``, else the trusted
+    ``X-Forwarded-Prefix``, else ``""``. A request fake without a client
+    reads as an unknown peer (forwarded headers then untrusted)."""
+    client = getattr(request, "client", None)
+    return request.app.state.util.hosting_base_path_for(
+        request.headers, client.host if client else None
+    )
+
+
 async def _authenticated_user(request: Request, credentials) -> dict:
     """The user for valid, unrevoked credentials; raises 401 for every
     failure mode (missing claims, a revoked token, an unknown user,
@@ -2697,6 +2734,7 @@ async def _authenticated_user(request: Request, credentials) -> dict:
         request.url.path,
         credentials.credentials,
         payload,
+        base_path=_dpop_base_path(request),
     )
     request.app.state.auth.enforce_bind_deadline(payload)
     user_id = payload.get("sub")
@@ -2734,6 +2772,7 @@ async def _optional_user(request: Request, credentials) -> dict | None:
         request.url.path,
         credentials.credentials,
         payload,
+        base_path=_dpop_base_path(request),
     )
     request.app.state.auth.enforce_bind_deadline(payload)
     user_id = payload.get("sub")

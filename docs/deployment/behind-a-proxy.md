@@ -147,6 +147,14 @@ If you serve klangk on a subpath (e.g. `/klangk/`), also set:
 proxy_set_header X-Forwarded-Prefix /klangk;
 ```
 
+The backend accepts DPoP proof `htu` claims spelled either with or without
+this prefix, so a browser session behind the subpath and one at the backend's
+own URL both authenticate. A client that sends a forged `X-Forwarded-Prefix`
+widens only its own request's accepted spellings — every proof is still signed
+by the requester's own bound key, and the stripped path must still match the
+request exactly — so the header cannot make one client's proof verify for
+another.
+
 ### WebSocket upgrade
 
 klangk uses WebSockets at `/ws` for live terminal and container status

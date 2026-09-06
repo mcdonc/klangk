@@ -798,12 +798,17 @@ async def refresh_token(request: Request):
     # The pair feeds binding enforcement (#3194); the method/referer
     # feed the session-limit eviction row a refresh can mint (#3255).
     source_ip, user_agent, method, referer = request_metadata(request)
+    client = request.client
+    base_path = request.app.state.util.hosting_base_path_for(
+        request.headers, client.host if client else None
+    )
     return await request.app.state.auth.refresh_token(
         token,
         (source_ip, user_agent),
         proof=request.headers.get("dpop"),
         method=method,
         referer=referer,
+        base_path=base_path,
     )
 
 

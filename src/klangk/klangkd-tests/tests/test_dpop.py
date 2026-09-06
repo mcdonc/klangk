@@ -40,6 +40,7 @@ def _verify(
     path="/api/v1/x",
     jkt="expected",
     token="the-access-token",
+    base_path="",
 ):
     return dpop.verify_proof(
         proof,
@@ -49,6 +50,7 @@ def _verify(
         expected_jkt=jkt,
         now=time.time(),
         replay={},
+        base_path=base_path,
     )
 
 
@@ -474,3 +476,124 @@ class TestCanonicalJson:
             "kty": jwk["kty"],
         }
         assert dpop.jwk_thumbprint(reordered) == dpop.jwk_thumbprint(jwk)
+
+
+class TestStripHostingPrefix:
+    """strip_hosting_prefix: the subpath tolerance (#3287)."""
+
+    def test_strips_leading_base_path(self):
+        assert (
+            dpop.strip_hosting_prefix("/klangk/api/v1/x", "/klangk")
+            == "/api/v1/x"
+        )
+
+    def test_strips_multi_segment_base_path(self):
+        assert (
+            dpop.strip_hosting_prefix("/tools/klangk/ws", "/tools/klangk")
+            == "/ws"
+        )
+
+    def test_strips_trailing_slash_base_path(self):
+        assert (
+            dpop.strip_hosting_prefix("/klangk/api/v1/x", "/klangk/")
+            == "/api/v1/x"
+        )
+
+    def test_strips_unpinned_slash_base_path(self):
+        assert (
+            dpop.strip_hosting_prefix("/klangk/api/v1/x", "klangk")
+            == "/api/v1/x"
+        )
+
+    def test_bare_base_path_collapses_to_empty(self):
+        assert dpop.strip_hosting_prefix("/klangk", "/klangk") == ""
+
+    def test_only_whole_segments_strip(self):
+        assert (
+            dpop.strip_hosting_prefix("/klangkland/api/v1/x", "/klangk")
+            == "/klangkland/api/v1/x"
+        )
+
+    def test_unprefixed_path_untouched(self):
+        assert dpop.strip_hosting_prefix("/api/v1/x", "/klangk") == "/api/v1/x"
+
+    def test_empty_or_root_base_path_is_a_no_op(self):
+        assert dpop.strip_hosting_prefix("/api/v1/x", "") == "/api/v1/x"
+        assert dpop.strip_hosting_prefix("/api/v1/x", "/") == "/api/v1/x"
+        assert dpop.strip_hosting_prefix("/api/v1/x", "//") == "/api/v1/x"
+
+    def test_none_passes_through(self):
+        assert dpop.strip_hosting_prefix(None, "/klangk") is None
+
+
+class TestBasePathTolerance:
+    """verify_proof accepts a prefixed htu when base_path is live (#3287)."""
+
+    def test_prefixed_htu_accepted_with_base_path(self, key):
+        private, jwk = key
+        from _helpers import make_dpop_proof
+
+        proof = make_dpop_proof(
+            private,
+            jwk,
+            method="GET",
+            uri="https://h/klangk/api/v1/x",
+            token="the-access-token",
+        )
+        assert (
+            _verify(proof, jkt=_thumbprint_of(jwk), base_path="/klangk")
+            is None
+        )
+
+    def test_prefixed_htu_rejected_without_base_path(self, key):
+        private, jwk = key
+        from _helpers import make_dpop_proof
+
+        proof = make_dpop_proof(
+            private,
+            jwk,
+            method="GET",
+            uri="https://h/klangk/api/v1/x",
+            token="the-access-token",
+        )
+        assert _verify(proof, jkt=_thumbprint_of(jwk)) == "uri mismatch"
+
+    def test_wrong_prefix_still_mismatches(self, key):
+        private, jwk = key
+        from _helpers import make_dpop_proof
+
+        proof = make_dpop_proof(
+            private,
+            jwk,
+            method="GET",
+            uri="https://h/other/api/v1/x",
+            token="the-access-token",
+        )
+        assert (
+            _verify(proof, jkt=_thumbprint_of(jwk), base_path="/klangk")
+            == "uri mismatch"
+        )
+
+    def test_prefixed_htu_for_a_different_path_mismatches(self, key):
+        private, jwk = key
+        from _helpers import make_dpop_proof
+
+        proof = make_dpop_proof(
+            private,
+            jwk,
+            method="GET",
+            uri="https://h/klangk/other",
+            token="the-access-token",
+        )
+        assert (
+            _verify(proof, jkt=_thumbprint_of(jwk), base_path="/klangk")
+            == "uri mismatch"
+        )
+
+    def test_bare_htu_still_accepted_with_base_path(self, key):
+        private, jwk = key
+        proof = _proof_ok(private, jwk)
+        assert (
+            _verify(proof, jkt=_thumbprint_of(jwk), base_path="/klangk")
+            is None
+        )
