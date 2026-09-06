@@ -7778,6 +7778,31 @@ class TestUserSearch:
         resp = await client.get("/api/v1/users/search?q=", headers=headers)
         assert resp.status_code == 400
 
+    async def test_search_wildcards_are_literal(self, client, app, user):
+        """A lone ``%``/``_``/``\\`` query cannot dump the directory
+        (#3280); a literal-underscore prefix still matches."""
+        headers = await _auth_headers(client)
+        await app.state.model.users.create_user(
+            "qzw7k-unrelated@example.com", "hash"
+        )
+        under = await app.state.model.users.create_user(
+            "_under@example.com", "hash"
+        )
+        for q in ("%", "_", "\\"):
+            resp = await client.get(
+                "/api/v1/users/search", params={"q": q}, headers=headers
+            )
+            assert resp.status_code == 200, q
+            emails = [r["email"] for r in resp.json()]
+            assert "testuser@example.com" not in emails, (q, emails)
+            assert "qzw7k-unrelated@example.com" not in emails, (q, emails)
+        resp = await client.get(
+            "/api/v1/users/search", params={"q": "_"}, headers=headers
+        )
+        emails = [r["email"] for r in resp.json()]
+        assert under["email"] in emails
+        assert "testuser@example.com" not in emails
+
 
 # --- Messages ---
 
@@ -14442,6 +14467,12 @@ class TestInvitations:
         # Two freshly-created pending invitations are reflected in the
         # global pending count (used by the UI badge).
         assert body["pending_count"] >= 2
+        # % matches literally, not as a wildcard (#3280).
+        resp = await client.get(
+            "/api/v1/invitations", params={"q": "%"}, headers=headers
+        )
+        assert resp.status_code == 200
+        assert resp.json()["total"] == 0
 
     async def test_list_invitations_default_page_size_is_10(
         self, client, app, admin_user

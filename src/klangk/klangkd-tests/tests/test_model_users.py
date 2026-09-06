@@ -272,6 +272,36 @@ async def test_search_users_matches_handle_prefix(users):
     assert any(f["id"] == u["id"] for f in await users.search_users("findme@"))
 
 
+async def test_search_users_like_wildcards_are_literal(users):
+    """``%``/``_``/``\\`` in the needle match literally (#3280) — a
+    lone wildcard cannot widen the prefix match into a directory
+    dump."""
+    under = await users.create_user("_under@x.com", "hash")
+    plain = await users.create_user("plain@x.com", "hash")
+    assert await users.search_users("") == []
+    assert await users.search_users("%") == []
+    assert await users.search_users("\\") == []
+    found = await users.search_users("_")
+    assert any(f["id"] == under["id"] for f in found)
+    assert all(f["id"] != plain["id"] for f in found)
+
+
+async def test_list_users_query_wildcards_are_literal(users):
+    """The admin users-list q filter treats ``%``/``_`` literally."""
+    u = await users.create_user("pct_user@x.com", "hash")
+    await users.create_user("plain@x.com", "hash")
+    assert (await users.list_users(q="%"))["total"] == 0
+    listed = await users.list_users(q="_")
+    assert u["id"] in [item["id"] for item in listed["users"]]
+
+
+async def test_list_groups_query_wildcards_are_literal(users):
+    """The admin groups-list q filter treats ``%``/``_`` literally."""
+    await users.create_group("grp_one")
+    assert (await users.list_groups(q="%"))["total"] == 0
+    assert (await users.list_groups(q="_"))["total"] >= 1
+
+
 async def test_update_email_and_password(users):
     u = await users.create_user("u@x.com", "hash")
     await users.update_email(u["id"], "u2@x.com")

@@ -32,8 +32,10 @@ from klangk.model.container_events import (
     EVENT_START,
     EVENT_STOP,
     actor_type_for,
+    workspace_filter_clause,
 )
 from klangk.model.users import AGENT_USER_ID
+from klangk.model.db import LIKE_ESCAPE
 from klangk.podman import PodmanError
 
 
@@ -55,6 +57,15 @@ class TestActorClassification:
 
     def test_any_other_id_is_user(self):
         assert actor_type_for("some-user-id") == ACTOR_USER
+
+
+class TestWorkspaceFilterClause:
+    def test_name_needle_is_escaped(self):
+        # #3280: the id stays an exact match; the name needle escapes
+        # % and _ so filter text matches literally.
+        where, params = workspace_filter_clause("a%b_c", None)
+        assert params == ["a%b_c", "a\\%b\\_c"]
+        assert where.count(LIKE_ESCAPE) == 1
 
 
 class TestContainerEventsModel:

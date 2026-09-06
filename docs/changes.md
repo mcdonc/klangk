@@ -332,6 +332,14 @@ operators or integrators to act when upgrading.
   allowed roots configured now fails at start — configure the roots
   or remove the mount. See
   [Mount security](features/workspaces.md#mount-security).
+- **`GET /users/search` matches filter text literally (#3280).**
+  `%` and `_` in the `q` parameter are now treated as literal
+  characters (escaped `LIKE` patterns), so a one-character wildcard
+  query can no longer enumerate the full user directory — the
+  type-ahead again requires a real prefix. Every admin list filter
+  (users, groups, invitations, workspace names) and the event-history
+  filters (`workspace` / `actor` / `target` / `event`) match filter
+  text literally the same way.
 
 - **Tokens removed from URLs (#3201).** Session JWTs no longer ride
   URLs anywhere. WebSocket clients (browser and CLI) now authenticate

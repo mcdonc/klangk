@@ -14,7 +14,13 @@ from test_api import _admin_login, _auth_headers
 from httpx import ASGITransport, AsyncClient
 from klangk.model.egress_consent import DECISION_ALLOWED, DECISION_DENIED
 from klangk.model.container_events import CAUSE_API, EVENT_START, EVENT_STOP
-from klangk.model.merged_events import MergedEventFilters
+from klangk.model.db import LIKE_ESCAPE
+from klangk.model.merged_events import (
+    MergedEventFilters,
+    audit_branch_clause,
+    container_branch_clause,
+    egress_branch_clause,
+)
 
 # test_api's app fixture, re-bound under a module-local name (the
 # test_audit_events.py pattern).
@@ -49,6 +55,23 @@ async def _other_user(app_state, email="other@example.com"):
     return await app_state.state.model.users.create_user(
         email, "not-a-real-hash", verified=True
     )
+
+
+class TestBranchClauses:
+    """Unit pins on the three branch-clause builders."""
+
+    def test_every_like_carries_escape(self):
+        # #3280: dropping one ESCAPE from a compound clause would
+        # silently restore wildcard matching on that axis — pin the
+        # LIKE count to the ESCAPE count for every branch.
+        f = MergedEventFilters(event="e", actor="a", workspace="w")
+        for clause in (
+            audit_branch_clause,
+            container_branch_clause,
+            egress_branch_clause,
+        ):
+            where, _params = clause(f)
+            assert where.count("LIKE") == where.count(LIKE_ESCAPE), clause
 
 
 class TestMergedEventsModel:
@@ -302,6 +325,16 @@ class TestMergedEventsModel:
             MergedEventFilters(event="egress.denied")
         )
         assert denied_rows == []
+
+    async def test_event_filter_wildcards_are_literal(self, app_state, db):
+        # #3280: a lone % must not act as a match-everything wildcard
+        # over the recorded history.
+        merged = app_state.state.model.merged_events
+        await app_state.state.model.audit_events.record(
+            "login.failed", actor_id=None
+        )
+        assert await merged.list_events(MergedEventFilters(event="%")) == []
+        assert await merged.count_events(MergedEventFilters(event="%")) == 0
 
     async def test_pagination_across_the_merge(self, app_state, db, user):
         merged = app_state.state.model.merged_events

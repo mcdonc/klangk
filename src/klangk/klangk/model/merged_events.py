@@ -29,6 +29,7 @@ email where the row's id resolves through the ``users`` table), a
 from dataclasses import dataclass
 
 from .base import Submodel
+from .db import LIKE_ESCAPE, sql_like_escape
 
 # Origin-table discriminators, as shipped in each merged row's
 # ``source`` field.
@@ -78,18 +79,24 @@ _EGRESS_SELECT = (
 
 # A workspace filter narrows workspace-carrying tables by exact id or
 # by a workspace whose *name* contains the text (the ``workspace``
-# convention of the container-events view, #3006).
+# convention of the container-events view, #3006). The name match is
+# an escaped LIKE pattern (#3280).
 _WORKSPACE_ID_OR_NAME = (
     "(workspace_id = ? OR workspace_id IN"
-    " (SELECT id FROM workspaces WHERE name LIKE '%' || ? || '%'))"
+    " (SELECT id FROM workspaces WHERE name LIKE '%' || ? || '%'"
+    + LIKE_ESCAPE
+    + "))"
 )
 
 # An actor substring matches the row's stored actor id directly, or an
 # actor whose email matches through the users table (audit rows carry
-# a denormalized email, so they need no join).
+# a denormalized email, so they need no join). Both LIKEs are escaped
+# patterns (#3280).
 _ACTOR_ID_OR_EMAIL = (
-    "(actor_id LIKE '%' || ? || '%' OR actor_id IN"
-    " (SELECT id FROM users WHERE email LIKE '%' || ? || '%'))"
+    "(actor_id LIKE '%' || ? || '%'" + LIKE_ESCAPE + " OR actor_id IN"
+    " (SELECT id FROM users WHERE email LIKE '%' || ? || '%'"
+    + LIKE_ESCAPE
+    + "))"
 )
 
 
@@ -137,20 +144,27 @@ def audit_branch_clause(filters: MergedEventFilters) -> tuple[str, list]:
     params: list = []
     time_window_conditions(conditions, params, "created_at", filters)
     if filters.event:
-        conditions.append("event LIKE '%' || ? || '%'")
-        params.append(filters.event)
+        conditions.append("event LIKE '%' || ? || '%'" + LIKE_ESCAPE)
+        params.append(sql_like_escape(filters.event))
     if filters.actor:
         conditions.append(
-            "(actor_id LIKE '%' || ? || '%' OR actor_email LIKE"
-            " '%' || ? || '%')"
+            "(actor_id LIKE '%' || ? || '%'"
+            + LIKE_ESCAPE
+            + " OR actor_email LIKE '%' || ? || '%'"
+            + LIKE_ESCAPE
+            + ")"
         )
-        params.extend((filters.actor, filters.actor))
+        params.extend(
+            (sql_like_escape(filters.actor), sql_like_escape(filters.actor))
+        )
     if filters.workspace:
         conditions.append(
             "(target_type = 'workspace' AND (target_id = ? OR target_id IN"
-            " (SELECT id FROM workspaces WHERE name LIKE '%' || ? || '%')))"
+            " (SELECT id FROM workspaces WHERE name LIKE '%' || ? || '%'"
+            + LIKE_ESCAPE
+            + ")))"
         )
-        params.extend((filters.workspace, filters.workspace))
+        params.extend((filters.workspace, sql_like_escape(filters.workspace)))
     return where_clause(conditions), params
 
 
@@ -160,14 +174,16 @@ def container_branch_clause(filters: MergedEventFilters) -> tuple[str, list]:
     params: list = []
     time_window_conditions(conditions, params, "created_at", filters)
     if filters.event:
-        conditions.append("event LIKE '%' || ? || '%'")
-        params.append(filters.event)
+        conditions.append("event LIKE '%' || ? || '%'" + LIKE_ESCAPE)
+        params.append(sql_like_escape(filters.event))
     if filters.actor:
         conditions.append(_ACTOR_ID_OR_EMAIL)
-        params.extend((filters.actor, filters.actor))
+        params.extend(
+            (sql_like_escape(filters.actor), sql_like_escape(filters.actor))
+        )
     if filters.workspace:
         conditions.append(_WORKSPACE_ID_OR_NAME)
-        params.extend((filters.workspace, filters.workspace))
+        params.extend((filters.workspace, sql_like_escape(filters.workspace)))
     return where_clause(conditions), params
 
 
@@ -181,22 +197,30 @@ def egress_branch_clause(filters: MergedEventFilters) -> tuple[str, list]:
     params: list = []
     time_window_conditions(conditions, params, "requested_at", filters)
     if filters.event:
-        conditions.append("('egress.' || decision) LIKE '%' || ? || '%'")
-        params.append(filters.event)
+        conditions.append(
+            "('egress.' || decision) LIKE '%' || ? || '%'" + LIKE_ESCAPE
+        )
+        params.append(sql_like_escape(filters.event))
     if filters.actor:
         conditions.append(
-            "(decided_by LIKE '%' || ? || '%' OR revoked_by LIKE"
-            " '%' || ? || '%' OR decided_by IN"
-            " (SELECT id FROM users WHERE email LIKE '%' || ? || '%')"
+            "(decided_by LIKE '%' || ? || '%'"
+            + LIKE_ESCAPE
+            + " OR revoked_by LIKE '%' || ? || '%'"
+            + LIKE_ESCAPE
+            + " OR decided_by IN"
+            " (SELECT id FROM users WHERE email LIKE '%' || ? || '%'"
+            + LIKE_ESCAPE
+            + ")"
             " OR revoked_by IN"
-            " (SELECT id FROM users WHERE email LIKE '%' || ? || '%'))"
+            " (SELECT id FROM users WHERE email LIKE '%' || ? || '%'"
+            + LIKE_ESCAPE
+            + "))"
         )
-        params.extend(
-            (filters.actor, filters.actor, filters.actor, filters.actor)
-        )
+        actor = sql_like_escape(filters.actor)
+        params.extend((actor, actor, actor, actor))
     if filters.workspace:
         conditions.append(_WORKSPACE_ID_OR_NAME)
-        params.extend((filters.workspace, filters.workspace))
+        params.extend((filters.workspace, sql_like_escape(filters.workspace)))
     return where_clause(conditions), params
 
 

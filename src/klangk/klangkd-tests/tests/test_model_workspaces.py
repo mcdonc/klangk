@@ -298,6 +298,14 @@ async def test_list_workspaces_with_query(ws, user):
     assert {w["name"] for w in all_items["items"]} == {"alpha", "beta"}
 
 
+async def test_list_workspaces_query_wildcards_are_literal(ws, user):
+    """The q filter treats ``%`` and ``_`` literally (#3280)."""
+    await ws.create_workspace(user["id"], "alpha")
+    await ws.create_workspace(user["id"], "beta")
+    assert (await ws.list_workspaces(user["id"], q="%"))["items"] == []
+    assert (await ws.list_workspaces(user["id"], q="_"))["items"] == []
+
+
 async def test_list_shared_workspaces(ws, app_state, user):
     other = await app_state.state.model.users.create_user("other@x.com", "h")
     ws_row = await ws.create_workspace_with_acl(other["id"], "shared-ws")
@@ -318,6 +326,8 @@ async def test_list_shared_workspaces(ws, app_state, user):
     # q-filter narrows by name.
     filtered = await ws.list_shared_workspaces(user["id"], q="shared")
     assert [w["name"] for w in filtered["items"]] == ["shared-ws"]
+    # % matches literally, not as a wildcard (#3280).
+    assert (await ws.list_shared_workspaces(user["id"], q="%"))["items"] == []
     # Nothing shared with ``other``.
     assert (await ws.list_shared_workspaces(other["id"]))["items"] == []
 

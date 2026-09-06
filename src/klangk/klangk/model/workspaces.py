@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from ..netfilter import parse_allowed_domains
 from .acl import ACTION_ALLOW, PRINCIPAL_GROUP, PRINCIPAL_USER
 from .base import Submodel
+from .db import LIKE_ESCAPE, sql_like_escape
 from .users import (
     AGENT_USER_ID,
     AgentPrincipalError,
@@ -589,8 +590,12 @@ class WorkspacesModel(Submodel):
         role-suffix list is duplicated here. Returns ``[{id, name}]``.
         """
         cursor = await db.execute(
-            "SELECT id, name FROM groups WHERE source = ? AND name LIKE ?",
-            (GROUP_SOURCE_WORKSPACE_ROLE, f"%-{workspace_id}"),
+            "SELECT id, name FROM groups WHERE source = ? AND name LIKE ?"
+            + LIKE_ESCAPE,
+            (
+                GROUP_SOURCE_WORKSPACE_ROLE,
+                f"%-{sql_like_escape(workspace_id)}",
+            ),
         )
         return [
             {"id": row["id"], "name": row["name"]}
@@ -768,8 +773,8 @@ class WorkspacesModel(Submodel):
         where = "WHERE user_id = ?"
         params: list = [user_id]
         if q:
-            where += " AND name LIKE '%' || ? || '%'"
-            params.append(q)
+            where += " AND name LIKE '%' || ? || '%'" + LIKE_ESCAPE
+            params.append(sql_like_escape(q))
         params.extend([limit + 1, offset])
         rows = await self.app.state.db.fetchall(
             "SELECT id, name, container_id, image, service_command,"
@@ -802,7 +807,9 @@ class WorkspacesModel(Submodel):
         a direct user-level ACE or a group-level ACE on
         ``/workspaces/{id}``."""
         order_by = sort_order_clause(sort, order, prefix="w")
-        name_filter = " AND w.name LIKE '%' || ? || '%'" if q else ""
+        name_filter = (
+            (" AND w.name LIKE '%' || ? || '%'" + LIKE_ESCAPE) if q else ""
+        )
         # The group-ids read runs on its own connection (it did before
         # the fetchall conversion too), so it never shared the page
         # read's snapshot.
@@ -838,7 +845,7 @@ class WorkspacesModel(Submodel):
                 user_id,
                 user_id,
                 *group_ids,
-                *([q] if q else []),
+                *([sql_like_escape(q)] if q else []),
                 limit + 1,
                 offset,
             ),
