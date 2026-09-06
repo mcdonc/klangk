@@ -290,6 +290,23 @@ class AuditEventsModel(Submodel):
         )
         return row[0] if row else 0
 
+    async def rows_by_ids(self, ids: list[int]) -> dict[int, dict]:
+        """Full rows keyed by id — the merged-stream detail fetch
+        (#3251). An empty id list short-circuits (no SQL)."""
+        if not ids:
+            return {}
+        placeholders = ",".join("?" * len(ids))
+        rows = await self.app.state.db.fetchall(
+            f"SELECT {_EVENT_COLUMNS} FROM audit_events"  # noqa: S608
+            f" WHERE id IN ({placeholders})",
+            tuple(ids),
+        )
+        out: dict[int, dict] = {}
+        for row in rows:
+            parsed = row_to_dict(row)
+            out[parsed["id"]] = parsed
+        return out
+
     async def prune(self, now: float | None = None) -> int:
         """Bound the table: delete rows past retention / over the row
         cap. Returns the number of rows deleted.

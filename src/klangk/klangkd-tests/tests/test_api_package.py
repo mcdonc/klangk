@@ -36,19 +36,19 @@ api_auth = sys.modules["klangk.api.auth"]
 # Total HTTP route operations the app registers.  The api.py split had
 # to preserve the monolith's 90 exactly; the expired-password route
 # (#3177), /audit (#3154), the #3214 admin audit-events route, step-up
-# (#3196), /auth/bind (#3218), and the OIDC code exchange (#3201) are
-# the additions since.
-EXPECTED_ROUTE_COUNT = 96
+# (#3196), /auth/bind (#3218), the OIDC code exchange (#3201), and the
+# merged events stream (#3251) are the additions since.
+EXPECTED_ROUTE_COUNT = 97
 
-# Per-domain submodules and the number of routes each owns.  90 sub-routes
+# Per-domain submodules and the number of routes each owns.  91 sub-routes
 # + 3 routes defined directly on the main router (version, config,
-# my-permissions) + 3 on the root router (health, audit, empty) == 96.
+# my-permissions) + 3 on the root router (health, audit, empty) == 97.
 SUBMODULE_ROUTES = {
     "auth": 21,  # 15 + 2 OIDC login/callback + expired-password (#3177) + step-up (#3196) + bind (#3218) + exchange (#3201)
     "workspaces": 27,
     "resources": 10,  # 6 files + 4 images/volumes (merged submodules)
     "browser_delegate": 2,
-    "admin": 28,
+    "admin": 29,  # + the merged events stream (#3251)
     "llm_proxy": 2,
 }
 
@@ -92,6 +92,7 @@ REPRESENTATIVE_PATHS = [
     f"{API_PREFIX}/invitations",
     f"{API_PREFIX}/groups",
     f"{API_PREFIX}/server/schedule",
+    f"{API_PREFIX}/events",
     f"{API_PREFIX}/events/containers",
     f"{API_PREFIX}/events/audit",
     f"{API_PREFIX}/acl/tree",

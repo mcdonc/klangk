@@ -147,13 +147,16 @@ void main() {
 
   /// Pump the page on a wide surface (the admin tab row overflows on the
   /// default 800px test surface) and settle. Optionally navigates to the
-  /// Events tab before settling.
+  /// Events tab (the merged All subtab is the default; the container
+  /// panel is one subtab over) before settling.
   Future<void> pumpPage(WidgetTester tester, {bool toEvents = true}) async {
     await tester.binding.setSurfaceSize(const Size(1600, 900));
     await tester.pumpWidget(buildPage());
     await tester.pumpAndSettle();
     if (toEvents) {
       await tester.tap(find.text('Events'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Containers'));
       await tester.pumpAndSettle();
     }
   }
@@ -172,6 +175,12 @@ void main() {
     testAuthHttpClientOverride = _mockClient(_adminPermissions, (
       request,
     ) async {
+      if (request.url.path == '/api/v1/events') {
+        // The All subtab (#3251) mounts by default and loads the merged
+        // stream; these tests exercise the Containers subtab.
+        requests.add(request);
+        return http.Response(_eventsEnvelope([], total: 0), 200);
+      }
       if (request.url.path == '/api/v1/events/containers') {
         requests.add(request);
         final limit = int.parse(request.url.queryParameters['limit'] ?? '50');
@@ -377,14 +386,17 @@ void main() {
 
       await tester.binding.setSurfaceSize(const Size(1600, 900));
       await tester.pumpWidget(buildPage());
-      // Permissions resolve asynchronously — pump until the mounted
-      // Events tab fires the container panel's initial load.
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Events'));
+      await tester.pumpAndSettle();
+      // The merged All subtab is the default; switch to Containers.
+      await tester.tap(find.text('Containers'));
+      // Permissions resolve asynchronously — pump until the panel's
+      // initial load is pending.
       while (pending.isEmpty) {
         await tester.pump(const Duration(milliseconds: 10));
       }
       pending.removeAt(0).complete(http.Response('', 200));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Events'));
       await tester.pumpAndSettle();
       expect(find.text('page-0'), findsOneWidget);
 
@@ -441,6 +453,9 @@ void main() {
           '/events': ['manage-events'],
         },
         (request) async {
+          if (request.url.path == '/api/v1/events') {
+            return http.Response(_eventsEnvelope([], total: 0), 200);
+          }
           if (request.url.path == '/api/v1/events/containers') {
             return http.Response(
               _eventsEnvelope([
@@ -459,6 +474,9 @@ void main() {
       expect(find.text('Access Control'), findsNothing);
 
       await tester.tap(find.text('Events'));
+      await tester.pumpAndSettle();
+      // The merged All subtab is the default; switch to Containers.
+      await tester.tap(find.text('Containers'));
       await tester.pumpAndSettle();
       expect(find.text('audit-ws'), findsOneWidget);
     });
