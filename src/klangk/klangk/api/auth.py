@@ -35,8 +35,8 @@ from .. import (
 )
 from ..settings import parse_bool_setting
 from ..util import API_PREFIX
-from .common import get_app_dep, workstation
 from ..notifier import notify_event
+from .common import get_app_dep, workstation
 from .common import (
     send_email,
 )

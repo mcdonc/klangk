@@ -89,9 +89,11 @@ in that list aborts startup so a typo cannot silently disable a
 notification. A config-file `admin_notify_events: []` turns event
 notifications off while leaving the channels configured — the
 deliberate off switch (blanking the environment variable instead
-restores the default allowlist). Persistent conditions (`audit.failure`, `resource.low`)
-notify at most once per event name every 5 minutes, so a degraded
-audit table or a full host produces one alert rather than a flood.
+restores the default allowlist). Persistent conditions (`audit.failure`,
+`resource.low`) notify at most once every 5 minutes — `audit.failure`
+once per source table (`audit_events` and `container_events` alert
+independently) — so a degraded audit table or a full host produces one
+alert per condition rather than a flood.
 
 Notification delivery is best-effort: a failed email or webhook call
 is logged as a warning and never fails or delays the action that

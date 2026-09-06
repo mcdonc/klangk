@@ -21,8 +21,8 @@ from .. import (
     wshandler,
 )
 from ..server_schedule import resolve_fire_at
-from .common import get_app_dep, workstation
 from ..notifier import notify_event
+from .common import get_app_dep, workstation
 from ..model import (
     ACTION_ALLOW,
     AgentPrincipalError,
@@ -566,6 +566,32 @@ _UPDATABLE_USER_FIELDS = (
 )
 
 
+async def _notify_disabled_toggle(
+    app,
+    request: Request,
+    req: "UpdateUserRequest",
+    user: dict,
+    user_id: str,
+    admin: dict,
+) -> None:
+    """Notify one disable/enable under its own event name — the STIG
+    rules distinguish them (SV-222419 / SV-222422), and the audit
+    stream records the toggle only inside user.update (#3250)."""
+    notify_event(
+        app,
+        "user.disable" if req.disabled else "user.enable",
+        actor_id=admin["id"],
+        actor_email=admin["email"],
+        target_type="user",
+        target_id=user_id,
+        # The PATCH may carry email + disabled together; report the
+        # address the row now has (a change also fires its own
+        # user.email.change notification).
+        detail={"email": req.email or user["email"]},
+        source_ip=workstation(request)[0],
+    )
+
+
 @router.patch("/users/{user_id}")
 async def update_user(
     user_id: str,
@@ -579,20 +605,7 @@ async def update_user(
     await _apply_user_field_updates(app, req, user)
     if req.disabled is not None:
         await _update_user_disabled(app, req, user_id, admin)
-        # Disable/enable notify under their own event names — the
-        # STIG rules distinguish them (SV-222419 / SV-222422), and the
-        # audit stream records the toggle only inside user.update
-        # (#3250).
-        notify_event(
-            app,
-            "user.disable" if req.disabled else "user.enable",
-            actor_id=admin["id"],
-            actor_email=admin["email"],
-            target_type="user",
-            target_id=user_id,
-            detail={"email": user["email"]},
-            source_ip=workstation(request)[0],
-        )
+        await _notify_disabled_toggle(app, request, req, user, user_id, admin)
     changed = [
         f for f in _UPDATABLE_USER_FIELDS if getattr(req, f) is not None
     ]

@@ -21,8 +21,9 @@ neither configured the notifier is inert.
 ``admin_notify_events`` is the allowlist: an event not on the list
 never notifies. Persistent-condition events (``audit.failure``,
 ``resource.low``) are additionally throttled to one notification per
-event name per window — a degraded audit table or a full host must
-not mail-bomb the recipients on every occurrence.
+window — keyed by event, and for ``audit.failure`` by source table,
+so one table's write storm never masks the other table's first alert
+and a full host alerts once, not on every occurrence.
 
 The event names mirror the identity audit stream (``user.create``,
 ``user.update``, …, #3205) so an operator can correlate a
@@ -41,8 +42,11 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-# Every event name a notification site can emit. Also the validation
-# set for KLANGKD_ADMIN_NOTIFY_EVENTS (a typo there aborts startup —
+# Every event name the emit sites deliver. The admin audit funnel
+# also feeds non-notifying names through notify_event (group.create,
+# acl.replace, ...) — the allowlist filters those out. Also the
+# validation set for KLANGKD_ADMIN_NOTIFY_EVENTS (a typo there aborts
+# startup —
 # the netfilter_default_domains posture: a silently mistyped event
 # name would silently disable a security notification).
 DEFAULT_NOTIFY_EVENTS = (
@@ -63,8 +67,9 @@ DEFAULT_NOTIFY_EVENTS = (
 )
 
 # Persistent conditions re-fire at the source on every occurrence (a
-# failed audit write, a refused start); notify at most once per event
-# name per window so the recipients get one alert, not a storm (#3250).
+# failed audit write, a refused start); notify at most once per window
+# per throttle key (see AdminNotifier.throttle_key) so the recipients
+# get one alert, not a storm (#3250).
 THROTTLE_SECONDS = {"audit.failure": 300, "resource.low": 300}
 
 # Fire-and-forget tasks are held here so the event loop cannot garbage
@@ -160,7 +165,9 @@ class AdminNotifier:
         """Throttle gate: True when *key* may notify now.
 
         Non-throttled events always pass. A throttled event passes at
-        most once per window; passing stamps the clock.
+        most once per window; passing stamps the clock. The stamp is
+        taken at dispatch, not delivery — a dropped task (no running
+        loop) or a failed send still consumes the window.
         """
         window = THROTTLE_SECONDS.get(event, 0)
         if window <= 0:

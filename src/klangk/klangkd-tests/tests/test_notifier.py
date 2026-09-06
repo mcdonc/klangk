@@ -22,6 +22,7 @@ from test_api import _admin_login
 from httpx import ASGITransport, AsyncClient
 
 from _helpers import make_settings
+from klangk.api.auth import _find_or_create_user
 from klangk.notifier import (
     DEFAULT_NOTIFY_EVENTS,
     AdminNotifier,
@@ -542,6 +543,191 @@ class TestRouteEmitSites:
         assert resp.status_code in (200, 201)
         assert spy.notify_admins.call_args.args[0] == "user.register"
         assert spy.notify_admins.call_args.kwargs["target_type"] == "user"
+
+
+class TestRouteEmitSitesSelfService:
+    """The self-service account-change sites reach the notifier."""
+
+    async def _user_headers(self, api_client):
+        resp = await api_client.post(
+            "/api/v1/auth/login",
+            json={
+                "identifier": "testuser@example.com",
+                "password": "testpass",
+            },
+        )
+        return {"Authorization": f"Bearer {resp.json()['access_token']}"}
+
+    async def test_change_password_notifies(self, api_client, api_app, user):
+        spy = Mock()
+        api_app.state.notifier = spy
+        headers = await self._user_headers(api_client)
+        resp = await api_client.post(
+            "/api/v1/auth/change-password",
+            json={
+                "current_password": "testpass",
+                "new_password": "NewPass456",
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        calls = [c.args[0] for c in spy.notify_admins.call_args_list]
+        assert "user.password.change" in calls
+
+    async def test_change_email_notifies(self, api_client, api_app, user):
+        from klangk.emailsvc import EmailService
+
+        spy = Mock()
+        api_app.state.notifier = spy
+        headers = await self._user_headers(api_client)
+        with patch.object(
+            EmailService, "send_verification_email", new_callable=AsyncMock
+        ):
+            resp = await api_client.post(
+                "/api/v1/auth/change-email",
+                json={"email": "moved@example.com", "password": "testpass"},
+                headers=headers,
+            )
+        assert resp.status_code == 200
+        calls = [c.args[0] for c in spy.notify_admins.call_args_list]
+        assert "user.email.change" in calls
+
+    async def test_change_handle_notifies(self, api_client, api_app, user):
+        spy = Mock()
+        api_app.state.notifier = spy
+        headers = await self._user_headers(api_client)
+        resp = await api_client.post(
+            "/api/v1/auth/change-handle",
+            json={"handle": "newhandle", "password": "testpass"},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        calls = [c.args[0] for c in spy.notify_admins.call_args_list]
+        assert "user.handle.change" in calls
+
+    async def test_accept_invite_notifies(
+        self, api_client, api_app, admin_user
+    ):
+        from klangk.emailsvc import EmailService
+
+        spy = Mock()
+        api_app.state.notifier = spy
+        headers = await _admin_login(api_client)
+        with patch.object(
+            EmailService, "send_invitation_email", new_callable=AsyncMock
+        ):
+            create_resp = await api_client.post(
+                "/api/v1/invitations",
+                headers=headers,
+                json={"email": "invitee@example.com"},
+            )
+        assert create_resp.status_code in (200, 201)
+        inv_id = create_resp.json()["id"]
+        token = api_app.state.auth.create_invitation_token(
+            inv_id, "invitee@example.com"
+        )
+        resp = await api_client.post(
+            "/api/v1/auth/accept-invite",
+            json={"token": token, "password": "InvitedPass1"},
+        )
+        assert resp.status_code == 200
+        calls = [c.args[0] for c in spy.notify_admins.call_args_list]
+        assert "user.create" in calls
+        create_details = [
+            c.kwargs.get("detail", {})
+            for c in spy.notify_admins.call_args_list
+            if c.args[0] == "user.create"
+        ]
+        assert {"via": "invite", "email": "invitee@example.com"} in (
+            create_details
+        )
+
+
+class TestOidcJitNotifies:
+    """OIDC JIT provisioning notifies user.create on first login only."""
+
+    async def test_first_login_creates_and_notifies(self, api_app):
+        spy = Mock()
+        api_app.state.notifier = spy
+        user = await _find_or_create_user(
+            api_app, "prov-1", "sub-jit-1", "jit@example.com"
+        )
+        assert user["email"] == "jit@example.com"
+        args, kwargs = spy.notify_admins.call_args
+        assert args[0] == "user.create"
+        assert kwargs["detail"] == {"email": "jit@example.com", "via": "oidc"}
+
+    async def test_subsequent_login_does_not_renotify(self, api_app):
+        spy = Mock()
+        api_app.state.notifier = spy
+        await _find_or_create_user(
+            api_app, "prov-1", "sub-jit-2", "again@example.com"
+        )
+        await _find_or_create_user(
+            api_app, "prov-1", "sub-jit-2", "again@example.com"
+        )
+        assert spy.notify_admins.call_count == 1
+
+
+class TestRouteEmitSitesAdminFunnel:
+    """Admin create/delete and group-membership sites reach the
+    notifier through the record_admin_event funnel."""
+
+    async def test_admin_create_notifies(
+        self, api_client, api_app, admin_user
+    ):
+        spy = Mock()
+        api_app.state.notifier = spy
+        headers = await _admin_login(api_client)
+        resp = await api_client.post(
+            "/api/v1/users",
+            headers=headers,
+            json={"email": "made@example.com", "password": "MadePass12"},
+        )
+        assert resp.status_code in (200, 201)
+        calls = [c.args[0] for c in spy.notify_admins.call_args_list]
+        assert "user.create" in calls
+
+    async def test_admin_delete_notifies(
+        self, api_client, api_app, admin_user, user
+    ):
+        spy = Mock()
+        api_app.state.notifier = spy
+        headers = await _admin_login(api_client)
+        resp = await api_client.delete(
+            f"/api/v1/users/{user['id']}", headers=headers
+        )
+        assert resp.status_code == 200
+        calls = [c.args[0] for c in spy.notify_admins.call_args_list]
+        assert "user.delete" in calls
+
+    async def test_group_member_add_remove_notifies(
+        self, api_client, api_app, admin_user, user
+    ):
+        spy = Mock()
+        api_app.state.notifier = spy
+        headers = await _admin_login(api_client)
+        create_resp = await api_client.post(
+            "/api/v1/groups",
+            headers=headers,
+            json={"name": "notify-grp", "description": "for notify test"},
+        )
+        assert create_resp.status_code in (200, 201)
+        group_id = create_resp.json()["id"]
+        resp = await api_client.post(
+            f"/api/v1/groups/{group_id}/members",
+            headers=headers,
+            json={"user_id": user["id"]},
+        )
+        assert resp.status_code == 200
+        resp = await api_client.delete(
+            f"/api/v1/groups/{group_id}/members/{user['id']}",
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        calls = [c.args[0] for c in spy.notify_admins.call_args_list]
+        assert "group.member.add" in calls
+        assert "group.member.remove" in calls
 
 
 def app_send_calls(notifier) -> list:
