@@ -151,6 +151,9 @@ http://:$PROXY_PORT {
 	handle /ws {
 		reverse_proxy 127.0.0.1:$BACKEND_PORT
 	}
+	handle /ws/* {
+		reverse_proxy 127.0.0.1:$BACKEND_PORT
+	}
 	handle {
 		reverse_proxy 127.0.0.1:$FLUTTER_PORT
 	}

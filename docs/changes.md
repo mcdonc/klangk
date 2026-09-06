@@ -3825,6 +3825,11 @@ users(id)`, so the decider handler passing the decider's email violated the
   display name — assistive tech announces every strip control by
   name.
 
+- **Long email addresses no longer overflow the Settings page
+  (#3237).** The account row's email now shrinks with an ellipsis
+  when it does not fit; previously a long address pushed the row
+  past the page edge.
+
 - **Self-registered and invited users can create workspaces again
   (#3234).** Both the self-registration and the admin-invite paths insert
   their user rows without the `members`-group join that admin-created

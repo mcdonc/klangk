@@ -60,6 +60,11 @@ def assert_proxy_split(up: str) -> None:
     assert "handle /api/*" in up and "handle /ws" in up, (
         "the proxy must route /api/* and /ws to the backend"
     )
+    assert "handle /ws/*" in up, (
+        "the proxy must route the backend's other WS endpoints "
+        "(/ws/consent-decider, #3237) — an unrouted decider socket makes "
+        "the monitor fail-close every held egress as an instant RST"
+    )
 
 
 def test_up_boots_all_pieces():
@@ -275,6 +280,34 @@ def test_terminal_suite_extensions():
     )
 
 
+def test_network_suite_extensions():
+    """The network suite (#3237) drives the consent surface end to end:
+    egress attempts from the real terminal, verdicts from the banner,
+    and rule/pause management from the panel."""
+    suite = _REPO_ROOT / "src/frontend/e2e-tests/fmtk/test_network.py"
+    assert suite.is_file(), "the network suite (#3237) is missing"
+    assert_wired(
+        suite.read_text(),
+        (
+            "Pending egress consent",
+            "Egress consent rules",
+            "Active denies (1)",
+            "Active allows (1)",
+            "Static allow-list",
+            "Pause 15m",
+            "Unpause",
+            "Filtering paused",
+            "Revoke consent rule?",
+            '"egress_mode": "static"',
+            '"egress_mode": "interactive"',
+            'f"EG-{EG_SEQ}"',  # per-attempt exit-code tags
+            'f"{host}:"',  # the email-chip-immune host match
+        ),
+        "the network suite (#3237) must drive the banner, the panel, "
+        "and the terminal-outcome loop",
+    )
+
+
 def test_agents_documents_the_harness():
     agents = _AGENTS.read_text()
     assert "fmtk-up" in agents, "AGENTS.md must point at the fmtk-up harness"
@@ -301,3 +334,10 @@ def test_e2e_suite_wiring():
     workflow = _REPO_ROOT / ".github/workflows/fmtk-e2e-tests.yml"
     assert workflow.is_file(), "the fmtk e2e CI workflow is missing"
     assert "test-fmtk-e2e" in workflow.read_text()
+    # the suites start real containers (workspace + network sidecar, the
+    # interactive-egress gate fail-closes without the sidecar image) — CI
+    # must build both images, not run image-less smoke suites only
+    wf = workflow.read_text()
+    assert 'build-tasks: ""' not in wf, (
+        "the fmtk e2e workflow must build the workspace + sidecar images"
+    )

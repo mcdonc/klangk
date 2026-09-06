@@ -465,8 +465,16 @@ def backend_env() -> dict:
     #1526), and on stock CI runners system podman (SUID newuidmap) is
     preferred over the nix one on PATH."""
     env = {k: v for k, v in os.environ.items() if not k.startswith("KLANGKD_")}
-    if Path("/usr/bin/podman").exists():
-        env["KLANGKD_PODMAN_BIN"] = "/usr/bin/podman"
+    # Deliberately NOT preferring /usr/bin/podman (the system build the
+    # stock CI runner has): with it, the interactive-egress deny path's
+    # fast-refuse silently degrades on stock runners — the sidecar's
+    # forged RST is sent and the REJECT (tcp-reset) backstop rule is
+    # installed, yet the held connection hangs to its timeout instead of
+    # refusing (curl 28, observed twice in #3237; the same stack under
+    # the devenv podman refuses in milliseconds, matching the backend
+    # e2e suite, which has always run the devenv podman there). Rootless
+    # containers work fine under the devenv podman on those runners —
+    # the whole fmtk suite is green with it (#3237).
     return env
 
 
@@ -518,6 +526,9 @@ class Proxy:
             f"\t\treverse_proxy 127.0.0.1:{BACKEND_PORT}\n"
             "\t}\n"
             "\thandle /ws {\n"
+            f"\t\treverse_proxy 127.0.0.1:{BACKEND_PORT}\n"
+            "\t}\n"
+            "\thandle /ws/* {\n"
             f"\t\treverse_proxy 127.0.0.1:{BACKEND_PORT}\n"
             "\t}\n"
             "\thandle {\n"
