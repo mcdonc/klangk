@@ -81,6 +81,8 @@ class TestAuditEventsModel:
             detail={"via": "password"},
             source_ip="10.0.0.1",
             user_agent="pytest-agent",
+            method="POST",
+            referer="https://klangk.example/login",
         )
         await events.record(
             "logout", actor_id="u1", actor_email="u1@example.com"
@@ -95,7 +97,13 @@ class TestAuditEventsModel:
         assert login["detail"] == {"via": "password"}
         assert login["source_ip"] == "10.0.0.1"
         assert login["user_agent"] == "pytest-agent"
+        assert login["method"] == "POST"
+        assert login["referer"] == "https://klangk.example/login"
         assert login["created_at"] > 0
+        # The off-request row records NULL for both #3255 fields —
+        # no HTTP request backs it.
+        assert rows[0]["method"] is None
+        assert rows[0]["referer"] is None
 
     async def test_row_without_detail(self, app_state, db):
         events = app_state.state.model.audit_events
@@ -115,15 +123,22 @@ class TestAuditEventsModel:
             '{"via": "password"}',
             "10.0.0.1",
             "ua",
+            "POST",
+            "https://klangk.example/login",
             1.0,
             None,
         )
-        assert row_to_dict(row)["detail"] == {"via": "password"}
+        d = row_to_dict(row)
+        assert d["detail"] == {"via": "password"}
+        assert d["method"] == "POST"
+        assert d["referer"] == "https://klangk.example/login"
 
     def test_row_to_dict_none_detail_stays_none(self):
         row = (
             1,
             "logout",
+            None,
+            None,
             None,
             None,
             None,
@@ -398,6 +413,80 @@ class TestLogoutAudit:
         )
         assert resp.status_code == 200
         assert await _events(api_app, "logout") == []
+
+
+class TestRequestMethodCapture:
+    """#3255: rows minted from an HTTP request carry its method and
+    Referer (SV-222447); the Referer is capped at capture time."""
+
+    async def test_login_row_carries_method_and_referer(
+        self, api_client, api_app, user
+    ):
+        resp = await api_client.post(
+            "/api/v1/auth/login",
+            json={
+                "identifier": "testuser@example.com",
+                "password": "testpass",
+            },
+            headers={"Referer": "https://klangk.example/login"},
+        )
+        assert resp.status_code == 200
+        row = (await _events(api_app, "login"))[0]
+        assert row["method"] == "POST"
+        assert row["referer"] == "https://klangk.example/login"
+
+    async def test_no_referer_header_records_null(
+        self, api_client, api_app, user
+    ):
+        await _auth_headers(api_client)
+        row = (await _events(api_app, "login"))[0]
+        assert row["method"] == "POST"
+        assert row["referer"] is None
+
+    async def test_long_referer_is_truncated_at_capture(
+        self, api_client, api_app, user
+    ):
+        from klangk.util import REFERER_STORE_MAX
+
+        resp = await api_client.post(
+            "/api/v1/auth/login",
+            json={
+                "identifier": "testuser@example.com",
+                "password": "testpass",
+            },
+            headers={"Referer": "https://klangk.example/pad?x=" + "a" * 5000},
+        )
+        assert resp.status_code == 200
+        row = (await _events(api_app, "login"))[0]
+        assert len(row["referer"]) == REFERER_STORE_MAX
+        assert row["referer"].startswith("https://klangk.example/pad?x=")
+
+    async def test_failed_login_row_carries_method_and_referer(
+        self, api_client, api_app, user
+    ):
+        resp = await api_client.post(
+            "/api/v1/auth/login",
+            json={
+                "identifier": "testuser@example.com",
+                "password": "wrong-password",
+            },
+            headers={"Referer": "https://klangk.example/login"},
+        )
+        assert resp.status_code == 401
+        row = (await _events(api_app, "login.failed"))[0]
+        assert row["method"] == "POST"
+        assert row["referer"] == "https://klangk.example/login"
+
+    async def test_logout_row_carries_method(self, api_client, api_app, user):
+        headers = await _auth_headers(api_client)
+        resp = await api_client.post(
+            "/api/v1/auth/logout",
+            headers={**headers, "Referer": "https://klangk.example/settings"},
+        )
+        assert resp.status_code == 200
+        row = (await _events(api_app, "logout"))[0]
+        assert row["method"] == "POST"
+        assert row["referer"] == "https://klangk.example/settings"
 
 
 class TestAdminUserAudit:
@@ -752,6 +841,9 @@ class TestAuditEventsEndpoint:
         item = body["items"][0]
         assert "hmac" not in item
         assert item["event"] in {"login", "user.create"}
+        # The #3255 request fields ship on the wire for every row.
+        assert "method" in item
+        assert "referer" in item
 
     async def test_filters_by_event(self, api_client, api_app, admin_user):
         headers = await _admin_login(api_client)

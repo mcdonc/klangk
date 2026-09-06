@@ -8,7 +8,10 @@ event, each carrying the acting principal (``actor_id`` /
 deletion), the target it acted on, a JSON ``detail`` blob for
 action-specific context (never secrets: no passwords, no tokens), and
 the per-request HTTP metadata the issue called out — the effective
-client IP and user agent the request came from.
+client IP, user agent (#3205), HTTP method, and Referer (#3255,
+SV-222447). Rows written before #3255 read NULL for method/referer;
+rows minted off the HTTP path (WebSocket-side revocations) record
+NULL for both because no HTTP request backs them.
 
 Event coverage (#3205):
 
@@ -66,10 +69,13 @@ logger = logging.getLogger(__name__)
 
 # Canonical column list so the read shape cannot drift from the schema
 # (a column added to the table is added here once). ``detail`` is stored
-# as a JSON string and decoded on read.
+# as a JSON string and decoded on read. ``method``/``referer`` are the
+# #3255 additions; they stay outside the HMAC column set
+# (``_AE_HMAC_COLUMNS``) so the published offsite-verification contract
+# (docs/reference/audit-integrity.md) is unchanged by their arrival.
 _EVENT_COLUMNS = (
     "id, event, actor_id, actor_email, target_type, target_id,"
-    " detail, source_ip, user_agent, created_at, hmac"
+    " detail, source_ip, user_agent, method, referer, created_at, hmac"
 )
 
 
@@ -130,11 +136,16 @@ class AuditEventsModel(Submodel):
         detail: dict | None = None,
         source_ip: str | None = None,
         user_agent: str | None = None,
+        method: str | None = None,
+        referer: str | None = None,
     ) -> None:
         """Insert one audit event row, HMAC-tagged when configured.
 
-        Raises on a DB failure; callers that must not fail on an audit
-        problem use :meth:`record_best_effort` instead.
+        *method* / *referer* are the #3255 request fields
+        (SV-222447); both ``None`` for rows with no HTTP request
+        behind them. Raises on a DB failure; callers that must not
+        fail on an audit problem use :meth:`record_best_effort`
+        instead.
         """
         created_at = time.time()
         detail_json = json.dumps(detail) if detail is not None else None
@@ -142,8 +153,9 @@ class AuditEventsModel(Submodel):
             cursor = await db.execute(
                 "INSERT INTO audit_events"
                 " (event, actor_id, actor_email, target_type, target_id,"
-                "  detail, source_ip, user_agent, created_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "  detail, source_ip, user_agent, method, referer,"
+                "  created_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     event,
                     actor_id,
@@ -153,6 +165,8 @@ class AuditEventsModel(Submodel):
                     detail_json,
                     source_ip,
                     user_agent,
+                    method,
+                    referer,
                     created_at,
                 ),
             )
@@ -167,6 +181,8 @@ class AuditEventsModel(Submodel):
                 "detail": detail_json,
                 "source_ip": source_ip,
                 "user_agent": user_agent,
+                "method": method,
+                "referer": referer,
                 "created_at": created_at,
             }
             tag = compute_audit_event_hmac(self.app.state.settings, row)

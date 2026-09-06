@@ -123,17 +123,27 @@ async def _audit(request: Request, user: dict, event: str, **detail) -> None:
     exactly the "session may be hijacked" signal operators review, so
     every gate outcome (refusal, exemption, confirmation, failed
     check) lands in ``audit_events`` like the login/identity events,
-    not just the server log.
+    not just the server log. The row carries the same per-request
+    HTTP metadata as every other audit emit (#3255): the
+    proxy-trust-aware client IP (not the raw peer), user agent,
+    method, and Referer.
     """
-    await request.app.state.model.audit_events.record_best_effort(
+    app = request.app
+    host = request.client.host if request.client else None
+    source_ip, user_agent, method, referer = app.state.util.request_metadata(
+        request.headers, host, request.method
+    )
+    await app.state.model.audit_events.record_best_effort(
         event,
         actor_id=user.get("id"),
         actor_email=user.get("email"),
         target_type="user",
         target_id=user.get("id"),
         detail=detail,
-        source_ip=request.client.host if request.client else None,
-        user_agent=request.headers.get("user-agent"),
+        source_ip=source_ip,
+        user_agent=user_agent,
+        method=method,
+        referer=referer,
     )
 
 

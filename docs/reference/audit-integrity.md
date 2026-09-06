@@ -63,6 +63,12 @@ decided_by, revoked_at, revoked_by`
 - `audit_events`: `id, event, actor_id, actor_email, target_type,
 target_id, detail, source_ip, user_agent, created_at`
 
+The `audit_events` `method` and `referer` columns (#3255, migration 0036) are recorded on the row but deliberately **not** covered by the
+tag: this column list is a published contract, and extending it would
+make every row written before #3255 fail re-computation under the
+recipe above. The two columns therefore read as untagged fields — an
+offsite checker neither verifies nor flags them.
+
 ## The tag format (the contract)
 
 Reimplementing verification only requires the standard library. The

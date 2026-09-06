@@ -22,7 +22,7 @@ from .. import (
 )
 from ..server_schedule import resolve_fire_at
 from ..notifier import notify_event
-from .common import get_app_dep, workstation
+from .common import get_app_dep, request_metadata
 from ..model import (
     ACTION_ALLOW,
     AgentPrincipalError,
@@ -53,12 +53,12 @@ async def record_admin_event(
     """Write one admin identity/privilege audit row (#3205).
 
     Every admin-route audit emit needs the same ingredients — the
-    acting admin, the workstation the request came from, and the
-    event's target/detail — so they funnel through here. Best-effort
-    by design (``record_best_effort``): an unwritable audit table is
-    logged, never bricked onto account management.
+    acting admin, the per-request HTTP metadata, and the event's
+    target/detail — so they funnel through here. Best-effort by design
+    (``record_best_effort``): an unwritable audit table is logged,
+    never bricked onto account management.
     """
-    source_ip, user_agent = workstation(request)
+    source_ip, user_agent, method, referer = request_metadata(request)
     await app.state.model.audit_events.record_best_effort(
         event,
         actor_id=admin["id"],
@@ -68,6 +68,8 @@ async def record_admin_event(
         detail=detail,
         source_ip=source_ip,
         user_agent=user_agent,
+        method=method,
+        referer=referer,
     )
     # SA/ISSO notification for the same lifecycle action (#3250). The
     # allowlist filters to the notify-worthy event names; everything
@@ -588,7 +590,7 @@ async def _notify_disabled_toggle(
         # address the row now has (a change also fires its own
         # user.email.change notification).
         detail={"email": req.email or user["email"]},
-        source_ip=workstation(request)[0],
+        source_ip=request_metadata(request)[0],
     )
 
 

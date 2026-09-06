@@ -36,7 +36,7 @@ from .. import (
 from ..settings import parse_bool_setting
 from ..util import API_PREFIX
 from ..notifier import notify_event
-from .common import get_app_dep, workstation
+from .common import get_app_dep, request_metadata
 from .common import (
     send_email,
 )
@@ -108,12 +108,14 @@ async def register(
         )
     if parse_bool_setting(request.app.state.settings.test_mode):
         # Test mode: auto-verify so E2E tests get immediate access
-        source_ip, user_agent = workstation(request)
+        source_ip, user_agent, method, referer = request_metadata(request)
         result = await request.app.state.auth.register(
             req,
             verified=True,
             source_ip=source_ip,
             user_agent=user_agent,
+            method=method,
+            referer=referer,
         )
         return result
 
@@ -165,7 +167,7 @@ async def register(
     # The unverified account creation is audited (#3205); there is no
     # actor yet (the registrant is unauthenticated) and no login row
     # until the verification flow mints a session.
-    reg_ip, reg_ua = workstation(request)
+    reg_ip, reg_ua, method, referer = request_metadata(request)
     await app.state.model.audit_events.record_best_effort(
         "user.register",
         target_type="user",
@@ -173,6 +175,8 @@ async def register(
         detail={"email": req.email, "verified": False},
         source_ip=reg_ip,
         user_agent=reg_ua,
+        method=method,
+        referer=referer,
     )
     notify_event(
         app,
@@ -242,12 +246,14 @@ async def verify_email(req: VerifyRequest, request: Request):
         raise HTTPException(status_code=404, detail="User not found")
     # The auto-login must not resurrect a disabled account (#2588).
     auth.ensure_not_disabled(user)
-    source_ip, user_agent = workstation(request)
+    source_ip, user_agent, method, referer = request_metadata(request)
     access_token = await request.app.state.auth.issue_token(
         user_id,
         user["email"],
         source_ip=source_ip,
         user_agent=user_agent,
+        method=method,
+        referer=referer,
         via="email-verify",
     )
     await request.app.state.model.users.record_login(user_id)
@@ -332,7 +338,15 @@ def _rate_limited(timestamps: dict, cooldown: float, email: str) -> bool:
 
 
 async def _authorize_resend(
-    app, user, req, lockout_key, attempt_info, source_ip, user_agent
+    app,
+    user,
+    req,
+    lockout_key,
+    attempt_info,
+    source_ip,
+    user_agent,
+    method=None,
+    referer=None,
 ) -> None:
     """401 unless the email+password pair authorizes a resend.
 
@@ -355,6 +369,8 @@ async def _authorize_resend(
             },
             source_ip=source_ip,
             user_agent=user_agent,
+            method=method,
+            referer=referer,
         )
         await app.state.auth.record_login_failure(lockout_key, attempt_info)
         raise HTTPException(status_code=401, detail="Invalid credentials")
@@ -371,12 +387,24 @@ async def resend_verification(
     # Lockout key: the resolved user's canonical email when known, the
     # raw input for unknown addresses (#2618).
     lockout_key = user["email"] if user else req.email
-    source_ip, user_agent = workstation(request)
+    source_ip, user_agent, method, referer = request_metadata(request)
     attempt_info = await app.state.auth.check_login_lockout(
-        lockout_key, source_ip=source_ip, user_agent=user_agent
+        lockout_key,
+        source_ip=source_ip,
+        user_agent=user_agent,
+        method=method,
+        referer=referer,
     )
     await _authorize_resend(
-        app, user, req, lockout_key, attempt_info, source_ip, user_agent
+        app,
+        user,
+        req,
+        lockout_key,
+        attempt_info,
+        source_ip,
+        user_agent,
+        method,
+        referer,
     )
     if user.get("verified"):
         raise HTTPException(status_code=400, detail="Account already verified")
@@ -561,7 +589,7 @@ async def reset_password(req: ResetPasswordRequest, request: Request):
     )
     # The self-chosen reset is a password change (#3205), audited before
     # the auto-login's ``login`` row below.
-    source_ip, user_agent = workstation(request)
+    source_ip, user_agent, method, referer = request_metadata(request)
     await request.app.state.model.audit_events.record_best_effort(
         "user.password.change",
         actor_id=user_id,
@@ -571,6 +599,8 @@ async def reset_password(req: ResetPasswordRequest, request: Request):
         detail={"via": "password-reset"},
         source_ip=source_ip,
         user_agent=user_agent,
+        method=method,
+        referer=referer,
     )
     notify_event(
         request.app,
@@ -588,6 +618,8 @@ async def reset_password(req: ResetPasswordRequest, request: Request):
         user["email"],
         source_ip=source_ip,
         user_agent=user_agent,
+        method=method,
+        referer=referer,
         via="password-reset",
     )
     await request.app.state.model.users.record_login(user_id)
@@ -603,9 +635,13 @@ async def login(
         raise HTTPException(
             status_code=403, detail="Password login is disabled"
         )
-    source_ip, user_agent = workstation(request)
+    source_ip, user_agent, method, referer = request_metadata(request)
     return await request.app.state.auth.login(
-        req, source_ip=source_ip, user_agent=user_agent
+        req,
+        source_ip=source_ip,
+        user_agent=user_agent,
+        method=method,
+        referer=referer,
     )
 
 
@@ -657,12 +693,14 @@ async def local_login(request: Request):
         )
     # A disabled default account must not mint a session (#2588).
     auth.ensure_not_disabled(user)
-    source_ip, user_agent = workstation(request)
+    source_ip, user_agent, method, referer = request_metadata(request)
     token = await request.app.state.auth.issue_token(
         user["id"],
         user["email"],
         source_ip=source_ip,
         user_agent=user_agent,
+        method=method,
+        referer=referer,
         via="local",
     )
     await request.app.state.model.users.record_login(user["id"])
@@ -687,7 +725,7 @@ async def refresh_token(request: Request):
     )
     return await request.app.state.auth.refresh_token(
         token,
-        workstation(request),
+        request_metadata(request)[:2],
         proof=request.headers.get("dpop"),
     )
 
@@ -709,13 +747,15 @@ async def bind_session_token(
     must-change-password session can still bind and keep working
     through the change-password flow (#3172).
     """
-    source_ip, user_agent = workstation(request)
+    source_ip, user_agent, method, referer = request_metadata(request)
     return await request.app.state.auth.bind_token(
         credentials.credentials,
         req.jwk,
         workstation=(source_ip, user_agent),
         source_ip=source_ip,
         user_agent=user_agent,
+        method=method,
+        referer=referer,
     )
 
 
@@ -790,7 +830,7 @@ async def change_password(
     await request.app.state.auth.revoke_all_user_sessions(user["id"])
     # Both halves are audited (#3205): the password change itself, and
     # the session revocation it forced (every live session ended).
-    source_ip, user_agent = workstation(request)
+    source_ip, user_agent, method, referer = request_metadata(request)
     await request.app.state.model.audit_events.record_best_effort(
         "user.password.change",
         actor_id=user["id"],
@@ -800,6 +840,8 @@ async def change_password(
         detail={"via": "self-service"},
         source_ip=source_ip,
         user_agent=user_agent,
+        method=method,
+        referer=referer,
     )
     notify_event(
         request.app,
@@ -859,6 +901,7 @@ async def step_up(
     stamped = await app.state.model.sessions.stamp_step_up(jti or "")
     if not stamped:
         raise HTTPException(status_code=401, detail="Session not found")
+    source_ip, user_agent, method, referer = request_metadata(request)
     await app.state.model.audit_events.record_best_effort(
         "step_up.confirmed",
         actor_id=user["id"],
@@ -866,8 +909,10 @@ async def step_up(
         target_type="user",
         target_id=user["id"],
         detail={"window_minutes": stepup.window_minutes(app)},
-        source_ip=request.client.host if request.client else None,
-        user_agent=request.headers.get("user-agent"),
+        source_ip=source_ip,
+        user_agent=user_agent,
+        method=method,
+        referer=referer,
     )
     logger.info(
         "step-up: password confirmed for user=%s email=%s",
@@ -893,9 +938,13 @@ async def change_expired_password(
         raise HTTPException(
             status_code=403, detail="Password login is disabled"
         )
-    source_ip, user_agent = workstation(request)
+    source_ip, user_agent, method, referer = request_metadata(request)
     return await request.app.state.auth.change_expired_password(
-        req, source_ip=source_ip, user_agent=user_agent
+        req,
+        source_ip=source_ip,
+        user_agent=user_agent,
+        method=method,
+        referer=referer,
     )
 
 
@@ -922,7 +971,7 @@ async def change_email(
     await app.state.model.users.update_email(user["id"], req.email)
     # The email change is audited the moment it lands (#3205); the
     # verification email below can still fail with the change applied.
-    source_ip, user_agent = workstation(request)
+    source_ip, user_agent, method, referer = request_metadata(request)
     await app.state.model.audit_events.record_best_effort(
         "user.email.change",
         actor_id=user["id"],
@@ -932,6 +981,8 @@ async def change_email(
         detail={"email": req.email},
         source_ip=source_ip,
         user_agent=user_agent,
+        method=method,
+        referer=referer,
     )
     notify_event(
         app,
@@ -984,7 +1035,7 @@ async def change_handle(
     await wshandler.refresh_user_handle(
         app.state.sockets, user["id"], req.handle
     )
-    source_ip, user_agent = workstation(request)
+    source_ip, user_agent, method, referer = request_metadata(request)
     await app.state.model.audit_events.record_best_effort(
         "user.handle.change",
         actor_id=user["id"],
@@ -994,6 +1045,8 @@ async def change_handle(
         detail={"handle": req.handle},
         source_ip=source_ip,
         user_agent=user_agent,
+        method=method,
+        referer=referer,
     )
     notify_event(
         app,
@@ -1072,7 +1125,7 @@ async def logout(
         if user is not None:
             # The logout is audited (#3205) only when it ended a live
             # session — an anonymous or dead-token call revoked nothing.
-            source_ip, user_agent = workstation(request)
+            source_ip, user_agent, method, referer = request_metadata(request)
             await request.app.state.model.audit_events.record_best_effort(
                 "logout",
                 actor_id=user["id"],
@@ -1081,6 +1134,8 @@ async def logout(
                 target_id=user["id"],
                 source_ip=source_ip,
                 user_agent=user_agent,
+                method=method,
+                referer=referer,
             )
 
     result: dict = {"status": "ok"}
@@ -1159,7 +1214,7 @@ async def accept_invite(req: AcceptInviteRequest, request: Request):
     # The invited account's creation notifies the SA/ISSO stream under
     # the same user.create name as the other creation paths (#3250);
     # the registrant is unauthenticated, so there is no actor.
-    source_ip, user_agent = workstation(request)
+    source_ip, user_agent, method, referer = request_metadata(request)
     notify_event(
         request.app,
         "user.create",
@@ -1173,6 +1228,8 @@ async def accept_invite(req: AcceptInviteRequest, request: Request):
         user["email"],
         source_ip=source_ip,
         user_agent=user_agent,
+        method=method,
+        referer=referer,
         via="invite",
     )
     await request.app.state.model.users.record_login(user["id"])
@@ -1565,12 +1622,14 @@ async def oidc_callback(
     if hook_groups is not None:
         await request.app.state.oidc.sync_oidc_groups(user["id"], hook_groups)
 
-    source_ip, user_agent = workstation(request)
+    source_ip, user_agent, method, referer = request_metadata(request)
     access_token = await request.app.state.auth.issue_token(
         user["id"],
         email,
         source_ip=source_ip,
         user_agent=user_agent,
+        method=method,
+        referer=referer,
         via="oidc",
     )
     await request.app.state.model.users.record_login(user["id"])
