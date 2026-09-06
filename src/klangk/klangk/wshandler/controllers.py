@@ -1401,13 +1401,17 @@ class TerminalController:
     def _window_target(msg: dict) -> int | str | None:
         """Prefer @N window_id (stable); fall back to index for compat.
 
-        None when the frame carries neither field — callers refuse
-        rather than act on a defaulted window 0 (#3288).
+        None when the frame carries neither usable field — callers refuse
+        rather than act on a defaulted window 0 (#3288). An empty-string
+        index is unusable too: ``sess:`` would match a window named "".
         """
         window_id = msg.get("window_id")
         if window_id:
             return window_id
-        return msg.get("index")
+        index = msg.get("index")
+        if index is None or index == "":
+            return None
+        return index
 
     async def forward_output(self, session: TerminalSession) -> None:
         """Forward terminal output to the frontend via WebSocket."""

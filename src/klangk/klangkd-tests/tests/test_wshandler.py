@@ -7894,6 +7894,11 @@ class TestTerminalWindowHandlers:
         conn._user_home = "/home/alice"
         with patch.object(_mock_term, "rename_window") as mock_ren:
             await conn.handle_terminal_rename_window({"name": "build"})
+            # An empty-string index is not a usable target either —
+            # ``sess:`` would match a window named "" (#3288).
+            await conn.handle_terminal_rename_window(
+                {"index": "", "name": "build"}
+            )
         mock_ren.assert_not_called()
         sent = sock.send_json.call_args[0][0]
         assert sent["type"] == "error"

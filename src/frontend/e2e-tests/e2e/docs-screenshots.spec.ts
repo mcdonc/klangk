@@ -235,7 +235,7 @@ test.describe("documentation screenshots", () => {
       // --- Rename the terminal ---
       ownerWs.send({
         cmd: "terminal_rename_window",
-        index: firstWindow.index as number,
+        window_id: firstWindow.id as string,
         name: "build",
       });
       await ownerWs.recvUntil((m) => m.type === "terminal_windows");
