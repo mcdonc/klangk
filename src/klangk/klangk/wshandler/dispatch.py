@@ -7,7 +7,12 @@ from fastapi import WebSocket, WebSocketDisconnect
 from jose import ExpiredSignatureError, JWTError
 
 from .safe_websocket import SafeWebSocket, SlowClientError
-from .support import send_error, log_ws_msg
+from .support import (
+    send_error,
+    log_ws_msg,
+    ws_bearer_token,
+    ws_echo_subprotocol,
+)
 from .connection import Connection
 
 logger = logging.getLogger(__name__)
@@ -77,8 +82,15 @@ async def ws_authenticate(
     token replayed from a different machine closes 4001 and its
     session is revoked. A DPoP-bound token must also prove
     possession (#3218).
+
+    #3201: the token arrives in the ``Sec-WebSocket-Protocol`` handshake
+    header (browsers cannot set ``Authorization`` on a WS connect, and a
+    ``?token=`` query param would land in proxy/server access logs);
+    the one-shot DPoP proof still rides a ``dpop`` query param (#3218 —
+    single-use jti + ath binding, so its URL presence leaks nothing
+    reusable).
     """
-    token = websocket.query_params.get("token")
+    token = ws_bearer_token(websocket)
     if not token:
         await websocket.close(code=4001, reason="Missing token")
         return None
@@ -290,13 +302,13 @@ async def _run_websocket_session(conn, safe_ws, user: dict, app) -> None:
 
 async def handle_websocket(websocket: WebSocket, app) -> None:
     """Main WebSocket handler."""
-    # Authenticate via query param
+    # Authenticate via the Sec-WebSocket-Protocol handshake header
     authed = await ws_authenticate(websocket, app)
     if authed is None:
         return
     user, jti, token_exp = authed
 
-    await websocket.accept()
+    await websocket.accept(subprotocol=ws_echo_subprotocol(websocket))
     safe_ws = SafeWebSocket(websocket)
     safe_ws.start_sender()
     conn = Connection(safe_ws, user, app, jti=jti, token_exp=token_exp)

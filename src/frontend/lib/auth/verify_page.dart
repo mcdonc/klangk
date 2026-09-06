@@ -36,8 +36,13 @@ class _VerifyPageState extends State<VerifyPage> {
 
     try {
       final auth = context.read<AuthService>();
-      final response =
-          await auth.authGet('/api/v1/auth/verify?token=${widget.token}');
+      // #3201: the token rides the POST body, not the URL — a GET query
+      // string would put a bearer-granting credential in proxy/server
+      // access logs.
+      final response = await auth.authPost(
+        '/api/v1/auth/verify',
+        body: jsonEncode({'token': widget.token}),
+      );
       // The await above can straddle an unmount (e.g. the router's
       // refreshListenable redirecting a already-tokened user off this
       // public route) — bail before touching state (#3203).

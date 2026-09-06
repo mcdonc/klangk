@@ -307,7 +307,8 @@ class TestWsAuthenticateJti:
         a = app_state.state.auth
         token = await a.issue_token(user["id"], user["email"])
         ws = types.SimpleNamespace(
-            query_params={"token": token},
+            headers={"sec-websocket-protocol": f"bearer, {token}"},
+            query_params={},
             url=types.SimpleNamespace(path="/ws"),
             close=AsyncMock(),
         )
@@ -324,7 +325,9 @@ class TestWsAuthenticateJti:
         from klangk.wshandler.dispatch import ws_authenticate
 
         ws = types.SimpleNamespace(
-            query_params={"token": "garbage"}, close=AsyncMock()
+            headers={"sec-websocket-protocol": "bearer, garbage"},
+            query_params={},
+            close=AsyncMock(),
         )
         assert await ws_authenticate(ws, app_state) is None
         ws.close.assert_awaited_once_with(code=4001, reason="Invalid token")
@@ -409,33 +412,3 @@ class TestUnarmedWsStamp:
         await unarmed.record_ws_session_activity("sid-1")
         app.state.model.sessions.touch_session_by_sid.assert_not_awaited()
         assert unarmed.session_stamps == {}
-
-
-class TestDeciderSessionIdResolution:
-    async def test_resolves_through_jti(self):
-        from klangk.wshandler import decider
-
-        app = _app()
-        app.state.auth = types.SimpleNamespace(
-            decode_token=lambda _t: {"jti": "jti-1"}
-        )
-        app.state.model = types.SimpleNamespace(
-            sessions=types.SimpleNamespace(
-                get_session_id=AsyncMock(return_value="sid-1")
-            )
-        )
-        ws = types.SimpleNamespace(query_params={"token": "tok"})
-        assert await decider._decider_session_id(ws, app) == "sid-1"
-        app.state.model.sessions.get_session_id.assert_awaited_once_with(
-            "jti-1"
-        )
-
-    async def test_no_token_or_no_jti_returns_none(self):
-        from klangk.wshandler import decider
-
-        app = _app()
-        app.state.auth = types.SimpleNamespace(decode_token=lambda _t: {})
-        ws = types.SimpleNamespace(query_params={})
-        assert await decider._decider_session_id(ws, app) is None
-        ws2 = types.SimpleNamespace(query_params={"token": "tok"})
-        assert await decider._decider_session_id(ws2, app) is None

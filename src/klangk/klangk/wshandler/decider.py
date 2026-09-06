@@ -31,8 +31,10 @@ spectators are watch-only and never register). A verdict is honored only if
 it targets the decider's own workspace (defense-in-depth), enforced in
 ``resolve`` via ``decider_workspace``. Pause/unpause share the same single
 gate as the connection itself (#2883): anyone who may register may also
-pause. Auth mirrors the main ``/ws`` handler: a user JWT in the ``token``
-query param — including its revocation story (#3162): the handshake
+pause. Auth mirrors the main ``/ws`` handler: a user JWT in the handshake's
+``Sec-WebSocket-Protocol`` header (#3201 -- browsers cannot set headers
+like ``Authorization`` on a WS connect, and a ``?token=`` query param
+would land in proxy/server access logs) — including its revocation story (#3162): the handshake
 records the token's JTI on the registry entry, and a hard revocation
 (logout, session-limit eviction) closes the decider socket with 4001,
 just like the main handler's connections (#3152), and an account
@@ -56,6 +58,7 @@ from jose import ExpiredSignatureError, JWTError
 
 from .safe_websocket import SafeWebSocket, SlowClientError
 from .dispatch import ws_workstation
+from .support import ws_bearer_token, ws_echo_subprotocol
 from ..model.egress_consent import (
     DECISION_ALLOWED,
     DECISION_DENIED,
@@ -239,8 +242,13 @@ async def _decider_authenticate(websocket: WebSocket, app, _hs_mark):
     hard-revoked (#3162), mirroring ``ws_authenticate`` (#3152); a
     session bound to another workstation is refused (#3194), and a
     DPoP-bound token must prove possession (#3218).
+
+    #3201: the token arrives in the ``Sec-WebSocket-Protocol`` handshake
+    header, not a ``?token=`` query param (query strings land in
+    proxy/server access logs); the one-shot DPoP proof still rides a
+    ``dpop`` query param (#3218).
     """
-    token = websocket.query_params.get("token")
+    token = ws_bearer_token(websocket)
     if not token:
         await _refuse(websocket, 4001, "Missing token")
         return None
@@ -451,7 +459,7 @@ async def handle_consent_decider(websocket: WebSocket, app) -> None:
         websocket, app, workspace, user, hs_mark=_hs_mark
     ):
         return
-    await websocket.accept()
+    await websocket.accept(subprotocol=ws_echo_subprotocol(websocket))
     _hs_mark("accept")
     _log_handshake_timing(_hs_t0, _hs_marks)
     safe_ws = SafeWebSocket(websocket)
@@ -477,28 +485,13 @@ async def handle_consent_decider(websocket: WebSocket, app) -> None:
             workspace,
             user,
             decider_id,
-            session_id=await _decider_session_id(websocket, app),
+            session_id=await app.state.model.sessions.get_session_id(jti),
         )
     finally:
         # Connection gone (clean disconnect, error, or crash) -> drop the
         # registration so the workspace reverts to static (#2308).
         registry.deregister(decider_id)
         await safe_ws.stop_sender()
-
-
-async def _decider_session_id(websocket: WebSocket, app) -> str | None:
-    """The stable session id behind the decider socket's token (#3151).
-
-    ``None`` when the token has no session row (fail-open, same as the
-    main /ws path). The decode is unguarded: ``_decider_authenticate``
-    validated this exact token moments earlier, so it cannot be
-    malformed here.
-    """
-    token = websocket.query_params.get("token")
-    jti = app.state.auth.decode_token(token).get("jti") if token else None
-    if jti is None:
-        return None
-    return await app.state.model.sessions.get_session_id(jti)
 
 
 async def _replay_decider_snapshot(app, safe_ws, workspace) -> None:

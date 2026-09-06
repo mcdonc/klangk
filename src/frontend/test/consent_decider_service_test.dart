@@ -657,7 +657,7 @@ void main() {
 
     setUp(() {
       channel = _FakeChannel();
-      ConsentDeciderService.testChannelFactory = (_) => channel;
+      ConsentDeciderService.testChannelFactory = (_, __) => channel;
     });
 
     tearDown(() {
@@ -755,7 +755,7 @@ void main() {
     });
 
     test('sendVerdict flashes when the socket send throws', () async {
-      ConsentDeciderService.testChannelFactory = (_) => _ThrowingChannel();
+      ConsentDeciderService.testChannelFactory = (_, __) => _ThrowingChannel();
       final svc = ConsentDeciderService(workspaceId: 'ws', token: 't');
       await svc.connect();
       svc.sendVerdict('r1', 'allowed', 'once'); // sink.add throws
@@ -934,7 +934,7 @@ void main() {
     });
 
     test('sendRevoke flashes when the socket send throws', () async {
-      ConsentDeciderService.testChannelFactory = (_) => _ThrowingChannel();
+      ConsentDeciderService.testChannelFactory = (_, __) => _ThrowingChannel();
       final svc = ConsentDeciderService(workspaceId: 'ws', token: 't');
       await svc.connect();
       svc.sendRevoke('v1');
@@ -981,7 +981,7 @@ void main() {
     });
 
     test('sendPause/sendUnpause flash when the socket send throws', () async {
-      ConsentDeciderService.testChannelFactory = (_) => _ThrowingChannel();
+      ConsentDeciderService.testChannelFactory = (_, __) => _ThrowingChannel();
       final svc = ConsentDeciderService(workspaceId: 'ws', token: 't');
       await svc.connect();
       svc.sendPause('15m');
@@ -1285,7 +1285,7 @@ void main() {
     test('drops expired timed rules, keeps the rest, and notifies', () async {
       var now = DateTime.fromMillisecondsSinceEpoch(1000 * 1000, isUtc: true);
       final ch = _FakeChannel();
-      ConsentDeciderService.testChannelFactory = (_) => ch;
+      ConsentDeciderService.testChannelFactory = (_, __) => ch;
       final svc = ConsentDeciderService(
         workspaceId: 'ws',
         token: 't',
@@ -1353,7 +1353,7 @@ void main() {
       () async {
         var now = DateTime.fromMillisecondsSinceEpoch(1000 * 1000, isUtc: true);
         final ch = _FakeChannel();
-        ConsentDeciderService.testChannelFactory = (_) => ch;
+        ConsentDeciderService.testChannelFactory = (_, __) => ch;
         final svc = ConsentDeciderService(
           workspaceId: 'ws',
           token: 't',
@@ -1390,8 +1390,10 @@ void main() {
       testDpopBackendOverride = FakeDpopBackend(proof: 'dec-proof');
       final bound = boundToken();
       Uri? seen;
-      ConsentDeciderService.testChannelFactory = (uri) {
+      List<String>? seenProtocols;
+      ConsentDeciderService.testChannelFactory = (uri, protocols) {
         seen = uri;
+        seenProtocols = protocols;
         return _FakeChannel();
       };
 
@@ -1399,7 +1401,9 @@ void main() {
       await svc.connect();
 
       expect(seen!.queryParameters['dpop'], 'dec-proof');
-      expect(seen!.queryParameters['token'], bound);
+      // #3201: the token rides the subprotocol list, never the query.
+      expect(seenProtocols, ['bearer', bound]);
+      expect(seen!.queryParameters.containsKey('token'), isFalse);
       expect(seen!.queryParameters['workspace'], 'ws');
       svc.dispose();
     });
@@ -1413,7 +1417,7 @@ void main() {
     test('overlapping connects open exactly one channel', () async {
       var opened = 0;
       final gate = Completer<void>();
-      ConsentDeciderService.testChannelFactory = (_) {
+      ConsentDeciderService.testChannelFactory = (_, __) {
         opened += 1;
         // Hold the first (and only permitted) open until the second
         // connect() call has come and gone.
@@ -1434,13 +1438,13 @@ void main() {
 
     test('a throwing channel factory is contained and reconnects', () async {
       ConsentDeciderService.testChannelFactory =
-          (_) => throw StateError('boom');
+          (_, __) => throw StateError('boom');
       final svc = ConsentDeciderService(workspaceId: 'ws', token: 't');
       await svc.connect();
       expect(svc.connected, isFalse);
       // The failure scheduled the normal reconnect backoff; a later
       // connect (the timer's path, or an explicit one) still works.
-      ConsentDeciderService.testChannelFactory = (_) => _FakeChannel();
+      ConsentDeciderService.testChannelFactory = (_, __) => _FakeChannel();
       await svc.connect();
       expect(svc.connected, isTrue);
       svc.dispose();

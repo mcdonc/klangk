@@ -10,9 +10,10 @@ from __future__ import annotations
 import logging
 import os
 
-# The `websockets` client logs the full HTTP request line (incl. any ?token=
-# query param) at DEBUG; cap it at WARNING so a workspace JWT can't leak to
-# sidecar stdout/logs even if debug logging is enabled elsewhere (#2309).
+# The `websockets` client logs the full HTTP request line (which can
+# include query strings) at DEBUG; cap it at WARNING so no credential
+# riding a URL can leak to sidecar stdout/logs even if debug logging is
+# enabled elsewhere (#2309; #3201 tightened the same posture server-side).
 logging.getLogger("websockets").setLevel(logging.WARNING)
 
 

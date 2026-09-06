@@ -613,11 +613,20 @@ class UsersModel(Submodel):
                 (provider, external_id, user_id),
             )
 
-    async def verify_user(self, user_id: str) -> bool:
-        """Mark a user as verified. Returns True if updated, False if not found."""
+    async def verify_user(self, user_id: str, email: str) -> bool:
+        """Mark a user as verified; True when the row transitioned.
+
+        #3201: the update is conditional on the row still carrying
+        *email* and being unverified — an atomic one-time redemption
+        for the verification-token flow (a replayed or stale link
+        matches no row and returns False). Returns False if the user
+        is not found.
+        """
         async with self.app.state.db.transaction() as db:
             cursor = await db.execute(
-                "UPDATE users SET verified = 1 WHERE id = ?", (user_id,)
+                "UPDATE users SET verified = 1 "
+                "WHERE id = ? AND verified = 0 AND email = ?",
+                (user_id, email),
             )
             return cursor.rowcount > 0
 

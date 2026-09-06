@@ -5,7 +5,7 @@ import base64
 import json
 import logging
 import time
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timedelta, timezone
 import types
 from types import SimpleNamespace
@@ -160,6 +160,11 @@ async def _grant_monitor(app_state, user_id: str, workspace_id: str) -> None:
         model.PRINCIPAL_USER,
         user_id=user_id,
     )
+
+
+def _auth_headers(token: str) -> dict:
+    """The #3201 WS auth header: token as a subprotocol entry."""
+    return {"sec-websocket-protocol": f"bearer, {token}"}
 
 
 def _mock_sock(headers=None, query_params=None):
@@ -2785,7 +2790,7 @@ class TestHandleWebsocketDispatch:
         if app_state is None:
             app_state = _make_app_state()
         token = _auth().create_token(user["id"], user["email"])
-        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket = _mock_raw_sock(headers=_auth_headers(token))
         msgs = [json.dumps(c) for c in commands] + [WebSocketDisconnect()]
         websocket.receive_text = AsyncMock(side_effect=msgs)
         await handle_websocket(websocket, app_state)
@@ -2802,7 +2807,7 @@ class TestHandleWebsocketDispatch:
 
         app_state = _make_app_state()
         token = _auth().create_token(user["id"], user["email"])
-        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket = _mock_raw_sock(headers=_auth_headers(token))
         websocket.receive_text = AsyncMock(side_effect=[WebSocketDisconnect()])
         with (
             patch.object(
@@ -2825,7 +2830,7 @@ class TestHandleWebsocketDispatch:
         app_state = _make_app_state()
         token = _auth().create_token(user["id"], user["email"])
         jti = _auth().decode_token(token)["jti"]
-        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket = _mock_raw_sock(headers=_auth_headers(token))
         websocket.receive_text = AsyncMock(side_effect=[WebSocketDisconnect()])
         seen: list = []
 
@@ -2844,7 +2849,7 @@ class TestHandleWebsocketDispatch:
         app_state = _make_app_state()
         token = _auth().create_token(user["id"], user["email"])
         payload = _auth().decode_token(token)
-        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket = _mock_raw_sock(headers=_auth_headers(token))
         result = await ws_authenticate(websocket, app_state)
         assert isinstance(result, tuple)
         authed_user, jti, exp = result
@@ -2869,7 +2874,7 @@ class TestHandleWebsocketDispatch:
             user_agent="klangk-cli/1.0",
         )
         jti = a.decode_token(token)["jti"]
-        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket = _mock_raw_sock(headers=_auth_headers(token))
         websocket.client = types.SimpleNamespace(host="203.0.113.9")
         assert await ws_authenticate(websocket, app_state) is None
         websocket.close.assert_awaited_once_with(
@@ -2891,7 +2896,7 @@ class TestHandleWebsocketDispatch:
             source_ip="198.51.100.7",
             user_agent="klangk-cli/1.0",
         )
-        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket = _mock_raw_sock(headers=_auth_headers(token))
         websocket.client = types.SimpleNamespace(host="198.51.100.7")
         result = await ws_authenticate(websocket, app_state)
         assert isinstance(result, tuple)
@@ -2963,7 +2968,7 @@ class TestHandleWebsocketDispatch:
         registry = app_state.state.container_registry
 
         token = _auth().create_token(user["id"], user["email"])
-        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket = _mock_raw_sock(headers=_auth_headers(token))
 
         workspace = await app_state.state.workspaces.create_workspace(
             user["id"], "stop-ws"
@@ -3070,9 +3075,51 @@ class TestHandleWebsocket:
             code=4001, reason="Missing token"
         )
 
+    async def test_token_only_header_echoes_no_subprotocol(
+        self, user, app_state, db
+    ):
+        """#3201: a client offering only the JWT (no 'bearer' marker)
+        still authenticates; accept echoes no subprotocol it did not
+        offer."""
+        a = app_state.state.auth
+        token = await a.issue_token(user["id"], user["email"])
+        websocket = _mock_raw_sock(headers={"sec-websocket-protocol": token})
+        task = asyncio.create_task(handle_websocket(websocket, app_state))
+        websocket.receive_text.side_effect = Exception("stop")
+        with suppress(Exception):
+            await asyncio.wait_for(task, timeout=2)
+        websocket.accept.assert_awaited_once_with(subprotocol=None)
+
+    async def test_app_subprotocol_before_pair_parses_last_entry(
+        self, user, app_state, db
+    ):
+        """#3201: a future client negotiating an application subprotocol
+        ahead of the pair (`json, bearer, <jwt>`) still yields the JWT —
+        the scan takes the LAST non-marker entry."""
+        a = app_state.state.auth
+        token = await a.issue_token(user["id"], user["email"])
+        websocket = _mock_raw_sock(
+            headers={"sec-websocket-protocol": f"json, bearer, {token}"}
+        )
+        authed = await ws_authenticate(websocket, app_state)
+        assert authed is not None
+        assert authed[0]["id"] == user["id"]
+
+    async def test_bearer_marker_echoed_on_accept(self, user, app_state, db):
+        """#3201: the offered 'bearer' marker is echoed so browser
+        clients complete the subprotocol negotiation."""
+        a = app_state.state.auth
+        token = await a.issue_token(user["id"], user["email"])
+        websocket = _mock_raw_sock(headers=_auth_headers(token))
+        task = asyncio.create_task(handle_websocket(websocket, app_state))
+        websocket.receive_text.side_effect = Exception("stop")
+        with suppress(Exception):
+            await asyncio.wait_for(task, timeout=2)
+        websocket.accept.assert_awaited_once_with(subprotocol="bearer")
+
     async def test_invalid_token(self, db, app_state):
         app_state = _make_app_state()
-        websocket = _mock_raw_sock(query_params={"token": "bad"})
+        websocket = _mock_raw_sock(headers=_auth_headers("bad"))
         await handle_websocket(websocket, app_state)
         websocket.close.assert_awaited_once_with(
             code=4001, reason="Invalid token"
@@ -3094,7 +3141,7 @@ class TestHandleWebsocket:
         token = jwt.encode(
             payload, _auth().secret, algorithm=_auth().algorithm
         )
-        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket = _mock_raw_sock(headers=_auth_headers(token))
         await handle_websocket(websocket, app_state)
         websocket.close.assert_awaited_once_with(
             code=4002, reason="Token expired"
@@ -3105,7 +3152,7 @@ class TestHandleWebsocket:
         # refused with 4001 (the post-decode None-user arm).
         app_state = _make_app_state()
         token = _auth().create_token("nonexistent-id", "ghost@example.com")
-        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket = _mock_raw_sock(headers=_auth_headers(token))
         await handle_websocket(websocket, app_state)
         websocket.close.assert_awaited_once_with(
             code=4001, reason="Invalid token"
@@ -3118,7 +3165,7 @@ class TestHandleWebsocket:
             user["id"], True
         )
         token = _auth().create_token(user["id"], user["email"])
-        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket = _mock_raw_sock(headers=_auth_headers(token))
         await handle_websocket(websocket, app_state)
         websocket.close.assert_awaited_once_with(
             code=4004, reason="Password change required"
@@ -3128,7 +3175,7 @@ class TestHandleWebsocket:
         app_state = _make_app_state()
 
         token = _auth().create_token(user["id"], user["email"])
-        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket = _mock_raw_sock(headers=_auth_headers(token))
         websocket.receive_text = AsyncMock(side_effect=WebSocketDisconnect())
 
         await handle_websocket(websocket, app_state)
@@ -3139,7 +3186,7 @@ class TestHandleWebsocket:
         app_state = _make_app_state()
 
         token = _auth().create_token(user["id"], user["email"])
-        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket = _mock_raw_sock(headers=_auth_headers(token))
         websocket.receive_text = AsyncMock(
             side_effect=ValueError("unexpected")
         )
@@ -3155,7 +3202,7 @@ class TestHandleWebsocket:
         app_state = _make_app_state()
 
         token = _auth().create_token(user["id"], user["email"])
-        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket = _mock_raw_sock(headers=_auth_headers(token))
         websocket.receive_text = AsyncMock(side_effect=WebSocketDisconnect())
 
         with patch.object(
@@ -3173,7 +3220,7 @@ class TestHandleWebsocket:
         app_state = _make_app_state()
 
         token = _auth().create_token(user["id"], user["email"])
-        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket = _mock_raw_sock(headers=_auth_headers(token))
         websocket.receive_text = AsyncMock(
             side_effect=RuntimeError(
                 'WebSocket is not connected. Need to call "accept" first.'
@@ -3188,7 +3235,7 @@ class TestHandleWebsocket:
         app_state = _make_app_state()
 
         token = _auth().create_token(user["id"], user["email"])
-        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket = _mock_raw_sock(headers=_auth_headers(token))
         websocket.receive_text = AsyncMock(
             side_effect=["not json", WebSocketDisconnect()]
         )
@@ -3202,7 +3249,7 @@ class TestHandleWebsocket:
         app_state = _make_app_state()
 
         token = _auth().create_token(user["id"], user["email"])
-        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket = _mock_raw_sock(headers=_auth_headers(token))
         websocket.receive_text = AsyncMock(
             side_effect=[
                 json.dumps({"cmd": "bogus"}),
@@ -3225,7 +3272,7 @@ class TestHandleWebsocket:
         app_state = _make_app_state()
 
         token = _auth().create_token(user["id"], user["email"])
-        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket = _mock_raw_sock(headers=_auth_headers(token))
         websocket.receive_text = AsyncMock(
             side_effect=[
                 frame,
@@ -3248,7 +3295,7 @@ class TestHandleWebsocket:
         app_state = _make_app_state()
 
         token = _auth().create_token(user["id"], user["email"])
-        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket = _mock_raw_sock(headers=_auth_headers(token))
         websocket.receive_text = AsyncMock(
             side_effect=[
                 json.dumps({"cmd": "heartbeat"}),
@@ -3278,7 +3325,7 @@ class TestHandleWebsocket:
         sockets = app_state.state.sockets
 
         token = _auth().create_token(user["id"], user["email"])
-        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket = _mock_raw_sock(headers=_auth_headers(token))
         websocket.receive_text = AsyncMock(
             side_effect=[
                 json.dumps({"cmd": "heartbeat"}),
@@ -3307,7 +3354,7 @@ class TestHandleWebsocket:
         app_state = _make_app_state()
 
         token = _auth().create_token(user["id"], user["email"])
-        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket = _mock_raw_sock(headers=_auth_headers(token))
         websocket.receive_text = AsyncMock(
             side_effect=[
                 json.dumps({"cmd": "browser_response", "id": "x"}),
@@ -3336,7 +3383,7 @@ class TestHandleWebsocket:
         app_state = _make_app_state()
 
         token = _auth().create_token(user["id"], user["email"])
-        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket = _mock_raw_sock(headers=_auth_headers(token))
         websocket.receive_text = AsyncMock(
             side_effect=[
                 json.dumps({"cmd": ["bogus"]}),
@@ -3357,7 +3404,7 @@ class TestHandleWebsocket:
         registry = app_state.state.container_registry
 
         token = _auth().create_token(user["id"], user["email"])
-        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket = _mock_raw_sock(headers=_auth_headers(token))
         workspace = await _create_workspace_with_acl(
             app_state, user["id"], "ui-ready-ws"
         )
@@ -3415,7 +3462,7 @@ class TestHandleWebsocket:
         app_state = _make_app_state()
 
         token = _auth().create_token(user["id"], user["email"])
-        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket = _mock_raw_sock(headers=_auth_headers(token))
         websocket.receive_text = AsyncMock(
             side_effect=[
                 json.dumps({"cmd": "ui_ready"}),
@@ -3440,7 +3487,7 @@ class TestHandleWebsocket:
         sockets = app_state.state.sockets
 
         token = _auth().create_token(user["id"], user["email"])
-        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket = _mock_raw_sock(headers=_auth_headers(token))
         websocket.receive_text = AsyncMock(
             side_effect=RuntimeError("unexpected")
         )
@@ -4969,7 +5016,7 @@ class TestExecDispatch:
         app_state = _make_app_state()
 
         token = _auth().create_token(user["id"], user["email"])
-        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket = _mock_raw_sock(headers=_auth_headers(token))
         websocket.receive_text = AsyncMock(
             side_effect=[
                 json.dumps({"cmd": "exec_start", "command": ["ls"]}),
@@ -4986,7 +5033,7 @@ class TestExecDispatch:
         app_state = _make_app_state()
 
         token = _auth().create_token(user["id"], user["email"])
-        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket = _mock_raw_sock(headers=_auth_headers(token))
         websocket.receive_text = AsyncMock(
             side_effect=[
                 json.dumps({"cmd": "exec_input", "data": "AA=="}),
@@ -5003,7 +5050,7 @@ class TestExecDispatch:
         app_state = _make_app_state()
 
         token = _auth().create_token(user["id"], user["email"])
-        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket = _mock_raw_sock(headers=_auth_headers(token))
         websocket.receive_text = AsyncMock(
             side_effect=[
                 json.dumps({"cmd": "exec_stop"}),
@@ -5020,7 +5067,7 @@ class TestExecDispatch:
         app_state = _make_app_state()
 
         token = _auth().create_token(user["id"], user["email"])
-        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket = _mock_raw_sock(headers=_auth_headers(token))
         websocket.receive_text = AsyncMock(
             side_effect=[
                 json.dumps({"cmd": "exec_close_stdin"}),
@@ -5037,7 +5084,7 @@ class TestExecDispatch:
         app_state = _make_app_state()
 
         token = _auth().create_token(user["id"], user["email"])
-        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket = _mock_raw_sock(headers=_auth_headers(token))
         websocket.receive_text = AsyncMock(
             side_effect=[
                 json.dumps({"cmd": "heartbeat"}),
@@ -5078,7 +5125,7 @@ class TestBrowserBridge:
         sockets = app_state.state.sockets
 
         token = _auth().create_token(user["id"], user["email"])
-        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket = _mock_raw_sock(headers=_auth_headers(token))
         websocket.receive_text = AsyncMock(
             side_effect=[
                 json.dumps({"cmd": "browser_response", "id": "req-1"}),
@@ -6616,7 +6663,7 @@ class TestWsDebugLogging:
 
         monkeypatch.setattr(wshandler.support, "WS_DEBUG", True)
         token = _auth().create_token(user["id"], user["email"])
-        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket = _mock_raw_sock(headers=_auth_headers(token))
         websocket.receive_text = AsyncMock(
             side_effect=[
                 json.dumps({"cmd": "heartbeat"}),
@@ -11443,7 +11490,7 @@ class TestSendQueueBehavior:
         app_state = _make_app_state()
 
         token = _auth().create_token(user["id"], user["email"])
-        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket = _mock_raw_sock(headers=_auth_headers(token))
 
         # Make the raw websocket.send_json block forever so the queue fills up
         send_blocked = asyncio.Event()
@@ -11744,7 +11791,7 @@ class TestDispatchBrowserRequestStreamTo:
         sockets = app_state.state.sockets
 
         token = _auth().create_token(user["id"], user["email"])
-        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket = _mock_raw_sock(headers=_auth_headers(token))
         websocket.receive_text = AsyncMock(
             side_effect=[
                 json.dumps({"cmd": "browser_chunk", "id": "x", "delta": "d"}),
@@ -12022,7 +12069,7 @@ class TestSSHAgentDispatch:
         app_state = _make_app_state()
 
         token = _auth().create_token(user["id"], user["email"])
-        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket = _mock_raw_sock(headers=_auth_headers(token))
         websocket.receive_text = AsyncMock(
             side_effect=[
                 json.dumps({"cmd": "ssh_agent_start"}),
@@ -12039,7 +12086,7 @@ class TestSSHAgentDispatch:
         app_state = _make_app_state()
 
         token = _auth().create_token(user["id"], user["email"])
-        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket = _mock_raw_sock(headers=_auth_headers(token))
         websocket.receive_text = AsyncMock(
             side_effect=[
                 json.dumps({"cmd": "ssh_agent_data", "data": "AA=="}),
@@ -12056,7 +12103,7 @@ class TestSSHAgentDispatch:
         app_state = _make_app_state()
 
         token = _auth().create_token(user["id"], user["email"])
-        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket = _mock_raw_sock(headers=_auth_headers(token))
         websocket.receive_text = AsyncMock(
             side_effect=[
                 json.dumps({"cmd": "ssh_agent_stop"}),
@@ -12073,7 +12120,7 @@ class TestSSHAgentDispatch:
         app_state = _make_app_state()
 
         token = _auth().create_token(user["id"], user["email"])
-        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket = _mock_raw_sock(headers=_auth_headers(token))
         websocket.receive_text = AsyncMock(
             side_effect=[
                 json.dumps({"cmd": "share_window", "window_id": "w1"}),
@@ -12090,7 +12137,7 @@ class TestSSHAgentDispatch:
         app_state = _make_app_state()
 
         token = _auth().create_token(user["id"], user["email"])
-        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket = _mock_raw_sock(headers=_auth_headers(token))
         websocket.receive_text = AsyncMock(
             side_effect=[
                 json.dumps({"cmd": "unshare_window", "window_id": "w1"}),
@@ -12107,7 +12154,7 @@ class TestSSHAgentDispatch:
         app_state = _make_app_state()
 
         token = _auth().create_token(user["id"], user["email"])
-        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket = _mock_raw_sock(headers=_auth_headers(token))
         websocket.receive_text = AsyncMock(
             side_effect=[
                 json.dumps({"cmd": "create_shared_terminal"}),
@@ -12124,7 +12171,7 @@ class TestSSHAgentDispatch:
         app_state = _make_app_state()
 
         token = _auth().create_token(user["id"], user["email"])
-        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket = _mock_raw_sock(headers=_auth_headers(token))
         websocket.receive_text = AsyncMock(
             side_effect=[
                 json.dumps(
@@ -12147,7 +12194,7 @@ class TestSSHAgentDispatch:
         app_state = _make_app_state()
 
         token = _auth().create_token(user["id"], user["email"])
-        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket = _mock_raw_sock(headers=_auth_headers(token))
         websocket.receive_text = AsyncMock(
             side_effect=[
                 json.dumps({"cmd": "delete_shared_terminal"}),
@@ -12166,7 +12213,7 @@ class TestSSHAgentDispatch:
         app_state = _make_app_state()
 
         token = _auth().create_token(user["id"], user["email"])
-        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket = _mock_raw_sock(headers=_auth_headers(token))
         websocket.receive_text = AsyncMock(
             side_effect=[
                 json.dumps({"cmd": "list_shared_terminals"}),
@@ -12419,7 +12466,7 @@ class TestServerScheduleSnapshotOnConnect:
         app_state.state.server_scheduler = scheduler
 
         token = _auth().create_token(user["id"], user["email"])
-        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket = _mock_raw_sock(headers=_auth_headers(token))
         websocket.receive_text = AsyncMock(side_effect=WebSocketDisconnect())
 
         await handle_websocket(websocket, app_state)
@@ -12883,10 +12930,12 @@ class TestWsDpopGate:
             user["email"],
             jkt=dpop_mod.jwk_thumbprint(jwk),
         )
-        params = {"token": token}
+        params = {}
         if dpop_param is not None:
             params["dpop"] = dpop_param
-        websocket = _mock_raw_sock(query_params=params)
+        websocket = _mock_raw_sock(
+            headers=_auth_headers(token), query_params=params
+        )
         websocket.url = types.SimpleNamespace(path="/ws")
         return a, private, jwk, token, websocket
 

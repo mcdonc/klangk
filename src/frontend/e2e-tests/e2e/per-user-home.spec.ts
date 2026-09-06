@@ -16,7 +16,7 @@ async function execInContainer(
   const wsUrl = API_BASE.replace("http://", "ws://");
 
   return new Promise<string>((resolve, reject) => {
-    const ws = new WebSocket(`${wsUrl}/ws?token=${token}`);
+    const ws = new WebSocket(`${wsUrl}/ws`, ["bearer", token]);
     const chunks: Buffer[] = [];
     let connected = false;
 

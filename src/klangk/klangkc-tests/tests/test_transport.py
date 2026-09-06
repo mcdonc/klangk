@@ -174,7 +174,9 @@ class TestWsConnect:
                 assert ws is mock_ws
 
         mock_connect.assert_called_once_with(
-            "ws://localhost:8995/ws?token=tok", max_size=1024
+            "ws://localhost:8995/ws",
+            max_size=1024,
+            subprotocols=["bearer", "tok"],
         )
 
     async def test_uds_opens_unix_socket(self):
@@ -199,7 +201,10 @@ class TestWsConnect:
 
         mock_sock.connect.assert_called_once_with("/tmp/klangk.sock")
         mock_connect.assert_called_once_with(
-            "ws://localhost/ws?token=tok", sock=mock_sock, max_size=2048
+            "ws://localhost/ws",
+            sock=mock_sock,
+            max_size=2048,
+            subprotocols=["bearer", "tok"],
         )
         mock_sock.close.assert_called_once()
 
@@ -221,7 +226,8 @@ class TestWsConnect:
                 assert ws is mock_ws
 
         mock_connect.assert_called_once_with(
-            "ws://localhost:8995/ws/consent-decider?workspace=wsid&token=tok"
+            "ws://localhost:8995/ws/consent-decider?workspace=wsid",
+            subprotocols=["bearer", "tok"],
         )
 
     async def test_uds_with_path_and_query(self):
@@ -248,12 +254,15 @@ class TestWsConnect:
                 assert ws is mock_ws
 
         mock_connect.assert_called_once_with(
-            "ws://localhost/ws/consent-decider?workspace=wsid&token=tok",
+            "ws://localhost/ws/consent-decider?workspace=wsid",
             sock=mock_sock,
+            subprotocols=["bearer", "tok"],
         )
 
-    async def test_token_wins_over_query_footgun(self):
-        # A caller passing query={"token": ...} must NOT clobber the auth token
+    async def test_token_never_rides_the_url(self):
+        # #3201: the auth token rides the subprotocol header, never the
+        # URL query string (query strings land in proxy/server logs) —
+        # and a query={"token": ...} footgun cannot smuggle it back
         # (#2320 review #6).
         mock_ws = MagicMock()
         mock_cm = MagicMock()
@@ -270,10 +279,10 @@ class TestWsConnect:
             ) as ws:
                 assert ws is mock_ws
 
-        uri = mock_connect.call_args.args[0]
-        assert "token=real-token" in uri
-        assert "token=evil" not in uri
-        assert "workspace=wsid" in uri
+        kwargs = mock_connect.call_args.kwargs
+        assert kwargs["subprotocols"] == ["bearer", "real-token"]
+        assert "token=" not in mock_connect.call_args.args[0]
+        assert "workspace=wsid" in mock_connect.call_args.args[0]
 
     async def test_uds_closes_socket_on_error(self):
         mock_sock = MagicMock()

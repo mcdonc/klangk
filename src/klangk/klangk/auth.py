@@ -518,6 +518,14 @@ class Auth:
         # Fixed-policy token lifetimes (not env-driven).
         self.verify_token_expire_hours = 72
         self.reset_token_expire_hours = 1
+        # One-time OIDC login codes (#3201): code -> (access_token,
+        # email, exp). The callback redirects a single-use code (not the
+        # session JWT) to the CLI/web completer, which redeems it via
+        # POST /auth/oidc/exchange. Process-local like the rate-limit
+        # dicts: redemption pops the entry, and anything surviving a
+        # restart is already expired.
+        self.pending_login_codes: dict[str, tuple[str, str, float]] = {}
+        self.login_code_ttl_seconds = 60
         # Per-user monotonic clock of the last last_activity_at write
         # (#2588) — transient runtime state (not settings-derived), so
         # it survives reconfigure and is deliberately not reset there.
@@ -1417,29 +1425,68 @@ class Auth:
 
     # --- email-verification tokens ---
 
-    def create_verification_token(self, user_id: str) -> str:
-        """Create a JWT token for email verification."""
+    def create_verification_token(self, user_id: str, email: str) -> str:
+        """Create a JWT token for email verification.
+
+        #3201: the token carries the address it was minted for, so a
+        link survives neither a later email change (the row's address
+        no longer matches) nor its own redemption (a verified row
+        rejects it) — one-time, single-purpose.
+        """
         return self._create_purpose_token(
-            user_id, "verify", self.verify_token_expire_hours
+            user_id,
+            "verify",
+            self.verify_token_expire_hours,
+            extra={"email": email},
         )
 
-    def decode_verification_token(self, token: str) -> str | None:
-        """Decode a verification token. Returns user_id or None if invalid."""
+    def decode_verification_token(self, token: str) -> tuple[str, str] | None:
+        """Decode a verification token. Returns ``(user_id, email)`` or
+        None if invalid."""
         payload = self._decode_purpose_token(token, "verify")
-        return payload.get("sub") if payload is not None else None
+        if payload is None:
+            return None
+        user_id = payload.get("sub")
+        email = payload.get("email")
+        if not user_id or not email:
+            return None
+        return (user_id, email)
 
     # --- password-reset tokens ---
 
-    def create_password_reset_token(self, user_id: str) -> str:
+    @staticmethod
+    def reset_token_binding(password_hash: str | None) -> str:
+        """The state a reset token is bound to (#3201): a digest of the
+        password hash it was minted against. Redemption requires the
+        row's current hash to still match, so the first successful
+        reset (which rewrites the hash) consumes every outstanding
+        token for the account — one-time without server-side state."""
+        return hashlib.sha256(
+            (password_hash or "").encode("utf-8")
+        ).hexdigest()[:16]
+
+    def create_password_reset_token(self, user_id: str, binding: str) -> str:
         """Create a JWT token for password reset."""
         return self._create_purpose_token(
-            user_id, "reset", self.reset_token_expire_hours
+            user_id,
+            "reset",
+            self.reset_token_expire_hours,
+            extra={"pwb": binding},
         )
 
-    def decode_password_reset_token(self, token: str) -> str | None:
-        """Decode a password reset token. Returns user_id or None."""
+    def decode_password_reset_token(
+        self, token: str
+    ) -> tuple[str, str] | None:
+        """Decode a password reset token. Returns ``(user_id, binding)``
+        or None."""
         payload = self._decode_purpose_token(token, "reset")
-        return payload.get("sub") if payload is not None else None
+        if payload is None:
+            return None
+        user_id = payload.get("sub")
+        binding = payload.get("pwb")
+        if not user_id or not binding:
+            return None
+        return (user_id, binding)
 
     # --- invitation tokens ---
 
@@ -1462,6 +1509,46 @@ class Auth:
         if not invitation_id or not email:
             return None
         return (invitation_id, email)
+
+    # --- one-time OIDC login codes (#3201) ---
+
+    def mint_login_code(self, access_token: str, email: str) -> str:
+        """Mint a single-use, short-lived code standing in for *access_token*.
+
+        The OIDC callback redirects the code to the completer page/CLI
+        so the session JWT never rides a URL; the completer redeems it
+        via :meth:`redeem_login_code`. Expired entries are pruned on
+        every mint (bounded by the mint rate).
+        """
+        code = secrets.token_urlsafe(32)
+        now = time.time()
+        self._prune_login_codes(now)
+        self.pending_login_codes[code] = (
+            access_token,
+            email,
+            now + self.login_code_ttl_seconds,
+        )
+        return code
+
+    def _prune_login_codes(self, now: float) -> None:
+        """Drop expired login codes (single-use redemption pops the rest)."""
+        for stale in [
+            c
+            for c, (_, _, exp) in self.pending_login_codes.items()
+            if exp <= now
+        ]:
+            del self.pending_login_codes[stale]
+
+    def redeem_login_code(self, code: str) -> tuple[str, str] | None:
+        """Pop and return ``(access_token, email)`` behind *code*, or None
+        when the code is unknown, already redeemed, or expired."""
+        entry = self.pending_login_codes.pop(code, None)
+        if entry is None:
+            return None
+        access_token, email, exp = entry
+        if exp <= time.time():
+            return None
+        return (access_token, email)
 
     # --- workspace tokens ---
 

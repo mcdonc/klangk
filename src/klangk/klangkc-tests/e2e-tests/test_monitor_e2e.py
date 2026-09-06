@@ -167,7 +167,9 @@ async def _holder_ws(server, auth, workspace_id):
     """
     ws_url = server["url"].replace("http://", "ws://")
     ws = await websockets.connect(
-        f"{ws_url}/ws?token={auth['token']}", max_size=2**20
+        f"{ws_url}/ws",
+        max_size=2**20,
+        subprotocols=["bearer", auth["token"]],
     )
     await ws.send(
         json.dumps({"cmd": "workspace_connect", "workspaceId": workspace_id})

@@ -316,7 +316,9 @@ async def admin_create_user(
                 request.client.host if request.client else None,
             )
         )
-        verification_token = app.state.auth.create_verification_token(user_id)
+        verification_token = app.state.auth.create_verification_token(
+            user_id, req.email
+        )
         verification_url = (
             f"{proto}://{hostname}{base_path}"
             f"/#/verify?token={verification_token}"

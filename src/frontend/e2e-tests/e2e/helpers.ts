@@ -547,7 +547,7 @@ export async function connectContainer(
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const WS = require("ws");
   const ws: any = await new Promise((resolve, reject) => {
-    const socket = new WS(`${wsBase}/ws?token=${token}`);
+    const socket = new WS(`${wsBase}/ws`, ["bearer", token]);
     socket.on("open", () => resolve(socket));
     socket.on("error", reject);
   });

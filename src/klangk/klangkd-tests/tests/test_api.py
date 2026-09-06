@@ -56,6 +56,16 @@ def _auth():
     return auth_mod.Auth(state)
 
 
+async def _reset_token(app_state, email: str) -> str:
+    """Mint a reset token bound to the row's current password hash
+    (#3201) — mirrors what the forgot-password email flow mints."""
+    a = app_state.state.auth
+    user = await app_state.state.model.users.get_user_by_email(email)
+    return a.create_password_reset_token(
+        user["id"], a.reset_token_binding(user["password_hash"])
+    )
+
+
 # Aliases for the raw-JWT test that builds a token by hand.
 _SECRET = make_settings({}).jwt_secret
 _ALGORITHM = "HS256"
@@ -1152,8 +1162,10 @@ class TestAuthRoutes:
         user = await app_state.state.model.users.create_user(
             "unverified@example.com", password_hash, verified=False
         )
-        token = _auth().create_verification_token(user["id"])
-        resp = await client.get(f"/api/v1/auth/verify?token={token}")
+        token = _auth().create_verification_token(
+            user["id"], "unverified@example.com"
+        )
+        resp = await client.post("/api/v1/auth/verify", json={"token": token})
         assert resp.status_code == 200
         assert resp.json()["status"] == "verified"
         # User can now log in
@@ -1163,14 +1175,38 @@ class TestAuthRoutes:
         )
         assert login_resp.status_code == 200
 
+    async def test_verify_token_is_one_time(self, client, db, app_state):
+        """#3201: a replayed verification link cannot mint a second
+        session, and a link minted before an email change no longer
+        matches the row."""
+        from klangk import auth as auth_mod
+
+        password_hash = auth_mod.hash_password("pass")
+        user = await app_state.state.model.users.create_user(
+            "unverified2@example.com", password_hash, verified=False
+        )
+        token = _auth().create_verification_token(
+            user["id"], "unverified2@example.com"
+        )
+        first = await client.post("/api/v1/auth/verify", json={"token": token})
+        replay = await client.post(
+            "/api/v1/auth/verify", json={"token": token}
+        )
+        assert first.status_code == 200
+        assert replay.status_code == 400
+
     async def test_verify_invalid_token(self, client, db):
-        resp = await client.get("/api/v1/auth/verify?token=garbage")
+        resp = await client.post(
+            "/api/v1/auth/verify", json={"token": "garbage"}
+        )
         assert resp.status_code == 400
 
     async def test_verify_nonexistent_user(self, client, db):
-        token = _auth().create_verification_token("nonexistent-id")
-        resp = await client.get(f"/api/v1/auth/verify?token={token}")
-        assert resp.status_code == 404
+        token = _auth().create_verification_token(
+            "nonexistent-id", "nobody@example.com"
+        )
+        resp = await client.post("/api/v1/auth/verify", json={"token": token})
+        assert resp.status_code == 400
 
     async def test_login(self, client, user):
         resp = await client.post(
@@ -1904,8 +1940,8 @@ class TestPasswordAgeRoutes:
         """A forgot-password reset inside the window is refused the same
         way — only admin-forced resets bypass."""
         monkeypatch.setattr(app.state.settings, "password_min_age_hours", 24)
-        user = await self._fresh_user(app_state, "minreset@example.com")
-        token = _auth().create_password_reset_token(user["id"])
+        await self._fresh_user(app_state, "minreset@example.com")
+        token = await _reset_token(app_state, "minreset@example.com")
         resp = await client.post(
             "/api/v1/auth/reset-password",
             json={"token": token, "password": "freshpass1"},
@@ -2045,7 +2081,7 @@ class TestForgotPassword:
         assert "/#/reset-password?token=" in reset_url
         token = reset_url.split("token=")[1]
         decoded = app_state.state.auth.decode_password_reset_token(token)
-        assert decoded == user["id"]
+        assert decoded is not None and decoded[0] == user["id"]
         api.reset_timestamps.pop(
             api.rate_limit_key("forgot@example.com"), None
         )
@@ -2355,8 +2391,8 @@ class TestResetPassword:
         )
 
     async def test_reset_success(self, client, db, app_state):
-        user = await self._create_user(app_state)
-        token = _auth().create_password_reset_token(user["id"])
+        await self._create_user(app_state)
+        token = await _reset_token(app_state, "reset@example.com")
         resp = await client.post(
             "/api/v1/auth/reset-password",
             json={"token": token, "password": "newpass1"},
@@ -2375,6 +2411,23 @@ class TestResetPassword:
         )
         assert resp2.status_code == 200
 
+    async def test_reset_is_one_time(self, client, db, app_state):
+        """#3201: after a successful reset rewrites the hash, the same
+        token (and any minted against the old hash) is rejected."""
+        await self._create_user(app_state)
+        token = await _reset_token(app_state, "reset@example.com")
+        first = await client.post(
+            "/api/v1/auth/reset-password",
+            json={"token": token, "password": "newpass1"},
+        )
+        replay = await client.post(
+            "/api/v1/auth/reset-password",
+            json={"token": token, "password": "another1"},
+        )
+        assert first.status_code == 200
+        assert replay.status_code == 400
+        assert "Invalid or expired" in replay.json()["detail"]
+
     async def test_reset_invalid_token(self, client, db):
         resp = await client.post(
             "/api/v1/auth/reset-password",
@@ -2383,8 +2436,8 @@ class TestResetPassword:
         assert resp.status_code == 400
 
     async def test_reset_short_password(self, client, db, app_state):
-        user = await self._create_user(app_state)
-        token = _auth().create_password_reset_token(user["id"])
+        await self._create_user(app_state)
+        token = await _reset_token(app_state, "reset@example.com")
         resp = await client.post(
             "/api/v1/auth/reset-password",
             json={"token": token, "password": "ab"},
@@ -2393,7 +2446,9 @@ class TestResetPassword:
         assert "8 characters" in resp.json()["detail"]
 
     async def test_reset_agent_user_rejected(self, client, db):
-        token = _auth().create_password_reset_token(model.AGENT_USER_ID)
+        token = _auth().create_password_reset_token(
+            model.AGENT_USER_ID, "irrelevant-binding"
+        )
         resp = await client.post(
             "/api/v1/auth/reset-password",
             json={"token": token, "password": "newpass1"},
@@ -2422,8 +2477,8 @@ class TestResetPassword:
             3,
             raising=False,
         )
-        user = await self._create_user_with(app, "oldpass12")
-        token = _auth().create_password_reset_token(user["id"])
+        await self._create_user_with(app, "oldpass12")
+        token = await _reset_token(app, "reset@example.com")
         # Reusing the current password.
         resp = await client.post(
             "/api/v1/auth/reset-password",
@@ -2432,13 +2487,13 @@ class TestResetPassword:
         assert resp.status_code == 400
         assert "current" in resp.json()["detail"]
         # Reuse via history: reset to newpass1, then try to reset back.
-        token = _auth().create_password_reset_token(user["id"])
+        token = await _reset_token(app, "reset@example.com")
         resp = await client.post(
             "/api/v1/auth/reset-password",
             json={"token": token, "password": "newpass1"},
         )
         assert resp.status_code == 200
-        token = _auth().create_password_reset_token(user["id"])
+        token = await _reset_token(app, "reset@example.com")
         resp = await client.post(
             "/api/v1/auth/reset-password",
             json={"token": token, "password": "oldpass12"},
@@ -2448,14 +2503,14 @@ class TestResetPassword:
 
     async def test_reset_allowed_when_disabled(self, client, db, app):
         """count=0 (default): the same reset-to-old flow succeeds."""
-        user = await self._create_user_with(app, "oldpass12")
-        token = _auth().create_password_reset_token(user["id"])
+        await self._create_user_with(app, "oldpass12")
+        token = await _reset_token(app, "reset@example.com")
         resp = await client.post(
             "/api/v1/auth/reset-password",
             json={"token": token, "password": "newpass1"},
         )
         assert resp.status_code == 200
-        token = _auth().create_password_reset_token(user["id"])
+        token = await _reset_token(app, "reset@example.com")
         resp = await client.post(
             "/api/v1/auth/reset-password",
             json={"token": token, "password": "oldpass12"},
@@ -2471,8 +2526,8 @@ class TestResetPassword:
         monkeypatch.setattr(
             app.state.settings, "password_min_changed", 8, raising=False
         )
-        user = await self._create_user_with(app, "oldpass12")
-        token = _auth().create_password_reset_token(user["id"])
+        await self._create_user_with(app, "oldpass12")
+        token = await _reset_token(app, "reset@example.com")
         # distance("oldpass12", "oldpass13") == 1 — far under the floor.
         resp = await client.post(
             "/api/v1/auth/reset-password",
@@ -11062,7 +11117,7 @@ class TestMustChangePassword:
         )
         assert user["must_change_password"] is True
         # Generate a reset token and use it
-        reset_token = app.state.auth.create_password_reset_token(user["id"])
+        reset_token = await _reset_token(app_state, "resetclear@example.com")
         resp = await client.post(
             "/api/v1/auth/reset-password",
             json={"token": reset_token, "password": "selfchosen999"},
@@ -14833,7 +14888,9 @@ class TestInvitations:
 
     async def test_accept_invite_wrong_purpose_token(self, client, db):
         # Use a verification token (wrong purpose)
-        token = _auth().create_verification_token("fake-user-id")
+        token = _auth().create_verification_token(
+            "fake-user-id", "fake@example.com"
+        )
         resp = await client.post(
             "/api/v1/auth/accept-invite",
             json={"token": token, "password": "newpassword"},
@@ -15137,7 +15194,9 @@ class TestOIDCCallback:
         assert resp.status_code == 302
         location = resp.headers["location"]
         assert "oidc-complete" in location
-        assert "token=" in location
+        # #3201: a one-time code rides the redirect, never the JWT.
+        assert "code=" in location
+        assert "token=" not in location
 
         # User was created
         user = await app_state.state.model.users.get_user_by_email(
@@ -15303,8 +15362,45 @@ class TestOIDCCallback:
         )
         assert resp.status_code == 302
         assert resp.headers["location"].startswith(
-            "http://localhost:12345/callback?token="
+            "http://localhost:12345/callback?code="
         )
+        # #3201: the redeemable session token never rides the URL.
+        assert "token=" not in resp.headers["location"]
+
+    async def test_callback_code_redeemable_once(
+        self, client, app, monkeypatch, db, app_state
+    ):
+        """#3201: the redirected code redeems for the session token via
+        POST /auth/oidc/exchange — exactly once."""
+        _, cookie_data = await self._setup_callback(
+            client, app, monkeypatch, db
+        )
+        client.cookies.set("oidc_test", cookie_data)
+        resp = await client.get(
+            "/api/v1/auth/oidc/test/callback",
+            params={"code": "auth-code", "state": "test-state"},
+            follow_redirects=False,
+        )
+        code = resp.headers["location"].split("code=")[1]
+        exchange = await client.post(
+            "/api/v1/auth/oidc/exchange", json={"code": code}
+        )
+        assert exchange.status_code == 200
+        data = exchange.json()
+        assert data["access_token"]
+        assert data["email"] == "oidcuser@example.com"
+        # Single-use: a replay of the same code fails.
+        replay = await client.post(
+            "/api/v1/auth/oidc/exchange", json={"code": code}
+        )
+        assert replay.status_code == 400
+        assert "access_token" not in replay.json()
+
+    async def test_exchange_rejects_unknown_code(self, client, db):
+        resp = await client.post(
+            "/api/v1/auth/oidc/exchange", json={"code": "never-minted"}
+        )
+        assert resp.status_code == 400
 
     async def test_callback_tampered_cli_redirect_falls_back(
         self, client, app, monkeypatch, db
@@ -15359,9 +15455,11 @@ class TestOIDCCallback:
         # Must NOT redirect to the attacker host with the token.
         assert not location.startswith("https://evil.com")
         assert "evil.com" not in location
-        # Falls back to the web flow, still carrying the token in-house.
+        # Falls back to the web flow, still keeping the session
+        # in-house behind a one-time code (#3201).
         assert "oidc-complete" in location
-        assert "token=" in location
+        assert "code=" in location
+        assert "token=" not in location
 
     async def test_callback_userinfo_cli_redirect_falls_back(
         self, client, app, monkeypatch, db
@@ -15424,7 +15522,8 @@ class TestOIDCCallback:
             assert "attacker.example" not in location, payload
             # Falls back to the web flow, still carrying the token in-house.
             assert "oidc-complete" in location, payload
-            assert "token=" in location, payload
+            assert "token=" not in location, payload
+            assert "code=" in location, payload
             client.cookies.delete("oidc_test")
 
     async def test_callback_redirect_uri_rederived_not_from_cookie(
@@ -15798,7 +15897,8 @@ class TestOIDCCallback:
             follow_redirects=False,
         )
         assert resp2.status_code == 302
-        assert "token=" in resp2.headers["location"]
+        assert "code=" in resp2.headers["location"]
+        assert "token=" not in resp2.headers["location"]
 
     async def test_callback_unknown_provider(
         self, client, app, monkeypatch, db
@@ -16288,10 +16388,10 @@ class TestPasswordPolicyRouteEnforcement:
         self, client, db, app_state
     ):
         password_hash = auth_mod.hash_password("oldpass")
-        created = await app_state.state.model.users.create_user(
+        await app_state.state.model.users.create_user(
             "policyreset@example.com", password_hash, verified=True
         )
-        token = _auth().create_password_reset_token(created["id"])
+        token = await _reset_token(app_state, "policyreset@example.com")
         resp = await client.post(
             "/api/v1/auth/reset-password",
             json={"token": token, "password": "alllowercase1!"},

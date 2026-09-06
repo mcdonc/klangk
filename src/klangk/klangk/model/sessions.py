@@ -73,9 +73,11 @@ class SessionsModel(Submodel):
                 ),
             )
 
-    async def get_session_id(self, jti: str) -> str | None:
+    async def get_session_id(self, jti: str | None) -> str | None:
         """The stable ``session_id`` of the row currently keyed by *jti*
-        (#3151), or ``None`` when no such row exists.
+        (#3151), or ``None`` when no such row exists — including a
+        ``None`` *jti* (a pre-#2585 token with no JTI binds no row;
+        callers treat that as fail-open).
 
         Resolved once per WebSocket connect and pinned on the
         Connection; because ``session_id`` survives the refresh rekey,

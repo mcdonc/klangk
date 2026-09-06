@@ -100,7 +100,7 @@ async function connectToWorkspace(
   const wsUrl = API_BASE.replace("http://", "ws://");
 
   return new Promise<TerminalWsClient>((resolve, reject) => {
-    const ws = new WebSocket(`${wsUrl}/ws?token=${token}`);
+    const ws = new WebSocket(`${wsUrl}/ws`, ["bearer", token]);
     const timeout = setTimeout(() => {
       ws.close();
       reject(new Error("connect timed out"));

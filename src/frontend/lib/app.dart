@@ -173,8 +173,10 @@ class _KlangkAppState extends State<KlangkApp> {
         GoRoute(
           path: '/oidc-complete',
           builder: (context, state) {
-            final token = state.uri.queryParameters['token'] ?? '';
-            return OidcCompletePage(token: token);
+            // #3201: a one-time login code, exchanged for the session
+            // token via POST by the page — never the JWT itself.
+            final code = state.uri.queryParameters['code'] ?? '';
+            return OidcCompletePage(code: code);
           },
         ),
         GoRoute(

@@ -37,6 +37,46 @@ MAX_INPUT_SIZE = 16777216
 # Max outbound messages before we declare the client too slow and close.
 SEND_QUEUE_SIZE = 256
 
+# The WS auth subprotocol name (#3201). Browser WebSocket clients cannot
+# set request headers, so the session JWT rides the handshake as the
+# ``Sec-WebSocket-Protocol`` header instead of a ``?token=`` query
+# param: query strings land in reverse-proxy and server access logs,
+# headers do not. The client offers ``["bearer", <jwt>]``; the server
+# extracts the non-"bearer" entry and echoes ``bearer`` on accept.
+WS_AUTH_SUBPROTOCOL = "bearer"
+
+
+def ws_bearer_token(websocket) -> str | None:
+    """The JWT from the handshake's ``Sec-WebSocket-Protocol`` header.
+
+    The client offers ``bearer, <jwt>`` (comma-separated when multiple
+    subprotocols are requested). The **last** entry that is not the
+    ``bearer`` marker is the token: a future client negotiating an
+    application subprotocol ahead of the pair (``json, bearer, <jwt>``)
+    still parses correctly, and a lone ``[<jwt>]`` offer works too —
+    but an application subprotocol appended *after* the pair
+    (``bearer, <jwt>, json``) would misparse; shipped clients send
+    exactly ``["bearer", token]``. ``None`` when no token was offered.
+    """
+    offered = websocket.headers.get("sec-websocket-protocol", "")
+    entries = [e.strip() for e in offered.split(",")]
+    for entry in reversed(entries):
+        if entry and entry != WS_AUTH_SUBPROTOCOL:
+            return entry
+    return None
+
+
+def ws_echo_subprotocol(websocket) -> str | None:
+    """The subprotocol to echo on accept, or None (#3201).
+
+    Per RFC 6455 the server may only select a protocol the client
+    offered, and a browser fails the handshake when the selection is
+    absent from its list — so echo ``bearer`` only when it was offered.
+    """
+    offered = websocket.headers.get("sec-websocket-protocol", "")
+    entries = {e.strip() for e in offered.split(",")}
+    return WS_AUTH_SUBPROTOCOL if WS_AUTH_SUBPROTOCOL in entries else None
+
 
 def _ws_debug_label(user: dict | None) -> str:
     """The optional [email] label for a debug log line."""

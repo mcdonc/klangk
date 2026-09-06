@@ -35,12 +35,15 @@ logger = logging.getLogger(__name__)
 
 
 def _egress_token(websocket: WebSocket) -> str | None:
-    """The workspace token from the Authorization header or ?token=."""
+    """The workspace token from the Authorization header (#3201).
+
+    The sidecar is a non-browser client (the ``websockets`` library),
+    so it sets a real header; the former ``?token=`` query-param
+    fallback is gone because query strings land in proxy/server
+    access logs.
+    """
     authorization = websocket.headers.get("authorization", "")
-    token = authorization[7:] if authorization.startswith("Bearer ") else None
-    if not token:
-        token = websocket.query_params.get("token")
-    return token
+    return authorization[7:] if authorization.startswith("Bearer ") else None
 
 
 async def authenticate_egress_socket(websocket: WebSocket, app) -> str | None:
@@ -63,8 +66,7 @@ async def authenticate_egress_socket(websocket: WebSocket, app) -> str | None:
 async def handle_egress_sidecar(websocket: WebSocket, app) -> None:
     """Receive blocked-egress events from the sidecar; relay verdicts back."""
     # forward_auth validated the workspace JWT from the Authorization header
-    # on the egress site; re-read it here for the workspace id. The ?token=
-    # query-param fallback covers the ingress path and handler-level tests.
+    # on the egress site; re-read it here for the workspace id.
     workspace_id = await authenticate_egress_socket(websocket, app)
     if workspace_id is None:
         return

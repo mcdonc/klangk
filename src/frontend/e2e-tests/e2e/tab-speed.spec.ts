@@ -18,7 +18,7 @@ test("new terminal tab round-trip completes within 10 seconds", async ({
   try {
     // Open parallel WebSocket
     const wsUrl = API_BASE.replace("http://", "ws://");
-    const ws = new WebSocket(`${wsUrl}/ws?token=${token}`);
+    const ws = new WebSocket(`${wsUrl}/ws`, ["bearer", token]);
 
     await new Promise<void>((resolve, reject) => {
       ws.on("open", () => {

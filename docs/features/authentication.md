@@ -103,6 +103,44 @@ Your session survives page refreshes. If you navigate to a workspace
 URL while logged out, you'll be redirected to the login page and
 returned to your original URL after logging in.
 
+## Token delivery policy
+
+Session tokens (JWTs) are never placed in URLs. URLs leak into browser
+history, `Referer` headers, and reverse-proxy/server access logs, so a
+session credential riding a URL is a leak waiting to happen. The
+delivery rules are:
+
+- **API calls** carry the session JWT in the `Authorization: Bearer`
+  header.
+- **WebSocket connections** carry it in the handshake's
+  `Sec-WebSocket-Protocol` header (the browser WebSocket API cannot set
+  `Authorization`, so the client offers the `bearer` subprotocol plus
+  the token, and the server echoes `bearer`). The token never rides the
+  `?token=` query string. The workspace sidecar authenticates its
+  socket with the `Authorization` header it already uses for HTTP.
+- **OIDC login completion** redirects a one-time, 60-second login code
+  (`/#/oidc-complete?code=…` for the web, `?code=…` on the CLI's
+  localhost callback). The completer redeems it via
+  `POST /auth/oidc/exchange` for the session token — the JWT itself
+  never rides a URL.
+- **Email links** (verification, password reset, invitations) are the
+  one place a token must travel by URL, because email is the delivery
+  channel. These tokens are single-purpose, one-time, and short-lived:
+  verification tokens are bound to the address they were minted for
+  and are consumed by the first redemption, an email change, or
+  72 hours (a stale link only matches again in the narrow case of the
+  account changing its address away and back while the link is still
+  unexpired); reset tokens are bound to a digest of the current password
+  hash (the first successful reset consumes every outstanding link) and
+  expire after 1 hour; invitation tokens are consumed when the
+  invitation is accepted. Links use the URL fragment (`#/verify?…`),
+  which browsers do not send to servers or in `Referer` headers.
+  Redeeming a verification token sends it in the `POST` body, not the
+  query string.
+- **Logs** never contain raw tokens: the register log line records a
+  SHA-256 prefix of the verification token, and WS URLs carry no token
+  at all.
+
 ## Brute-force protection
 
 By default, Klangk locks accounts after repeated failed login

@@ -88,7 +88,7 @@ ConsentDeciderService _serviceWithChannel(
   _FakeChannel channel, {
   DateTime Function()? clock,
 }) {
-  ConsentDeciderService.testChannelFactory = (_) => channel;
+  ConsentDeciderService.testChannelFactory = (_, __) => channel;
   return ConsentDeciderService(
     workspaceId: 'ws',
     token: 't',
@@ -504,7 +504,7 @@ void main() {
       tester,
     ) async {
       final ch = _FakeChannel();
-      ConsentDeciderService.testChannelFactory = (_) => ch;
+      ConsentDeciderService.testChannelFactory = (_, __) => ch;
       final svc = ConsentDeciderService(
         workspaceId: 'ws',
         token: 't',
@@ -650,7 +650,7 @@ void main() {
 
     testWidgets('header shows reconnecting when disconnected', (tester) async {
       final ch = _FakeChannel();
-      ConsentDeciderService.testChannelFactory = (_) => ch;
+      ConsentDeciderService.testChannelFactory = (_, __) => ch;
       final svc = ConsentDeciderService(
         workspaceId: 'ws',
         token: 't',

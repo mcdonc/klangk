@@ -714,7 +714,11 @@ class TestSelfServiceAudit:
     async def test_reset_password_records_events(
         self, api_client, api_app, user
     ):
-        token = api_app.state.auth.create_password_reset_token(user["id"])
+        a = api_app.state.auth
+        row = await api_app.state.model.users.get_user_by_email(user["email"])
+        token = a.create_password_reset_token(
+            user["id"], a.reset_token_binding(row["password_hash"])
+        )
         resp = await api_client.post(
             "/api/v1/auth/reset-password",
             json={"token": token, "password": "NewPass1!"},

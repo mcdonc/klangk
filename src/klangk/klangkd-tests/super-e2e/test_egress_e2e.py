@@ -97,9 +97,13 @@ async def test_interactive_consent_deny(appliance, api, auth):
     try:
         url = (
             f"{appliance.url.replace('http://', 'ws://')}"
-            f"/ws/consent-decider?token={token}&workspace={ws_id}"
+            f"/ws/consent-decider?workspace={ws_id}"
         )
-        decider = await websockets.connect(url, max_size=2**20)
+        decider = await websockets.connect(
+            url,
+            max_size=2**20,
+            subprotocols=["bearer", token],
+        )
 
         # Fire the connection inside the workspace; the SYN holds at the
         # sidecar until a verdict. curl retries/timeout bounds the hold.

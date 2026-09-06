@@ -94,8 +94,8 @@ async def test_link_oidc_and_external_id_and_verify(users):
     assert ext["id"] == u["id"]
     assert ext["verified"] is False
     assert await users.get_user_by_external_id("google", "missing") is None
-    assert await users.verify_user(u["id"]) is True
-    assert await users.verify_user("missing") is False
+    assert await users.verify_user(u["id"], "d@x.com") is True
+    assert await users.verify_user("missing", "d@x.com") is False
 
 
 async def test_insert_unverified_user(users):

@@ -183,16 +183,21 @@ async def ws_connect(
 
     ``path`` selects the server WS endpoint (default ``/ws``; the consent
     decider client uses ``/ws/consent-decider``), and ``query`` adds extra
-    query params alongside the always-present ``token``. Yields the open
-    WebSocket connection.
+    query params. The auth ``token`` rides the handshake's
+    ``Sec-WebSocket-Protocol`` header (``bearer, <jwt>``) rather than the
+    URL — query strings land in proxy/server access logs (#3201).
+    Yields the open WebSocket connection.
     """
     transport = resolve_transport(server_spec)
     qs = dict(query) if query else {}
-    qs["token"] = (
-        token  # token always wins -- a caller can't clobber it via query
-    )
-    uri = f"{transport.ws_base}{path}?{urlencode(qs)}"
+    # A caller passing query={"token": ...} must not smuggle it back into
+    # the URL (#2320 review #6; the header is the only token carrier).
+    qs.pop("token", None)
+    uri = f"{transport.ws_base}{path}"
+    if qs:
+        uri = f"{uri}?{urlencode(qs)}"
     ws_kwargs = dict(kwargs)
+    ws_kwargs["subprotocols"] = ["bearer", token]
     if max_size is not None:
         ws_kwargs["max_size"] = max_size
 

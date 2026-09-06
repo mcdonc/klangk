@@ -786,12 +786,19 @@ class TestLoginRateLimit:
 
 class TestVerification:
     def test_create_and_decode_verification_token(self):
-        token = _auth().create_verification_token("user-123")
-        user_id = _auth().decode_verification_token(token)
-        assert user_id == "user-123"
+        token = _auth().create_verification_token(
+            "user-123", "someone@example.com"
+        )
+        decoded = _auth().decode_verification_token(token)
+        assert decoded == ("user-123", "someone@example.com")
 
     def test_decode_invalid_token(self):
         assert _auth().decode_verification_token("garbage") is None
+
+    def test_decode_token_missing_email_rejected(self):
+        """#3201: a verify token without its email binding is refused."""
+        token = _auth()._create_purpose_token("user-123", "verify", 1)
+        assert _auth().decode_verification_token(token) is None
 
     def test_decode_wrong_purpose(self):
         # A regular auth token should not pass as a verification token
@@ -804,31 +811,65 @@ class TestVerification:
             "toverify@example.com", password_hash, verified=False
         )
         assert not user["verified"]
-        result = await app_state.state.model.users.verify_user(user["id"])
+        result = await app_state.state.model.users.verify_user(
+            user["id"], "toverify@example.com"
+        )
         assert result is True
         updated = await app_state.state.model.users.get_user_by_email(
             "toverify@example.com"
         )
         assert updated["verified"] is True
+        # #3201: one-time — the same (id, email) no longer matches an
+        # already-verified row, and a stale address matches nothing.
+        assert (
+            await app_state.state.model.users.verify_user(
+                user["id"], "toverify@example.com"
+            )
+            is False
+        )
+        assert (
+            await app_state.state.model.users.verify_user(
+                user["id"], "old-address@example.com"
+            )
+            is False
+        )
 
     async def test_verify_nonexistent_user(self, db, app_state):
         result = await app_state.state.model.users.verify_user(
-            "nonexistent-id"
+            "nonexistent-id", "nobody@example.com"
         )
         assert result is False
 
 
 class TestPasswordReset:
     def test_create_and_decode_reset_token(self):
-        token = _auth().create_password_reset_token("user-456")
-        assert _auth().decode_password_reset_token(token) == "user-456"
+        binding = auth.Auth.reset_token_binding("some-hash")
+        token = _auth().create_password_reset_token("user-456", binding)
+        decoded = _auth().decode_password_reset_token(token)
+        assert decoded == ("user-456", binding)
+
+    def test_reset_binding_tracks_password_hash(self):
+        """#3201: the binding changes with the stored hash, so a token
+        minted before a reset stops matching the row after it."""
+        before = auth.Auth.reset_token_binding("hash-a")
+        after = auth.Auth.reset_token_binding("hash-b")
+        none = auth.Auth.reset_token_binding(None)
+        assert before != after
+        assert none != before
+
+    def test_decode_token_missing_binding_rejected(self):
+        """#3201: a reset token without its hash binding is refused."""
+        token = _auth()._create_purpose_token("user-456", "reset", 1)
+        assert _auth().decode_password_reset_token(token) is None
 
     def test_decode_invalid_token(self):
         assert _auth().decode_password_reset_token("garbage") is None
 
     def test_reset_and_verify_tokens_not_interchangeable(self):
-        reset = _auth().create_password_reset_token("user-456")
-        verify = _auth().create_verification_token("user-456")
+        reset = _auth().create_password_reset_token(
+            "user-456", auth.Auth.reset_token_binding("h")
+        )
+        verify = _auth().create_verification_token("user-456", "u@example.com")
         assert _auth().decode_verification_token(reset) is None
         assert _auth().decode_password_reset_token(verify) is None
 
@@ -846,13 +887,34 @@ class TestWorkspaceToken:
         assert _auth().decode_workspace_token(user_token) is None
 
     def test_verify_token_rejected(self):
-        verify_token = _auth().create_verification_token("user-1")
+        verify_token = _auth().create_verification_token(
+            "user-1", "u@example.com"
+        )
         assert _auth().decode_workspace_token(verify_token) is None
 
     def test_workspace_token_rejected_by_other_decoders(self):
         ws_token = _auth().create_workspace_token("ws-123")
         assert _auth().decode_verification_token(ws_token) is None
         assert _auth().decode_password_reset_token(ws_token) is None
+
+
+class TestLoginCodes:
+    """One-time OIDC login codes (#3201): mint/redeem/prune, directly
+    (the HTTP redemption path is covered by the OIDC callback tests)."""
+
+    def test_expired_code_rejected_and_pruned(self):
+        a = _auth()
+        a.login_code_ttl_seconds = -1
+        expired = a.mint_login_code("tok", "e@x.com")
+        assert a.redeem_login_code(expired) is None
+        # Minting a live code prunes the expired leftovers.
+        stale = a.mint_login_code("tok2", "e2@x.com")
+        a.login_code_ttl_seconds = 60
+        live = a.mint_login_code("tok3", "e3@x.com")
+        assert stale not in a.pending_login_codes
+        assert a.redeem_login_code(live) == ("tok3", "e3@x.com")
+        # Single-use: the redeemed live code is gone.
+        assert a.redeem_login_code(live) is None
 
 
 class TestTokenValidation:
@@ -1199,7 +1261,7 @@ class TestInvitationTokens:
         assert result == ("inv-123", "user@example.com")
 
     def test_wrong_purpose_rejected(self):
-        token = _auth().create_verification_token("uid")
+        token = _auth().create_verification_token("uid", "u@example.com")
         assert _auth().decode_invitation_token(token) is None
 
     def test_invalid_token_returns_none(self):

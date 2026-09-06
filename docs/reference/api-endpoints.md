@@ -403,7 +403,9 @@ authorization code for tokens.
 
 **Auth:** None. Query params: `code`, `state`, optional `error`.
 
-Returns HTTP 302 redirect to `/#/oidc-complete?token=...` or CLI localhost URL.
+Returns HTTP 302 redirect to `/#/oidc-complete?code=...` (a one-time code
+redeemable via `POST /api/v1/auth/oidc/exchange`) or
+`<cli_redirect>?code=...` on the CLI localhost callback.
 
 ---
 
@@ -418,15 +420,33 @@ Returns HTTP 302 redirect to OIDC IdP.
 
 ---
 
-### GET `/api/v1/auth/verify`
+### POST `/api/v1/auth/verify`
 
 Verify a user's email address using the token from the verification
-email. Returns a session token on success.
+email. Returns a session token on success. The token rides the request
+body (never the URL — URLs land in proxy/server access logs); the token
+is one-time: a replayed link, or one minted before an email change, is
+rejected.
 
-**Auth:** None. Query param: `token` (verification JWT from email link).
+**Auth:** None. Body: `{"token": "<verification JWT from email link>"}`.
 
 ```json
 { "status": "verified", "access_token": "jwt-string" }
+```
+
+---
+
+### POST `/api/v1/auth/oidc/exchange`
+
+Redeem the one-time login code the OIDC callback redirected to
+(`/#/oidc-complete?code=…` for the web flow, `?code=…` on the CLI's
+localhost callback). Codes are single-use and expire after 60 seconds;
+unknown, replayed, and expired codes all return 400.
+
+**Auth:** None. Body: `{"code": "<one-time login code>"}`.
+
+```json
+{ "access_token": "jwt-string", "email": "user@example.com" }
 ```
 
 ---
@@ -2135,7 +2155,8 @@ Primary WebSocket connection for real-time communication. Handles
 terminal I/O, workspace status updates, and browser
 delegate events.
 
-**Auth:** JWT required via `?token=` query param.
+**Auth:** JWT via the handshake's `Sec-WebSocket-Protocol` header
+(`bearer, <jwt>` — the server echoes `bearer`; #3201).
 
 Close codes: 4001 (missing/invalid token), 4002 (expired token), 4004
 (password change required, #3172 — the account must change its password
@@ -2155,7 +2176,9 @@ socket. Requires the `egress-consent` permission on the workspace
 strictly workspace-scoped: the `workspace` query param is
 required — a handshake without it is refused.
 
-**Auth:** JWT required. Query param: `workspace` (the workspace id).
+**Auth:** JWT via the handshake's `Sec-WebSocket-Protocol` header
+(`bearer, <jwt>` — the server echoes `bearer`; #3201). Query param:
+`workspace` (the workspace id).
 
 Close codes: 4001 (missing/invalid token), 4002 (expired token), 4003
 (forbidden — missing `egress-consent` or wrong scope), 4004 (password

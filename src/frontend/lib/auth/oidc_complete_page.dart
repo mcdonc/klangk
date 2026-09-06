@@ -1,15 +1,19 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'auth_service.dart';
 import '../utils/page_title.dart';
 import '../widgets/klangk_logo.dart';
 
-/// Landing page after OIDC callback. Extracts the token from the URL
-/// query parameters, saves it, and redirects to /workspaces.
+/// Landing page after OIDC callback. The backend redirected here with a
+/// one-time login code (#3201 — the session JWT never rides the URL);
+/// this page redeems the code for the token via POST, saves it, and the
+/// GoRouter redirect then navigates to /workspaces.
 class OidcCompletePage extends StatefulWidget {
-  final String token;
+  final String code;
 
-  const OidcCompletePage({super.key, required this.token});
+  const OidcCompletePage({super.key, required this.code});
 
   @override
   State<OidcCompletePage> createState() => _OidcCompletePageState();
@@ -26,13 +30,33 @@ class _OidcCompletePageState extends State<OidcCompletePage> {
   }
 
   Future<void> _completeLogin() async {
-    if (widget.token.isEmpty) {
-      setState(() => _error = 'Missing authentication token.');
+    if (widget.code.isEmpty) {
+      setState(() => _error = 'Missing login code.');
       return;
     }
     final auth = context.read<AuthService>();
-    await auth.saveTokenFromVerification(widget.token);
-    // GoRouter redirect handles navigation to /workspaces
+    try {
+      final resp = await auth.authPost(
+        '/api/v1/auth/oidc/exchange',
+        body: jsonEncode({'code': widget.code}),
+      );
+      if (!mounted) return;
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body);
+        final token = data['access_token'];
+        if (token is String && token.isNotEmpty) {
+          await auth.saveTokenFromVerification(token);
+          return; // GoRouter redirect handles navigation to /workspaces
+        }
+      }
+      setState(() => _error = 'Login code exchange failed.');
+    } catch (_) {
+      // Stable message only (#3223 policy): transport errors are mapped
+      // upstream; a malformed 200 body must not leak a raw exception.
+      // The await may have straddled an unmount (#3203) — re-check.
+      if (!mounted) return;
+      setState(() => _error = 'Login code exchange failed.');
+    }
   }
 
   @override

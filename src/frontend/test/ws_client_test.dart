@@ -139,7 +139,7 @@ void main() {
     test('connects on logged-in transition', () async {
       SharedPreferences.setMockInitialValues({'klangk_jwt': 'test-token'});
       final channel = _FakeWebSocketChannel();
-      WsClient.testChannelFactory = (_) => channel;
+      WsClient.testChannelFactory = (_, __) => channel;
 
       final auth = AuthService();
       await Future.delayed(Duration.zero);
@@ -158,7 +158,7 @@ void main() {
       () async {
         SharedPreferences.setMockInitialValues({'klangk_jwt': 'test-token'});
         final channel = _FakeWebSocketChannel();
-        WsClient.testChannelFactory = (_) => channel;
+        WsClient.testChannelFactory = (_, __) => channel;
 
         final auth = AuthService();
         await Future.delayed(Duration.zero);
@@ -470,7 +470,11 @@ void main() {
     test('connect success via testChannelFactory', () async {
       SharedPreferences.setMockInitialValues({'klangk_jwt': 'test-token'});
       final channel = _FakeWebSocketChannel();
-      WsClient.testChannelFactory = (_) => channel;
+      List<String>? seenProtocols;
+      WsClient.testChannelFactory = (_, protocols) {
+        seenProtocols = protocols;
+        return channel;
+      };
 
       final auth = AuthService();
       await Future.delayed(Duration.zero);
@@ -481,6 +485,8 @@ void main() {
 
       await client.connect();
       expect(client.connected, isTrue);
+      // #3201: the JWT rides the subprotocol list, never the URL.
+      expect(seenProtocols, ['bearer', 'test-token']);
       client.disconnect();
       client.dispose();
     });
@@ -489,7 +495,7 @@ void main() {
       SharedPreferences.setMockInitialValues({'klangk_jwt': 'test-token'});
       final failChannel = _FakeWebSocketChannel();
       failChannel.failReady = true;
-      WsClient.testChannelFactory = (_) => failChannel;
+      WsClient.testChannelFactory = (_, __) => failChannel;
 
       final auth = AuthService();
       await Future.delayed(Duration.zero);
@@ -514,7 +520,7 @@ void main() {
       final failChannel = _FakeWebSocketChannel();
       failChannel.failReady = true;
       failChannel._closeCode = 4001;
-      WsClient.testChannelFactory = (_) => failChannel;
+      WsClient.testChannelFactory = (_, __) => failChannel;
 
       final auth = AuthService();
       await Future.delayed(Duration.zero);
@@ -538,7 +544,7 @@ void main() {
     test('connect always pre-checks HTTP before opening WebSocket', () async {
       SharedPreferences.setMockInitialValues({'klangk_jwt': 'test-token'});
       final channel = _FakeWebSocketChannel();
-      WsClient.testChannelFactory = (_) => channel;
+      WsClient.testChannelFactory = (_, __) => channel;
       var httpCheckCalled = false;
       WsClient.testHttpPreCheck = () async {
         httpCheckCalled = true;
@@ -562,7 +568,7 @@ void main() {
     test('connect aborts when HTTP pre-check fails', () async {
       SharedPreferences.setMockInitialValues({'klangk_jwt': 'test-token'});
       final channel = _FakeWebSocketChannel();
-      WsClient.testChannelFactory = (_) => channel;
+      WsClient.testChannelFactory = (_, __) => channel;
       WsClient.testHttpPreCheck = () async => false;
 
       final auth = AuthService();
@@ -680,7 +686,7 @@ void main() {
     setUp(() {
       SharedPreferences.setMockInitialValues({'klangk_jwt': 'test-token'});
       channels = [];
-      WsClient.testChannelFactory = (_) {
+      WsClient.testChannelFactory = (_, __) {
         final ch = _FakeWebSocketChannel();
         channels.add(ch);
         return ch;
@@ -907,7 +913,7 @@ void main() {
       channels.add(_FakeWebSocketChannel()..failReady = true);
       // Override factory to return the failing channel
       var callCount = 0;
-      WsClient.testChannelFactory = (_) {
+      WsClient.testChannelFactory = (_, __) {
         callCount++;
         if (channels.length > callCount) return channels[callCount];
         final ch = _FakeWebSocketChannel()..failReady = true;
@@ -946,7 +952,7 @@ void main() {
       await Future.delayed(Duration.zero);
 
       // Keep failing so attempts accumulate
-      WsClient.testChannelFactory = (_) {
+      WsClient.testChannelFactory = (_, __) {
         final ch = _FakeWebSocketChannel()..failReady = true;
         channels.add(ch);
         return ch;
@@ -1776,8 +1782,10 @@ void main() {
       testDpopBackendOverride = FakeDpopBackend(proof: 'ws-proof');
       final channel = _FakeWebSocketChannel();
       Uri? seen;
-      WsClient.testChannelFactory = (uri) {
+      List<String>? seenProtocols;
+      WsClient.testChannelFactory = (uri, protocols) {
         seen = uri;
+        seenProtocols = protocols;
         return channel;
       };
 
@@ -1788,7 +1796,10 @@ void main() {
       await Future.delayed(Duration.zero);
 
       expect(seen, isNotNull);
-      expect(seen!.queryParameters['token'], bound);
+      // #3201: the token rides the subprotocol list, never the query;
+      // only the one-shot DPoP proof stays a query param (#3218).
+      expect(seenProtocols, ['bearer', bound]);
+      expect(seen!.queryParameters.containsKey('token'), isFalse);
       expect(seen!.queryParameters['dpop'], 'ws-proof');
       WsClient.testChannelFactory = null;
       client.dispose();
@@ -1799,8 +1810,10 @@ void main() {
       testDpopBackendOverride = FakeDpopBackend(proof: 'ws-proof');
       final channel = _FakeWebSocketChannel();
       Uri? seen;
-      WsClient.testChannelFactory = (uri) {
+      List<String>? seenProtocols;
+      WsClient.testChannelFactory = (uri, protocols) {
         seen = uri;
+        seenProtocols = protocols;
         return channel;
       };
 
@@ -1810,7 +1823,8 @@ void main() {
       client.updateAuth(auth);
       await Future.delayed(Duration.zero);
 
-      expect(seen!.queryParameters['token'], 'plain-token');
+      expect(seenProtocols, ['bearer', 'plain-token']);
+      expect(seen!.queryParameters.containsKey('token'), isFalse);
       expect(seen!.queryParameters.containsKey('dpop'), isFalse);
       WsClient.testChannelFactory = null;
       client.dispose();

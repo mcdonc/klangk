@@ -735,12 +735,27 @@ async def ws_connect(server: dict[str, Any], path: str, **kwargs: Any):
     """Open a websocket to ``path`` over the server's UDS or TCP transport.
 
     ``path`` is the request target including the query string, e.g.
-    ``"/ws?token=..."``. Returns an open websocket connection (the caller
+    ``"/ws?token=..."``. A ``token`` query parameter is moved into the
+    handshake's ``Sec-WebSocket-Protocol`` header (``bearer, <jwt>``),
+    mirroring the production client contract (#3201 — the JWT never
+    rides the URL). Returns an open websocket connection (the caller
     closes it, typically via ``async with``).
     """
+    from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
+    parts = urlsplit(path)
+    query = dict(parse_qsl(parts.query))
+    token = query.pop("token", None)
+    if token is not None:
+        subprotocols = kwargs.setdefault("subprotocols", ["bearer", token])
+        if subprotocols != ["bearer", token]:
+            raise ValueError(
+                "ws_connect: pass the token via ?token=, not subprotocols="
+            )
+    target = urlunsplit(("", "", parts.path, urlencode(query), ""))
     if server["uds_path"] is not None:
         return await websockets.unix_connect(
-            server["uds_path"], f"{_UDS_WS_HOST}{path}", **kwargs
+            server["uds_path"], f"{_UDS_WS_HOST}{target}", **kwargs
         )
     ws_base = server["url"].replace("http://", "ws://")
-    return await websockets.connect(f"{ws_base}{path}", **kwargs)
+    return await websockets.connect(f"{ws_base}{target}", **kwargs)
