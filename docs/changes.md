@@ -792,6 +792,26 @@ sync` report a clear permission-denied error.
   with the file icon and path in the detail expansion. Terminal I/O
   and container-internal changes stay out of scope by design.
 
+- **Time-correlated merged audit stream (#3251).** A new
+  `GET /api/v1/events` returns one time-ordered stream merged across
+  all three audit tables (identity/privilege, container lifecycle,
+  egress consent), each row naming its origin table in `source` and
+  embedding the full origin row — the SV-222439 replay view ("what
+  did this actor do, in order" across components). Filters: time
+  window (`since`/`until`), actor (id or email), workspace (id or
+  name), event name; paged like the sibling views and gated on the
+  same `manage-events` permission. The admin Events tab's new All
+  subtab renders it with a source badge per row. See the
+  [API reference](/reference/api-endpoints/#get-apiv1events).
+
+- **Inactivity sweep disables are audited (#3251).** The
+  dormant-account sweep now writes one `user.disable` row per
+  disabled account (`via=inactivity` in the detail) — the audit
+  stream's first `user.disable` rows, since an admin's disable/enable
+  toggle records inside its `user.update` row. The sweep's
+  auto-disables surface in the audit and merged events views.
+
+
 - **Admin notifications (#3250).** SA/ISSO notification of
   security-relevant events: account lifecycle (create, register,
   update, delete, unlock, disable, enable — including the inactivity

@@ -30,6 +30,7 @@ from ..model import (
     PRINCIPAL_SYSTEM,
     SYSTEM_AUTHENTICATED,
 )
+from ..model.merged_events import MergedEventFilters
 from .common import (
     WorkspaceAclEntry,
     send_email,
@@ -1267,6 +1268,111 @@ async def list_container_events(
     )
     return {
         "items": await _annotate_events(app, rows),
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
+
+
+# --- Time-correlated merged stream (#3251) ---
+
+
+async def _merged_workspace_names(app, rows: list[dict]) -> dict:
+    """Workspace-id -> name for one merged page (cosmetic join
+    bounded by the page size); ``None`` for a deleted workspace."""
+    names: dict[str, str | None] = {}
+    for row in rows:
+        wid = row["workspace_id"]
+        if wid is None or wid in names:
+            continue
+        ws = await app.state.model.workspaces.get_workspace(wid)
+        names[wid] = ws["name"] if ws else None
+    return names
+
+
+def _needs_email_lookup(row: dict, emails: dict) -> bool:
+    """Whether a merged row's actor needs a users-table email lookup:
+    it is a human actor (``actor_type='user'`` — every branch's
+    projection only stamps it on a set actor id, so system/agent
+    rows and actor-less rows never match), and it arrived without a
+    denormalized email (audit rows carry one; container and egress
+    rows do not) that has not been resolved on this page yet."""
+    return (
+        row.get("actor_type") == "user"
+        and not row["actor_email"]
+        and row["actor_id"] not in emails
+    )
+
+
+async def _merged_actor_emails(app, rows: list[dict]) -> dict:
+    """Actor-id -> email for one merged page's rows that need the
+    lookup. A purged user yields ``None``."""
+    emails: dict[str, str | None] = {}
+    for row in rows:
+        if not _needs_email_lookup(row, emails):
+            continue
+        user = await app.state.model.users.get_user_by_id(row["actor_id"])
+        emails[row["actor_id"]] = user["email"] if user else None
+    return emails
+
+
+async def _annotate_merged_events(app, rows: list[dict]) -> list[dict]:
+    """Resolve workspace names and actor emails for one merged page
+    (the same cosmetic joins the container view applies, over the
+    merged row shape)."""
+    names = await _merged_workspace_names(app, rows)
+    emails = await _merged_actor_emails(app, rows)
+    return [
+        {
+            **row,
+            "workspace_name": names.get(row["workspace_id"]),
+            "actor_email": row["actor_email"] or emails.get(row["actor_id"]),
+        }
+        for row in rows
+    ]
+
+
+@router.get("/events")
+async def list_merged_events(
+    request: Request,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    since: float | None = None,
+    until: float | None = None,
+    actor: str | None = None,
+    workspace: str | None = None,
+    event: str | None = None,
+    viewer: dict = Depends(acl.has_permission("manage-events")),
+):
+    """Time-correlated audit stream across all three audit tables
+    (#3251, SV-222439).
+
+    One newest-first page over ``audit_events``, ``container_events``
+    and ``egress_consent`` merged by timestamp, each item naming its
+    origin in ``source`` (``audit`` / ``container`` / ``egress``) and
+    embedding the full origin row in ``data`` (the HMAC tag, #3174,
+    is verification-internal and never ships). Filters: ``since`` /
+    ``until`` (inclusive epoch seconds), ``actor`` (id or email
+    substring), ``workspace`` (exact id or name substring), ``event``
+    (name substring; consent rows are named ``egress.<decision>``).
+    Gated on ``manage-events`` — the same permission as the two
+    per-table views, so one read-only audit grant covers every
+    stream.
+    """
+    app = request.app
+    filters = MergedEventFilters(
+        since=since,
+        until=until,
+        actor=actor,
+        workspace=workspace,
+        event=event,
+    )
+    rows = await app.state.model.merged_events.list_events(
+        filters, limit=limit, offset=offset
+    )
+    total = await app.state.model.merged_events.count_events(filters)
+    return {
+        "items": await _annotate_merged_events(app, rows),
         "total": total,
         "limit": limit,
         "offset": offset,

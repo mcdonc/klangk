@@ -168,6 +168,12 @@ void main() {
         return auditFor(limit, offset, event, actor, target);
       }
       if (withPage) {
+        if (request.url.path == '/api/v1/events') {
+          // The All subtab (#3251) mounts by default; serve it an
+          // empty merged envelope.
+          requests.add(request);
+          return http.Response(_auditEnvelope([]), 200);
+        }
         if (request.url.path == '/api/v1/events/containers') {
           requests.add(request);
           return http.Response(_auditEnvelope([]), 200);
@@ -651,11 +657,11 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('Events'));
       await tester.pumpAndSettle();
-      // The Containers subtab is the default: its panel is up first.
-      // (Offstage panels stay mounted — the keep-alive — so
+      // The merged All subtab (#3251) is the default: its panel is up
+      // first. (Offstage panels stay mounted — the keep-alive — so
       // visibility asserts use hitTestable, not findsNothing.)
       expect(
-        find.byKey(const ValueKey('events-workspace-filter')).hitTestable(),
+        find.byKey(const ValueKey('all-event-filter')).hitTestable(),
         findsOneWidget,
       );
       await tester.tap(find.text('Audit'));
@@ -679,6 +685,10 @@ void main() {
       // The audit panel is the visible subtab now.
       expect(
         find.byKey(const ValueKey('events-workspace-filter')).hitTestable(),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const ValueKey('all-event-filter')).hitTestable(),
         findsNothing,
       );
       expect(

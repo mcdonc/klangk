@@ -525,6 +525,68 @@ see [Auth Modes](../features/auth-modes.md).
 
 ---
 
+### GET `/api/v1/events`
+
+Time-correlated merged audit stream (#3251, SV-222439): one
+newest-first page over all three audit tables — `audit_events`
+(identity/privilege), `container_events` (lifecycle) and
+`egress_consent` — merged by timestamp so an attack trail can be
+replayed across components (a login, a workspace start, an
+egress-consent decision, in order). Each item names its origin in
+`source` (`audit` / `container` / `egress`) and embeds the full
+origin row in `data`; the HMAC integrity tag (#3174) is
+verification-internal and never ships. One merged row per origin
+row — a consent row is named `egress.<decision>`, timestamped by its
+`requested_at`, and attributed to its decider/revoker when a human
+has acted on it. Query params: `limit` (1–200, default 50),
+`offset`, `since` / `until` (inclusive epoch seconds), `actor`
+(actor id or email substring; a consent row matches when the actor
+is its decider **or** its revoker, while the summary row names the
+revoker for a revoked verdict — the `data` blob carries both),
+`workspace` (exact workspace id or a workspace-name substring), and
+`event` (event-name substring). `workspace_name` and `actor_email`
+are resolved for display.
+
+**Auth:** JWT required. User must have the `manage-events`
+permission on `/events` (the same grant as the two per-table views).
+
+No request body.
+
+```json
+{
+  "items": [
+    {
+      "source": "container",
+      "id": 1,
+      "created_at": 1759200000.0,
+      "event": "start",
+      "actor_id": "uuid",
+      "actor_type": "user",
+      "actor_email": "user@example.com",
+      "workspace_id": "uuid",
+      "workspace_name": "my-ws",
+      "data": {
+        "id": 1,
+        "workspace_id": "uuid",
+        "event": "start",
+        "actor_type": "user",
+        "actor_id": "uuid",
+        "cause": "api",
+        "container_id": "abc123",
+        "container_role": "workspace",
+        "network_namespace": null,
+        "created_at": 1759200000.0
+      }
+    }
+  ],
+  "total": 1,
+  "limit": 50,
+  "offset": 0
+}
+```
+
+---
+
 ### GET `/api/v1/events/audit`
 
 Paged identity/privilege audit history (#3205), newest first, from the

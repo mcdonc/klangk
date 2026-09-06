@@ -220,6 +220,19 @@ class EgressConsentModel(Submodel):
             return None
         return _row_to_dict(row)
 
+    async def rows_by_ids(self, ids: list[str]) -> dict[str, dict]:
+        """Full rows keyed by id — the merged-stream detail fetch
+        (#3251). An empty id list short-circuits (no SQL)."""
+        if not ids:
+            return {}
+        placeholders = ",".join("?" * len(ids))
+        rows = await self.app.state.db.fetchall(
+            f"SELECT {_EC_COLUMNS} FROM egress_consent"  # noqa: S608
+            f" WHERE id IN ({placeholders})",
+            tuple(ids),
+        )
+        return {r["id"]: _row_to_dict(r) for r in rows}
+
     async def list_requests(
         self,
         workspace_id: str,

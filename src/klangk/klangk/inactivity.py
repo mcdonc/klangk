@@ -76,6 +76,7 @@ class InactivitySweeper(IntervalWorker):
             # dormant-turned-disabled account must not keep it. 4001 ->
             # the client logs out rather than reconnect-looping.
             for u in disabled:
+                await self._audit_disable(u, days)
                 await wshandler.disconnect_user(
                     self.app.state.sockets,
                     u["id"],
@@ -97,3 +98,22 @@ class InactivitySweeper(IntervalWorker):
             # SV-222419): the sweeper's silent auto-disable is exactly
             # what an ISSO wants to hear about.
             notify_sweep_disables(self.app, days, disabled)
+
+    async def _audit_disable(self, user: dict, days: int) -> None:
+        """Write the sweep's ``user.disable`` audit row (#3251 review).
+
+        The audit stream had no ``user.disable`` rows at all — an
+        admin's disable/enable toggle records inside its
+        ``user.update`` row (the disable/enable names are #3250
+        notification events) — so the sweep's auto-disables were
+        invisible to every events view. One row per disabled account:
+        no actor (a system action, like the anonymous rows),
+        ``via=inactivity`` in the detail. Best-effort like every audit
+        emit: an unwritable table logs and never fails the sweep.
+        """
+        await self.app.state.model.audit_events.record_best_effort(
+            "user.disable",
+            target_type="user",
+            target_id=user["id"],
+            detail={"via": "inactivity", "days": days, "email": user["email"]},
+        )

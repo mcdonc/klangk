@@ -24,6 +24,7 @@ from .audit_forward import AuditForwardModel
 from .base import Submodel
 from .container_events import ContainerEventsModel
 from .egress_consent import EgressConsentModel
+from .merged_events import MergedEventsModel
 from .server_schedules import ServerSchedulesModel
 from .ports import PortsModel
 from .sessions import SessionsModel
@@ -170,6 +171,7 @@ class Model:
         self.container_events = ContainerEventsModel(app)
         self.audit_events = AuditEventsModel(app)
         self.audit_forward = AuditForwardModel(app)
+        self.merged_events = MergedEventsModel(app)
         self.server_schedules = ServerSchedulesModel(app)
 
     def reconfigure(self, app) -> None:
@@ -187,6 +189,7 @@ class Model:
             self.container_events,
             self.audit_events,
             self.audit_forward,
+            self.merged_events,
             self.server_schedules,
         ):
             sub.reconfigure(app)

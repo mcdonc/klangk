@@ -17,8 +17,11 @@ and HTTP paths present identically.
 
 Event coverage (#3205):
 
-- **Account CRUD** — ``user.register``, ``user.create`` (admin),
-  ``user.update`` (admin), ``user.delete`` (admin), ``user.unlock``,
+- **Account CRUD** — ``user.register``, ``user.create`` (admin,
+  invite-accept, OIDC JIT), ``user.update`` (admin — a disable/enable
+  toggle records here, ``fields`` naming ``disabled``),
+  ``user.delete`` (admin), ``user.unlock``, the inactivity sweep's
+  ``user.disable`` rows (#2588 — the only ``user.disable`` writer),
   ``user.password.change``, ``user.email.change``,
   ``user.handle.change``.
 - **Privilege changes** — ``group.create`` / ``group.update`` /
@@ -289,6 +292,23 @@ class AuditEventsModel(Submodel):
             f"SELECT COUNT(*) FROM audit_events{where}", tuple(params)
         )
         return row[0] if row else 0
+
+    async def rows_by_ids(self, ids: list[int]) -> dict[int, dict]:
+        """Full rows keyed by id — the merged-stream detail fetch
+        (#3251). An empty id list short-circuits (no SQL)."""
+        if not ids:
+            return {}
+        placeholders = ",".join("?" * len(ids))
+        rows = await self.app.state.db.fetchall(
+            f"SELECT {_EVENT_COLUMNS} FROM audit_events"  # noqa: S608
+            f" WHERE id IN ({placeholders})",
+            tuple(ids),
+        )
+        out: dict[int, dict] = {}
+        for row in rows:
+            parsed = row_to_dict(row)
+            out[parsed["id"]] = parsed
+        return out
 
     async def prune(self, now: float | None = None) -> int:
         """Bound the table: delete rows past retention / over the row
