@@ -145,11 +145,24 @@ class ConsentDeciderRegistry:
         except WS_ERRORS:  # pragma: no cover — already closing
             logger.debug("Error closing expired decider socket")
 
+    def _drop(self, decider_id: str) -> bool:
+        """Pop a registration and cancel its expiry close task (#3230).
+
+        Every removal path funnels through here: a leaked,
+        still-sleeping ``_expire_when_due`` task would pin the entry,
+        its SafeWebSocket, and the underlying websocket until the
+        token's ``exp`` — under reconnect churn that accumulates for
+        hours. Returns whether an entry was dropped.
+        """
+        entry = self._deciders.pop(decider_id, None)
+        if entry is None:
+            return False
+        entry["expiry_task"] and entry["expiry_task"].cancel()
+        return True
+
     def deregister(self, decider_id: str) -> None:
         """Drop a decider (disconnect). No-op if unknown."""
-        entry = self._deciders.pop(decider_id, None)
-        if entry is not None:
-            entry["expiry_task"] and entry["expiry_task"].cancel()
+        if self._drop(decider_id):
             logger.info(
                 "consent decider deregistered: decider=%s", decider_id[:8]
             )
@@ -201,7 +214,7 @@ class ConsentDeciderRegistry:
             except WS_ERRORS:
                 dead.append(did)
         for did in dead:
-            self._deciders.pop(did, None)
+            self._drop(did)
         return delivered
 
     async def _close_and_drop(
@@ -213,7 +226,7 @@ class ConsentDeciderRegistry:
         must not abort the sweep over the rest.
         """
         for did, entry in victims:
-            self._deciders.pop(did, None)
+            self._drop(did)
             try:
                 await entry["sock"].close(code=code, reason=reason)
             except Exception:  # noqa: BLE001
@@ -302,7 +315,8 @@ class ConsentDeciderRegistry:
             except asyncio.CancelledError:
                 pass
             self._reaper = None
-        self._deciders.clear()
+        for did in list(self._deciders):
+            self._drop(did)
 
     async def _reap_loop(self) -> None:
         """Periodically drop deciders not pinged within the timeout.
@@ -320,7 +334,7 @@ class ConsentDeciderRegistry:
                 if now - entry["seen"] > self.timeout
             ]
             for did in stale:
-                self._deciders.pop(did, None)
+                self._drop(did)
                 logger.info(
                     "consent decider reaped (no ping within %.0fs): %s",
                     self.timeout,

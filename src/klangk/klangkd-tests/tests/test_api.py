@@ -15685,11 +15685,17 @@ class TestOIDCCallback:
                 )
             ),
         )
+        _, jwk = make_binding_key()
         cookie_data = json_mod.dumps(
             {
                 "state": "s",
                 "verifier": "v",
                 "cli_redirect": None,
+                "binding_jwk": base64.urlsafe_b64encode(
+                    json_mod.dumps(jwk).encode()
+                )
+                .rstrip(b"=")
+                .decode(),
             }
         )
         client.cookies.set("oidc_test", cookie_data)
@@ -15715,11 +15721,17 @@ class TestOIDCCallback:
             "exchange_code",
             AsyncMock(return_value={"access_token": "at"}),
         )
+        _, jwk = make_binding_key()
         cookie_data = json_mod.dumps(
             {
                 "state": "s",
                 "verifier": "v",
                 "cli_redirect": None,
+                "binding_jwk": base64.urlsafe_b64encode(
+                    json_mod.dumps(jwk).encode()
+                )
+                .rstrip(b"=")
+                .decode(),
             }
         )
         client.cookies.set("oidc_test", cookie_data)
@@ -15753,11 +15765,17 @@ class TestOIDCCallback:
             "validate_id_token",
             AsyncMock(side_effect=Exception("bad token")),
         )
+        _, jwk = make_binding_key()
         cookie_data = json_mod.dumps(
             {
                 "state": "s",
                 "verifier": "v",
                 "cli_redirect": None,
+                "binding_jwk": base64.urlsafe_b64encode(
+                    json_mod.dumps(jwk).encode()
+                )
+                .rstrip(b"=")
+                .decode(),
             }
         )
         client.cookies.set("oidc_test", cookie_data)
@@ -15789,11 +15807,17 @@ class TestOIDCCallback:
             "validate_id_token",
             AsyncMock(return_value={"sub": "s"}),  # no email
         )
+        _, jwk = make_binding_key()
         cookie_data = json_mod.dumps(
             {
                 "state": "s",
                 "verifier": "v",
                 "cli_redirect": None,
+                "binding_jwk": base64.urlsafe_b64encode(
+                    json_mod.dumps(jwk).encode()
+                )
+                .rstrip(b"=")
+                .decode(),
             }
         )
         client.cookies.set("oidc_test", cookie_data)

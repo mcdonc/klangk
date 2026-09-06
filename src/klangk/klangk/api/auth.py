@@ -1736,6 +1736,11 @@ async def oidc_callback(
         raise HTTPException(status_code=404, detail="Unknown OIDC provider")
 
     cookie_data = _validate_state_cookie(request, provider_id, state)
+    # #3230 round-3: resolve the mint flags (and refuse a key-less web
+    # flow) BEFORE the token exchange, JIT provisioning, hooks, and
+    # group sync — a refused callback must be a pure no-op that does
+    # not consume the one-time code or mutate the user.
+    web_client, jkt = _callback_mint_flags(cookie_data)
     claims, tokens = await _exchange_and_validate_token(
         request.app.state.oidc,
         provider,
@@ -1766,7 +1771,6 @@ async def oidc_callback(
         await request.app.state.oidc.sync_oidc_groups(user["id"], hook_groups)
 
     source_ip, user_agent, method, referer = request_metadata(request)
-    web_client, jkt = _callback_mint_flags(cookie_data)
     access_token = await request.app.state.auth.issue_token(
         user["id"],
         email,

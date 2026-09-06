@@ -432,11 +432,14 @@ re-login, not the session's secrecy. CLI and TUI clients are always
 unmarked and unaffected — their tokens keep working indefinitely.
 
 What remains deliberately out of model: a script able to _rewrite
-the minting request itself_ (swap or strip its headers before it
-is sent) is not stopped by any of this — but that script reads the
-login credentials out of the same request, a compromise no token
-binding can address. The controls here bound the attacker who
-arrives _after_ the session was minted.
+the minting request or login navigation itself_ (swap or strip its
+binding key, or force the `none` marker) is not stopped by any of
+this. On the password flows that script reads the login credentials
+out of the same request; on OIDC the credential is the IdP's own
+HttpOnly session — but either way a script alive in the page at
+login time owns the resulting session, whatever it is minted with.
+The controls here bound the attacker who arrives _after_ the
+session was minted.
 
 Operational notes:
 

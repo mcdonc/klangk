@@ -355,31 +355,19 @@ operators or integrators to act when upgrading.
   the previous unbound behavior. See
   [Authentication: DPoP session-token binding](features/authentication.md#dpop-session-token-binding-xss-theft-protection).
 
-- **`KLANGKD_WEB_BIND_GRACE_SECONDS` (#3230).** Closes the
-  attacker-extendable mint-to-bind window of the DPoP feature
-  (#3218) twice over. Sessions minted for the web client are now
-  **born bound**: the SPA's minting requests (login, register,
-  verify, reset, invite, local) carry its public binding JWK
-  (`Klangk-Binding-Jwk`; the OIDC login URL carries it into the
-  state cookie for the callback mint), so the token is minted with
-  `cnf.jkt` and no unbound window exists — nothing to read,
-  sabotage, or bind-first with a substituted key. An OIDC web flow
-  that arrives without its binding key is refused at the callback
-  (a key-less web build rides an explicit `none` and mints
-  unmarked), and every established WebSocket — main and
-  consent-decider alike — is armed to close at its token's expiry
-  (or bind deadline) and re-armed on rotation. The setting is the
-  deadline backstop for tokens that nonetheless mint unbound: such
-  a session carries a signed bind deadline (mint time plus this
-  many seconds, default `300`) and is refused with 401 on every
-  API request, token refresh, bind call, and WebSocket connect
-  once past it, while an established WebSocket closes at the
-  deadline rather than the token's natural expiry. The deadline survives refresh and bind swaps unchanged,
-  so a rotation can never reset it; the web client retries a
-  transiently failed bind every 30 seconds inside the window.
-  CLI/TUI sessions are unmarked and stay unbound indefinitely; `0`
-  drops the deadline (born-bound minting stays on). Reloadable on
-  SIGHUP. See
+- **`KLANGKD_WEB_BIND_GRACE_SECONDS` (#3230).** Sessions minted for
+  the web client are now **born DPoP-bound**: the SPA's minting
+  requests carry its public binding JWK (`Klangk-Binding-Jwk`; an
+  OIDC login URL carries it into the state cookie, a key-less web
+  build rides an explicit `none`, and a web flow arriving without it
+  is refused at the callback before any exchange), so there is no
+  unbound window to read, sabotage, or bind-first with a substituted
+  key. Every WebSocket — main and consent-decider alike — is armed to
+  close at its token's expiry and re-armed on rotation. This setting
+  is the deadline backstop for tokens that nonetheless mint unbound:
+  still unbound past it (default `300` seconds; `0` disables), the
+  session is refused with 401 everywhere until re-login. CLI/TUI
+  sessions are unmarked and unaffected. See
   [Authentication: DPoP session-token binding](features/authentication.md#dpop-session-token-binding-xss-theft-protection).
 
 - **CSP: hash-allowed inline scripts + Trusted Types (#3219).** The

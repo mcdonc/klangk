@@ -188,6 +188,26 @@ class TestMintMarking:
         )
         assert resp.status_code == 400
 
+    async def test_marker_with_non_string_coordinates_rejected(
+        self, client, user
+    ):
+        """#3230 round-3: numeric coordinates are not a usable key — the
+        mint is refused rather than binding a token nobody can prove."""
+        resp = await client.post(
+            "/api/v1/auth/login",
+            json={
+                "identifier": "testuser@example.com",
+                "password": "testpass",
+            },
+            headers={
+                auth_mod.WEB_CLIENT_HEADER: "1",
+                auth_mod.BINDING_JWK_HEADER: _b64url(
+                    json.dumps({"kty": "EC", "crv": "P-256", "x": 1, "y": 2})
+                ),
+            },
+        )
+        assert resp.status_code == 400
+
     async def test_zero_grace_mints_deadline_only(self, user, db):
         """Grace 0 keeps born-bound minting but drops the deadline."""
         a = _standalone_auth({"KLANGKD_WEB_BIND_GRACE_SECONDS": "0"})

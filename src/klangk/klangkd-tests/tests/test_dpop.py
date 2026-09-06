@@ -74,6 +74,20 @@ class TestThumbprint:
         _, jwk = key
         assert dpop.jwk_thumbprint({"kty": "EC", "crv": "P-256"}) is None
 
+    def test_non_string_coordinates_refused(self, key):
+        """#3230 round-3: numeric/nested coordinates are not a usable
+        key — no thumbprint, so no token can be bound to nothing."""
+        assert (
+            dpop.jwk_thumbprint({"kty": "EC", "crv": "P-256", "x": 1, "y": 2})
+            is None
+        )
+        assert (
+            dpop.jwk_thumbprint(
+                {"kty": "EC", "crv": "P-256", "x": [1], "y": {"a": 2}}
+            )
+            is None
+        )
+
 
 class TestValidatePublicJwk:
     def test_public_ec_key_accepted(self, key):

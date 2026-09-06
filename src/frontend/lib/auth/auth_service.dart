@@ -353,7 +353,7 @@ class AuthService extends ChangeNotifier {
       if (bound != null && bound != _token) {
         _token = bound;
         await writeToken(bound);
-      } else {
+      } else if (!tokenIsBound(_token!)) {
         _scheduleBindRetry();
       }
     }
