@@ -57,6 +57,7 @@ nav = [
     { "FIPS 140-3 Mode" = "deployment/fips.md" },
     { "Process Signals" = "deployment/signals.md" },
     { "Decommissioning" = "deployment/decommissioning.md" },
+    { "Falco Exec Audit" = "deployment/falco.md" },
     { "Podman" = "reference/podman.md" },
     { "OIDC" = "reference/oidc.md" },
     { "Backup and Restore" = "reference/backup-restore.md" },
