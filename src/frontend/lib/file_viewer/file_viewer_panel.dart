@@ -171,21 +171,11 @@ class FileViewerPanelState extends State<FileViewerPanel> {
   }
 
   /// Headers for one authenticated file-API request: the Bearer token
-  /// plus a DPoP proof when that token is bound (#3218).
-  Future<Map<String, String>> _headersFor(String method, String url) async {
-    final headers = <String, String>{
-      if (widget.authToken != null)
-        'Authorization': 'Bearer ${widget.authToken}',
-    };
-    if (widget.authToken == null) return headers;
-    final proof = await dpopBackend.createProof(
-      method: method,
-      uri: url,
-      accessToken: widget.authToken!,
-    );
-    if (proof != null) headers['DPoP'] = proof;
-    return headers;
-  }
+  /// plus a DPoP proof when that token is bound (#3218). Delegates to
+  /// [dpopHeadersFor] so the proof's htu is minted backend-visible
+  /// (#3287) identically to every other minting site.
+  Future<Map<String, String>> _headersFor(String method, String url) =>
+      dpopHeadersFor(method, url, widget.authToken);
 
   Future<void> _loadFiles({bool force = false}) async {
     if (!mounted) return;

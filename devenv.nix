@@ -628,7 +628,47 @@ in
       fi
     fi
 
-    exec npx playwright test --reporter=list "$@"
+    npx playwright test --reporter=list "$@"
+    _main_status=$?
+
+    # The subpath × web × DPoP suite (#3287): a separate Playwright config
+    # (its own klangkd behind a prefix-stripping outer caddy at /klangk/).
+    # Runs after the main suite; its own config, chromium-only. Project
+    # selection flags (--project=... / --project X, --no-deps) target the
+    # main config's projects and are dropped here so a filtered dispatch
+    # run still exercises the subpath scenario; -g and friends pass
+    # through. --pass-with-no-tests keeps a filter that matches nothing
+    # in the one-test subpath config from failing the whole task.
+    _subpath_status=0
+    if [ -n "''${KLANGKBUILD_TEST_URL:-}" ]; then
+      # External-server mode: the main setup talks to a server we do not
+      # control, while the subpath suite drives its own locally-booted
+      # stack — the spec's API helpers would register on the external
+      # server and the browser would log in against the local one. Skip
+      # the chain, mirroring the main setup's external short-circuit.
+      echo "=== subpath × web × DPoP e2e skipped (KLANGKBUILD_TEST_URL set) ==="
+    else
+      _subpath_args=(--pass-with-no-tests)
+      _skip_next=false
+      for _arg in "$@"; do
+        if [ "$_skip_next" = true ]; then
+          _skip_next=false
+          continue
+        fi
+        case "$_arg" in
+          --project) _skip_next=true ;;
+          --project=*|--no-deps) ;;
+          *) _subpath_args+=("$_arg") ;;
+        esac
+      done
+      echo "=== subpath × web × DPoP e2e (#3287) ==="
+      npx playwright test -c subpath/playwright.subpath.config.ts \
+        --reporter=list "''${_subpath_args[@]}"
+      _subpath_status=$?
+    fi
+
+    [ "$_main_status" -ne 0 ] && exit "$_main_status"
+    exit "$_subpath_status"
   '';
 
   # Bare `playwright` command that always uses the LOCAL binary pinned in

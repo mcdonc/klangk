@@ -1312,3 +1312,37 @@ class TestConsentDeciderDpopGate:
         # The proof arrived via the dpop query parameter.
         check = app.state.auth.check_dpop
         assert check.call_args.args[0] == "a-proof"
+
+    async def test_gate_passes_trusted_hosting_base_path(self):
+        """#3287: the decider gate resolves the handshake's live hosting
+        base path and forwards it to proof verification."""
+        from klangk.wshandler.decider import _decider_authenticate
+
+        app = _ws_app({"id": "u1", "email": "a@x"})
+        ws = _FakeWS(
+            {"token": "tok", "dpop": "a-proof"},
+            [],
+            headers={"x-forwarded-prefix": "/klangk"},
+        )
+        ws.client = types.SimpleNamespace(host="127.0.0.1")
+        result = await _decider_authenticate(ws, app, lambda label: None)
+        assert result is not None
+        check = app.state.auth.check_dpop
+        assert check.call_args.kwargs.get("base_path") == "/klangk"
+
+    async def test_gate_passes_empty_base_path_without_trust(self):
+        """An untrusted peer (or no forwarded prefix) resolves an empty
+        base path — the comparison stays exact (#3287)."""
+        from klangk.wshandler.decider import _decider_authenticate
+
+        app = _ws_app({"id": "u1", "email": "a@x"})
+        ws = _FakeWS(
+            {"token": "tok", "dpop": "a-proof"},
+            [],
+            headers={"x-forwarded-prefix": "/klangk"},
+        )
+        ws.client = types.SimpleNamespace(host="203.0.113.9")
+        result = await _decider_authenticate(ws, app, lambda label: None)
+        assert result is not None
+        check = app.state.auth.check_dpop
+        assert check.call_args.kwargs.get("base_path") == ""

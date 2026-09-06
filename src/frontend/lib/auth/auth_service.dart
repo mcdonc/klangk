@@ -568,7 +568,7 @@ class AuthService extends ChangeNotifier {
     if (_token == null) return headers;
     final proof = await dpopBackend.createProof(
       method: method,
-      uri: '$_baseUrl$path',
+      uri: backendVisiblePath('$_baseUrl$path'),
       accessToken: _token!,
     );
     if (proof != null) headers['DPoP'] = proof;

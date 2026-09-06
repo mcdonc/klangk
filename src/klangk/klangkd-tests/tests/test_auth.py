@@ -35,11 +35,17 @@ def _req(auth=None):
     ``model``/``db`` the dep callables reach (#1572). The HTTP surface
     the DPoP gate reads (#3218) — headers, method, url.path — is
     faked with no DPoP header; tokens minted by these tests are
-    unbound, so the gate no-ops.
+    unbound, so the gate no-ops. A real ``util`` is wired when the
+    fake lacks one — the gate's base-path resolution reads it
+    (#3287) even for unbound tokens.
     """
     if auth is None:
         auth = _auth()
     auth.app.state.auth = auth
+    if not hasattr(auth.app.state, "util"):
+        from klangk.util import Util
+
+        auth.app.state.util = Util(auth.app)
     return _types.SimpleNamespace(
         app=auth.app,
         headers={},
@@ -3709,6 +3715,23 @@ class TestDpopRefresh:
         result = await a.refresh_token(token)
         assert result.access_token != token
 
+    async def test_bound_refresh_tolerates_prefixed_htu(self, user):
+        """#3287: the refresh gate strips the live base path from the
+        proof's htu, like the HTTP deps and both WS gates."""
+        a = _auth()
+        private, jwk = make_binding_key()
+        jkt = dpop.jwk_thumbprint(jwk)
+        token = a.create_token(user["id"], user["email"], jkt=jkt)
+        proof = make_dpop_proof(
+            private,
+            jwk,
+            method="POST",
+            uri="https://h/klangk/api/v1/auth/refresh",
+            token=token,
+        )
+        result = await a.refresh_token(token, proof=proof, base_path="/klangk")
+        assert a.decode_token(result.access_token)["cnf"]["jkt"] == jkt
+
 
 class TestDpopEnforcement:
     """The FastAPI deps enforce proofs for bound tokens (#3218)."""
@@ -3790,6 +3813,76 @@ class TestDpopEnforcement:
     async def test_lenient_logout_dep_ignores_proofs(self, user):
         a, _, _, creds = self._bound_credentials(user)
         result = await auth.get_current_user_lenient(_dpop_req(a), creds)
+        assert result["id"] == user["id"]
+
+    async def test_prefixed_htu_accepted_behind_trusted_prefix(self, user):
+        """#3287: a subpath deployment's browser mints the htu with the
+        base path; a trusted X-Forwarded-Prefix lets the gate strip it."""
+        a, private, jwk, creds = self._bound_credentials(user)
+        proof = make_dpop_proof(
+            private,
+            jwk,
+            method="GET",
+            uri="https://h/klangk/api/v1/x",
+            token=creds.credentials,
+        )
+        req = _dpop_req(
+            a,
+            headers={
+                "dpop": proof,
+                "x-forwarded-prefix": "/klangk",
+                "x-forwarded-for": "203.0.113.9",
+                "x-real-ip": "203.0.113.9",
+            },
+        )
+        req.client = _types.SimpleNamespace(host="127.0.0.1")
+        result = await auth.get_current_user(req, creds)
+        assert result["id"] == user["id"]
+
+    async def test_prefixed_htu_rejected_from_untrusted_peer(self, user):
+        """The same forwarded headers from a peer outside the trust set
+        must not loosen the comparison (#3287)."""
+        a, private, jwk, creds = self._bound_credentials(user)
+        proof = make_dpop_proof(
+            private,
+            jwk,
+            method="GET",
+            uri="https://h/klangk/api/v1/x",
+            token=creds.credentials,
+        )
+        req = _dpop_req(
+            a,
+            headers={
+                "dpop": proof,
+                "x-forwarded-prefix": "/klangk",
+            },
+        )
+        req.client = _types.SimpleNamespace(host="203.0.113.9")
+        with pytest.raises(HTTPException) as exc_info:
+            await auth.get_current_user(req, creds)
+        assert exc_info.value.status_code == 401
+        assert "uri mismatch" in exc_info.value.detail
+
+    async def test_prefixed_htu_accepted_with_pinned_base_path(self, user):
+        """#3287: a pinned KLANGKD_HOSTING_BASE_PATH applies with no
+        forwarded headers at all (the env pin wins over headers)."""
+        pinned = _auth({"KLANGKD_HOSTING_BASE_PATH": "/klangk"})
+        private, jwk = make_binding_key()
+        creds = HTTPAuthorizationCredentials(
+            scheme="Bearer",
+            credentials=pinned.create_token(
+                user["id"], user["email"], jkt=dpop.jwk_thumbprint(jwk)
+            ),
+        )
+        proof = make_dpop_proof(
+            private,
+            jwk,
+            method="GET",
+            uri="https://h/klangk/api/v1/x",
+            token=creds.credentials,
+        )
+        req = _dpop_req(pinned, headers={"dpop": proof})
+        result = await auth.get_current_user(req, creds)
         assert result["id"] == user["id"]
 
 

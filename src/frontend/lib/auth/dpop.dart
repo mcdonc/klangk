@@ -7,6 +7,8 @@ library;
 
 export 'dpop_core.dart';
 
+import 'package:klangk_plugin_api/klangk_plugin_api.dart' show baseUrl;
+
 import 'dpop_core.dart';
 import 'dpop_backend_stub.dart'
     if (dart.library.js_interop) 'dpop_backend_web.dart' as impl;
@@ -15,6 +17,28 @@ import 'dpop_backend_stub.dart'
 /// [testDpopBackendOverride]).
 DpopBackend get dpopBackend =>
     testDpopBackendOverride ?? impl.createDpopBackend();
+
+/// The htu a proof must name: the request path as the backend sees it
+/// (#3287).
+///
+/// On a subpath deployment the backend sits behind an outer proxy that
+/// strips the base prefix before forwarding, while the browser — minting
+/// from `<base href>` — carries it. A proof whose htu included the prefix
+/// failed the server's uri comparison, so the htu is minted over the
+/// backend-visible path: the [url]'s path component with [baseUrl]'s
+/// prefix removed. Scheme, host, and query never participate in the
+/// server's comparison, so a bare path is a valid htu (the server also
+/// tolerates the prefixed form, keeping pre-fix clients working).
+String backendVisiblePath(String url) {
+  final path = Uri.tryParse(url)?.path ?? url;
+  if (baseUrl.isEmpty) return path;
+  final base = baseUrl.startsWith('/') ? baseUrl : '/$baseUrl';
+  final trimmed =
+      base.endsWith('/') ? base.substring(0, base.length - 1) : base;
+  if (trimmed.isEmpty) return path;
+  if (path == trimmed) return '';
+  return path.startsWith('$trimmed/') ? path.substring(trimmed.length) : path;
+}
 
 /// Bearer headers for [token], plus a DPoP proof when it is bound
 /// (#3218). For callers that only hold the token string (file viewer,
@@ -32,7 +56,7 @@ Future<Map<String, String>> dpopHeadersFor(
   headers['Authorization'] = 'Bearer $token';
   final proof = await dpopBackend.createProof(
     method: method,
-    uri: url,
+    uri: backendVisiblePath(url),
     accessToken: token,
   );
   if (proof != null) headers['DPoP'] = proof;

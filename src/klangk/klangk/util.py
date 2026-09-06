@@ -806,6 +806,21 @@ class Util:
             return hostname
         return f"{hostname}:{port}"
 
+    def hosting_base_path_for(
+        self, headers=None, client_host: str | None = None
+    ) -> str:
+        """The live hosting base path of this request (#3287).
+
+        The pinned ``KLANGKD_HOSTING_BASE_PATH``, else the trusted
+        ``X-Forwarded-Prefix``, else ``""`` — the same prefix
+        :meth:`derive_hosting_info` re-attaches when building external
+        URLs. The DPoP gates pass it to proof verification so a proof
+        whose ``htu`` path still carries the prefix (minted by a browser
+        from ``<base href>``) verifies against the prefix-stripped path
+        the backend sees.
+        """
+        return self.derive_hosting_info(headers, client_host)[2] or ""
+
     def cors_origins(self) -> list[str]:
         """Build the CORS allowed-origins list.
 
