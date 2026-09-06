@@ -66,8 +66,8 @@ Semantics worth knowing:
   reading.** Sibling starts in flight (per-workspace operation lock
   held, container not yet created) have their resolved limits
   subtracted from the measured availability.
-- **No limit configured → no check.** An unbounded workspace has
-  nothing to admit against.
+- **An unbounded workspace skips the check** — with no limit
+  configured, there is nothing to admit against.
 - **Unmeasurable fails open.** A host whose memory cannot be read
   admits with a one-time warning — an exotic platform must not become
   unable to start workspaces.

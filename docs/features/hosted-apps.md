@@ -87,15 +87,17 @@ The generated hosted app URL becomes:
 https://example.com/klangk/hosted/<workspace_id>/<host_port>/
 ```
 
-No manual configuration needed — the `KLANGKD_HOSTING_*` environment variables are only required if header-based derivation doesn't work for your setup.
+Manual configuration is optional — the `KLANGKD_HOSTING_*` environment
+variables are only needed when header-based derivation doesn't work for
+your setup (URLs then derive from those variables instead).
 
 ## Configuration
 
-| Variable                             | Default   | Description                                                                                                                |
-| ------------------------------------ | --------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `KLANGKD_PORT_RANGE_START`           | `9000`    | First host port for workspace app allocations                                                                              |
-| `KLANGKD_HOSTED_PORTS_PER_WORKSPACE` | `5`       | Ceiling on ports per workspace. `0` disables hosted-app serving entirely (no allocation, no hosting env, `/hosted/` 404s). |
-| `KLANGKD_PORT`                       | _(unset)_ | Browser/proxy port (used in URL derivation). Must be set to serve hosted apps (hosted apps are browser-ingress).           |
+| Variable                             | Default   | Description                                                                                                                                                         |
+| ------------------------------------ | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `KLANGKD_PORT_RANGE_START`           | `9000`    | First host port for workspace app allocations                                                                                                                       |
+| `KLANGKD_HOSTED_PORTS_PER_WORKSPACE` | `5`       | Ceiling on ports per workspace. `0` disables hosted-app serving entirely: klangkd stops allocating ports and injecting the hosting env, and `/hosted/` returns 404. |
+| `KLANGKD_PORT`                       | _(unset)_ | Browser/proxy port (used in URL derivation). Must be set to serve hosted apps (hosted apps are browser-ingress).                                                    |
 
 Ports are allocated atomically and cleaned up automatically when workspaces are deleted.
 
@@ -104,12 +106,12 @@ Ports are allocated atomically and cleaned up automatically when workspaces are 
 Set `KLANGKD_HOSTED_PORTS_PER_WORKSPACE=0` to turn hosted-app serving off
 server-wide. This is a single knob that doubles as the count configuration:
 
-- **No ports are allocated** — not at workspace creation, not on container
-  start. Existing workspaces release their allocations on their next start.
-- **No hosting env in containers** — `KLANGKWS_PORT_MAPPINGS` and the
-  `KLANGKWS_HOSTING_*` vars are not injected, so `klangk-hosted-url` and the
-  agent's `get_hosted_url` tool error out cleanly. The same happens in
-  headless deployments (`KLANGKD_PORT` unset): `/hosted/` is served by the
+- **Port allocation stops** — at workspace creation and at container start
+  alike. Existing workspaces release their allocations on their next start.
+- **Containers run without the hosting env** — `KLANGKWS_PORT_MAPPINGS` and
+  the `KLANGKWS_HOSTING_*` vars stay unset, so `klangk-hosted-url` and the
+  agent's `get_hosted_url` tool error out cleanly. Headless deployments
+  (`KLANGKD_PORT` unset) behave the same way: `/hosted/` is served by the
   browser listener, which headless mode does not render.
 - **`/hosted/<ws>/<port>/` returns 404** — the proxy locations are
   collapsed to a single `return 404` block.

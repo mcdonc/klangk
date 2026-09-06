@@ -182,8 +182,9 @@ before; `none` is purely additive.
 
 ## Switching modes
 
-Mode switching is **just changing `KLANGKD_AUTH_MODES` and restarting** — no
-migration, no data loss, no re-seed. Two directions matter; both work because
+Mode switching is **just changing `KLANGKD_AUTH_MODES` and restarting** —
+users and data carry over untouched; there is no migration or re-seed
+step. Two directions matter; both work because
 the CLI probes the server's mode **live** on every command (it is not cached),
 so the new mode takes effect the moment the server restarts.
 

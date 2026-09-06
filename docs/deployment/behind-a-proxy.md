@@ -238,11 +238,11 @@ proxy's address instead of the client's.
 **Too little trust** (headers missing, `trusted-proxy-cidrs` wrong,
 or `reject-proxy-headers: true`):
 
-- **No audit records are ever written.** All logins appear to come
-  from one workstation (the proxy's address), so concurrent logons
-  from different workstations are never detected. This is exactly the
-  event the feature exists to catch — an attacker using stolen
-  credentials from a second machine leaves no trace.
+- **Every session records the proxy's address as its workstation.**
+  Concurrent logons from different machines therefore look like one, the
+  audit record is never written, and an attacker using stolen credentials
+  from a second machine leaves no trace — exactly the event the feature
+  exists to catch.
 - **The admin session list is misleading.**
   `GET /api/v1/users/{id}/sessions` shows the proxy's address
   for every session. An operator cannot tell workstations apart, and

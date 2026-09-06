@@ -197,8 +197,9 @@ bytes through the download endpoint, cannot render.
 Withholding `files-write` disables every mutating route — upload
 (`/files/upload`), rename (`/files/rename`), and delete (`DELETE
 /files`) — so a `files-view`-only member can browse listings but not read
-file bodies or modify the workspace. In the file viewer the matching affordances disappear: no
-drag-and-drop zone or upload hints, no Rename/Delete in the context menu,
+file bodies or modify the workspace. In the file viewer the matching affordances disappear: the
+drag-and-drop zone and upload hints are hidden, Rename/Delete drop out of
+the context menu,
 and text-editor renderers go read-only (their Save uploads through that
 endpoint).
 
