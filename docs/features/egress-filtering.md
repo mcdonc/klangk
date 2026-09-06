@@ -259,12 +259,12 @@ entry is retracted so it does not re-apply on the next restart.
 
 ### Operator notes
 
-- **No host-side setup.** Interactive mode needs no kernel logging, no
-  `/dev/kmsg` access, no host iptables and no `nsenter`: the sidecar
-  consumes its own NFQUEUE inside the network namespace it owns, and
-  klangkd coordinates everything over authenticated WebSockets. (An
-  earlier design tailed kernel LOG lines; NFQUEUE replaced it — blocked
-  packets generate no kernel log volume at all.)
+- **Interactive mode lives entirely inside the workspace's network
+  namespace.** The sidecar consumes its own NFQUEUE there and klangkd
+  coordinates everything over authenticated WebSockets, so the host side
+  needs no kernel logging, `/dev/kmsg` access, host iptables, or
+  `nsenter`. (An earlier design tailed kernel LOG lines; NFQUEUE
+  replaced it — blocked packets generate no kernel log volume at all.)
 - **Settings** (all SIGHUP-reloadable): `KLANGKD_EGRESS_CONSENT_TIMEOUT`
   (default 120s — how long a request stays pending before auto-deny),
   `KLANGKD_EGRESS_CONSENT_RATE_LIMIT` (default 50 pending requests per

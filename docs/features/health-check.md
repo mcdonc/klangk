@@ -129,7 +129,7 @@ login-shell exports don't reach the probe.
 
 Health checks are deliberately conservative:
 
-- **No health check configured** — nothing is polled; status stays
+- **Health check unset** — nothing is polled; status stays
   `null` (unknown).
 - **Setup not finished** — checks are skipped until the workspace's
   [`setup_state`](sandbox.md#setup-scripts) is `complete`. Polling
