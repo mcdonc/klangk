@@ -1,7 +1,13 @@
 """Workspace resource routes: files (list/read/delete/rename/download/
 upload) and container resources (images + named volumes) — merged from the
 former files and images submodules (images.py was misnamed: it lists
-volumes too)."""
+volumes too).
+
+The data-level file routes (download, upload, rename, delete) each
+write a best-effort ``file.download`` / ``file.write`` audit row
+(#3257, SV-222471/472) through ``common.record_workspace_event``.
+Text reads (``/files/content``) stay unaudited: the viewer's preview
+path, bounded by the content-size cap, not an export channel."""
 
 import io
 import json
@@ -15,6 +21,7 @@ from fastapi import (
     Depends,
     HTTPException,
     Path,
+    Request,
     UploadFile,
 )
 from fastapi.responses import (
@@ -33,6 +40,7 @@ from ..util import (
 )
 from .common import get_app_dep
 from .common import (
+    record_workspace_event,
     workspace_resource,
 )
 
@@ -129,6 +137,7 @@ async def read_file(
 async def delete_file(
     workspace_id: str,
     path: str,
+    request: Request,
     user: dict = Depends(acl.has_permission("files-view", workspace_resource)),
     _write: dict = Depends(
         acl.has_permission("files-write", workspace_resource)
@@ -140,6 +149,11 @@ async def delete_file(
         deleted = await app.state.files.delete_path(cid, path)
     except (ValueError, FileNotFoundError, OSError) as e:
         raise _files_http_error(e) from None
+    # A delete is a write-class change to workspace data (#3257,
+    # SV-222472) — no byte size: the removed content is gone.
+    await record_workspace_event(
+        app, request, user, workspace_id, "file.write", {"path": deleted}
+    )
     return {"path": deleted, "status": "deleted"}
 
 
@@ -152,6 +166,7 @@ class RenameFileRequest(BaseModel):
 async def rename_file(
     workspace_id: str,
     body: RenameFileRequest,
+    request: Request,
     user: dict = Depends(acl.has_permission("files-view", workspace_resource)),
     _write: dict = Depends(
         acl.has_permission("files-write", workspace_resource)
@@ -165,13 +180,34 @@ async def rename_file(
         )
     except (ValueError, FileNotFoundError, FileExistsError, OSError) as e:
         raise _files_http_error(e, not_found="Source not found") from None
+    # A rename is a write-class change to workspace data (#3257,
+    # SV-222472) — the new path names the row; the old one rides in
+    # ``from``.
+    await record_workspace_event(
+        app,
+        request,
+        user,
+        workspace_id,
+        "file.write",
+        {"path": renamed, "from": body.old_path},
+    )
     return {"path": renamed, "status": "renamed"}
+
+
+def _download_detail(path: str, info: dict) -> dict:
+    """The ``file.download`` detail blob (#3257): the path plus the
+    byte size — a file row only, since a directory's stat size is its
+    inode, not the archive the stream produces."""
+    if info["is_dir"]:
+        return {"path": path}
+    return {"path": path, "size": info["size"]}
 
 
 @router.get("/workspaces/{workspace_id}/files/download")
 async def download_file(
     workspace_id: str,
     path: str,
+    request: Request,
     user: dict = Depends(acl.has_permission("files-view", workspace_resource)),
     _download: dict = Depends(
         acl.has_permission("files-download", workspace_resource)
@@ -186,6 +222,16 @@ async def download_file(
     if info is None:
         raise HTTPException(status_code=404, detail="Path not found")
     name = sanitize_disposition_name(posixpath.basename(path) or "download")
+    # Data-level audit row (#3257, SV-222471): per-file downloads are
+    # the exfiltration channel an incident review walks first.
+    await record_workspace_event(
+        app,
+        request,
+        user,
+        workspace_id,
+        "file.download",
+        _download_detail(path, info),
+    )
     if not info["is_dir"]:
         return StreamingResponse(
             app.state.files.stream_file(cid, path),
@@ -232,6 +278,7 @@ async def _read_upload(file: UploadFile, max_upload: int) -> bytes:
 async def upload_file(
     workspace_id: str,
     file: UploadFile,
+    request: Request,
     path: str = "",
     user: dict = Depends(acl.has_permission("files-view", workspace_resource)),
     _write: dict = Depends(
@@ -252,6 +299,16 @@ async def upload_file(
         )
     except (ValueError, OSError) as e:
         raise _files_http_error(e) from None
+    # Data-level audit row (#3257, SV-222472): every byte written
+    # into a workspace through the files API.
+    await record_workspace_event(
+        app,
+        request,
+        user,
+        workspace_id,
+        "file.write",
+        {"path": saved_path, "size": len(data)},
+    )
     return {"path": saved_path, "status": "uploaded"}
 
 

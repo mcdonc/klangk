@@ -381,6 +381,76 @@ void main() {
       expect(find.byKey(const ValueKey('audit-event-detail')), findsNothing);
     });
 
+    testWidgets('file events show the file icon and path in the detail',
+        (tester) async {
+      serveAudit((limit, offset, event, actor, target) => http.Response(
+            _auditEnvelope([
+              _auditEvent(
+                9,
+                event: 'file.download',
+                actorEmail: 'exfil@example.com',
+                targetType: 'workspace',
+                targetId: 'ws-42',
+                detail: {
+                  'path': 'secret-ws.tar.gz',
+                  'size': 1048576,
+                },
+                sourceIp: '203.0.113.9',
+                userAgent: 'klangk-cli/1.0',
+              ),
+            ], total: 1),
+            200,
+          ));
+
+      await pumpPanel(tester);
+
+      // The chip renders like any other (non-negative: green).
+      expect(find.text('file.download'), findsOneWidget);
+      expect(find.byKey(const ValueKey('audit-event-detail')), findsNothing);
+
+      await tester.tap(find.text('file.download'));
+      await tester.pumpAndSettle();
+
+      // The file-icon path row, plus the size in the raw detail JSON.
+      final pathRow = find.byKey(const ValueKey('audit-event-path'));
+      expect(pathRow, findsOneWidget);
+      expect(
+        find.descendant(
+            of: pathRow, matching: find.byIcon(Icons.insert_drive_file)),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: pathRow, matching: find.text('secret-ws.tar.gz')),
+        findsOneWidget,
+      );
+      expect(find.textContaining('1048576'), findsOneWidget);
+    });
+
+    testWidgets('non-file events render no path row', (tester) async {
+      serveAudit((limit, offset, event, actor, target) => http.Response(
+            _auditEnvelope([
+              _auditEvent(
+                4,
+                event: 'user.update',
+                actorEmail: 'admin@example.com',
+                targetId: 'u-2',
+                detail: {
+                  'fields': ['handle']
+                },
+              ),
+            ], total: 1),
+            200,
+          ));
+
+      await pumpPanel(tester);
+      await tester.tap(find.text('user.update'));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('audit-event-detail')), findsOneWidget);
+      expect(find.byKey(const ValueKey('audit-event-path')), findsNothing);
+      expect(find.byIcon(Icons.insert_drive_file), findsNothing);
+    });
+
     testWidgets('null detail renders a placeholder, not an error',
         (tester) async {
       serveAudit((limit, offset, event, actor, target) => http.Response(

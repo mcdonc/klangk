@@ -8,12 +8,15 @@ login.failed rows, session-limit revocation), the HTTP emit sites
 logout), and the ``GET /events/audit`` listing.
 """
 
+import io
+import json
+import tarfile
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
 import test_api
-from test_api import _admin_login, _auth_headers
+from test_api import _admin_login, _auth_headers, _mock_pod
 from httpx import ASGITransport, AsyncClient
 from klangk import auth as klangk_auth
 from klangk.model.audit_events import filter_clause, row_to_dict
@@ -215,6 +218,24 @@ class TestAuditEventsModel:
         assert await events.prune() == 2
         assert await events.count_events(event="user.delete") == 1
         assert await events.count_events(event="login.failed") == 2
+
+    async def test_file_events_have_own_row_cap_bucket(self, app_state, db):
+        """The high-frequency file.* class gets its own bucket (#3257):
+        a flood of file rows evicts only other file rows — never the
+        account/privilege history, and never the login.failed spray
+        bucket either."""
+        events = app_state.state.model.audit_events
+        await events.record("user.delete", target_type="user")
+        for _ in range(4):
+            await events.record("login.failed")
+        for _ in range(4):
+            await events.record("file.write", target_type="workspace")
+        app_state.state.settings.audit_events_retention_days = 0
+        app_state.state.settings.audit_events_row_cap = 2
+        assert await events.prune() == 4
+        assert await events.count_events(event="user.delete") == 1
+        assert await events.count_events(event="login.failed") == 2
+        assert await events.count_events(event="file.write") == 2
 
     async def test_prune_both_passes(self, app_state, db):
         events = app_state.state.model.audit_events
@@ -834,6 +855,265 @@ class TestSelfServiceAudit:
         assert change["detail"] == {"via": "password-reset"}
         login = (await _events(api_app, "login"))[0]
         assert login["detail"] == {"via": "password-reset"}
+
+
+class TestFileAudit:
+    """Data-level file events (#3257): archive export/import and the
+    in-workspace files API each leave a file.* audit row with actor,
+    workspace target, path, and byte size."""
+
+    CID = "cid-audit-files"
+
+    @pytest.fixture(autouse=True)
+    async def _make_user_admin(self, ws_admin):
+        """Seed the ACL world (admins/members groups) so the standard
+        user can create workspaces — the TestFileRoutes pattern."""
+
+    async def _workspace(self, api_client, api_app, name="audit-file-ws"):
+        """Create a workspace over HTTP as the standard user and
+        simulate its running container (the files routes require one).
+        ``api_app`` is a parameter, not the module global: the module
+        alias is pytest's fixture definition, not the resolved app."""
+        headers = await _auth_headers(api_client)
+        resp = await api_client.post(
+            "/api/v1/workspaces", headers=headers, json={"name": name}
+        )
+        assert resp.status_code == 200
+        ws_id = resp.json()["id"]
+        api_app.state.container_registry.track_activity(self.CID, ws_id)
+        return headers, ws_id
+
+    def _cleanup(self, api_app, ws_id):
+        registry = api_app.state.container_registry
+        registry.states.pop(ws_id, None)
+        registry._cid_to_wsid.pop(self.CID, None)
+
+    async def test_export_records_file_download(
+        self, api_client, api_app, user
+    ):
+        headers, ws_id = await self._workspace(
+            api_client, api_app, "audit-export"
+        )
+        resp = await api_client.get(
+            f"/api/v1/workspaces/{ws_id}/export", headers=headers
+        )
+        assert resp.status_code == 200
+        rows = await _events(api_app, "file.download")
+        assert len(rows) == 1
+        row = rows[0]
+        assert row["actor_id"] == user["id"]
+        assert row["target_type"] == "workspace"
+        assert row["target_id"] == ws_id
+        assert row["detail"]["path"] == "audit-export.tar.gz"
+        assert isinstance(row["detail"]["size"], int)
+        assert row["source_ip"] is not None
+
+    async def test_import_records_file_upload(
+        self, api_client, api_app, user, app_state
+    ):
+        meta = json.dumps(
+            {
+                "instance_id": app_state.state.util.instance_id(),
+                "name": "audit-import",
+                "egress_mode": "interactive",
+                "per_handle_home": True,
+            }
+        ).encode()
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+            info = tarfile.TarInfo(name="workspace.json")
+            info.size = len(meta)
+            tar.addfile(info, io.BytesIO(meta))
+        archive = buf.getvalue()
+
+        headers = await _auth_headers(api_client)
+        resp = await api_client.post(
+            "/api/v1/workspaces/import",
+            headers=headers,
+            files={"file": ("archive.tar.gz", archive, "application/gzip")},
+        )
+        assert resp.status_code == 200
+        rows = await _events(api_app, "file.upload")
+        assert len(rows) == 1
+        row = rows[0]
+        assert row["actor_id"] == user["id"]
+        assert row["target_type"] == "workspace"
+        assert row["target_id"] == resp.json()["id"]
+        assert row["detail"]["path"] == "archive.tar.gz"
+        assert row["detail"]["size"] == len(archive)
+
+    async def test_files_upload_records_file_write(
+        self, api_client, api_app, user
+    ):
+        headers, ws_id = await self._workspace(api_client, api_app)
+        try:
+            with patch.object(
+                _mock_pod,
+                "exec_container",
+                new_callable=AsyncMock,
+                return_value=(0, "", ""),
+            ):
+                resp = await api_client.post(
+                    f"/api/v1/workspaces/{ws_id}/files/upload"
+                    "?path=/home/klangk/audit.txt",
+                    headers=headers,
+                    files={"file": ("audit.txt", b"audited", "text/plain")},
+                )
+            assert resp.status_code == 200
+            rows = await _events(api_app, "file.write")
+            assert len(rows) == 1
+            row = rows[0]
+            assert row["actor_id"] == user["id"]
+            assert row["target_id"] == ws_id
+            assert row["detail"] == {
+                "path": "/home/klangk/audit.txt",
+                "size": 7,
+            }
+        finally:
+            self._cleanup(api_app, ws_id)
+
+    async def test_files_download_records_file_download(
+        self, api_client, api_app, user
+    ):
+        headers, ws_id = await self._workspace(api_client, api_app)
+        try:
+
+            async def fake_stream(*a, **kw):
+                yield b"download me"
+
+            with (
+                patch.object(
+                    _mock_pod,
+                    "exec_container",
+                    new_callable=AsyncMock,
+                    return_value=(0, "regular file\t11", ""),
+                ),
+                patch.object(
+                    _mock_pod,
+                    "exec_container_stream",
+                    side_effect=fake_stream,
+                ),
+            ):
+                resp = await api_client.get(
+                    f"/api/v1/workspaces/{ws_id}/files/download"
+                    "?path=/home/klangk/dl.txt",
+                    headers=headers,
+                )
+            assert resp.status_code == 200
+            rows = await _events(api_app, "file.download")
+            row = rows[0]
+            assert row["target_id"] == ws_id
+            assert row["detail"] == {
+                "path": "/home/klangk/dl.txt",
+                "size": 11,
+            }
+        finally:
+            self._cleanup(api_app, ws_id)
+
+    async def test_directory_download_omits_size(
+        self, api_client, api_app, user
+    ):
+        """A directory download is an unbounded tar stream — the stat
+        size is the inode, not the archive, so the row carries the path
+        only."""
+        headers, ws_id = await self._workspace(api_client, api_app)
+        try:
+
+            async def fake_stream(*a, **kw):
+                yield b"tar bytes"
+
+            with (
+                patch.object(
+                    _mock_pod,
+                    "exec_container",
+                    new_callable=AsyncMock,
+                    return_value=(0, "directory\t4096", ""),
+                ),
+                patch.object(
+                    _mock_pod,
+                    "exec_container_stream",
+                    side_effect=fake_stream,
+                ),
+            ):
+                resp = await api_client.get(
+                    f"/api/v1/workspaces/{ws_id}/files/download"
+                    "?path=/home/klangk",
+                    headers=headers,
+                )
+            assert resp.status_code == 200
+            row = (await _events(api_app, "file.download"))[0]
+            assert row["detail"] == {"path": "/home/klangk"}
+        finally:
+            self._cleanup(api_app, ws_id)
+
+    async def test_rename_and_delete_record_file_write(
+        self, api_client, api_app, user
+    ):
+        headers, ws_id = await self._workspace(api_client, api_app)
+        try:
+            exec_results = [
+                (0, "", ""),  # rename: test -e source — exists
+                (1, "", ""),  # rename: test -e dest — does not
+                (0, "", ""),  # rename: mkdir -p parent
+                (0, "", ""),  # rename: mv
+                (0, "", ""),  # delete: test -e — exists
+                (0, "", ""),  # delete: rm -rf
+            ]
+            with patch.object(
+                _mock_pod,
+                "exec_container",
+                new_callable=AsyncMock,
+                side_effect=exec_results,
+            ):
+                renamed = await api_client.post(
+                    f"/api/v1/workspaces/{ws_id}/files/rename",
+                    headers=headers,
+                    json={
+                        "old_path": "/home/klangk/a.txt",
+                        "new_path": "/home/klangk/b.txt",
+                    },
+                )
+                assert renamed.status_code == 200
+                deleted = await api_client.delete(
+                    f"/api/v1/workspaces/{ws_id}/files"
+                    "?path=/home/klangk/b.txt",
+                    headers=headers,
+                )
+                assert deleted.status_code == 200
+            rows = await _events(api_app, "file.write")
+            # Newest first: the delete row lands on top of the rename.
+            assert len(rows) == 2
+            delete_row, rename_row = rows
+            assert rename_row["detail"] == {
+                "path": "/home/klangk/b.txt",
+                "from": "/home/klangk/a.txt",
+            }
+            assert delete_row["detail"] == {"path": "/home/klangk/b.txt"}
+            assert delete_row["target_id"] == ws_id
+            assert delete_row["actor_id"] == user["id"]
+        finally:
+            self._cleanup(api_app, ws_id)
+
+    async def test_failed_write_records_nothing(
+        self, api_client, api_app, user
+    ):
+        """A rejected write (413 past the upload cap) leaves no audit
+        row — the file events record actions that happened, not
+        attempts the server refused."""
+        headers, ws_id = await self._workspace(api_client, api_app)
+        try:
+            api_app.state.settings.file_upload_size_max = 4
+            resp = await api_client.post(
+                f"/api/v1/workspaces/{ws_id}/files/upload"
+                "?path=/home/klangk/big.txt",
+                headers=headers,
+                files={"file": ("big.txt", b"xxxxxx", "text/plain")},
+            )
+            assert resp.status_code == 413
+            assert await _events(api_app, "file.write") == []
+        finally:
+            api_app.state.settings.file_upload_size_max = 1024 * 1024 * 1024
+            self._cleanup(api_app, ws_id)
 
 
 class TestAuditEventsEndpoint:

@@ -17719,12 +17719,19 @@ class TestNoCoverAudit2910Part3:
             side_effect=[b"tar-bytes", RuntimeError("consumer gone")]
         )
 
-        with patch(
-            "klangk.api.workspaces.asyncio.create_subprocess_exec",
-            return_value=proc,
+        with (
+            patch(
+                "klangk.api.workspaces.asyncio.create_subprocess_exec",
+                return_value=proc,
+            ),
+            patch(
+                "klangk.api.workspaces.record_workspace_event",
+                new_callable=AsyncMock,
+            ),
         ):
             response = await export_workspace(
                 "ws-1",
+                request=MagicMock(),
                 user={"id": "u1", "email": "u@x.com"},
                 app=app,
             )
@@ -17747,6 +17754,7 @@ class TestNoCoverAudit2910Part3:
             await upload_file(
                 "ws-1",
                 upload,
+                request=MagicMock(),
                 path="",
                 user={"id": "u1"},
                 _write={"user_id": "u1"},

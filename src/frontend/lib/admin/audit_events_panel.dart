@@ -8,7 +8,10 @@
 /// [ContainerEventsPanel] (same paged envelope, same filter-field +
 /// paging layout). The subtab rides the Events tab's `manage-events`
 /// gate (see [AdminUsersPage]); the `/events` ACL resource governs
-/// both streams, so no separate permission wiring exists.
+/// both streams, so no separate permission wiring exists. The
+/// data-level file events (#3257) — `file.download`, `file.upload`,
+/// `file.write` — render here like any other row; their detail
+/// expansion shows the file icon and the audited path.
 library;
 
 import 'dart:async';
@@ -357,12 +360,18 @@ class _AuditEventsPanelState extends State<AuditEventsPanel> {
 
   /// The expanded, read-only per-row detail view: the action-specific
   /// `detail` blob (pretty-printed JSON, never secrets — #3205) plus
-  /// the full correlation fields the row columns ellipsize.
+  /// the full correlation fields the row columns ellipsize. File
+  /// events (#3257) carry a `path` in their detail — rendered as a
+  /// file-icon row above the raw JSON so the reviewed path reads at
+  /// a glance.
   Widget _detailArea(Map<String, dynamic> row) {
     final detail = row['detail'];
     final detailJson = detail == null
         ? '—'
         : const JsonEncoder.withIndent('  ').convert(detail);
+    final filePath = detail is Map && detail['path'] is String
+        ? detail['path'] as String
+        : null;
     Widget field(String label, String value) {
       return Padding(
         padding: const EdgeInsets.only(bottom: 4),
@@ -398,6 +407,27 @@ class _AuditEventsPanelState extends State<AuditEventsPanel> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          if (filePath != null)
+            Padding(
+              key: const ValueKey('audit-event-path'),
+              padding: const EdgeInsets.only(bottom: 4),
+              child: Row(
+                children: [
+                  const Icon(
+                    Icons.insert_drive_file,
+                    size: 16,
+                    color: KColors.textSecondary,
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: SelectableText(
+                      filePath,
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           field('Source IP', row['source_ip'] as String? ?? '—'),
           field('User agent', row['user_agent'] as String? ?? '—'),
           field('Detail', detailJson),

@@ -1531,15 +1531,18 @@ class KlangkSettings(BaseSettings):
     container_events_row_cap: int = 10000
     # audit_events_retention_days / audit_events_row_cap (#3205): bound
     # the ``audit_events`` identity/privilege audit table (account CRUD,
-    # group/ACL/role changes, login/logout, session revocation). Same
-    # two-pass prune as container_events: retention_days deletes rows
-    # older than the window; row_cap is a deploy-wide cap on total rows
-    # keeping the newest when exceeded. Login/logout events are far
-    # lower-volume than container transitions but are the table every
-    # incident review starts from, so the defaults are longer/larger
-    # than container_events'. 0 disables either knob. Swept hourly by
-    # the consent sweeper (once at startup); read live (SIGHUP
-    # reload-safe -- a reload applies on the next sweep).
+    # group/ACL/role changes, login/logout, session revocation) and its
+    # data-level file events (#3257: file.download / file.upload /
+    # file.write). Same two-pass prune as container_events:
+    # retention_days deletes rows older than the window; row_cap is a
+    # deploy-wide cap applied per class (login.failed rows and file.*
+    # rows each get their own bucket) keeping the newest when exceeded.
+    # Login/logout events are far lower-volume than container
+    # transitions but are the table every incident review starts from,
+    # so the defaults are longer/larger than container_events'. 0
+    # disables either knob. Swept hourly by the consent sweeper (once
+    # at startup); read live (SIGHUP reload-safe -- a reload applies on
+    # the next sweep).
     audit_events_retention_days: int = 365
     audit_events_row_cap: int = 100000
     # audit_fail_closed (#3154, security finding): refuse the

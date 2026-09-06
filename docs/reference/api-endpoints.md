@@ -530,7 +530,13 @@ see [Auth Modes](../features/auth-modes.md).
 Paged identity/privilege audit history (#3205), newest first, from the
 `audit_events` table: account create/update/delete, group and ACL
 changes, workspace role assignments and transfers,
-login/logout/failed-login, and session revocation. Query params:
+login/logout/failed-login, session revocation, and the data-level
+file events (#3257) — `file.download` (a workspace archive export or
+a per-file/directory download), `file.upload` (a workspace archive
+import), and `file.write` (an upload, rename, or delete through the
+files API), each carrying the path and byte size in `detail` (the
+size is omitted where meaningless — rename, delete, directory
+downloads). Query params:
 `limit` (1–200, default 50), `offset`, and optional `event`, `actor`
 (matches actor id or email), and `target` (target id) substring filters.
 Each item carries the acting principal (`actor_id` / `actor_email` —

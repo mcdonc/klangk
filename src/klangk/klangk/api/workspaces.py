@@ -49,7 +49,7 @@ from ..workspace_settings import (
     validate_settings,
     validate_settings_patch,
 )
-from .common import get_app_dep, request_metadata
+from .common import get_app_dep
 from ..model import (
     EGRESS_MODE_DEFAULT,
     EGRESS_MODES,
@@ -64,6 +64,7 @@ from .common import (
     ALL_PERMISSIONS,
     WorkspaceAclEntry,
     autostart_allowed,
+    record_workspace_event,
     serialize_acl_entries,
     workspace_collection_resource,
     workspace_resource,
@@ -1262,6 +1263,7 @@ async def _estimate_home_size(home_dir) -> int:
 @router.get("/workspaces/{workspace_id}/export")
 async def export_workspace(
     workspace_id: str,
+    request: Request,
     user: dict = Depends(
         acl.has_permission("export-workspace", workspace_resource)
     ),
@@ -1367,6 +1369,19 @@ async def export_workspace(
     # Rough estimate: gzip typically compresses to ~20% of original
     # for text-heavy home dirs (source code, dotfiles, configs).
     estimated_compressed = max(int(estimated_size * 0.2), 1)
+    # Data-level audit row (#3257, SV-222471): who pulled which
+    # workspace archive is the trail an exfiltration review starts
+    # from. The size is the pre-flight estimate the client's progress
+    # display uses — the streamed archive is never materialized
+    # server-side, so exact byte counts are not observable here.
+    await record_workspace_event(
+        app,
+        request,
+        user,
+        workspace_id,
+        "file.download",
+        {"path": f"{safe_name}.tar.gz", "size": estimated_compressed},
+    )
     return StreamingResponse(
         _stream(),
         media_type="application/gzip",
@@ -1377,11 +1392,15 @@ async def export_workspace(
     )
 
 
-async def _stream_upload_to_tempfile(file: UploadFile, max_upload: int) -> str:
+async def _stream_upload_to_tempfile(
+    file: UploadFile, max_upload: int
+) -> tuple[str, int]:
     """Stream *file* to a temp file, enforcing the upload size limit.
 
-    Returns the path to the temp file.  Caller is responsible for
-    deleting it.
+    Returns ``(path, total_bytes)`` — the byte count rides along so
+    the import's audit row can carry it (#3257) without a second
+    stat on a file that is deleted as soon as the import finishes.
+    Caller is responsible for deleting the temp file.
     """
     tmp = tempfile.NamedTemporaryFile(suffix=".tar.gz", delete=False)
     total = 0
@@ -1398,7 +1417,7 @@ async def _stream_upload_to_tempfile(file: UploadFile, max_upload: int) -> str:
     except BaseException:
         os.unlink(tmp.name)
         raise
-    return tmp.name
+    return tmp.name, total
 
 
 async def _extract_archive_metadata(
@@ -1641,9 +1660,16 @@ async def _create_from_archive(
         )
 
 
+def _upload_audit_name(file: UploadFile) -> str:
+    """The import row's audit path (#3257): the upload's filename, a
+    fixed placeholder when the client sent none."""
+    return file.filename or "archive.tar.gz"
+
+
 @router.post("/workspaces/import")
 async def import_workspace(
     file: UploadFile,
+    request: Request,
     name: str | None = None,
     user: dict = Depends(
         acl.has_permission("create-workspace", workspace_collection_resource)
@@ -1655,7 +1681,7 @@ async def import_workspace(
     Creates a new workspace with metadata from workspace.json and
     extracts the home directory from the archive.
     """
-    archive_path = await _stream_upload_to_tempfile(
+    archive_path, upload_bytes = await _stream_upload_to_tempfile(
         file, app.state.settings.file_upload_size_max
     )
     ws = None
@@ -1692,6 +1718,17 @@ async def import_workspace(
     finally:
         os.unlink(archive_path)
 
+    # Data-level audit row (#3257, SV-222472): who injected which
+    # archive into the instance — recorded after the import commits so
+    # the target names the workspace the archive became.
+    await record_workspace_event(
+        app,
+        request,
+        user,
+        ws["id"],
+        "file.upload",
+        {"path": _upload_audit_name(file), "size": upload_bytes},
+    )
     app.state.sockets.notify_user_workspaces_changed(user["id"])
     return ws
 
@@ -2104,23 +2141,28 @@ async def record_workspace_share_event(
 
     The workspace-targeted twin of admin.py's ``record_admin_event``:
     the actor is whoever holds the share permission (an owner sharing
-    their own workspace as often as an admin), the target is the
-    workspace, and the row carries the request's HTTP metadata.
-    Best-effort — a share must not fail because its audit row could
-    not be written.
+async def record_workspace_share_event(
+    app,
+    request: Request,
+    actor: dict,
+    workspace_id: str,
+    event: str,
+    detail: dict,
+) -> None:
+    """Write one workspace share/role/ACL audit row (#3205).
+
+    The workspace-targeted twin of admin.py's ``record_admin_event``:
+    the actor is whoever holds the share permission (an owner sharing
+    their own workspace as often as an admin). Delegates to
+    ``common.record_workspace_event`` — the same emit path the
+    data-level file events use (#3257) — so the row carries the
+    request's HTTP metadata (method/Referer included, #3255). Best-
+    effort — a share must not fail because its audit row could not be
+    written.
     """
-    source_ip, user_agent, method, referer = request_metadata(request)
-    await app.state.model.audit_events.record_best_effort(
-        event,
-        actor_id=actor["id"],
-        actor_email=actor["email"],
-        target_type="workspace",
-        target_id=workspace_id,
-        detail=detail,
-        source_ip=source_ip,
-        user_agent=user_agent,
-        method=method,
-        referer=referer,
+    await record_workspace_event(
+        app, request, actor, workspace_id, event, detail
+    )
     )
 
 

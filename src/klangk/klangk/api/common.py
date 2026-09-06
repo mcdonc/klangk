@@ -113,6 +113,41 @@ def request_metadata(
     )
 
 
+async def record_workspace_event(
+    app,
+    request: Request,
+    actor: dict,
+    workspace_id: str,
+    event: str,
+    detail: dict,
+) -> None:
+    """Write one workspace-targeted audit row (#3205/#3257).
+
+    The shared emit path for events whose actor is whoever holds the
+    workspace permission (an owner acting on their own workspace as
+    often as an admin or member): the target is the workspace, and
+    the row carries the request's full HTTP metadata — the
+    workstation pair plus method/Referer (#3255). Used by the
+    share/role/ACL routes (via workspaces.py's
+    ``record_workspace_share_event``) and the data-level file events
+    (#3257). Best-effort — an action must not fail because its audit
+    row could not be written.
+    """
+    source_ip, user_agent, method, referer = request_metadata(request)
+    await app.state.model.audit_events.record_best_effort(
+        event,
+        actor_id=actor["id"],
+        actor_email=actor["email"],
+        target_type="workspace",
+        target_id=workspace_id,
+        detail=detail,
+        source_ip=source_ip,
+        user_agent=user_agent,
+        method=method,
+        referer=referer,
+    )
+
+
 async def require_workspace_token(request: Request) -> str:
     """FastAPI dependency: validate workspace JWT from Authorization header.
 
