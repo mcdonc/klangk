@@ -747,6 +747,21 @@ class TestDispatchRetry:
         wd.step_filesystem(7, "/data", 92.0)
         assert len(calls) == 1
 
+    def test_retry_attempts_log_at_debug(self, monkeypatch, caplog):
+        """A retry re-attempt logs at DEBUG, not WARNING — the
+        transition already said it, and an edge retried at the poll
+        floor inside one throttle window must not repeat the WARNING
+        line hundreds of times."""
+        wd = self._wd()
+        calls = patch_dispatch(monkeypatch, [False, True])
+        wd.step_filesystem(7, "/data", 91.0)
+        with caplog.at_level(logging.DEBUG, logger="klangk.resource_watchdog"):
+            wd.step_filesystem(7, "/data", 92.0)  # the retry
+        assert len(calls) == 2
+        retries = [r for r in caplog.records if "(retry" in r.message]
+        assert len(retries) == 1
+        assert retries[0].levelno == logging.DEBUG
+
     def test_second_recovery_inside_window_lands_via_retry(self, monkeypatch):
         """Two episode ends inside one throttle window: the second
         recovery dispatch is swallowed by the notifier and retried
@@ -838,6 +853,31 @@ class TestReconfigure:
         assert wd._pending == {1: CRITICAL}
         assert wd._warned_paths == set()
         assert wd._audit_counts == {"container_events": 5}
+
+    def test_production_shape_reload_same_app(self):
+        """apply_reloaded_settings swaps app.state.settings in place
+        BEFORE reconfigure(app) runs on the same app — the comparison
+        must work in that shape (an instance snapshot, not old-vs-new
+        off the app, which is already new-vs-new by then)."""
+        wd, app = make_wd()
+        wd._states[1] = CRITICAL
+        # Same app, thresholds swapped in place (the production shape).
+        app.state.settings = make_settings(
+            {"KLANGKD_DISK_WATCHDOG_WARN_PERCENT": "80"}
+        )
+        wd.reconfigure(app)
+        assert wd._states == {}
+        # An unrelated in-place swap keeps the states (warn stays 80
+        # — only the interval moves).
+        wd._states[2] = WARN
+        app.state.settings = make_settings(
+            {
+                "KLANGKD_DISK_WATCHDOG_WARN_PERCENT": "80",
+                "KLANGKD_DISK_WATCHDOG_POLL_INTERVAL": "30",
+            }
+        )
+        wd.reconfigure(app)
+        assert wd._states == {2: WARN}
 
     def test_threshold_change_re_evaluates_fresh(self):
         """A reload that moved a threshold resets the disk states —

@@ -748,8 +748,9 @@ sync` report a clear permission-denied error.
   `resource.disk.warn` (75% used, the STIG storage warning point) /
   `resource.disk.critical` (90%) / `resource.disk.recovered`
   notifications on state transitions — hysteresis bands below both
-  thresholds, one alert per filesystem per 5 minutes, and undelivered
-  transitions retried until they land. It also summarizes
+  thresholds, one alert per filesystem per 5 minutes, and a dispatch
+  the throttle swallows retried while delivery stays possible. It
+  also summarizes
   audit-write-failure growth as one `audit.failure` per table, and
   `GET /audit` reports the identity-audit counter as
   `identity_write_failures`. Thresholds and interval are

@@ -195,6 +195,13 @@ class ResourceWatchdog:
         # retries after a cooldown.
         self._graph_root: str | None = None
         self._graph_root_retry_at = 0.0
+        # Last-seen thresholds (instance snapshot): reconfigure
+        # compares against these because by the time it runs, the
+        # app's settings have already been swapped in place
+        # (apply_reloaded_settings assigns app.state.settings before
+        # calling reconfigure) — reading "old" off the app would
+        # compare new-against-new and never fire.
+        self._thresholds = self._thresholds_of(app)
 
     def reconfigure(self, app) -> None:
         """Swap the app reference (SIGHUP reload). The cached
@@ -205,8 +212,9 @@ class ResourceWatchdog:
         must not re-alert already-degraded filesystems (the notifier's
         throttle clocks reset on reload too, so nothing else would
         suppress the re-alert)."""
-        thresholds_changed = self._thresholds_changed(app)
+        thresholds_changed = self._thresholds != self._thresholds_of(app)
         self.app = app
+        self._thresholds = self._thresholds_of(app)
         self._graph_root = None
         self._graph_root_retry_at = 0.0
         self._warned_paths.clear()
@@ -215,15 +223,14 @@ class ResourceWatchdog:
             self._emitted_at.clear()
             self._pending.clear()
 
-    def _thresholds_changed(self, new_app) -> bool:
-        """Whether the reload moved a disk threshold (the only change
-        that needs the remembered states re-evaluated from ``ok``)."""
-        old = self.app.state.settings
-        new = new_app.state.settings
+    @staticmethod
+    def _thresholds_of(app) -> tuple[float, float]:
+        """The (warn, critical) pair off an app's live settings — the
+        snapshot reconfigure compares against (see ``__init__``)."""
+        settings = app.state.settings
         return (
-            old.disk_watchdog_warn_percent != new.disk_watchdog_warn_percent
-            or old.disk_watchdog_critical_percent
-            != new.disk_watchdog_critical_percent
+            settings.disk_watchdog_warn_percent,
+            settings.disk_watchdog_critical_percent,
         )
 
     # --- settings (read live) ---
@@ -374,15 +381,16 @@ class ResourceWatchdog:
     async def monitored_filesystems(self) -> list[tuple[int, str, float]]:
         """``(device, path, usage%)`` for every monitored filesystem.
 
-        Monitored: the data directory (the audit records storage), any
-        ``disk_watchdog_paths`` entries, and the podman container-storage
-        root. The configured paths are measured first (synchronous
-        statvfs, before the storage-root query's await), the root last;
-        the evaluation still runs over the full set, so the first sweep
-        waits out the root query (bounded by its short timeout). Deduplicated by device — several paths on one
-        filesystem are one monitored filesystem, reported under the
-        first path (the data directory wins over the storage root when
-        they share a filesystem).
+        Monitored: the data directory (the audit records storage),
+        any ``disk_watchdog_paths`` entries, and the podman
+        container-storage root. The configured paths are measured
+        first (synchronous statvfs, before the storage-root query's
+        await), the root last; the evaluation still runs over the full
+        set, so the first sweep waits out the root query (bounded by
+        its short timeout). Deduplicated by device — several paths on
+        one filesystem are one monitored filesystem, reported under
+        the first of them in that order (data directory, extras,
+        storage root).
         """
         paths = [self.app.state.settings.data_dir, *self._extra_paths]
         entries = [e for e in map(self._measure, paths) if e is not None]
@@ -488,10 +496,10 @@ class ResourceWatchdog:
         if pending is None:
             return
         event = EVENT_BY_STATE.get(pending, RECOVERED_EVENT)
-        delivered = self.emit_disk_event(pending, path, usage)
-        if delivered or not self._event_dispatchable(event):
+        dispatched = self.emit_disk_event(pending, path, usage, retry=True)
+        if dispatched or not self._event_dispatchable(event):
             self._pending.pop(device, None)
-        if delivered:
+        if dispatched:
             self._emitted_at[device] = time.monotonic()
 
     def refresh_due(self, device: int, state: str) -> bool:
@@ -509,21 +517,18 @@ class ResourceWatchdog:
         last = self._emitted_at.get(device, 0.0)
         return time.monotonic() - last >= REFRESH_SECONDS
 
-    def emit_disk_event(self, state: str, path: str, usage: float) -> bool:
-        """Notify + log one disk event (transition, refresh, or retry).
-        Returns whether the notification dispatched (#3206 retry
-        semantics)."""
+    def emit_disk_event(
+        self, state: str, path: str, usage: float, *, retry: bool = False
+    ) -> bool:
+        """Notify + log one disk event (transition, refresh, or
+        retry). Returns whether the notification dispatched (#3206
+        retry semantics — dispatched, not delivered). Retry attempts
+        log at DEBUG: the transition already said it at WARNING, and
+        an edge swallowed by the throttle retried at the poll floor
+        would otherwise repeat the line hundreds of times inside one
+        window."""
         event = EVENT_BY_STATE.get(state, RECOVERED_EVENT)
-        level = logging.INFO if state == OK else logging.WARNING
-        logger.log(
-            level,
-            "Disk usage %.1f%% on %s: %s (warn %.1f%%, critical %.1f%%)",
-            usage,
-            path,
-            "recovered" if state == OK else state,
-            self._warn_percent,
-            self._critical_percent,
-        )
+        self._log_disk_event(state, path, usage, retry)
         return notify_event(
             self.app,
             event,
@@ -534,6 +539,33 @@ class ResourceWatchdog:
                 "warn_percent": self._warn_percent,
                 "critical_percent": self._critical_percent,
             },
+        )
+
+    def _log_disk_event(
+        self, state: str, path: str, usage: float, retry: bool
+    ) -> None:
+        """The log line for one disk event — WARNING for degradations,
+        INFO for recoveries, DEBUG for retry attempts."""
+        if retry:
+            logger.debug(
+                "Disk usage %.1f%% on %s: %s (retry; warn %.1f%%, "
+                "critical %.1f%%)",
+                usage,
+                path,
+                state,
+                self._warn_percent,
+                self._critical_percent,
+            )
+            return
+        level = logging.INFO if state == OK else logging.WARNING
+        logger.log(
+            level,
+            "Disk usage %.1f%% on %s: %s (warn %.1f%%, critical %.1f%%)",
+            usage,
+            path,
+            "recovered" if state == OK else state,
+            self._warn_percent,
+            self._critical_percent,
         )
 
     async def resolve_graph_root(self) -> str | None:
