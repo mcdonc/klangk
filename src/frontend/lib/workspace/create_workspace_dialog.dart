@@ -1,6 +1,8 @@
 import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+
 import '../auth/auth_service.dart';
 import '../theme/colors.dart';
 import 'marking_banner.dart' show classificationBannerMaxLength;
@@ -351,38 +353,48 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
                       icon: Icons.tune,
                       title: 'General',
                       children: [
-                        TextField(
-                          controller: _nameController,
-                          decoration: InputDecoration(
-                            labelText: 'Name',
-                            labelStyle: _labelStyle,
-                            floatingLabelStyle: _labelStyle,
-                            floatingLabelBehavior: FloatingLabelBehavior.always,
-                            border: const OutlineInputBorder(),
+                        Semantics(
+                          container: true,
+                          identifier: 'create-workspace-name',
+                          child: TextField(
+                            controller: _nameController,
+                            decoration: InputDecoration(
+                              labelText: 'Name',
+                              labelStyle: _labelStyle,
+                              floatingLabelStyle: _labelStyle,
+                              floatingLabelBehavior:
+                                  FloatingLabelBehavior.always,
+                              border: const OutlineInputBorder(),
+                            ),
+                            autofocus: true,
+                            onSubmitted: (_) => _submit(),
                           ),
-                          autofocus: true,
-                          onSubmitted: (_) => _submit(),
                         ),
                         const SizedBox(height: 16),
-                        DropdownButtonFormField<String>(
-                          initialValue: _selectedImage,
-                          decoration: InputDecoration(
-                            labelText: 'Container Image',
-                            labelStyle: _labelStyle,
-                            floatingLabelStyle: _labelStyle,
-                            floatingLabelBehavior: FloatingLabelBehavior.always,
-                            border: const OutlineInputBorder(),
-                          ),
-                          items: widget.allowedImages
-                              .map(
-                                (img) => DropdownMenuItem(
-                                  value: img,
-                                  child: Text(img),
-                                ),
-                              )
-                              .toList(),
-                          onChanged: (v) => setState(
-                            () => _selectedImage = v ?? widget.defaultImage,
+                        Semantics(
+                          container: true,
+                          identifier: 'create-workspace-image',
+                          child: DropdownButtonFormField<String>(
+                            initialValue: _selectedImage,
+                            decoration: InputDecoration(
+                              labelText: 'Container Image',
+                              labelStyle: _labelStyle,
+                              floatingLabelStyle: _labelStyle,
+                              floatingLabelBehavior:
+                                  FloatingLabelBehavior.always,
+                              border: const OutlineInputBorder(),
+                            ),
+                            items: widget.allowedImages
+                                .map(
+                                  (img) => DropdownMenuItem(
+                                    value: img,
+                                    child: Text(img),
+                                  ),
+                                )
+                                .toList(),
+                            onChanged: (v) => setState(
+                              () => _selectedImage = v ?? widget.defaultImage,
+                            ),
                           ),
                         ),
                         if (widget.allowAutostart) ...[
@@ -392,16 +404,21 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
                           // opaque background surface.
                           Material(
                             type: MaterialType.transparency,
-                            child: CheckboxListTile(
-                              value: _autoStart,
-                              onChanged: (v) =>
-                                  setState(() => _autoStart = v ?? false),
-                              title: const Text('Auto start'),
-                              subtitle: const Text(
-                                'Start this workspace when the server starts',
+                            child: Semantics(
+                              container: true,
+                              identifier: 'create-workspace-autostart',
+                              child: CheckboxListTile(
+                                value: _autoStart,
+                                onChanged: (v) =>
+                                    setState(() => _autoStart = v ?? false),
+                                title: const Text('Auto start'),
+                                subtitle: const Text(
+                                  'Start this workspace when the server starts',
+                                ),
+                                controlAffinity:
+                                    ListTileControlAffinity.leading,
+                                contentPadding: EdgeInsets.zero,
                               ),
-                              controlAffinity: ListTileControlAffinity.leading,
-                              contentPadding: EdgeInsets.zero,
                             ),
                           ),
                         ],
@@ -472,9 +489,8 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
                               child: Text('allow (default-permit)'),
                             ),
                           ],
-                          onChanged: (v) => setState(
-                            () => _egressMode = v ?? 'interactive',
-                          ),
+                          onChanged: (v) =>
+                              setState(() => _egressMode = v ?? 'interactive'),
                         ),
                         const SizedBox(height: 16),
                         ..._buildAllowedDomainsEditor(),
@@ -491,18 +507,22 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
                         Row(
                           children: [
                             Expanded(
-                              child: TextField(
-                                controller: _idleTimeoutController,
-                                decoration: InputDecoration(
-                                  labelText: 'Idle Timeout (s)',
-                                  labelStyle: _labelStyle,
-                                  floatingLabelStyle: _labelStyle,
-                                  floatingLabelBehavior:
-                                      FloatingLabelBehavior.always,
-                                  border: const OutlineInputBorder(),
-                                  hintText: '0 = never',
+                              child: Semantics(
+                                container: true,
+                                identifier: 'create-workspace-idle-timeout',
+                                child: TextField(
+                                  controller: _idleTimeoutController,
+                                  decoration: InputDecoration(
+                                    labelText: 'Idle Timeout (s)',
+                                    labelStyle: _labelStyle,
+                                    floatingLabelStyle: _labelStyle,
+                                    floatingLabelBehavior:
+                                        FloatingLabelBehavior.always,
+                                    border: const OutlineInputBorder(),
+                                    hintText: '0 = never',
+                                  ),
+                                  keyboardType: TextInputType.number,
                                 ),
-                                keyboardType: TextInputType.number,
                               ),
                             ),
                             const SizedBox(width: 12),
@@ -644,9 +664,8 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
                             type: MaterialType.transparency,
                             child: CheckboxListTile(
                               value: _perHandleHome,
-                              onChanged: (v) => setState(
-                                () => _perHandleHome = v ?? true,
-                              ),
+                              onChanged: (v) =>
+                                  setState(() => _perHandleHome = v ?? true),
                               title: const Text('Per-handle home'),
                               subtitle: const Text(
                                 'Each member gets a private /home/<handle>; '
@@ -715,7 +734,11 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
                     ),
                   ),
                   IconButton(
-                    icon: const Icon(Icons.copy, size: 16),
+                    icon: const Icon(
+                      Icons.copy,
+                      size: 16,
+                      semanticLabel: 'Copy mount',
+                    ),
                     tooltip: 'Copy',
                     onPressed: () =>
                         Clipboard.setData(ClipboardData(text: e.value)),
@@ -724,7 +747,11 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
                   ),
                   const SizedBox(width: 4),
                   IconButton(
-                    icon: const Icon(Icons.close, size: 18),
+                    icon: const Icon(
+                      Icons.close,
+                      size: 18,
+                      semanticLabel: 'Remove mount',
+                    ),
                     onPressed: () => setState(() => _mounts.removeAt(e.key)),
                     padding: EdgeInsets.zero,
                     constraints: const BoxConstraints(),
@@ -758,7 +785,10 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
             ),
           ),
           const SizedBox(width: 8),
-          IconButton(icon: const Icon(Icons.add), onPressed: _tryAddMount),
+          IconButton(
+            icon: const Icon(Icons.add, semanticLabel: 'Add mount'),
+            onPressed: _tryAddMount,
+          ),
         ],
       ),
     ];
@@ -778,7 +808,11 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
                     ),
                   ),
                   IconButton(
-                    icon: const Icon(Icons.copy, size: 16),
+                    icon: const Icon(
+                      Icons.copy,
+                      size: 16,
+                      semanticLabel: 'Copy environment variable',
+                    ),
                     tooltip: 'Copy',
                     onPressed: () => Clipboard.setData(
                       ClipboardData(text: '${e.value.key}=${e.value.value}'),
@@ -788,7 +822,11 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
                   ),
                   const SizedBox(width: 4),
                   IconButton(
-                    icon: const Icon(Icons.close, size: 18),
+                    icon: const Icon(
+                      Icons.close,
+                      size: 18,
+                      semanticLabel: 'Remove environment variable',
+                    ),
                     onPressed: () =>
                         setState(() => _envVars.remove(e.value.key)),
                     padding: EdgeInsets.zero,
@@ -823,7 +861,13 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
             ),
           ),
           const SizedBox(width: 8),
-          IconButton(icon: const Icon(Icons.add), onPressed: _tryAddEnv),
+          IconButton(
+            icon: const Icon(
+              Icons.add,
+              semanticLabel: 'Add environment variable',
+            ),
+            onPressed: _tryAddEnv,
+          ),
         ],
       ),
     ];
@@ -850,7 +894,11 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
                     ),
                   ),
                   IconButton(
-                    icon: const Icon(Icons.copy, size: 16),
+                    icon: const Icon(
+                      Icons.copy,
+                      size: 16,
+                      semanticLabel: 'Copy allowed domain',
+                    ),
                     tooltip: 'Copy',
                     onPressed: () =>
                         Clipboard.setData(ClipboardData(text: e.value)),
@@ -859,7 +907,11 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
                   ),
                   const SizedBox(width: 4),
                   IconButton(
-                    icon: const Icon(Icons.close, size: 18),
+                    icon: const Icon(
+                      Icons.close,
+                      size: 18,
+                      semanticLabel: 'Remove allowed domain',
+                    ),
                     onPressed: () =>
                         setState(() => _allowedDomains.removeAt(e.key)),
                     padding: EdgeInsets.zero,
@@ -895,7 +947,9 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
           ),
           const SizedBox(width: 8),
           IconButton(
-              icon: const Icon(Icons.add), onPressed: _tryAddAllowedDomain),
+            icon: const Icon(Icons.add, semanticLabel: 'Add allowed domain'),
+            onPressed: _tryAddAllowedDomain,
+          ),
         ],
       ),
       if (_allowedDomains.isNotEmpty && !widget.netfilterEnabled) ...[
@@ -946,7 +1000,11 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
                     ),
                   ),
                   IconButton(
-                    icon: const Icon(Icons.close, size: 18),
+                    icon: const Icon(
+                      Icons.close,
+                      size: 18,
+                      semanticLabel: 'Remove rejected domain',
+                    ),
                     onPressed: () =>
                         setState(() => _rejectedDomains.removeAt(e.key)),
                     padding: EdgeInsets.zero,
@@ -982,7 +1040,7 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
           ),
           const SizedBox(width: 8),
           IconButton(
-            icon: const Icon(Icons.add),
+            icon: const Icon(Icons.add, semanticLabel: 'Add rejected domain'),
             onPressed: _tryAddRejectedDomain,
           ),
         ],

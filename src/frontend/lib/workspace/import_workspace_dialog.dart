@@ -1,8 +1,12 @@
 import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+
 import '../auth/auth_service.dart';
+
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
+
 import '../utils/web_helpers_stub.dart'
     if (dart.library.js_interop) '../utils/web_helpers_web.dart';
 
@@ -110,16 +114,18 @@ class _ImportWorkspaceDialogState extends State<ImportWorkspaceDialog> {
             if (_errorMessage != null) ...[
               Text(
                 _errorMessage!,
-                style: TextStyle(
-                  color: Theme.of(context).colorScheme.error,
-                ),
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
               ),
               const SizedBox(height: 12),
             ],
-            OutlinedButton.icon(
-              onPressed: _importing ? null : _pickFile,
-              icon: const Icon(Icons.file_open, size: 18),
-              label: Text(_fileName ?? 'Select .tar.gz file'),
+            Semantics(
+              container: true,
+              identifier: 'import-select-file',
+              child: OutlinedButton.icon(
+                onPressed: _importing ? null : _pickFile,
+                icon: const Icon(Icons.file_open, size: 18),
+                label: Text(_fileName ?? 'Select .tar.gz file'),
+              ),
             ),
             if (_selectedBytes != null) ...[
               const SizedBox(height: 4),
@@ -132,12 +138,16 @@ class _ImportWorkspaceDialogState extends State<ImportWorkspaceDialog> {
               ),
             ],
             const SizedBox(height: 16),
-            TextField(
-              controller: _nameController,
-              decoration: const InputDecoration(
-                labelText: 'Workspace Name (optional)',
-                hintText: 'Uses name from archive if empty',
-                border: OutlineInputBorder(),
+            Semantics(
+              container: true,
+              identifier: 'import-workspace-name',
+              child: TextField(
+                controller: _nameController,
+                decoration: const InputDecoration(
+                  labelText: 'Workspace Name (optional)',
+                  hintText: 'Uses name from archive if empty',
+                  border: OutlineInputBorder(),
+                ),
               ),
             ),
           ],

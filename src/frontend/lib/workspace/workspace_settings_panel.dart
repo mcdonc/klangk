@@ -1,9 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
+
 import '../auth/auth_service.dart';
 import '../theme/colors.dart';
 import '../utils/system_agent.dart';
@@ -211,12 +213,14 @@ class WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
       sudoAvailable: _sudoAvailable,
       perHandleHomeAvailable: _perHandleHomeAvailable,
       canExport: widget.canExport,
-      allowAutostart:
-          context.select<AuthService, bool>((a) => a.allowAutostart),
+      allowAutostart: context.select<AuthService, bool>(
+        (a) => a.allowAutostart,
+      ),
       saveMessage: _saveMessage,
       pendingRestart: _pendingRestart,
-      netfilterEnabled:
-          context.select<AuthService, bool>((a) => a.netfilterEnabled),
+      netfilterEnabled: context.select<AuthService, bool>(
+        (a) => a.netfilterEnabled,
+      ),
       onSave: _saveSettings,
       canRestart: widget.canRestart,
       onRestart: _restartNow,
@@ -297,7 +301,9 @@ bool _hasCreateTimeFieldChanged(
   }
   // rejected_domains — set comparison (#2386)
   if (!_domainListsEqual(
-      prev['rejected_domains'], fields['rejected_domains'])) {
+    prev['rejected_domains'],
+    fields['rejected_domains'],
+  )) {
     return true;
   }
   // egress_mode — the network sidecar is set up at container create
@@ -651,8 +657,9 @@ class _SettingsFormState extends State<_SettingsForm> {
     // instead of 422-ing the whole panel PUT and blocking every other
     // field from saving.
     if (name.isEmpty) {
-      setState(() =>
-          _nameError = 'Workspace name cannot be empty or only whitespace');
+      setState(
+        () => _nameError = 'Workspace name cannot be empty or only whitespace',
+      );
       return;
     }
     setState(() {
@@ -1045,9 +1052,7 @@ class _SettingsFormState extends State<_SettingsForm> {
               child: Text('allow (default-permit)'),
             ),
           ],
-          onChanged: (v) => setState(
-            () => _egressMode = v ?? 'interactive',
-          ),
+          onChanged: (v) => setState(() => _egressMode = v ?? 'interactive'),
         ),
         const SizedBox(height: 16),
         _buildAllowedDomainsEditor(labelStyle),
@@ -1066,16 +1071,20 @@ class _SettingsFormState extends State<_SettingsForm> {
         Row(
           children: [
             Expanded(
-              child: TextField(
-                controller: _idleTimeoutCtrl,
-                decoration: InputDecoration(
-                  labelText: 'Idle Timeout (s)',
-                  labelStyle: labelStyle,
-                  floatingLabelBehavior: FloatingLabelBehavior.always,
-                  border: const OutlineInputBorder(),
-                  hintText: '0 = never',
+              child: Semantics(
+                container: true,
+                identifier: 'settings-idle-timeout',
+                child: TextField(
+                  controller: _idleTimeoutCtrl,
+                  decoration: InputDecoration(
+                    labelText: 'Idle Timeout (s)',
+                    labelStyle: labelStyle,
+                    floatingLabelBehavior: FloatingLabelBehavior.always,
+                    border: const OutlineInputBorder(),
+                    hintText: '0 = never',
+                  ),
+                  keyboardType: TextInputType.number,
                 ),
-                keyboardType: TextInputType.number,
               ),
             ),
             const SizedBox(width: 12),
@@ -1292,10 +1301,7 @@ class _SettingsFormState extends State<_SettingsForm> {
           'Restricts outbound network to these hosts (host or host:port). '
           'Requires netfilter to be enabled on the server; empty '
           'means unrestricted.',
-          style: TextStyle(
-            color: KColors.textSecondary,
-            fontSize: 12,
-          ),
+          style: TextStyle(color: KColors.textSecondary, fontSize: 12),
         ),
         if (_allowedDomains.isNotEmpty && !widget.netfilterEnabled) ...[
           const SizedBox(height: 8),
@@ -1335,10 +1341,7 @@ class _SettingsFormState extends State<_SettingsForm> {
         Text(
           'Hosts blocked unconditionally (never resolved, no consent asked). '
           'CIDR ranges are not supported.',
-          style: TextStyle(
-            color: KColors.textSecondary,
-            fontSize: 12,
-          ),
+          style: TextStyle(color: KColors.textSecondary, fontSize: 12),
         ),
         if (_rejectedDomains.isNotEmpty && !widget.netfilterEnabled) ...[
           const SizedBox(height: 8),
@@ -1585,10 +1588,7 @@ class _SettingsFormState extends State<_SettingsForm> {
                           ),
                           onTap: () {
                             Navigator.of(ctx).pop();
-                            _confirmTransfer(
-                              context,
-                              r['email'] as String,
-                            );
+                            _confirmTransfer(context, r['email'] as String);
                           },
                         ),
                       )
@@ -1666,17 +1666,21 @@ class _SettingsFormState extends State<_SettingsForm> {
       titleColor: Colors.red,
       children: [
         const SizedBox(height: 12),
-        OutlinedButton.icon(
-          onPressed: () => _confirmShutdown(context),
-          icon: const Icon(
-            Icons.power_settings_new,
-            size: 18,
-            color: Colors.red,
-          ),
-          label: const Text('Shut Down Container'),
-          style: OutlinedButton.styleFrom(
-            foregroundColor: Colors.red,
-            side: const BorderSide(color: Colors.red),
+        Semantics(
+          container: true,
+          identifier: 'shutdown-container',
+          child: OutlinedButton.icon(
+            onPressed: () => _confirmShutdown(context),
+            icon: const Icon(
+              Icons.power_settings_new,
+              size: 18,
+              color: Colors.red,
+            ),
+            label: const Text('Shut Down Container'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: Colors.red,
+              side: const BorderSide(color: Colors.red),
+            ),
           ),
         ),
       ],
@@ -1714,9 +1718,8 @@ class _SettingsFormState extends State<_SettingsForm> {
     } catch (_) {
       // coverage:ignore-start
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('Export failed')));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('Export failed')));
       }
     } finally {
       // coverage:ignore-end
@@ -1738,13 +1741,17 @@ class _SettingsFormState extends State<_SettingsForm> {
             onPressed: () => Navigator.of(ctx).pop(),
             child: const Text('Cancel'),
           ),
-          FilledButton(
-            onPressed: () {
-              Navigator.of(ctx).pop();
-              _shutdownContainer();
-            },
-            style: FilledButton.styleFrom(backgroundColor: Colors.red),
-            child: const Text('Shut Down'),
+          Semantics(
+            container: true,
+            identifier: 'shutdown-confirm',
+            child: FilledButton(
+              onPressed: () {
+                Navigator.of(ctx).pop();
+                _shutdownContainer();
+              },
+              style: FilledButton.styleFrom(backgroundColor: Colors.red),
+              child: const Text('Shut Down'),
+            ),
           ),
         ],
       ),

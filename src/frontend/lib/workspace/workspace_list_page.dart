@@ -1,9 +1,13 @@
 import 'dart:async';
 import 'dart:convert';
+
 import 'package:flutter/material.dart';
+
 import '../theme/colors.dart';
+
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
+
 import '../auth/auth_service.dart';
 import '../ws/ws_client.dart';
 import '../utils/page_title.dart';
@@ -125,10 +129,12 @@ String? _validateCidrDomainSpec(String spec) {
   // `00`/`010` are not (octal-ambiguity guard). Octet is inlined 4x so
   // the whole regex is one raw string; `\.` is a literal dot, `$` the
   // end anchor.
-  final ipRe = RegExp(r'^(0|[1-9][0-9]?|1[0-9][0-9]|2[0-4][0-9]|25[0-5])\.'
-      r'(0|[1-9][0-9]?|1[0-9][0-9]|2[0-4][0-9]|25[0-5])\.'
-      r'(0|[1-9][0-9]?|1[0-9][0-9]|2[0-4][0-9]|25[0-5])\.'
-      r'(0|[1-9][0-9]?|1[0-9][0-9]|2[0-4][0-9]|25[0-5])$');
+  final ipRe = RegExp(
+    r'^(0|[1-9][0-9]?|1[0-9][0-9]|2[0-4][0-9]|25[0-5])\.'
+    r'(0|[1-9][0-9]?|1[0-9][0-9]|2[0-4][0-9]|25[0-5])\.'
+    r'(0|[1-9][0-9]?|1[0-9][0-9]|2[0-4][0-9]|25[0-5])\.'
+    r'(0|[1-9][0-9]?|1[0-9][0-9]|2[0-4][0-9]|25[0-5])$',
+  );
   if (!ipRe.hasMatch(ip)) {
     return 'Expected IPv4 CIDR (e.g. 10.0.0.0/8)';
   }
@@ -497,13 +503,17 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
             style: TextButton.styleFrom(foregroundColor: KColors.accentRed),
             child: const Text('Cancel'),
           ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: FilledButton.styleFrom(
-              backgroundColor: KColors.accentRed,
-              foregroundColor: Colors.white,
+          Semantics(
+            container: true,
+            identifier: 'workspace-delete-confirm',
+            child: FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              style: FilledButton.styleFrom(
+                backgroundColor: KColors.accentRed,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('Delete'),
             ),
-            child: const Text('Delete'),
           ),
         ],
       ),
@@ -607,19 +617,27 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
           _sortChip(section, 'Created', 'created'),
           const SizedBox(width: 12),
           Expanded(
-            child: TextField(
-              controller: section.searchController,
-              decoration: const InputDecoration(
-                isDense: true,
-                hintText: 'Filter by name...',
-                prefixIcon: Icon(Icons.search, size: 18),
-                border: OutlineInputBorder(),
-                contentPadding: EdgeInsets.symmetric(
-                  horizontal: 8,
-                  vertical: 0,
+            // Identified for the fmtk e2e driver (one id per section —
+            // both tabs' controls can be alive at once).
+            child: Semantics(
+              container: true,
+              identifier: section.isShared
+                  ? 'workspace-filter-shared'
+                  : 'workspace-filter-owned',
+              child: TextField(
+                controller: section.searchController,
+                decoration: const InputDecoration(
+                  isDense: true,
+                  hintText: 'Filter by name...',
+                  prefixIcon: Icon(Icons.search, size: 18),
+                  border: OutlineInputBorder(),
+                  contentPadding: EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 0,
+                  ),
                 ),
+                onChanged: (v) => _onQueryChanged(section, v),
               ),
-              onChanged: (v) => _onQueryChanged(section, v),
             ),
           ),
         ],
@@ -637,110 +655,112 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          ...section.workspaces.asMap().entries.map(
-                (e) => Material(
-                  color: e.key.isEven
-                      ? Colors.white.withValues(alpha: 0.03)
-                      : Colors.transparent,
-                  child: ListTile(
-                    leading: Icon(
-                      Icons.terminal,
-                      size: 20,
-                      // The icon signals container/health state: green
-                      // when healthy (or running with no health check),
-                      // amber when running but the health check failed,
-                      // grey when stopped.
-                      color: () {
-                        final running = (e.value['running'] as bool? ?? false);
-                        if (!running) return KColors.textSecondary;
-                        final health = e.value['health'] as String?;
-                        if (health == 'unhealthy') {
-                          return Colors.orange;
-                        }
-                        return KColors.accentGreen;
-                      }(),
-                    ),
-                    title: Text(e.value['name'] as String),
-                    subtitle: section.isShared
-                        ? Text(
-                            '${e.value['owner_email']} · ${_formatCreatedAt(e.value['created_at'] as String?)}',
-                          )
-                        : Builder(
-                            builder: (context) {
-                              final wsMembers =
-                                  _workspaceMembers[e.value['id'] as String] ??
-                                      [];
-                              return Row(
-                                children: [
-                                  Text(
-                                    _formatCreatedAt(
-                                      e.value['created_at'] as String?,
-                                    ),
+          ...section.workspaces.asMap().entries.map((e) {
+            final status = _statusVisual(e.value);
+            return Material(
+              color: e.key.isEven
+                  ? Colors.white.withValues(alpha: 0.03)
+                  : Colors.transparent,
+              child: ListTile(
+                leading: Icon(
+                  Icons.terminal,
+                  size: 20,
+                  // The icon signals container/health state by color
+                  // (see _statusVisual); the semanticLabel carries the
+                  // same state as text for assistive tech and the fmtk
+                  // e2e driver — color alone is invisible to semantic
+                  // snapshots.
+                  color: status.color,
+                  semanticLabel: status.label,
+                ),
+                title: Text(e.value['name'] as String),
+                subtitle: section.isShared
+                    ? Text(
+                        '${e.value['owner_email']} · ${_formatCreatedAt(e.value['created_at'] as String?)}',
+                      )
+                    : Builder(
+                        builder: (context) {
+                          final wsMembers =
+                              _workspaceMembers[e.value['id'] as String] ?? [];
+                          return Row(
+                            children: [
+                              Text(
+                                _formatCreatedAt(
+                                  e.value['created_at'] as String?,
+                                ),
+                              ),
+                              if (_hasUnenforcedEgress(e.value)) ...[
+                                const SizedBox(width: 8),
+                                Tooltip(
+                                  message: 'Allowed-domains set but '
+                                      'egress filtering is not '
+                                      'enforced (netfilter disabled '
+                                      'on server)',
+                                  child: Icon(
+                                    Icons.warning_amber,
+                                    size: 16,
+                                    color: Colors.orange,
+                                    // Named for assistive tech and the
+                                    // fmtk e2e driver (tooltips are not
+                                    // exposed to semantic snapshots).
+                                    semanticLabel:
+                                        'Egress filtering not enforced',
                                   ),
-                                  if (_hasUnenforcedEgress(e.value)) ...[
-                                    const SizedBox(width: 8),
-                                    Tooltip(
-                                      message: 'Allowed-domains set but '
-                                          'egress filtering is not '
-                                          'enforced (netfilter disabled '
-                                          'on server)',
-                                      child: Icon(
-                                        Icons.warning_amber,
-                                        size: 16,
-                                        color: Colors.orange,
-                                      ),
-                                    ),
-                                  ],
-                                  if (wsMembers.isNotEmpty) ...[
-                                    const SizedBox(width: 8),
-                                    ...wsMembers.map((m) {
-                                      final email = m['email'] as String;
-                                      final letter = email.isNotEmpty
-                                          ? email[0].toUpperCase()
-                                          : '?';
-                                      return Padding(
-                                        padding:
-                                            const EdgeInsets.only(right: 2),
-                                        child: Tooltip(
-                                          message: email,
-                                          child: CircleAvatar(
-                                            radius: 10,
-                                            backgroundColor:
-                                                KColors.colorForString(
-                                              email,
-                                            ),
-                                            child: Text(
-                                              letter,
-                                              style: const TextStyle(
-                                                fontSize: 10,
-                                                color: Colors.white,
-                                                fontWeight: FontWeight.bold,
-                                              ),
-                                            ),
+                                ),
+                              ],
+                              if (wsMembers.isNotEmpty) ...[
+                                const SizedBox(width: 8),
+                                ...wsMembers.map((m) {
+                                  final email = m['email'] as String;
+                                  final letter = email.isNotEmpty
+                                      ? email[0].toUpperCase()
+                                      : '?';
+                                  return Padding(
+                                    padding: const EdgeInsets.only(right: 2),
+                                    child: Tooltip(
+                                      message: email,
+                                      child: CircleAvatar(
+                                        radius: 10,
+                                        backgroundColor: KColors.colorForString(
+                                          email,
+                                        ),
+                                        child: Text(
+                                          letter,
+                                          style: const TextStyle(
+                                            fontSize: 10,
+                                            color: Colors.white,
+                                            fontWeight: FontWeight.bold,
                                           ),
                                         ),
-                                      );
-                                    }),
-                                  ],
-                                ],
-                              );
-                            },
-                          ),
-                    trailing: section.isShared
-                        ? null
-                        : IconButton(
-                            icon: const Icon(Icons.delete_outline),
-                            tooltip: 'Delete workspace',
-                            onPressed: () =>
-                                _deleteWorkspace(e.value['id'] as String),
-                          ),
-                    onTap: () =>
-                        // coverage:ignore-start
-                        context.go('/workspace/${e.value['id']}'),
-                    // coverage:ignore-end
-                  ),
-                ),
+                                      ),
+                                    ),
+                                  );
+                                }),
+                              ],
+                            ],
+                          );
+                        },
+                      ),
+                trailing: section.isShared
+                    ? null
+                    : IconButton(
+                        icon: Icon(
+                          Icons.delete_outline,
+                          // Named per workspace for assistive tech
+                          // and the fmtk e2e driver.
+                          semanticLabel: 'Delete ${e.value['name']}',
+                        ),
+                        tooltip: 'Delete workspace',
+                        onPressed: () =>
+                            _deleteWorkspace(e.value['id'] as String),
+                      ),
+                onTap: () =>
+                    // coverage:ignore-start
+                    context.go('/workspace/${e.value['id']}'),
+                // coverage:ignore-end
               ),
+            );
+          }),
           _loadMoreButton(
             section.isShared
                 ? 'Load more shared workspaces'
@@ -764,6 +784,26 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
     final rejected = ws['rejected_domains'] as List?;
     return (allowed != null && allowed.isNotEmpty) ||
         (rejected != null && rejected.isNotEmpty);
+  }
+
+  /// Color + semantic label for a list tile's status icon: green when
+  /// healthy (or running with no health check), amber when running but the
+  /// health check failed, grey when stopped. The label mirrors the color
+  /// for assistive tech and the fmtk e2e driver (#3234) — semantic
+  /// snapshots cannot see color.
+  ({Color color, String label}) _statusVisual(Map<String, dynamic> ws) {
+    final running = ws['running'] as bool? ?? false;
+    if (!running) {
+      return (color: KColors.textSecondary, label: 'Workspace status: stopped');
+    }
+    final health = ws['health'] as String?;
+    if (health == 'unhealthy') {
+      return (
+        color: Colors.orange,
+        label: 'Workspace status: running, unhealthy',
+      );
+    }
+    return (color: KColors.accentGreen, label: 'Workspace status: running');
   }
 
   Widget _buildTabBody(_Section section) {
@@ -825,9 +865,10 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
         title: const AppBarTitle(title: 'Workspaces'),
         actions: const [AppBarActions()],
       ),
-      floatingActionButton: context
-              .watch<AuthService>()
-              .hasPermission('/workspaces', 'create-workspace')
+      floatingActionButton: context.watch<AuthService>().hasPermission(
+                '/workspaces',
+                'create-workspace',
+              )
           ? Column(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -842,8 +883,10 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
                   heroTag: 'create',
                   onPressed: _createWorkspace,
                   tooltip: 'New Workspace',
-                  child:
-                      const Icon(Icons.add, semanticLabel: 'Create workspace'),
+                  child: const Icon(
+                    Icons.add,
+                    semanticLabel: 'Create workspace',
+                  ),
                 ),
               ],
             )

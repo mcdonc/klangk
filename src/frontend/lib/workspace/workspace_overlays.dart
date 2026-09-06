@@ -85,44 +85,57 @@ Widget buildContainerStoppedOverlay({
     color: Colors.black54,
     child: Center(
       child: restarting
-          ? const Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                CircularProgressIndicator(color: Colors.white),
-                SizedBox(height: 12),
-                Text(
-                  'Restarting...',
-                  style: TextStyle(color: Colors.white),
-                ),
-              ],
+          // Identified for assistive tech and the fmtk e2e driver — the
+          // 'Restart' button label collides (substring-wise) with the
+          // settings panel's 'Restart now', which stays mounted in the
+          // stack under this overlay.
+          ? Semantics(
+              container: true,
+              identifier: 'container-restarting',
+              child: const Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  CircularProgressIndicator(color: Colors.white),
+                  SizedBox(height: 12),
+                  Text('Restarting...', style: TextStyle(color: Colors.white)),
+                ],
+              ),
             )
-          : Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  stopReason,
-                  style: const TextStyle(color: Colors.white, fontSize: 16),
-                ),
-                const SizedBox(height: 16),
-                if (canRestart)
-                  ElevatedButton.icon(
-                    onPressed: onRestart,
-                    icon: const Icon(Icons.refresh, size: 18),
-                    label: const Text('Restart'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: KColors.accentGreen,
-                      foregroundColor: Colors.white,
+          : Semantics(
+              container: true,
+              identifier: 'container-stopped-overlay',
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    stopReason,
+                    style: const TextStyle(color: Colors.white, fontSize: 16),
+                  ),
+                  const SizedBox(height: 16),
+                  if (canRestart)
+                    Semantics(
+                      container: true,
+                      identifier: 'container-restart-button',
+                      child: ElevatedButton.icon(
+                        onPressed: onRestart,
+                        icon: const Icon(Icons.refresh, size: 18),
+                        label: const Text('Restart'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: KColors.accentGreen,
+                          foregroundColor: Colors.white,
+                        ),
+                      ),
+                    ),
+                  const SizedBox(height: 12),
+                  TextButton(
+                    onPressed: onBack,
+                    child: const Text(
+                      'Back to workspaces',
+                      style: TextStyle(color: Colors.white54),
                     ),
                   ),
-                const SizedBox(height: 12),
-                TextButton(
-                  onPressed: onBack,
-                  child: const Text(
-                    'Back to workspaces',
-                    style: TextStyle(color: Colors.white54),
-                  ),
-                ),
-              ],
+                ],
+              ),
             ),
     ),
   );
@@ -136,10 +149,7 @@ Widget buildContainerStoppedOverlay({
 /// action: the refusal is permanent from this client, so retrying can never
 /// succeed; the only sensible action is leaving the page. [detail] (the
 /// server's refusal message) renders under the explanation for diagnosis.
-Widget buildAccessRevokedView({
-  String? detail,
-  required VoidCallback onBack,
-}) {
+Widget buildAccessRevokedView({String? detail, required VoidCallback onBack}) {
   return Scaffold(
     appBar: AppBar(title: const Text('Workspace')),
     body: Center(
@@ -190,63 +200,68 @@ Widget buildDisconnectedOverlay({
   return Container(
     color: Colors.black54,
     child: Center(
-      child: reconnecting
-          ? Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const CircularProgressIndicator(color: Colors.white),
-                const SizedBox(height: 12),
-                Text(
-                  'Reconnecting (attempt $reconnectAttempt)...',
-                  style: const TextStyle(color: Colors.white),
-                ),
-                const SizedBox(height: 16),
-                ElevatedButton.icon(
-                  onPressed: onReconnect,
-                  icon: const Icon(Icons.refresh, size: 18),
-                  label: const Text('Reconnect now'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: KColors.accentGreen,
-                    foregroundColor: Colors.white,
+      // Identified for assistive tech and the fmtk e2e driver.
+      child: Semantics(
+        container: true,
+        identifier: 'disconnected-overlay',
+        child: reconnecting
+            ? Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const CircularProgressIndicator(color: Colors.white),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Reconnecting (attempt $reconnectAttempt)...',
+                    style: const TextStyle(color: Colors.white),
                   ),
-                ),
-                const SizedBox(height: 12),
-                TextButton(
-                  onPressed: onBack,
-                  child: const Text(
-                    'Back to workspaces',
-                    style: TextStyle(color: Colors.white54),
+                  const SizedBox(height: 16),
+                  ElevatedButton.icon(
+                    onPressed: onReconnect,
+                    icon: const Icon(Icons.refresh, size: 18),
+                    label: const Text('Reconnect now'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: KColors.accentGreen,
+                      foregroundColor: Colors.white,
+                    ),
                   ),
-                ),
-              ],
-            )
-          : Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Text(
-                  'Connection lost',
-                  style: TextStyle(color: Colors.white, fontSize: 16),
-                ),
-                const SizedBox(height: 16),
-                ElevatedButton.icon(
-                  onPressed: onReconnect,
-                  icon: const Icon(Icons.refresh, size: 18),
-                  label: const Text('Reconnect'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: KColors.accentGreen,
-                    foregroundColor: Colors.white,
+                  const SizedBox(height: 12),
+                  TextButton(
+                    onPressed: onBack,
+                    child: const Text(
+                      'Back to workspaces',
+                      style: TextStyle(color: Colors.white54),
+                    ),
                   ),
-                ),
-                const SizedBox(height: 12),
-                TextButton(
-                  onPressed: onBack,
-                  child: const Text(
-                    'Back to workspaces',
-                    style: TextStyle(color: Colors.white54),
+                ],
+              )
+            : Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text(
+                    'Connection lost',
+                    style: TextStyle(color: Colors.white, fontSize: 16),
                   ),
-                ),
-              ],
-            ),
+                  const SizedBox(height: 16),
+                  ElevatedButton.icon(
+                    onPressed: onReconnect,
+                    icon: const Icon(Icons.refresh, size: 18),
+                    label: const Text('Reconnect'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: KColors.accentGreen,
+                      foregroundColor: Colors.white,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextButton(
+                    onPressed: onBack,
+                    child: const Text(
+                      'Back to workspaces',
+                      style: TextStyle(color: Colors.white54),
+                    ),
+                  ),
+                ],
+              ),
+      ),
     ),
   );
 }
