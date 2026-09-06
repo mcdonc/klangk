@@ -664,10 +664,11 @@ class AuthService extends ChangeNotifier {
     try {
       final response = await _client.post(
         Uri.parse('$_baseUrl/api/v1/auth/step-up'),
-        headers: {
-          ..._authHeaders,
-          'Content-Type': 'application/json',
-        },
+        // DPoP proof, like every authed call: the web client binds its
+        // token post-login (#3218), and a bound token without a proof
+        // is rejected — sudo-mode would 401 on every attempt. Found by
+        // the fmtk e2e auth suite (#3233).
+        headers: await authHeadersFor('POST', '/api/v1/auth/step-up'),
         body: jsonEncode({'password': password}),
       );
       return response.statusCode;
