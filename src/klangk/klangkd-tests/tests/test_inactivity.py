@@ -18,6 +18,8 @@ def _app(*, days=35, disable_inactive=None):
     app = types.SimpleNamespace()
     app.state = types.SimpleNamespace()
     app.state.settings = types.SimpleNamespace(inactivity_disable_days=days)
+    # The sweep writes one user.disable audit row per disabled account
+    # (#3251 review); the AsyncMock is the assertion surface for it.
     app.state.model = types.SimpleNamespace(
         users=types.SimpleNamespace(
             disable_inactive_users=(
@@ -25,7 +27,8 @@ def _app(*, days=35, disable_inactive=None):
                 if disable_inactive is not None
                 else AsyncMock(return_value=[])
             )
-        )
+        ),
+        audit_events=types.SimpleNamespace(record_best_effort=AsyncMock()),
     )
     app.state.sockets = types.SimpleNamespace(disconnect_user=AsyncMock())
     # #3250: the sweep notifies on a non-empty disable result; the
@@ -157,6 +160,48 @@ class TestInactivitySweeper:
         app.state.sockets.disconnect_user.assert_awaited_once_with(
             "u1", code=4001, reason="Account disabled"
         )
+
+    async def test_disabled_users_write_audit_rows(self):
+        """#3251 review: the sweep's disables leave the same
+        ``user.disable`` trail the admin toggle writes — one row per
+        account, no actor (system action), via=inactivity in the
+        detail — so every events view (audit, merged) surfaces them."""
+        app = _app(
+            disable_inactive=AsyncMock(
+                return_value=[
+                    {"id": "u1", "email": "gone@example.com"},
+                    {"id": "u2", "email": "away@example.com"},
+                ]
+            )
+        )
+        await inactivity.InactivitySweeper(app).sweep()
+        audit = app.state.model.audit_events.record_best_effort
+        assert audit.await_count == 2
+        audit.assert_any_await(
+            "user.disable",
+            target_type="user",
+            target_id="u1",
+            detail={
+                "via": "inactivity",
+                "days": 35,
+                "email": "gone@example.com",
+            },
+        )
+        audit.assert_any_await(
+            "user.disable",
+            target_type="user",
+            target_id="u2",
+            detail={
+                "via": "inactivity",
+                "days": 35,
+                "email": "away@example.com",
+            },
+        )
+
+        # An empty sweep writes nothing.
+        idle_app = _app()
+        await inactivity.InactivitySweeper(idle_app).sweep()
+        idle_app.state.model.audit_events.record_best_effort.assert_not_awaited()
 
     async def test_disabled_users_notify_sa_isso(self):
         """#3250 (SV-222419): a non-empty sweep result notifies the

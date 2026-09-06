@@ -804,6 +804,12 @@ sync` report a clear permission-denied error.
   subtab renders it with a source badge per row. See the
   [API reference](/reference/api-endpoints/#get-apiv1events).
 
+- **Inactivity sweep disables are audited (#3251).** The
+  dormant-account sweep now writes one `user.disable` row per
+  disabled account (`via=inactivity` in the detail), matching the
+  admin toggle's rows, so the sweep's auto-disables surface in the
+  audit and merged events views.
+
 
 - **Admin notifications (#3250).** SA/ISSO notification of
   security-relevant events: account lifecycle (create, register,
