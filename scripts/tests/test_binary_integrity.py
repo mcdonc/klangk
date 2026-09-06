@@ -101,7 +101,17 @@ def test_new_corrupt_binary_flagged(repo):
     _stage(repo, "new.wasm")
     old, new = assert_single_violation(cbi.find_violations(), "new.wasm", True)
     assert old == 0  # no prior version
-    assert new > cbi.TEXT_THRESHOLD
+    assert new > cbi.ADDED_BINARY_THRESHOLD
+
+
+def test_new_binary_with_incidental_repl_passes(repo):
+    """A newly added binary whose genuine bytes coincidentally contain one
+    EF BF BD sequence is allowed (#3228: 2 of the 725 vendored Noto woff2
+    parts carry exactly one). Added binaries threshold like text — a real
+    lossy rewrite produces hundreds."""
+    (repo / "font.woff2").write_bytes(b"wOF2" + REPL + b"\xff\xfe\xfd" * 10)
+    _stage(repo, "font.woff2")
+    assert cbi.find_violations() == []
 
 
 def test_text_small_increase_not_flagged(repo):

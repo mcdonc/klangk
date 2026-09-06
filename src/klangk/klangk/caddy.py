@@ -320,7 +320,16 @@ def csp_policy(frontend_dir: str | Path) -> str:
     beep/boingball features no longer JS-``eval``), no third-party origins
     (Roboto Mono is self-hosted, so fonts.gstatic.com is gone).
     ``frame-ancestors 'none'`` + X-Frame-Options DENY is the clickjacking
-    posture. ``require-trusted-types-for 'script'`` (#3219) closes the
+    posture. ``worker-src 'self' blob:`` sanctions exactly one widening:
+    same-origin ``blob:`` workers. A ``blob:`` worker inherits the document
+    origin, and its script URL must first pass the Trusted Types default
+    policy above (same-origin relative/absolute/blob shapes only), so this
+    adds no new fetch surface — remote worker URLs stay blocked. The pdfium
+    viewer itself runs from a plain same-origin file (the build-generated
+    ``worker-tt.js``, no blob), but Flutter's loader builds skwasm workers
+    from in-page Blobs, and the wasm build is due back (it is temporarily
+    switched to dart2js), so ``blob:`` keeps that path legal.
+    ``require-trusted-types-for 'script'`` (#3219) closes the
     DOM-based XSS sinks (``innerHTML`` & co., string ``script.src``, string
     ``eval``): they only accept TrustedTypes values routed through a
     policy. Two sanctioned policies cover the shipped frontend — the
@@ -368,7 +377,7 @@ def csp_policy(frontend_dir: str | Path) -> str:
         "img-src 'self' data: blob:; "
         "font-src 'self'; "
         "connect-src 'self'; "
-        "worker-src 'self'; "
+        "worker-src 'self' blob:; "
         "object-src 'none'; "
         "base-uri 'self'; "
         "frame-ancestors 'none'; "

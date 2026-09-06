@@ -789,6 +789,12 @@ in
         "email_templates/"
         # Deployer copies of the above (customize/ template tree).
         "customize/custom/email-templates/"
+        # Flutter bootstrap template: the {{flutter_build_config}}/
+        # {{flutter_js}} placeholders must stay on their exact single-line
+        # form for the flutter tool's substitution; prettier reflows them
+        # into blocks and the built bootstrap then throws
+        # "flutter_build_config is not defined" at boot (#3228).
+        "src/frontend/web/flutter_bootstrap.js"
       ];
     };
     # Nix
@@ -909,6 +915,8 @@ in
     email_templates/
     # Deployer copies of the above (customize/ template tree).
     customize/custom/email-templates/
+    # Flutter bootstrap template — placeholders must stay single-line (#3228).
+    src/frontend/web/flutter_bootstrap.js
     PRETTIER
 
     # Generate yamllint config (not committed)

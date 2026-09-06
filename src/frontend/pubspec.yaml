@@ -69,6 +69,163 @@ flutter:
   assets:
     - assets/fonts/
     - assets/libghostty-wasm32-freestanding.wasm
+    # Engine fallback fonts (#3228): the CanvasKit/skwasm web renderers
+    # lazily fetch Noto script fallbacks + Roboto from
+    # configuration.fontFallbackBaseUrl when a frame rasterizes a codepoint
+    # the bundled families lack (CJK terminal output, "…", emoji). The
+    # default base is fonts.gstatic.com; web/flutter_bootstrap.js points it
+    # at this same-origin mirror instead, so nothing external is ever
+    # fetched and offline sessions render identically. Flutter directory
+    # assets are not recursive, so every family/version directory is listed
+    # explicitly; regenerate the list with
+    # `python scripts/vendor_flutter_fallback_fonts.py --print-pubspec`
+    # after re-vendoring (engine/toolchain bumps can change the set).
+    - assets/fallback-fonts/
+    - assets/fallback-fonts/notocoloremoji/v32/
+    - assets/fallback-fonts/notomusic/v20/
+    - assets/fallback-fonts/notosans/v37/
+    - assets/fallback-fonts/notosansadlam/v22/
+    - assets/fallback-fonts/notosansanatolianhieroglyphs/v16/
+    - assets/fallback-fonts/notosansarabic/v28/
+    - assets/fallback-fonts/notosansarmenian/v43/
+    - assets/fallback-fonts/notosansavestan/v21/
+    - assets/fallback-fonts/notosansbalinese/v24/
+    - assets/fallback-fonts/notosansbamum/v27/
+    - assets/fallback-fonts/notosansbassavah/v17/
+    - assets/fallback-fonts/notosansbatak/v20/
+    - assets/fallback-fonts/notosansbengali/v26/
+    - assets/fallback-fonts/notosansbhaiksuki/v17/
+    - assets/fallback-fonts/notosansbrahmi/v19/
+    - assets/fallback-fonts/notosansbuginese/v18/
+    - assets/fallback-fonts/notosansbuhid/v22/
+    - assets/fallback-fonts/notosanscanadianaboriginal/v26/
+    - assets/fallback-fonts/notosanscarian/v16/
+    - assets/fallback-fonts/notosanscaucasianalbanian/v18/
+    - assets/fallback-fonts/notosanschakma/v17/
+    - assets/fallback-fonts/notosanscham/v31/
+    - assets/fallback-fonts/notosanscherokee/v20/
+    - assets/fallback-fonts/notosanscoptic/v21/
+    - assets/fallback-fonts/notosanscuneiform/v17/
+    - assets/fallback-fonts/notosanscypriot/v19/
+    - assets/fallback-fonts/notosansdeseret/v17/
+    - assets/fallback-fonts/notosansdevanagari/v26/
+    - assets/fallback-fonts/notosansduployan/v18/
+    - assets/fallback-fonts/notosansegyptianhieroglyphs/v29/
+    - assets/fallback-fonts/notosanselbasan/v16/
+    - assets/fallback-fonts/notosanselymaic/v17/
+    - assets/fallback-fonts/notosansethiopic/v47/
+    - assets/fallback-fonts/notosansgeorgian/v44/
+    - assets/fallback-fonts/notosansglagolitic/v18/
+    - assets/fallback-fonts/notosansgothic/v16/
+    - assets/fallback-fonts/notosansgrantha/v19/
+    - assets/fallback-fonts/notosansgujarati/v25/
+    - assets/fallback-fonts/notosansgunjalagondi/v19/
+    - assets/fallback-fonts/notosansgurmukhi/v26/
+    - assets/fallback-fonts/notosanshanunoo/v21/
+    - assets/fallback-fonts/notosanshatran/v16/
+    - assets/fallback-fonts/notosanshebrew/v46/
+    - assets/fallback-fonts/notosanshk/v32/
+    - assets/fallback-fonts/notosansimperialaramaic/v17/
+    - assets/fallback-fonts/notosansindicsiyaqnumbers/v16/
+    - assets/fallback-fonts/notosansinscriptionalpahlavi/v17/
+    - assets/fallback-fonts/notosansinscriptionalparthian/v17/
+    - assets/fallback-fonts/notosansjavanese/v23/
+    - assets/fallback-fonts/notosansjp/v53/
+    - assets/fallback-fonts/notosanskaithi/v22/
+    - assets/fallback-fonts/notosanskannada/v27/
+    - assets/fallback-fonts/notosanskayahli/v21/
+    - assets/fallback-fonts/notosanskharoshthi/v16/
+    - assets/fallback-fonts/notosanskhmer/v24/
+    - assets/fallback-fonts/notosanskhojki/v19/
+    - assets/fallback-fonts/notosanskhudawadi/v22/
+    - assets/fallback-fonts/notosanskr/v36/
+    - assets/fallback-fonts/notosanslao/v30/
+    - assets/fallback-fonts/notosanslepcha/v19/
+    - assets/fallback-fonts/notosanslimbu/v24/
+    - assets/fallback-fonts/notosanslineara/v18/
+    - assets/fallback-fonts/notosanslinearb/v17/
+    - assets/fallback-fonts/notosanslisu/v25/
+    - assets/fallback-fonts/notosanslycian/v15/
+    - assets/fallback-fonts/notosanslydian/v18/
+    - assets/fallback-fonts/notosansmahajani/v19/
+    - assets/fallback-fonts/notosansmalayalam/v26/
+    - assets/fallback-fonts/notosansmandaic/v17/
+    - assets/fallback-fonts/notosansmanichaean/v18/
+    - assets/fallback-fonts/notosansmarchen/v20/
+    - assets/fallback-fonts/notosansmasaramgondi/v17/
+    - assets/fallback-fonts/notosansmath/v15/
+    - assets/fallback-fonts/notosansmayannumerals/v16/
+    - assets/fallback-fonts/notosansmedefaidrin/v23/
+    - assets/fallback-fonts/notosansmeeteimayek/v15/
+    - assets/fallback-fonts/notosansmeroitic/v18/
+    - assets/fallback-fonts/notosansmiao/v17/
+    - assets/fallback-fonts/notosansmodi/v23/
+    - assets/fallback-fonts/notosansmongolian/v22/
+    - assets/fallback-fonts/notosansmro/v18/
+    - assets/fallback-fonts/notosansmultani/v20/
+    - assets/fallback-fonts/notosansmyanmar/v20/
+    - assets/fallback-fonts/notosansnabataean/v16/
+    - assets/fallback-fonts/notosansnewa/v16/
+    - assets/fallback-fonts/notosansnewtailue/v22/
+    - assets/fallback-fonts/notosansnko/v6/
+    - assets/fallback-fonts/notosansnushu/v19/
+    - assets/fallback-fonts/notosansogham/v17/
+    - assets/fallback-fonts/notosansolchiki/v29/
+    - assets/fallback-fonts/notosansoldhungarian/v18/
+    - assets/fallback-fonts/notosansolditalic/v17/
+    - assets/fallback-fonts/notosansoldnortharabian/v16/
+    - assets/fallback-fonts/notosansoldpermic/v17/
+    - assets/fallback-fonts/notosansoldpersian/v16/
+    - assets/fallback-fonts/notosansoldsogdian/v17/
+    - assets/fallback-fonts/notosansoldsoutharabian/v16/
+    - assets/fallback-fonts/notosansoldturkic/v18/
+    - assets/fallback-fonts/notosansoriya/v31/
+    - assets/fallback-fonts/notosansosage/v18/
+    - assets/fallback-fonts/notosansosmanya/v18/
+    - assets/fallback-fonts/notosanspahawhhmong/v18/
+    - assets/fallback-fonts/notosanspalmyrene/v16/
+    - assets/fallback-fonts/notosanspaucinhau/v20/
+    - assets/fallback-fonts/notosansphagspa/v15/
+    - assets/fallback-fonts/notosansphoenician/v17/
+    - assets/fallback-fonts/notosanspsalterpahlavi/v17/
+    - assets/fallback-fonts/notosansrejang/v21/
+    - assets/fallback-fonts/notosansrunic/v17/
+    - assets/fallback-fonts/notosanssaurashtra/v23/
+    - assets/fallback-fonts/notosanssc/v37/
+    - assets/fallback-fonts/notosanssharada/v16/
+    - assets/fallback-fonts/notosansshavian/v17/
+    - assets/fallback-fonts/notosanssiddham/v20/
+    - assets/fallback-fonts/notosanssinhala/v32/
+    - assets/fallback-fonts/notosanssogdian/v16/
+    - assets/fallback-fonts/notosanssorasompeng/v24/
+    - assets/fallback-fonts/notosanssoyombo/v17/
+    - assets/fallback-fonts/notosanssundanese/v26/
+    - assets/fallback-fonts/notosanssylotinagri/v23/
+    - assets/fallback-fonts/notosanssymbols/v43/
+    - assets/fallback-fonts/notosanssymbols2/v24/
+    - assets/fallback-fonts/notosanssyriac/v16/
+    - assets/fallback-fonts/notosanstagalog/v22/
+    - assets/fallback-fonts/notosanstagbanwa/v18/
+    - assets/fallback-fonts/notosanstaile/v17/
+    - assets/fallback-fonts/notosanstaitham/v20/
+    - assets/fallback-fonts/notosanstaiviet/v19/
+    - assets/fallback-fonts/notosanstakri/v24/
+    - assets/fallback-fonts/notosanstamil/v27/
+    - assets/fallback-fonts/notosanstamilsupplement/v21/
+    - assets/fallback-fonts/notosanstc/v36/
+    - assets/fallback-fonts/notosanstelugu/v26/
+    - assets/fallback-fonts/notosansthaana/v24/
+    - assets/fallback-fonts/notosansthai/v25/
+    - assets/fallback-fonts/notosanstifinagh/v20/
+    - assets/fallback-fonts/notosanstirhuta/v16/
+    - assets/fallback-fonts/notosansugaritic/v16/
+    - assets/fallback-fonts/notosansvai/v17/
+    - assets/fallback-fonts/notosanswancho/v17/
+    - assets/fallback-fonts/notosanswarangciti/v17/
+    - assets/fallback-fonts/notosansyi/v19/
+    - assets/fallback-fonts/notosanszanabazarsquare/v19/
+    - assets/fallback-fonts/notoseriftibetan/v22/
+    - assets/fallback-fonts/roboto/v32/
 
   fonts:
     - family: JetBrains Mono
