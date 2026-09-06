@@ -465,6 +465,8 @@ def backend_env() -> dict:
     #1526), and on stock CI runners system podman (SUID newuidmap) is
     preferred over the nix one on PATH."""
     env = {k: v for k, v in os.environ.items() if not k.startswith("KLANGKD_")}
+    # TEMP #3237 diagnostics: sidecar forged-RST debug lines (#2345)
+    env["KLANGKNETWORK_EGRESS_DEBUG_RST"] = "1"
     if Path("/usr/bin/podman").exists():
         env["KLANGKD_PODMAN_BIN"] = "/usr/bin/podman"
     return env
