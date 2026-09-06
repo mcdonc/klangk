@@ -1624,18 +1624,35 @@ def _archive_banner(classification_banner) -> str | None:
 
 # Safety margin kept free on the workspace volume after an import
 # (#3284): the pre-scan refuses an archive whose uncompressed home/
-# tree would eat it.
+# tree would eat it. Per import — concurrent imports can jointly
+# consume more than either alone would pass; the reserve is not a
+# hard guarantee against a full disk.
 _IMPORT_FREE_MARGIN_BYTES = 2 * 1024**3
 
+# The scan streams the listing and must finish inside this budget
+# (#3284 review): without it, a max-ratio gzip bomb pins a worker
+# thread decompressing hundreds of GB of headers for many minutes —
+# tar lists only by decompressing everything.
+_SCAN_TIMEOUT_SECONDS = 30
+
+# One tzvf line is bounded: pax path records have no length cap, and a
+# member name is the one archive-controlled field that lands whole in
+# the scan's buffer.
+_LISTING_LINE_MAX = 65536
+
 # A tzvf listing line: mode, uid/gid (numeric — --numeric-owner keeps
-# a crafted header's owner field from carrying spaces), size, date,
-# time, then the member name (spaces are legal; GNU tar escapes
-# control characters in names, so a name cannot split a record into
-# two lines — but a listing line that still does not parse fails
-# closed). A big member's own line always shows its real size first,
-# so the sum can only over-count, never under-count.
+# a crafted header's owner field from carrying spaces), size (a
+# device member prints major,minor), date (negative years are legal
+# mtimes), time, then the member name (spaces are legal; GNU tar
+# escapes control characters in names, so a name cannot split a
+# record into two lines — but a listing line that still does not
+# parse fails closed). A big member's own line always shows its real
+# size first, so the byte sum can only over-count, never under-count;
+# the fit check adds one filesystem block per member for the disk-side
+# floor (inodes and block rounding — millions of 1-byte files cost far
+# more than their byte sum).
 _TZVF_LINE = re.compile(
-    r"^\S+\s+\d+/\d+\s+(?P<size>\d+)\s+\d{4}-\d{2}-\d{2}\s+\S+\s+.+$"
+    r"^\S+\s+\d+/\d+\s+(?P<size>\d+)(?:,\d+)?\s+-?\d+-\d{2}-\d{2}\s+\S+\s+.+$"
 )
 
 
@@ -1644,23 +1661,45 @@ class _ListingUnparsable(Exception):
     malformed or hostile; the import fails closed (#3284)."""
 
 
-def _sum_listing(proc: subprocess.Popen) -> int:
-    """Sum the size column of a tzvf stream. The listing is never stored
-    — a bomb carrying a billion tiny member headers cannot OOM the scan
-    itself (#3284)."""
+def _listing_line_size(line: bytes) -> int:
+    """Parse one tzvf line's size column; raises ``_ListingUnparsable``
+    on a line that does not match or exceeds the line bound (an
+    unbounded pax member name is the one archive-controlled field that
+    lands whole in the scan's buffer, #3284)."""
+    if len(line) == _LISTING_LINE_MAX and not line.endswith(b"\n"):
+        raise _ListingUnparsable
+    m = _TZVF_LINE.match(line.decode("utf-8", "replace"))
+    if m is None:
+        raise _ListingUnparsable
+    return int(m.group("size"))
+
+
+def _sum_listing(proc: subprocess.Popen, deadline: float) -> tuple[int, int]:
+    """Sum the size column of a tzvf stream, one bounded line at a
+    time: the listing is never stored, so a bomb with a billion tiny
+    headers cannot OOM the scan, and no single name can buffer more
+    than the line cap (#3284). Returns ``(total_bytes, member_count)``.
+
+    Raises ``TimeoutExpired`` past *deadline* (the caller kills tar)
+    and ``_ListingUnparsable`` on a hostile line."""
     assert proc.stdout is not None
     total = 0
-    for line in proc.stdout:
-        m = _TZVF_LINE.match(line.decode("utf-8", "replace"))
-        if m is None:
-            raise _ListingUnparsable
-        total += int(m.group("size"))
-    return total
+    count = 0
+    while line := proc.stdout.readline(_LISTING_LINE_MAX):
+        if time.monotonic() > deadline:
+            raise subprocess.TimeoutExpired(
+                cmd="tar", timeout=_SCAN_TIMEOUT_SECONDS
+            )
+        total += _listing_line_size(line)
+        count += 1
+    return total, count
 
 
-def _scan_home_uncompressed_bytes(archive_path: str) -> int | None:
+def _scan_home_uncompressed_bytes(
+    archive_path: str,
+) -> tuple[int, int] | None:
     """Stream ``tar tzvf`` over the home members, summing their
-    uncompressed sizes (#3284).
+    uncompressed sizes and counting them (#3284).
 
     ``None`` when tar fails — the metadata-only archive with no home/
     member extracts no tree, same as the old presence probe. Raises
@@ -1680,30 +1719,35 @@ def _scan_home_uncompressed_bytes(archive_path: str) -> int | None:
         stderr=subprocess.DEVNULL,
     ) as proc:
         try:
-            total = _sum_listing(proc)
-            proc.wait(timeout=30)
+            total, count = _sum_listing(
+                proc, time.monotonic() + _SCAN_TIMEOUT_SECONDS
+            )
+            proc.wait(timeout=_SCAN_TIMEOUT_SECONDS)
         except subprocess.TimeoutExpired:
             proc.kill()
             raise
     if proc.returncode != 0:
         return None
-    return total
+    return total, count
 
 
-def _free_bytes(path) -> int:
-    """Bytes available to unprivileged writes on *path*'s filesystem."""
+def _fs_stats(path) -> tuple[int, int]:
+    """(bytes available to unprivileged writes, filesystem block size)
+    for *path*'s filesystem."""
     st = os.statvfs(path)
-    return st.f_bavail * st.f_frsize
+    return st.f_bavail * st.f_frsize, st.f_frsize
 
 
 def _gb(n: int) -> str:
     return f"{n / 1024**3:.1f}"
 
 
-def _assert_import_fits(home_dir, total: int, app) -> None:
+def _assert_import_fits(home_dir, total: int, count: int, app) -> None:
     """Refuse (#3284) before a byte is written when the uncompressed
     home tree exceeds the operator cap or the workspace volume's free
-    space minus the reserve."""
+    space minus the reserve. Demand counts one filesystem block per
+    member on top of the byte sum — block rounding and inodes mean a
+    tree of millions of 1-byte files costs far more than its bytes."""
     cap = app.state.settings.import_max_uncompressed_mb
     if cap is not None and total > cap * 1024 * 1024:
         raise HTTPException(
@@ -1713,12 +1757,14 @@ def _assert_import_fits(home_dir, total: int, app) -> None:
                 f"{cap} MB (KLANGKD_IMPORT_MAX_UNCOMPRESSED_MB)"
             ),
         )
-    avail = _free_bytes(home_dir) - _IMPORT_FREE_MARGIN_BYTES
-    if total > avail:
+    free, block = _fs_stats(home_dir)
+    demand = total + count * block
+    avail = free - _IMPORT_FREE_MARGIN_BYTES
+    if demand > avail:
         raise HTTPException(
             status_code=413,
             detail=(
-                f"Archive expands to {_gb(total)} GB; only "
+                f"Archive expands to {_gb(demand)} GB; only "
                 f"{_gb(max(avail, 0))} GB free on the workspace volume"
             ),
         )
@@ -1733,7 +1779,7 @@ async def _extract_home_directory(
     home_dir = app.state.workspaces.home_path(ws_id)
     home_dir.mkdir(parents=True, exist_ok=True)
     try:
-        total = await asyncio.to_thread(
+        scanned = await asyncio.to_thread(
             _scan_home_uncompressed_bytes, archive_path
         )
     except _ListingUnparsable:
@@ -1741,9 +1787,9 @@ async def _extract_home_directory(
             status_code=400,
             detail="Archive home listing is malformed",
         )
-    if total is None:
+    if scanned is None:
         return
-    _assert_import_fits(home_dir, total, app)
+    _assert_import_fits(home_dir, scanned[0], scanned[1], app)
     result = await asyncio.to_thread(
         subprocess.run,
         [
@@ -1757,7 +1803,11 @@ async def _extract_home_directory(
             str(home_dir),
             "home/",
         ],
-        capture_output=True,
+        # Output is discarded on purpose: only the return code decides,
+        # and a hostile archive's per-member stderr warnings are
+        # unbounded (#3284 review).
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
         timeout=300,
     )
     if result.returncode != 0:

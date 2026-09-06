@@ -14219,8 +14219,8 @@ class TestWorkspaceExportImport:
 
         monkeypatch.setattr(
             api_ws,
-            "_free_bytes",
-            lambda path: api_ws._IMPORT_FREE_MARGIN_BYTES + 1,
+            "_fs_stats",
+            lambda path: (api_ws._IMPORT_FREE_MARGIN_BYTES + 1, 4096),
         )
         archive = self._archive(
             [("home/payload.bin", b"\0" * 1024)], name="disk-bomb"
@@ -14266,7 +14266,7 @@ class TestWorkspaceExportImport:
         CI disk's real free space is not under the test's control)."""
         from klangk.api import workspaces as api_ws
 
-        monkeypatch.setattr(api_ws, "_free_bytes", lambda path: 1 << 40)
+        monkeypatch.setattr(api_ws, "_fs_stats", lambda path: (1 << 40, 4096))
         archive = self._archive(
             [("home/big.bin", b"\0" * (32 * 1024 * 1024))],
             name="big-ok",
@@ -14278,9 +14278,15 @@ class TestWorkspaceExportImport:
         assert (home / "big.bin").stat().st_size == 32 * 1024 * 1024
 
     def test_sum_listing_fails_closed(self):
-        """#3284: a tzvf line that does not parse raises instead of
-        under-counting — the archive is malformed or hostile."""
+        """#3284: a tzvf line that does not parse — or exceeds the line
+        bound, or the scan misses its deadline — fails closed instead
+        of under-counting."""
+        import subprocess as subprocess_mod
+        import time as time_mod
+
         from klangk.api import workspaces as api_ws
+
+        soon = time_mod.monotonic() + 30
 
         # A crafted owner field with spaces (no --numeric-owner
         # protection) shifts the size column; the regex must reject it.
@@ -14290,17 +14296,66 @@ class TestWorkspaceExportImport:
             )
         )
         with pytest.raises(api_ws._ListingUnparsable):
-            api_ws._sum_listing(hostile)
+            api_ws._sum_listing(hostile, soon)
 
-        # Well-formed lines (symlink arrow, spaces in the name) parse.
+        # An unbounded pax member name would buffer whole; the line cap
+        # refuses it (#3284 review: a 65 KB upload could otherwise
+        # drive a multi-GB transient allocation).
+        long_name = types.SimpleNamespace(
+            stdout=io.BytesIO(
+                b"-rw-r--r-- 0/0 5 2024-01-01 00:00 home/"
+                + b"x" * api_ws._LISTING_LINE_MAX
+                + b"\n"
+            )
+        )
+        with pytest.raises(api_ws._ListingUnparsable):
+            api_ws._sum_listing(long_name, soon)
+
+        # A scan that misses its deadline raises TimeoutExpired (the
+        # caller kills tar) — a gzip bomb cannot pin the worker thread
+        # decompressing headers for minutes.
+        slow = types.SimpleNamespace(
+            stdout=io.BytesIO(b"-rw-r--r-- 0/0 5 2024-01-01 00:00 home/a\n")
+        )
+        with pytest.raises(subprocess_mod.TimeoutExpired):
+            api_ws._sum_listing(slow, time_mod.monotonic() - 1)
+
+        # Well-formed lines parse: symlink arrow, spaces in the name,
+        # a negative mtime year, a device member's major,minor size.
         good = types.SimpleNamespace(
             stdout=io.BytesIO(
                 b"-rw-r--r-- 0/0 5 2024-01-01 00:00 home/a b.txt\n"
                 b"lrwxrwxrwx 0/0 9 2024-01-01 00:00 home/l -> target x\n"
                 b"drwxr-xr-x 0/0 0 2024-01-01 00:00 home/d/\n"
+                b"-rw-r--r-- 0/0 7 -26550-02-19 03:03 home/old.txt\n"
+                b"crw-rw-rw- 0/0 1,3 2024-01-01 00:00 home/dev\n"
             )
         )
-        assert api_ws._sum_listing(good) == 14
+        assert api_ws._sum_listing(good, soon) == (22, 5)
+
+    def test_import_fit_counts_blocks_per_member(self, monkeypatch, tmp_path):
+        """#3284: demand counts one filesystem block per member — a
+        tree of half a million 1-byte files costs ~2 GB of blocks and
+        inodes, far past its byte sum, and is refused against a volume
+        with only 1 GB past the reserve."""
+        from fastapi import HTTPException
+
+        from klangk.api import workspaces as api_ws
+
+        monkeypatch.setattr(
+            api_ws,
+            "_fs_stats",
+            lambda path: (api_ws._IMPORT_FREE_MARGIN_BYTES + (1 << 30), 4096),
+        )
+        app = types.SimpleNamespace(
+            state=types.SimpleNamespace(
+                settings=types.SimpleNamespace(import_max_uncompressed_mb=None)
+            )
+        )
+        with pytest.raises(HTTPException) as excinfo:
+            api_ws._assert_import_fits(tmp_path, 1024 * 1024, 500_000, app)
+        assert excinfo.value.status_code == 413
+        assert "free on the workspace volume" in excinfo.value.detail
 
     async def test_import_metadata_timeout_rejected(
         self, client, user, app, monkeypatch
@@ -17802,7 +17857,7 @@ class TestBranchGaps2834:
         )
         monkeypatch.setattr(
             "klangk.api.workspaces._scan_home_uncompressed_bytes",
-            lambda path: 0,
+            lambda path: (0, 0),
         )
         deleted = []
         with patch.object(

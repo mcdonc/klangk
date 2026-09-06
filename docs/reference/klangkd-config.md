@@ -587,7 +587,10 @@ bounded on the decompressed side too (#3284): the archive's `workspace.json`
 member is capped at 1 MB, and the `home/` tree is pre-scanned and refused
 with 413 when it would exceed the free space on the workspace volume (a
 2 GB reserve is kept) or `import_max_uncompressed_mb`. A legitimate
-multi-gigabyte home import succeeds whenever the volume has room.
+multi-gigabyte home import succeeds whenever the volume has room. The
+free-space check runs per import: two imports started at the same time can
+together consume more than either alone would pass, so the reserve is a
+working margin rather than a hard guarantee against a full disk.
 
 ### Feature configuration
 
