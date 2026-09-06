@@ -1697,7 +1697,7 @@ class _SettingsFormState extends State<_SettingsForm> {
       final streamed = await downloadStreamedUrl(
         exportPath,
         filename: filename,
-        headers: auth.authHeaders,
+        headers: await auth.authHeadersFor('GET', exportPath),
       );
       if (!streamed) {
         final resp = await auth.authGet(exportPath);

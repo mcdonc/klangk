@@ -28,6 +28,7 @@ from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError as SAIntegrityError
 
 from .exceptions import ConfigurationError
+from . import dpop as dpop_mod
 from .model.users import parse_user_ts
 from .settings import INSECURE_DEFAULT_SECRET
 
@@ -331,6 +332,12 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class BindRequest(BaseModel):
+    """DPoP key registration (#3218): a public EC P-256 JWK."""
+
+    jwk: dict
+
+
 class ChangeExpiredPasswordRequest(BaseModel):
     """Expired-password rotation: the current (expired) password plus
     its replacement (#3177). The current password is the ownership
@@ -520,6 +527,13 @@ class Auth:
         # by session so one user's two browsers cannot suppress each
         # other's stamps.
         self.session_stamps: dict[str, float] = {}
+        # DPoP proof-JTI → expiry map (#3218) — the replay half of
+        # proof verification. Transient runtime state like the stamp
+        # dicts above. A restart clears it, which can re-admit one
+        # replay of an already-consumed proof inside its freshness
+        # window — that also requires the token itself, so it rides
+        # the same boat as the WS token-in-URL problem (#3201).
+        self.dpop_replay: dict[str, float] = {}
 
     def reconfigure(self, app) -> None:
         self.app = app
@@ -1066,12 +1080,19 @@ class Auth:
         await self.app.state.model.sessions.touch_session_by_sid(session_id)
 
     def create_token(
-        self, user_id: str, email: str, expire_hours: float | None = None
+        self,
+        user_id: str,
+        email: str,
+        expire_hours: float | None = None,
+        jkt: str | None = None,
     ) -> str:
         """Mint an access token, optionally overriding the lifetime.
 
         *expire_hours* (when given) is the capped lifetime the idle
         window demands (#3151) — see :meth:`create_capped_token`.
+        *jkt* (when given) is an RFC 7638 thumbprint: the token then
+        carries ``cnf.jkt`` and every use must present a DPoP proof
+        signed by the matching key (#3218).
         """
         lifetime = (
             self.token_expire_hours if expire_hours is None else expire_hours
@@ -1086,9 +1107,13 @@ class Auth:
             "iat": now,
             "exp": expire,
         }
+        if jkt is not None:
+            payload["cnf"] = {"jkt": jkt}
         return jwt.encode(payload, self.secret, algorithm=self.algorithm)
 
-    async def create_capped_token(self, user_id: str, email: str) -> str:
+    async def create_capped_token(
+        self, user_id: str, email: str, jkt: str | None = None
+    ) -> str:
         """Mint an access token capped at the owner's idle window (#3151).
 
         With the window armed, a token that outlives it would let an
@@ -1096,13 +1121,16 @@ class Auth:
         the lifetime is the lesser of ``KLANGKD_ACCESS_TOKEN_HOURS``
         and the (admin-aware) window. The client's 80%-of-lifetime
         refresh schedule then surfaces it at the refresh seam within
-        the window. Unarmed → the plain configured lifetime.
+        the window. Unarmed → the plain configured lifetime. *jkt*
+        carries a DPoP binding through a refresh (#3218).
         """
         window_hours = (await self.idle_window_minutes_for_user(user_id)) / 60
         lifetime = self.token_expire_hours
         if window_hours > 0:
             lifetime = min(lifetime, window_hours)
-        return self.create_token(user_id, email, expire_hours=lifetime)
+        return self.create_token(
+            user_id, email, expire_hours=lifetime, jkt=jkt
+        )
 
     async def issue_token(
         self,
@@ -2023,10 +2051,136 @@ class Auth:
         if exp is not None:
             await self._revoke_session(jti, exp)
 
+    def token_binding(self, payload: dict) -> str | None:
+        """The DPoP thumbprint a token is bound to, or None (#3218)."""
+        jkt = (payload.get("cnf") or {}).get("jkt")
+        return jkt if isinstance(jkt, str) else None
+
+    def check_dpop(
+        self, proof, method: str, path: str, access_token: str, payload: dict
+    ) -> str | None:
+        """Verify a DPoP proof for *payload*; None = OK / not bound.
+
+        Unbound tokens (no ``cnf.jkt``) verify trivially — CLI/TUI and
+        every pre-#3218 client keeps working untouched; the web client
+        binds its tokens at login, so a browser session always carries
+        the claim.
+        """
+        jkt = self.token_binding(payload)
+        if jkt is None:
+            return None
+        return dpop_mod.verify_proof(
+            proof,
+            method=method,
+            path=path,
+            access_token=access_token,
+            expected_jkt=jkt,
+            now=time.time(),
+            replay=self.dpop_replay,
+        )
+
+    def enforce_dpop(
+        self, proof, method: str, path: str, access_token: str, payload: dict
+    ) -> None:
+        """Raise 401 unless a bound token presents a valid DPoP proof."""
+        reason = self.check_dpop(proof, method, path, access_token, payload)
+        if reason is not None:
+            raise HTTPException(
+                status_code=401, detail=f"Invalid DPoP proof: {reason}"
+            )
+
+    def _bind_claims(self, payload: dict) -> tuple:
+        """The (sub, email, jti, exp) of a session payload, or a 401."""
+        claims = (
+            payload.get("sub"),
+            payload.get("email"),
+            payload.get("jti"),
+            payload.get("exp"),
+        )
+        if None in claims:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        return claims
+
+    def _bind_eligibility(self, payload: dict, jwk) -> str:
+        """The new binding's thumbprint, after the refuse-list.
+
+        A token already bound cannot be re-bound (an XSS holding the
+        readable JWT must not be able to swap the binding to its own
+        key) and the JWK must be a public EC P-256 key. Token expiry is
+        already rejected by ``decode_token``'s exp verification.
+        """
+        if self.token_binding(payload) is not None:
+            raise HTTPException(status_code=409, detail="Token already bound")
+        jkt = dpop_mod.validate_public_jwk(jwk)
+        if jkt is None:
+            raise HTTPException(status_code=400, detail="Invalid binding key")
+        return jkt
+
+    async def bind_token(
+        self,
+        token: str,
+        jwk,
+        *,
+        workstation: tuple[str | None, str | None] | None = None,
+        source_ip: str | None = None,
+        user_agent: str | None = None,
+    ) -> TokenResponse:
+        """Swap an unbound session token for one DPoP-bound to *jwk*.
+
+        The web client calls this right after every session-minting
+        flow (#3218): the mint endpoints stay credential-only (CLI,
+        TUI, and OIDC flows unchanged), then the browser registers its
+        non-extractable WebCrypto key and receives a replacement token
+        carrying ``cnf.jkt``. The swap reuses the refresh machinery —
+        old JTI blocklisted with the replacement cached (a retried
+        bind is idempotent), session row moved, live sockets
+        retargeted — and keeps the token's *remaining* lifetime rather
+        than extending it.
+        """
+        try:
+            payload = self.decode_token(token)
+            user_id, email, jti, exp = self._bind_claims(payload)
+            cached = await self._refreshed_or_revoked(jti, workstation)
+            if cached is not None:
+                return cached
+            jkt = self._bind_eligibility(payload, jwk)
+            user = await self._require_active_user(user_id)
+            remaining_hours = (exp - time.time()) / 3600
+            new_token = self.create_token(
+                user_id,
+                email,
+                expire_hours=remaining_hours,
+                jkt=jkt,
+            )
+            await self._swap_token(jti, exp, user_id, new_token)
+            # Binding a pre-#2585 token INSERTS a session row (the
+            # swap re-keys one), so the cap must hold here too — the
+            # same reason refresh enforces (#2585 review).
+            await self._enforce_session_limit(user_id)
+            await self.app.state.model.audit_events.record_best_effort(
+                "session.bind",
+                actor_id=user_id,
+                actor_email=user["email"],
+                target_type="session",
+                target_id=user_id,
+                detail={"via": "dpop"},
+                source_ip=source_ip,
+                user_agent=user_agent,
+            )
+            return TokenResponse(
+                access_token=new_token,
+                must_change_password=user.get("must_change_password", False),
+            )
+        except ExpiredSignatureError:
+            raise HTTPException(status_code=401, detail="Token expired")
+        except JWTError:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
     async def refresh_token(
         self,
         token: str,
         workstation: tuple[str | None, str | None] | None = None,
+        proof: str | None = None,
     ) -> TokenResponse:
         """Exchange a valid access token for a new one.
 
@@ -2040,6 +2194,8 @@ class Auth:
         presented from a different workstation than it was issued to
         is revoked and refused here too — the refresh seam is the one
         place a headless stolen-token client must eventually surface.
+        A DPoP-bound token (#3218) must prove possession to rotate,
+        and the replacement keeps the binding.
         """
         try:
             payload = self.decode_token(token)
@@ -2058,6 +2214,10 @@ class Auth:
             if cached is not None:
                 return cached
 
+            self.enforce_dpop(
+                proof, "POST", "/api/v1/auth/refresh", token, payload
+            )
+
             user = await self._require_active_user(user_id)
             await self._reject_idle_session(jti, exp, user_id)
             # A refresh is authenticated API use (#2588 review): stamp so
@@ -2068,7 +2228,9 @@ class Auth:
             # time out.
             await self.record_activity(user_id)
 
-            new_token = await self.create_capped_token(user_id, email)
+            new_token = await self.create_capped_token(
+                user_id, email, jkt=self.token_binding(payload)
+            )
             await self._swap_token(jti, exp, user_id, new_token)
             # Refreshing a pre-#2585 token (no row) INSERTS one; enforce
             # so the cap holds on every path that adds a session row,
@@ -2189,6 +2351,13 @@ async def _authenticated_user(request: Request, credentials) -> dict:
     failure mode (missing claims, a revoked token, an unknown user,
     a token presented from a different workstation, #3194)."""
     payload = request.app.state.auth.decode_token(credentials.credentials)
+    request.app.state.auth.enforce_dpop(
+        request.headers.get("dpop"),
+        request.method,
+        request.url.path,
+        credentials.credentials,
+        payload,
+    )
     user_id = payload.get("sub")
     jti = payload.get("jti")
     if None in (user_id, jti):
@@ -2214,8 +2383,17 @@ async def _optional_user(request: Request, credentials) -> dict | None:
     claims, a revoked token, an unknown user, or a token presented
     from a different workstation (#3194 — the mismatch still revokes
     the session, then degrades this request to its anonymous view,
-    exactly like any other dead token)."""
+    exactly like any other dead token). A DPoP-bound token with a bad
+    proof still raises 401 (#3218) — presented credentials that fail
+    verification are not "anonymous"."""
     payload = request.app.state.auth.decode_token(credentials.credentials)
+    request.app.state.auth.enforce_dpop(
+        request.headers.get("dpop"),
+        request.method,
+        request.url.path,
+        credentials.credentials,
+        payload,
+    )
     user_id = payload.get("sub")
     jti = payload.get("jti")
     if None in (user_id, jti):

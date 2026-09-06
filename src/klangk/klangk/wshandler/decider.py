@@ -236,20 +236,19 @@ async def _decider_authenticate(websocket: WebSocket, app, _hs_mark):
 
     Success returns ``(user, jti)`` — the token's JTI rides along so the
     registration can be targeted for closing when that token is later
-    hard-revoked (#3162), mirroring ``ws_authenticate`` (#3152).
+    hard-revoked (#3162), mirroring ``ws_authenticate`` (#3152); a
+    session bound to another workstation is refused (#3194), and a
+    DPoP-bound token must prove possession (#3218).
     """
     token = websocket.query_params.get("token")
     if not token:
         await _refuse(websocket, 4001, "Missing token")
         return None
     a = app.state.auth
-    try:
-        payload = a.decode_token(token)
-    except ExpiredSignatureError:
-        await _refuse(websocket, 4002, "Token expired")
+    payload = await _decode_decider_token(websocket, a, token)
+    if payload is None:
         return None
-    except JWTError:
-        await _refuse(websocket, 4001, "Invalid token")
+    if not await _decider_dpop_gate(websocket, app, token, payload):
         return None
     user = await _decider_user_or_refuse(
         websocket, a, payload, ws_workstation(websocket, app)
@@ -260,9 +259,40 @@ async def _decider_authenticate(websocket: WebSocket, app, _hs_mark):
     return user, payload.get("jti")
 
 
+async def _decode_decider_token(websocket: WebSocket, a, token: str):
+    """The token payload, or None after refusing on failure."""
+    try:
+        return a.decode_token(token)
+    except ExpiredSignatureError:
+        await _refuse(websocket, 4002, "Token expired")
+        return None
+    except JWTError:
+        await _refuse(websocket, 4001, "Invalid token")
+        return None
+
+
+async def _decider_dpop_gate(
+    websocket: WebSocket, app, token, payload
+) -> bool:
+    """DPoP proof gate for the decider handshake (#3218) — mirrors the
+    main socket's ``_dpop_gate`` (one-shot ``dpop`` query parameter)."""
+    reason = app.state.auth.check_dpop(
+        websocket.query_params.get("dpop"),
+        "GET",
+        websocket.url.path,
+        token,
+        payload,
+    )
+    if reason is None:
+        return True
+    await _refuse(websocket, 4001, "Invalid DPoP proof")
+    return False
+
+
 async def _decider_user_or_refuse(
     websocket: WebSocket, a, payload, workstation
 ):
+
     """The authenticated user for a decider registration, or None
     after refusing the handshake.
 

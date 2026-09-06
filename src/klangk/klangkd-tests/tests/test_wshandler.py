@@ -12865,3 +12865,60 @@ class TestTokenExpiryTimer:
         assert not conn._expiry_task.done()
         await conn.cleanup()
         assert conn._expiry_task is None
+
+
+# --- DPoP gate on the main WS handshake (#3218) ------------------------------
+
+
+class TestWsDpopGate:
+    def _bound_socket(self, user, dpop_param=None):
+        """A mock socket whose token carries cnf.jkt (+ optional proof)."""
+        from _helpers import make_binding_key
+        from klangk import dpop as dpop_mod
+
+        a = _auth()
+        private, jwk = make_binding_key()
+        token = a.create_token(
+            user["id"],
+            user["email"],
+            jkt=dpop_mod.jwk_thumbprint(jwk),
+        )
+        params = {"token": token}
+        if dpop_param is not None:
+            params["dpop"] = dpop_param
+        websocket = _mock_raw_sock(query_params=params)
+        websocket.url = types.SimpleNamespace(path="/ws")
+        return a, private, jwk, token, websocket
+
+    async def test_bound_token_without_proof_rejected(self, user):
+
+        a, private, jwk, token, ws = self._bound_socket(user)
+        result = await ws_authenticate(ws, _make_app_state())
+        assert result is None
+        ws.close.assert_awaited_once_with(
+            code=4001, reason="Invalid DPoP proof"
+        )
+
+    async def test_bound_token_with_valid_proof_accepted(self, user):
+        from _helpers import make_dpop_proof
+
+        a, private, jwk, token, ws = self._bound_socket(user)
+        ws.query_params["dpop"] = make_dpop_proof(
+            private, jwk, method="GET", uri="wss://h/ws", token=token
+        )
+        result = await ws_authenticate(ws, _make_app_state())
+        assert result is not None
+        ws.close.assert_not_awaited()
+
+    async def test_bound_token_with_bad_proof_rejected(self, user):
+        from _helpers import make_dpop_proof
+
+        a, private, jwk, token, ws = self._bound_socket(user)
+        ws.query_params["dpop"] = make_dpop_proof(
+            private, jwk, method="GET", uri="wss://h/ws", token="other"
+        )
+        result = await ws_authenticate(ws, _make_app_state())
+        assert result is None
+        ws.close.assert_awaited_once_with(
+            code=4001, reason="Invalid DPoP proof"
+        )

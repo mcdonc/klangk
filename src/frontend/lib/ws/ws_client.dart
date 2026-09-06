@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart' show baseUrl;
 import '../auth/auth_service.dart';
+import '../auth/dpop.dart';
 import '../utils/web_helpers_stub.dart'
     if (dart.library.js_interop) '../utils/web_helpers_web.dart';
 
@@ -64,6 +65,24 @@ class WsClient extends ChangeNotifier {
     return '$wsScheme://${loc.host}:${loc.port}$baseUrl/ws';
   }
   // coverage:ignore-end
+
+  /// The connect URI: the session token, plus a DPoP proof parameter
+  /// when that token is bound (#3218). The proof is one-shot (unique
+  /// jti, ath-bound to this token) and the server compares only its
+  /// htu path, so carrying it in the query leaks nothing reusable.
+  ///
+  /// The query is assembled structurally: under `flutter test` the
+  /// page URL has no host/port, so the interpolated `$_wsBaseUrl`
+  /// string is not a parseable URI there (`Uri.tryParse` falls back to
+  /// a bare path, keeping the injected-channel tests on a valid Uri).
+  Future<Uri> _wsUri() async {
+    final token = _auth!.token!;
+    final headers = await dpopHeadersFor('GET', _wsBaseUrl, token);
+    final proof = headers['DPoP'];
+    final params = {'token': token, if (proof != null) 'dpop': proof};
+    final base = Uri.tryParse(_wsBaseUrl) ?? Uri(path: '/ws');
+    return base.replace(queryParameters: params);
+  }
 
   WebSocketChannel? _channel;
   void Function()? _removeBeforeUnload;
@@ -333,17 +352,10 @@ class WsClient extends ChangeNotifier {
   /// close — we just wait it out since retrying creates zombie connections.
   Future<void> _connectWs() async {
     if (testChannelFactory != null) {
-      _channel = testChannelFactory!(Uri());
+      _channel = testChannelFactory!(await _wsUri());
     } else {
       // coverage:ignore-start
-      final uri = Uri.parse('$_wsBaseUrl?token=${_auth!.token}');
-      debugPrint(
-        '[WsClient] WebSocketChannel.connect() start: ${DateTime.now()}',
-      );
-      _channel = WebSocketChannel.connect(uri);
-      debugPrint(
-        '[WsClient] WebSocketChannel.connect() returned: ${DateTime.now()}',
-      );
+      _channel = WebSocketChannel.connect(await _wsUri());
       // coverage:ignore-end
     }
 

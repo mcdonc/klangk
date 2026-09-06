@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -8,6 +9,9 @@ import 'package:klangk_frontend/auth/auth_service.dart';
 import 'package:klangk_frontend/auth/pending_redirect.dart';
 import 'package:klangk_frontend/branding.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
+
+import 'package:klangk_frontend/auth/dpop.dart';
+import 'dpop_test_helpers.dart';
 
 void main() {
   setUp(() {
@@ -1843,4 +1847,183 @@ void main() {
       expect(stepUps, 1);
     });
   });
+
+  group('AuthService DPoP binding (#3218)', () {
+    setUp(() {
+      testDpopBackendOverride = FakeDpopBackend(proof: 'proof-value');
+    });
+
+    tearDown(() {
+      testDpopBackendOverride = null;
+    });
+
+    test('login binds the fresh token and proofs later requests', () async {
+      final requests = <http.Request>[];
+      testAuthHttpClientOverride = _bindableClient(
+        requests,
+        bindResponse: _bindOk,
+      );
+
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+      expect(await service.login('user', 'pass'), isNull);
+
+      // The bound replacement is the live + persisted token.
+      expect(service.token, _boundSwap());
+      expect(service.tokenBound, isTrue);
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString('klangk_jwt'), _boundSwap());
+
+      // The bind call carried the plain token and the public JWK.
+      final bind = requests.firstWhere(
+        (r) => r.url.path == '/api/v1/auth/bind',
+      );
+      expect(bind.headers['Authorization'], 'Bearer plain-token');
+      expect((jsonDecode(bind.body)['jwk'] as Map)['kty'], 'EC');
+
+      // Follow-up authenticated requests carry a DPoP proof.
+      await service.authGet('/api/v1/somewhere');
+      final get = requests.lastWhere(
+        (r) => r.url.path == '/api/v1/somewhere',
+      );
+      expect(get.headers['DPoP'], 'proof-value');
+      expect(get.headers['Authorization'], 'Bearer ${_boundSwap()}');
+    });
+
+    test('bind refused keeps the unbound token working', () async {
+      testAuthHttpClientOverride = _bindableClient(
+        [],
+        bindResponse: () => http.Response('already bound', 409),
+      );
+
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+      await service.login('user', 'pass');
+
+      expect(service.token, 'plain-token');
+      expect(service.tokenBound, isFalse);
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString('klangk_jwt'), 'plain-token');
+    });
+
+    test('bind network failure keeps the unbound token working', () async {
+      testAuthHttpClientOverride = MockClient((request) async {
+        final path = request.url.path;
+        if (path == '/api/v1/auth/login') {
+          return http.Response(jsonEncode({'access_token': 'plain'}), 200);
+        }
+        if (path == '/api/v1/auth/bind') {
+          throw Exception('network down');
+        }
+        if (path == '/api/v1/config' || path == '/api/v1/my-permissions') {
+          return http.Response('{}', 200);
+        }
+        return http.Response('Not found', 404);
+      });
+
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+      await service.login('user', 'pass');
+      expect(service.token, 'plain');
+      expect(service.tokenBound, isFalse);
+    });
+
+    test('startup binds a legacy unbound token', () async {
+      SharedPreferences.setMockInitialValues({'klangk_jwt': 'legacy-plain'});
+      testAuthHttpClientOverride = _bindableClient(
+        [],
+        bindResponse: _bindOk,
+      );
+
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+      expect(service.token, _boundSwap());
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString('klangk_jwt'), _boundSwap());
+    });
+
+    test('startup drops a bound token when the key is gone', () async {
+      final bound = _boundSwap();
+      SharedPreferences.setMockInitialValues({'klangk_jwt': bound});
+      testDpopBackendOverride = FakeDpopBackend(hasKey: false);
+      testAuthHttpClientOverride = _bindableClient(
+        [],
+        bindResponse: _bindOk,
+      );
+
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+      expect(service.isLoggedIn, isFalse);
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString('klangk_jwt'), isNull);
+    });
+
+    test('refresh of a bound token sends a DPoP proof', () async {
+      final requests = <http.Request>[];
+      final bound = _boundSwap();
+      SharedPreferences.setMockInitialValues({'klangk_jwt': bound});
+      testAuthHttpClientOverride = _bindableClient(
+        requests,
+        bindResponse: _bindOk,
+      );
+
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+      await service.testRefreshToken();
+      final refresh = requests.firstWhere(
+        (r) => r.url.path == '/api/v1/auth/refresh',
+      );
+      expect(refresh.headers['DPoP'], 'proof-value');
+      expect(refresh.headers['Authorization'], 'Bearer $bound');
+    });
+  });
+}
+
+/// A mock client that answers the standard startup endpoints plus a
+/// bind swap: /auth/bind returns [boundToken] for any other bearer.
+http.Client _bindableClient(
+  List<http.Request> requests, {
+  required FutureOr<http.Response> Function() bindResponse,
+}) {
+  return MockClient((request) async {
+    requests.add(request);
+    final path = request.url.path;
+    if (path == '/api/v1/auth/login') {
+      return http.Response(jsonEncode({'access_token': 'plain-token'}), 200);
+    }
+    if (path == '/api/v1/auth/bind') {
+      return await bindResponse();
+    }
+    if (path == '/api/v1/config') {
+      return http.Response('{}', 200);
+    }
+    if (path == '/api/v1/my-permissions') {
+      return http.Response(
+        jsonEncode({
+          'user_id': 'u1',
+          'email': 'test@example.com',
+          'is_admin': false,
+          'permissions': {},
+          'groups': [],
+        }),
+        200,
+      );
+    }
+    return http.Response('Not found', 404);
+  });
+}
+
+http.Response _bindOk() =>
+    http.Response(jsonEncode({'access_token': _boundSwap()}), 200);
+
+String _boundSwap() {
+  final payload = jsonEncode({
+    'sub': 'u1',
+    'email': 'test@example.com',
+    'jti': 'j2',
+    'exp': 9999999999,
+    'cnf': {'jkt': 'jkt-1'},
+  });
+  final encoded = base64Url.encode(utf8.encode(payload)).replaceAll('=', '');
+  return 'header.$encoded.signature';
 }

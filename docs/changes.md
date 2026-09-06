@@ -320,6 +320,19 @@ operators or integrators to act when upgrading.
   legitimate client out too. Sessions with an unknown recorded IP are
   never rejected; reloadable on SIGHUP. See
   [Authentication: session workstation binding](features/authentication.md#session-workstation-binding-replay-protection).
+- **DPoP token binding (#3218).** Web sessions bind their JWT to a
+  non-extractable WebCrypto ECDSA P-256 key held in IndexedDB: the
+  token carries `cnf.jkt`, and every authenticated request and
+  WebSocket connect must present a fresh proof signed by the private
+  half. A stolen bound token is useless without the key, and the key
+  cannot be read by any script — the stored-token-theft exposure of
+  V-222575/V-222576 shrinks to the brief mint-to-bind window and to
+  sessions that never bind (binding is best-effort at the browser).
+  CLI and TUI clients are unchanged (their tokens stay unbound); a
+  bound token whose key is gone forces a re-login. Requires a secure
+  context (HTTPS or localhost); plain-HTTP remote deployments keep
+  the previous unbound behavior. See
+  [Authentication: DPoP session-token binding](features/authentication.md#dpop-session-token-binding-xss-theft-protection).
 
 - **CSP: hash-allowed inline scripts + Trusted Types (#3219).** The
   served `Content-Security-Policy` drops `'unsafe-inline'` from

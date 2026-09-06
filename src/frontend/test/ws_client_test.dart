@@ -5,7 +5,10 @@ import 'package:klangk_frontend/ws/ws_client.dart';
 import 'package:klangk_frontend/auth/auth_service.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:klangk_frontend/auth/dpop.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
+
+import 'dpop_test_helpers.dart';
 
 /// Minimal fake WebSocketChannel for testing.
 class _FakeWebSocketChannel extends Fake implements WebSocketChannel {
@@ -1759,6 +1762,58 @@ void main() {
       // log, not the stream.
       expect(errors[0].message, 'Connection failed. Please try again.');
       expect(client.connected, isFalse);
+    });
+  });
+
+  group('WsClient DPoP connect URI (#3218)', () {
+    tearDown(() {
+      testDpopBackendOverride = null;
+    });
+
+    test('bound token appends the dpop proof parameter', () async {
+      final bound = boundToken();
+      SharedPreferences.setMockInitialValues({'klangk_jwt': bound});
+      testDpopBackendOverride = FakeDpopBackend(proof: 'ws-proof');
+      final channel = _FakeWebSocketChannel();
+      Uri? seen;
+      WsClient.testChannelFactory = (uri) {
+        seen = uri;
+        return channel;
+      };
+
+      final auth = AuthService();
+      await Future.delayed(Duration.zero);
+      final client = WsClient();
+      client.updateAuth(auth);
+      await Future.delayed(Duration.zero);
+
+      expect(seen, isNotNull);
+      expect(seen!.queryParameters['token'], bound);
+      expect(seen!.queryParameters['dpop'], 'ws-proof');
+      WsClient.testChannelFactory = null;
+      client.dispose();
+    });
+
+    test('unbound token sends no dpop parameter', () async {
+      SharedPreferences.setMockInitialValues({'klangk_jwt': 'plain-token'});
+      testDpopBackendOverride = FakeDpopBackend(proof: 'ws-proof');
+      final channel = _FakeWebSocketChannel();
+      Uri? seen;
+      WsClient.testChannelFactory = (uri) {
+        seen = uri;
+        return channel;
+      };
+
+      final auth = AuthService();
+      await Future.delayed(Duration.zero);
+      final client = WsClient();
+      client.updateAuth(auth);
+      await Future.delayed(Duration.zero);
+
+      expect(seen!.queryParameters['token'], 'plain-token');
+      expect(seen!.queryParameters.containsKey('dpop'), isFalse);
+      WsClient.testChannelFactory = null;
+      client.dispose();
     });
   });
 }

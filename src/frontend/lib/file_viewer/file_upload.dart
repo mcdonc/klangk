@@ -2,6 +2,7 @@ import 'package:desktop_drop/desktop_drop.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
+import '../auth/dpop.dart';
 
 /// Override for testing — intercepts multipart upload requests.
 /// Return a status code. If null, uses real HTTP.
@@ -100,7 +101,9 @@ class FileDropZoneState extends State<FileDropZone> {
             '$_baseUrl/api/v1/workspaces/${widget.workspaceId}/files/upload?path=${Uri.encodeComponent(uploadPath)}';
         final headers = <String, String>{};
         if (widget.authToken != null) {
-          headers['Authorization'] = 'Bearer ${widget.authToken}';
+          headers.addAll(
+            await dpopHeadersFor('POST', url, widget.authToken!),
+          );
         }
         int statusCode;
         if (testUploadOverride != null) {

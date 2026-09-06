@@ -17805,3 +17805,108 @@ class TestAdminTabPermissions:
             ("/acl", "manage-acls"),
         ):
             assert name in perms.get(resource, []), resource
+
+
+class TestDpopBindApi:
+    """POST /auth/bind + proof-carrying refresh, end to end (#3218)."""
+
+    async def _login_token(self, client) -> str:
+        resp = await client.post(
+            "/api/v1/auth/login",
+            json={
+                "identifier": "testuser@example.com",
+                "password": "testpass",
+            },
+        )
+        return resp.json()["access_token"]
+
+    async def test_bind_swaps_token_for_bound_one(self, client, user):
+        from jose import jwt
+
+        from _helpers import make_binding_key
+        from klangk import dpop as dpop_mod
+
+        token = await self._login_token(client)
+        _, jwk = make_binding_key()
+        resp = await client.post(
+            "/api/v1/auth/bind",
+            json={"jwk": jwk},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200
+        bound = resp.json()["access_token"]
+        payload = jwt.decode(bound, _SECRET, algorithms=[_ALGORITHM])
+        assert payload["cnf"]["jkt"] == dpop_mod.jwk_thumbprint(jwk)
+        # The bound token is unusable without a proof...
+        resp = await client.get(
+            "/api/v1/my-permissions",
+            headers={"Authorization": f"Bearer {bound}"},
+        )
+        assert resp.status_code == 401
+        assert "DPoP" in resp.json()["detail"]
+
+    async def test_bind_twice_refused(self, client, user):
+        from _helpers import make_binding_key, make_dpop_proof
+
+        token = await self._login_token(client)
+        private, jwk = make_binding_key()
+        first = await client.post(
+            "/api/v1/auth/bind",
+            json={"jwk": jwk},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert first.status_code == 200
+        bound = first.json()["access_token"]
+        # A re-bind of the bound token — WITH a valid proof, since the
+        # dependency enforces proofs before the handler runs — is 409.
+        proof = make_dpop_proof(
+            private,
+            jwk,
+            method="POST",
+            uri="http://test/api/v1/auth/bind",
+            token=bound,
+        )
+        second = await client.post(
+            "/api/v1/auth/bind",
+            json={"jwk": jwk},
+            headers={
+                "Authorization": f"Bearer {bound}",
+                "DPoP": proof,
+            },
+        )
+        assert second.status_code == 409
+
+    async def test_bound_refresh_via_endpoint(self, client, user):
+        from jose import jwt
+
+        from _helpers import make_binding_key, make_dpop_proof
+        from klangk import dpop as dpop_mod
+
+        token = await self._login_token(client)
+        private, jwk = make_binding_key()
+        bound = (
+            await client.post(
+                "/api/v1/auth/bind",
+                json={"jwk": jwk},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+        ).json()["access_token"]
+        proof = make_dpop_proof(
+            private,
+            jwk,
+            method="POST",
+            uri="http://test/api/v1/auth/refresh",
+            token=bound,
+        )
+        resp = await client.post(
+            "/api/v1/auth/refresh",
+            headers={
+                "Authorization": f"Bearer {bound}",
+                "DPoP": proof,
+            },
+        )
+        assert resp.status_code == 200
+        payload = jwt.decode(
+            resp.json()["access_token"], _SECRET, algorithms=[_ALGORITHM]
+        )
+        assert payload["cnf"]["jkt"] == dpop_mod.jwk_thumbprint(jwk)

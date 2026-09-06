@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 
 import '../branding.dart';
+import 'dpop.dart';
 import 'password_policy.dart';
 import 'pending_redirect.dart';
 import 'token_store.dart';
@@ -88,6 +89,12 @@ class AuthService extends ChangeNotifier {
 
   String? get token => _token;
   bool get isLoggedIn => _token != null;
+
+  /// True when the session token is DPoP-bound (#3218): every
+  /// authenticated request must then carry a fresh proof signed by the
+  /// browser's non-extractable key. False for unbound tokens (CLI/TUI
+  /// minted, or the browser could not create a key).
+  bool get tokenBound => _token != null && tokenIsBound(_token!);
   bool get loading => _loading;
   bool get initialized => _initialized;
   String get bannerTitle => _bannerTitle;
@@ -244,7 +251,7 @@ class AuthService extends ChangeNotifier {
       final client = testAuthHttpClientOverride ?? http.Client();
       final resp = await client.get(
         Uri.parse('$_baseUrl/api/v1/config'),
-        headers: {if (_token != null) 'Authorization': 'Bearer $_token'},
+        headers: await authHeadersFor('GET', '/api/v1/config'),
       );
       if (resp.statusCode == 200) {
         final data = jsonDecode(resp.body);
@@ -285,6 +292,7 @@ class AuthService extends ChangeNotifier {
     // SharedPreferences elsewhere.
     _token = await readToken();
 
+    await _restoreBinding();
     await _loadConfig();
 
     if (_bannerText.isNotEmpty) {
@@ -309,13 +317,71 @@ class AuthService extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Reconcile a persisted token with the DPoP binding key (#3218).
+  ///
+  /// A bound token whose key is gone (wiped IndexedDB, a different
+  /// browser profile) is unusable — every proof would fail — so it is
+  /// dropped and the user re-logs in. An unbound token (minted before
+  /// #3218, or a bind that failed mid-session) is bound now, so the
+  /// upgrade path heals on the first app load.
+  Future<void> _restoreBinding() async {
+    if (_token == null) return;
+    final hasKey = await dpopBackend.ensureKey();
+    if (tokenBound && !hasKey) {
+      debugPrint(
+        '[AuthService] bound token without a key; forcing re-login',
+      );
+      await _clearToken();
+      return;
+    }
+    if (!tokenBound && hasKey) {
+      final bound = await _tryBind(_token!);
+      if (bound != null && bound != _token) {
+        _token = bound;
+        await writeToken(bound);
+      }
+    }
+  }
+
+  /// Exchange [token] for a DPoP-bound replacement (#3218).
+  ///
+  /// Returns the bound token, or null when binding is unavailable
+  /// (non-web / insecure context), the server refuses, or the call
+  /// fails. The caller keeps the unbound token — the session works as
+  /// before (CLI-equivalent posture) and the next refresh retries.
+  Future<String?> _tryBind(String token) async {
+    if (tokenIsBound(token)) return token;
+    final jwk = await dpopBackend.publicJwk();
+    if (jwk == null) return null;
+    try {
+      final response = await _client.post(
+        Uri.parse('$_baseUrl/api/v1/auth/bind'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+        body: jsonEncode({'jwk': jwk}),
+      );
+      if (response.statusCode == 200) {
+        return (jsonDecode(response.body)['access_token']) as String?;
+      }
+      debugPrint(
+        '[AuthService] DPoP bind refused: '
+        '${response.statusCode} ${response.body}',
+      );
+    } catch (e) {
+      debugPrint('[AuthService] DPoP bind failed: $e');
+    }
+    return null;
+  }
+
   /// Fetch permissions from the server.
   Future<void> _fetchPermissions() async {
     debugPrint('[AuthService] fetching /api/v1/my-permissions');
     try {
       final resp = await _client.get(
         Uri.parse('$_baseUrl/api/v1/my-permissions'),
-        headers: _authHeaders,
+        headers: await authHeadersFor('GET', '/api/v1/my-permissions'),
       );
       if (resp.statusCode == 200) {
         final data = jsonDecode(resp.body) as Map<String, dynamic>;
@@ -366,6 +432,15 @@ class AuthService extends ChangeNotifier {
   Future<void> _saveToken(String token) async {
     _token = token;
     await writeToken(token);
+    // Bind the fresh token to the browser's non-extractable key right
+    // away (#3218): the unbound token exists in JS-readable form only
+    // for this instant. On any bind failure the unbound token stays
+    // valid and the next refresh re-attempts.
+    final bound = await _tryBind(token);
+    if (bound != null && bound != token) {
+      _token = bound;
+      await writeToken(bound);
+    }
     // Re-fetch config now that we have a token, so authenticated-only
     // fields (e.g. the netfilter deploy allow-list, #1365) are picked up
     // without an app restart.
@@ -404,11 +479,26 @@ class AuthService extends ChangeNotifier {
         if (_token != null) 'Authorization': 'Bearer $_token',
       };
 
-  /// Public access to the auth headers, for callers that issue their own
-  /// authenticated requests outside the `http` package (e.g. the streaming
-  /// workspace export, which uses `fetch()` directly to stream the body to
-  /// disk without buffering it in memory).
-  Map<String, String> get authHeaders => _authHeaders;
+  /// Auth headers for one request, carrying a fresh DPoP proof when
+  /// the token is bound (#3218). [method] is the HTTP verb and [path]
+  /// the request path (as in `authGet`/`authPost`); callers issuing
+  /// their own requests outside the `http` package (streaming export,
+  /// uploads, file fetches) use this instead of assembling Bearer
+  /// headers by hand, so bound sessions keep proving possession.
+  Future<Map<String, String>> authHeadersFor(
+    String method,
+    String path,
+  ) async {
+    final headers = Map<String, String>.of(_authHeaders);
+    if (_token == null) return headers;
+    final proof = await dpopBackend.createProof(
+      method: method,
+      uri: '$_baseUrl$path',
+      accessToken: _token!,
+    );
+    if (proof != null) headers['DPoP'] = proof;
+    return headers;
+  }
 
   /// Stable user-facing text for a transport failure (#3203): the raw
   /// exception (URLs, endpoint paths, transport messages) goes to the
@@ -615,7 +705,7 @@ class AuthService extends ChangeNotifier {
   Future<http.Response> authGet(String path) async {
     final response = await _client.get(
       Uri.parse('$_baseUrl$path'),
-      headers: _authHeaders,
+      headers: await authHeadersFor('GET', path),
     );
     await _handleAuthFailure(response);
     return response;
@@ -623,9 +713,9 @@ class AuthService extends ChangeNotifier {
 
   Future<http.Response> authPost(String path, {String? body}) async {
     final response = await _withStepUp(
-      () => _client.post(
+      () async => await _client.post(
         Uri.parse('$_baseUrl$path'),
-        headers: _authHeaders,
+        headers: await authHeadersFor('POST', path),
         body: body,
       ),
     );
@@ -635,9 +725,9 @@ class AuthService extends ChangeNotifier {
 
   Future<http.Response> authPatch(String path, {String? body}) async {
     final response = await _withStepUp(
-      () => _client.patch(
+      () async => await _client.patch(
         Uri.parse('$_baseUrl$path'),
-        headers: _authHeaders,
+        headers: await authHeadersFor('PATCH', path),
         body: body,
       ),
     );
@@ -647,12 +737,9 @@ class AuthService extends ChangeNotifier {
 
   Future<http.Response> authPut(String path, {String? body}) async {
     final response = await _withStepUp(
-      () => _client.put(
+      () async => await _client.put(
         Uri.parse('$_baseUrl$path'),
-        headers: {
-          ..._authHeaders,
-          if (body != null) 'Content-Type': 'application/json',
-        },
+        headers: await authHeadersFor('PUT', path),
         body: body,
       ),
     );
@@ -662,9 +749,9 @@ class AuthService extends ChangeNotifier {
 
   Future<http.Response> authDelete(String path) async {
     final response = await _withStepUp(
-      () => _client.delete(
+      () async => await _client.delete(
         Uri.parse('$_baseUrl$path'),
-        headers: _authHeaders,
+        headers: await authHeadersFor('DELETE', path),
       ),
     );
     await _handleAuthFailure(response);
@@ -695,7 +782,7 @@ class AuthService extends ChangeNotifier {
     try {
       final response = await _client.post(
         Uri.parse('$_baseUrl/api/v1/auth/refresh'),
-        headers: _authHeaders,
+        headers: await authHeadersFor('POST', '/api/v1/auth/refresh'),
       );
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
@@ -735,7 +822,7 @@ class AuthService extends ChangeNotifier {
       try {
         final resp = await _client.post(
           Uri.parse('$_baseUrl/api/v1/auth/logout'),
-          headers: _authHeaders,
+          headers: await authHeadersFor('POST', '/api/v1/auth/logout'),
         );
         if (resp.statusCode == 200) {
           final data = jsonDecode(resp.body);
