@@ -200,6 +200,43 @@ def test_harness_auth_suite_extensions():
     )
 
 
+def test_workspace_suite_extensions():
+    """The workspace-suite harness pieces (#3234) — exact-label tile
+    taps, label/identifier waits, scroll-to-reveal, binary downloads —
+    must stay wired into the harness, and the suite must drive the
+    instrumented identifiers."""
+    harness = (_REPO_ROOT / "src/frontend/e2e-tests/fmtk/fmtkharness.py").read_text()
+    assert_wired(
+        harness,
+        (
+            "def tap_labeled_exact",
+            "def wait_for_label",
+            "def wait_for_identifier",
+            "def wait_identifier_gone",
+            "def scroll_until_label",
+            "def http_download",
+            "def find_label_nodes",
+            "def parent_map",
+        ),
+        "the workspace-suite locators (#3234) must stay wired in",
+    )
+    suite = _REPO_ROOT / "src/frontend/e2e-tests/fmtk/test_workspaces.py"
+    assert suite.is_file(), "the workspace suite (#3234) is missing"
+    assert_wired(
+        suite.read_text(),
+        (
+            "create-workspace-fab",
+            "import-workspace-fab",
+            "testPickFileBytesOverride",
+            "per_handle_home",
+            "container-stopped-overlay",
+            "workspace-delete-confirm",
+            "file-browser-path",
+        ),
+        "the workspace suite (#3234) must drive the instrumented UI",
+    )
+
+
 def test_agents_documents_the_harness():
     agents = _AGENTS.read_text()
     assert "fmtk-up" in agents, "AGENTS.md must point at the fmtk-up harness"

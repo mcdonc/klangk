@@ -872,20 +872,31 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
           ? Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                FloatingActionButton.small(
-                  heroTag: 'import',
-                  onPressed: _showImportDialog,
-                  tooltip: 'Import Workspace',
-                  child: const Icon(Icons.upload, semanticLabel: 'Import'),
+                // Identified for the fmtk e2e driver — FAB semantics
+                // never merge child labels, so labels alone cannot
+                // address them (the invite-fab pattern, #3233).
+                Semantics(
+                  container: true,
+                  identifier: 'import-workspace-fab',
+                  child: FloatingActionButton.small(
+                    heroTag: 'import',
+                    onPressed: _showImportDialog,
+                    tooltip: 'Import Workspace',
+                    child: const Icon(Icons.upload, semanticLabel: 'Import'),
+                  ),
                 ),
                 const SizedBox(height: 12),
-                FloatingActionButton(
-                  heroTag: 'create',
-                  onPressed: _createWorkspace,
-                  tooltip: 'New Workspace',
-                  child: const Icon(
-                    Icons.add,
-                    semanticLabel: 'Create workspace',
+                Semantics(
+                  container: true,
+                  identifier: 'create-workspace-fab',
+                  child: FloatingActionButton(
+                    heroTag: 'create',
+                    onPressed: _createWorkspace,
+                    tooltip: 'New Workspace',
+                    child: const Icon(
+                      Icons.add,
+                      semanticLabel: 'Create workspace',
+                    ),
                   ),
                 ),
               ],
