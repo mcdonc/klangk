@@ -789,6 +789,7 @@ class Lifecycle:
         "inactivity_sweeper",
         "session_idle_monitor",
         "memory_evictor",
+        "resource_watchdog",
         "consent_coordinator",
         "consent_deciders",
         "sidecar_connections",
@@ -1290,6 +1291,13 @@ def start_background_workers(app: FastAPI) -> None:
     # analogue) — stops idle workspaces before the kernel OOM killer picks a
     # random victim (possibly klangkd itself).
     app.state.memory_evictor.start()
+    # #3206: resource watchdog — disk-capacity thresholds + audit
+    # degradation detection, feeding #3250's notifier. Guarded: some
+    # minimal test apps wire the lifespan without build_app's full
+    # state (the server_scheduler pattern).
+    resource_watchdog = getattr(app.state, "resource_watchdog", None)
+    if resource_watchdog is not None:
+        resource_watchdog.start()
     # #2661: scheduled server stop/recycle loop — fires persisted
     # schedules (surviving this daemon's restarts) and keeps every
     # client informed with the pending-schedule snapshot. Guarded: some
@@ -1315,6 +1323,9 @@ async def stop_background_workers(app: FastAPI) -> None:
     await app.state.inactivity_sweeper.stop()
     await app.state.session_idle_monitor.stop()
     await app.state.memory_evictor.stop()
+    resource_watchdog = getattr(app.state, "resource_watchdog", None)
+    if resource_watchdog is not None:
+        await resource_watchdog.stop()
     await app.state.consent_coordinator.stop()
     await app.state.consent_deciders.stop()
     await app.state.sidecar_connections.stop()

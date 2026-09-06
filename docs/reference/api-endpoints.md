@@ -2115,11 +2115,12 @@ No request body.
 
 Container-audit status (#3154, security finding):
 `write_failures` counts every `container_events` write that failed
-(best-effort paths included), and `fail_closed` mirrors
-`KLANGKD_AUDIT_FAIL_CLOSED` so an assessor can verify the mode. The
-counter is in-memory and **since process start** — a restart (including
-a crash-restart) zeroes it, so `0` means "no failures this process",
-not "no failures ever".
+(best-effort paths included), `identity_write_failures` counts the
+same for the `audit_events` identity/privilege table (#3206), and
+`fail_closed` mirrors `KLANGKD_AUDIT_FAIL_CLOSED` so an assessor can
+verify the mode. The counters are in-memory and **since process
+start** — a restart (including a crash-restart) zeroes them, so `0`
+means "no failures this process", not "no failures ever".
 
 Deliberately public like `/health` (a deliberate, documented decision:
 the values carry no user data and an assessor must be able to probe the
@@ -2131,7 +2132,7 @@ now" — was judged an acceptable trade for verifiability).
 No request body.
 
 ```json
-{ "write_failures": 0, "fail_closed": false }
+{ "write_failures": 0, "identity_write_failures": 0, "fail_closed": false }
 ```
 
 ---

@@ -742,7 +742,19 @@ sync` report a clear permission-denied error.
   are truncated at 2048 characters. The HMAC tag column set is
   unchanged, so offsite verification recipes keep working (see
   [Audit Record Integrity](/reference/audit-integrity)).
-
+- **Disk-capacity and audit-degradation detection (#3206).** The
+  resource watchdog checks the data directory, podman container
+  storage, and `KLANGKD_DISK_WATCHDOG_PATHS` every minute, sending
+  `resource.disk.warn` (75% used, the STIG storage warning point) /
+  `resource.disk.critical` (90%) / `resource.disk.recovered`
+  notifications on state transitions — hysteresis bands below both
+  thresholds, one alert per filesystem per 5 minutes, and a dispatch
+  the throttle swallows retried while delivery stays possible. It
+  also summarizes
+  audit-write-failure growth as one `audit.failure` per table, and
+  `GET /audit` reports the identity-audit counter as
+  `identity_write_failures`. Thresholds and interval are
+  `KLANGKD_DISK_WATCHDOG_*`, reloadable on SIGHUP.
 - **Admin notifications (#3250).** SA/ISSO notification of
   security-relevant events: account lifecycle (create, register,
   update, delete, unlock, disable, enable — including the inactivity

@@ -43,6 +43,7 @@ from .. import (
     oidc,
     wshandler,
 )
+from ..resource_watchdog import audit_failure_counts
 from ..settings import parse_bool_setting
 from .common import ALL_PERMISSIONS, autostart_allowed, get_app_dep
 
@@ -108,14 +109,18 @@ async def audit_status(app=Depends(get_app_dep)):
     # included — bumps write_failures, and fail_closed mirrors
     # KLANGKD_AUDIT_FAIL_CLOSED, so an operator (or assessor) can see
     # the audit trail losing rows and verify the mode without reading
-    # the journal. Public like /health: the counters carry no user
-    # data, and an assessor must be able to probe the mode
-    # unauthenticated. #3252: when audit forwarding is configured, the
-    # same surface reports the forwarder's health — a down target is
-    # an audit-delivery degradation. Unconfigured forwarding adds no
-    # key (the response stays byte-identical to before #3252).
+    # the journal. #3206: identity_write_failures counts the
+    # audit_events table's failed writes the same way — both tables
+    # serve SV-222484, so both counters belong on the assessor's
+    # probe. #3252: when audit forwarding is configured, the same
+    # surface reports the forwarder's health — a down target is an
+    # audit-delivery degradation. Unconfigured forwarding adds no key.
+    # Public like /health: the counters carry no user data, and an
+    # assessor must be able to probe the mode unauthenticated.
+    counts = audit_failure_counts(app)
     body = {
-        "write_failures": app.state.container_registry.audit_write_failures,
+        "write_failures": counts.get("container_events", 0),
+        "identity_write_failures": counts.get("audit_events", 0),
         "fail_closed": app.state.settings.audit_fail_closed,
     }
     forwarder = getattr(app.state, "audit_forwarder", None)

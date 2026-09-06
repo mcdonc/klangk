@@ -70,6 +70,20 @@ audit log:
   an unwritable audit table must not fail silently.
 - **Capacity refusals** — a workspace start refused because host memory
   cannot fit the workspace's memory limit.
+- **Disk capacity** (#3206) — the resource watchdog checks the
+  filesystems holding the data directory (where the audit records
+  live), the podman container-storage root, and any configured extra
+  paths every minute. Usage crossing the warn threshold (75% by
+  default) or the critical threshold (90%) sends
+  `resource.disk.warn` / `resource.disk.critical`; falling back below
+  the recovery floor sends `resource.disk.recovered`. Events fire on
+  transitions — hysteresis bands below both thresholds hold usage
+  hovering at a boundary at its current state — and a filesystem
+  that stays degraded refreshes its alert once per 5 minutes, so a
+  slowly filling disk produces one alert per episode per filesystem,
+  not one per check, and no alert is permanently lost to the
+  throttle. See `KLANGKD_DISK_WATCHDOG_*`
+  ([Environment Variables](../reference/environment.md)).
 
 Two delivery channels are available, and both can be on at once:
 
@@ -90,10 +104,21 @@ notification. A config-file `admin_notify_events: []` turns event
 notifications off while leaving the channels configured — the
 deliberate off switch (blanking the environment variable instead
 restores the default allowlist). Persistent conditions (`audit.failure`,
-`resource.low`) notify at most once every 5 minutes — `audit.failure`
-once per source table (`audit_events` and `container_events` alert
-independently) — so a degraded audit table or a full host produces one
-alert per condition rather than a flood.
+`resource.low`, and the `resource.disk.*` transitions) notify at most
+once every 5 minutes — `audit.failure` once per source table
+(`audit_events` and `container_events` alert independently) and the
+disk events once per filesystem — so a degraded audit table or a full
+host produces one alert per condition rather than a flood.
+
+The resource watchdog (#3206) adds a second detection layer over the
+audit-failure write sites: it watches the audit-write-failure counters
+themselves, and a check that observed new failures since the last one
+sends one `audit.failure` summary naming the table and the count. The
+summary shares the per-table 5-minute throttle with the write-time
+events, so a sustained storm produces one alert per window from either
+layer, never both. Fail-closed audit refusals (`KLANGKD_AUDIT_FAIL_CLOSED`)
+pass the same counters, so a start or stop refused because its audit
+row could not be written is detected as well.
 
 Notification delivery is best-effort: a failed email or webhook call
 is logged as a warning and never fails or delays the action that

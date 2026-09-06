@@ -94,6 +94,7 @@ from . import (
     podman,
     netfilter,
     notifier as notifier_mod,
+    resource_watchdog,
     sidecar_connections,
     ssl_trust,
     terminal,
@@ -246,6 +247,11 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     # workspaces (sibling loop to the registry's IdleMonitor). Reads its
     # thresholds live off settings (SIGHUP-reloadable) via self.app.
     app.state.memory_evictor = container.eviction.MemoryPressureEvictor(app)
+    # #3206: ResourceWatchdog — periodic disk-capacity thresholds and
+    # audit-write-failure growth detection, emitting events for the
+    # admin notifier (#3250). Reads its settings live (SIGHUP-
+    # reloadable) via self.app; inert until a channel is configured.
+    app.state.resource_watchdog = resource_watchdog.ResourceWatchdog(app)
     # #2661: scheduled host shutdown/restart — persists schedules in the
     # DB (surviving daemon restarts), broadcasts the pending snapshot to
     # all clients, and fires due actions (drain workspaces, then the

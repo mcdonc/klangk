@@ -254,6 +254,8 @@ class TestAuditEventsModel:
         assert args[0] == "audit.failure"
         assert kwargs["detail"]["table"] == "audit_events"
         assert kwargs["detail"]["failed_event"] == "login"
+        # The degradation counter the resource watchdog watches (#3206).
+        assert events.write_failures == 1
 
 
 class TestAuthChokePoints:

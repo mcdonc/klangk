@@ -28,9 +28,12 @@ and a full host alerts once, not on every occurrence.
 The event names mirror the identity audit stream (``user.create``,
 ``user.update``, …, #3205) so an operator can correlate a
 notification with its ``audit_events`` row. ``user.disable`` /
-``user.enable`` / ``audit.failure`` / ``resource.low`` are
-notifier-only names (the audit stream records disable toggles under
-``user.update``).
+``user.enable`` are notifier-only names (the audit stream records
+disable toggles under ``user.update``). The resource-watchdog names
+(``resource.disk.warn`` / ``resource.disk.critical`` /
+``resource.disk.recovered``, #3206) are transition-based — one event
+per threshold episode, per monitored filesystem (the throttle key
+includes the detail's ``path``).
 """
 
 import asyncio
@@ -64,13 +67,24 @@ DEFAULT_NOTIFY_EVENTS = (
     "group.member.remove",
     "audit.failure",
     "resource.low",
+    "resource.disk.warn",
+    "resource.disk.critical",
+    "resource.disk.recovered",
 )
 
 # Persistent conditions re-fire at the source on every occurrence (a
 # failed audit write, a refused start); notify at most once per window
 # per throttle key (see AdminNotifier.throttle_key) so the recipients
-# get one alert, not a storm (#3250).
-THROTTLE_SECONDS = {"audit.failure": 300, "resource.low": 300}
+# get one alert, not a storm (#3250). The disk transitions (#3206) are
+# edge-triggered already, but a deep usage oscillation across the
+# hysteresis band could still flap — the same window bounds it.
+THROTTLE_SECONDS = {
+    "audit.failure": 300,
+    "resource.low": 300,
+    "resource.disk.warn": 300,
+    "resource.disk.critical": 300,
+    "resource.disk.recovered": 300,
+}
 
 # Fire-and-forget tasks are held here so the event loop cannot garbage
 # collect a deliver task mid-flight (the asyncio docs' keep-alive set).
@@ -83,7 +97,7 @@ def hold_task(task) -> None:
     task.add_done_callback(PENDING_TASKS.discard)
 
 
-def notify_event(app, event: str, **fields) -> None:
+def notify_event(app, event: str, **fields) -> bool:
     """Guarded ``notify_admins``: a no-op when *app* has no notifier.
 
     Production wires ``app.state.notifier`` in ``build_app``; minimal
@@ -92,6 +106,12 @@ def notify_event(app, event: str, **fields) -> None:
     guard in lifecycle (#2762). Every emit site goes through here so
     no call path depends on the full state shape.
 
+    Returns whether a delivery task was created — ``False`` when no
+    notifier is wired, the event was gated off (allowlist, channels,
+    throttle), or dispatch failed. Callers that need eventual delivery
+    (the resource watchdog's transition events, #3206) use this to
+    retry; everyone else ignores it.
+
     Never raises — including from inside the caller's own ``except``
     block (the audit-failure sites): a dispatch problem must not mask
     or replace the exception it annotates.
@@ -99,13 +119,14 @@ def notify_event(app, event: str, **fields) -> None:
     try:
         notifier = getattr(app.state, "notifier", None)
         if notifier is not None:
-            notifier.notify_admins(event, **fields)
+            return bool(notifier.notify_admins(event, **fields))
     except Exception:  # noqa: BLE001 — best-effort by contract
         logger.warning(
             "admin notification dispatch for %s failed",
             event,
             exc_info=True,
         )
+    return False
 
 
 class AdminNotifier:
@@ -152,14 +173,17 @@ class AdminNotifier:
 
     def throttle_key(self, event: str, detail: dict | None) -> str:
         """One throttle bucket per event — and, when the detail names a
-        source ``table``, per table: a container_events write storm must
-        not mask the first audit_events degradation alert (and vice
-        versa) under the shared 300s window (#3250 review).
+        source ``table``, per table, or a monitored filesystem
+        ``path``, per path: a container_events write storm must not
+        mask the first audit_events degradation alert (and vice
+        versa), and one full filesystem must not mask another's first
+        alert under the shared window (#3250 review, #3206).
         """
-        table = (detail or {}).get("table")
-        if table is None:
+        detail = detail or {}
+        scope = detail.get("table") or detail.get("path")
+        if scope is None:
             return event
-        return f"{event}:{table}"
+        return f"{event}:{scope}"
 
     def throttle_allows(self, event: str, key: str) -> bool:
         """Throttle gate: True when *key* may notify now.
@@ -200,8 +224,14 @@ class AdminNotifier:
         target_id: str | None = None,
         detail: dict | None = None,
         source_ip: str | None = None,
-    ) -> None:
+    ) -> bool:
         """Fan one event out to every configured channel. Never raises.
+
+        Returns ``True`` when a delivery task was created; ``False``
+        when the event was gated off (allowlist, channels, throttle) or
+        there was no running event loop to deliver on — the caller can
+        use the result to retry an event that must eventually land
+        (#3206's transition events do).
 
         Fire-and-forget: delivery is a detached background task, so a
         slow SMTP handshake or an unreachable webhook never delays the
@@ -209,7 +239,7 @@ class AdminNotifier:
         """
         key = self.throttle_key(event, detail)
         if not self.should_notify(event, key):
-            return
+            return False
         payload = {
             "event": event,
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -227,6 +257,8 @@ class AdminNotifier:
                 "admin notification for %s dropped: no running event loop",
                 event,
             )
+            return False
+        return True
 
     # --- delivery ---
 
