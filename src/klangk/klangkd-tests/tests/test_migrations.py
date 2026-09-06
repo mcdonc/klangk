@@ -99,6 +99,7 @@ class TestRunner:
             (36, "0036_audit_forward_state"),
             (37, "0037_audit_forward_cursors"),
             (38, "0038_audit_events_method_referer"),
+            (39, "0039_role_group_descriptions"),
         ]
         async with aiosqlite.connect(str(app_state.state.db.db_path)) as db:
             assert await _recorded(db) == expected
@@ -207,6 +208,7 @@ class TestRunner:
                 (36, "0036_audit_forward_state"),
                 (37, "0037_audit_forward_cursors"),
                 (38, "0038_audit_events_method_referer"),
+                (39, "0039_role_group_descriptions"),
             ]
 
     async def test_m0008_agent_identity_and_human_collision(
@@ -3623,5 +3625,119 @@ class TestM0038AuditEventsMethodReferer:
                 "SELECT event, method, referer FROM audit_events"
             )
             assert await cursor.fetchone() == ("login", None, None)
+        finally:
+            await db.__aexit__(None, None, None)
+
+
+class TestM0039RoleGroupDescriptions:
+    """m0039: workspace-role-group descriptions lose the embedded
+    workspace name (#3283) — the /groups listing is readable by any
+    authenticated user, and the free-form name must not be pageable
+    through it. Rows whose description an admin edited after seeding
+    (no longer matching the seed template) keep their wording."""
+
+    async def _db(self, tmp_path):
+        db = aiosqlite.connect(str(tmp_path / "m0039.db"))
+        await db.__aenter__()
+        await db.execute(
+            "CREATE TABLE groups ("
+            " id TEXT PRIMARY KEY, name TEXT UNIQUE NOT NULL,"
+            " description TEXT, source TEXT NOT NULL DEFAULT 'manual',"
+            " created_at TEXT NOT NULL DEFAULT (datetime('now')))"
+        )
+        return db
+
+    async def _descriptions(self, db) -> dict[str, str | None]:
+        cursor = await db.execute("SELECT name, description FROM groups")
+        return {row[0]: row[1] for row in await cursor.fetchall()}
+
+    async def test_rewrites_seeded_template_rows(self, tmp_path):
+        db = await self._db(tmp_path)
+        try:
+            from klangk.model.migrations import m0039_role_group_descriptions
+
+            await db.executemany(
+                "INSERT INTO groups (id, name, description, source)"
+                " VALUES (?, ?, ?, 'workspace-role')",
+                [
+                    (
+                        "g1",
+                        "owners-11111111-2222-3333-4444-555555555555",
+                        "Workspace role group: owners of workspace"
+                        " acme-merger-dossier",
+                    ),
+                    (
+                        "g2",
+                        "spectators-11111111-2222-3333-4444-555555555555",
+                        "Workspace role group: spectators of workspace"
+                        " acme-merger-dossier",
+                    ),
+                ],
+            )
+            await m0039_role_group_descriptions.migration.apply(db)
+            rows = await self._descriptions(db)
+            assert rows["owners-11111111-2222-3333-4444-555555555555"] == (
+                "Workspace role group: owners"
+            )
+            assert rows["spectators-11111111-2222-3333-4444-555555555555"] == (
+                "Workspace role group: spectators"
+            )
+        finally:
+            await db.__aexit__(None, None, None)
+
+    async def test_leaves_edited_and_manual_rows_alone(self, tmp_path):
+        db = await self._db(tmp_path)
+        try:
+            from klangk.model.migrations import m0039_role_group_descriptions
+
+            await db.executemany(
+                "INSERT INTO groups (id, name, description, source)"
+                " VALUES (?, ?, ?, ?)",
+                [
+                    # Admin-edited role-group description: not the
+                    # seeded wording anymore.
+                    (
+                        "g1",
+                        "coders-11111111-2222-3333-4444-555555555555",
+                        "editing team (renamed)",
+                        "workspace-role",
+                    ),
+                    # Seeded shape on a manual group: out of scope.
+                    (
+                        "g2",
+                        "human-group",
+                        "Workspace role group: owners of workspace x",
+                        "manual",
+                    ),
+                    # NULL description on a role group.
+                    (
+                        "g3",
+                        "spectators-11111111-2222-3333-4444-555555555556",
+                        None,
+                        "workspace-role",
+                    ),
+                ],
+            )
+            await m0039_role_group_descriptions.migration.apply(db)
+            rows = await self._descriptions(db)
+            assert rows["coders-11111111-2222-3333-4444-555555555555"] == (
+                "editing team (renamed)"
+            )
+            assert rows["human-group"] == (
+                "Workspace role group: owners of workspace x"
+            )
+            assert (
+                rows["spectators-11111111-2222-3333-4444-555555555556"] is None
+            )
+        finally:
+            await db.__aexit__(None, None, None)
+
+    async def test_empty_table_is_a_noop(self, tmp_path):
+        db = await self._db(tmp_path)
+        try:
+            from klangk.model.migrations import m0039_role_group_descriptions
+
+            await m0039_role_group_descriptions.migration.apply(db)
+            assert await self._descriptions(db) == {}
         finally:
             await db.__aexit__(None, None, None)

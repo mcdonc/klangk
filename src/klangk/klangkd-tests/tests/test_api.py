@@ -7642,6 +7642,64 @@ class TestUserGroupEndpoints:
         assert paged.status_code == 200
         assert len(paged.json()["groups"]) == 1
 
+    async def test_default_listing_hides_role_groups_from_plain_users(
+        self, client, user, app_state
+    ):
+        """#3283: the default (no ``source``) listing shows the seeded
+        workspace-role rows only to manage-groups holders. A plain
+        authenticated caller gets the manual-only view — another
+        user's workspace id (in role-group names) and workspace name
+        are not pageable through /groups."""
+        headers = await _auth_headers(client)
+        await app_state.state.model.workspaces.create_workspace_with_acl(
+            user["id"], "merger-dossier-384ac4"
+        )
+        resp = await client.get(
+            "/api/v1/groups?page_size=200", headers=headers
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert all(g["source"] == "manual" for g in body["groups"])
+        assert "merger-dossier-384ac4" not in str(body)
+
+    async def test_role_group_descriptions_carry_no_workspace_name(
+        self, client, user, app_state
+    ):
+        """#3283: role-group rows reachable via an explicit
+        ``source=workspace-role`` describe the role only — the
+        free-form workspace name never lands in a description any
+        authenticated reader can page through."""
+        headers = await _auth_headers(client)
+        await app_state.state.model.workspaces.create_workspace_with_acl(
+            user["id"], "therapy-notes-dev"
+        )
+        resp = await client.get(
+            "/api/v1/groups?source=workspace-role&page_size=200",
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["total"] >= 4
+        for group in resp.json()["groups"]:
+            assert group["description"].startswith("Workspace role group: ")
+            assert "therapy-notes-dev" not in group["description"]
+
+    async def test_admin_default_listing_keeps_role_groups(
+        self, client, admin_user, user, app_state
+    ):
+        """#3283: a manage-groups holder keeps the show-all default —
+        the admin Groups tab's role-group chip reads it."""
+        await app_state.state.model.workspaces.create_workspace_with_acl(
+            user["id"], "admin-view-ws"
+        )
+        headers = await self._admin_login(client)
+        resp = await client.get(
+            "/api/v1/groups?page_size=200", headers=headers
+        )
+        assert resp.status_code == 200
+        assert any(
+            g["source"] == "workspace-role" for g in resp.json()["groups"]
+        )
+
     async def test_admin_list_groups_source_filter(
         self, client, admin_user, app_state
     ):

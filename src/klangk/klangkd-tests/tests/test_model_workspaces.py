@@ -921,8 +921,9 @@ async def test_settings_in_auto_start_listing(ws, user):
 
 
 async def test_role_groups_carry_workspace_role_source(ws, app_state, user):
-    """#2750: seeded role groups are marked ``workspace-role`` and their
-    descriptions carry the normalized purpose."""
+    """#2750: seeded role groups are marked ``workspace-role``; the
+    description carries the normalized purpose with no workspace name
+    (#3283 — the listing is readable by any authenticated user)."""
     from klangk.model.users import GROUP_SOURCE_WORKSPACE_ROLE
 
     ws_row = await ws.create_workspace_with_acl(user["id"], "marked-ws")
@@ -932,9 +933,7 @@ async def test_role_groups_carry_workspace_role_source(ws, app_state, user):
         )
         assert group is not None
         assert group["source"] == GROUP_SOURCE_WORKSPACE_ROLE
-        assert group["description"] == (
-            f"Workspace role group: {suffix} of workspace marked-ws"
-        )
+        assert group["description"] == f"Workspace role group: {suffix}"
 
 
 async def test_delete_workspace_tears_down_unknown_suffix_role_group(

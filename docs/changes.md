@@ -318,6 +318,16 @@ operators or integrators to act when upgrading.
 
 ### Security
 
+- **`GET /groups` no longer discloses workspace names (#3283).**
+  Workspace role groups are seeded with an id-only description
+  (`Workspace role group: role`; the group name already carries the
+  workspace id), and a migration rewrites existing rows — a
+  description no longer embeds the free-form workspace name. The
+  default group listing (no `source` parameter) returns
+  `source='workspace-role'` rows only to callers holding
+  `manage-groups`; other authenticated callers get the manual-only
+  view. Explicit `source=manual` and `source=workspace-role` filters
+  work as before for every authenticated caller.
 - **Bind-mount re-validation at container start (#3278).** A mount's
   host-path source is now checked against
   `KLANGKD_ALLOWED_MOUNT_ROOTS` and the protected-path blocklist every
