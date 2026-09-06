@@ -408,24 +408,35 @@ live, but cannot steal a credential that outlives the reload. With
 born-bound mints there is no unbound window at all — nothing to
 read, sabotage, or bind-first with a substituted key (#3230).
 
-The **bind deadline** is the backstop for the paths that can still
-mint unbound: an OIDC login whose navigation lost the binding key
-(a key-less build, or a script stripping the param), or a mint
-request whose key header was stripped (a bare marker is rejected
-with 400, so stripping yields a failed login, not a weaker token).
-Such a token carries a `wbd` claim — mint time plus
-`KLANGKD_WEB_BIND_GRACE_SECONDS`, default 300 seconds — and a
-session still unbound past the deadline is refused everywhere:
-every API request, token refresh, bind call, and WebSocket connect
-answers 401 (established sockets close at the deadline, not at the
-token's natural expiry) until the user logs in again. The deadline
-is a signed claim and survives refresh and bind swaps unchanged, so
-no rotation can reset it. The re-login re-enters the bind flow under
-attacker-free conditions, or surfaces the sabotage. A transient
-bind failure on the web is retried every 30 seconds inside the
-window; a failure that outlives the window costs a re-login, not
-the session's secrecy. CLI and TUI clients are always unmarked and
-unaffected — their tokens keep working indefinitely.
+The **bind deadline** is the backstop. On the header paths a bare
+marker without a usable key is rejected with 400, so stripping the
+key from the SPA's request yields a failed login, not a weaker
+token. On the OIDC path the key rides the login URL; a web flow
+whose navigation lost it is refused at the callback, and a web
+build that cannot bind at all (plain HTTP to a remote host) rides
+an explicit `none` so its session is minted unmarked and keeps the
+pre-#3230 behavior. A token that nonetheless carries a `wbd`
+claim — mint time plus `KLANGKD_WEB_BIND_GRACE_SECONDS`, default
+300 seconds, `0` disables — is refused everywhere once past the
+deadline while still unbound: every API request, token refresh,
+bind call, and WebSocket connect answers 401, and every established
+socket (main and consent-decider alike) is armed to close at the
+deadline, not at the token's natural expiry. The deadline is a
+signed claim and survives refresh and bind swaps unchanged — and a
+rotation re-arms the live sockets for the replacement token — so
+no rotation can reset it. The re-login re-enters the bind flow
+under attacker-free conditions, or surfaces the sabotage. A
+transient bind failure on the web is retried every 30 seconds
+inside the window; a failure that outlives the window costs a
+re-login, not the session's secrecy. CLI and TUI clients are always
+unmarked and unaffected — their tokens keep working indefinitely.
+
+What remains deliberately out of model: a script able to _rewrite
+the minting request itself_ (swap or strip its headers before it
+is sent) is not stopped by any of this — but that script reads the
+login credentials out of the same request, a compromise no token
+binding can address. The controls here bound the attacker who
+arrives _after_ the session was minted.
 
 Operational notes:
 

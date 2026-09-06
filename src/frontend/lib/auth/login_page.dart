@@ -41,10 +41,12 @@ class _LoginPageState extends State<LoginPage> {
   List<Map<String, dynamic>> _oidcProviders = [];
   String _authModes = 'password';
 
-  /// #3230: the binding-JWK query param for OIDC login navigations
-  /// (null when this build must not mark its mints). Loaded async at
-  /// mount; the buttons render with or without it.
+  /// #3230: the binding-JWK query param for OIDC login navigations.
+  /// Null until loaded on web builds (the buttons stay disabled for
+  /// those milliseconds so no login can race ahead of the key and
+  /// mint a refused session); non-web builds never wait.
   String? _oidcBindingParam;
+  bool _oidcBindingReady = !isWebClient;
 
   bool get _showPasswordForm => _authModes != 'oidc' && _authModes != 'none';
 
@@ -58,8 +60,11 @@ class _LoginPageState extends State<LoginPage> {
 
   Future<void> _loadOidcBindingParam() async {
     final param = await oidcBindingParam();
-    if (!mounted || param == null) return;
-    setState(() => _oidcBindingParam = param);
+    if (!mounted) return;
+    setState(() {
+      _oidcBindingParam = param;
+      _oidcBindingReady = true;
+    });
   }
 
   Future<void> _loadConfig() async {
@@ -172,17 +177,21 @@ class _LoginPageState extends State<LoginPage> {
             child: OutlinedButton.icon(
               icon: const Icon(Icons.login),
               label: Text('Log in with ${provider['display_name']}'),
-              onPressed: () {
-                final id = provider['id'];
-                var url = '${baseUrl}/api/v1/auth/oidc/$id/login';
-                // #3230: ride the binding key so the callback mint is
-                // born bound — no unbound window even for OIDC.
-                if (_oidcBindingParam != null) {
-                  url =
-                      '$url?binding_jwk=${Uri.encodeQueryComponent(_oidcBindingParam!)}';
-                }
-                navigateTo(url);
-              },
+              onPressed: _oidcBindingReady
+                  ? () {
+                      final id = provider['id'];
+                      var url = '${baseUrl}/api/v1/auth/oidc/$id/login';
+                      // #3230: ride the binding key so the callback mint
+                      // is born bound — no unbound window even for OIDC.
+                      // A key-less web build rides the explicit `none`.
+                      final param = _oidcBindingParam;
+                      if (param != null) {
+                        url =
+                            '$url?binding_jwk=${Uri.encodeQueryComponent(param)}';
+                      }
+                      navigateTo(url);
+                    }
+                  : null,
             ),
           ),
         ),

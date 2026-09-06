@@ -2021,27 +2021,35 @@ class Auth:
         await self.app.state.model.sessions.replace_session(
             jti, user_id, new_payload["jti"], new_expires_at
         )
-        self._retarget_refreshed_sockets(jti, new_payload["jti"])
+        self._retarget_refreshed_sockets(
+            jti, new_payload["jti"], new_exp=self.ws_expiry(new_payload)
+        )
         # The old JTI is dead — drop its stamp-throttle entry (#3151)
         # so the dict tracks live sessions, not history.
         self.session_stamps.pop(f"jti:{jti}", None)
 
-    def _retarget_refreshed_sockets(self, old_jti: str, new_jti: str) -> None:
+    def _retarget_refreshed_sockets(
+        self, old_jti: str, new_jti: str, new_exp: float | None = None
+    ) -> None:
         """Move live WS connections onto the refreshed token's JTI (#3152).
 
         Keeps ``conn.jti`` equal to the session row's current JTI so a
         later hard revocation (logout, eviction) still finds the socket
         the refreshed session is using — for the main ``/ws``
         connections and the consent-decider registrations alike
-        (#3162). Minimal app states (tests) may not wire ``sockets`` or
-        ``consent_deciders`` — then there is nothing to retarget.
+        (#3162). *new_exp* re-arms each socket's expiry close task for
+        the replacement token (#3230) so a rotation never leaves a
+        socket closing at the OLD token's expiry (or bind deadline)
+        mid-session. Minimal app states (tests) may not wire
+        ``sockets`` or ``consent_deciders`` — then there is nothing to
+        retarget.
         """
         sockets = getattr(self.app.state, "sockets", None)
         if sockets is not None:
-            sockets.reattach_jti(old_jti, new_jti)
+            sockets.reattach_jti(old_jti, new_jti, new_exp=new_exp)
         deciders = getattr(self.app.state, "consent_deciders", None)
         if deciders is not None:
-            deciders.reattach_jti(old_jti, new_jti)
+            deciders.reattach_jti(old_jti, new_jti, new_exp=new_exp)
 
     async def _expired_token_response(
         self, token: str, workstation=None

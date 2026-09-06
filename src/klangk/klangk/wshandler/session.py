@@ -1020,19 +1020,28 @@ class WebSocketState:
                 logger.debug("Error closing socket for jti %s", jti)
         return len(socks)
 
-    def reattach_jti(self, old_jti: str, new_jti: str) -> int:
+    def reattach_jti(
+        self, old_jti: str, new_jti: str, new_exp: float | None = None
+    ) -> int:
         """Move live connections from *old_jti* onto *new_jti* (#3152).
 
         A token refresh keeps the session — and its socket — alive under
         the new token; retargeting keeps ``conn.jti`` equal to the
         session row's current JTI so a later hard revocation (logout,
-        session-limit eviction) still finds the socket. Returns how many
-        connections were moved.
+        session-limit eviction) still finds the socket. *new_exp* (the
+        replacement token's expiry, #3230) re-arms the connection's
+        close task so it follows the new token instead of closing at
+        the old one's expiry. Returns how many connections were moved.
         """
         moved = 0
         for conn in self.connections.values():
             if conn.jti == old_jti:
                 conn.jti = new_jti
+                # Minimal test doubles may lack the re-arm method —
+                # then only the jti moves (their expiry is fake too).
+                retarget = getattr(conn, "retarget_expiry", None)
+                if retarget is not None:
+                    retarget(new_exp)
                 moved += 1
         return moved
 

@@ -363,14 +363,18 @@ operators or integrators to act when upgrading.
   (`Klangk-Binding-Jwk`; the OIDC login URL carries it into the
   state cookie for the callback mint), so the token is minted with
   `cnf.jkt` and no unbound window exists — nothing to read,
-  sabotage, or bind-first with a substituted key. The setting is
-  the backstop for the paths that can still mint unbound (a
-  stripped OIDC binding param): such a session carries a signed
-  bind deadline (mint time plus this many seconds, default `300`)
-  and is refused with 401 on every API request, token refresh, bind
-  call, and WebSocket connect once past it, while an established
-  WebSocket closes at the deadline rather than the token's natural
-  expiry. The deadline survives refresh and bind swaps unchanged,
+  sabotage, or bind-first with a substituted key. An OIDC web flow
+  that arrives without its binding key is refused at the callback
+  (a key-less web build rides an explicit `none` and mints
+  unmarked), and every established WebSocket — main and
+  consent-decider alike — is armed to close at its token's expiry
+  (or bind deadline) and re-armed on rotation. The setting is the
+  deadline backstop for tokens that nonetheless mint unbound: such
+  a session carries a signed bind deadline (mint time plus this
+  many seconds, default `300`) and is refused with 401 on every
+  API request, token refresh, bind call, and WebSocket connect
+  once past it, while an established WebSocket closes at the
+  deadline rather than the token's natural expiry. The deadline survives refresh and bind swaps unchanged,
   so a rotation can never reset it; the web client retries a
   transiently failed bind every 30 seconds inside the window.
   CLI/TUI sessions are unmarked and stay unbound indefinitely; `0`

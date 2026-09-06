@@ -1363,6 +1363,24 @@ def _valid_cli_redirect(url: str | None) -> bool:
 # --- OIDC endpoints ---
 
 
+#: The explicit "this client cannot bind" value for the OIDC login's
+#: ``binding_jwk`` param (#3230): a web build without WebCrypto (plain
+#: HTTP to a remote host) rides it so the callback mints an unmarked
+#: session instead of refusing the login.
+BINDING_NONE = "none"
+
+
+def _binding_param_ok(binding_jwk: str | None) -> bool:
+    """Whether a login-navigation binding param is acceptable: absent,
+    the explicit cannot-bind marker, or a valid public JWK."""
+    if binding_jwk is None or binding_jwk == BINDING_NONE:
+        return True
+    return (
+        dpop_mod.validate_public_jwk(_decode_binding_jwk(binding_jwk))
+        is not None
+    )
+
+
 def _validate_login_params(cli_redirect: str | None, binding_jwk) -> None:
     """400 on an impermissible login-navigation parameter (#936/#3230).
 
@@ -1374,11 +1392,7 @@ def _validate_login_params(cli_redirect: str | None, binding_jwk) -> None:
         raise HTTPException(
             status_code=400, detail="cli_redirect must be localhost"
         )
-    if (
-        binding_jwk
-        and dpop_mod.validate_public_jwk(_decode_binding_jwk(binding_jwk))
-        is None
-    ):
+    if not _binding_param_ok(binding_jwk):
         raise HTTPException(status_code=400, detail="Invalid binding key")
 
 
@@ -1674,6 +1688,34 @@ async def _call_login_hook(request: Request, provider, claims, email, tokens):
         ) from None
 
 
+def _callback_mint_flags(cookie_data: dict) -> tuple[bool, str | None]:
+    """``(web_client, jkt)`` for the OIDC callback mint (#3230).
+
+    The web flow (no cli_redirect) mints born bound to the binding
+    key that rode the login navigation; the explicit ``none`` (a web
+    build that cannot bind) mints unmarked; a web flow whose
+    navigation lost its binding key is refused — an attacker
+    stripping the param gets a failed login, not an unbound token
+    with a bind-first window. The CLI's localhost-redirect flow mints
+    an unmarked token as always.
+    """
+    cli_flow = _valid_cli_redirect(cookie_data.get("cli_redirect"))
+    cannot_bind = cookie_data.get("binding_jwk") == BINDING_NONE
+    web_client = not cli_flow and not cannot_bind
+    jkt = (
+        dpop_mod.validate_public_jwk(
+            _decode_binding_jwk(cookie_data.get("binding_jwk"))
+        )
+        if web_client
+        else None
+    )
+    if web_client and jkt is None:
+        raise HTTPException(
+            status_code=400, detail="Binding key required for web login"
+        )
+    return web_client, jkt
+
+
 @router.get("/auth/oidc/{provider_id}/callback")
 async def oidc_callback(
     provider_id: str,
@@ -1724,12 +1766,7 @@ async def oidc_callback(
         await request.app.state.oidc.sync_oidc_groups(user["id"], hook_groups)
 
     source_ip, user_agent, method, referer = request_metadata(request)
-    # #3230: the web flow (no cli_redirect) mints a bind-deadline
-    # token, born bound to the SPA's key when the login navigation
-    # carried one; the CLI's localhost-redirect flow mints an
-    # unmarked one.
-    cli_flow = _valid_cli_redirect(cookie_data.get("cli_redirect"))
-    binding_jwk = None if cli_flow else cookie_data.get("binding_jwk")
+    web_client, jkt = _callback_mint_flags(cookie_data)
     access_token = await request.app.state.auth.issue_token(
         user["id"],
         email,
@@ -1738,8 +1775,8 @@ async def oidc_callback(
         method=method,
         referer=referer,
         via="oidc",
-        web_client=not cli_flow,
-        jkt=dpop_mod.validate_public_jwk(_decode_binding_jwk(binding_jwk)),
+        web_client=web_client,
+        jkt=jkt,
     )
     await request.app.state.model.users.record_login(user["id"])
     return _build_redirect_response(

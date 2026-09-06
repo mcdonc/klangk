@@ -359,6 +359,11 @@ class AuthService extends ChangeNotifier {
     }
   }
 
+  /// #3230: the HTTP status of the last bind attempt (null on success
+  /// or a network error). A 4xx refusal is permanent — retrying every
+  /// 30s cannot fix an already-bound or invalid-key state.
+  int? _lastBindStatus;
+
   /// Exchange [token] for a DPoP-bound replacement (#3218).
   ///
   /// Returns the bound token, or null when binding is unavailable
@@ -380,6 +385,7 @@ class AuthService extends ChangeNotifier {
         },
         body: jsonEncode({'jwk': jwk}),
       );
+      _lastBindStatus = response.statusCode;
       if (response.statusCode == 200) {
         return (jsonDecode(response.body)['access_token']) as String?;
       }
@@ -388,6 +394,7 @@ class AuthService extends ChangeNotifier {
         '${response.statusCode} ${response.body}',
       );
     } catch (e) {
+      _lastBindStatus = null;
       debugPrint('[AuthService] DPoP bind failed: $e');
     }
     return null;
@@ -501,6 +508,8 @@ class AuthService extends ChangeNotifier {
       return;
     }
     if (await dpopBackend.publicJwk() == null) return;
+    final status = _lastBindStatus;
+    if (status != null && status >= 400 && status < 500) return;
     _scheduleBindRetry();
   }
 

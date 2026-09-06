@@ -658,15 +658,32 @@ class TestOidcMint:
         assert payload["cnf"]["jkt"] == dpop_mod.jwk_thumbprint(jwk)
         assert auth_mod.BIND_DEADLINE_CLAIM in payload
 
-    async def test_web_flow_without_binding_param_deadline_backstop(
+    async def test_web_flow_without_binding_param_refused(
         self, client, app, monkeypatch, user, db
     ):
-        """The one remaining unbound-marked path: stripped param or a
-        key-less build — unbound, but deadline-limited."""
-        token = await self._redeem(client, app, monkeypatch, {})
+        """A web flow whose navigation lost its binding key is refused
+        at the callback — an attacker stripping the param gets a
+        failed login, not an unbound token with a bind-first window
+        (#3230 round-2 review F2)."""
+        with pytest.raises(Exception) as exc_info:
+            await self._redeem(client, app, monkeypatch, {})
+        assert "400" in str(exc_info.value) or (
+            getattr(exc_info.value, "response", None) is not None
+            and exc_info.value.response.status_code == 400
+        )
+
+    async def test_web_flow_explicit_none_mints_unmarked(
+        self, client, app, monkeypatch, user, db
+    ):
+        """The explicit cannot-bind marker: a key-less web build's
+        OIDC session is unmarked — it keeps the pre-#3230 behavior
+        instead of a deadline it can never satisfy (#3230 round-2 F4)."""
+        token = await self._redeem(
+            client, app, monkeypatch, {"binding_jwk": "none"}
+        )
         payload = app.state.auth.decode_token(token)
         assert "cnf" not in payload
-        assert auth_mod.BIND_DEADLINE_CLAIM in payload
+        assert auth_mod.BIND_DEADLINE_CLAIM not in payload
 
     async def test_cli_flow_mints_plain_token(
         self, client, app, monkeypatch, user, db
@@ -733,6 +750,44 @@ class TestOidcMint:
         sc.load(resp.headers["set-cookie"])
         data = json.loads(sc["oidc_test"].value)
         assert data["binding_jwk"] == encoded
+
+    async def test_change_expired_password_mint(self, make_app, db):
+        """The one SPA-reachable route the round-1 table missed — pins
+        its web_mint_binding threading (#3230 round-2 F6)."""
+        import datetime as dt
+
+        app = make_app({"KLANGKD_PASSWORD_MAX_AGE_DAYS": "1"})
+        created = await app.state.model.users.create_user(
+            "expired@example.com",
+            auth_mod.hash_password("OldPassword1"),
+            verified=True,
+        )
+        old = (
+            dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=3)
+        ).isoformat()
+        async with app.state.db.transaction() as tx:
+            await tx.execute(
+                "UPDATE users SET password_set_at = ? WHERE id = ?",
+                (old, created["id"]),
+            )
+        headers, jwk, _ = _mint_headers()
+        transport = ASGITransport(app=app)
+        async with AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as c:
+            resp = await c.post(
+                "/api/v1/auth/change-expired-password",
+                json={
+                    "identifier": "expired@example.com",
+                    "current_password": "OldPassword1",
+                    "new_password": "NewPassword123!",
+                },
+                headers=headers,
+            )
+        assert resp.status_code == 200, resp.text
+        payload = app.state.auth.decode_token(resp.json()["access_token"])
+        assert payload["cnf"]["jkt"] == dpop_mod.jwk_thumbprint(jwk)
+        assert auth_mod.BIND_DEADLINE_CLAIM in payload
 
 
 class TestSabotageScenario:

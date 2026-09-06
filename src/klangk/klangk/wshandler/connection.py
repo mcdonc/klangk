@@ -119,6 +119,17 @@ class Connection:
             return
         self._expiry_task = asyncio.create_task(self._expire_when_due())
 
+    def retarget_expiry(self, new_exp: float | None) -> None:
+        """Re-arm the expiry close task for a replacement token (#3230).
+
+        A refresh or bind swap keeps the session — and its socket —
+        alive under the new token; without this the socket kept the
+        ORIGINAL token's ``exp`` (or bind deadline) and closed mid-
+        session even though the caller holds a fresh, valid token."""
+        self._expiry_task and self._expiry_task.cancel()
+        self.token_exp = new_exp
+        self.schedule_token_expiry()
+
     async def _expire_when_due(self) -> None:
         """Sleep until the token's ``exp`` claim, then close the socket."""
         remaining = self.token_exp - time.time()

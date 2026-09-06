@@ -62,8 +62,14 @@ Future<Map<String, String>> mintHeaders() async {
 /// The binding-JWK query param for the OIDC login navigation (a
 /// top-level GET cannot carry headers, so the key rides the URL and
 /// the server stores it in the OIDC state cookie for the callback
-/// mint). Null when this client must not mark.
+/// mint). Returns the base64url JWK on a binding-capable web build,
+/// the literal `none` on a web build that cannot bind (the server
+/// then mints an unmarked session), and null on non-web builds (no
+/// param — the CLI/desktop flows never send one).
 Future<String?> oidcBindingParam() async {
-  final headers = await mintHeaders();
-  return headers['Klangk-Binding-Jwk'];
+  if (!isWebClient) return null;
+  if (!await dpopBackend.ensureKey()) return 'none';
+  final jwk = await dpopBackend.publicJwk();
+  if (jwk == null) return 'none';
+  return encodeBindingValue(jsonEncode(jwk));
 }

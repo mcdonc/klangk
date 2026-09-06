@@ -82,6 +82,7 @@ class ConsentDeciderRegistry:
         sock,
         jti: str | None = None,
         user_id: str | None = None,
+        exp: float | None = None,
     ) -> None:
         """Register a live decider (connect). Idempotent on decider_id.
 
@@ -92,6 +93,10 @@ class ConsentDeciderRegistry:
         close exactly this decider; ``user_id`` lets an account disable do
         the same for every decider of the user. Both are ``None`` on
         registrations built without them (tests) -- never kicked.
+        ``exp`` (the token's expiry — or its #3230 bind deadline, whichever
+        is sooner) arms a close task so a decider never outlives its
+        credential (#3230 review F1: egress-verdict authority must not
+        survive past the deadline).
         """
         self._deciders[decider_id] = {
             "ws": workspace_id,
@@ -100,16 +105,51 @@ class ConsentDeciderRegistry:
             "sock": sock,
             "jti": jti,
             "user_id": user_id,
+            "exp": exp,
+            "expiry_task": None,
         }
+        self._arm_expiry(decider_id)
         logger.info(
             "consent decider registered: scope=%s decider=%s",
             workspace_id[:8],
             decider_id[:8],
         )
 
+    def _arm_expiry(self, decider_id: str) -> None:
+        """(Re)arm the decider's expiry close task for its entry's ``exp``."""
+        entry = self._deciders[decider_id]
+        entry["expiry_task"] and entry["expiry_task"].cancel()
+        if entry["exp"] is not None:
+            entry["expiry_task"] = asyncio.create_task(
+                self._expire_when_due(decider_id)
+            )
+
+    async def _expire_when_due(self, decider_id: str) -> None:
+        """Close the decider's socket when its token expires (#3230).
+
+        The close ends the handler's receive loop, whose teardown
+        deregisters the decider — mirroring the main socket's
+        ``Connection._expire_when_due``."""
+        entry = self._deciders.get(decider_id)
+        if entry is None:  # pragma: no cover — raced a deregister
+            return
+        remaining = entry["exp"] - time.time()
+        if remaining > 0:
+            await asyncio.sleep(remaining)
+        logger.info(
+            "Access token expired for decider %s — closing socket",
+            entry.get("email"),
+        )
+        try:
+            await entry["sock"].close(code=4002, reason="Token expired")
+        except WS_ERRORS:  # pragma: no cover — already closing
+            logger.debug("Error closing expired decider socket")
+
     def deregister(self, decider_id: str) -> None:
         """Drop a decider (disconnect). No-op if unknown."""
-        if self._deciders.pop(decider_id, None) is not None:
+        entry = self._deciders.pop(decider_id, None)
+        if entry is not None:
+            entry["expiry_task"] and entry["expiry_task"].cancel()
             logger.info(
                 "consent decider deregistered: decider=%s", decider_id[:8]
             )
@@ -224,7 +264,9 @@ class ConsentDeciderRegistry:
         ]
         return await self._close_and_drop(victims, code, reason)
 
-    def reattach_jti(self, old_jti: str, new_jti: str) -> int:
+    def reattach_jti(
+        self, old_jti: str, new_jti: str, new_exp: float | None = None
+    ) -> int:
         """Move live deciders from *old_jti* onto *new_jti* (#3162).
 
         A token refresh keeps the session — and its decider socket —
@@ -232,12 +274,17 @@ class ConsentDeciderRegistry:
         equal to the session row's current JTI so a later hard
         revocation (logout, session-limit eviction) still finds the
         decider (mirrors ``WebSocketState.reattach_jti``, #3152).
-        Returns how many deciders were moved.
+        *new_exp* (the replacement token's expiry, #3230) re-arms the
+        close task so the socket follows the new token instead of
+        closing at the old one's expiry. Returns how many deciders
+        were moved.
         """
         moved = 0
-        for entry in self._deciders.values():
+        for decider_id, entry in self._deciders.items():
             if entry["jti"] == old_jti:
                 entry["jti"] = new_jti
+                entry["exp"] = new_exp
+                self._arm_expiry(decider_id)
                 moved += 1
         return moved
 
