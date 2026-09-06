@@ -278,6 +278,7 @@ async def test_search_users_like_wildcards_are_literal(users):
     dump."""
     under = await users.create_user("_under@x.com", "hash")
     plain = await users.create_user("plain@x.com", "hash")
+    assert await users.search_users("") == []
     assert await users.search_users("%") == []
     assert await users.search_users("\\") == []
     found = await users.search_users("_")

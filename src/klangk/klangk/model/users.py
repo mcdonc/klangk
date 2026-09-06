@@ -1365,8 +1365,11 @@ class UsersModel(Submodel):
 
         ``%`` and ``_`` in *query* match literally (#3280): the needle
         is escaped, so a wildcard query cannot widen the prefix match
-        into a directory dump.
+        into a directory dump. An empty *query* returns no rows (the
+        route also rejects it, but the model stays safe standalone).
         """
+        if not query:
+            return []
         needle = f"{sql_like_escape(query)}%"
         rows = await self.app.state.db.fetchall(
             "SELECT id, email, handle FROM users"
