@@ -527,10 +527,18 @@ class TestRouteEmitSites:
     async def test_registration_notifies(self, api_client, api_app):
         spy = Mock()
         api_app.state.notifier = spy
-        resp = await api_client.post(
-            "/api/v1/auth/register",
-            json={"email": "newbie@example.com", "password": "GoodPass123"},
-        )
+        from klangk.emailsvc import EmailService
+
+        with patch.object(
+            EmailService, "send_verification_email", new_callable=AsyncMock
+        ):
+            resp = await api_client.post(
+                "/api/v1/auth/register",
+                json={
+                    "email": "newbie@example.com",
+                    "password": "GoodPass123",
+                },
+            )
         assert resp.status_code in (200, 201)
         assert spy.notify_admins.call_args.args[0] == "user.register"
         assert spy.notify_admins.call_args.kwargs["target_type"] == "user"
