@@ -772,12 +772,16 @@ class WsClient extends ChangeNotifier {
     _send({'cmd': 'terminal_select_window', 'window_id': windowId});
   }
 
-  void sendTerminalCloseWindow(int index) {
-    _send({'cmd': 'terminal_close_window', 'index': index});
+  void sendTerminalCloseWindow(String windowId) {
+    _send({'cmd': 'terminal_close_window', 'window_id': windowId});
   }
 
-  void sendTerminalRenameWindow(int index, String name) {
-    _send({'cmd': 'terminal_rename_window', 'index': index, 'name': name});
+  void sendTerminalRenameWindow(String windowId, String name) {
+    _send({
+      'cmd': 'terminal_rename_window',
+      'window_id': windowId,
+      'name': name,
+    });
   }
 
   void sendTerminalListWindows() {

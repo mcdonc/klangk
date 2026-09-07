@@ -483,9 +483,9 @@ class TuiState:
         return await self.client().create_terminal(name, window_name)
 
     async def rename_terminal(
-        self, name: str, index: int, new_name: str
+        self, name: str, window_id: str, new_name: str
     ) -> list[dict]:
-        return await self.client().rename_terminal(name, index, new_name)
+        return await self.client().rename_terminal(name, window_id, new_name)
 
     # --- auth mode (probed live via /config) ---
 

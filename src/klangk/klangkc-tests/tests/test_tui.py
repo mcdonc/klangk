@@ -1042,8 +1042,8 @@ async def test_rename_terminal_delegates(monkeypatch, redirect_xdg):
 
     renamed = {}
 
-    async def fake_rename(name, index, new_name):
-        renamed.update(name=name, index=index, new=new_name)
+    async def fake_rename(name, window_id, new_name):
+        renamed.update(name=name, window_id=window_id, new=new_name)
         return [
             {"index": 0, "name": "main"},
             {"index": 1, "name": new_name},
@@ -1055,8 +1055,8 @@ async def test_rename_terminal_delegates(monkeypatch, redirect_xdg):
     fake_client.rename_terminal = fake_rename
     t = TuiState("https://x.example")
     monkeypatch.setattr(t, "client", lambda: fake_client)
-    result = await t.rename_terminal("ws1", 1, "ci")
-    assert renamed == {"name": "ws1", "index": 1, "new": "ci"}
+    result = await t.rename_terminal("ws1", "@1", "ci")
+    assert renamed == {"name": "ws1", "window_id": "@1", "new": "ci"}
     assert len(result) == 2
 
 
@@ -8820,8 +8820,8 @@ async def test_detail_rename_terminal(monkeypatch):
 
     renamed = {}
 
-    async def _rename(name, index, new_name):
-        renamed.update(name=name, index=index, new=new_name)
+    async def _rename(name, window_id, new_name):
+        renamed.update(name=name, window_id=window_id, new=new_name)
         return [
             {"index": 0, "name": "main", "id": "@0"},
             {"index": 1, "name": new_name, "id": "@1"},
@@ -8852,7 +8852,7 @@ async def test_detail_rename_terminal(monkeypatch):
         app.screen.on_button_pressed(FakeBtnPress("ok"))
         for _ in range(4):
             await pilot.pause()
-        assert renamed == {"name": "alpha", "index": 1, "new": "ci"}
+        assert renamed == {"name": "alpha", "window_id": "@1", "new": "ci"}
         assert any("Renamed terminal to 'ci'" in m for m in notified)
 
 
@@ -8876,6 +8876,49 @@ async def test_detail_rename_terminal_no_selection(monkeypatch):
         await app.workers.wait_for_complete()
         await pilot.pause()
         # No InputScreen pushed — still on the detail screen.
+        assert app.screen is d
+
+
+async def test_detail_rename_terminal_stale_row_refuses(monkeypatch):
+    """A row whose window has no resolvable id refuses to rename and
+    refreshes the list, rather than risking the wrong window (#3288)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    a = _wsobj("alpha")
+    calls = {"rename": 0, "list": 0}
+
+    async def _terms_no_id(*a, **k):
+        calls["list"] += 1
+        return [
+            {"index": 0, "name": "main", "id": "@0"},
+            {"index": 1, "name": "build"},  # no id — contract violation
+        ]
+
+    async def _rename(name, window_id, new_name):
+        calls["rename"] += 1
+        return []
+
+    st = _ws(list_terminals=_terms_no_id, rename_terminal=_rename)
+    st.find_workspace = lambda n: a
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        await app.screen._load_terminals()
+        await pilot.pause()
+        d = app.screen
+        d.query_one("#term_list").index = 1
+        before = calls["list"]
+        d.action_rename_terminal()
+        for _ in range(4):
+            await pilot.pause()
+        # No rename sent, no InputScreen pushed, and the list refreshed.
+        assert calls["rename"] == 0
+        assert calls["list"] > before
+        assert "no longer exists" in str(d.query_one("#detail_msg").render())
         assert app.screen is d
 
 
@@ -8915,7 +8958,7 @@ async def test_detail_rename_terminal_failure(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    async def _rename(name, index, new_name):
+    async def _rename(name, window_id, new_name):
         raise RuntimeError("boom")
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
@@ -8947,7 +8990,7 @@ async def test_detail_rename_terminal_empty_result(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    async def _rename(name, index, new_name):
+    async def _rename(name, window_id, new_name):
         return []
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)

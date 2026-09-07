@@ -51,12 +51,12 @@ class _MockWsClient extends WsClient {
   void sendTerminalStop() => sentCommands.add('terminal_stop');
 
   @override
-  void sendTerminalCloseWindow(int index) =>
-      sentCommands.add('close_window:$index');
+  void sendTerminalCloseWindow(String windowId) =>
+      sentCommands.add('close_window:$windowId');
 
   @override
-  void sendTerminalRenameWindow(int index, String name) =>
-      sentCommands.add('rename_window:$index:$name');
+  void sendTerminalRenameWindow(String windowId, String name) =>
+      sentCommands.add('rename_window:$windowId:$name');
 
   @override
   void sendTerminalNewWindow({String? name}) => sentCommands.add('new_window');
@@ -513,7 +513,7 @@ void main() {
       await tester.tap(find.text('OK'));
       await tester.pumpAndSettle();
 
-      expect(client.sentCommands, contains('rename_window:0:zsh'));
+      expect(client.sentCommands, contains('rename_window:w1:zsh'));
     });
 
     testWidgets('context menu rename cancel does not rename', (tester) async {
@@ -793,7 +793,8 @@ void main() {
 
       // Find close icons and tap the first one
       await tester.tap(find.byIcon(Icons.close).first);
-      expect(client.sentCommands, contains('close_window:0'));
+      // Close addresses the window by its stable id, not the index (#3288).
+      expect(client.sentCommands, contains('close_window:w1'));
     });
 
     testWidgets('long handle and window name are truncated in shared tab',
@@ -942,7 +943,7 @@ void main() {
       await tester.testTextInput.receiveAction(TextInputAction.done);
       await tester.pumpAndSettle();
 
-      expect(client.sentCommands, contains('rename_window:0:fish'));
+      expect(client.sentCommands, contains('rename_window:w1:fish'));
     });
 
     testWidgets('hover exit on + button resets state', (tester) async {

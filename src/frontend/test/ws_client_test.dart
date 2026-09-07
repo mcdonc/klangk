@@ -408,8 +408,8 @@ void main() {
       client.sendTerminalNewWindow();
       client.sendTerminalNewWindow(name: 'build');
       client.sendTerminalSelectWindow('@1');
-      client.sendTerminalCloseWindow(1);
-      client.sendTerminalRenameWindow(0, 'test');
+      client.sendTerminalCloseWindow('@1');
+      client.sendTerminalRenameWindow('@0', 'test');
       client.sendTerminalListWindows();
       client.sendShareWindow('@0');
       client.sendUnshareWindow('@0');
@@ -1386,8 +1386,8 @@ void main() {
       client.sendTerminalResize(120, 40);
       client.sendTerminalNewWindow(name: 'build');
       client.sendTerminalSelectWindow('@2');
-      client.sendTerminalCloseWindow(1);
-      client.sendTerminalRenameWindow(0, 'main');
+      client.sendTerminalCloseWindow('@3');
+      client.sendTerminalRenameWindow('@0', 'main');
       client.sendTerminalListWindows();
       client.sendShareWindow('@0');
       client.sendUnshareWindow('@0');
@@ -1408,10 +1408,13 @@ void main() {
       expect(msgs[3], {'cmd': 'terminal_resize', 'cols': 120, 'rows': 40});
       expect(msgs[4], {'cmd': 'terminal_new_window', 'name': 'build'});
       expect(msgs[5], {'cmd': 'terminal_select_window', 'window_id': '@2'});
-      expect(msgs[6], {'cmd': 'terminal_close_window', 'index': 1});
+      // Close and rename address windows by their stable @N id — never a
+      // positional index, which a concurrent window mutation can shift
+      // between sync and click (#3288).
+      expect(msgs[6], {'cmd': 'terminal_close_window', 'window_id': '@3'});
       expect(msgs[7], {
         'cmd': 'terminal_rename_window',
-        'index': 0,
+        'window_id': '@0',
         'name': 'main',
       });
       expect(msgs[8], {'cmd': 'terminal_list_windows'});

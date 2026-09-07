@@ -296,10 +296,11 @@ test.describe("terminal tabs", () => {
         )!;
         expect(tempWindow).toBeDefined();
 
-        // Close it
+        // Close it — by stable id, the wire shape every current client
+        // sends (#3288)
         client.send({
           cmd: "terminal_close_window",
-          index: tempWindow.index,
+          window_id: tempWindow.id,
         });
         // The close handler broadcasts a refreshed terminal_windows list,
         // but a stale pre-close frame can arrive first — poll the
@@ -330,18 +331,20 @@ test.describe("terminal tabs", () => {
       const client = await connectToWorkspace(token, workspaceId);
       try {
         const windows = await startTerminalAndGetWindows(client);
-        const firstIndex = windows[0].index;
+        const firstId = windows[0].id;
 
-        // Rename window 0
+        // Rename the first window by its stable id (#3288)
         client.send({
           cmd: "terminal_rename_window",
-          index: firstIndex,
+          window_id: firstId,
           name: "main-shell",
         });
-        const msg = await client.recvUntil(
-          (m) => m.type === "terminal_windows",
+        // A stale pre-rename frame can arrive first — poll the
+        // authoritative list until the rename really landed (#3057).
+        const renamed = await waitForWindows(
+          client,
+          (ws) => ws[0].name === "main-shell",
         );
-        const renamed = msg.windows as WindowInfo[];
         expect(renamed[0].name).toBe("main-shell");
       } finally {
         client.close();
@@ -365,21 +368,28 @@ test.describe("terminal tabs", () => {
 
         // Create a second window named "build"
         client.send({ cmd: "terminal_new_window", name: "build" });
-        await client.recvUntil((m) => m.type === "terminal_windows");
-
-        // Renaming window 0 to "build" is permitted — names are
-        // display-only and window identity is the @N id (#2192).
-        client.send({
-          cmd: "terminal_rename_window",
-          index: 0,
-          name: "build",
-        });
-        const msg = await client.recvUntil(
+        const created = await client.recvUntil(
           (m) => m.type === "terminal_windows",
         );
-        const named = (msg.windows as WindowInfo[]).filter(
-          (w) => w.name === "build",
-        );
+
+        // Renaming the first window to "build" is permitted — names are
+        // display-only and window identity is the @N id (#2192).
+        const firstId = (created.windows as WindowInfo[]).find(
+          (w) => w.index === 0,
+        )!.id;
+        client.send({
+          cmd: "terminal_rename_window",
+          window_id: firstId,
+          name: "build",
+        });
+        // Poll the authoritative list — a stale pre-rename frame could
+        // arrive first and would lack the second "build" (#3057).
+        const named = (
+          await waitForWindows(
+            client,
+            (ws) => ws.filter((w) => w.name === "build").length === 2,
+          )
+        ).filter((w) => w.name === "build");
         expect(named.length).toBe(2);
         expect(named[0].id).not.toBe(named[1].id);
       } finally {

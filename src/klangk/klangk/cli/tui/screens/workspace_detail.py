@@ -1184,10 +1184,16 @@ class WorkspaceDetailScreen(StatusScreen):
         child = lv.highlighted_child
         if child is None or not child.name:
             return
-        # The rename controller targets the window by INDEX (tmux
-        # rename-window -t session:INDEX), not the @N id used by select /
-        # delete. The list row key *is* the index (#1965).
-        index = int(child.name)
+        # Target the window by its stable @N id, not the row index —
+        # a stale list could otherwise rename the wrong window (#3288).
+        # The resolution matches delete_terminal's (#1965).
+        window_id = self._window_id_for(child.name)
+        if window_id is None:
+            self.msg(
+                "Terminal no longer exists — refreshing list.", error=True
+            )
+            self.run_worker(self._load_terminals, exit_on_error=False)
+            return
         current = self._terminal_label_for(child.name)
 
         def _on_rename(new_name: str | None) -> None:
@@ -1196,7 +1202,7 @@ class WorkspaceDetailScreen(StatusScreen):
             if not new_name or new_name == current:
                 return
             self.run_worker(
-                self._do_rename_terminal(index, new_name),
+                self._do_rename_terminal(window_id, new_name),
                 exit_on_error=False,
             )
 
@@ -1210,16 +1216,16 @@ class WorkspaceDetailScreen(StatusScreen):
             _on_rename,
         )
 
-    async def _do_rename_terminal(self, index: int, new_name: str) -> None:
+    async def _do_rename_terminal(self, window_id: str, new_name: str) -> None:
         try:
             windows = await self.app.tui_state.rename_terminal(
-                self._name, index, new_name
+                self._name, window_id, new_name
             )
         except Exception as exc:
             self.app.notify(
                 f"Rename failed: {exc}", severity="error", timeout=8
             )
-            # Stale index — refresh so the row self-heals (#1965).
+            # Stale target — refresh so the row self-heals (#1965).
             await self._load_terminals()
             return
         if not windows:

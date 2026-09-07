@@ -1147,10 +1147,10 @@ test.describe("shared terminal visibility", () => {
         )[0].window_name as string;
         expect(originalName).toBe(firstWindow.name as string);
 
-        // Admin renames the terminal
+        // Admin renames the terminal — by stable id (#3288)
         adminWs.send({
           cmd: "terminal_rename_window",
-          index: firstWindow.index as number,
+          window_id: firstWindow.id as string,
           name: "my-build",
         });
 

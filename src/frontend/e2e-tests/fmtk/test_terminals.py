@@ -293,7 +293,7 @@ def test_own_terminal_tabs(harness, app):
     # from a right-click the driver cannot perform)
     first = wait_terminal_windows(app, 1)[0]
     app.terminal_eval(
-        f"st!.widget.wsClient.sendTerminalRenameWindow({first['index']}, 'main');"
+        f"st!.widget.wsClient.sendTerminalRenameWindow('{first['id']}', 'main');"
     )
     deadline = time.monotonic() + 15
     while time.monotonic() < deadline:

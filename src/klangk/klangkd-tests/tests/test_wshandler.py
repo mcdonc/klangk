@@ -7638,6 +7638,20 @@ class TestTerminalWindowHandlers:
         sent = sock.send_json.call_args[0][0]
         assert sent["type"] == "error"
 
+    async def test_select_window_missing_target_refused(self):
+        """A select frame with neither window_id nor index is refused,
+        not defaulted to window 0 (#3288)."""
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock, perms=("code-in-isolation",))
+        conn.container_id = "cid"
+        conn._user_home = "/home/alice"
+        with patch.object(_mock_term, "select_window") as mock_sel:
+            await conn.handle_terminal_select_window({})
+        mock_sel.assert_not_called()
+        sent = sock.send_json.call_args[0][0]
+        assert sent["type"] == "error"
+        assert "window_id or index" in sent["message"]
+
     async def test_close_window(self):
         sock = _mock_sock()
         conn = _base_conn(ws=sock, perms=("code-in-isolation",))
@@ -7784,6 +7798,23 @@ class TestTerminalWindowHandlers:
             )
             assert _mock_term.close_window.call_args[0][2] == "@1"
 
+    async def test_close_window_missing_target_refused(self):
+        """A close frame with neither window_id nor index is refused,
+        not defaulted to window 0 (#3288)."""
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock, perms=("code-in-isolation",))
+        conn.container_id = "cid"
+        conn._user_home = "/home/alice"
+        with (
+            patch.object(_mock_term, "list_windows"),
+            patch.object(_mock_term, "close_window"),
+        ):
+            await conn.handle_terminal_close_window({})
+        _mock_term.close_window.assert_not_called()
+        sent = sock.send_json.call_args[0][0]
+        assert sent["type"] == "error"
+        assert "window_id or index" in sent["message"]
+
     async def test_rename_window(self):
         sock = _mock_sock()
         conn = _base_conn(ws=sock, perms=("code-in-isolation",))
@@ -7805,8 +7836,74 @@ class TestTerminalWindowHandlers:
             await conn.handle_terminal_rename_window(
                 {"index": 0, "name": "build"}
             )
+            # Index-only frames keep working — the compat fallback (#3288).
+            assert _mock_term.rename_window.call_args[0][2] == 0
         sent = sock.send_json.call_args[0][0]
         assert sent["type"] == "terminal_windows"
+
+    async def test_rename_window_by_id(self):
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock, perms=("code-in-isolation",))
+        conn.container_id = "cid"
+        conn._user_home = "/home/alice"
+        with (
+            patch.object(_mock_term, "rename_window"),
+            patch.object(
+                _mock_term,
+                "list_windows",
+                return_value=[
+                    {"id": "@1", "index": 1, "name": "build", "active": True}
+                ],
+            ),
+        ):
+            await conn.handle_terminal_rename_window(
+                {"window_id": "@1", "name": "build"}
+            )
+            # Targeted the window by its stable id, not an index (#3288).
+            assert _mock_term.rename_window.call_args[0][2] == "@1"
+        sent = sock.send_json.call_args[0][0]
+        assert sent["type"] == "terminal_windows"
+
+    async def test_rename_window_prefers_window_id(self):
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock, perms=("code-in-isolation",))
+        conn.container_id = "cid"
+        conn._user_home = "/home/alice"
+        with (
+            patch.object(_mock_term, "rename_window"),
+            patch.object(
+                _mock_term,
+                "list_windows",
+                return_value=[
+                    {"id": "@1", "index": 1, "name": "build", "active": True}
+                ],
+            ),
+        ):
+            # Both present → window_id wins over index (#3288).
+            await conn.handle_terminal_rename_window(
+                {"window_id": "@1", "index": 0, "name": "build"}
+            )
+            assert _mock_term.rename_window.call_args[0][2] == "@1"
+
+    async def test_rename_window_missing_target_refused(self):
+        """A rename frame with neither window_id nor index is refused,
+        not defaulted to window 0 (#3288)."""
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock, perms=("code-in-isolation",))
+        conn.container_id = "cid"
+        conn._user_home = "/home/alice"
+        with patch.object(_mock_term, "rename_window") as mock_ren:
+            await conn.handle_terminal_rename_window({"name": "build"})
+            # An empty-string index is not a usable target either —
+            # ``sess:`` would match a window named "" (#3288).
+            await conn.handle_terminal_rename_window(
+                {"index": "", "name": "build"}
+            )
+        mock_ren.assert_not_called()
+        assert sock.send_json.call_count == 2
+        sent = sock.send_json.call_args[0][0]
+        assert sent["type"] == "error"
+        assert "window_id or index" in sent["message"]
 
     async def test_rename_window_no_name(self):
         sock = _mock_sock()
@@ -8648,6 +8745,17 @@ class TestTerminalController:
         ctrl, sock, _ = self._controller()
         await ctrl.rename_window({"index": 0, "name": ""})
         assert sock.send_json.call_args[0][0]["type"] == "error"
+
+    async def test_rename_window_missing_target_sends_error(self):
+        """Neither window_id nor index → error, not a rename of window 0
+        (#3288)."""
+        ctrl, sock, _ = self._controller()
+        with patch.object(_mock_term, "rename_window") as mock_ren:
+            await ctrl.rename_window({"name": "build"})
+        mock_ren.assert_not_called()
+        msg = sock.send_json.call_args[0][0]
+        assert msg["type"] == "error"
+        assert "window_id or index" in msg["message"]
 
     async def test_list_windows_no_container(self):
         ctrl, sock, _ = self._controller(container_id=None)
