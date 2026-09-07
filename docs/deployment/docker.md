@@ -12,30 +12,32 @@ build tools required.
 
 ## Run
 
+Set your deployment values in a `klangkd.yaml` — [Getting
+Started](../getting-started.md) has a ready-to-use file covering the auth
+settings, the admin identity, an LLM provider, and the image's structural
+settings — then mount it over the image's copy at
+`/home/klangk/etc/klangkd.yaml`:
+
 ```bash
 docker run -d \
   --name klangk \
   -p 8997:8997 \
   -v klangk-data:/home/klangk/data \
+  -v ./klangkd.yaml:/home/klangk/etc/klangkd.yaml:ro \
   --cap-add SYS_ADMIN \
   --device /dev/fuse \
   --device /dev/net/tun \
   --security-opt seccomp=unconfined \
   --security-opt systempaths=unconfined \
-  -e KLANGKD_DEFAULT_USER=you@example.com \
-  -e KLANGKD_DEFAULT_PASSWORD=changeme \
-  -e KLANGKD_AUTH_MODES=password \
-  -e KLANGKD_JWT_SECRET=$(openssl rand -hex 32) \
-  -e KLANGKD_LLM_MODELS="openai/gpt-4o::your-api-key" \
   ghcr.io/mcdonc/klangk/klangk-host:v1.0
 ```
 
-Open <http://localhost:8997> and log in with the email and password
-you set above.
+Open <http://localhost:8997> and log in with the `default_user` /
+`default_password` from your config file.
 
 The published host image uses **password auth** — the examples pin
-`KLANGKD_AUTH_MODES=password`, and that is the supported configuration
-for the image. The default mode for a local install is `none`
+`auth_modes: password` in the mounted config, and that is the supported
+configuration for the image. The default mode for a local install is `none`
 (no-login, loopback-only), but **`none` is an unsupported configuration
 with the published Docker host image.** The image publishes its port
 (`-p 8997:8997`), making it network-reachable, while `none` mode is
@@ -63,6 +65,7 @@ See [Auth Modes](../features/auth-modes.md).
 | Flag                                    | Why                                               |
 | --------------------------------------- | ------------------------------------------------- |
 | `-v klangk-data:/home/klangk/data`      | Persist workspaces and database across restarts   |
+| `-v ./klangkd.yaml:...:ro`              | Mount your `klangkd.yaml` over the image's copy   |
 | `--cap-add SYS_ADMIN`                   | Required for rootless podman inside the container |
 | `--device /dev/fuse`                    | FUSE filesystem for overlay storage               |
 | `--device /dev/net/tun`                 | pasta networking for workspace containers         |
@@ -108,6 +111,7 @@ services:
       - "8997:8997"
     volumes:
       - klangk-data:/home/klangk/data
+      - ./klangkd.yaml:/home/klangk/etc/klangkd.yaml:ro
     cap_add:
       - SYS_ADMIN
     devices:
@@ -116,13 +120,6 @@ services:
     security_opt:
       - seccomp=unconfined
       - systempaths=unconfined
-    environment:
-      KLANGKD_DEFAULT_USER: you@example.com
-      KLANGKD_DEFAULT_PASSWORD: changeme
-      KLANGKD_AUTH_MODES: password
-      KLANGKD_JWT_SECRET: change-this-to-a-random-secret
-      KLANGKD_LLM_MODELS: "openai/gemma4:31b:https://ollama.com/v1:"
-      KLANGKD_LLM_API_KEY: your-api-key
 
 volumes:
   klangk-data:
@@ -147,6 +144,6 @@ instructions.
 
 ## Next steps
 
-- [Environment Variables](../reference/environment.md) — all
-  configuration options
+- [Configuration File](../reference/klangkd-config.md) — every
+  config key and its `KLANGKD_*` env-var override
 - [Feature Activation](../features/features.md) — the default features and how to turn them on
