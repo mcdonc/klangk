@@ -808,6 +808,12 @@ sync` report a clear permission-denied error.
 
 ### Added
 
+- **fmtk e2e: user Settings page, password change, branding, legal
+  links (#3241).** Automated coverage for the user Settings page
+  navigation, password change (wrong-current rejection and success
+  session rotation), custom branding product name on login and app
+  chrome, and legal links presence/absence on the login page.
+
 - **fmtk e2e: workspace Settings panel, marking + server-schedule
   banners (#3239).** Automated coverage for the settings-panel save
   round-trip, the classification marking banner under deploy-wide and
