@@ -2556,6 +2556,15 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Terminal window names must start with a letter or digit (#3279).**
+  Renaming a terminal tab to a name with a leading hyphen (e.g. `-dev`)
+  failed as a server-side tmux error: the name is passed positionally to
+  `rename-window`, which tmux parses as a flag. The name validator now
+  rejects a leading hyphen, dot, underscore, or space (same start rule as
+  volume names, #3018), and the create/rename handlers send the
+  validator's message to the client, so the rename is refused as invalid
+  input with wording that states the rule.
+
 - **Subpath deployments work with DPoP-bound web sessions (#3287).**
   On a deployment served under a base path (`hosting-base-path` /
   `X-Forwarded-Prefix`), the web client's DPoP proofs carried the

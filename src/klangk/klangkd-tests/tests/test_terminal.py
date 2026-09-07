@@ -937,6 +937,21 @@ class TestValidateWindowName:
             with pytest.raises(ValueError, match="only contain"):
                 validate_window_name(name)
 
+    def test_rejects_leading_non_alphanumeric(self):
+        # #3279: a leading hyphen reaches tmux's rename-window positionally
+        # and parses as a flag; same class as #3018. Also covers dot,
+        # underscore, and space, which tmux would accept as names but which
+        # the volume-name rule (#3018) rejects for consistency.
+        for name in ["-dev", "--flags", "-", ".dev", "_dev", " dev"]:
+            with pytest.raises(ValueError, match="must start with a letter"):
+                validate_window_name(name)
+
+    def test_rejects_trailing_newline(self):
+        # Python re's `$` also matches before a trailing newline; \Z does
+        # not (mirrors the strict-$ semantics of #3018's volume rule).
+        with pytest.raises(ValueError, match="only contain"):
+            validate_window_name("build\n")
+
 
 class TestNewWindow:
     async def test_creates_window_auto_name(self):
