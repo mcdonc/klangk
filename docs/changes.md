@@ -845,6 +845,19 @@ sync` report a clear permission-denied error.
   listener bound to a remote host the browser ignores the header and no
   wipe happens.
 
+- **App lifecycle audit events (#3329).** The daemon's own start and
+  stop now appear in the structured audit stream: one `app.start` row
+  per boot (build version, pid, listener) and one `app.stop` row per
+  shutdown (pid, uptime, exit reason — the graceful signal or the
+  fail-secure forced exit), written before the teardown steps so the
+  row lands while the database is still open. A SIGHUP or scheduled
+  recycle that swaps settings in place writes its own `app.reload` row
+  — the process keeps running, so there is no start/stop pair to
+  bracket it. System rows (no actor, target is the app itself),
+  covered by the opt-in `KLANGKD_AUDIT_HMAC_KEY` tagging and the
+  audit-record forwarder, listed by `GET /api/v1/events/audit` next to
+  the identity and privilege events.
+
 - **Air-gapped deployment guide (#2660).** New deployment chapter
   (`docs/deployment/airgapped.md`) covering offline image transport,
   DNS and LLM configuration for disconnected networks, workspace
