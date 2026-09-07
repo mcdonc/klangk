@@ -12,8 +12,8 @@ KEPT across runs (adopted when healthy and provably ours — same config
 path), so re-runs pay only the flutter compile time. ``boot(fresh=True)``
 wipes the scratch state first (fresh DB).
 
-Stdlib + pyyaml (venv) only — it runs under the devenv venv python, like
-``scripts/fmtk-seed.py``.
+Stdlib + venv packages (yaml, cryptography, jose, websockets) — it runs
+under the devenv venv python, like ``scripts/fmtk-seed.py``.
 
 Env knobs (all optional, defaults match fmtk-up):
 
@@ -27,20 +27,29 @@ Env knobs (all optional, defaults match fmtk-up):
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
+import http.server
 import json
 import os
 import quopri
 import re
+import secrets
 import shutil
 import signal
 import subprocess
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
 import yaml
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+from jose import jwt as jose_jwt
+from websockets.sync.client import connect as ws_connect
 
 FIXTURE_PASSWORD = "fmtk-Pass123!"
 ADMIN_EMAIL = "fmtk-admin@example.com"
@@ -294,6 +303,346 @@ class SmtpSink:
         if not match:
             raise FmtkError(f"no #/{route}?token link in message: {body!r}")
         return match.group(1)
+
+
+def b64url_uint(value: int) -> str:
+    """JWK ``n``/``e`` encoding: big-endian bytes, unpadded base64url."""
+    raw = value.to_bytes((value.bit_length() + 7) // 8, "big")
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+
+class FakeIdP:
+    """In-process OIDC Identity Provider for the SSO suites (#3242).
+
+    Serves everything klangkd's OIDC client needs — discovery, JWKS, an
+    ``authorize`` endpoint whose decision page is a plain HTML page
+    (``Approve as <email>`` / ``Deny`` links) driven from the REAL
+    browser tab via CDP, a ``token`` endpoint minting RS256 id_tokens
+    (PKCE + client-secret checked, codes single-use), and RP-initiated
+    ``end_session``. Nothing here talks to the app directly: the whole
+    redirect chain runs through the driven tab, exactly like a real
+    IdP (#3242's done-when).
+
+    ``identities`` is a list of ``{email, sub, email_verified}`` dicts —
+    the decision page offers one Approve link per identity (stable
+    order: ``approve-0`` is the first). ``events`` records every leg
+    (authorize/approve/deny/token/end_session) for suite assertions.
+    """
+
+    def __init__(self, identities: list[dict]):
+        self.identities = identities
+        self.events: list[tuple] = []
+        self._pending: dict[str, dict] = {}
+        self._codes: dict[str, dict] = {}
+        self._key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        self._pem = self._key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        ).decode()
+        self._server: _IdPHTTPServer | None = None
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> str:
+        """Serve on an ephemeral localhost port (daemon thread); the issuer."""
+        self._server = _IdPHTTPServer(self)
+        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
+        self._thread.start()
+        return self.issuer
+
+    @property
+    def port(self) -> int:
+        assert self._server is not None
+        return self._server.server_address[1]
+
+    @property
+    def issuer(self) -> str:
+        return f"http://127.0.0.1:{self.port}"
+
+    def stop(self) -> None:
+        if self._server is not None:
+            self._server.shutdown()
+            self._server.server_close()
+            self._server = None
+
+    def provider_entry(self, logout_redirect: bool = False) -> dict:
+        """The klangkd provider-config dict pointing at this IdP."""
+        return {
+            "id": "fmtk-idp",
+            "display-name": "Fmtk SSO",
+            "issuer": self.issuer,
+            "client-id": "klangk-fmtk",
+            "client-secret": "fmtk-idp-secret",
+            "logout-redirect": logout_redirect,
+        }
+
+    # --- request handling (called from the HTTP thread) ----------------
+
+    def discovery(self) -> dict:
+        return {
+            "issuer": self.issuer,
+            "authorization_endpoint": f"{self.issuer}/authorize",
+            "token_endpoint": f"{self.issuer}/token",
+            "jwks_uri": f"{self.issuer}/jwks.json",
+            "end_session_endpoint": f"{self.issuer}/end_session",
+            "response_types_supported": ["code"],
+            "subject_types_supported": ["public"],
+            "id_token_signing_alg_values_supported": ["RS256"],
+        }
+
+    def jwks(self) -> dict:
+        numbers = self._key.public_key().public_numbers()
+        return {
+            "keys": [
+                {
+                    "kty": "RSA",
+                    "use": "sig",
+                    "alg": "RS256",
+                    "kid": "fmtk-idp-key",
+                    "n": b64url_uint(numbers.n),
+                    "e": b64url_uint(numbers.e),
+                }
+            ]
+        }
+
+    def authorize_page(self, params: dict) -> str:
+        req = secrets.token_urlsafe(8)
+        self._pending[req] = params
+        self.events.append(("authorize", req))
+        rows = []
+        for i, identity in enumerate(self.identities):
+            email = identity["email"]
+            rows.append(
+                f'<a id="approve-{i}" '
+                f'href="/decide?req={req}&choice=approve&as={i}">'
+                f"Sign in as {email}</a><br>"
+            )
+        rows.append(f'<a id="deny" href="/decide?req={req}&choice=deny">Deny</a>')
+        return (
+            "<html><head><title>fmtk fake IdP</title></head>"
+            "<body><h1>fmtk fake IdP</h1>"
+            f"<p>client {params.get('client_id', '?')} requests access</p>"
+            + "".join(rows)
+            + "</body></html>"
+        )
+
+    def decide(self, params: dict) -> tuple[str, str]:
+        """``(redirect_url, event)`` for a decision-page click."""
+        pending = self._pending.pop(params["req"][0], None)
+        if pending is None:
+            return "/?expired", ("expired",)
+        redirect = pending["redirect_uri"][0]
+        state = pending["state"][0]
+        if params["choice"][0] != "approve":
+            self.events.append(("deny",))
+            sep = "&" if "?" in redirect else "?"
+            return f"{redirect}{sep}error=access_denied&state={state}", ("deny",)
+        identity = self.identities[int(params["as"][0])]
+        code = secrets.token_urlsafe(16)
+        self._codes[code] = {
+            "identity": identity,
+            "challenge": pending.get("code_challenge", [""])[0],
+            "client_id": pending.get("client_id", [""])[0],
+            "redirect_uri": redirect,
+        }
+        self.events.append(("approve", identity["email"]))
+        return f"{redirect}?code={code}&state={state}", ("approve", identity["email"])
+
+    def token_response(self, form: dict) -> tuple[int, dict | str]:
+        """Validate the token request; ``(http_status, body)``."""
+        code = form.get("code", "")
+        record = self._codes.pop(code, None)
+        if (
+            record is None
+            or form.get("grant_type") != "authorization_code"
+            or form.get("client_id") != record["client_id"]
+            or form.get("client_secret") != "fmtk-idp-secret"
+            or _pkce_mismatch(form.get("code_verifier", ""), record["challenge"])
+        ):
+            self.events.append(("token-rejected", code))
+            return 400, {"error": "invalid_grant"}
+        identity = record["identity"]
+        now = int(time.time())
+        claims = {
+            "iss": self.issuer,
+            "aud": record["client_id"],
+            "sub": identity["sub"],
+            "email": identity["email"],
+            "email_verified": identity.get("email_verified", True),
+            "iat": now,
+            "exp": now + 600,
+        }
+        id_token = jose_jwt.encode(claims, self._pem, algorithm="RS256")
+        self.events.append(("token", identity["email"]))
+        return 200, {
+            "access_token": "fmtk-fake-access-token",
+            "token_type": "Bearer",
+            "expires_in": 3600,
+            "id_token": id_token,
+        }
+
+
+def _pkce_mismatch(verifier: str, challenge: str) -> bool:
+    """S256(verifier) must equal the stored challenge."""
+    digest = hashlib.sha256(verifier.encode()).digest()
+    computed = base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
+    return computed != challenge
+
+
+class _IdPHTTPServer(http.server.ThreadingHTTPServer):
+    daemon_threads = True
+
+    def __init__(self, idp: FakeIdP):
+        super().__init__(("127.0.0.1", 0), _IdPHandler)
+        self.idp = idp
+
+
+class _IdPHandler(http.server.BaseHTTPRequestHandler):
+    """One request per route; state lives on ``self.server.idp``."""
+
+    def log_message(self, *args) -> None:  # silence the default stderr spam
+        pass
+
+    def do_GET(self) -> None:  # noqa: N802 (http.server naming)
+        url = urllib.parse.urlsplit(self.path)
+        idp = self.server.idp
+        if url.path == "/.well-known/openid-configuration":
+            self._send_json(200, idp.discovery())
+        elif url.path == "/jwks.json":
+            self._send_json(200, idp.jwks())
+        elif url.path == "/authorize":
+            page = idp.authorize_page(urllib.parse.parse_qs(url.query))
+            self._send_html(page)
+        elif url.path == "/decide":
+            redirect, _ = idp.decide(urllib.parse.parse_qs(url.query))
+            self.send_response(302)
+            self.send_header("Location", redirect)
+            self.end_headers()
+        elif url.path == "/end_session":
+            params = urllib.parse.parse_qs(url.query)
+            idp.events.append(
+                ("end_session", params.get("post_logout_redirect_uri", [""])[0])
+            )
+            self.send_response(302)
+            self.send_header(
+                "Location", params.get("post_logout_redirect_uri", ["/"])[0]
+            )
+            self.end_headers()
+        else:
+            self._send_json(404, {"error": "not_found"})
+
+    def do_POST(self) -> None:  # noqa: N802 (http.server naming)
+        url = urllib.parse.urlsplit(self.path)
+        length = int(self.headers.get("Content-Length", "0"))
+        form = urllib.parse.parse_qs(self.rfile.read(length).decode())
+        if url.path == "/token":
+            status, body = self.server.idp.token_response(
+                {k: v[0] for k, v in form.items()}
+            )
+            self._send_json(status, body)
+        else:
+            self._send_json(404, {"error": "not_found"})
+
+    def _send_json(self, status: int, body) -> None:
+        payload = json.dumps(body).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def _send_html(self, body: str) -> None:
+        payload = body.encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+
+# --- Chrome DevTools Protocol (cross-origin legs of the SSO flow) ------
+
+
+def chrome_profile_dir() -> Path:
+    return STATE_DIR / "chrome-profile"
+
+
+def cdp_port() -> int:
+    """THIS stack's Chrome DevTools port.
+
+    Read from OUR browser process's command line — matched on the proxy
+    origin the wrapper opened (``http://127.0.0.1:<proxy>/``), never a
+    bare ``remote-debugging-port`` that would match ANY chrome on a host
+    running sibling stacks (the #3238 lesson). Flutter also passes its
+    own ``--user-data-dir``, so Chrome does not write
+    ``DevToolsActivePort`` into the harness profile dir — the command
+    line is the reliable source."""
+    pattern = f"[c]hrome.*127.0.0.1:{PROXY_PORT}"
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        for pid in pids_matching(pattern):
+            try:
+                cmdline = (
+                    Path(f"/proc/{pid}/cmdline").read_bytes().decode(errors="replace")
+                )
+            except OSError:
+                continue  # exited between the pgrep and the read
+            match = re.search(r"remote-debugging-port=(\d+)", cmdline)
+            if match:
+                return int(match.group(1))
+        time.sleep(0.5)
+    raise FmtkError(f"no chrome DevTools port for our stack ({pattern})")
+
+
+def cdp_tabs() -> list[dict]:
+    """The driven Chrome's page tabs (``/json/list``)."""
+    return [
+        target
+        for target in http_get_json(f"http://127.0.0.1:{cdp_port()}/json/list")
+        if target.get("type") == "page"
+        and not target["url"].startswith(("devtools://", "chrome://"))
+    ]
+
+
+def cdp_app_tab() -> dict:
+    """The app tab — the one non-internal page Chrome has. When the SSO
+    chain is mid-flight the same tab sits at the backend or IdP origin;
+    it stays "the app tab" the whole way (#3242)."""
+    tabs = cdp_tabs()
+    if not tabs:
+        raise FmtkError("no page tab in the driven chrome")
+    return tabs[0]
+
+
+def cdp_wait_tab_url(prefixes: tuple[str, ...], timeout: float = 60) -> str:
+    """Block until the app tab's URL starts with one of ``prefixes``."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        url = cdp_app_tab()["url"]
+        if url.startswith(prefixes):
+            return url
+        time.sleep(0.5)
+    raise HarnessTimeout(f"tab never reached {prefixes} (at {cdp_app_tab()['url']})")
+
+
+def cdp_eval(js: str) -> object:
+    """Evaluate ``js`` in the app tab (one-shot CDP websocket)."""
+    ws_url = cdp_app_tab()["webSocketDebuggerUrl"]
+    with ws_connect(ws_url) as ws:
+        ws.send(
+            json.dumps(
+                {
+                    "id": 1,
+                    "method": "Runtime.evaluate",
+                    "params": {"expression": js, "returnByValue": True},
+                }
+            )
+        )
+        reply = json.loads(ws.recv())
+    result = reply.get("result", {}).get("result", {})
+    if result.get("subtype") == "error":
+        raise FmtkError(f"cdp_eval threw: {result.get('description')}")
+    return result.get("value")
 
 
 class Backend:
