@@ -2594,6 +2594,17 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Environment-variable reference page (#3339).** The table on
+  `docs/reference/environment.md` listed every variable twice: a stale
+  copy of the table (missing five variables added since, carrying an
+  outdated feature-defaults list) is removed, and the two idle-timeout
+  variables that only the stale copy carried,
+  `KLANGKD_SESSION_IDLE_TIMEOUT_MINUTES` and
+  `KLANGKD_PRIVILEGED_SESSION_IDLE_TIMEOUT_MINUTES`, now sit in the
+  single remaining table. The build finishes warning-free again; the
+  range notation in the watchdog rows' descriptions no longer parses
+  as a Markdown link reference.
+
 - **CIDR allow-list ports must be ASCII digits (#3274).** An
   allow-list entry like `10.0.0.0/8:٤٤٣` (a port written in Unicode
   digits) was accepted by the API, persisted, and then aborted the
