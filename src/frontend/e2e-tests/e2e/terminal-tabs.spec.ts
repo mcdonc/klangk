@@ -339,10 +339,12 @@ test.describe("terminal tabs", () => {
           window_id: firstId,
           name: "main-shell",
         });
-        const msg = await client.recvUntil(
-          (m) => m.type === "terminal_windows",
+        // A stale pre-rename frame can arrive first — poll the
+        // authoritative list until the rename really landed (#3057).
+        const renamed = await waitForWindows(
+          client,
+          (ws) => ws[0].name === "main-shell",
         );
-        const renamed = msg.windows as WindowInfo[];
         expect(renamed[0].name).toBe("main-shell");
       } finally {
         client.close();
@@ -380,12 +382,14 @@ test.describe("terminal tabs", () => {
           window_id: firstId,
           name: "build",
         });
-        const msg = await client.recvUntil(
-          (m) => m.type === "terminal_windows",
-        );
-        const named = (msg.windows as WindowInfo[]).filter(
-          (w) => w.name === "build",
-        );
+        // Poll the authoritative list — a stale pre-rename frame could
+        // arrive first and would lack the second "build" (#3057).
+        const named = (
+          await waitForWindows(
+            client,
+            (ws) => ws.filter((w) => w.name === "build").length === 2,
+          )
+        ).filter((w) => w.name === "build");
         expect(named.length).toBe(2);
         expect(named[0].id).not.toBe(named[1].id);
       } finally {

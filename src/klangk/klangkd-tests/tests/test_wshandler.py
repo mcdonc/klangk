@@ -7900,6 +7900,7 @@ class TestTerminalWindowHandlers:
                 {"index": "", "name": "build"}
             )
         mock_ren.assert_not_called()
+        assert sock.send_json.call_count == 2
         sent = sock.send_json.call_args[0][0]
         assert sent["type"] == "error"
         assert "window_id or index" in sent["message"]

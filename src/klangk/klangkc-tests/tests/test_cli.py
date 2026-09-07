@@ -2267,8 +2267,60 @@ class TestKlangkClient:
             s for s in sent if s.get("cmd") == "terminal_rename_window"
         ]
         assert len(rename_cmds) == 1
+        # Current servers prefer the stable id; the index rides along so
+        # a pre-#3288 server (index-only) still targets the right window
+        # instead of defaulting to window 0.
         assert rename_cmds[0]["window_id"] == "@1"
+        assert rename_cmds[0]["index"] == 1
         assert rename_cmds[0]["name"] == "ci"
+
+    def test_rename_terminal_stale_id_omits_index(self):
+        """A window id absent from the synced list sends no index — an
+        old server must refuse rather than default to window 0."""
+        client = KlangkClient("http://test:8995", "token")
+        ws = Workspace(id="ws" + "0" * 60, name="alpha", created_at="x")
+        client.resolve_workspace = MagicMock(return_value=ws)
+        messages = [
+            json.dumps({"type": "container_ready"}),
+            json.dumps(
+                {"type": "event", "event": {"name": "container_ready"}}
+            ),
+            json.dumps(
+                {
+                    "type": "terminal_windows",
+                    "windows": [
+                        {"index": 0, "name": "main", "id": "@0"},
+                        {"index": 1, "name": "build", "id": "@1"},
+                    ],
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "terminal_windows",
+                    "windows": [
+                        {"index": 0, "name": "main", "id": "@0"},
+                        {"index": 1, "name": "build", "id": "@1"},
+                    ],
+                }
+            ),
+        ]
+        mock_ws = AsyncMock()
+        mock_ws.recv = AsyncMock(side_effect=messages)
+        mock_ws.send = AsyncMock()
+        mock_ws.__aenter__ = AsyncMock(return_value=mock_ws)
+        mock_ws.__aexit__ = AsyncMock(return_value=False)
+        with patch(
+            "klangk.cli.transport.websockets.connect",
+            return_value=mock_ws,
+        ):
+            asyncio.run(client.rename_terminal("alpha", "@9", "ci"))
+        sent = [json.loads(c.args[0]) for c in mock_ws.send.call_args_list]
+        rename_cmds = [
+            s for s in sent if s.get("cmd") == "terminal_rename_window"
+        ]
+        assert len(rename_cmds) == 1
+        assert rename_cmds[0]["window_id"] == "@9"
+        assert "index" not in rename_cmds[0]
 
     def test_list_workspaces_parses_response(self):
         client = KlangkClient("http://test:8995", "valid-token")

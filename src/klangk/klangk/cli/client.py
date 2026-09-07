@@ -942,21 +942,32 @@ class KlangkClient:
             return await self._recv_windows(conn)
         return windows
 
+    @staticmethod
+    def _window_index(windows: list[dict], window_id: str):
+        """The current index of *window_id* in *windows*, or None."""
+        return next(
+            (w.get("index") for w in windows if w.get("id") == window_id),
+            None,
+        )
+
     async def _maybe_rename_window(
         self, conn, windows: list[dict], rename
     ) -> list[dict]:
         """Rename the requested window; the refreshed window list."""
         if rename is not None and windows:
             window_id, new_name = rename
-            await conn.send(
-                json.dumps(
-                    {
-                        "cmd": "terminal_rename_window",
-                        "window_id": window_id,
-                        "name": new_name,
-                    }
-                )
-            )
+            # Send the stable id and the row's current index: current
+            # servers prefer the id, pre-#3288 servers ignore it and
+            # would otherwise default the missing index to window 0.
+            index = self._window_index(windows, window_id)
+            cmd = {
+                "cmd": "terminal_rename_window",
+                "window_id": window_id,
+                "name": new_name,
+            }
+            if index is not None:
+                cmd["index"] = index
+            await conn.send(json.dumps(cmd))
             return await self._recv_windows(conn)
         return windows
 
