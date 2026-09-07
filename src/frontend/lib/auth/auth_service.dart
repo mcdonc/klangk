@@ -281,7 +281,7 @@ class AuthService extends ChangeNotifier {
             (data['default_classification_banner'] as String? ?? '').trim();
         _netfilterDefaultDomains =
             (data['netfilter_default_domains'] as List?)?.cast<String>() ??
-                const [];
+            const [];
         _netfilterEnabled = (data['netfilter_enabled'] as bool?) ?? false;
         _nixAvailable = (data['nix_available'] as bool?) ?? false;
         _sudoAvailable = (data['sudo_available'] as bool?) ?? false;
@@ -342,10 +342,8 @@ class AuthService extends ChangeNotifier {
     if (_token == null) return;
     final hasKey = await dpopBackend.ensureKey();
     if (tokenBound && !hasKey) {
-      debugPrint(
-        '[AuthService] bound token without a key; forcing re-login',
-      );
-      await _clearToken();
+      debugPrint('[AuthService] bound token without a key; forcing re-login');
+      await _clearToken(preserveRedirect: true);
       return;
     }
     if (!tokenBound && hasKey) {
@@ -419,7 +417,7 @@ class AuthService extends ChangeNotifier {
         );
         _isAdmin = data['is_admin'] == true;
       } else if (resp.statusCode == 401) {
-        await _clearToken();
+        await _clearToken(preserveRedirect: true);
       }
     } catch (e) {
       // coverage:ignore-start
@@ -524,7 +522,7 @@ class AuthService extends ChangeNotifier {
     _bindRetryTimer = null;
   }
 
-  Future<void> _clearToken() async {
+  Future<void> _clearToken({bool preserveRedirect = false}) async {
     _refreshTimer?.cancel();
     _refreshTimer = null;
     _token = null;
@@ -532,22 +530,27 @@ class AuthService extends ChangeNotifier {
     _groups = [];
     _isAdmin = false;
     _mustChangePassword = false;
-    // The pending redirect belongs to the session being cleared; drop it
-    // so the next login can never inherit the old session's destination
-    // (#2670). If the user was on a protected page, guardAuth re-stashes
-    // the current URI on the redirect that follows, preserving the
-    // same-user "resume where you were" behavior after a token expiry.
-    pendingRedirect = null;
     _stopPermissionRefresh();
     _stopBindRetry();
     await clearToken();
     notifyListeners();
+    // Clear pendingRedirect AFTER notifyListeners: the notification
+    // triggers the router's redirect evaluation, and guardAuth
+    // re-stashes the current protected URI during the bounce to /login.
+    // For explicit logout (!preserveRedirect) the stash must not
+    // survive — a different user may log in next and should land on
+    // /workspaces, not the previous user's admin page (#3321).
+    // Token-expiry and 401 paths pass preserveRedirect=true so the
+    // same user resumes where they were after re-login (#2670).
+    if (!preserveRedirect) {
+      pendingRedirect = null;
+    }
   }
 
   Map<String, String> get _authHeaders => {
-        'Content-Type': 'application/json',
-        if (_token != null) 'Authorization': 'Bearer $_token',
-      };
+    'Content-Type': 'application/json',
+    if (_token != null) 'Authorization': 'Bearer $_token',
+  };
 
   /// Auth headers for one request, carrying a fresh DPoP proof when
   /// the token is bound (#3218). [method] is the HTTP verb and [path]
@@ -590,10 +593,7 @@ class AuthService extends ChangeNotifier {
     try {
       final response = await _client.post(
         Uri.parse('$_baseUrl/api/v1/auth/register'),
-        headers: {
-          'Content-Type': 'application/json',
-          ...await mintHeaders(),
-        },
+        headers: {'Content-Type': 'application/json', ...await mintHeaders()},
         body: jsonEncode({'email': email, 'password': password}),
       );
       if (response.statusCode == 200) {
@@ -622,10 +622,7 @@ class AuthService extends ChangeNotifier {
     try {
       final response = await _client.post(
         Uri.parse('$_baseUrl/api/v1/auth/login'),
-        headers: {
-          'Content-Type': 'application/json',
-          ...await mintHeaders(),
-        },
+        headers: {'Content-Type': 'application/json', ...await mintHeaders()},
         body: jsonEncode({'identifier': email, 'password': password}),
       );
       if (response.statusCode == 200) {
@@ -706,7 +703,7 @@ class AuthService extends ChangeNotifier {
   /// waiting for the next token refresh.
   Future<void> _handleAuthFailure(http.Response response) async {
     if (response.statusCode == 401) {
-      await _clearToken();
+      await _clearToken(preserveRedirect: true);
       return;
     }
     if (response.statusCode != 403 || _token == null) return;
@@ -794,8 +791,11 @@ class AuthService extends ChangeNotifier {
     return response;
   }
 
-  Future<http.Response> authPost(String path,
-      {String? body, bool mint = false}) async {
+  Future<http.Response> authPost(
+    String path, {
+    String? body,
+    bool mint = false,
+  }) async {
     final response = await _withStepUp(
       () async => await _client.post(
         Uri.parse('$_baseUrl$path'),
@@ -882,7 +882,7 @@ class AuthService extends ChangeNotifier {
           await _saveToken(newToken);
         }
       } else if (response.statusCode == 401) {
-        await _clearToken();
+        await _clearToken(preserveRedirect: true);
       }
     } catch (e) {
       // Network error — retry in 60 seconds

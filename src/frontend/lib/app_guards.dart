@@ -85,8 +85,10 @@ String? guardAuth({
 /// (saveToken's, then its finally-block's). Consuming on the first
 /// evaluation made the second — still re-parsing `/login` — see a null
 /// stash and win the navigation with the `/workspaces` fallback (#2670).
-/// The cross-session leak is instead cut where it originates:
-/// `_clearToken()` clears the stash on logout / any session-ending 401.
+/// The cross-session leak is cut in `_clearToken()`: explicit logout
+/// clears `pendingRedirect` AFTER `notifyListeners()` — so guardAuth's
+/// re-stash from the bounce is overwritten — while token-expiry paths
+/// preserve the stash so the same user resumes where they were (#3321).
 ///
 /// Returns the redirect target, or null to allow.
 String? guardLoggedInPublicRoute({
