@@ -840,8 +840,10 @@ sync` report a clear permission-denied error.
   path (live token, anonymous token, OIDC logout redirect), so the
   browser wipes the origin's web storage — localStorage, IndexedDB,
   cache storage, and service worker registrations — when a session ends.
-  Browsers apply it in secure contexts (HTTPS or localhost), where
-  klangkd serves the frontend.
+  Browsers apply the header only in secure contexts: an HTTPS listener
+  (`KLANGKD_TLS_HOSTNAME` set) or a localhost bind. On a plain-HTTP
+  listener bound to a remote host the browser ignores the header and no
+  wipe happens.
 
 - **Air-gapped deployment guide (#2660).** New deployment chapter
   (`docs/deployment/airgapped.md`) covering offline image transport,
