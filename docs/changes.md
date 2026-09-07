@@ -824,6 +824,15 @@ sync` report a clear permission-denied error.
 
 ### Added
 
+- **Disk watchdog monitors `state_dir` (#3310).** The resource
+  watchdog's disk-capacity check now measures the filesystem holding
+  `KLANGKD_STATE_DIR` in addition to the data directory, so a
+  split-mount deployment (state dir on the OS disk, data dir on its
+  own volume) gets `resource.disk.warn` / `resource.disk.critical`
+  / `resource.disk.recovered` for both filesystems. Same-mount
+  deployments alert exactly as before (device dedup collapses the
+  two paths into one).
+
 - **Host memory and CPU-pressure alerting (#3309).** The resource
   watchdog gained two surfaces beside disk capacity: memory
   utilization of the machine containers run on (MemAvailable-based on

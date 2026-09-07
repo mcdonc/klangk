@@ -64,7 +64,8 @@ audit log:
   cannot fit the workspace's memory limit.
 - **Disk capacity** (#3206) — the resource watchdog checks the
   filesystems holding the data directory (where the audit records
-  live), the podman container-storage root, and any configured extra
+  live), the state directory, the podman container-storage root, and
+  any configured extra
   paths every minute. Usage crossing the warn threshold (75% by
   default) or the critical threshold (90%) sends
   `resource.disk.warn` / `resource.disk.critical`; falling back below

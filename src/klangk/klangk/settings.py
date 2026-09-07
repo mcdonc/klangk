@@ -1468,8 +1468,8 @@ class KlangkSettings(BaseSettings):
     # resource_watchdog_poll_interval seconds the loop checks four
     # surfaces: (a) statvfs the filesystems holding the data directory
     # (the audit records storage — SV-222483's alert surface), the
-    # podman container-storage root, and any disk_watchdog_paths
-    # entries, deduplicated by device; (b) the memory utilization of
+    # state directory (#3310), the podman container-storage root, and
+    # any disk_watchdog_paths entries, deduplicated by device; (b) the memory utilization of
     # the machine containers run on — MemAvailable/MemTotal from
     # /proc/meminfo on a Linux host (pressed by the cgroup limit when
     # klangkd itself runs memory-capped), the podman machine VM's own
