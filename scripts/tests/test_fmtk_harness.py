@@ -440,6 +440,26 @@ def test_files_suite_extensions():
     )
 
 
+def test_features_suite_extensions():
+    """The features suite (#3243) drives the feature-plugin enable/disable
+    lifecycle via features_enable swaps."""
+    suite = _REPO_ROOT / "src/frontend/e2e-tests/fmtk/test_features.py"
+    assert suite.is_file(), "the features suite (#3243) is missing"
+    assert_wired(
+        suite.read_text(),
+        (
+            '"features_enable"',
+            '"soliplex"',
+            '"beep"',
+            '"celebrate"',
+            "api_config",
+            "restart_app",
+        ),
+        "the features suite (#3243) must drive the features_enable "
+        "config contract and app-boot lifecycle",
+    )
+
+
 def test_user_settings_suite_extensions():
     """The user-settings suite (#3241) drives the Settings page, password
     change, branding, and legal links."""

@@ -830,6 +830,12 @@ sync` report a clear permission-denied error.
   seeded fixture files, code editor round-trip (API write + read-back),
   and cache invalidation (terminal-created file appears after refresh).
 
+- **fmtk e2e: feature-plugin tabs — features_enable swaps (#3243).**
+  Automated coverage for the feature-plugin enable/disable lifecycle:
+  the Soliplex app-bar icon appears when enabled and disappears when
+  disabled (app restart required), and the `/api/v1/config`
+  `features_enable` key reflects the setting.
+
 - **fmtk e2e: user Settings page, password change, branding, legal
   links (#3241).** Automated coverage for the user Settings page
   navigation, password change (wrong-current rejection and success
