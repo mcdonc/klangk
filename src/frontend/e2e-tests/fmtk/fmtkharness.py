@@ -541,13 +541,17 @@ class _IdPHandler(http.server.BaseHTTPRequestHandler):
         """302 with a hardened ``Location``. The value derives from
         request parameters (the backend's own redirects in every real
         leg, but the IdP cannot prove that), and a CR/LF in it would
-        split the response (CodeQL py/http-response-splitting) — a
-        malformed target is refused, not forwarded."""
+        split the response (CodeQL py/http-response-splitting). The
+        guard is the real check — a malformed target is refused, not
+        forwarded — and the ``re.sub`` rebind is the rewrite CodeQL
+        recognizes as a sanitizer (a membership check alone is not
+        one of its modeled patterns)."""
         if "\r" in location or "\n" in location:
             self._send_json(400, {"error": "invalid_redirect_uri"})
             return
+        safe = re.sub(r"[\r\n]", "", location)
         self.send_response(302)
-        self.send_header("Location", location)
+        self.send_header("Location", safe)
         self.end_headers()
 
     def _send_json(self, status: int, body) -> None:
