@@ -1,6 +1,13 @@
 name: "E2E: fmtk Frontend Tests"
 
 on:
+  schedule:
+    # Daily at 05:23 UTC — deliberately off the 06:00–06:43 UTC cluster
+    # (fuzz-daily, frontend-e2e-cross-browser, the CDK pentests) so this
+    # suite is not queued behind them. Scheduled runs use stock runners:
+    # the `inputs` context is empty on `schedule`, so the `runner` input
+    # below coalesces to ubuntu-latest (#3300).
+    - cron: "23 5 * * *"
   workflow_dispatch:
     inputs:
       runner:
@@ -8,13 +15,14 @@ on:
         type: choice
         options: [stock, nix]
         default: stock
-  push:
-    branches: [release/**]
-  # The suite runs on manual dispatch and release-branch pushes only —
-  # no pull_request trigger: until the #3264 flake is fixed, a PR-triggered
-  # run can red any backend PR through the src/klangk/** paths filter
-  # (#3266). Validate a PR branch by dispatching this workflow on it;
-  # re-add the trigger together with the #3264 fix.
+  # No pull_request/push triggers and no path gating (#3300): the suite
+  # is expensive (boots the full fmtk-up stack) and backend/frontend
+  # changes are already covered per-PR by the backend and frontend e2e
+  # suites — the daily schedule above carries the regression signal
+  # instead, reporting drift at most a day late. Until the #3264 flake is
+  # fixed, a PR-triggered run could also red any backend PR through the
+  # src/klangk/** paths filter (#3266); validate a PR branch by
+  # dispatching this workflow on it.
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
