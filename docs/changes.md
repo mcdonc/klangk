@@ -824,6 +824,15 @@ sync` report a clear permission-denied error.
 
 ### Added
 
+- **`host` and `instance` fields on JSON log records (#3330).** Every
+  JSON log line (console in `KLANGKD_LOG_FORMAT=json` and the
+  `KLANGKD_LOG_FILE` sink) now carries `host` (the emitting machine's
+  hostname) and `instance` (the per-data-dir klangk instance id from
+  `<data_dir>/instance-id` — the same id the audit trail's app lifecycle
+  rows key on), so SIEM streams from several hosts or instances are
+  distinguishable. The id is re-resolved on every SIGHUP reload; a data
+  dir change updates the field.
+
 - **Air-gapped deployment guide (#2660).** New deployment chapter
   (`docs/deployment/airgapped.md`) covering offline image transport,
   DNS and LLM configuration for disconnected networks, workspace

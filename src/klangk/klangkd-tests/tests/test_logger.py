@@ -13,6 +13,7 @@ Logging is configured by two module-level functions in :mod:`klangk.logger`
 import json
 import logging
 import logging.handlers
+import socket
 
 import pytest
 
@@ -63,6 +64,7 @@ def _make_settings(
     max_bytes=None,
     rotate=None,
     backup_count=None,
+    data_dir=None,
 ):
     env = {}
     if level is not None:
@@ -77,6 +79,8 @@ def _make_settings(
         env["KLANGKD_LOG_FILE_ROTATE"] = rotate
     if backup_count is not None:
         env["KLANGKD_LOG_FILE_BACKUP_COUNT"] = backup_count
+    if data_dir is not None:
+        env["KLANGKD_DATA_DIR"] = str(data_dir)
     return make_settings(env)
 
 
@@ -146,10 +150,18 @@ class TestJsonFormatter:
             None,
         )
         payload = self._format_record(record)
-        assert set(payload) == {"timestamp", "level", "logger", "message"}
+        # No instance id handed in -> host rides, instance omitted (#3330).
+        assert set(payload) == {
+            "timestamp",
+            "level",
+            "logger",
+            "message",
+            "host",
+        }
         assert payload["level"] == "WARNING"
         assert payload["logger"] == "klangk.test"
         assert payload["message"] == "watch out"
+        assert payload["host"] == socket.gethostname()
 
     def test_timestamp_is_iso8601_utc(self):
         record = logging.LogRecord(
@@ -252,6 +264,166 @@ class TestJsonFormatter:
             fmt = logger_mod.JsonFormatter()
             fmt.formatException = lambda exc_info: 1 / 0
             assert fmt.safe_exception(record) == repr(record.exc_info[1])
+
+
+class TestHostInstanceFields:
+    """``host`` + ``instance`` on JSON records (#3330).
+
+    A SIEM aggregating lines from several klangkd deployments needs to
+    attribute each record: ``host`` is the emitting machine's hostname,
+    ``instance`` the per-data-dir instance id — the same file-backed
+    identity ``Util.resolve_instance_id`` owns, so log stream and audit
+    trail (app.start/app.stop ``target_id``, #3329) correlate.
+    """
+
+    def _record(self, msg="m"):
+        return logging.LogRecord(
+            "klangk.test", logging.INFO, __file__, 1, msg, (), None
+        )
+
+    def test_host_on_every_json_record(self):
+        payload = json.loads(logger_mod.JsonFormatter().format(self._record()))
+        assert payload["host"] == socket.gethostname()
+
+    def test_instance_omitted_without_id(self):
+        # Pre-settings formatters (and a data dir that cannot be resolved)
+        # degrade: no id, so the field is absent — the line stays parseable.
+        assert "instance" not in json.loads(
+            logger_mod.JsonFormatter().format(self._record())
+        )
+
+    def test_instance_rides_the_formatter(self):
+        payload = json.loads(
+            logger_mod.JsonFormatter("iid-1").format(self._record())
+        )
+        assert payload["instance"] == "iid-1"
+
+    def test_hostname_resolution_degrades_on_oserror(self, monkeypatch):
+        def boom():
+            raise OSError("no hostname")
+
+        monkeypatch.setattr(logger_mod.socket, "gethostname", boom)
+        assert logger_mod.resolve_hostname() == ""
+
+    def test_resolve_instance_reads_existing_file(self, tmp_path):
+        (tmp_path / "instance-id").write_text("  abc  \n")
+        assert logger_mod.resolve_instance_id(str(tmp_path)) == "abc"
+
+    def test_resolve_instance_creates_when_absent(self, tmp_path):
+        data = tmp_path / "fresh"
+        resolved = logger_mod.resolve_instance_id(str(data))
+        assert (data / "instance-id").read_text() == resolved
+        assert resolved  # a generated uuid, not empty
+
+    def test_resolve_instance_degrades_on_unwritable_dir(self, tmp_path):
+        # A data dir whose parent is a regular file: the mkdir fails and
+        # the resolver degrades to "" instead of raising.
+        blocker = tmp_path / "blocker"
+        blocker.write_text("not a dir")
+        assert logger_mod.resolve_instance_id(str(blocker / "d")) == ""
+
+    def test_read_instance_file_oserror_arm(self, tmp_path):
+        # A directory at the instance-id path: the read fails -> None.
+        d = tmp_path / "instance-id"
+        d.mkdir()
+        assert logger_mod.read_instance_file(d) is None
+
+    def test_write_instance_file_oserror_arm(self, tmp_path, monkeypatch):
+        # The atomic replace fails: "" and no file left at the target path.
+        def boom(src, dst):
+            raise OSError("denied")
+
+        monkeypatch.setattr(logger_mod.os, "replace", boom)
+        assert logger_mod.write_instance_file(tmp_path / "instance-id") == ""
+        assert not (tmp_path / "instance-id").exists()
+
+    def test_configure_stamps_console_json_records(
+        self, clean_root, tmp_path, capsys
+    ):
+        data = tmp_path / "d1"
+        data.mkdir()
+        (data / "instance-id").write_text("iid-console")
+        logger_mod.configure(_make_settings(log_format="json", data_dir=data))
+        logging.getLogger("klangk.id.console").info("m")
+        line = capsys.readouterr().err.strip().splitlines()[-1]
+        payload = json.loads(line)
+        assert payload["instance"] == "iid-console"
+        assert payload["host"] == socket.gethostname()
+
+    def test_configure_stamps_file_sink_records(self, clean_root, tmp_path):
+        data = tmp_path / "d2"
+        data.mkdir()
+        (data / "instance-id").write_text("iid-file")
+        target = tmp_path / "k.jsonl"
+        logger_mod.configure(
+            _make_settings(
+                log_format="text", log_file=str(target), data_dir=data
+            )
+        )
+        logging.getLogger("klangk.id.file").info("m")
+        payload = json.loads(target.read_text().strip())
+        assert payload["instance"] == "iid-file"
+        assert payload["host"] == socket.gethostname()
+
+    def test_first_boot_creates_instance_file_and_stamps_it(
+        self, clean_root, tmp_path, capsys
+    ):
+        # build_app runs configure(settings) before the lifespan's
+        # Util.resolve_instance_id(): the logger creates the file, Util
+        # then reads the same value back — agreement from the first line.
+        data = tmp_path / "fresh" / "data"
+        logger_mod.configure(_make_settings(log_format="json", data_dir=data))
+        logging.getLogger("klangk.id.first").info("m")
+        payload = json.loads(capsys.readouterr().err.strip().splitlines()[-1])
+        on_disk = (data / "instance-id").read_text().strip()
+        assert on_disk  # generated uuid, not empty
+        assert payload["instance"] == on_disk
+
+    def test_instance_field_matches_util_resolution(
+        self, clean_root, tmp_path, capsys
+    ):
+        # Criterion #3330: the field equals the id Util resolves — the
+        # audit-event target_id of app lifecycle rows (#3329).
+        import types
+
+        from klangk.util import Util
+
+        data = tmp_path / "d3"
+        settings = _make_settings(log_format="json", data_dir=data)
+        logger_mod.configure(settings)
+        logging.getLogger("klangk.id.util").info("m")
+        payload = json.loads(capsys.readouterr().err.strip().splitlines()[-1])
+        util = Util(
+            types.SimpleNamespace(
+                state=types.SimpleNamespace(settings=settings)
+            )
+        )
+        assert util.resolve_instance_id() == payload["instance"]
+
+    def test_sighup_data_dir_swap_swaps_instance_field(
+        self, clean_root, tmp_path, capsys
+    ):
+        # A SIGHUP that changes the data dir updates the field like every
+        # other settings-derived value: the second configure re-resolves
+        # from the new dir's instance-id file.
+        old_data = tmp_path / "old"
+        new_data = tmp_path / "new"
+        old_data.mkdir()
+        new_data.mkdir()
+        (old_data / "instance-id").write_text("old-iid")
+        (new_data / "instance-id").write_text("new-iid")
+        logger_mod.configure(
+            _make_settings(log_format="json", data_dir=old_data)
+        )
+        logging.getLogger("klangk.id.swap").info("old")
+        logger_mod.configure(
+            _make_settings(log_format="json", data_dir=new_data)
+        )
+        logging.getLogger("klangk.id.swap").info("new")
+        lines = [
+            json.loads(x) for x in capsys.readouterr().err.strip().splitlines()
+        ]
+        assert [p["instance"] for p in lines] == ["old-iid", "new-iid"]
 
 
 class TestConfigureDefaults:

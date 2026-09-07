@@ -7,9 +7,9 @@ Everything klangkd logs — its own records, uvicorn's startup/error/access logs
 ## Console format: `KLANGKD_LOG_FORMAT`
 
 - **`text`** (the default) — the human-readable colored console format.
-- **`json`** — one JSON object per line: `timestamp` (ISO-8601 UTC), `level`, `logger`, `message`, plus `exc_info` (the formatted traceback) when a record carries an exception.
+- **`json`** — one JSON object per line: `timestamp` (ISO-8601 UTC), `level`, `logger`, `message`, `host` (the emitting machine's hostname), plus `instance` (the per-data-dir klangk instance id, `<data_dir>/instance-id` — the same id the audit trail's app lifecycle rows key on) once settings have loaded, and `exc_info` (the formatted traceback) when a record carries an exception.
 
-The JSON form contains no ANSI color codes, so the whole stream is uniform and parseable. Formatting never raises: a record with mismatched `%`-format arguments (or any other pathological input) degrades to a best-effort message instead of dumping a raw traceback line into the stream. Every line stays a parseable JSON object.
+The `host`/`instance` pair lets a SIEM attribute each line when several klangkd deployments — or several instances on one host, each with its own data dir — feed the same ingestion stream. Both fields are resolved once at startup (or on reload): `host` from the machine's hostname, `instance` from the data dir's `instance-id` file — the same file klangkd creates on first boot, stable across restarts. A record whose data dir cannot be read at configuration time carries `host` alone; the JSON form contains no ANSI color codes, so the whole stream stays uniform and parseable. Formatting never raises: a record with mismatched `%`-format arguments (or any other pathological input) degrades to a best-effort message instead of dumping a raw traceback line into the stream. Every line stays a parseable JSON object.
 
 ## The file sink: `KLANGKD_LOG_FILE`
 
