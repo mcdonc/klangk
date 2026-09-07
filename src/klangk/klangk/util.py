@@ -341,8 +341,9 @@ def _served_authority_names(
 
 def _listener_authority_address(listen: str | None) -> list[str]:
     """The listener address as a one-element URL-authority list — only
-    when it is a specific IP literal; otherwise empty."""
-    addr = (listen or "").strip().lower()
+    when it is a specific IP literal (brackets stripped); otherwise
+    empty."""
+    addr = (listen or "").strip().strip("[]").lower()
     if addr and _is_specific_ip_literal(addr):
         return [addr]
     return []
@@ -355,6 +356,26 @@ def _is_specific_ip_literal(addr: str) -> bool:
         return not ipaddress.ip_address(addr).is_unspecified
     except ValueError:
         return False
+
+
+def _same_authority_host(host: str, name: str) -> bool:
+    """True when a request's *host* names the configured *name*.
+
+    IP literals compare in canonical form (``2001:0db8::1`` and
+    ``[2001:db8::1]`` both name ``2001:db8::1``); names compare
+    case-insensitively with a DNS trailing dot ignored
+    (``example.com.`` names ``example.com``)."""
+    return _canonical_host(host) == _canonical_host(name)
+
+
+def _canonical_host(value: str) -> str:
+    """Canonical IP form when *value* parses as an address, else the
+    lowercased name with brackets and a trailing dot removed."""
+    candidate = value.strip().strip("[]")
+    try:
+        return str(ipaddress.ip_address(candidate))
+    except ValueError:
+        return candidate.lower().rstrip(".")
 
 
 def _canonical_ip_or_raw(candidate: str | None) -> str | None:
@@ -881,7 +902,8 @@ class Util:
         settings = self.app.state.settings
         names = _served_authority_names(settings.tls_hostname, settings.listen)
         return any(
-            host == name and _port_names_listener(port, settings.port)
+            _same_authority_host(host, name)
+            and _port_names_listener(port, settings.port)
             for name in names
         )
 

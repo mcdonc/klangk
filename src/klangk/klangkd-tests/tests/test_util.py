@@ -772,9 +772,11 @@ class TestDeriveHostingInfo:
         """Bare (unbracketed) IPv6 Hosts never validate (#2732 review).
 
         ``::1`` parses as port-bearing; ``::ffff:127.0.0.1`` (v4-mapped
-        loopback) parses as a port-less loopback — either way the form is
-        indistinguishable from ``host:port`` by suffix alone, so it names
-        no servable authority and collapses to the floor (#3276).
+        loopback) parses as a port-less loopback — either way the *bare*
+        form is indistinguishable from ``host:port`` by suffix alone, so
+        it names no servable authority and collapses to the floor
+        (#3276). The bracketed forms are different: ``[::1]`` and
+        ``[::1]:8997`` parse cleanly and validate as loopback.
         """
         u = _util({"KLANGKD_PORT": "8997"})
         for host in ("::1", "::ffff:127.0.0.1"):
@@ -894,6 +896,35 @@ class TestHostNamesServedAuthority:
             {"host": "192.168.1.5:8997"}, "203.0.113.7"
         )
         assert h == "192.168.1.5:8997"
+
+    def test_listen_authority_ip_forms_compare_canonically(self):
+        """IPv6 listen literals compare in canonical form: a bracketed
+        listen value and a differently-spelled Host literal both name
+        the same address (#3276 review)."""
+        u = _util(
+            {
+                "KLANGKD_PORT": "8997",
+                "KLANGKD_LISTEN": "[2001:db8::1]",
+            }
+        )
+        h, _, _ = u.derive_hosting_info(
+            {"host": "[2001:0db8:0000::1]:8997"}, "203.0.113.7"
+        )
+        assert h == "[2001:0db8:0000::1]:8997"
+
+    def test_tls_authority_trailing_dot_honored(self):
+        """A Host with a DNS trailing dot names the same name as the
+        configured TLS hostname."""
+        u = _util(
+            {
+                "KLANGKD_PORT": "8997",
+                "KLANGKD_TLS_HOSTNAME": "klangk.example.com",
+            }
+        )
+        h, _, _ = u.derive_hosting_info(
+            {"host": "klangk.example.com.:8997"}, "203.0.113.7"
+        )
+        assert h == "klangk.example.com.:8997"
 
     def test_wildcard_listen_names_nothing(self):
         """0.0.0.0 / :: name every interface at once, so no Host can be

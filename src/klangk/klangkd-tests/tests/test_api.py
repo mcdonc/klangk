@@ -15707,6 +15707,65 @@ class TestOIDCCallback:
             assert "code=" in location, payload
             client.cookies.delete("oidc_test")
 
+    async def test_callback_forged_host_redirect_stays_in_house(
+        self, client, app, monkeypatch, db
+    ):
+        """#3276: the OIDC callback's redirect carries a login code (a
+        bearer credential); a forged Host on the callback request must
+        never become that redirect's authority — the Location derives
+        from the localhost floor instead."""
+        import json as json_mod
+
+        provider = api.oidc.OIDCProvider(
+            id="test",
+            display_name="Test",
+            issuer="https://idp.example.com",
+            client_id="klangk",
+            client_secret="s",
+        )
+        monkeypatch.setattr(app.state.oidc, "get_provider", lambda _: provider)
+        monkeypatch.setattr(
+            app.state.oidc,
+            "exchange_code",
+            AsyncMock(return_value={"id_token": "idt", "access_token": "at"}),
+        )
+        monkeypatch.setattr(
+            app.state.oidc,
+            "validate_id_token",
+            AsyncMock(
+                return_value={
+                    "sub": "fh-sub",
+                    "email": "fh@example.com",
+                    "email_verified": True,
+                }
+            ),
+        )
+        _, jwk = make_binding_key()
+        cookie_data = json_mod.dumps(
+            {
+                "state": "s",
+                "verifier": "v",
+                "cli_redirect": None,
+                "binding_jwk": base64.urlsafe_b64encode(
+                    json_mod.dumps(jwk).encode()
+                )
+                .rstrip(b"=")
+                .decode(),
+            }
+        )
+        client.cookies.set("oidc_test", cookie_data)
+        resp = await client.get(
+            "/api/v1/auth/oidc/test/callback",
+            params={"code": "code", "state": "s"},
+            headers={"host": "attacker.example"},
+            follow_redirects=False,
+        )
+        client.cookies.delete("oidc_test")
+        assert resp.status_code == 302
+        location = resp.headers["location"]
+        assert "attacker.example" not in location
+        assert location.startswith("http://localhost/#/oidc-complete?code=")
+
     async def test_callback_redirect_uri_rederived_not_from_cookie(
         self, client, app, monkeypatch, db
     ):

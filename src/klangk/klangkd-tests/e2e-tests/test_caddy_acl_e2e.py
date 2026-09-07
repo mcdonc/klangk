@@ -805,16 +805,35 @@ class TestHostHeaderTrust:
         assert echoed["headers"].get("Host") == "attacker.example"
         assert "X-Forwarded-Host" not in echoed["headers"]
 
+    def test_untrusted_peer_loses_forwarded_prefix(self, stack):
+        """#3276 review: caddy passes X-Forwarded-Prefix through untouched
+        (its defaults cover For/Proto/Host only), so a client-chosen
+        prefix must be deleted at the untrusted handle — otherwise it
+        reaches URL construction as a trusted forwarded value."""
+        host_ip = _host_nonloopback_ipv4()
+        if not host_ip:
+            pytest.skip("no non-loopback IPv4 on this host")
+        r = httpx.get(
+            f"http://{host_ip}:{stack['browser_port']}/api/v1/x",
+            headers={"X-Forwarded-Prefix": "/attacker-path"},
+            timeout=5,
+        )
+        assert r.status_code == 200
+        echoed = r.json()
+        assert "X-Forwarded-Prefix" not in echoed["headers"]
+
     def test_trusted_peer_keeps_forwarded_host(self, stack):
         """A loopback peer (in the default trusted set — the stand-in for
-        a configured outer proxy) keeps its X-Forwarded-Host, so
-        behind-a-proxy URL derivation is untouched."""
+        a configured outer proxy) keeps its X-Forwarded-Host and
+        X-Forwarded-Prefix, so behind-a-proxy URL derivation is
+        untouched."""
         r = httpx.get(
             f"http://127.0.0.1:{stack['browser_port']}/api/v1/x",
             headers={
                 "Host": "klangk.example.com",
                 "X-Forwarded-Host": "klangk.example.com",
                 "X-Forwarded-Proto": "https",
+                "X-Forwarded-Prefix": "/klangk",
             },
             timeout=5,
         )
@@ -824,6 +843,7 @@ class TestHostHeaderTrust:
             echoed["headers"].get("X-Forwarded-Host") == "klangk.example.com"
         )
         assert echoed["headers"].get("X-Forwarded-Proto") == "https"
+        assert echoed["headers"].get("X-Forwarded-Prefix") == "/klangk"
 
 
 # ---------------------------------------------------------------------------

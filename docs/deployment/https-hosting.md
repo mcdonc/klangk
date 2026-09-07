@@ -260,7 +260,8 @@ Which to set, by deployment:
 | Behind an outer proxy that mangles `Host`/forwarded  | `hosting-hostname` as the URL pin                             |
 | Behind an outer proxy, encrypted hop wanted          | `tls-hostname` + `tls-issuer: internal`                       |
 | Plain HTTP, direct browser access by loopback        | nothing — a loopback `Host` on the browser port validates     |
-| Plain HTTP, direct browser access by name/IP         | `hosting-hostname` — an unconfigured name never validates     |
+| Plain HTTP, direct access by the `listen` IP literal | nothing — that `Host` names the listener                      |
+| Plain HTTP, direct access by name, or wildcard bind  | `hosting-hostname` — a name/wildcard never validates          |
 | URLs come out wrong despite correct headers          | `hosting-hostname` as an explicit override                    |
 
 ## Checking the setup
