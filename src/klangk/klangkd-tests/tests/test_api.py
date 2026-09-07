@@ -13599,13 +13599,21 @@ class TestWorkspaceExportImport:
         loop_thread = threading.get_ident()
         seen = []
         real_run = subprocess.run
+        real_popen = subprocess.Popen
 
         def spy(*args, **kwargs):
             seen.append(threading.get_ident())
             return real_run(*args, **kwargs)
 
+        def spy_popen(*args, **kwargs):
+            seen.append(threading.get_ident())
+            return real_popen(*args, **kwargs)
+
         headers = await self._user_headers(client)
-        with patch.object(subprocess, "run", spy):
+        with (
+            patch.object(subprocess, "run", spy),
+            patch.object(subprocess, "Popen", spy_popen),
+        ):
             resp = await client.post(
                 "/api/v1/workspaces/import",
                 headers=headers,
@@ -14149,6 +14157,389 @@ class TestWorkspaceExportImport:
             files={"file": ("big.tar.gz", b"x" * 200, "application/gzip")},
         )
         assert resp.status_code == 413
+
+    def _archive(self, home_members: list[tuple[str, bytes]], **meta_over):
+        """Build a small in-memory import archive (#3284 tests): the
+        provenance-valid workspace.json plus the given home members."""
+        import json
+        import tarfile
+
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+            meta = json.dumps(self._meta(**meta_over)).encode()
+            info = tarfile.TarInfo(name="workspace.json")
+            info.size = len(meta)
+            tar.addfile(info, io.BytesIO(meta))
+            for name, data in home_members:
+                mi = tarfile.TarInfo(name=name)
+                mi.size = len(data)
+                tar.addfile(mi, io.BytesIO(data))
+        return buf.getvalue()
+
+    async def _import(
+        self, client, headers, archive: bytes, name: str | None = None
+    ):
+        """POST the archive; returns the response object."""
+        return await client.post(
+            "/api/v1/workspaces/import",
+            headers=headers,
+            params={"name": name} if name else None,
+            files={"file": ("archive.tar.gz", archive, "application/gzip")},
+        )
+
+    async def test_import_metadata_member_oversize_rejected(
+        self, client, user, app
+    ):
+        """#3284: a multi-GB workspace.json member used to accumulate in
+        Python memory before json.loads; the capped read turns it into a
+        cheap 413. A ~1.1 MB member compresses to a few KB, so the
+        compressed-upload bound never sees it."""
+        from klangk.api import workspaces as api_ws
+
+        archive = self._archive(
+            [],
+            name="meta-bomb",
+            pad="x" * (api_ws._METADATA_MAX_BYTES + 1),
+        )
+        assert len(archive) < 100_000  # compressed well under the upload cap
+
+        headers = await self._user_headers(client)
+        resp = await self._import(client, headers, archive)
+        assert resp.status_code == 413
+        assert "metadata bound" in resp.json()["detail"]
+
+    async def test_import_home_exceeds_free_space(
+        self, client, user, app, monkeypatch
+    ):
+        """#3284: the uncompressed home tree is pre-scanned against the
+        workspace volume's free space (minus the reserve) and refused
+        with 413 before tar writes a byte — the workspace row is rolled
+        back."""
+        from klangk.api import workspaces as api_ws
+
+        monkeypatch.setattr(
+            api_ws,
+            "_fs_stats",
+            lambda path: (api_ws._IMPORT_FREE_MARGIN_BYTES + 1, 4096),
+        )
+        archive = self._archive(
+            [("home/payload.bin", b"\0" * 1024)], name="disk-bomb"
+        )
+
+        headers = await self._user_headers(client)
+        resp = await self._import(client, headers, archive)
+        assert resp.status_code == 413
+        assert "free on the workspace volume" in resp.json()["detail"]
+
+        # The half-created workspace was rolled back.
+        listed = await client.get("/api/v1/workspaces", headers=headers)
+        assert all(w["name"] != "disk-bomb" for w in listed.json())
+
+    async def test_import_free_space_probe_failure_fails_closed(
+        self, client, user, app, monkeypatch
+    ):
+        """#3284 review: a statvfs failure (volume vanished mid-request)
+        must fail closed as a clean 500 with the row rolled back, not an
+        unbounded import or a leaked workspace."""
+        from klangk.api import workspaces as api_ws
+
+        def _gone(path):
+            raise OSError("volume gone")
+
+        monkeypatch.setattr(api_ws, "_fs_stats", _gone)
+        archive = self._archive(
+            [("home/payload.bin", b"x")], name="statvfs-gone"
+        )
+        headers = await self._user_headers(client)
+        resp = await self._import(client, headers, archive)
+        assert resp.status_code == 500
+        assert "Cannot verify free space" in resp.json()["detail"]
+        listed = await client.get("/api/v1/workspaces", headers=headers)
+        assert all(w["name"] != "statvfs-gone" for w in listed.json())
+
+    async def test_import_home_exceeds_policy_cap(
+        self, client, user, app, monkeypatch
+    ):
+        """#3284: KLANGKD_IMPORT_MAX_UNCOMPRESSED_MB bounds how much of the
+        free space one import may consume — a 2 MB home tree against a
+        1 MB cap is a 413, and the cap path reports the knob."""
+        monkeypatch.setattr(
+            app.state.settings, "import_max_uncompressed_mb", 1
+        )
+        archive = self._archive(
+            [("home/payload.bin", b"\0" * (2 * 1024 * 1024))],
+            name="cap-bomb",
+        )
+
+        headers = await self._user_headers(client)
+        resp = await self._import(client, headers, archive)
+        assert resp.status_code == 413
+        assert "KLANGKD_IMPORT_MAX_UNCOMPRESSED_MB" in resp.json()["detail"]
+
+        listed = await client.get("/api/v1/workspaces", headers=headers)
+        assert all(w["name"] != "cap-bomb" for w in listed.json())
+
+    async def test_import_large_home_with_free_space_succeeds(
+        self, client, user, app, monkeypatch
+    ):
+        """#3284: the bound is the free space, not a tight fixed cap — a
+        payload larger than any fixed limit imports cleanly when the
+        volume has room (the reserve is monkeypatched away because the
+        CI disk's real free space is not under the test's control)."""
+        from klangk.api import workspaces as api_ws
+
+        monkeypatch.setattr(api_ws, "_fs_stats", lambda path: (1 << 40, 4096))
+        archive = self._archive(
+            [("home/big.bin", b"\0" * (32 * 1024 * 1024))],
+            name="big-ok",
+        )
+        headers = await self._user_headers(client)
+        resp = await self._import(client, headers, archive)
+        assert resp.status_code == 200
+        home = app.state.workspaces.home_path(resp.json()["id"])
+        assert (home / "big.bin").stat().st_size == 32 * 1024 * 1024
+
+    def test_sum_listing_fails_closed(self):
+        """#3284: a tzvf line that does not parse — or exceeds the line
+        bound, or the scan misses its deadline — fails closed instead
+        of under-counting."""
+        import subprocess as subprocess_mod
+        import time as time_mod
+
+        from klangk.api import workspaces as api_ws
+
+        soon = time_mod.monotonic() + 30
+
+        # A crafted owner field with spaces (no --numeric-owner
+        # protection) shifts the size column; the regex must reject it.
+        hostile = types.SimpleNamespace(
+            stdout=io.BytesIO(
+                b"-rw-r--r-- a b/c 1234 2024-01-01 00:00 home/x\n"
+            )
+        )
+        with pytest.raises(api_ws._ListingUnparsable):
+            api_ws._sum_listing(hostile, soon)
+
+        # An unbounded pax member name would buffer whole; the line cap
+        # refuses it (#3284 review: a 65 KB upload could otherwise
+        # drive a multi-GB transient allocation).
+        long_name = types.SimpleNamespace(
+            stdout=io.BytesIO(
+                b"-rw-r--r-- 0/0 5 2024-01-01 00:00 home/"
+                + b"x" * api_ws._LISTING_LINE_MAX
+                + b"\n"
+            )
+        )
+        with pytest.raises(api_ws._ListingUnparsable):
+            api_ws._sum_listing(long_name, soon)
+
+        # A scan that misses its deadline raises TimeoutExpired (the
+        # caller kills tar) — a gzip bomb cannot pin the worker thread
+        # decompressing headers for minutes.
+        slow = types.SimpleNamespace(
+            stdout=io.BytesIO(b"-rw-r--r-- 0/0 5 2024-01-01 00:00 home/a\n")
+        )
+        with pytest.raises(subprocess_mod.TimeoutExpired):
+            api_ws._sum_listing(slow, time_mod.monotonic() - 1)
+
+        # Well-formed lines parse: symlink arrow, spaces in the name,
+        # a negative mtime year, a device member's major,minor size.
+        good = types.SimpleNamespace(
+            stdout=io.BytesIO(
+                b"-rw-r--r-- 0/0 5 2024-01-01 00:00 home/a b.txt\n"
+                b"lrwxrwxrwx 0/0 9 2024-01-01 00:00 home/l -> target x\n"
+                b"drwxr-xr-x 0/0 0 2024-01-01 00:00 home/d/\n"
+                b"-rw-r--r-- 0/0 7 -26550-02-19 03:03 home/old.txt\n"
+                b"crw-rw-rw- 0/0 1,3 2024-01-01 00:00 home/dev\n"
+            )
+        )
+        assert api_ws._sum_listing(good, soon) == (22, 5)
+
+    def test_scan_deadline_enforced_while_blocked(self, monkeypatch):
+        """#3284 second review: the deadline must hold even while the
+        reader is blocked on a pipe that never yields output — a bomb
+        whose members don't match home/ lists nothing, so the per-line
+        check never runs. The kill-watchdog bounds the blocked read
+        itself (a real subprocess, not a fake)."""
+        import subprocess as subprocess_mod
+        import time as time_mod
+
+        from klangk.api import workspaces as api_ws
+
+        real_popen = subprocess_mod.Popen
+        monkeypatch.setattr(api_ws, "_TAR_TIMEOUT_SECONDS", 1)
+
+        def _silent_tar(argv, *a, **kw):
+            return real_popen(
+                ["sleep", "300"],
+                stdout=subprocess_mod.PIPE,
+                stderr=subprocess_mod.DEVNULL,
+            )
+
+        monkeypatch.setattr(api_ws.subprocess, "Popen", _silent_tar)
+        started = time_mod.monotonic()
+        with pytest.raises(subprocess_mod.TimeoutExpired):
+            api_ws._scan_home_uncompressed_bytes("/nonexistent.tar.gz")
+        assert time_mod.monotonic() - started < 30
+
+    def test_metadata_deadline_enforced_while_blocked(self, monkeypatch):
+        """#3284 second review: same property for the metadata read —
+        tar -O emits nothing until the matching member, so the first
+        read can block through an entire giant archive."""
+        import subprocess as subprocess_mod
+
+        from klangk.api import workspaces as api_ws
+
+        real_popen = subprocess_mod.Popen
+        monkeypatch.setattr(api_ws, "_TAR_TIMEOUT_SECONDS", 1)
+
+        def _silent_tar(argv, *a, **kw):
+            return real_popen(
+                ["sleep", "300"],
+                stdout=subprocess_mod.PIPE,
+                stderr=subprocess_mod.DEVNULL,
+            )
+
+        monkeypatch.setattr(api_ws.subprocess, "Popen", _silent_tar)
+        with pytest.raises(subprocess_mod.TimeoutExpired):
+            api_ws._extract_capped_metadata("/nonexistent.tar.gz")
+
+    def test_import_fit_counts_blocks_per_member(self, monkeypatch, tmp_path):
+        """#3284: demand counts one filesystem block per member — a
+        tree of half a million 1-byte files costs ~2 GB of blocks and
+        inodes, far past its byte sum, and is refused against a volume
+        with only 1 GB past the reserve."""
+        from fastapi import HTTPException
+
+        from klangk.api import workspaces as api_ws
+
+        monkeypatch.setattr(
+            api_ws,
+            "_fs_stats",
+            lambda path: (api_ws._IMPORT_FREE_MARGIN_BYTES + (1 << 30), 4096),
+        )
+        app = types.SimpleNamespace(
+            state=types.SimpleNamespace(
+                settings=types.SimpleNamespace(import_max_uncompressed_mb=None)
+            )
+        )
+        with pytest.raises(HTTPException) as excinfo:
+            api_ws._assert_import_fits(tmp_path, 1024 * 1024, 500_000, app)
+        assert excinfo.value.status_code == 413
+        assert "free on the workspace volume" in excinfo.value.detail
+
+    async def test_import_metadata_timeout_rejected(
+        self, client, user, app, monkeypatch
+    ):
+        """#3284: a tar that never finishes is killed and surfaces as a
+        clean 400 before any workspace row exists."""
+        import json
+        import subprocess as subprocess_mod
+
+        meta_bytes = json.dumps(self._meta(name="meta-hang")).encode()
+
+        class _HangingTar:
+            def __init__(self, argv, *a, **kw):
+                self.argv = argv
+                self.stdout = io.BytesIO(meta_bytes)
+                self.returncode = 0
+                self.killed = False
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def wait(self, timeout=None):
+                raise subprocess_mod.TimeoutExpired(cmd="tar", timeout=30)
+
+            def kill(self):
+                self.killed = True
+
+        hung = []
+
+        def _spawn(argv, *a, **kw):
+            proc = _HangingTar(argv, *a, **kw)
+            hung.append(proc)
+            return proc
+
+        monkeypatch.setattr("klangk.api.workspaces.subprocess.Popen", _spawn)
+        headers = await self._user_headers(client)
+        resp = await self._import(
+            client, headers, self._archive([], name="meta-hang")
+        )
+        assert resp.status_code == 400
+        assert "corrupt" in resp.json()["detail"]
+        assert hung and hung[0].killed
+
+    async def test_import_scan_timeout_rejected(
+        self, client, user, app, monkeypatch
+    ):
+        """#3284: a tzvf scan that never finishes is killed and the
+        just-created workspace row is rolled back."""
+        import json
+        import subprocess as subprocess_mod
+
+        meta_bytes = json.dumps(self._meta(name="scan-hang")).encode()
+        listing = b"-rw-r--r-- 0/0 5 2024-01-01 00:00 home/a\n"
+
+        class _HangingTar:
+            def __init__(self, argv, *a, **kw):
+                self.argv = argv
+                # The metadata extract (-O) completes; the scan hangs.
+                self.hangs = "-O" not in argv
+                self.stdout = io.BytesIO(listing if self.hangs else meta_bytes)
+                self.returncode = 0
+                self.killed = False
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def wait(self, timeout=None):
+                if self.hangs:
+                    raise subprocess_mod.TimeoutExpired(cmd="tar", timeout=30)
+
+            def kill(self):
+                self.killed = True
+
+        monkeypatch.setattr(
+            "klangk.api.workspaces.subprocess.Popen", _HangingTar
+        )
+        headers = await self._user_headers(client)
+        resp = await self._import(
+            client, headers, self._archive([], name="scan-hang")
+        )
+        assert resp.status_code == 400
+        assert "corrupt" in resp.json()["detail"]
+        listed = await client.get("/api/v1/workspaces", headers=headers)
+        assert all(w["name"] != "scan-hang" for w in listed.json())
+
+    async def test_import_listing_fails_closed(
+        self, client, user, app, monkeypatch
+    ):
+        """#3284: an unparsable tzvf line refuses the import (400) and
+        rolls the workspace row back instead of under-counting."""
+        from klangk.api import workspaces as api_ws
+
+        def _unparsable(path):
+            raise api_ws._ListingUnparsable
+
+        monkeypatch.setattr(
+            "klangk.api.workspaces._scan_home_uncompressed_bytes",
+            _unparsable,
+        )
+        headers = await self._user_headers(client)
+        resp = await self._import(
+            client, headers, self._archive([], name="bad-listing")
+        )
+        assert resp.status_code == 400
+        assert resp.json()["detail"] == "Archive home listing is malformed"
+        listed = await client.get("/api/v1/workspaces", headers=headers)
+        assert all(w["name"] != "bad-listing" for w in listed.json())
 
     async def test_import_sanitizes_env(self, client, user):
         """Dangerous env vars from archive are stripped."""
@@ -17525,17 +17916,19 @@ class TestBranchGaps2834:
         import subprocess as subprocess_mod
 
         def _timing_out_tar(cmd, *a, **kw):
-            # Only the post-creation home-tree probe times out; the earlier
-            # metadata read (tar xzf -O workspace.json) still succeeds so the
-            # workspace row is created first.
-            if "tzf" in cmd:
-                raise subprocess_mod.TimeoutExpired(cmd="tar", timeout=30)
-            return subprocess_mod.CompletedProcess(
-                cmd, returncode=0, stdout=meta_bytes
-            )
+            # Only the post-creation home-tree extraction times out; the
+            # tzvf pre-scan below is stubbed to "fits", so the workspace
+            # row is created first.
+            if "-C" in cmd:
+                raise subprocess_mod.TimeoutExpired(cmd="tar", timeout=300)
+            return subprocess_mod.CompletedProcess(cmd, returncode=0)
 
         monkeypatch.setattr(
             "klangk.api.workspaces.subprocess.run", _timing_out_tar
+        )
+        monkeypatch.setattr(
+            "klangk.api.workspaces._scan_home_uncompressed_bytes",
+            lambda path: (0, 0),
         )
         deleted = []
         with patch.object(

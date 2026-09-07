@@ -4,9 +4,11 @@ import asyncio
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 from datetime import datetime, timezone
 from typing import Annotated, Literal
@@ -1423,6 +1425,64 @@ async def _stream_upload_to_tempfile(
     return tmp.name, total
 
 
+# workspace.json is server-generated metadata — a few KB. A hard byte
+# bound keeps a crafted multi-GB member from accumulating in Python
+# memory before json.loads ever runs (#3284); anything near 1 MB is
+# already corrupt or hostile.
+_METADATA_MAX_BYTES = 1024 * 1024
+
+
+class _MetadataTooLarge(Exception):
+    """workspace.json exceeded the metadata byte bound (#3284)."""
+
+
+def _read_capped(proc: subprocess.Popen) -> bytes:
+    """Read *proc*'s stdout up to ``_METADATA_MAX_BYTES`` and stop.
+
+    Closing the read end SIGPIPEs tar, so an arbitrarily large member
+    costs at most the cap in memory (#3284)."""
+    assert proc.stdout is not None
+    chunks: list[bytes] = []
+    total = 0
+    while chunk := proc.stdout.read(65536):
+        total += len(chunk)
+        if total > _METADATA_MAX_BYTES:
+            raise _MetadataTooLarge
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+def _extract_capped_metadata(archive_path: str) -> bytes:
+    """tar -O extract of workspace.json under the metadata byte bound.
+
+    Raises ``subprocess.CalledProcessError`` when the member is missing
+    or the archive is corrupt, ``_MetadataTooLarge`` past the bound,
+    ``TimeoutExpired`` past the tar budget (the -O extract emits
+    nothing until the matching member, so the watchdog bounds the
+    blocked first read too)."""
+    with subprocess.Popen(
+        ["tar", "xzf", archive_path, "-O", "workspace.json"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    ) as proc:
+        watchdog, fired = _arm_deadline_kill(proc, _TAR_TIMEOUT_SECONDS)
+        try:
+            payload = _read_capped(proc)
+            proc.wait(timeout=_TAR_TIMEOUT_SECONDS)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            raise
+        finally:
+            watchdog.cancel()
+    if fired:
+        raise subprocess.TimeoutExpired(
+            cmd="tar", timeout=_TAR_TIMEOUT_SECONDS
+        )
+    if proc.returncode != 0:
+        raise subprocess.CalledProcessError(proc.returncode, proc.args)
+    return payload
+
+
 async def _extract_archive_metadata(
     archive_path: str, name: str | None, app
 ) -> dict:
@@ -1452,21 +1512,28 @@ async def _extract_archive_metadata(
 
 
 async def _read_archive_metadata(archive_path: str) -> dict:
-    """Run the tar extract of workspace.json and parse it; 400 on a missing
-    entry or corrupt JSON."""
-    result = await asyncio.to_thread(
-        subprocess.run,
-        ["tar", "xzf", archive_path, "-O", "workspace.json"],
-        capture_output=True,
-        timeout=30,
-    )
-    if result.returncode != 0:
+    """Read workspace.json from the archive and parse it; 400 on a missing
+    entry or corrupt JSON, 413 when the member exceeds the metadata byte
+    bound (#3284)."""
+    try:
+        payload = await asyncio.to_thread(
+            _extract_capped_metadata, archive_path
+        )
+    except _MetadataTooLarge:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                "workspace.json exceeds the "
+                f"{_METADATA_MAX_BYTES // (1024 * 1024)} MB metadata bound"
+            ),
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
         raise HTTPException(
             status_code=400,
             detail="Archive missing workspace.json or is corrupt",
         )
     try:
-        return json.loads(result.stdout)
+        return json.loads(payload)
     except (json.JSONDecodeError, UnicodeDecodeError):
         raise HTTPException(
             status_code=400,
@@ -1566,20 +1633,217 @@ def _archive_banner(classification_banner) -> str | None:
         return None
 
 
+# Safety margin kept free on the workspace volume after an import
+# (#3284): the pre-scan refuses an archive whose uncompressed home/
+# tree would eat it. Per import — concurrent imports can jointly
+# consume more than either alone would pass; the reserve is not a
+# hard guarantee against a full disk.
+_IMPORT_FREE_MARGIN_BYTES = 2 * 1024**3
+
+# Every tar invocation on the import path must finish inside this
+# budget (#3284): a per-line deadline cannot fire while the reader is
+# blocked on a pipe that never yields output (a bomb whose members do
+# not match home/ lists nothing, and tar -O extracts nothing until the
+# matching member), so a kill-watchdog enforces the budget on blocked
+# reads too. A legitimate 500 MB archive lists in a couple of seconds
+# — 30 is generous headroom.
+_TAR_TIMEOUT_SECONDS = 30
+
+
+def _arm_deadline_kill(
+    proc: subprocess.Popen, seconds: float
+) -> tuple[threading.Timer, list]:
+    """Kill *proc* after *seconds*; returns ``(timer, fired)`` —
+    cancel the timer when the reads finish, and treat a truthy *fired*
+    as the timeout (the killed pipe EOFs the blocked reader; #3284
+    review)."""
+    fired: list = []
+
+    def _kill():
+        fired.append(True)
+        proc.kill()
+
+    timer = threading.Timer(seconds, _kill)
+    timer.daemon = True
+    timer.start()
+    return timer, fired
+
+
+# One tzvf line is bounded: pax path records have no length cap, and a
+# member name is the one archive-controlled field that lands whole in
+# the scan's buffer.
+_LISTING_LINE_MAX = 65536
+
+# A tzvf listing line: mode, uid/gid (numeric — --numeric-owner keeps
+# a crafted header's owner field from carrying spaces), size (a
+# device member prints major,minor), date (negative years are legal
+# mtimes), time, then the member name (spaces are legal; GNU tar
+# escapes control characters in names, so a name cannot split a
+# record into two lines — but a listing line that still does not
+# parse fails closed). A big member's own line always shows its real
+# size first, so the byte sum can only over-count, never under-count;
+# the fit check adds one filesystem block per member for the disk-side
+# floor (inodes and block rounding — millions of 1-byte files cost far
+# more than their byte sum).
+_TZVF_LINE = re.compile(
+    r"^\S+\s+\d+/\d+\s+(?P<size>\d+)(?:,\d+)?\s+-?\d+-\d{2}-\d{2}\s+\S+\s+.+$"
+)
+
+
+class _ListingUnparsable(Exception):
+    """A tzvf line did not match the listing format — the archive is
+    malformed or hostile; the import fails closed (#3284)."""
+
+
+def _listing_line_size(line: bytes) -> int:
+    """Parse one tzvf line's size column; raises ``_ListingUnparsable``
+    on a line that does not match or exceeds the line bound (an
+    unbounded pax member name is the one archive-controlled field that
+    lands whole in the scan's buffer, #3284)."""
+    if len(line) == _LISTING_LINE_MAX and not line.endswith(b"\n"):
+        raise _ListingUnparsable
+    m = _TZVF_LINE.match(line.decode("utf-8", "replace"))
+    if m is None:
+        raise _ListingUnparsable
+    return int(m.group("size"))
+
+
+def _sum_listing(proc: subprocess.Popen, deadline: float) -> tuple[int, int]:
+    """Sum the size column of a tzvf stream, one bounded line at a
+    time: the listing is never stored, so a bomb with a billion tiny
+    headers cannot OOM the scan, and no single name can buffer more
+    than the line cap (#3284). Returns ``(total_bytes, member_count)``.
+
+    Raises ``TimeoutExpired`` past *deadline* (the caller kills tar)
+    and ``_ListingUnparsable`` on a hostile line."""
+    assert proc.stdout is not None
+    total = 0
+    count = 0
+    while line := proc.stdout.readline(_LISTING_LINE_MAX):
+        if time.monotonic() > deadline:
+            raise subprocess.TimeoutExpired(
+                cmd="tar", timeout=_TAR_TIMEOUT_SECONDS
+            )
+        total += _listing_line_size(line)
+        count += 1
+    return total, count
+
+
+def _scan_home_uncompressed_bytes(
+    archive_path: str,
+) -> tuple[int, int] | None:
+    """Stream ``tar tzvf`` over the home members, summing their
+    uncompressed sizes and counting them (#3284).
+
+    ``None`` when tar fails — the metadata-only archive with no home/
+    member extracts no tree, same as the old presence probe. Raises
+    ``_ListingUnparsable`` on a line that does not parse."""
+    with subprocess.Popen(
+        [
+            "tar",
+            "-t",
+            "-z",
+            "-v",
+            "--numeric-owner",
+            "-f",
+            archive_path,
+            "home/",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    ) as proc:
+        watchdog, fired = _arm_deadline_kill(proc, _TAR_TIMEOUT_SECONDS)
+        try:
+            total, count = _sum_listing(
+                proc, time.monotonic() + _TAR_TIMEOUT_SECONDS
+            )
+            proc.wait(timeout=_TAR_TIMEOUT_SECONDS)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            raise
+        finally:
+            watchdog.cancel()
+    if fired:
+        raise subprocess.TimeoutExpired(
+            cmd="tar", timeout=_TAR_TIMEOUT_SECONDS
+        )
+    if proc.returncode != 0:
+        return None
+    return total, count
+
+
+def _fs_stats(path) -> tuple[int, int]:
+    """(bytes available to unprivileged writes, filesystem block size)
+    for *path*'s filesystem."""
+    st = os.statvfs(path)
+    return st.f_bavail * st.f_frsize, st.f_frsize
+
+
+def _gb(n: int) -> str:
+    """Human-size a byte count: MB below 1 GB, GB above (a sub-GB
+    overage must not read as "0.0 GB")."""
+    if n < 1024**3:
+        return f"{max(n, 0) / 1024**2:.0f} MB"
+    return f"{n / 1024**3:.1f} GB"
+
+
+def _assert_import_fits(home_dir, total: int, count: int, app) -> None:
+    """Refuse (#3284) before a byte is written when the uncompressed
+    home tree exceeds the operator cap or the workspace volume's free
+    space minus the reserve. Demand counts one filesystem block per
+    member on top of the byte sum — block rounding and inodes mean a
+    tree of millions of 1-byte files costs far more than its bytes."""
+    cap = app.state.settings.import_max_uncompressed_mb
+    if cap is not None and total > cap * 1024 * 1024:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"Archive expands to {_gb(total)}; the import cap is "
+                f"{cap} MB (KLANGKD_IMPORT_MAX_UNCOMPRESSED_MB)"
+            ),
+        )
+    try:
+        free, block = _fs_stats(home_dir)
+    except OSError as exc:
+        # Fail closed (500) with the row rolled back rather than an
+        # unbounded import (#3284 review: statvfs can fail when the
+        # workspace volume vanishes mid-request).
+        raise HTTPException(
+            status_code=500,
+            detail="Cannot verify free space on the workspace volume",
+        ) from exc
+    demand = total + count * block
+    avail = free - _IMPORT_FREE_MARGIN_BYTES
+    if demand > avail:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"Archive expands to {_gb(demand)}; only "
+                f"{_gb(avail)} free on the workspace volume"
+            ),
+        )
+
+
 async def _extract_home_directory(
     archive_path: str, user_id: int, ws_id: int, app
 ) -> None:
-    """Extract the ``home/`` tree from *archive_path* into the workspace home."""
+    """Extract the ``home/`` tree from *archive_path* into the workspace
+    home. The uncompressed payload is bounded first (#3284): the tzvf
+    scan decides before tar writes a byte."""
     home_dir = app.state.workspaces.home_path(ws_id)
     home_dir.mkdir(parents=True, exist_ok=True)
-    check = await asyncio.to_thread(
-        subprocess.run,
-        ["tar", "tzf", archive_path, "home/"],
-        capture_output=True,
-        timeout=30,
-    )
-    if check.returncode != 0:
+    try:
+        scanned = await asyncio.to_thread(
+            _scan_home_uncompressed_bytes, archive_path
+        )
+    except _ListingUnparsable:
+        raise HTTPException(
+            status_code=400,
+            detail="Archive home listing is malformed",
+        )
+    if scanned is None:
         return
+    _assert_import_fits(home_dir, scanned[0], scanned[1], app)
     result = await asyncio.to_thread(
         subprocess.run,
         [
@@ -1593,7 +1857,11 @@ async def _extract_home_directory(
             str(home_dir),
             "home/",
         ],
-        capture_output=True,
+        # Output is discarded on purpose: only the return code decides,
+        # and a hostile archive's per-member stderr warnings are
+        # unbounded (#3284 review).
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
         timeout=300,
     )
     if result.returncode != 0:
@@ -1716,7 +1984,11 @@ async def import_workspace(
     except HTTPException:
         raise
     except (json.JSONDecodeError, subprocess.TimeoutExpired):
-        if ws:
+        # The metadata read converts its own timeout to a 400 upstream
+        # (#3284), so every timeout reaching here has a row to roll
+        # back; ws stays None only for the HTTPException paths that
+        # re-raise above.
+        if ws:  # pragma: no branch
             await app.state.workspaces.delete_workspace(ws["id"], user["id"])
         raise HTTPException(
             status_code=400, detail="Invalid or corrupt archive"

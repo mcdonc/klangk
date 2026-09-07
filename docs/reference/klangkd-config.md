@@ -577,9 +577,23 @@ setting.
 
 ### File upload
 
-| Key                    | Default     | Env var                        |
-| ---------------------- | ----------- | ------------------------------ |
-| `file_upload_size_max` | `524288000` | `KLANGKD_FILE_UPLOAD_SIZE_MAX` |
+| Key                          | Default     | Env var                              |
+| ---------------------------- | ----------- | ------------------------------------ |
+| `file_upload_size_max`       | `524288000` | `KLANGKD_FILE_UPLOAD_SIZE_MAX`       |
+| `import_max_uncompressed_mb` | _(unset)_   | `KLANGKD_IMPORT_MAX_UNCOMPRESSED_MB` |
+
+`file_upload_size_max` bounds the compressed upload. Workspace imports are
+bounded on the decompressed side too (#3284): the archive's `workspace.json`
+member is capped at 1 MB, and the `home/` tree is pre-scanned and refused
+with 413 when it would exceed the free space on the workspace volume (a
+2 GB reserve is kept) or `import_max_uncompressed_mb`. A legitimate
+multi-gigabyte home import succeeds whenever the volume has room. The
+free-space check runs per import: two imports started at the same time can
+together consume more than either alone would pass, so the reserve is a
+working margin rather than a hard guarantee against a full disk. The
+pre-scan must finish within 30 seconds; an archive that takes longer to list
+(because it expands to hundreds of gigabytes of members) is refused as an
+invalid archive.
 
 ### Feature configuration
 

@@ -2133,6 +2133,7 @@ class TestNumericSettingCoercion:
         "websocket_msg_size_max",
         "api_rate_limit",
         "file_upload_size_max",
+        "import_max_uncompressed_mb",
         "hosted_ports_per_workspace",
         "smtp_port",
         "password_history_count",
@@ -2146,6 +2147,7 @@ class TestNumericSettingCoercion:
         "port_range_start",
         "websocket_msg_size_max",
         "file_upload_size_max",
+        "import_max_uncompressed_mb",
         "smtp_port",
     ]
     FLOAT_FIELDS = [
@@ -2301,6 +2303,15 @@ class TestNumericSettingCoercion:
         assert s.min_password_length == 10
         assert s.access_token_hours == 1.5
         assert s.smtp_port == 2525
+
+    def test_import_cap_default_none_and_env_parse(self):
+        """#3284: the uncompressed import cap is an opt-in fairness knob —
+        unset means only the workspace volume's free space bounds an
+        import."""
+        s = make_settings({})
+        assert s.import_max_uncompressed_mb is None
+        s = make_settings({"KLANGKD_IMPORT_MAX_UNCOMPRESSED_MB": "4096"})
+        assert s.import_max_uncompressed_mb == 4096
 
     def test_file_indirection_still_works(self, tmp_path):
         secret = tmp_path / "port"
