@@ -397,12 +397,12 @@ class TestMonitoredFilesystems:
     async def test_unmeasurable_path_warned_once_then_skipped(
         self, monkeypatch, caplog, tmp_path
     ):
+        # The autouse fixture's KLANGKD_STATE_DIR (tmp_path/state) is
+        # never created on disk; point it at an existing path. The
+        # fixture sets KLANGKD_DATA_DIR to tmp_path itself, so state_dir
+        # and data_dir are the same path here.
         wd, app = make_wd(
             {
-                # A state_dir that exists on disk (the derived default
-                # is never created); the autouse fixture points
-                # KLANGKD_DATA_DIR at tmp_path itself, so state_dir and
-                # data_dir are the same path here.
                 "KLANGKD_STATE_DIR": str(tmp_path),
                 "KLANGKD_DISK_WATCHDOG_PATHS": str(tmp_path / "missing"),
             }
@@ -440,6 +440,8 @@ class TestMonitoredFilesystems:
     async def test_recovered_measurement_rearms_warning(
         self, monkeypatch, caplog, tmp_path
     ):
+        # A state_dir distinct from data_dir (tmp_path) that exists on
+        # disk — the flaky statvfs below is keyed to the data path only.
         state = tmp_path / "state"
         state.mkdir()
         wd, app = make_wd({"KLANGKD_STATE_DIR": str(state)})
