@@ -2610,7 +2610,8 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   misparsed: the port was stripped from the base URL and became the
   api_key, sending requests to the default port with a garbage bearer
   token. A digit-only tail after a scheme-bearing base now stays on the
-  api_base. See [LLM proxy](architecture/llm-proxy.md).
+  api_base; spell a genuinely digit-only api_key in the `klangkd.yaml`
+  dict form. See [LLM proxy](architecture/llm-proxy.md).
 
 - **Terminal window names must start with a letter or digit (#3279).**
   Renaming a terminal tab to a name with a leading hyphen (e.g. `-dev`)

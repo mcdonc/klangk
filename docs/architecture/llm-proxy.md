@@ -88,11 +88,13 @@ Configure models via `KLANGKD_LLM_MODELS` (env var) or `llm-models` (klangkd.yam
 KLANGKD_LLM_MODELS="openai/gpt-4o::sk-xxx,anthropic/claude-sonnet-4::sk-ant-xxx,ollama/llama3:http://gpu:11434:"
 ```
 
-A keyless entry whose api_base carries a port can drop the trailing colon:
-`ollama/llama3:http://gpu:11434` keeps `11434` on the base URL. When the
-api_base has no URL scheme, keep the trailing colon —
-`my-gateway/model-x:host:8080` without it would read `8080` as the api_key.
-The `klangkd.yaml` dict form (below) has no such ambiguity.
+A keyless entry whose api_base ends in its port can drop the trailing
+colon — `ollama/llama3:http://gpu:11434` keeps `11434` on the base URL.
+In every other keyless shape keep the trailing colon: without it, a base
+with no URL scheme (`my-gateway/model-x:host:8080`) or with a path after
+the port (`openai/foo:http://gw:8000/v1`) reads the port as the api_key.
+A digit-only api_key against a scheme-bearing base has the same ambiguity
+— spell it in the `klangkd.yaml` dict form below, which is unambiguous.
 
 ### klangkd.yaml (LiteLLM-native dict format)
 
