@@ -88,6 +88,12 @@ Configure models via `KLANGKD_LLM_MODELS` (env var) or `llm-models` (klangkd.yam
 KLANGKD_LLM_MODELS="openai/gpt-4o::sk-xxx,anthropic/claude-sonnet-4::sk-ant-xxx,ollama/llama3:http://gpu:11434:"
 ```
 
+A keyless entry whose api_base carries a port can drop the trailing colon:
+`ollama/llama3:http://gpu:11434` keeps `11434` on the base URL. When the
+api_base has no URL scheme, keep the trailing colon —
+`my-gateway/model-x:host:8080` without it would read `8080` as the api_key.
+The `klangkd.yaml` dict form (below) has no such ambiguity.
+
 ### klangkd.yaml (LiteLLM-native dict format)
 
 The recommended format for `klangkd.yaml` uses the same `model_name` / `litellm_params` shape as LiteLLM's own config. Keys accept both kebab-case and snake_case. `api_key` and `api_base` values support `file:` and `cmd:` indirection so secrets stay out of the config file.

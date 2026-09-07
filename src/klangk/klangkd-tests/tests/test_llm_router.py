@@ -590,6 +590,17 @@ class TestPassthrough:
         assert len(models) == 1
         assert models[0]["id"] == "gpt-4o"
 
+    async def test_router_mode_port_bearing_keyless_base(self):
+        # End-to-end through the settings validator (#3277): the
+        # two-colon guard passes this shape, and the port must stay on
+        # the api_base with no api_key.
+        app = _app({"KLANGKD_LLM_MODELS": "ollama/llama3:http://gpu:11434"})
+        router = LLMRouter(app)
+        assert router._router is not None
+        params = router.get_model_list()[0]["litellm_params"]
+        assert params["api_base"] == "http://gpu:11434"
+        assert "api_key" not in params
+
 
 class TestParseModelEntry:
     def test_full_entry(self):
@@ -623,6 +634,25 @@ class TestParseModelEntry:
             result["litellm_params"]["api_base"] == "https://api.openai.com/v1"
         )
         assert result["litellm_params"]["api_key"] == "sk-xxx"
+
+    def test_port_bearing_keyless_base_keeps_port(self):
+        # No trailing colon: the port's colon is not an api-key boundary
+        # (#3277) — the digit-only tail stays on the base URL.
+        result = parse_model_entry("ollama/llama3:http://gpu:11434")
+        assert result["litellm_params"]["api_base"] == "http://gpu:11434"
+        assert "api_key" not in result["litellm_params"]
+
+    def test_port_bearing_base_with_real_key_still_splits(self):
+        result = parse_model_entry("openai/gpt-4o:https://gw:8443:sk-xxx")
+        assert result["litellm_params"]["api_base"] == "https://gw:8443"
+        assert result["litellm_params"]["api_key"] == "sk-xxx"
+
+    def test_digit_only_tail_without_scheme_is_a_key(self):
+        # Only scheme-bearing remainders treat a digit-only tail as a
+        # port; a scheme-less one keeps the last-colon split.
+        result = parse_model_entry("my-gateway/model-x:host:8080")
+        assert result["litellm_params"]["api_base"] == "host"
+        assert result["litellm_params"]["api_key"] == "8080"
 
 
 class TestParseModelEntryBranchGaps2834:

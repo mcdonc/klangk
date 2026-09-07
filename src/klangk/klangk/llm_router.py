@@ -115,7 +115,12 @@ _INDIRECT_KEYS = frozenset({"api_key", "api_base"})
 
 def _split_entry(entry: str) -> tuple[str, str, str]:
     """(litellm_model, api_base, api_key): the **first** colon bounds
-    the model, the **last** colon of the remainder bounds the key."""
+    the model, the **last** colon of the remainder bounds the key.
+
+    A scheme-bearing remainder whose tail after the final colon is
+    digit-only carries a port, not a key — ``provider/model:http://gpu:11434``
+    keeps the port on the base URL and leaves the key empty (#3277).
+    """
     first_colon = entry.find(":")
     if first_colon == -1:
         return entry, "", ""
@@ -123,6 +128,9 @@ def _split_entry(entry: str) -> tuple[str, str, str]:
     rest = entry[first_colon + 1 :]
     last_colon = rest.rfind(":")
     if last_colon == -1:
+        return litellm_model, rest, ""
+    tail = rest[last_colon + 1 :]
+    if "://" in rest[:last_colon] and tail.isdigit():
         return litellm_model, rest, ""
     return litellm_model, rest[:last_colon], rest[last_colon + 1 :]
 
