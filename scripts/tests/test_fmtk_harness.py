@@ -355,6 +355,47 @@ def test_sharing_suite_extensions():
     )
 
 
+def test_oidc_suite_extensions():
+    """The OIDC suite (#3242) drives the SSO entry points, the full
+    redirect chain through the fake IdP (CDP-driven legs), and the
+    deny/link/unverified/logout behaviors."""
+    suite = _REPO_ROOT / "src/frontend/e2e-tests/fmtk/test_oidc.py"
+    assert suite.is_file(), "the OIDC suite (#3242) is missing"
+    assert_wired(
+        suite.read_text(),
+        (
+            'PROVIDER_LABEL = "Log in with Fmtk SSO"',
+            "FakeIdP(",
+            "tap_sso",
+            "cdp_wait_tab_url",
+            "approve-{index}",
+            "document.getElementById('deny').click()",
+            "code_challenge_method=S256",
+            '"Email not verified by identity provider"',
+            '"Login failed"',
+            "logout_redirect=True",
+            'f"{app_origin()}/#/login"',
+            '"auth_modes": "both"',
+            'apply="restart"',
+        ),
+        "the OIDC suite (#3242) must drive the config pair, the redirect "
+        "chain, and the denial paths through the real surfaces",
+    )
+    harness = _REPO_ROOT / "src/frontend/e2e-tests/fmtk/fmtkharness.py"
+    assert_wired(
+        harness.read_text(),
+        (
+            "class FakeIdP:",
+            "openid-configuration",
+            "authorization_endpoint",
+            "def token_response",
+            "def cdp_port",
+            "def cdp_eval",
+        ),
+        "the harness must ship the fake IdP and the CDP legs (#3242)",
+    )
+
+
 def test_agents_documents_the_harness():
     agents = _AGENTS.read_text()
     assert "fmtk-up" in agents, "AGENTS.md must point at the fmtk-up harness"
