@@ -379,12 +379,22 @@ class TestVerifyProof:
         assert _verify(proof, jkt=_thumbprint_of(jwk)) is None
 
     @pytest.mark.parametrize(
-        "iat", [float("nan"), float("inf"), float("-inf"), True]
+        "iat",
+        [
+            float("nan"),
+            float("inf"),
+            float("-inf"),
+            True,
+            10**400,
+        ],
     )
     def test_non_finite_iat_refused(self, key, iat):
-        # json.loads decodes NaN/Infinity literals; comparisons against
-        # NaN are False, so a NaN-dated proof used to pass the window
-        # check at any `now` and could be replayed forever (#3272).
+        # json.loads decodes NaN/Infinity literals and parses integers
+        # at arbitrary precision. NaN was the pre-fix bypass (every
+        # comparison against it is False, so the window check never
+        # fired); the other shapes pin the refusal behavior — inf and
+        # the giant int (whose float subtraction would raise
+        # OverflowError, #3272) alongside bool.
         private, jwk = key
         from _helpers import make_dpop_proof
 

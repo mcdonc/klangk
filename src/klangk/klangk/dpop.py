@@ -260,15 +260,18 @@ def _fresh_iat(iat, now: float) -> bool:
     literals, and every comparison against NaN is False — so a
     NaN-dated proof would pass the window check forever (#3272).
     ``bool`` (an ``int`` subclass standing for 0/1, never a clock
-    reading) is refused too. Plain ``int`` needs no finiteness test:
-    ints are finite by definition, and converting an oversized JSON
-    integer to float would raise OverflowError.
+    reading) is refused too. So is a JSON integer too large for a
+    float: ints parse at arbitrary precision, and the subtraction
+    below converts to float, where it would raise OverflowError.
     """
     if isinstance(iat, bool) or (
         isinstance(iat, float) and not math.isfinite(iat)
     ):
         return False
-    return abs(now - iat) <= PROOF_WINDOW_SECONDS
+    try:
+        return abs(now - iat) <= PROOF_WINDOW_SECONDS
+    except OverflowError:
+        return False
 
 
 def _freshness_reason(payload: dict, now: float, replay: dict) -> str | None:
