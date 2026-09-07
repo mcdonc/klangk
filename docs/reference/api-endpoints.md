@@ -2254,15 +2254,74 @@ so the popup doesn't need to boot the Flutter SPA.
 
 ### GET `/health`
 
-Readiness check. Returns OK if the server is running.
+Liveness check: always HTTP 200 while the server is running. The
+`status` field separates a healthy host (`ok`) from a
+resource-degraded one (`degraded`, #3308): the resource watchdog's
+last-known state — any monitored filesystem or host metric at
+warn/critical, or new audit-write failures in the latest watchdog
+window — flips `status` to `degraded` and adds a `degraded` detail
+block naming the degraded metrics (per-filesystem path, usage
+percent, and state; the memory and CPU rows; the audit flag; and the
+wall-clock time of the last completed watchdog poll). A monitor that
+treats non-200 as "down" would page the wrong way for a host that is
+up but full, so the status code never changes. Recovery (usage back
+below the recovery floor, or one clean audit window) restores the
+plain `ok` payload. The filesystem rows mirror the last completed
+watchdog sweep: a path whose measurement fails (a lost mount) drops
+out of the detail block until it measures again — the watchdog logs
+the condition — and a filesystem that comes back on a new device
+(a replaced disk) drops its old device's row. The
+`instance` field identifies _this_ klangkd; see the resource
+watchdog settings
+([Environment Variables](environment.md)) to tune the thresholds.
+
+With `KLANGKD_RESOURCE_WATCHDOG_ENABLED` off, or before the first
+poll, `/health` reports `ok` with no detail block — after the
+watchdog's next poll cycle, for a reload that turned it off. While
+the watchdog is off this holds even if the audit-write-failure
+counters on [`GET /audit`](#get-audit) are climbing: the detection
+loop is off, and `/audit` keeps reporting the counters
+themselves.
 
 **Auth:** None.
 
 No request body.
 
 ```json
-{ "status": "ok" }
+{
+  "status": "ok",
+  "instance": "b1c0ffee-0000-4000-8000-000000000000"
+}
 ```
+
+Degraded (a filesystem over the critical threshold):
+
+```json
+{
+  "status": "degraded",
+  "instance": "b1c0ffee-0000-4000-8000-000000000000",
+  "degraded": {
+    "degraded": true,
+    "filesystems": [
+      {
+        "path": "/var/lib/klangk/data",
+        "usage_percent": 91.7,
+        "state": "critical"
+      }
+    ],
+    "memory": { "usage_percent": 85.2, "state": "warn" },
+    "audit_degraded": false,
+    "last_poll": 1767225600.0
+  }
+}
+```
+
+The `memory` and `cpu` rows appear only once their checks have
+measured (a check turned off with `KLANGKD_MEMORY_WATCHDOG_ENABLED`
+or `KLANGKD_CPU_WATCHDOG_ENABLED` leaves its row out). The `memory`
+row carries host memory utilization; the `cpu` row carries the PSI
+`avg60` percent as `psi_avg60_percent`. Both use the same `state`
+vocabulary as the filesystem rows (`ok` / `warn` / `critical`).
 
 ---
 

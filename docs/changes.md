@@ -828,6 +828,14 @@ sync` report a clear permission-denied error.
   (`docs/deployment/airgapped.md`) covering offline image transport,
   DNS and LLM configuration for disconnected networks, workspace
   package-mirror workarounds, and a recommended-settings checklist.
+- **`GET /health` degraded status (#3308).** The resource watchdog's
+  last-known state now surfaces on `/health`: any monitored filesystem
+  or host metric at warn/critical, or new audit-write failures in the
+  latest watchdog window, flips the status to `degraded` and adds a
+  detail block (per-filesystem path/usage/state, the memory and CPU
+  rows, the audit flag, the last poll time). The response stays HTTP
+  200 and the healthy payload is unchanged, so liveness probes and the
+  instance-id check keep working; recovery restores `ok`.
 
 - **Disk watchdog monitors `state_dir` (#3310).** The resource
   watchdog's disk-capacity check now measures the filesystem holding
