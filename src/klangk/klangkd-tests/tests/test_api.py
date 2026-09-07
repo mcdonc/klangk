@@ -574,6 +574,34 @@ class TestVersion:
         assert data["built_at"] is None
         assert "features" in data
 
+    async def test_version_missing_file_falls_back_to_dev(
+        self, client, app, tmp_path, monkeypatch
+    ):
+        # #3329: an unreadable version file falls through to the dev
+        # block instead of 500ing (the same tolerance the app.start
+        # audit row's version field applies).
+        monkeypatch.setattr(
+            app.state.settings,
+            "version_file",
+            str(tmp_path / "absent.json"),
+        )
+        resp = await client.get("/api/v1/version")
+        assert resp.status_code == 200
+        assert resp.json()["version"] == "dev"
+
+    async def test_version_non_dict_file_falls_back_to_dev(
+        self, client, app, tmp_path, monkeypatch
+    ):
+        monkeypatch.setattr(
+            app.state.settings,
+            "version_file",
+            str(tmp_path / "version.json"),
+        )
+        (tmp_path / "version.json").write_text('["2026.01.01"]')
+        resp = await client.get("/api/v1/version")
+        assert resp.status_code == 200
+        assert resp.json()["version"] == "dev"
+
     async def test_version_includes_features(
         self, client, app, tmp_path, monkeypatch
     ):

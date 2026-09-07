@@ -1371,6 +1371,60 @@ class TestAppLifecycleAudit:
         )
         assert rows == []
 
+    async def test_reload_row_survives_a_failed_recycle(self, db, app_state):
+        """The row is written at the settings swap, so a recycle that
+        fails afterwards (and recovers) still leaves it — the audit
+        stream must not lose an applied config swap."""
+        app_state = _make_app_state()
+        lc = app_state.state.lifecycle
+        lc._recycle_lock = None
+        registry = app_state.state.container_registry
+
+        async def explode():
+            raise RuntimeError("recycle exploded")
+
+        with (
+            patch.object(
+                lc,
+                "reload_settings",
+                return_value=(
+                    make_settings({"KLANGKD_DEFAULT_PASSWORD": "test"}),
+                    None,
+                ),
+            ),
+            patch.object(
+                lc, "apply_reloaded_settings", new_callable=AsyncMock
+            ),
+            patch.object(lc, "runtime_shutdown", side_effect=explode),
+            patch.object(lc, "startup", new_callable=AsyncMock),
+            patch.object(
+                registry,
+                "drain_all_containers",
+                new_callable=AsyncMock,
+                return_value=0,
+            ),
+            patch.object(
+                app_state.state.inflight_requests,
+                "wait_for_idle",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+        ):
+            lc.request_recycle(source="SIGHUP")
+            # Let the recycle fail and the done-callback's recovery
+            # run to completion — each aiosqlite round-trip needs real
+            # wall time on its worker thread, so pump with small
+            # sleeps until both tasks drain (bounded: 200 × 10ms).
+            for _ in range(200):
+                if not lc._recycle_tasks:
+                    break
+                await asyncio.sleep(0.01)
+        rows = await app_state.state.model.audit_events.list_events(
+            event="app.reload"
+        )
+        assert len(rows) == 1
+        assert rows[0]["detail"]["source"] == "SIGHUP"
+
     def test_app_version_dev_without_version_file(self):
         assert _app_version(types.SimpleNamespace(version_file=None)) == "dev"
 
@@ -3112,13 +3166,14 @@ class TestMainEntryCallback2910:
         assert registry.draining is False
 
     async def test_restart_aborts_when_shutdown_arrives_mid_drain(
-        self, app_state
+        self, db, app_state
     ):
         """#2527 review: a TERM landing while the restart's drain is in
         flight aborts the restart after the drain — no settings apply,
         no runtime recycle — and never lifts the shutdown's drain flag
         (no auto-start resurrecting drained containers, no 503-lift
-        while exiting)."""
+        while exiting). The aborted recycle applies nothing, so no
+        app.reload row either (#3329)."""
         app_state = _make_app_state()
         lc = app_state.state.lifecycle
         lc._recycle_lock = None
@@ -3159,6 +3214,11 @@ class TestMainEntryCallback2910:
         mock_up.assert_not_awaited()  # no auto-start resurrect
         # The shutdown's flag was NOT lifted.
         assert registry.draining is True
+        # #3329: nothing was applied, so no reload row.
+        rows = await app_state.state.model.audit_events.list_events(
+            event="app.reload"
+        )
+        assert rows == []
 
     async def test_restart_aborts_before_starting_when_shutdown_precedes(
         self, app_state

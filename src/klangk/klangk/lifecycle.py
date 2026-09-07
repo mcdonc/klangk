@@ -110,21 +110,28 @@ _NON_RELOADABLE_SETTINGS: tuple[tuple[str, str], ...] = (
 )
 
 
+def _read_version_file(path: str) -> dict | None:
+    """The parsed version file, or ``None`` when it is absent,
+    unreadable, or not a JSON object."""
+    try:
+        with open(path) as f:
+            info = json.load(f)
+    except (OSError, ValueError):
+        return None
+    return info if isinstance(info, dict) else None
+
+
 def _app_version(settings) -> str:
     """The running build's version string ("dev" until a version file
     is configured and readable — the same source the ``/version``
     endpoint reads)."""
     path = settings.version_file
-    if not path or not os.path.isfile(path):
+    if not path:
         return "dev"
-    try:
-        with open(path) as f:
-            info = json.load(f)
-    except (OSError, ValueError):
+    info = _read_version_file(path)
+    if info is None:
         return "dev"
-    if not isinstance(info, dict):
-        return "dev"
-    return str(info.get("version", "dev"))
+    return str(info.get("version") or "dev")
 
 
 def _stop_reason(lifecycle) -> str:
@@ -710,7 +717,7 @@ class Lifecycle:
             return True
         return False
 
-    async def _apply_and_recycle(self, state, new_settings) -> None:
+    async def _apply_and_recycle(self, state, new_settings, source) -> None:
         """Phases 5–7 of the recycle: apply the reloaded config, recycle
         the runtime, and resume. The drain flag deliberately stays set
         through ``startup()``'s podman pre-warm and container reaps (so a
@@ -719,6 +726,11 @@ class Lifecycle:
         container destroyed by the reap); ``startup()`` clears it."""
         logger.info("SIGHUP: phase: apply (applying reloaded config)")
         await self.apply_reloaded_settings(new_settings)
+        # #3329: the settings swap is the auditable fact — the
+        # app.reload row goes in right after it, before the runtime
+        # recycle, so a recycle or recovery failure further down
+        # cannot lose it (the new settings are live either way).
+        await self._record_reload(source)
         state.sockets.notify_server_recycle("recycling")
         logger.info(
             "SIGHUP: phase: restart (recycling runtime; "
@@ -789,7 +801,7 @@ class Lifecycle:
                 await self._quiesce_and_drain(state, registry, new_settings)
                 if self._shutdown_won_mid_recycle():
                     return
-                await self._apply_and_recycle(state, new_settings)
+                await self._apply_and_recycle(state, new_settings, source)
             finally:
                 # A failed restart must never leave the node refusing
                 # starts: the in-memory flag has no DB persistence an
@@ -801,7 +813,6 @@ class Lifecycle:
                     registry.draining = False
             logger.info("SIGHUP: restart complete (phase: resumed)")
             state.sockets.notify_host_started()
-            await self._record_reload(source)
 
     async def _record_reload(self, source: str | None) -> None:
         """Write the ``app.reload`` audit row (#3329).
@@ -812,8 +823,10 @@ class Lifecycle:
         the #3329 open question) because the alternative — a detail
         field on the next ``app.start`` — would be delayed arbitrarily
         (the next stop may be days away) and conflated with that boot.
-        Only a fully-applied reload writes the row: a denied (invalid
-        config) or aborted (shutdown raced) recycle changed nothing.
+        Written right after the settings swap — the auditable fact —
+        so a later runtime-recycle or recovery failure cannot lose it;
+        a denied (invalid config) or aborted (shutdown raced) recycle
+        applies nothing and writes no row.
         Best-effort like every audit write.
         """
         detail: dict = {"pid": os.getpid()}
@@ -1450,25 +1463,6 @@ async def lifespan(app: FastAPI):
     except ConfigurationError as exc:
         app.state.startup_config_error = str(exc)
         raise
-    # #3329: the daemon's own lifecycle joins the structured audit
-    # stream. The start row goes in once config has validated and the
-    # seed ran (a refused boot — pid conflict, ConfigurationError —
-    # wrote nothing); best-effort, so an audit problem never blocks
-    # boot. ``started`` anchors the app.stop row's uptime.
-    started = time.monotonic()
-    settings = app.state.settings
-    await app.state.model.audit_events.record_best_effort(
-        "app.start",
-        target_type="app",
-        target_id=app.state.util.instance_id(),
-        detail={
-            "version": _app_version(settings),
-            "pid": os.getpid(),
-            "listen": settings.listen,
-            "port": settings.port,
-            "socket": settings.socket,
-        },
-    )
     wire_registry_callbacks(app)
     await app.state.lifecycle.startup()
     # Reap orphaned pending consent rows from a prior run: the in-memory
@@ -1493,6 +1487,27 @@ async def lifespan(app: FastAPI):
     loop.add_signal_handler(
         signal.SIGHUP,
         app.state.lifecycle.on_sighup,
+    )
+    # #3329: the daemon's own lifecycle joins the structured audit
+    # stream. The start row goes in at the moment the backend
+    # announces itself ready — the stop-row finally below runs only
+    # once the yield is reached, so writing any earlier would orphan
+    # the row on a pre-yield startup crash (one pair per process
+    # lifetime). Best-effort: an audit problem never blocks boot.
+    # ``started`` anchors the app.stop row's uptime.
+    started = time.monotonic()
+    settings = app.state.settings
+    await app.state.model.audit_events.record_best_effort(
+        "app.start",
+        target_type="app",
+        target_id=app.state.util.instance_id(),
+        detail={
+            "version": _app_version(settings),
+            "pid": os.getpid(),
+            "listen": settings.listen,
+            "port": settings.port,
+            "socket": settings.socket,
+        },
     )
     try:
         yield
