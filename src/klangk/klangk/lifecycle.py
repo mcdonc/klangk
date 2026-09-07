@@ -122,6 +122,8 @@ def _app_version(settings) -> str:
             info = json.load(f)
     except (OSError, ValueError):
         return "dev"
+    if not isinstance(info, dict):
+        return "dev"
     return str(info.get("version", "dev"))
 
 

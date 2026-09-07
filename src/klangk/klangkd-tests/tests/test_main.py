@@ -1397,6 +1397,17 @@ class TestAppLifecycleAudit:
             == "dev"
         )
 
+    def test_app_version_non_dict_file_falls_back_to_dev(self, tmp_path):
+        # Valid JSON of the wrong shape must not raise out of the
+        # lifespan (the detail dict is built before record_best_effort
+        # can swallow anything — an exception here would block boot).
+        path = tmp_path / "version.json"
+        path.write_text('["1.2.3"]')
+        assert (
+            _app_version(types.SimpleNamespace(version_file=str(path)))
+            == "dev"
+        )
+
 
 class TestBroadcastContainerStatus:
     """The registry status callback schedules the scoped broadcast (#1714).
