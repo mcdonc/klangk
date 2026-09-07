@@ -49,6 +49,17 @@ class TestLLMRouterSubsystem:
         assert "gpt-4o" in names
         assert "llama3" in names
 
+    def test_with_string_models_port_bearing_keyless(self):
+        # End-to-end through the settings validator (#3277): the
+        # two-colon guard passes this shape, and the port stays on the
+        # api_base with no api_key.
+        router = LLMRouter(
+            _app({"KLANGKD_LLM_MODELS": "ollama/llama3:http://gpu:11434"})
+        )
+        params = router.get_model_list()[0]["litellm_params"]
+        assert params["api_base"] == "http://gpu:11434"
+        assert "api_key" not in params
+
     def test_default_api_key_from_settings(self):
         router = LLMRouter(
             _app(
@@ -354,6 +365,16 @@ class TestPassthrough:
         assert router._passthrough_base == "http://localhost:11434"
         assert router._passthrough_key == "dummy"
 
+    def test_passthrough_mode_from_string_wildcard_port_bearing(self):
+        # The wildcard spelling without a trailing colon (#3277): the
+        # port stays on the passthrough base, the key stays empty.
+        router = LLMRouter(
+            _app({"KLANGKD_LLM_MODELS": "openai/*:http://bizon:11430"})
+        )
+        assert router.passthrough
+        assert router._passthrough_base == "http://bizon:11430"
+        assert router._passthrough_key == ""
+
     def test_passthrough_mode_inactive_for_explicit_models(self):
         app = _app({"KLANGKD_LLM_MODELS": "openai/gpt-4o::sk-xxx"})
         router = LLMRouter(app)
@@ -623,6 +644,33 @@ class TestParseModelEntry:
             result["litellm_params"]["api_base"] == "https://api.openai.com/v1"
         )
         assert result["litellm_params"]["api_key"] == "sk-xxx"
+
+    def test_port_bearing_keyless_base_keeps_port(self):
+        # No trailing colon: the port's colon is not an api-key boundary
+        # (#3277) — the digit-only tail stays on the base URL.
+        result = parse_model_entry("ollama/llama3:http://gpu:11434")
+        assert result["litellm_params"]["api_base"] == "http://gpu:11434"
+        assert "api_key" not in result["litellm_params"]
+
+    def test_port_bearing_base_with_real_key_still_splits(self):
+        result = parse_model_entry("openai/gpt-4o:https://gw:8443:sk-xxx")
+        assert result["litellm_params"]["api_base"] == "https://gw:8443"
+        assert result["litellm_params"]["api_key"] == "sk-xxx"
+
+    def test_digit_only_tail_without_scheme_is_a_key(self):
+        # Only scheme-bearing remainders treat a digit-only tail as a
+        # port; a scheme-less one keeps the last-colon split.
+        result = parse_model_entry("my-gateway/model-x:host:8080")
+        assert result["litellm_params"]["api_base"] == "host"
+        assert result["litellm_params"]["api_key"] == "8080"
+
+    def test_digit_only_key_after_scheme_bearing_base_needs_dict_form(self):
+        # A digit-only api_key against a scheme-bearing base is
+        # indistinguishable from a port (#3277): the tail stays on the
+        # base and the key is dropped — spell such keys in the dict form.
+        result = parse_model_entry("openai/gpt-4o:https://gw:8443:12345")
+        assert result["litellm_params"]["api_base"] == "https://gw:8443:12345"
+        assert "api_key" not in result["litellm_params"]
 
 
 class TestParseModelEntryBranchGaps2834:
