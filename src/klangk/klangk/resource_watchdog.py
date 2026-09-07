@@ -70,8 +70,9 @@ from .notifier import THROTTLE_SECONDS, notify_event
 # availability, the cgroup-aware fraction) are imported *inside*
 # :meth:`ResourceWatchdog._measure_memory_fraction` (the
 # allow-deferred-import pattern, see llm_router): a module-level
-# import cycles — klangk.container.__init__ pulls the registry, which
-# pulls settings, which imports this module for RECOVERY_GAP_PERCENT.
+# import would create a cycle — klangk.container.__init__ pulls the
+# registry, which pulls settings, which imports this module for
+# RECOVERY_GAP_PERCENT.
 
 logger = logging.getLogger(__name__)
 
@@ -324,21 +325,39 @@ class ResourceWatchdog:
         """Swap the app reference (SIGHUP reload). The cached
         container-storage root and its cooldown always reset (a
         changed podman configuration re-resolves immediately), and
-        the unmeasurable-condition warnings re-arm. The threshold
-        states reset only when a threshold actually changed — an
-        unrelated reload must not re-alert already-degraded metrics
-        (the notifier's throttle clocks reset on reload too, so
-        nothing else would suppress the re-alert)."""
-        thresholds_changed = self._thresholds != self._thresholds_of(app)
+        the unmeasurable-condition warnings re-arm. Each metric
+        family's threshold states reset only when **that family's**
+        thresholds changed — an unrelated reload (or a threshold edit
+        for a different family) must not re-alert already-degraded
+        metrics (the notifier's throttle clocks reset on reload too,
+        so nothing else would suppress the re-alert)."""
+        old = self._thresholds
+        new = self._thresholds_of(app)
         self.app = app
-        self._thresholds = self._thresholds_of(app)
+        self._thresholds = new
         self._graph_root = None
         self._graph_root_retry_at = 0.0
         self._unmeasurable.clear()
-        if thresholds_changed:
-            self._states.clear()
-            self._emitted_at.clear()
-            self._pending.clear()
+        self._reset_families_with_changed_thresholds(old, new)
+
+    def _reset_families_with_changed_thresholds(
+        self, old: tuple, new: tuple
+    ) -> None:
+        """Drop remembered states per metric family whose (warn,
+        critical) pair changed: disk (index 0), memory (1), CPU (2).
+        Memory/CPU hold one fixed key each; disk's are the int-keyed
+        (st_dev) entries."""
+        if old[0] != new[0]:
+            self._forget_disk_states()
+        if old[1] != new[1]:
+            self._forget(MEMORY_KEY)
+        if old[2] != new[2]:
+            self._forget(CPU_KEY)
+
+    def _forget_disk_states(self) -> None:
+        """Drop every disk entry — the int-keyed (``st_dev``) states."""
+        for key in [k for k in self._states if isinstance(k, int)]:
+            self._forget(key)
 
     @staticmethod
     def _thresholds_of(app) -> tuple[tuple[float, float], ...]:

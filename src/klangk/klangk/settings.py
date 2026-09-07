@@ -1462,7 +1462,7 @@ class KlangkSettings(BaseSettings):
     memory_eviction_recovery_percent: float = 15.0
     memory_eviction_sustain_polls: int = 3
     memory_eviction_poll_interval: float = 10.0
-    # --- Disk-capacity detection (#3206) ---
+    # --- Resource detection: disk, memory, CPU, audit (#3206, #3309) ---
     # resource_watchdog_*: the operational detection layer under #3250's
     # admin notifications (#3206 disk+audit, #3309 memory+CPU). Every
     # resource_watchdog_poll_interval seconds the loop checks four

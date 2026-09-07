@@ -1459,3 +1459,49 @@ class TestPodmanMachinePath:
         f = tmp_path / "f"
         f.write_text("hello")
         assert read_local_text(str(f)) == "hello"
+
+
+class TestReconfigureThresholdReset:
+    """Only the metric family whose thresholds changed resets on a
+    SIGHUP reload — another family's degraded state survives without
+    re-alerting (the notifier's throttle clocks reset on reload too,
+    so a reset would re-deliver a duplicate)."""
+
+    def test_cpu_threshold_change_leaves_disk_and_memory(self):
+        wd, _ = make_wd()
+        wd._states[7] = CRITICAL
+        wd._states[MEMORY_KEY] = WARN
+        _, other = make_wd({"KLANGKD_CPU_WATCHDOG_WARN_PERCENT": "50"})
+        wd.reconfigure(other)
+        assert wd._states[7] == CRITICAL
+        assert wd._states[MEMORY_KEY] == WARN
+        assert CPU_KEY not in wd._states
+
+    def test_disk_threshold_change_resets_disk_only(self):
+        wd, _ = make_wd()
+        wd._states[7] = CRITICAL
+        wd._states[MEMORY_KEY] = WARN
+        _, other = make_wd({"KLANGKD_DISK_WATCHDOG_WARN_PERCENT": "50"})
+        wd.reconfigure(other)
+        assert 7 not in wd._states
+        assert wd._states[MEMORY_KEY] == WARN
+
+    def test_memory_threshold_change_resets_memory_only(self):
+        wd, _ = make_wd()
+        wd._states[7] = CRITICAL
+        wd._states[MEMORY_KEY] = WARN
+        _, other = make_wd({"KLANGKD_MEMORY_WATCHDOG_WARN_PERCENT": "70"})
+        wd.reconfigure(other)
+        assert wd._states[7] == CRITICAL
+        assert MEMORY_KEY not in wd._states
+
+    def test_unrelated_reload_resets_nothing(self):
+        wd, _ = make_wd()
+        wd._states[7] = CRITICAL
+        wd._states[MEMORY_KEY] = WARN
+        wd._states[CPU_KEY] = WARN
+        _, other = make_wd()  # identical thresholds
+        wd.reconfigure(other)
+        assert wd._states[7] == CRITICAL
+        assert wd._states[MEMORY_KEY] == WARN
+        assert wd._states[CPU_KEY] == WARN

@@ -51,10 +51,12 @@ def parse_meminfo(text: str) -> dict[str, int]:
     mapping.
 
     Kernel values are in kB; converted to bytes here so callers never
-    mix units. Malformed lines are skipped. The shared body of
-    :func:`read_meminfo` (local file) and the remote path that reads
-    the file out of a podman machine VM (``podman machine ssh`` — the
-    VM's meminfo is the gauge that matters on macOS, #3309).
+    mix units. Lines that do not match the ``Name: value kB`` shape
+    are skipped; a well-shaped line with a non-integer value raises
+    ``ValueError`` (callers treat that as unmeasurable). The shared
+    body of :func:`read_meminfo` (local file) and the remote path that
+    reads the file out of a podman machine VM (``podman machine ssh``
+    — the VM's meminfo is the gauge that matters on macOS, #3309).
     """
     values: dict[str, int] = {}
     for line in text.splitlines():
