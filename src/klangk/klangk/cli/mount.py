@@ -71,8 +71,18 @@ def validate_mount_spec(spec: str) -> str | None:
 # (:func:`klangk.netfilter.parse_allowed_domains`) does the authoritative
 # check (#1365, #1745, #1935).
 _ALLOWED_DOMAIN_RE = re.compile(
-    r"^[^\[\]/\s:]+(?::\d{1,5})?$"  # host or host:port (IPv4 / DNS)
+    r"^[^\[\]/\s:]+(?::[0-9]{1,5})?$"  # host or host:port (IPv4 / DNS)
 )
+
+
+def _is_port_digits(s: str) -> bool:
+    """1–5 ASCII digits — the port grammar shared by the host regex and the
+    CIDR suffix. ``\\d`` and ``str.isdigit()`` alone admit Unicode digit
+    forms (Arabic-Indic ٤٤٣ parses via ``int()``, superscript ² raises), and
+    an unbounded run hits ``int()``'s conversion limit (#3274). Duplicated
+    from ``klangk.netfilter`` — the CLI subpackage imports nothing from the
+    server."""
+    return bool(s) and s.isascii() and s.isdigit() and len(s) <= 5
 
 
 def validate_allowed_domain_spec(
@@ -115,7 +125,7 @@ def validate_allowed_domain_spec(
 
 def cidr_port_error(spec: str, port: str) -> str | None:
     """The CIDR-port range error, if *port* is not 1–65535 digits."""
-    if not port or not port.isdigit() or int(port) > 65535:
+    if not _is_port_digits(port) or int(port) > 65535:
         return f"Invalid allowed-domain {spec!r}: CIDR port must be 1–65535"
     return None
 

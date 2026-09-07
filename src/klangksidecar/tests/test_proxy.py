@@ -122,6 +122,13 @@ class TestParseSpecs:
         monkeypatch.setenv("KLANGKNETWORK_EGRESS_ALLOW", "example.com:٤٤٣")
         assert proxy.parse_specs() == [("example.com:٤٤٣", None, proxy.EXACT)]
 
+    def test_overlong_digit_run_not_a_port(self, proxy, monkeypatch):
+        # #3274 review: a port is 1–5 digits, so an over-long digit run
+        # stays part of the host — int()'s 4300-digit conversion limit can
+        # never raise from the split.
+        monkeypatch.setenv("KLANGKNETWORK_EGRESS_ALLOW", "example.com:" + "1" * 6)
+        assert proxy.parse_specs() == [("example.com:" + "1" * 6, None, proxy.EXACT)]
+
 
 class TestPortsFor:
     """``ports_for`` is the allow gate (#2377 nginx-style scopes). Returns

@@ -128,10 +128,13 @@ class TestParseAllowedDomains:
 
     # #3274: the CIDR validator must answer False (not propagate int()'s
     # ValueError) for digit forms where isdigit() is true but the string
-    # is not ASCII-decimal — parse_allowed_domains turns that False into
-    # the normal "invalid entry" error, exactly like the host:port path.
-    @pytest.mark.parametrize("spec", ["10.0.0.0/8:٤٤٣", "10.0.0.0/8:²"])
-    def test_cidr_unicode_port_returns_false_not_raise(self, spec):
+    # is not a 1–5 ASCII-digit run — parse_allowed_domains turns that False
+    # into the normal "invalid entry" error, exactly like the host:port
+    # path. The over-long run covers int()'s 4300-digit conversion limit.
+    @pytest.mark.parametrize(
+        "spec", ["10.0.0.0/8:٤٤٣", "10.0.0.0/8:²", "10.0.0.0/8:" + "1" * 4301]
+    )
+    def test_cidr_bad_port_returns_false_not_raise(self, spec):
         assert nf.valid_cidr_spec(spec) is False
 
     def test_error_lists_every_invalid_entry(self):

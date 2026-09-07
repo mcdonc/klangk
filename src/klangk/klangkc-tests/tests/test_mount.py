@@ -120,6 +120,18 @@ class TestValidateAllowedDomainSpec:
     def test_rejects_non_numeric_port(self):
         assert validate_allowed_domain_spec("a.com:abc") is not None
 
+    def test_rejects_non_ascii_digit_ports(self):
+        # #3274: only 1–5 ASCII digits are a port, on both paths. The host
+        # regex used \d (which matches Unicode digits), the CIDR path used
+        # isdigit() (which admits them and accepted ٤٤٣ as valid), and the
+        # superscript ² raised int()'s ValueError out of the validator.
+        # Every form must return an error string — never None, never raise.
+        assert "expected host" in validate_allowed_domain_spec("a.com:٤٤٣")
+        for spec in ("10.0.0.0/8:٤٤٣", "10.0.0.0/8:²", "10.0.0.0/8:123456"):
+            err = validate_allowed_domain_spec(spec)
+            assert err is not None
+            assert "1–65535" in err
+
     def test_strips_whitespace(self):
         assert validate_allowed_domain_spec("  github.com:443  ") is None
         assert validate_allowed_domain_spec("  10.0.0.0/8  ") is None

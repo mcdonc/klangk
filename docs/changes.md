@@ -2571,7 +2571,9 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   network sidecar at workspace start: iptables rejects the port and
   the sidecar exits before the workspace gets network. Such specs are
   now rejected as invalid input at the API boundary, matching how
-  `host:port` specs were already treated.
+  `host:port` specs were already treated; the CLI's client-side
+  pre-check rejects them too instead of crashing on digit forms the
+  port parse cannot handle.
 
 - **Terminal window names must start with a letter or digit (#3279).**
   Renaming a terminal tab to a name with a leading hyphen (e.g. `-dev`)
