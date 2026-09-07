@@ -2104,6 +2104,38 @@ class TestForgotPassword:
             api.rate_limit_key("forgot@example.com"), None
         )
 
+    async def test_forgot_host_poisoning_falls_back(
+        self, client, db, app_state
+    ):
+        """#3276: a client-chosen Host never lands in the emailed reset link.
+
+        One direct request with ``Host: attacker.example`` used to make the
+        delivered URL point at the attacker (silent account takeover via the
+        reset token). The Host names nothing klangkd serves, so the link
+        derives from the localhost floor instead.
+        """
+        user = await self._create_user(app_state)
+        with patch.object(
+            emailsvc_mod.EmailService,
+            "send_password_reset_email",
+            new_callable=AsyncMock,
+        ) as mock_send:
+            resp = await client.post(
+                "/api/v1/auth/forgot-password",
+                json={"email": "forgot@example.com"},
+                headers={"host": "attacker.example"},
+            )
+        assert resp.status_code == 200
+        email_arg, reset_url = mock_send.await_args.args
+        assert "attacker.example" not in reset_url
+        assert reset_url.startswith("http://localhost/#/reset-password?token=")
+        token = reset_url.split("token=")[1]
+        decoded = app_state.state.auth.decode_password_reset_token(token)
+        assert decoded is not None and decoded[0] == user["id"]
+        api.reset_timestamps.pop(
+            api.rate_limit_key("forgot@example.com"), None
+        )
+
     async def test_forgot_unknown_email_still_returns_sent(self, client, db):
         resp = await client.post(
             "/api/v1/auth/forgot-password",
@@ -15237,9 +15269,10 @@ class TestOIDCLogin:
         # equal the URI the callback later sends to the token exchange
         # (pinned in TestOIDCCallback.test_callback_redirect_uri_
         # rederived_not_from_cookie) — both derive it from hosting info
-        # (#2573).
+        # (#2573). The test client's Host (``test``) names nothing klangkd
+        # serves, so the derivation is the localhost floor (#3276).
         assert build_auth_url.call_args[0][1] == (
-            "http://test/api/v1/auth/oidc/test/callback"
+            "http://localhost/api/v1/auth/oidc/test/callback"
         )
         from http.cookies import SimpleCookie
 
@@ -15674,6 +15707,65 @@ class TestOIDCCallback:
             assert "code=" in location, payload
             client.cookies.delete("oidc_test")
 
+    async def test_callback_forged_host_redirect_stays_in_house(
+        self, client, app, monkeypatch, db
+    ):
+        """#3276: the OIDC callback's redirect carries a login code (a
+        bearer credential); a forged Host on the callback request must
+        never become that redirect's authority — the Location derives
+        from the localhost floor instead."""
+        import json as json_mod
+
+        provider = api.oidc.OIDCProvider(
+            id="test",
+            display_name="Test",
+            issuer="https://idp.example.com",
+            client_id="klangk",
+            client_secret="s",
+        )
+        monkeypatch.setattr(app.state.oidc, "get_provider", lambda _: provider)
+        monkeypatch.setattr(
+            app.state.oidc,
+            "exchange_code",
+            AsyncMock(return_value={"id_token": "idt", "access_token": "at"}),
+        )
+        monkeypatch.setattr(
+            app.state.oidc,
+            "validate_id_token",
+            AsyncMock(
+                return_value={
+                    "sub": "fh-sub",
+                    "email": "fh@example.com",
+                    "email_verified": True,
+                }
+            ),
+        )
+        _, jwk = make_binding_key()
+        cookie_data = json_mod.dumps(
+            {
+                "state": "s",
+                "verifier": "v",
+                "cli_redirect": None,
+                "binding_jwk": base64.urlsafe_b64encode(
+                    json_mod.dumps(jwk).encode()
+                )
+                .rstrip(b"=")
+                .decode(),
+            }
+        )
+        client.cookies.set("oidc_test", cookie_data)
+        resp = await client.get(
+            "/api/v1/auth/oidc/test/callback",
+            params={"code": "code", "state": "s"},
+            headers={"host": "attacker.example"},
+            follow_redirects=False,
+        )
+        client.cookies.delete("oidc_test")
+        assert resp.status_code == 302
+        location = resp.headers["location"]
+        assert "attacker.example" not in location
+        assert location.startswith("http://localhost/#/oidc-complete?code=")
+
     async def test_callback_redirect_uri_rederived_not_from_cookie(
         self, client, app, monkeypatch, db
     ):
@@ -15682,8 +15774,9 @@ class TestOIDCCallback:
 
         Regression test for #2573: the cookie value used to be fed
         verbatim to the IdP token endpoint.  The exchange must receive
-        the redirect_uri re-derived via derive_hosting_info (host
-        ``test`` from the test client's base_url), never the cookie's
+        the redirect_uri re-derived via derive_hosting_info — the
+        localhost floor here, because the test client's Host (``test``)
+        names nothing klangkd serves (#3276) — never the cookie's
         attacker-influenced copy.
         """
         import json as json_mod
@@ -15734,7 +15827,9 @@ class TestOIDCCallback:
         assert resp.status_code == 302
         exchange.assert_awaited_once()
         redirect_uri = exchange.call_args[0][2]
-        assert redirect_uri == ("http://test/api/v1/auth/oidc/test/callback")
+        assert redirect_uri == (
+            "http://localhost/api/v1/auth/oidc/test/callback"
+        )
         assert "attacker.example" not in redirect_uri
 
     async def test_callback_missing_verifier_cookie(

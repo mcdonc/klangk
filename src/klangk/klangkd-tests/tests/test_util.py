@@ -535,8 +535,10 @@ class TestDeriveHostingInfo:
 
         An attacker reaching the backend directly (e.g. from a public IP)
         must not be able to poison X-Forwarded-Host to mint phishing links.
+        The plain Host (loopback on the configured browser port) survives
+        — it names the deployment's own listener (#3276).
         """
-        u = _util({"KLANGKD_EGRESS_PORT": "8995"})
+        u = _util({"KLANGKD_EGRESS_PORT": "8995", "KLANGKD_PORT": "8997"})
         h, p, b = u.derive_hosting_info(
             {
                 "host": "localhost:8997",
@@ -552,7 +554,7 @@ class TestDeriveHostingInfo:
 
     def test_forwarded_headers_rejected_when_no_peer(self):
         """Forwarded headers ignored when client_host is unavailable (fail-closed)."""
-        u = _util({"KLANGKD_EGRESS_PORT": "8995"})
+        u = _util({"KLANGKD_EGRESS_PORT": "8995", "KLANGKD_PORT": "8997"})
         h, p, b = u.derive_hosting_info(
             {
                 "host": "localhost:8997",
@@ -570,6 +572,7 @@ class TestDeriveHostingInfo:
         u = _util(
             {
                 "KLANGKD_EGRESS_PORT": "8995",
+                "KLANGKD_PORT": "8997",
                 "KLANGKD_REJECT_PROXY_HEADERS": "1",
             }
         )
@@ -606,24 +609,65 @@ class TestDeriveHostingInfo:
         assert p == "https"
         assert b == "/klangk"
 
-    def test_host_header_used_verbatim(self):
-        """Direct access: the Host header (with its port) is used verbatim.
+    def test_host_header_used_when_it_names_the_listener(self):
+        """Direct access: a Host that names the listener's IP-literal
+        address is used verbatim, port included (#3276).
 
-        the proxy forwards the client's Host as both Host and X-Forwarded-Host,
-        so the port the browser hit rides along unmodified — no port is
-        synthesized from KLANGKD_EGRESS_PORT (that is internal wiring, not the
-        public port; wrong behind a real proxy/ingress).
+        The browser listener binds that address, so a Host naming it (with
+        the browser port) carries real deployment intent — the port the
+        browser hit rides along unmodified, and no port is synthesized
+        from KLANGKD_EGRESS_PORT (internal wiring, not the public port).
         """
-        u = _util({"KLANGKD_EGRESS_PORT": "8995"})
-        h, p, b = u.derive_hosting_info({"host": "myhost:8997"}, "127.0.0.1")
-        assert h == "myhost:8997"
+        u = _util(
+            {
+                "KLANGKD_EGRESS_PORT": "8995",
+                "KLANGKD_LISTEN": "10.1.2.3",
+                "KLANGKD_PORT": "8997",
+            }
+        )
+        h, p, b = u.derive_hosting_info(
+            {"host": "10.1.2.3:8997"}, "203.0.113.7"
+        )
+        assert h == "10.1.2.3:8997"
+        assert p == "http"
+        assert b == ""
+
+    def test_hostname_listen_validates_nothing(self):
+        """A hostname KLANGKD_LISTEN is not a URL authority (#3276): a
+        DNS name can rebind, so only an address the operator wrote as a
+        literal validates. Deployments bound by name pin
+        KLANGKD_HOSTING_HOSTNAME instead."""
+        u = _util(
+            {
+                "KLANGKD_LISTEN": "myhost",
+                "KLANGKD_PORT": "8997",
+            }
+        )
+        h, _, _ = u.derive_hosting_info({"host": "myhost:8997"}, "203.0.113.7")
+        assert h == "localhost:8997"
+
+    def test_host_not_naming_served_authority_falls_back(self):
+        """#3276: a Host the deployment does not serve never reaches URL
+        construction.
+
+        The client chooses the Host it sends; without a match against the
+        listener address / armed TLS name / loopback forms, the value
+        collapses to the localhost floor (pointed at the browser listener
+        by #2732) instead of flowing into reset/verify/invite/OIDC URLs.
+        """
+        u = _util({"KLANGKD_EGRESS_PORT": "8995", "KLANGKD_PORT": "8997"})
+        h, p, b = u.derive_hosting_info(
+            {"host": "attacker.example"}, "127.0.0.1"
+        )
+        assert h == "localhost:8997"
         assert p == "http"
         assert b == ""
 
     def test_host_header_no_egress_port(self):
+        """Headless + a Host naming nothing klangkd serves -> the floor."""
         u = _util({})
         h, p, b = u.derive_hosting_info({"host": "myhost:8997"}, "127.0.0.1")
-        assert h == "myhost:8997"
+        assert h == "localhost"
         assert p == "http"
         assert b == ""
 
@@ -724,32 +768,32 @@ class TestDeriveHostingInfo:
             h, _, _ = u.derive_hosting_info({"host": host}, None)
             assert h == f"{host}:8997", host
 
-    def test_bare_ipv6_host_left_alone(self):
-        """Bare (unbracketed) IPv6 Hosts are never appended (#2732 review).
+    def test_bare_ipv6_host_falls_back(self):
+        """Bare (unbracketed) IPv6 Hosts never validate (#2732 review).
 
         ``::1`` parses as port-bearing; ``::ffff:127.0.0.1`` (v4-mapped
-        loopback) parses as a port-less loopback — either way a bare
-        ``:port`` append would emit an unparseable authority, so both
-        pass through untouched.
+        loopback) parses as a port-less loopback — either way the *bare*
+        form is indistinguishable from ``host:port`` by suffix alone, so
+        it names no servable authority and collapses to the floor
+        (#3276). The bracketed forms are different: ``[::1]`` and
+        ``[::1]:8997`` parse cleanly and validate as loopback.
         """
         u = _util({"KLANGKD_PORT": "8997"})
         for host in ("::1", "::ffff:127.0.0.1"):
             h, _, _ = u.derive_hosting_info({"host": host}, None)
-            assert h == host, host
+            assert h == "localhost:8997", host
 
-    def test_untrusted_portless_host_unchanged(self):
-        """A non-loopback port-less Host carries remote intent; untouched.
-
-        Same anti-phishing posture as the forwarded-header gate: an
-        untrusted peer's Host is already suspect, and rewriting it with a
-        local port would only launder it.
+    def test_untrusted_portless_host_falls_back(self):
+        """#3276: a non-loopback Host naming nothing klangkd serves never
+        reaches URL construction — the floor replaces it, so no rewrite of
+        an attacker value can launder it into a link.
         """
         u = _util({"KLANGKD_PORT": "8997"})
         h, _, _ = u.derive_hosting_info(
             {"host": "evil.com", "x-forwarded-host": "evil.com"},
             "203.0.113.7",
         )
-        assert h == "evil.com"
+        assert h == "localhost:8997"
 
     def test_forwarded_host_not_port_appended(self):
         """A trusted X-Forwarded-Host passes through verbatim (#2732).
@@ -779,6 +823,137 @@ class TestDeriveHostingInfo:
         u = _util({})
         h, _, _ = u.derive_hosting_info(None, None)
         assert h == "localhost"
+
+
+class TestHostNamesServedAuthority:
+    """#3276: which plain Host values survive as URL authorities."""
+
+    def test_tls_hostname_is_served_authority(self):
+        """Automatic TLS armed: a Host naming the TLS FQDN on the browser
+        port is the deployment's own identity — honored (case-insensitive
+        host part), so the zero-extra-config TLS URL behavior (#3192)
+        survives the Host validation."""
+        u = _util(
+            {
+                "KLANGKD_PORT": "8997",
+                "KLANGKD_TLS_HOSTNAME": "klangk.example.com",
+            }
+        )
+        h, _, _ = u.derive_hosting_info(
+            {"host": "Klangk.Example.Com:8997"}, "203.0.113.7"
+        )
+        assert h == "Klangk.Example.Com:8997"
+
+    def test_tls_hostname_portless_on_443(self):
+        """A port-less Host on the standard HTTPS port names the listener
+        (browsers omit 443); a port-less Host on any other port does not."""
+        u = _util(
+            {
+                "KLANGKD_PORT": "443",
+                "KLANGKD_TLS_HOSTNAME": "klangk.example.com",
+            }
+        )
+        h, _, _ = u.derive_hosting_info(
+            {"host": "klangk.example.com"}, "203.0.113.7"
+        )
+        assert h == "klangk.example.com"
+
+    def test_tls_hostname_portless_on_custom_port_falls_back(self):
+        u = _util(
+            {
+                "KLANGKD_PORT": "8997",
+                "KLANGKD_TLS_HOSTNAME": "klangk.example.com",
+            }
+        )
+        h, _, _ = u.derive_hosting_info(
+            {"host": "klangk.example.com"}, "203.0.113.7"
+        )
+        assert h == "localhost:8997"
+
+    def test_tls_name_mismatch_falls_back(self):
+        u = _util(
+            {
+                "KLANGKD_PORT": "443",
+                "KLANGKD_TLS_HOSTNAME": "klangk.example.com",
+            }
+        )
+        h, _, _ = u.derive_hosting_info(
+            {"host": "other.example:443"}, "203.0.113.7"
+        )
+        assert h == "localhost:443"
+
+    def test_specific_listen_ip_is_served_authority(self):
+        """A Host naming the bound interface's own IP-literal address (on
+        the browser port) names the listener — honored even from an
+        untrusted peer."""
+        u = _util(
+            {
+                "KLANGKD_PORT": "8997",
+                "KLANGKD_LISTEN": "192.168.1.5",
+            }
+        )
+        h, _, _ = u.derive_hosting_info(
+            {"host": "192.168.1.5:8997"}, "203.0.113.7"
+        )
+        assert h == "192.168.1.5:8997"
+
+    def test_listen_authority_ip_forms_compare_canonically(self):
+        """IPv6 listen literals compare in canonical form: a bracketed
+        listen value and a differently-spelled Host literal both name
+        the same address (#3276 review)."""
+        u = _util(
+            {
+                "KLANGKD_PORT": "8997",
+                "KLANGKD_LISTEN": "[2001:db8::1]",
+            }
+        )
+        h, _, _ = u.derive_hosting_info(
+            {"host": "[2001:0db8:0000::1]:8997"}, "203.0.113.7"
+        )
+        assert h == "[2001:0db8:0000::1]:8997"
+
+    def test_tls_authority_trailing_dot_honored(self):
+        """A Host with a DNS trailing dot names the same name as the
+        configured TLS hostname."""
+        u = _util(
+            {
+                "KLANGKD_PORT": "8997",
+                "KLANGKD_TLS_HOSTNAME": "klangk.example.com",
+            }
+        )
+        h, _, _ = u.derive_hosting_info(
+            {"host": "klangk.example.com.:8997"}, "203.0.113.7"
+        )
+        assert h == "klangk.example.com.:8997"
+
+    def test_wildcard_listen_names_nothing(self):
+        """0.0.0.0 / :: name every interface at once, so no Host can be
+        validated against them — everything falls to the floor and the
+        operator pins KLANGKD_HOSTING_HOSTNAME for public URLs."""
+        for wildcard in ("0.0.0.0", "::"):
+            u = _util(
+                {
+                    "KLANGKD_PORT": "8997",
+                    "KLANGKD_LISTEN": wildcard,
+                }
+            )
+            h, _, _ = u.derive_hosting_info(
+                {"host": "192.168.1.5:8997"}, "203.0.113.7"
+            )
+            assert h == "localhost:8997", wildcard
+
+    def test_loopback_host_wrong_port_falls_back(self):
+        """Loopback Hosts are synthetic local values only on the configured
+        browser port; a loopback Host naming some other port names nothing
+        klangkd serves."""
+        u = _util({"KLANGKD_PORT": "8997"})
+        h, _, _ = u.derive_hosting_info({"host": "localhost:9999"}, None)
+        assert h == "localhost:8997"
+
+    def test_bracketed_loopback_with_port_honored(self):
+        u = _util({"KLANGKD_PORT": "8997"})
+        h, _, _ = u.derive_hosting_info({"host": "[::1]:8997"}, None)
+        assert h == "[::1]:8997"
 
 
 class TestAuthorityHasPort:

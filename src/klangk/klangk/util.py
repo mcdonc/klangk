@@ -292,6 +292,92 @@ def _parse_trusted_entry(token: str) -> ipaddress._BaseAddress | None:
         return None
 
 
+def _split_authority(authority: str) -> tuple[str | None, str | None]:
+    """(host, port) from a Host header value (#3276).
+
+    *host* is ``None`` for the forms this resolver refuses to reason
+    about — every bare (unbracketed) colon-bearing form, i.e. bare IPv6
+    literals: they cannot be told apart from ``host:port`` by suffix
+    alone (same stance as :func:`authority_has_port`), so they never
+    validate as a URL authority. Bracketed IPv6 arrives as
+    ``[::1][:port]`` and splits cleanly.
+    """
+    if authority_has_port(authority):
+        host, _, port = authority.rpartition(":")
+        return _unbracketed_host(host.lower()), port
+    return _unbracketed_host(authority.lower()), None
+
+
+def _port_names_listener(port: str | None, configured: str | None) -> bool:
+    """True when a Host header's *port* names the configured browser
+    port: carried explicitly, or omitted on a standard port (80/443) the
+    listener itself is configured to use (browsers omit those)."""
+    if port is None:
+        return configured in ("80", "443")
+    return port == configured
+
+
+def _served_authority_names(
+    tls_hostname: str | None, listen: str | None
+) -> list[str]:
+    """The names from klangkd's configuration a request's Host may
+    validate against (#3276): the armed TLS hostname, plus the listener
+    address when it is a specific IP literal.
+
+    A hostname ``KLANGKD_LISTEN`` value validates nothing — a DNS name
+    can rebind, so only an address the operator wrote as a literal names
+    an authority (the armed TLS name is the one deliberate exception:
+    arming it means the deployment is reachable by that certified name).
+    A wildcard bind (``0.0.0.0``, ``::``) names every interface at once
+    and validates nothing either.
+    """
+    names = []
+    tls = (tls_hostname or "").strip().lower()
+    if tls:
+        names.append(tls)
+    names.extend(_listener_authority_address(listen))
+    return names
+
+
+def _listener_authority_address(listen: str | None) -> list[str]:
+    """The listener address as a one-element URL-authority list — only
+    when it is a specific IP literal (brackets stripped); otherwise
+    empty."""
+    addr = (listen or "").strip().strip("[]").lower()
+    if addr and _is_specific_ip_literal(addr):
+        return [addr]
+    return []
+
+
+def _is_specific_ip_literal(addr: str) -> bool:
+    """True when *addr* parses as an IP literal that names one
+    interface's address — not the all-interfaces wildcard."""
+    try:
+        return not ipaddress.ip_address(addr).is_unspecified
+    except ValueError:
+        return False
+
+
+def _same_authority_host(host: str, name: str) -> bool:
+    """True when a request's *host* names the configured *name*.
+
+    IP literals compare in canonical form (``2001:0db8::1`` and
+    ``[2001:db8::1]`` both name ``2001:db8::1``); names compare
+    case-insensitively with a DNS trailing dot ignored
+    (``example.com.`` names ``example.com``)."""
+    return _canonical_host(host) == _canonical_host(name)
+
+
+def _canonical_host(value: str) -> str:
+    """Canonical IP form when *value* parses as an address, else the
+    lowercased name with brackets and a trailing dot removed."""
+    candidate = value.strip().strip("[]")
+    try:
+        return str(ipaddress.ip_address(candidate))
+    except ValueError:
+        return candidate.lower().rstrip(".")
+
+
 def _canonical_ip_or_raw(candidate: str | None) -> str | None:
     """The canonical (``str()``-normalized) form of a parseable IP
     address; the raw string (or ``None``) when it does not parse."""
@@ -521,6 +607,14 @@ class Util:
     # are ignored (so an attacker cannot spoof X-Forwarded-Host to poison
     # verification/reset/OIDC links).
     #
+    # #3276: the plain Host header is likewise untrusted input. It is kept
+    # only when it names an authority klangkd itself serves (loopback, the
+    # armed TLS name, or the listener's IP-literal address); anything else
+    # collapses to the localhost floor — and the managed Caddy deletes the
+    # X-Forwarded-Host it would otherwise derive from a client-chosen Host
+    # for untrusted peers (caddy.py), so that header only ever carries a
+    # trusted outer proxy's value.
+    #
     # KLANGKD_TRUSTED_PROXY_CIDRS: comma-separated CIDRs/IPs to trust
     # (default "127.0.0.1,::1").
     #
@@ -709,7 +803,10 @@ class Util:
         headers, so setting ``KLANGKD_HOSTING_HOSTNAME`` / ``_PROTO`` /
         ``_BASE_PATH`` pins every URL the backend builds — independent of how
         a request arrives. With no env vars, forwarded headers are trusted
-        only when the immediate peer is trusted.
+        only when the immediate peer is trusted, and the plain ``Host``
+        header is kept only when it names an authority klangkd itself
+        serves (#3276) — a client-chosen Host otherwise never reaches URL
+        construction.
 
         Both args are optional so the same resolver serves callers that have
         no request in hand (e.g. ``start_workspace`` at boot). With no
@@ -739,9 +836,9 @@ class Util:
         self, headers, env_hostname: str, trust: bool
     ) -> str:
         """Resolve the hosting hostname: env pin, else trusted
-        X-Forwarded-Host, else the Host header, else ``localhost``. A
-        synthetic (non-pinned, non-forwarded) loopback hostname is pointed
-        at the browser listener (#2732)."""
+        X-Forwarded-Host, else the validated Host header, else
+        ``localhost``. A synthetic (non-pinned, non-forwarded) loopback
+        hostname is pointed at the browser listener (#2732)."""
         pinned = bool(env_hostname)
         hostname, forwarded = self._hostname_source(
             headers, env_hostname, trust
@@ -762,12 +859,53 @@ class Util:
 
     def _hostname_from_headers(self, headers, trust: bool) -> tuple[str, bool]:
         """Trusted X-Forwarded-Host when present (flagged True), else the
-        raw Host header, else ``localhost``."""
+        plain Host header validated against klangkd's own configured
+        authority (#3276), else the ``localhost`` floor."""
         if trust:
             forwarded_host = headers.get("x-forwarded-host")
             if forwarded_host:
                 return forwarded_host, True
-        return headers.get("host") or "localhost", False
+        return self._validated_request_host(headers.get("host")), False
+
+    def _validated_request_host(self, host: str | None) -> str:
+        """The plain ``Host`` header, kept only when it names an authority
+        klangkd itself serves; every other value collapses to the
+        ``localhost`` floor (#3276).
+
+        The client chooses the Host it sends, so an unvalidated value is a
+        poisoning vector for every URL built from the request — password
+        reset and verification emails, invites, the OIDC redirect. Kept
+        values: the synthetic local forms (#2732 — loopback hosts,
+        portless or carrying the configured browser port) and hosts
+        naming the deployment's configured authority: the armed TLS name
+        (``KLANGKD_TLS_HOSTNAME``) or the listener's own IP-literal
+        address (``KLANGKD_LISTEN``) on the configured port.
+        """
+        if host and self._host_names_served_authority(host):
+            return host
+        return "localhost"
+
+    def _host_names_served_authority(self, authority: str) -> bool:
+        """True when *authority* (a Host header value) names loopback on
+        the configured browser port, or the armed TLS name / listener
+        address on that port."""
+        host, port = _split_authority(authority)
+        if host is None:
+            return False
+        if _is_loopback_literal(host):
+            return port is None or port == self.app.state.settings.port
+        return self._names_configured_authority(host, port)
+
+    def _names_configured_authority(self, host: str, port: str | None) -> bool:
+        """True when *host*/*port* name the armed TLS hostname or the
+        listener's IP-literal address, on the configured browser port."""
+        settings = self.app.state.settings
+        names = _served_authority_names(settings.tls_hostname, settings.listen)
+        return any(
+            _same_authority_host(host, name)
+            and _port_names_listener(port, settings.port)
+            for name in names
+        )
 
     @staticmethod
     def _hosting_proto(headers, trust: bool) -> str:

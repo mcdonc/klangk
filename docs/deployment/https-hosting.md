@@ -215,14 +215,28 @@ is the whole game:
   the public name.
 
 Most deployments set neither. With the pin unset, klangkd derives
-every public URL from the request itself, in this order:
+every public URL from operator configuration first and the request
+second, in this order (#3276):
 
 1. `KLANGKD_HOSTING_HOSTNAME` (the explicit pin), else
 2. `X-Forwarded-Host` — trusted only when the immediate peer is in
-   `KLANGKD_TRUSTED_PROXY_CIDRS`, else
-3. the `Host` header, verbatim including its port, else
-4. the floor `localhost:<KLANGKD_PORT>` (no request in hand, e.g. a
-   CLI handshake).
+   `KLANGKD_TRUSTED_PROXY_CIDRS` (the managed Caddy passes a trusted
+   outer proxy's value through and drops the header it would otherwise
+   derive from a client-chosen `Host` for every other peer), else
+3. the `Host` header, kept only when it names an address klangkd
+   itself serves — loopback, this chapter's `tls-hostname`, or the
+   `KLANGKD_LISTEN` IP-literal address on the browser port, else
+4. the floor `localhost:<KLANGKD_PORT>` (also what an unvalidated
+   `Host` collapses to, and the no-request value, e.g. a CLI
+   handshake).
+
+A client chooses the `Host` it sends, so klangkd never lets an
+unvalidated value become the authority of a password-reset link, a
+verification link, an invite, or the OIDC redirect. A deployment whose
+browsers reach klangkd by an identity that appears nowhere in its own
+configuration (for example `KLANGKD_LISTEN=0.0.0.0` reached by DNS
+name, or a hostname `listen` value) pins `hosting-hostname` so those
+URLs name the real public address.
 
 The scheme and subpath follow the same shape: `KLANGKD_HOSTING_PROTO`
 over a trusted `X-Forwarded-Proto`, and `KLANGKD_HOSTING_BASE_PATH`
@@ -233,19 +247,22 @@ In the automatic-TLS model this needs **zero extra configuration**:
 the built-in Caddy terminates TLS and forwards the real `Host` with
 `X-Forwarded-Proto: https`, and its loopback peer is trusted by
 default — so URLs derive as `https://<your-fqdn>[:<port>]` on their
-own. `tls-hostname` arms the listener; the headers carry the name into
+own. `tls-hostname` arms the listener; the `Host` that names it
+validates (#3276) and `X-Forwarded-Proto` carries the scheme into
 URLs.
 
 Which to set, by deployment:
 
-| Deployment                                           | Hostname settings to set                      |
-| ---------------------------------------------------- | --------------------------------------------- |
-| Internet-facing, automatic TLS (this chapter)        | `tls-hostname` only — URLs derive from `Host` |
-| Behind an outer proxy that forwards truthful headers | nothing (still set `trusted-proxy-cidrs`)     |
-| Behind an outer proxy that mangles `Host`/forwarded  | `hosting-hostname` as the URL pin             |
-| Behind an outer proxy, encrypted hop wanted          | `tls-hostname` + `tls-issuer: internal`       |
-| Plain HTTP, direct browser access                    | nothing                                       |
-| URLs come out wrong despite correct headers          | `hosting-hostname` as an explicit override    |
+| Deployment                                           | Hostname settings to set                                      |
+| ---------------------------------------------------- | ------------------------------------------------------------- |
+| Internet-facing, automatic TLS (this chapter)        | `tls-hostname` only — URLs derive from the TLS name in `Host` |
+| Behind an outer proxy that forwards truthful headers | nothing (still set `trusted-proxy-cidrs`)                     |
+| Behind an outer proxy that mangles `Host`/forwarded  | `hosting-hostname` as the URL pin                             |
+| Behind an outer proxy, encrypted hop wanted          | `tls-hostname` + `tls-issuer: internal`                       |
+| Plain HTTP, direct browser access by loopback        | nothing — a loopback `Host` on the browser port validates     |
+| Plain HTTP, direct access by the `listen` IP literal | nothing — that `Host` names the listener                      |
+| Plain HTTP, direct access by name, or wildcard bind  | `hosting-hostname` — a name/wildcard never validates          |
+| URLs come out wrong despite correct headers          | `hosting-hostname` as an explicit override                    |
 
 ## Checking the setup
 

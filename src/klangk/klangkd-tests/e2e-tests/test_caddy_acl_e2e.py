@@ -722,6 +722,131 @@ class TestCaddyTrustedProxies:
 
 
 # ---------------------------------------------------------------------------
+# Host-header trust on the browser catch-all (#3276)
+# ---------------------------------------------------------------------------
+
+
+class TestHostHeaderTrust:
+    """The browser catch-all's peer-trust split, against the real rendered
+    Caddyfile (the managed proxy, not a hand-written one).
+
+    Caddy's ``reverse_proxy`` derives ``X-Forwarded-Host`` from the
+    client-chosen ``Host`` for peers outside the trusted set; the backend
+    honors that header from its own trusted peer (this proxy). The render
+    deletes it for untrusted peers so a direct request with a forged
+    ``Host`` reaches the backend with no forwarded host at all — leaving
+    only the backend's configured-authority Host validation (#3276, unit
+    suite). A trusted peer (an outer proxy in
+    ``KLANGKD_TRUSTED_PROXY_CIDRS``) keeps its value.
+    """
+
+    @pytest.fixture(scope="class")
+    @staticmethod
+    def stack(tmp_path_factory):
+        tmpdir = str(tmp_path_factory.mktemp("caddy-host-trust"))
+        echo_port = free_port()
+        browser_port = free_port()
+        egress_port = free_port()
+        admin_sock = os.path.join(tmpdir, "caddy-admin.sock")
+
+        echo = _start_echo(echo_port)
+        try:
+            from klangk.caddy import tcp_upstream
+
+            settings_env = {
+                "KLANGKD_DATA_DIR": tmpdir,
+                "KLANGKD_STATE_DIR": tmpdir,
+                "KLANGKD_PORT": str(browser_port),
+                # Bind all interfaces so the test can connect from the
+                # host's non-loopback IP — an untrusted peer at Caddy.
+                "KLANGKD_LISTEN": "0.0.0.0",
+                "KLANGKD_EGRESS_PORT": str(egress_port),
+                "KLANGKD_EGRESS_LISTEN": "127.0.0.1",
+                # TEST-NET: the deny set stays off the host's real IPs so
+                # the non-loopback request is routed, not 403'd.
+                "KLANGKD_CONTAINER_SUBNETS": "192.0.2.0/24",
+            }
+            proc, conf_path = _render_and_launch(
+                settings_env,
+                tcp_upstream("127.0.0.1", str(echo_port)),
+                admin_sock,
+                tmpdir,
+            )
+            if not _wait_for_caddy_health(browser_port):
+                proc.kill()
+                pytest.fail(f"Caddy did not start:\n{_caddy_output(proc)}")
+
+            yield {"browser_port": browser_port}
+
+            proc.terminate()
+            proc.wait(timeout=5)
+        finally:
+            _stop_echo(echo)
+
+    def test_untrusted_peer_loses_derived_forwarded_host(self, stack):
+        """A direct request with a forged Host (from a non-loopback peer,
+        outside the default trusted set) proxies with NO
+        X-Forwarded-Host — caddy's derived copy is deleted, so the
+        backend's trusted-forwarded path cannot be fed a client-chosen
+        value."""
+        host_ip = _host_nonloopback_ipv4()
+        if not host_ip:
+            pytest.skip("no non-loopback IPv4 on this host")
+        r = httpx.get(
+            f"http://{host_ip}:{stack['browser_port']}/api/v1/x",
+            headers={
+                "Host": "attacker.example",
+                "X-Forwarded-Host": "attacker.example",
+            },
+            timeout=5,
+        )
+        assert r.status_code == 200
+        echoed = r.json()
+        assert echoed["headers"].get("Host") == "attacker.example"
+        assert "X-Forwarded-Host" not in echoed["headers"]
+
+    def test_untrusted_peer_loses_forwarded_prefix(self, stack):
+        """#3276 review: caddy passes X-Forwarded-Prefix through untouched
+        (its defaults cover For/Proto/Host only), so a client-chosen
+        prefix must be deleted at the untrusted handle — otherwise it
+        reaches URL construction as a trusted forwarded value."""
+        host_ip = _host_nonloopback_ipv4()
+        if not host_ip:
+            pytest.skip("no non-loopback IPv4 on this host")
+        r = httpx.get(
+            f"http://{host_ip}:{stack['browser_port']}/api/v1/x",
+            headers={"X-Forwarded-Prefix": "/attacker-path"},
+            timeout=5,
+        )
+        assert r.status_code == 200
+        echoed = r.json()
+        assert "X-Forwarded-Prefix" not in echoed["headers"]
+
+    def test_trusted_peer_keeps_forwarded_host(self, stack):
+        """A loopback peer (in the default trusted set — the stand-in for
+        a configured outer proxy) keeps its X-Forwarded-Host and
+        X-Forwarded-Prefix, so behind-a-proxy URL derivation is
+        untouched."""
+        r = httpx.get(
+            f"http://127.0.0.1:{stack['browser_port']}/api/v1/x",
+            headers={
+                "Host": "klangk.example.com",
+                "X-Forwarded-Host": "klangk.example.com",
+                "X-Forwarded-Proto": "https",
+                "X-Forwarded-Prefix": "/klangk",
+            },
+            timeout=5,
+        )
+        assert r.status_code == 200
+        echoed = r.json()
+        assert (
+            echoed["headers"].get("X-Forwarded-Host") == "klangk.example.com"
+        )
+        assert echoed["headers"].get("X-Forwarded-Proto") == "https"
+        assert echoed["headers"].get("X-Forwarded-Prefix") == "/klangk"
+
+
+# ---------------------------------------------------------------------------
 # /hosted/ proxying + WebSocket (#1237)
 # ---------------------------------------------------------------------------
 

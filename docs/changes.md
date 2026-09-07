@@ -35,6 +35,21 @@ operators or integrators to act when upgrading.
 
 ### Breaking
 
+- **Host-header validation changes URL derivation for name-accessed
+  deployments (#3276).** A request's `Host` header now validates against
+  klangkd's own configuration (loopback, the armed `KLANGKD_TLS_HOSTNAME`
+  name, or the `KLANGKD_LISTEN` IP-literal address) before it may name
+  the authority of any URL klangkd builds — reset/verification emails,
+  invitations, the OIDC redirect, hosted-app URLs; every other value
+  falls back to `localhost`. **Migration:** deployments reached by an
+  identity klangkd does not configure (`KLANGKD_LISTEN=0.0.0.0` by DNS
+  name or non-literal address, a hostname `listen`, an outer proxy not
+  in `KLANGKD_TRUSTED_PROXY_CIDRS`) must set `KLANGKD_HOSTING_HOSTNAME`
+  or their links, container hosted-app URLs, and the OIDC `redirect_uri`
+  (login fails on the mismatch) all name `localhost`. Loopback,
+  automatic-TLS, and trusted-outer-proxy deployments are unaffected. See
+  [HTTPS Hosting](deployment/https-hosting.md#public-urls-tls-hostname-vs-hosting-hostname).
+
 - **Token-in-URL removal changes client contracts (#3201).**
   Anything connecting to `/ws` or `/ws/consent-decider` must switch
   from the `?token=` query param to the `bearer` WebSocket subprotocol
@@ -328,6 +343,14 @@ operators or integrators to act when upgrading.
   `manage-groups`; other authenticated callers get the manual-only
   view. Explicit `source=manual` and `source=workspace-role` filters
   work as before for every authenticated caller.
+- **Host-header poisoning of reset/verify links and the OIDC redirect
+  (#3276).** A request's `Host` (and the `X-Forwarded-Host`/`-Prefix`
+  the managed Caddy would derive from it for untrusted peers) can no
+  longer name the authority of URLs klangkd builds — one direct request
+  with a forged Host can no longer steer the emailed reset link at an
+  attacker (silent account takeover). Name-accessed deployments must set
+  `KLANGKD_HOSTING_HOSTNAME`; see the Breaking entry.
+
 - **Bind-mount re-validation at container start (#3278).** A mount's
   host-path source is now checked against
   `KLANGKD_ALLOWED_MOUNT_ROOTS` and the protected-path blocklist every

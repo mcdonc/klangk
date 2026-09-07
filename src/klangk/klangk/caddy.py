@@ -110,10 +110,13 @@ def _caddy_parseable_cidr(token: str) -> bool:
 def _valid_cidr_tokens(tokens: list[str]) -> list[str]:
     """The tokens Caddy can consume as an IP address or CIDR.
 
-    An invalid entry is warned and skipped: garbage would otherwise
-    flow into the Caddyfile (a ``remote_ip`` matcher or
-    ``trusted_proxies static`` argument), where Caddy rejects it at
-    provision time — the ``POST /load`` fails and the watchdog's
+    Python-only forms (dotted-quad netmask/hostmask notation) are
+    canonicalized to strict prefix-length form rather than dropped, so
+    the proxy's trust decisions match the backend's parser
+    (:func:`_canonical_cidr`). Anything else is warned and skipped:
+    garbage would otherwise flow into the Caddyfile (a ``remote_ip``
+    matcher or ``trusted_proxies static`` argument), where Caddy rejects
+    it at provision time — the ``POST /load`` fails and the watchdog's
     kill/respawn loop wedges the whole proxy on a typo'd setting.
     Skipping fails toward *less* access (narrower egress allowlist /
     narrower XFF trust), never more. The warning deliberately does not
@@ -124,8 +127,9 @@ def _valid_cidr_tokens(tokens: list[str]) -> list[str]:
     """
     valid: list[str] = []
     for token in tokens:
-        if _caddy_parseable_cidr(token):
-            valid.append(token)
+        canonical = _canonical_cidr(token)
+        if canonical:
+            valid.append(canonical)
         else:
             logger.warning(
                 "ignoring an invalid IP/CIDR entry — entries must be"
@@ -133,6 +137,24 @@ def _valid_cidr_tokens(tokens: list[str]) -> list[str]:
                 " KLANGKD_CONTAINER_SUBNETS)"
             )
     return valid
+
+
+def _canonical_cidr(token: str) -> str | None:
+    """*token* as a Caddy-consumable IP/CIDR string, ``None`` for garbage.
+
+    Python additionally accepts dotted-quad netmask/hostmask notation
+    (``10.0.0.0/255.255.0.0``) that Go ``netip`` rejects; those are
+    canonicalized to strict prefix-length form instead of dropped, so an
+    entry the backend's own trust parser accepts keeps matching at the
+    proxy too — dropping it would route a listed proxy through the
+    untrusted handle and silently floor its URLs (#3276 review).
+    """
+    if _caddy_parseable_cidr(token):
+        return token
+    try:
+        return str(ipaddress.ip_network(token, strict=False))
+    except ValueError:
+        return None
 
 
 def _non_loopback(entries: list[str]) -> list[str]:
@@ -856,6 +878,12 @@ class CaddyRenderer:
         ``X-Token-Error``) is returned to the client. Every egress location
         additionally allows only container-source peers (``@notContainerSrc``
         → 403) — the same CONTAINER_ACL nginx enforces.
+
+        These proxies carry Caddy's default ``X-Forwarded-Host`` derivation
+        with no trust split (#3276): safe today because no egress endpoint
+        builds a hosting URL — a handler added here that derives URLs from
+        request headers must gate them on the same peer-trust split the
+        browser catch-all uses.
         """
         if container_srcs:
             not_src_matcher = (
@@ -1009,14 +1037,7 @@ class CaddyRenderer:
             "		}\n"
             "	}\n"
         )
-        catch_all = (
-            "	handle {\n"
-            f"{deny_guard}"
-            f"		reverse_proxy {upstream} {{\n"
-            f"{self._common_rp_headers()}\n"
-            "		}\n"
-            "	}\n"
-        )
+        catch_all = self._browser_catch_all(upstream, deny_guard)
         return (
             f"{site_addr} {{\n"
             f"{tls_line}"
@@ -1029,6 +1050,56 @@ class CaddyRenderer:
             f"{hosted}"
             f"{auth_local}"
             f"{catch_all}}}\n"
+        )
+
+    def _browser_catch_all(self, upstream: str, deny_guard: str) -> str:
+        """The browser-site catch-all, split by immediate-peer trust (#3276).
+
+        Both handles keep the shared header bundle and the container-source
+        deny. The untrusted handle — a peer outside
+        ``KLANGKD_TRUSTED_PROXY_CIDRS``, i.e. every direct browser or
+        attacker when no outer proxy is configured — additionally deletes
+        ``X-Forwarded-Host`` and ``X-Forwarded-Prefix`` before proxying.
+        Caddy's ``reverse_proxy`` derives ``X-Forwarded-Host`` from the
+        client-chosen ``Host`` for untrusted peers, and passes
+        ``X-Forwarded-Prefix`` through untouched (its defaults cover only
+        For/Proto/Host) — and the backend honors both arriving from its
+        own trusted peer (this proxy): without the deletes, one direct
+        request with a forged Host or Prefix would reach
+        reset/verify/invite/OIDC URL construction as a *trusted
+        forwarded* value. The trusted handle passes a trusted outer
+        proxy's headers through untouched, so behind-a-proxy deployments
+        keep deriving the public name and subpath with zero extra
+        configuration. Under ``KLANGKD_REJECT_PROXY_HEADERS`` the trusted
+        handle deletes them too — the hard trust-off override strips
+        forwarded headers from every peer at the proxy as well as at the
+        backend. ``remote_ip`` keys on the immediate peer (ignores
+        ``trusted_proxies``), the same primitive the container deny uses.
+        """
+        peers = " ".join(self._trusted_proxy_cidrs())
+        trusted_delete = (
+            "			header_up -X-Forwarded-Host\n"
+            "			header_up -X-Forwarded-Prefix\n"
+            if self._reject_proxy_headers()
+            else ""
+        )
+        return (
+            f"	@notTrustedPeer not remote_ip {peers}\n"
+            "	handle @notTrustedPeer {\n"
+            f"{deny_guard}"
+            f"		reverse_proxy {upstream} {{\n"
+            f"{self._common_rp_headers()}\n"
+            "			header_up -X-Forwarded-Host\n"
+            "			header_up -X-Forwarded-Prefix\n"
+            "		}\n"
+            "	}\n"
+            "	handle {\n"
+            f"{deny_guard}"
+            f"		reverse_proxy {upstream} {{\n"
+            f"{self._common_rp_headers()}\n"
+            f"{trusted_delete}"
+            "		}\n"
+            "	}\n"
         )
 
     def _warn_loopback_listen_when_armed(self, listen_addr: str) -> None:

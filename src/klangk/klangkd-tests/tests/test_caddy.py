@@ -298,26 +298,40 @@ class TestContainerSourceLists:
         assert "invalid IP/CIDR entry" in caplog.text
 
     @pytest.mark.parametrize(
-        "entry",
+        ("entry", "canonical"),
         [
-            "10.0.0.0/255.255.0.0",  # dotted-quad netmask: python yes, netip no
-            "10.0.0.0/0.0.255.255",  # hostmask form: same mismatch
-            "10.0.0.0/\u0661\u0662",  # Arabic-Indic digits: isdigit() yes, ParseUint no
+            ("10.0.0.0/255.255.0.0", "10.0.0.0/16"),  # netmask notation
+            ("10.0.0.0/0.0.255.255", "10.0.0.0/16"),  # hostmask notation
         ],
     )
-    def test_python_only_cidr_forms_rejected(self, entry, caplog):
-        """The accept boundary must match Caddy's provisioner (Go netip),
-        not Python's ipaddress: netmask/hostmask notation and non-ASCII
-        digit suffixes parse in Python but fail at POST /load provision
-        time — the kill/respawn wedge this validator exists to prevent
-        (nginx accepts netmask notation, so copy-pasted lines hit it)."""
+    def test_python_only_cidr_forms_canonicalized(self, entry, canonical):
+        """Netmask/hostmask notation parses in Python but not in Go netip
+        (the POST /load provision wedge this validator guards against),
+        yet the backend's own trust parser accepts it — so it is
+        canonicalized to strict prefix form, never dropped (#3276
+        review: dropping it routed a listed proxy through the untrusted
+        handle and silently floored its URLs)."""
+        assert _caddy_parseable_cidr(entry) is False
+        s = make_settings(
+            {"KLANGKD_CONTAINER_SUBNETS": f"{entry},192.168.0.0/16"}
+        )
+        acl, _deny = _renderer(s)._container_source_entries()
+        assert entry not in acl
+        assert canonical in acl
+        assert "192.168.0.0/16" in acl
+
+    def test_non_ascii_digit_cidr_still_rejected(self, caplog):
+        """Non-ASCII digit suffixes parse in neither Go netip nor (after
+        canonicalization) the renderer — the entry is warned and skipped,
+        never canonicalized to something the operator did not write."""
+        entry = "10.0.0.0/\u0661\u0662"
         assert _caddy_parseable_cidr(entry) is False
         s = make_settings(
             {"KLANGKD_CONTAINER_SUBNETS": f"{entry},192.168.0.0/16"}
         )
         with caplog.at_level("WARNING"):
             acl, _deny = _renderer(s)._container_source_entries()
-        assert entry not in acl
+        assert entry not in acl and "10.0.0.0/" not in ",".join(acl)
         assert "192.168.0.0/16" in acl
         assert "invalid IP/CIDR entry" in caplog.text
 
@@ -857,6 +871,63 @@ class TestRenderConfig:
         cf = _renderer(s).render_config("unix//s", self.ADMIN)
         assert "@containerSrc remote_ip 10.89.0.0/24" in cf
         assert "respond @containerSrc 403" in cf
+
+    def test_browser_catch_all_splits_by_peer_trust(self):
+        """#3276: the catch-all proxies untrusted and trusted peers through
+        separate handles; the untrusted one deletes X-Forwarded-Host and
+        X-Forwarded-Prefix (caddy derives the former from the client-chosen
+        Host for untrusted peers and passes the latter through untouched;
+        the backend trusts both from this proxy) while the trusted one
+        passes a trusted outer proxy's values through untouched."""
+        s = make_settings({"KLANGKD_PORT": "8997"})
+        cf = _renderer(s).render_config("unix//s", self.ADMIN)
+        assert "@notTrustedPeer not remote_ip 127.0.0.1 ::1" in cf
+        assert "handle @notTrustedPeer {" in cf
+        assert cf.count("header_up -X-Forwarded-Host") == 1
+        assert cf.count("header_up -X-Forwarded-Prefix") == 1
+        # The trusted fallback handle proxies without the deletions.
+        trusted = cf[cf.index("\thandle {\n") :]
+        assert "header_up -X-Forwarded-" not in trusted
+        assert trusted.count("reverse_proxy") >= 1
+
+    def test_browser_catch_all_reject_mode_deletes_everywhere(self):
+        """Under KLANGKD_REJECT_PROXY_HEADERS the trusted handle deletes
+        X-Forwarded-Host and X-Forwarded-Prefix too — the hard trust-off
+        override strips the headers from every peer at the proxy, matching
+        the backend."""
+        s = make_settings(
+            {
+                "KLANGKD_PORT": "8997",
+                "KLANGKD_REJECT_PROXY_HEADERS": "1",
+            }
+        )
+        cf = _renderer(s).render_config("unix//s", self.ADMIN)
+        assert cf.count("header_up -X-Forwarded-Host") == 2
+        assert cf.count("header_up -X-Forwarded-Prefix") == 2
+
+    def test_browser_catch_all_trust_uses_configured_cidrs(self):
+        """The peer-trust split keys on KLANGKD_TRUSTED_PROXY_CIDRS — an
+        outer proxy in the configured set keeps its X-Forwarded-Host."""
+        s = make_settings(
+            {
+                "KLANGKD_PORT": "8997",
+                "KLANGKD_TRUSTED_PROXY_CIDRS": "127.0.0.1,::1,10.0.0.0/8",
+            }
+        )
+        cf = _renderer(s).render_config("unix//s", self.ADMIN)
+        assert "@notTrustedPeer not remote_ip 127.0.0.1 ::1 10.0.0.0/8" in cf
+
+    def test_browser_catch_all_deny_in_both_handles(self):
+        """The container-source deny guards both trust handles (a container
+        peer must be refused whichever branch routes it)."""
+        s = make_settings(
+            {
+                "KLANGKD_PORT": "8997",
+                "KLANGKD_CONTAINER_SUBNETS": "10.89.0.0/24",
+            }
+        )
+        cf = _renderer(s).render_config("unix//s", self.ADMIN)
+        assert cf.count("respond @containerSrc 403") == 2
 
     def test_browser_deny_uses_immediate_peer_matcher(self):
         """Regression guard (#1546): the container-source *deny matcher* keys
