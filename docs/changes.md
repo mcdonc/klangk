@@ -824,39 +824,6 @@ sync` report a clear permission-denied error.
 
 ### Added
 
-- **fmtk e2e: files browser, renderers, editor round-trip (#3236).**
-  Automated coverage for the Files tab: directory navigation with
-  breadcrumbs and up-button, markdown/code/raw-text renderers opening
-  seeded fixture files, code editor round-trip (API write + read-back),
-  and cache invalidation (terminal-created file appears after refresh).
-
-- **fmtk e2e: feature-plugin tabs — features_enable swaps (#3243).**
-  Automated coverage for the feature-plugin enable/disable lifecycle:
-  the Soliplex app-bar icon appears when enabled and disappears when
-  disabled (app restart required), and the `/api/v1/config`
-  `features_enable` key reflects the setting.
-
-- **fmtk e2e: user Settings page, password change, branding, legal
-  links (#3241).** Automated coverage for the user Settings page
-  navigation, password change (wrong-current rejection and success
-  session rotation), custom branding product name on login and app
-  chrome, and legal links presence/absence on the login page.
-
-- **fmtk e2e: workspace Settings panel, marking + server-schedule
-  banners (#3239).** Automated coverage for the settings-panel save
-  round-trip, the classification marking banner under deploy-wide and
-  per-workspace configurations, and the server-schedule countdown
-  banner (publish → appears, cancel → clears).
-
-- **fmtk e2e: admin UI — users, groups, invitations, events, server
-  schedule (#3240).** Automated coverage for the admin icon gating,
-  user CRUD (create, edit handle/password, disable, delete), group
-  lifecycle (create, member add/remove, delete, admins-membership
-  icon tracking), invitation management (create, resend, revoke with
-  token refusal), events tabs (All/Containers/Audit filters and
-  expandable row detail), and the server schedule panel
-  (publish stop + recycle, cancel both).
-
 - **Falco exec audit guide (#2780).** New deployment chapter
   (`docs/deployment/falco.md`) documenting the verified procedure for
   running Falco 0.44.1 as a privileged container that captures every
@@ -1238,16 +1205,6 @@ sync` report a clear permission-denied error.
   the consent sweeper's retention pass. Set either to `0` to disable that
   bound. Reloadable on SIGHUP (applies on the next sweep).
 
-- **Super-E2E suite (#2561).** A new pytest suite
-  (`src/klangk/klangkd-tests/super-e2e/`, run via `test-super-e2e`)
-  exercises the real Docker host container (supervisord + klangkd +
-  caddy + nested rootless podman) black-box over its published port:
-  auth, workspace lifecycle, file ops, egress filtering + interactive
-  consent, shared terminals, health/idle, SIGHUP reload, admin users,
-  export/import. The `super-e2e.yml` workflow runs it on demand and on
-  release branches; it is not a per-PR gate. See
-  [Super-E2E](development/super-e2e.md).
-
 - **`change-acls` permission (#2764).** Raw ACL editing is now gated
   on a dedicated resource-level permission instead of `share`:
   `GET`/`PUT /api/v1/workspaces/{id}/acl` (the Advanced ACL editor) and
@@ -1263,14 +1220,6 @@ sync` report a clear permission-denied error.
   workspaces must now hold `change-acls` there (grant it on the
   workspace, or on `/workspaces` / `/` for deploy-wide coverage). See
   [ACL](reference/acl.md).
-- **`fmtk-up` / `fmtk-down` / `fmtk-seed` — one-command fmtk harness (#2881).**
-  `devenv shell -- fmtk-up` boots a scratch backend, an origin-splitting
-  proxy, a seeded fixture, and a debug `flutter run -d chrome`, then
-  prints the VM-service URI for `fmtk` (see AGENTS.md "Inspecting the
-  running frontend"). Ctrl-C keeps the backend+proxy for a fast
-  re-launch; `fmtk-down` stops them (`--wipe` resets the fixture), and
-  `fmtk-seed` re-seeds standalone.
-
 - **Native YAML booleans for string-typed boolean settings (#2796).**
   `allow_sudo`, `allow_autostart`, `disable_registration`,
   `disable_invites`, `disable_tmux`, `prevent_insecure_jwt_secret`,
@@ -1278,13 +1227,6 @@ sync` report a clear permission-denied error.
   accept a bare `true`/`false` in the YAML config file (previously
   rejected at boot unless quoted). Env vars and quoted strings behave
   exactly as before.
-
-- **`fmtk` — flutter-mcp-toolkit CLI in the devenv shell (#2868).** Agents
-  can inspect and drive a debug run of the frontend (semantic snapshots,
-  widget refs, taps/typing, hot reload, app logs) via the pinned
-  `flutter-mcp-toolkit` release binary. The frontend registers the debug-only
-  `mcp_toolkit` VM service extensions (release builds are unaffected). See
-  AGENTS.md "Inspecting the running frontend" for the workflow.
 
 - **Admission control: `KLANGKD_ADMISSION_MEMORY_ENABLED`,
   `KLANGKD_ADMISSION_MEMORY_MARGIN` (#2525).** Opt-in start-time
@@ -1617,12 +1559,6 @@ stop)`) and a `server: stop at 23:00 (in 1h 12m)` status line in the
   keeps the same slot, and expired sessions never count. Reloadable on
   SIGHUP. See [Authentication](features/authentication.md).
 
-- **Schema migrations (#30).** Schema changes are now applied as
-  ordered, once-only migrations recorded in a new `schema_migrations`
-  table at startup, instead of ad-hoc `CREATE TABLE IF NOT EXISTS`
-  blocks. Migration 0001 adds a `password_history` table (rows cascade
-  with their user) ahead of password-reuse prevention (#2582).
-
 - **`KLANGKD_PASSWORD_REQUIRE_{UPPER,LOWER,DIGIT,SPECIAL}` (#2581).**
   Character-class complexity requirements for passwords: each setting is
   the number of characters of that class a password must contain
@@ -1913,14 +1849,6 @@ stop)`) and a `server: stop at 23:00 (in 1h 12m)` status line in the
   forward_auth); it also forwards denied DNS queries with their domain
   names (NFQUEUE only carries raw IPs). Static mode is now strictly better
   than the old silent-deny: it records denied attempts for audit/review.
-- **`scripts/consent-watch.py`** — a tiny `rich`-based live view of a
-  workspace's egress-consent request history (pending/allowed/denied/expired),
-  for debugging interactive mode (#2242).
-- **`scripts/consent-decide.py`** — an interactive CLI to accept/deny a
-  workspace's pending egress-consent requests at runtime (the command-line
-  decide flow for #2244); accept marks a request `allowed` and adds the
-  destination to the workspace's allow-list (applies on next recreate), deny
-  marks it `denied` (#2242).
 - **Consent decider registry + `/ws/consent-decider` (#2308).** Interactive
   egress consent is now runtime state: a workspace's blocked egress is held
   for a decision only while a consent decider is registered for it (or
@@ -2261,12 +2189,6 @@ stop)`) and a `server: stop at 23:00 (in 1h 12m)` status line in the
   fields. The toggle is now mouse/touch-only: it has no keyboard
   activation path (screen-reader semantics navigation still reaches it).
 
-- **The devenv Flutter toolchain is now 3.47.0 (#2869).** Flutter (and its
-  Dart SDK) come from a pinned `nixpkgs-unstable` input while the rest of
-  the toolchain stays on `nixos-26.05`. Contributors get Flutter 3.47 /
-  Dart 3.13, clearing the Flutter >= 3.44 requirement for the
-  flutter-mcp-toolkit integration (#2868).
-
 - **Host image base is `python:3.14-slim` (#2844).** The host and FIPS
   host container images now run CPython 3.14 (digest-pinned, OpenSSL
   3.5). Workspaces are unaffected; operators should rebuild the host
@@ -2281,14 +2203,6 @@ stop)`) and a `server: stop at 23:00 (in 1h 12m)` status line in the
   a stored nix flag proceeds without the `/nix` mount (logged once at
   info). Set it with a `nix_seed` block to arm the feature — see
   [Nix workspaces](features/nix.md).
-
-- **Branch coverage in the Python 100% gates (#2834).** Both the
-  `klangk` and `klangksidecar` unit suites now measure branch coverage
-  (`--cov-branch`) and require every branch outcome exercised, not just
-  every line — structurally unreachable arms carry documented
-  `# pragma: no branch` comments. The sidecar suite gains a coverage gate
-  at all (previously none); contributors adding an `if` with only one
-  side tested will now fail the build until the other outcome is tested.
 
 - **`host_restart` WS event renamed to `server_recycle` (#2661).** The
   graceful recycle path (SIGHUP and scheduled `recycle`) now broadcasts
@@ -2485,8 +2399,6 @@ share`/`unshare` likewise accept `@N` and reject an ambiguous name. The
   overridable per-deploy (`klangkd.yaml` / `KLANGKD_CONTAINER_PIDS_LIMIT`)
   or per-workspace (`pids_limit`, #864).
 
-- **Bumped `@earendil-works/pi-coding-agent` to `0.83.0` (#2049).**
-
 - **`none` auth mode unsupported with Docker host image (#1391).** The Docker
   image uses `KLANGKD_AUTH_MODES=password` by default.
 
@@ -2587,9 +2499,6 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   `<data_dir>/instance-id`.
 
 - **`klangk-instance-id` console script (#1565).** Read the file directly.
-
-- **`adopt_orphaned_containers` renamed to `reap_instance_containers`
-  (#1554).**
 
 - **`KLANGKD_AUTH_MODES=none` (#1374).** No-login single-user mode. The server
   auto-creates the default user; loopback + proxy ACL keep `/auth/local`
@@ -2699,17 +2608,6 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   held and cuts their live WebSocket and consent-decider connections.
   Previously sessions stayed alive until their natural expiry.
 
-- **Parallel image-build tasks tolerate transient rootless-podman failures
-  (#3168).** `klangk:build-workspace-image` and `klangk:build-network-sidecar`
-  run in parallel and are a fresh machine's first rootless podman invocations;
-  the concurrent first-time user-namespace initialization intermittently
-  aborted one of them with `failed to reexec: Permission denied` before any
-  test ran, reding the whole CI job. Their podman calls now go through a
-  retry helper that retries exactly that failure signature once — printing
-  `podman info` / `podman unshare` diagnostics first so a persistent
-  occurrence stays attributable — and passes every other failure through
-  untouched.
-
 - **Account-disable / inactivity socket kick was a no-op (#3152).**
   `SafeWebSocket.close` dropped the `reason` argument, so the 4001
   close that admin-disable and the inactivity sweep issue for a
@@ -2717,13 +2615,6 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   swallowed — no socket was ever actually closed. `close` now forwards
   `reason` to the transport, and the kick paths have regression tests
   against the real `SafeWebSocket`.
-
-- **`build-host-image` / `build_wheel.sh` (#3143).** The release wheel is
-  now built with `uv build`, which resolves hatchling/hatch-vcs into its own
-  isolated build environment instead of transiently installing `build` into
-  the shared devenv venv. Previously a concurrent `uv-sync` from another
-  devenv shell entry could wipe `pyproject-hooks` mid-build, failing the
-  wheel build with `can't open ... _in_process.py: [Errno 2]`.
 
 - **Workspace settings panel name validation (#3130).** Clearing the
   _Name_ field and tapping _Save_ used to fail the whole panel update
@@ -3282,10 +3173,6 @@ terminal unshare` works for any role — since unsharing only reduces
   collision guard raised bare `RuntimeError`, which a supervisor would
   restart-loop; they now raise the configuration error the launcher
   maps to `EX_CONFIG`, like every other deterministic boot refusal.
-- **E2E container-readiness budget tolerates CI load (#245).**
-  Frontend e2e tests running four Playwright workers on one runner
-  could exceed the 120s container bring-up budget under contention;
-  the budget now doubles to 240s on CI (local runs keep 120s).
 - **Hosted-app URLs derived without a request now name the browser listener
   (#2732).** The hostname floor used when no browser request is in hand
   (sandbox setup starts, autostart) was a bare `localhost` — implying port
@@ -3384,14 +3271,6 @@ send` rejects a malformed address locally the same way.
   longer sees the dead-end "No admin sections available" page; the
   router now bounces them to the workspace list. Logged-out visitors
   keep the normal login flow, and admins are unaffected.
-
-- **Short image names resolve in fresh checkouts (#286).** devenv now
-  exports `CONTAINERS_REGISTRIES_CONF` and seeds a
-  `registries.conf` (`unqualified-search-registries = ["docker.io"]`)
-  next to the podman signature policy, so image builds that reference
-  short names (`alpine:3.21`, `python:3.13-slim`, …) no longer fail with
-  `short-name ... did not resolve to an alias and no
-containers-registries.conf(5) was found`.
 
 - **Post-login redirect no longer leaks across sessions (#2670).** The
   "return to where you were" URL stashed when a logged-out user hits a
