@@ -127,6 +127,12 @@ To add features beyond what ships with the image, you need to build a
 custom image — see [Customizing a Deployment](customizing.md) for
 instructions.
 
+## Air-gapped networks
+
+Deploying on a network with no internet access? See
+[Air-Gapped Deployment](airgapped.md) for the offline image transport
+procedure, DNS and LLM configuration, and a settings checklist.
+
 ## Next steps
 
 - [Configuration File](../reference/klangkd-config.md) — every

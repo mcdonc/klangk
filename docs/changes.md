@@ -824,6 +824,11 @@ sync` report a clear permission-denied error.
 
 ### Added
 
+- **Air-gapped deployment guide (#2660).** New deployment chapter
+  (`docs/deployment/airgapped.md`) covering offline image transport,
+  DNS and LLM configuration for disconnected networks, workspace
+  package-mirror workarounds, and a recommended-settings checklist.
+
 - **Disk watchdog monitors `state_dir` (#3310).** The resource
   watchdog's disk-capacity check now measures the filesystem holding
   `KLANGKD_STATE_DIR` in addition to the data directory, so a
