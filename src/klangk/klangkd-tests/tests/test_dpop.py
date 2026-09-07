@@ -378,6 +378,56 @@ class TestVerifyProof:
         )
         assert _verify(proof, jkt=_thumbprint_of(jwk)) is None
 
+    @pytest.mark.parametrize(
+        "iat", [float("nan"), float("inf"), float("-inf"), True]
+    )
+    def test_non_finite_iat_refused(self, key, iat):
+        # json.loads decodes NaN/Infinity literals; comparisons against
+        # NaN are False, so a NaN-dated proof used to pass the window
+        # check at any `now` and could be replayed forever (#3272).
+        private, jwk = key
+        from _helpers import make_dpop_proof
+
+        proof = make_dpop_proof(
+            private,
+            jwk,
+            method="GET",
+            uri="https://host/api/v1/x",
+            token="the-access-token",
+            iat=iat,
+        )
+        assert _verify(proof, jkt=_thumbprint_of(jwk)) == "stale proof"
+
+    def test_nan_iat_never_becomes_fresh(self, key):
+        # The same NaN-dated proof string stays refused far past the
+        # window — it never enters the replay cache at all.
+        private, jwk = key
+        from _helpers import make_dpop_proof
+
+        proof = make_dpop_proof(
+            private,
+            jwk,
+            method="GET",
+            uri="https://host/api/v1/x",
+            token="the-access-token",
+            iat=float("nan"),
+        )
+        replay: dict = {}
+        for now in (time.time(), time.time() + 10_000):
+            assert (
+                dpop.verify_proof(
+                    proof,
+                    method="GET",
+                    path="/api/v1/x",
+                    access_token="the-access-token",
+                    expected_jkt=_thumbprint_of(jwk),
+                    now=now,
+                    replay=replay,
+                )
+                == "stale proof"
+            )
+        assert replay == {}
+
     def test_malformed_claims(self, key):
         private, jwk = key
         from _helpers import build_dpop_proof
@@ -428,6 +478,45 @@ class TestVerifyProof:
         assert first is None
         assert second == "replayed proof"
         assert len(replay) == 1
+
+    def test_future_dated_proof_replay_entry_covers_its_window(self, key):
+        # A proof minted iat = now + 290 stays fresh until iat + 300;
+        # its replay entry must live just as long, or the same proof
+        # string re-verifies once the entry (formerly keyed off
+        # verification time) expires early (#3272).
+        private, jwk = key
+        from _helpers import make_dpop_proof
+
+        now = time.time()
+        iat = now + dpop.PROOF_WINDOW_SECONDS - 10
+        proof = make_dpop_proof(
+            private,
+            jwk,
+            method="GET",
+            uri="https://host/api/v1/x",
+            token="the-access-token",
+            jti="future-jti",
+            iat=iat,
+        )
+        replay: dict = {}
+        verify = dict(
+            method="GET",
+            path="/api/v1/x",
+            access_token="the-access-token",
+            expected_jkt=_thumbprint_of(jwk),
+            replay=replay,
+        )
+        assert dpop.verify_proof(proof, now=now, **verify) is None
+        assert replay["future-jti"] == iat + dpop.PROOF_WINDOW_SECONDS
+        # +400 s: verification-time-keyed entries are gone, the proof
+        # itself is still fresh (|400 - 290| <= 300) — a replay of the
+        # same string must still be refused.
+        dpop.purge_replay(replay, now + 400)
+        assert replay == {"future-jti": iat + dpop.PROOF_WINDOW_SECONDS}
+        assert (
+            dpop.verify_proof(proof, now=now + 400, **verify)
+            == "replayed proof"
+        )
 
     def test_bad_signature(self, key):
         private, jwk = key

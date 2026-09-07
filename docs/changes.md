@@ -333,6 +333,13 @@ operators or integrators to act when upgrading.
 
 ### Security
 
+- **DPoP proof freshness and replay hardening (#3272).** A proof
+  whose `iat` is not a finite number (`NaN`/`Infinity` literals
+  decode via JSON) is now rejected as stale — such a proof previously
+  verified at any time and could be replayed indefinitely. A proof's
+  replay-cache entry now lives until the last moment the proof can
+  still pass the freshness check, closing a doubled replay window for
+  future-dated proofs.
 - **`GET /groups` no longer discloses workspace names (#3283).**
   Workspace role groups are seeded with an id-only description
   (`Workspace role group: role`; the group name already carries the

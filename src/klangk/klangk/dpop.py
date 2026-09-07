@@ -33,6 +33,7 @@ outer proxy's prefix, the request path without it) verify too (#3287).
 import base64
 import hashlib
 import json
+import math
 from urllib.parse import urlsplit
 
 from cryptography.exceptions import InvalidSignature
@@ -252,13 +253,31 @@ def _claim_reason(
     return None
 
 
+def _fresh_iat(iat, now: float) -> bool:
+    """Whether *iat* is a finite number within the freshness window.
+
+    ``json.loads`` decodes the non-standard ``NaN``/``Infinity``
+    literals, and every comparison against NaN is False — so a
+    NaN-dated proof would pass the window check forever (#3272).
+    ``bool`` (an ``int`` subclass standing for 0/1, never a clock
+    reading) is refused too. Plain ``int`` needs no finiteness test:
+    ints are finite by definition, and converting an oversized JSON
+    integer to float would raise OverflowError.
+    """
+    if isinstance(iat, bool) or (
+        isinstance(iat, float) and not math.isfinite(iat)
+    ):
+        return False
+    return abs(now - iat) <= PROOF_WINDOW_SECONDS
+
+
 def _freshness_reason(payload: dict, now: float, replay: dict) -> str | None:
     """Freshness + replay claims: a proof is single-use and short-lived."""
     iat = payload.get("iat")
     jti = payload.get("jti")
     if not isinstance(iat, (int, float)) or not isinstance(jti, str):
         return "malformed claims"
-    if abs(now - iat) > PROOF_WINDOW_SECONDS:
+    if not _fresh_iat(iat, now):
         return "stale proof"
     if jti in replay:
         return "replayed proof"
@@ -293,7 +312,12 @@ def _record_if_authentic(
     signing_input = proof.rsplit(".", 1)[0].encode()
     if not verify_signature(header["jwk"], signing_input, signature):
         return "bad signature"
-    replay[payload["jti"]] = now + PROOF_WINDOW_SECONDS
+    # Key the entry off the last moment the proof can still pass the
+    # freshness check — iat + window for a future-dated proof (the
+    # clock-skew tolerance allows iat ahead of now), which is later
+    # than now + window; keying off verification time let such a proof
+    # re-verify once its entry expired early (#3272).
+    replay[payload["jti"]] = max(now, payload["iat"]) + PROOF_WINDOW_SECONDS
     purge_replay(replay, now)
     return None
 
