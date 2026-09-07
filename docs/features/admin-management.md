@@ -23,18 +23,10 @@ The Users tab lists all registered accounts. From here you can:
 
 [![Admin groups panel](../assets/admin/groups.png)](../assets/admin/groups.png)
 
-The Groups tab lets you organize users into named groups. Groups are
-used for sharing workspaces and controlling access via
-[ACL rules](authorization.md).
-
-- **Create groups** — give the group a name and optional description.
-- **Manage members** — add or remove users from a group.
-- **Delete groups** — removing a group also removes any ACL entries
-  that reference it.
-
-The `admins` group is created automatically on first startup and
-grants access to this Admin page. The default user is added to it
-automatically.
+The Groups tab lets you organize users into named groups — create
+groups, manage members, and delete groups (which also removes any ACL
+entries referencing them). See [Authorization — Groups](authorization.md#groups)
+for the built-in groups and how groups interact with the ACL system.
 
 ## Server
 

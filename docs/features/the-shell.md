@@ -34,28 +34,11 @@ fighting permissions. Collaboration just works.
 
 ### Home directory layouts
 
-Even though everyone shares the same UNIX user, a workspace controls
-who sees whose files via its **home layout** — a setting chosen when
-the workspace is created (see
-[Workspaces](workspaces.md#home-directory-layout)):
-
-- **Shared home** (the default) — every member's shell, exec session,
-  and the service share the single `/home/klangk` as `$HOME`, with one
-  `.bash_history` and one set of dotfiles. What one member installs or
-  configures (`.profile`, `~/.local/bin`, nix profiles) is immediately
-  on every member's `PATH` — the point of the default.
-- **Per-handle home** — each member gets a private `$HOME` at
-  `/home/<handle>/` — a symlink to `.users/<user-id>/` on the
-  bind-mounted home volume. This means:
-  - Your dotfiles (`.bashrc`, `.gitconfig`, `.vimrc`) are yours alone
-  - Your bash history is separate from other members'
-  - Your AI agent config (`.pi/agent/`, `.claude/`) is per-user
-
-Under both layouts your project files live directly in your home
-(`~`) — there is no separate shared project directory — and `/home/klangk`
-(the shared home) is created and populated from the image skeleton
-when the container is first created, on every start path (including
-[auto-start](auto-start.md) on server boot).
+A workspace chooses between a **shared home** (`/home/klangk` for
+everyone) and a **per-handle home** (each member gets a private
+`/home/<handle>/`). See
+[Workspaces — Home directory layout](workspaces.md#home-directory-layout)
+for the full explanation, ceiling behavior, and CLI flags.
 
 The [service command](service-command.md) session always runs with
 `HOME=/home/klangk` — under both layouts — so environment setup that

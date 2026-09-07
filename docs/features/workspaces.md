@@ -86,26 +86,10 @@ open terminals keep their layout until they end.
 ## Auto-start
 
 Workspaces with **auto-start** enabled start their containers
-automatically when the Klangk server starts. This is useful for
-service workspaces where a long-running process (configured via
-[Service Command](service-command.md)) should be available
-immediately — without waiting for a user to connect.
-
-Auto-start requires the server to have `KLANGKD_ALLOW_AUTOSTART`
-set to `1`/`true`/`yes`. When disabled (the default), the
-auto-start option is hidden in the UI, CLI, and API.
-
-Toggle auto-start from the workspace **Settings** tab, or via the
-CLI:
-
-```bash
-klangk edit my-project --auto-start
-klangk edit my-project --no-auto-start
-```
-
-When the server starts, it starts containers for all auto-start
-workspaces. If the workspace has a service command, the command
-is already running by the time any user connects.
+automatically when the Klangk server starts — useful for service
+workspaces that should be available before any user connects. See
+[Auto-Start](auto-start.md) for the full details, server
+configuration, and CLI usage.
 
 ## What's inside a workspace
 

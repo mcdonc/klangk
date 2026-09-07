@@ -61,15 +61,11 @@ docker run -d \
 Open <http://localhost:8997> and log in with the `default_user` /
 `default_password` you set above.
 
-> A Docker container publishes its port (`-p 8997:8997`), making it
-> network-reachable, so the quick-start config sets
-> `auth_modes: password` — that is the supported configuration for
-> the image. The default mode is `none` (no-login, loopback-only), which is
-> **unsupported with the published Docker host image**: it is meant for
-> local dev on your own machine, where the port is not published, and it
-> freely issues an admin token with no password. For the no-login
-> single-user experience, run klangk locally via devenv (below) instead.
-> See [Auth Modes](features/auth-modes.md).
+> The quick-start config sets `auth_modes: password` — that is the
+> supported configuration for the Docker image. The default `none` mode
+> is loopback-only and **unsupported with the published image**. For a
+> no-login single-user experience, run klangk locally via devenv
+> (below). See [Auth Modes](features/auth-modes.md).
 
 ## Run Using devenv
 
