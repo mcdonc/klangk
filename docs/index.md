@@ -30,6 +30,10 @@ run agents, and tear it down when you're done.
 - Run any container image — bring your own toolchains
 - [Hosted apps](features/hosted-apps.md) map container ports to
   public URLs for web dev previews
+- [Egress filtering](features/egress-filtering.md) with interactive
+  consent: a workspace starts network-closed and each new outbound
+  destination is held for a human allow/deny decision; every blocked
+  or off-list destination is recorded for audit
 
 ### AI Agent Integration
 
@@ -66,6 +70,12 @@ connect from your local terminal with
 - [Per-resource ACLs](features/authorization.md)
 - [OIDC single sign-on](reference/oidc.md) (Google, GitHub, etc.)
 - [Email invitations](features/invitations.md)
+- [Audit log](features/admin-management.md) of security-relevant
+  actions, with email/webhook notifications that alert when an
+  audit-trail write fails
+- [Health monitoring](features/health-check.md): workspace health
+  checks, and `klangk monitor` event streaming that can run a command
+  when a service fails
 
 ## Architecture
 
