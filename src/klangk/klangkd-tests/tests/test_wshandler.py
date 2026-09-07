@@ -7599,6 +7599,23 @@ class TestTerminalWindowHandlers:
             await conn.handle_terminal_new_window({"name": "dup"})
         sent = sock.send_json.call_args[0][0]
         assert sent["type"] == "error"
+        # The validator's wording reaches the client (#3279).
+        assert sent["message"] == "already exists"
+
+    async def test_new_window_terminal_error(self):
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock, perms=("code-in-isolation",))
+        conn.container_id = "cid"
+        conn._user_home = "/home/alice"
+        with patch.object(
+            _mock_term,
+            "new_window",
+            side_effect=RuntimeError("boom"),
+        ):
+            await conn.handle_terminal_new_window({"name": "build"})
+        sent = sock.send_json.call_args[0][0]
+        assert sent["type"] == "error"
+        assert sent["message"] == "Failed to create window"
 
     async def test_select_window_by_index(self):
         sock = _mock_sock()
@@ -7930,6 +7947,25 @@ class TestTerminalWindowHandlers:
             )
         sent = sock.send_json.call_args[0][0]
         assert sent["type"] == "error"
+        # The validator's wording reaches the client (#3279).
+        assert sent["message"] == "already exists"
+
+    async def test_rename_window_terminal_error(self):
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock, perms=("code-in-isolation",))
+        conn.container_id = "cid"
+        conn._user_home = "/home/alice"
+        with patch.object(
+            _mock_term,
+            "rename_window",
+            side_effect=RuntimeError("boom"),
+        ):
+            await conn.handle_terminal_rename_window(
+                {"index": 0, "name": "build"}
+            )
+        sent = sock.send_json.call_args[0][0]
+        assert sent["type"] == "error"
+        assert sent["message"] == "Failed to rename window"
 
     async def test_rename_shared_window_broadcasts_shared_terminals(
         self, user, app_state

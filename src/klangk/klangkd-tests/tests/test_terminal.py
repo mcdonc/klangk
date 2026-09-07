@@ -946,6 +946,12 @@ class TestValidateWindowName:
             with pytest.raises(ValueError, match="must start with a letter"):
                 validate_window_name(name)
 
+    def test_rejects_trailing_newline(self):
+        # Python re's `$` also matches before a trailing newline; \Z does
+        # not (mirrors the strict-$ semantics of #3018's volume rule).
+        with pytest.raises(ValueError, match="only contain"):
+            validate_window_name("build\n")
+
 
 class TestNewWindow:
     async def test_creates_window_auto_name(self):

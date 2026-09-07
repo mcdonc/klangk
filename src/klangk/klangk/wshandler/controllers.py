@@ -1157,6 +1157,21 @@ class TerminalController:
             self._conn.user["id"], ws_id, windows
         )
 
+    def _send_window_error(self, e: Exception, action: str) -> None:
+        """Send the right error frame for a failed window operation.
+
+        A ``ValueError`` is the name validator refusing the input — send
+        its wording so the client sees the rule (#3279). Anything else is
+        an infrastructure failure: log the traceback and send the
+        generic text (*action* is "create", "rename", or "close").
+        """
+        if isinstance(e, ValueError):
+            logger.info("Window name rejected: %s", e)
+            send_error(self._conn.sock, str(e))
+        else:
+            logger.exception("Failed to %s window: %s", action, e)
+            send_error(self._conn.sock, f"Failed to {action} window")
+
     async def new_window(self, msg: dict) -> None:
         t0 = time.monotonic()
         if not await self._own_windows_allowed():
@@ -1178,8 +1193,7 @@ class TerminalController:
             self.notify_user_terminal_windows(windows)
             self._notify_terminals_changed(windows)
         except Exception as e:
-            logger.exception("Failed to create window: %s", e)
-            send_error(self._conn.sock, "Failed to create window")
+            self._send_window_error(e, "create")
 
     async def select_window(self, msg: dict) -> None:
         t0 = time.monotonic()
@@ -1239,8 +1253,7 @@ class TerminalController:
             self.notify_user_terminal_windows(windows)
             self._notify_terminals_changed(windows)
         except Exception as e:
-            logger.exception("Failed to close window: %s", e)
-            send_error(self._conn.sock, "Failed to close window")
+            self._send_window_error(e, "close")
 
     async def rename_window(self, msg: dict) -> None:
         if not await self._own_windows_allowed():
@@ -1272,8 +1285,7 @@ class TerminalController:
             self.notify_user_terminal_windows(windows)
             self._notify_terminals_changed(windows)
         except Exception as e:
-            logger.exception("Failed to rename window: %s", e)
-            send_error(self._conn.sock, "Failed to rename window")
+            self._send_window_error(e, "rename")
 
     async def list_windows(self) -> None:
         if not await self._own_windows_allowed():

@@ -38,8 +38,10 @@ CONTAINER_USER = "klangk"
 # #3018): tmux has no "--" separator for command arguments, so a
 # leading hyphen in a name passed positionally to ``rename-window`` is
 # parsed as a flag (``unknown flag -dev``). Window names are display-only
-# (#2192), so no other start rule is needed.
-_SAFE_WINDOW_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 _.\-]*$")
+# (#2192), so no other start rule is needed. Anchored with \Z (not
+# Python re's `$`, which also matches before a trailing newline) to
+# mirror the pydantic-core strict-$ semantics of VOLUME_NAME_PATTERN.
+_SAFE_WINDOW_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 _.\-]*\Z")
 _MAX_WINDOW_NAME_LEN = 64
 
 
