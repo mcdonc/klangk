@@ -72,6 +72,54 @@ class _ThrowingSink extends Fake implements WebSocketSink {
   Future close([int? code, String? reason]) async {}
 }
 
+/// A channel whose handshake never opens (#3289): `ready` fails the way a
+/// pre-accept HTTP 403 refusal does — an exception, no close frame (a close
+/// code can be injected for the defensive auth classification).
+class _RefusedChannel extends Fake implements WebSocketChannel {
+  _RefusedChannel({this.closeCode});
+
+  @override
+  final int? closeCode;
+
+  @override
+  Future<void> get ready => Future.error(WebSocketChannelException('refused'));
+}
+
+/// A channel whose handshake resolves only when the test drives it
+/// (#3289 review): lets a test dispose the service while connect() is
+/// parked on `ready` — the navigate-away-mid-handshake race.
+class _GatedChannel extends Fake implements WebSocketChannel {
+  final _ready = Completer<void>();
+  final closes = <(int?, String?)>[];
+
+  @override
+  Stream<dynamic> get stream => const Stream.empty();
+
+  @override
+  WebSocketSink get sink => _GatedSink(closes);
+
+  @override
+  int? get closeCode => null;
+
+  @override
+  Future<void> get ready => _ready.future;
+
+  void acceptHandshake() => _ready.complete();
+  void refuseHandshake() =>
+      _ready.completeError(WebSocketChannelException('refused'));
+}
+
+class _GatedSink extends Fake implements WebSocketSink {
+  _GatedSink(this.closes);
+  final List<(int?, String?)> closes;
+
+  @override
+  void add(dynamic data) {}
+
+  @override
+  Future close([int? code, String? reason]) async => closes.add((code, reason));
+}
+
 Map<String, dynamic> _request({
   String id = 'r1',
   String host = 'example.com',
@@ -762,6 +810,152 @@ void main() {
       expect(svc.flashMessage, contains('verdict send failed'));
       svc.dispose();
     });
+
+    test(
+      'a refused handshake never reports connected and surfaces refused (#3289)',
+      () async {
+        final refused = _RefusedChannel();
+        ConsentDeciderService.testChannelFactory = (_, __) => refused;
+        final svc = ConsentDeciderService(
+          workspaceId: 'ws',
+          token: 't',
+          // Long delay so the scheduled reconnect Timer never fires.
+          reconnectDelays: const [Duration(minutes: 5)],
+        );
+        await svc.connect();
+        // The handshake failed: the service must NOT claim connected (the
+        // old code flipped it before awaiting ready), and the refusal is a
+        // distinct state from both an auth failure and a plain drop.
+        expect(svc.connected, isFalse);
+        expect(svc.refused, isTrue);
+        expect(svc.authFailed, isFalse);
+        // The reconnect path stayed intact: a later successful handshake
+        // connects and clears the refused flag.
+        final good = _FakeChannel();
+        ConsentDeciderService.testChannelFactory = (_, __) => good;
+        await svc.connect();
+        expect(svc.connected, isTrue);
+        expect(svc.refused, isFalse);
+        svc.dispose();
+      },
+    );
+
+    test(
+      'a verdict during the refused window flashes disconnected (#3289)',
+      () async {
+        ConsentDeciderService.testChannelFactory = (_, __) => _RefusedChannel();
+        final svc = ConsentDeciderService(
+          workspaceId: 'ws',
+          token: 't',
+          reconnectDelays: const [Duration(minutes: 5)],
+        );
+        await svc.connect(); // refused — never connected
+        svc.sendVerdict('r1', 'allowed', 'once');
+        // Pre-ready verdicts hit the same disconnected flash as post-drop
+        // ones instead of being written to a channel that never opened.
+        expect(svc.flashMessage, contains('disconnected'));
+        svc.dispose();
+      },
+    );
+
+    test(
+      'a handshake failure carrying an auth close code classifies as auth',
+      () async {
+        // Some platforms surface a close code alongside the ready failure;
+        // the defensive classification (mirroring WsClient) must take the
+        // auth path: authFailed, no refused flag, no reconnect loop.
+        ConsentDeciderService.testChannelFactory =
+            (_, __) => _RefusedChannel(closeCode: 4001);
+        final svc = ConsentDeciderService(
+          workspaceId: 'ws',
+          token: 't',
+          reconnectDelays: const [Duration(minutes: 5)],
+        );
+        await svc.connect();
+        expect(svc.authFailed, isTrue);
+        expect(svc.refused, isFalse);
+        expect(svc.connected, isFalse);
+        svc.dispose();
+      },
+    );
+
+    test(
+      'the auth classification clears a prior refused flag (#3289 review)',
+      () async {
+        // refused first (no close code), then a ready failure carrying an
+        // auth close code: authFailed wins and refused must not linger —
+        // the banner/header must not split on which condition won.
+        ConsentDeciderService.testChannelFactory = (_, __) => _RefusedChannel();
+        final svc = ConsentDeciderService(
+          workspaceId: 'ws',
+          token: 't',
+          reconnectDelays: const [Duration(minutes: 5)],
+        );
+        await svc.connect();
+        expect(svc.refused, isTrue);
+        ConsentDeciderService.testChannelFactory =
+            (_, __) => _RefusedChannel(closeCode: 4001);
+        await svc.connect();
+        expect(svc.authFailed, isTrue);
+        expect(svc.refused, isFalse);
+        svc.dispose();
+      },
+    );
+
+    test(
+      'a refused handshake keeps the reconnect loop retrying (#3289)',
+      () async {
+        var opens = 0;
+        ConsentDeciderService.testChannelFactory = (_, __) {
+          opens += 1;
+          return _RefusedChannel();
+        };
+        final svc = ConsentDeciderService(
+          workspaceId: 'ws',
+          token: 't',
+          reconnectDelays: const [Duration(milliseconds: 10)],
+        );
+        await svc.connect();
+        expect(opens, 1);
+        // connect()'s catch must have scheduled the reconnect (the rethrow
+        // path): the backoff timer fires and re-attempts the still-refused
+        // handshake instead of going dormant after one refusal.
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        expect(opens, greaterThan(1));
+        svc.dispose();
+      },
+    );
+
+    test(
+      'a handshake resolving after dispose adopts no channel (#3289)',
+      () async {
+        final ch = _GatedChannel();
+        ConsentDeciderService.testChannelFactory = (_, __) => ch;
+        final svc = ConsentDeciderService(workspaceId: 'ws', token: 't');
+        final connecting = svc.connect(); // parked on ch.ready
+        svc.dispose(); // navigate away mid-handshake
+        ch.acceptHandshake(); // ready succeeds — into a disposed service
+        await connecting;
+        // The channel was closed, never adopted: no connected claim, no ping
+        // timer, no stream sub, and no notify on the disposed notifier.
+        expect(svc.connected, isFalse);
+        expect(ch.closes, [(1000, 'dispose')]);
+      },
+    );
+
+    test(
+      'a handshake failing after dispose stays silent (#3289)',
+      () async {
+        final ch = _GatedChannel();
+        ConsentDeciderService.testChannelFactory = (_, __) => ch;
+        final svc = ConsentDeciderService(workspaceId: 'ws', token: 't');
+        final connecting = svc.connect();
+        svc.dispose();
+        ch.refuseHandshake();
+        await connecting; // no throw, no post-dispose notify
+        expect(svc.refused, isFalse);
+      },
+    );
 
     test(
       'auth-fail close (4001) sets authFailed and stops reconnecting',

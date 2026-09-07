@@ -44,6 +44,16 @@ class _FakeSink extends Fake implements WebSocketSink {
   Future close([int? code, String? reason]) async {}
 }
 
+/// A channel whose handshake never opens (#3289): `ready` fails the way a
+/// pre-accept HTTP 403 refusal does.
+class _RefusedChannel extends Fake implements WebSocketChannel {
+  @override
+  int? get closeCode => null;
+
+  @override
+  Future<void> get ready => Future.error(WebSocketChannelException('refused'));
+}
+
 Map<String, dynamic> _ruleJson({
   String id = 'v1',
   String host = 'a.io',
@@ -666,6 +676,47 @@ void main() {
       await tester.pump();
       await tester.pump(); // flush onDone -> notifyListeners -> rebuild
       expect(find.textContaining('reconnecting'), findsOneWidget);
+      svc.dispose();
+    });
+
+    testWidgets('header shows refused when the handshake is refused (#3289)',
+        (tester) async {
+      ConsentDeciderService.testChannelFactory = (_, __) => _RefusedChannel();
+      final svc = ConsentDeciderService(
+        workspaceId: 'ws',
+        token: 't',
+        // Long delay so the reconnect Timer never fires during the test
+        // (dispose cancels it regardless).
+        reconnectDelays: const [Duration(minutes: 5)],
+      );
+      svc.connect();
+      await tester.pumpWidget(_wrap(ConsentRulesPanel(service: svc)));
+      await tester.pump();
+      await tester.pump(); // flush the refused notify -> rebuild
+      expect(find.textContaining('refused'), findsOneWidget);
+      expect(find.textContaining('reconnecting'), findsNothing);
+      svc.dispose();
+    });
+
+    testWidgets(
+        'header shows session expired when a live socket auth-closes '
+        '(#3289 review)', (tester) async {
+      final ch = _FakeChannel();
+      ConsentDeciderService.testChannelFactory = (_, __) => ch;
+      final svc = ConsentDeciderService(
+        workspaceId: 'ws',
+        token: 't',
+        reconnectDelays: const [Duration(minutes: 5)],
+      );
+      svc.connect();
+      await tester.pumpWidget(_wrap(ConsentRulesPanel(service: svc)));
+      ch.serverSend(_rulesFrame(allowList: ['a.io']));
+      await tester.pump();
+      ch.serverClose(4001); // live-socket auth close -> authFailed, no retry
+      await tester.pump();
+      await tester.pump(); // flush onDone -> notifyListeners -> rebuild
+      expect(find.textContaining('session expired'), findsOneWidget);
+      expect(find.textContaining('reconnecting'), findsNothing);
       svc.dispose();
     });
 

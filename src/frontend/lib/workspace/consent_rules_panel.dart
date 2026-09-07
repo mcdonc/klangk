@@ -243,7 +243,18 @@ class _Header extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final conn = service.connected ? 'connected' : 'reconnecting';
+    // #3289: a refused handshake is its own state — the server declined the
+    // connect (authz/static-mode gate), which "reconnecting" would misreport.
+    // authFailed takes precedence over refused, mirroring the banner: the
+    // re-login path is terminal, and a live-socket 4001 close (session
+    // eviction) must not read as an endless "reconnecting".
+    final conn = service.authFailed
+        ? 'session expired'
+        : service.refused
+            ? 'refused'
+            : service.connected
+                ? 'connected'
+                : 'reconnecting';
     final held = service.pending.length;
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),

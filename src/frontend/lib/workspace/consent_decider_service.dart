@@ -452,6 +452,17 @@ class ConsentDeciderService extends ChangeNotifier {
   bool _authFailed = false;
   bool get authFailed => _authFailed;
 
+  /// Whether the last connect attempt failed at the WebSocket handshake
+  /// itself (#3289) — the server refused the upgrade (authz gate, static
+  /// egress mode, expired session) or the endpoint was unreachable. A
+  /// pre-accept refusal is answered with a bare HTTP 403, so no WS close
+  /// frame reaches the client and [_onClosed]'s close-code classification
+  /// can never see it; this flag is the surfaced state instead of the
+  /// connected/disconnected flap. The reconnect loop keeps retrying, and
+  /// the next successful handshake clears it.
+  bool _refused = false;
+  bool get refused => _refused;
+
   /// Transient status flash (server `error` frame / verdict send failure /
   /// verdict attempted while disconnected), shown by the banner until
   /// [_flashUntil]. Mirrors the TUI's status-line flash (cli/tui/consent.py
@@ -567,6 +578,48 @@ class ConsentDeciderService extends ChangeNotifier {
       ch = WebSocketChannel.connect(Uri.parse(url), protocols: protocols);
       // coverage:ignore-end
     }
+    // #3289: connected state flips only after the handshake resolves
+    // (mirrors WsClient._connectWs). A pre-accept refusal arrives as a bare
+    // HTTP 403 — `ready` throws, no close frame — and was previously
+    // invisible: the service reported itself live, reset the backoff, and
+    // wrote verdicts to a channel that never opened.
+    try {
+      await ch.ready;
+    } catch (e) {
+      debugPrint('[ConsentDecider] handshake failed: $e');
+      // #3289 review: dispose() may have completed while we were parked on
+      // the handshake's await -- stay silent (no notify on a disposed
+      // notifier, no reconnect scheduling for a dead service).
+      if (_stopped) return;
+      // A failed handshake normally carries no close code (the server's
+      // pre-accept refusals never become a close frame), but classify
+      // defensively in case the platform surfaces one — mirrors WsClient.
+      // A prior attempt's refused flag must not survive into the auth
+      // state (the banner/header would split on which condition won).
+      if (_isAuthCloseCode(ch.closeCode)) {
+        _authFailed = true;
+        _refused = false;
+        notifyListeners();
+        return; // stop reconnecting; the app surfaces re-login
+      }
+      // Refused/unreachable handshake: a distinct state from a
+      // post-connect drop, so the UI can say the connection was refused
+      // instead of flapping "reconnecting". connect()'s catch schedules
+      // the normal backoff reconnect; the next handshake that completes
+      // clears this.
+      _refused = true;
+      notifyListeners();
+      rethrow;
+    }
+    // #3289 review: the same dispose-during-await race on the success side
+    // -- never adopt the channel into a disposed service. Its ping timer
+    // and stream subscription would outlive dispose(), keeping a phantom
+    // decider registered server-side; close the orphaned channel instead.
+    if (_stopped) {
+      ch.sink.close(1000, 'dispose');
+      return;
+    }
+    _refused = false;
     _channel = ch;
     // The server's snapshot (sent immediately on connect) is authoritative
     // for currently-held requests, so rows that resolved while we were
@@ -683,8 +736,7 @@ class ConsentDeciderService extends ChangeNotifier {
       return; // a stale callback from a prior socket
     _stopPing();
     _connected = false;
-    final code = ch.closeCode;
-    if (code == 4001 || code == 4002 || code == 4004) {
+    if (_isAuthCloseCode(ch.closeCode)) {
       _authFailed = true;
       notifyListeners();
       return; // stop reconnecting; the app surfaces re-login
@@ -1022,3 +1074,10 @@ class ConsentDeciderService extends ChangeNotifier {
 }
 
 DateTime _wallClock() => DateTime.now();
+
+/// Whether a WS close code is an auth failure (invalid/expired token, or the
+/// must-change-password gate, #3172) — the caller stops reconnecting and the
+/// app surfaces re-login. Duplicated from `WsClient.isAuthCloseCode` per the
+/// client isolation boundary this service shares with the TUI.
+bool _isAuthCloseCode(int? code) =>
+    code == 4001 || code == 4002 || code == 4004;
