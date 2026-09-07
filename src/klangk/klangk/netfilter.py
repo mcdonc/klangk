@@ -55,6 +55,16 @@ def _has_no_whitespace(spec: str) -> bool:
     return not any(ch.isspace() for ch in spec)
 
 
+def _is_port_digits(s: str) -> bool:
+    """True for a run of 1–5 ASCII digits — the port grammar shared by the
+    host regex (``[0-9]{1,5}``) and the CIDR suffix. ``str.isdigit()`` alone
+    also admits Unicode digit forms — Arabic-Indic ٤٤٣ parses via ``int()``
+    but is rejected by iptables, and superscript ² raises from ``int()`` —
+    and an unbounded digit run would hit ``int()``'s conversion limit
+    (#3274)."""
+    return bool(s) and s.isascii() and s.isdigit() and len(s) <= 5
+
+
 def _valid_host_port(host: str) -> bool:
     """A ``host[:port]`` spec against the host grammar + port range."""
     return bool(_DOMAIN_RE.match(host)) and _valid_spec_port(host)
@@ -97,19 +107,20 @@ def _valid_spec_port(spec: str) -> bool:
     if ":" not in spec:
         return True
     port_str = spec.rsplit(":", 1)[1]
-    if port_str and port_str.isdigit() and int(port_str) > 65535:
+    if _is_port_digits(port_str) and int(port_str) > 65535:
         return False
     return True
 
 
 def _valid_cidr_port_suffix(spec: str) -> tuple[str, str | None] | None:
     """(cidr, port) with the port split off; ``None`` when the port suffix
-    is malformed (the grammar matches the host spec: 1–65535, digits
-    only)."""
+    is malformed (the grammar matches the host spec: 1–65535, ASCII digits
+    only — ``isdigit()`` alone also admits Unicode digit forms that iptables
+    rejects, #3274)."""
     if ":" not in spec:
         return spec, None
     cidr, port = spec.rsplit(":", 1)
-    if not port or not port.isdigit() or int(port) > 65535:
+    if not _is_port_digits(port) or int(port) > 65535:
         return None
     return cidr, port
 

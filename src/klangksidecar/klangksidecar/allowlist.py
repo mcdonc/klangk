@@ -32,11 +32,13 @@ SUBDOMAINS = "subdomains"
 def _split_spec_port(spec: str) -> tuple[str, int | None]:
     """Split a trailing ``:port`` off a spec -> ``(host_part, port)``; the
     port is None when absent or not numeric (then the whole spec is the host,
-    e.g. a bare IPv6 literal fragment)."""
+    e.g. a bare IPv6 literal fragment). Only 1–5 ASCII digits parse as a
+    port (#3274) — a Unicode-digit suffix stays part of the host and an
+    over-long digit run can never reach ``int()``'s conversion limit."""
     if ":" not in spec:
         return spec, None
     host_part, port_part = spec.rsplit(":", 1)
-    if port_part.isdigit():
+    if port_part.isascii() and port_part.isdigit() and len(port_part) <= 5:
         return host_part, int(port_part)
     return spec, None
 

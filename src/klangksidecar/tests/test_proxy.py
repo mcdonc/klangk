@@ -113,6 +113,22 @@ class TestParseSpecs:
         monkeypatch.delenv("KLANGKNETWORK_EGRESS_ALLOW", raising=False)
         assert proxy.parse_specs() == []
 
+    def test_unicode_digit_port_not_a_port(self, proxy, monkeypatch):
+        # #3274: only ASCII digits parse as a port. A Unicode-digit suffix
+        # (Arabic-Indic ٤٤٣) stays part of the host — like any non-numeric
+        # suffix — so int() can never choke on a digit form like ². Backend
+        # validation rejects such specs at the API boundary; this gate keeps
+        # the sidecar's parse symmetric with klangk.netfilter.
+        monkeypatch.setenv("KLANGKNETWORK_EGRESS_ALLOW", "example.com:٤٤٣")
+        assert proxy.parse_specs() == [("example.com:٤٤٣", None, proxy.EXACT)]
+
+    def test_overlong_digit_run_not_a_port(self, proxy, monkeypatch):
+        # #3274 review: a port is 1–5 digits, so an over-long digit run
+        # stays part of the host — int()'s 4300-digit conversion limit can
+        # never raise from the split.
+        monkeypatch.setenv("KLANGKNETWORK_EGRESS_ALLOW", "example.com:" + "1" * 6)
+        assert proxy.parse_specs() == [("example.com:" + "1" * 6, None, proxy.EXACT)]
+
 
 class TestPortsFor:
     """``ports_for`` is the allow gate (#2377 nginx-style scopes). Returns
