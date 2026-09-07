@@ -3091,6 +3091,57 @@ class TestMainEntryCallback2910:
         assert len(called) == 17
         mock_reseed.assert_awaited_once()
 
+    async def test_apply_reloaded_settings_logging_carries_live_instance_id(
+        self, app_state, tmp_path
+    ):
+        """The reload seam itself (not a logger-test simulation) stamps the
+        JSON log field with the process's live Util id, even when the
+        reloaded settings name a different (refused, non-reloadable)
+        data_dir (#3330, second fresh-eyes review)."""
+        import logging
+
+        from klangk.logger import JsonFormatter
+
+        app_state = _make_app_state()
+        lc = app_state.state.lifecycle
+        # Startup resolves the id before SIGHUP registration; pre-seed
+        # Util's process-lifetime cache the same way.
+        app_state.state.util._instance_id = "live-from-util"
+        phantom = tmp_path / "phantom-data"
+        new_settings = make_settings(
+            {
+                "KLANGKD_DATA_DIR": str(phantom),
+                "KLANGKD_DEFAULT_PASSWORD": "test",
+                "KLANGKD_LOG_FORMAT": "json",
+            }
+        )
+        root = logging.getLogger()
+        saved_handlers = list(root.handlers)
+        try:
+            with patch.object(
+                lc, "apply_pending_reseed", new_callable=AsyncMock
+            ):
+                await lc.apply_reloaded_settings(new_settings)
+            (fmt,) = [
+                h.formatter
+                for h in root.handlers
+                if getattr(h, "_klangk_log_handler", False)
+            ]
+            assert isinstance(fmt, JsonFormatter)
+            # The live identity, not the refused config's dir.
+            assert fmt.instance_id == "live-from-util"
+            assert app_state.state.settings is new_settings
+        finally:
+            for h in list(root.handlers):
+                if getattr(h, "_klangk_log_handler", False) or getattr(
+                    h, "_klangk_log_file_handler", False
+                ):
+                    root.removeHandler(h)
+                    h.close()
+            root.handlers = saved_handlers
+        # No instance-id was created in the dir the process doesn't use.
+        assert not (phantom / "instance-id").exists()
+
     async def test_apply_reloaded_settings_calls_caddy_reload(self, app_state):
         """When the proxy watchdog is the Caddy engine, apply_reloaded_settings
         calls its apply_pending_reload (#1559: a settings change is a fresh

@@ -13,6 +13,7 @@ Logging is configured by two module-level functions in :mod:`klangk.logger`
 import json
 import logging
 import logging.handlers
+import socket
 
 import pytest
 
@@ -63,6 +64,7 @@ def _make_settings(
     max_bytes=None,
     rotate=None,
     backup_count=None,
+    data_dir=None,
 ):
     env = {}
     if level is not None:
@@ -77,6 +79,8 @@ def _make_settings(
         env["KLANGKD_LOG_FILE_ROTATE"] = rotate
     if backup_count is not None:
         env["KLANGKD_LOG_FILE_BACKUP_COUNT"] = backup_count
+    if data_dir is not None:
+        env["KLANGKD_DATA_DIR"] = str(data_dir)
     return make_settings(env)
 
 
@@ -146,10 +150,18 @@ class TestJsonFormatter:
             None,
         )
         payload = self._format_record(record)
-        assert set(payload) == {"timestamp", "level", "logger", "message"}
+        # No instance id handed in -> host rides, instance omitted (#3330).
+        assert set(payload) == {
+            "timestamp",
+            "level",
+            "logger",
+            "message",
+            "host",
+        }
         assert payload["level"] == "WARNING"
         assert payload["logger"] == "klangk.test"
         assert payload["message"] == "watch out"
+        assert payload["host"] == socket.gethostname()
 
     def test_timestamp_is_iso8601_utc(self):
         record = logging.LogRecord(
@@ -252,6 +264,228 @@ class TestJsonFormatter:
             fmt = logger_mod.JsonFormatter()
             fmt.formatException = lambda exc_info: 1 / 0
             assert fmt.safe_exception(record) == repr(record.exc_info[1])
+
+
+class TestHostInstanceFields:
+    """``host`` + ``instance`` on JSON records (#3330).
+
+    A SIEM aggregating lines from several klangkd deployments needs to
+    attribute each record: ``host`` is the emitting machine's hostname,
+    ``instance`` the per-data-dir instance id — the same file-backed
+    identity ``Util.resolve_instance_id`` owns, so log stream and audit
+    trail (app.start/app.stop ``target_id``, #3329) correlate.
+    """
+
+    def _record(self, msg="m"):
+        return logging.LogRecord(
+            "klangk.test", logging.INFO, __file__, 1, msg, (), None
+        )
+
+    def test_host_on_every_json_record(self):
+        payload = json.loads(logger_mod.JsonFormatter().format(self._record()))
+        assert payload["host"] == socket.gethostname()
+
+    def test_instance_omitted_without_id(self):
+        # Pre-settings formatters (and a data dir that cannot be resolved)
+        # degrade: no id, so the field is absent — the line stays parseable.
+        assert "instance" not in json.loads(
+            logger_mod.JsonFormatter().format(self._record())
+        )
+
+    def test_instance_rides_the_formatter(self):
+        payload = json.loads(
+            logger_mod.JsonFormatter("iid-1").format(self._record())
+        )
+        assert payload["instance"] == "iid-1"
+
+    def test_instance_filename_matches_util_constant(self):
+        # Direct pin: logger and Util must resolve the same file — a drift
+        # in either constant would silently fork the identity (the
+        # end-to-end agreement test catches it transitively; this makes
+        # the pin explicit).
+        from klangk.util import Util
+
+        assert logger_mod.INSTANCE_ID_FILENAME == Util.INSTANCE_ID_FILENAME
+
+    def test_hostname_resolution_degrades_on_oserror(self, monkeypatch):
+        def boom():
+            raise OSError("no hostname")
+
+        monkeypatch.setattr(logger_mod.socket, "gethostname", boom)
+        assert logger_mod.resolve_hostname() == ""
+
+    def test_resolve_instance_reads_existing_file(self, tmp_path):
+        (tmp_path / "instance-id").write_text("  abc  \n")
+        assert logger_mod.resolve_instance_id(str(tmp_path)) == "abc"
+
+    def test_resolve_instance_creates_when_absent(self, tmp_path):
+        data = tmp_path / "fresh"
+        resolved = logger_mod.resolve_instance_id(str(data))
+        assert (data / "instance-id").read_text() == resolved
+        assert resolved  # a generated uuid, not empty
+
+    def test_resolve_instance_degrades_on_unwritable_dir(self, tmp_path):
+        # A data dir whose parent is a regular file: the mkdir fails and
+        # the resolver degrades to "" instead of raising.
+        blocker = tmp_path / "blocker"
+        blocker.write_text("not a dir")
+        assert logger_mod.resolve_instance_id(str(blocker / "d")) == ""
+
+    def test_resolve_instance_degrades_on_nul_in_data_dir(self):
+        # An embedded NUL raises ValueError (not OSError) from the path
+        # calls — the catch set must cover it (fresh-eyes review #1).
+        assert logger_mod.resolve_instance_id("bad\0dir") == ""
+
+    def test_corrupt_instance_file_regenerates_not_raises(self, tmp_path):
+        # A non-UTF-8 identity file raises UnicodeDecodeError (a ValueError)
+        # from read_text — the reader degrades to None and the resolver
+        # regenerates the file instead of raising into configure
+        # (fresh-eyes review #1; Util's own resolver would raise here).
+        path = tmp_path / "instance-id"
+        path.write_bytes(b"\xff\xfe\x00bad")
+        resolved = logger_mod.resolve_instance_id(str(tmp_path))
+        assert resolved  # a fresh uuid
+        assert path.read_text().strip() == resolved  # rewritten, valid utf-8
+
+    def test_blank_instance_file_is_regenerated(self, tmp_path):
+        # Whitespace-only file: treated as missing, regenerated — the same
+        # semantics Util.resolve_instance_id promises for its file.
+        (tmp_path / "instance-id").write_text("   \n")
+        resolved = logger_mod.resolve_instance_id(str(tmp_path))
+        assert resolved
+        assert (tmp_path / "instance-id").read_text().strip() == resolved
+
+    def test_read_instance_file_oserror_arm(self, tmp_path):
+        # A directory at the instance-id path: the read fails -> None.
+        d = tmp_path / "instance-id"
+        d.mkdir()
+        assert logger_mod.read_instance_file(d) is None
+
+    def test_write_instance_file_oserror_arm(self, tmp_path, monkeypatch):
+        # The atomic replace fails: "" and no file left at the target path.
+        def boom(src, dst):
+            raise OSError("denied")
+
+        monkeypatch.setattr(logger_mod.os, "replace", boom)
+        assert logger_mod.write_instance_file(tmp_path / "instance-id") == ""
+        assert not (tmp_path / "instance-id").exists()
+
+    def test_configure_stamps_console_json_records(
+        self, clean_root, tmp_path, capsys
+    ):
+        data = tmp_path / "d1"
+        data.mkdir()
+        (data / "instance-id").write_text("iid-console")
+        logger_mod.configure(_make_settings(log_format="json", data_dir=data))
+        logging.getLogger("klangk.id.console").info("m")
+        line = capsys.readouterr().err.strip().splitlines()[-1]
+        payload = json.loads(line)
+        assert payload["instance"] == "iid-console"
+        assert payload["host"] == socket.gethostname()
+
+    def test_configure_stamps_file_sink_records(self, clean_root, tmp_path):
+        data = tmp_path / "d2"
+        data.mkdir()
+        (data / "instance-id").write_text("iid-file")
+        target = tmp_path / "k.jsonl"
+        logger_mod.configure(
+            _make_settings(
+                log_format="text", log_file=str(target), data_dir=data
+            )
+        )
+        logging.getLogger("klangk.id.file").info("m")
+        payload = json.loads(target.read_text().strip())
+        assert payload["instance"] == "iid-file"
+        assert payload["host"] == socket.gethostname()
+
+    def test_first_boot_creates_instance_file_and_stamps_it(
+        self, clean_root, tmp_path, capsys
+    ):
+        # build_app runs configure(settings) before the lifespan's
+        # Util.resolve_instance_id(): the logger creates the file, Util
+        # then reads the same value back — agreement from the first line.
+        data = tmp_path / "fresh" / "data"
+        logger_mod.configure(_make_settings(log_format="json", data_dir=data))
+        logging.getLogger("klangk.id.first").info("m")
+        payload = json.loads(capsys.readouterr().err.strip().splitlines()[-1])
+        on_disk = (data / "instance-id").read_text().strip()
+        assert on_disk  # generated uuid, not empty
+        assert payload["instance"] == on_disk
+
+    def test_instance_field_matches_util_resolution(
+        self, clean_root, tmp_path, capsys
+    ):
+        # Criterion #3330: the field equals the id Util resolves — the
+        # audit-event target_id of app lifecycle rows (#3329).
+        import types
+
+        from klangk.util import Util
+
+        data = tmp_path / "d3"
+        settings = _make_settings(log_format="json", data_dir=data)
+        logger_mod.configure(settings)
+        logging.getLogger("klangk.id.util").info("m")
+        payload = json.loads(capsys.readouterr().err.strip().splitlines()[-1])
+        util = Util(
+            types.SimpleNamespace(
+                state=types.SimpleNamespace(settings=settings)
+            )
+        )
+        assert util.resolve_instance_id() == payload["instance"]
+
+    def test_sighup_carries_the_process_live_instance_across_a_data_dir_flip(
+        self, clean_root, tmp_path, capsys
+    ):
+        # data_dir is a non-reloadable setting: a SIGHUP that changes it
+        # draws a requires-restart warning and leaves the DB, pidfile, and
+        # container labels on the old dir. The reload path therefore passes
+        # the process's live Util id into configure (lifecycle), so records
+        # keep the identity everything else in the process uses — not the
+        # refused config's phantom id (fresh-eyes review #2).
+        old_data = tmp_path / "old"
+        new_data = tmp_path / "new"
+        old_data.mkdir()
+        new_data.mkdir()
+        (old_data / "instance-id").write_text("live-iid")
+        (new_data / "instance-id").write_text("phantom-iid")
+        logger_mod.configure(
+            _make_settings(log_format="json", data_dir=old_data)
+        )
+        logging.getLogger("klangk.id.swap").info("before")
+        # The reload seam: new settings naming a different data dir, with
+        # the live instance id handed in (as apply_reloaded_settings does).
+        reloaded = _make_settings(log_format="json", data_dir=new_data)
+        logger_mod.configure(reloaded, "live-iid")
+        logging.getLogger("klangk.id.swap").info("after")
+        lines = [
+            json.loads(x) for x in capsys.readouterr().err.strip().splitlines()
+        ]
+        assert [p["instance"] for p in lines] == ["live-iid", "live-iid"]
+
+    def test_data_dir_change_applies_after_a_process_restart(
+        self, clean_root, tmp_path, capsys
+    ):
+        # A data-dir change takes effect the honest way: the next process
+        # start's build_app resolves from the (then effective) data dir.
+        old_data = tmp_path / "old"
+        new_data = tmp_path / "new"
+        for d in (old_data, new_data):
+            d.mkdir()
+        (old_data / "instance-id").write_text("old-iid")
+        (new_data / "instance-id").write_text("new-iid")
+        logger_mod.configure(
+            _make_settings(log_format="json", data_dir=old_data)
+        )
+        logging.getLogger("klangk.id.restart").info("old process")
+        # Fresh process: plain configure(settings) — no id handed in.
+        logger_mod.configure(
+            _make_settings(log_format="json", data_dir=new_data)
+        )
+        logging.getLogger("klangk.id.restart").info("new process")
+        lines = [
+            json.loads(x) for x in capsys.readouterr().err.strip().splitlines()
+        ]
+        assert [p["instance"] for p in lines] == ["old-iid", "new-iid"]
 
 
 class TestConfigureDefaults:

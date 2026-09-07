@@ -29,7 +29,12 @@ module-level functions (no state object):
   (``KLANGKD_LOG_FILE``). Idempotent, so it is also the
   **SIGHUP reconfigure** path: :func:`klangk.main.Lifecycle.apply_reloaded_settings`
   calls it right after the settings swap (before the subsystem loop, so warnings
-  the loop emits use the new level/format/file).
+  the loop emits use the new level/format/file). ``configure`` also supplies the
+  ``instance`` field of the JSON form (#3330): ``build_app`` resolves it from
+  ``<data_dir>`` (read-or-create), while the SIGHUP path carries the process's
+  live instance id — ``data_dir`` does not actually swap on reload (a change
+  draws a requires-restart warning), so the field keeps matching the audit
+  trail's identity until the next process start.
 
 Both reach the same private :func:`_apply`, which removes any prior
 klangk-tagged handler before adding the new one — so repeated calls (fresh
@@ -49,14 +54,19 @@ import json
 import logging
 import logging.handlers
 import os
+import socket
 import time
+import uuid
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Callable
 
 __all__ = [
     "DEFAULT_BACKUP_COUNT",
     "DEFAULT_FORMAT",
     "DEFAULT_LEVEL",
+    "HOSTNAME",
+    "INSTANCE_ID_FILENAME",
     "JsonFormatter",
     "ROTATE_WHENS",
     "RotationSafeFileHandler",
@@ -68,6 +78,10 @@ __all__ = [
     "level_to_int",
     "make_formatter",
     "next_rotate_boundary",
+    "read_instance_file",
+    "resolve_hostname",
+    "resolve_instance_id",
+    "write_instance_file",
 ]
 
 
@@ -169,15 +183,109 @@ def format_is_json(value: str | None) -> bool:
     return (value or "").strip().lower() == "json"
 
 
+# --- Emission identity: host + instance on JSON records (#3330) ---------
+#
+# A SIEM aggregating JSON lines from several klangkd deployments (or several
+# instances on one host, each with its own data dir) needs to attribute each
+# record. Two fields ride every JSON record: ``host`` — the emitting
+# machine's hostname — and ``instance`` — the per-data-dir klangk instance
+# id. The instance id is the file-backed identity ``Util.resolve_instance_id``
+# owns (``<data_dir>/instance-id``, #1553): stable across restarts and equal
+# to the audit-event ``target_id`` of app lifecycle rows, so the log stream
+# and the audit trail correlate. The resolvers below mirror Util's
+# read-or-create semantics against the same file (``Util`` is app-coupled —
+# it needs an ``app.state`` to know its data dir — and heavier to import
+# into the package's most-imported module than one filename constant is
+# worth; ``main._read_instance_id`` already mirrors the read side the same
+# way); whoever resolves first, the value on disk wins, so logger and Util
+# always agree.
+
+#: Filename of the instance-id file within ``data_dir`` (same file as
+#: ``Util.INSTANCE_ID_FILENAME``).
+INSTANCE_ID_FILENAME = "instance-id"
+
+
+def resolve_hostname() -> str:
+    """The emitting host's name; computed once at import and cached.
+
+    ``socket.gethostname()`` can fail on a misconfigured host; an empty
+    string then — a missing hostname serializes as ``""`` rather than
+    taking the logging path down (#3330).
+    """
+    try:
+        return socket.gethostname()
+    except OSError:
+        return ""
+
+
+#: The hostname stamped on every JSON record (resolved once, #3330).
+HOSTNAME = resolve_hostname()
+
+
+def read_instance_file(path: Path) -> str | None:
+    """The stripped contents of an instance-id file; ``None`` when absent,
+    unreadable, or blank.
+
+    ``ValueError`` is caught alongside ``OSError`` because a non-UTF-8
+    file raises :class:`UnicodeDecodeError` (a ``ValueError``) from
+    ``read_text`` — a corrupt identity file must degrade, not take the
+    configure path down (same catch set as ``main._read_instance_id``).
+    """
+    try:
+        return path.read_text().strip() or None
+    except (OSError, ValueError):
+        return None
+
+
+def write_instance_file(path: Path) -> str:
+    """Generate a fresh id and write it atomically; ``""`` on failure.
+
+    Same write shape as :meth:`klangk.util.Util.resolve_instance_id`
+    (``instance-id.tmp`` then ``os.replace``) so a torn write never leaves
+    the identity file half-written. ``ValueError`` joins ``OSError`` in
+    the catch set (an embedded NUL in the data dir raises it from the
+    path calls) — same degrade-not-raise posture as the reader.
+    """
+    fresh = str(uuid.uuid4())
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.parent / f"{path.name}.tmp"
+        tmp.write_text(fresh)
+        os.replace(tmp, path)
+    except (OSError, ValueError):
+        return ""
+    return fresh
+
+
+def resolve_instance_id(data_dir: str) -> str:
+    """The klangk instance id for ``data_dir``, creating it when absent.
+
+    Called once per :func:`configure` — never per record — so the
+    filesystem is touched at configuration seams only (build_app, a SIGHUP
+    reload). Degrades to ``""`` (the ``instance`` field is omitted) when
+    the data dir is not yet readable or writable, or the identity file is
+    corrupt — never raises into the configure path.
+    """
+    path = Path(data_dir) / INSTANCE_ID_FILENAME
+    resolved = read_instance_file(path)
+    if resolved is None:
+        resolved = write_instance_file(path)
+    return resolved
+
+
 class JsonFormatter(logging.Formatter):
     """One JSON object per line, for SIEM ingestion (#3156).
 
     Hand-rolled (no ``python-json-logger`` dependency): emits ``timestamp``
-    (ISO-8601 UTC), ``level``, ``logger``, and ``message`` — plus ``exc_info``
-    when the record carries an exception. ``stack_info`` records drop the
-    stack (no ``stack`` field). Covers everything that reaches the root
-    handler, klangk's own loggers and third-party ones alike, so the whole
-    stream is uniform and free of ANSI color codes.
+    (ISO-8601 UTC), ``level``, ``logger``, ``message``, and ``host`` — plus
+    ``instance`` when the id is known (#3330: ``configure(settings)``
+    resolves it from ``<data_dir>/instance-id`` and builds its formatters
+    with it; a formatter built without one — pre-settings, or an unresolvable
+    data dir — omits the field) and ``exc_info`` when the record carries an
+    exception. ``stack_info`` records drop the stack (no ``stack`` field).
+    Covers everything that reaches the root handler, klangk's own loggers
+    and third-party ones alike, so the whole stream is uniform and free of
+    ANSI color codes.
 
     Formatting never raises: a record whose ``%``-args don't match its format
     string would make ``getMessage()`` raise, and the stdlib ``handleError``
@@ -185,6 +293,12 @@ class JsonFormatter(logging.Formatter):
     a SIEM parser cannot ingest. The helpers below degrade to a best-effort
     message so every emitted line stays a parseable JSON object (#3156).
     """
+
+    def __init__(self, instance_id: str = "") -> None:
+        super().__init__()
+        # Resolved once per configure() and handed in (#3330) — the
+        # formatter never touches the filesystem itself.
+        self.instance_id = instance_id
 
     def safe_message(self, record: logging.LogRecord) -> str:
         """``getMessage()``, degrading to ``str(msg)`` then ``repr(msg)``.
@@ -221,7 +335,10 @@ class JsonFormatter(logging.Formatter):
             "level": record.levelname,
             "logger": record.name,
             "message": self.safe_message(record),
+            "host": HOSTNAME,
         }
+        if self.instance_id:
+            payload["instance"] = self.instance_id
         if self.has_exception(record):
             payload["exc_info"] = self.safe_exception(record)
         return json.dumps(payload)
@@ -254,14 +371,17 @@ _THIRD_PARTY_LEVELS: dict[str, int | str] = {
 }
 
 
-def make_formatter(log_format: str) -> logging.Formatter:
+def make_formatter(
+    log_format: str, instance_id: str = ""
+) -> logging.Formatter:
     """Build the root-handler formatter for a ``KLANGKD_LOG_FORMAT`` value.
 
     ``json`` (and its case variants) gets :class:`JsonFormatter`; anything
     else — the default ``text`` included — gets the colored console format.
+    ``instance_id`` rides the JSON form only (#3330).
     """
     if format_is_json(log_format):
-        return JsonFormatter()
+        return JsonFormatter(instance_id)
     return logging.Formatter(_FORMAT, datefmt=_DATEFMT)
 
 
@@ -372,13 +492,15 @@ def install_file_handler(
     max_bytes: int = 0,
     rotate: str = "",
     backup_count: int = DEFAULT_BACKUP_COUNT,
+    instance_id: str = "",
 ) -> None:
     """Attach the JSON file sink for ``KLANGKD_LOG_FILE`` (#3156).
 
     The file is the machine-ingestion artifact (rsyslog ``imfile`` / fluent-bit
     tail it into a SIEM), so it is **always** :class:`JsonFormatter` — the
     console keeps ``KLANGKD_LOG_FORMAT`` and may stay human-readable while the
-    file carries JSON. :class:`RotationSafeFileHandler` (a
+    file carries JSON, with the same ``host``/``instance`` fields as the JSON
+    console form (#3330). :class:`RotationSafeFileHandler` (a
     ``WatchedFileHandler``) reopens the file when the inode changes, so
     external log rotation (logrotate rename / rsyslog) works without a
     SIGHUP; ``max_bytes``/``rotate`` instead turn on in-app rotation (see
@@ -407,7 +529,7 @@ def install_file_handler(
         )
         return
     handler._klangk_log_file_handler = True  # type: ignore[attr-defined]
-    handler.setFormatter(JsonFormatter())
+    handler.setFormatter(JsonFormatter(instance_id))
     handler.setLevel(level)
     root.addHandler(handler)
 
@@ -436,6 +558,7 @@ def _apply(
     max_bytes: int = 0,
     rotate: str = "",
     backup_count: int = DEFAULT_BACKUP_COUNT,
+    instance_id: str = "",
 ) -> None:
     """Install/replace the klangk root handlers at ``level`` + silence 3rd-party.
 
@@ -446,7 +569,8 @@ def _apply(
     duplicate handlers (and a SIGHUP that changes ``KLANGKD_LOG_FILE`` closes
     the old sink and opens the new one). Handlers are tagged via private
     attributes so this dedup is robust to other handlers on the root (pytest's
-    ``caplog`` handler, operator-added handlers, ...).
+    ``caplog`` handler, operator-added handlers, ...). ``instance_id`` rides
+    the JSON formatters of both sinks (#3330).
     """
     root = logging.getLogger()
 
@@ -460,14 +584,20 @@ def _apply(
     handler = logging.StreamHandler()
     # Private tag for cross-call dedup (see the loop above).
     handler._klangk_log_handler = True  # type: ignore[attr-defined]
-    handler.setFormatter(make_formatter(log_format))
+    handler.setFormatter(make_formatter(log_format, instance_id))
     handler.setLevel(level)
     root.addHandler(handler)
 
     root.setLevel(level)
 
     install_file_handler(
-        root, level, log_file, max_bytes, rotate, backup_count
+        root,
+        level,
+        log_file,
+        max_bytes,
+        rotate,
+        backup_count,
+        instance_id,
     )
 
     for name, lvl in _THIRD_PARTY_LEVELS.items():
@@ -493,7 +623,7 @@ def configure_defaults() -> None:
     _apply(DEFAULT_LEVEL, DEFAULT_FORMAT, "")
 
 
-def configure(settings) -> None:
+def configure(settings, instance_id: str = "") -> None:
     """Re-apply configuration from finalized settings.
 
     Called in :func:`klangk.main.build_app` (once settings are constructed) and
@@ -503,6 +633,21 @@ def configure(settings) -> None:
     (``KLANGKD_LOG_FILE_MAX_BYTES`` / ``KLANGKD_LOG_FILE_ROTATE`` /
     ``KLANGKD_LOG_FILE_BACKUP_COUNT``) take effect without a process
     restart (#1587). Reads them live off the settings object; idempotent.
+
+    The ``instance`` field of the JSON form comes from ``instance_id`` when
+    handed one, else is resolved from ``<data_dir>`` (read-or-create, the
+    same file :meth:`klangk.util.Util.resolve_instance_id` owns) — resolved
+    once per call, never per record (#3330). The two callers split on
+    purpose: ``build_app`` resolves from the data dir (the first boot
+    creates the file; Util's later startup read agrees with it), while the
+    SIGHUP path passes ``app.state.util.instance_id()`` — the process's
+    live identity. ``data_dir`` is a non-reloadable setting (a change draws
+    a requires-restart warning and leaves the DB, pidfile, and container
+    labels on the old dir), so stamping the new dir's id would attribute
+    records to an instance that exists nowhere but the refused config;
+    carrying the live id keeps the log stream correlated with the audit
+    trail (app.start/app.stop ``target_id``, #3329) across the reload, and
+    the next process start re-resolves from the (then effective) data dir.
     """
     _apply(
         level_to_int(settings.log_level),
@@ -511,6 +656,7 @@ def configure(settings) -> None:
         settings.log_file_max_bytes,
         settings.log_file_rotate,
         settings.log_file_backup_count,
+        instance_id or resolve_instance_id(settings.data_dir),
     )
 
 
