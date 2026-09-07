@@ -1763,6 +1763,8 @@ class KlangkSettings(BaseSettings):
     # import is refused with 413 past the cap. None = only the workspace
     # volume's free space (minus a 2 GB reserve) bounds an import — the
     # correctness bound; this knob is the multi-tenant fairness layer.
+    # There is no zero-semantics (0 would not mean "off" — unset does),
+    # so 0 aborts startup.
     import_max_uncompressed_mb: int | None = None
 
     # --- Feature / feature config (#1659) ---

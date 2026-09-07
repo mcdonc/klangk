@@ -590,7 +590,10 @@ with 413 when it would exceed the free space on the workspace volume (a
 multi-gigabyte home import succeeds whenever the volume has room. The
 free-space check runs per import: two imports started at the same time can
 together consume more than either alone would pass, so the reserve is a
-working margin rather than a hard guarantee against a full disk.
+working margin rather than a hard guarantee against a full disk. The
+pre-scan must finish within 30 seconds; an archive that takes longer to list
+(because it expands to hundreds of gigabytes of members) is refused as an
+invalid archive.
 
 ### Feature configuration
 

@@ -14235,6 +14235,28 @@ class TestWorkspaceExportImport:
         listed = await client.get("/api/v1/workspaces", headers=headers)
         assert all(w["name"] != "disk-bomb" for w in listed.json())
 
+    async def test_import_free_space_probe_failure_fails_closed(
+        self, client, user, app, monkeypatch
+    ):
+        """#3284 review: a statvfs failure (volume vanished mid-request)
+        must fail closed as a clean 500 with the row rolled back, not an
+        unbounded import or a leaked workspace."""
+        from klangk.api import workspaces as api_ws
+
+        def _gone(path):
+            raise OSError("volume gone")
+
+        monkeypatch.setattr(api_ws, "_fs_stats", _gone)
+        archive = self._archive(
+            [("home/payload.bin", b"x")], name="statvfs-gone"
+        )
+        headers = await self._user_headers(client)
+        resp = await self._import(client, headers, archive)
+        assert resp.status_code == 500
+        assert "Cannot verify free space" in resp.json()["detail"]
+        listed = await client.get("/api/v1/workspaces", headers=headers)
+        assert all(w["name"] != "statvfs-gone" for w in listed.json())
+
     async def test_import_home_exceeds_policy_cap(
         self, client, user, app, monkeypatch
     ):
@@ -14332,6 +14354,55 @@ class TestWorkspaceExportImport:
             )
         )
         assert api_ws._sum_listing(good, soon) == (22, 5)
+
+    def test_scan_deadline_enforced_while_blocked(self, monkeypatch):
+        """#3284 second review: the deadline must hold even while the
+        reader is blocked on a pipe that never yields output — a bomb
+        whose members don't match home/ lists nothing, so the per-line
+        check never runs. The kill-watchdog bounds the blocked read
+        itself (a real subprocess, not a fake)."""
+        import subprocess as subprocess_mod
+        import time as time_mod
+
+        from klangk.api import workspaces as api_ws
+
+        real_popen = subprocess_mod.Popen
+        monkeypatch.setattr(api_ws, "_TAR_TIMEOUT_SECONDS", 1)
+
+        def _silent_tar(argv, *a, **kw):
+            return real_popen(
+                ["sleep", "300"],
+                stdout=subprocess_mod.PIPE,
+                stderr=subprocess_mod.DEVNULL,
+            )
+
+        monkeypatch.setattr(api_ws.subprocess, "Popen", _silent_tar)
+        started = time_mod.monotonic()
+        with pytest.raises(subprocess_mod.TimeoutExpired):
+            api_ws._scan_home_uncompressed_bytes("/nonexistent.tar.gz")
+        assert time_mod.monotonic() - started < 30
+
+    def test_metadata_deadline_enforced_while_blocked(self, monkeypatch):
+        """#3284 second review: same property for the metadata read —
+        tar -O emits nothing until the matching member, so the first
+        read can block through an entire giant archive."""
+        import subprocess as subprocess_mod
+
+        from klangk.api import workspaces as api_ws
+
+        real_popen = subprocess_mod.Popen
+        monkeypatch.setattr(api_ws, "_TAR_TIMEOUT_SECONDS", 1)
+
+        def _silent_tar(argv, *a, **kw):
+            return real_popen(
+                ["sleep", "300"],
+                stdout=subprocess_mod.PIPE,
+                stderr=subprocess_mod.DEVNULL,
+            )
+
+        monkeypatch.setattr(api_ws.subprocess, "Popen", _silent_tar)
+        with pytest.raises(subprocess_mod.TimeoutExpired):
+            api_ws._extract_capped_metadata("/nonexistent.tar.gz")
 
     def test_import_fit_counts_blocks_per_member(self, monkeypatch, tmp_path):
         """#3284: demand counts one filesystem block per member — a

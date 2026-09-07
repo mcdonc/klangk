@@ -8,6 +8,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 from datetime import datetime, timezone
 from typing import Annotated, Literal
@@ -1455,18 +1456,28 @@ def _extract_capped_metadata(archive_path: str) -> bytes:
     """tar -O extract of workspace.json under the metadata byte bound.
 
     Raises ``subprocess.CalledProcessError`` when the member is missing
-    or the archive is corrupt, ``_MetadataTooLarge`` past the bound."""
+    or the archive is corrupt, ``_MetadataTooLarge`` past the bound,
+    ``TimeoutExpired`` past the tar budget (the -O extract emits
+    nothing until the matching member, so the watchdog bounds the
+    blocked first read too)."""
     with subprocess.Popen(
         ["tar", "xzf", archive_path, "-O", "workspace.json"],
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
     ) as proc:
+        watchdog, fired = _arm_deadline_kill(proc, _TAR_TIMEOUT_SECONDS)
         try:
             payload = _read_capped(proc)
-            proc.wait(timeout=30)
+            proc.wait(timeout=_TAR_TIMEOUT_SECONDS)
         except subprocess.TimeoutExpired:
             proc.kill()
             raise
+        finally:
+            watchdog.cancel()
+    if fired:
+        raise subprocess.TimeoutExpired(
+            cmd="tar", timeout=_TAR_TIMEOUT_SECONDS
+        )
     if proc.returncode != 0:
         raise subprocess.CalledProcessError(proc.returncode, proc.args)
     return payload
@@ -1629,11 +1640,34 @@ def _archive_banner(classification_banner) -> str | None:
 # hard guarantee against a full disk.
 _IMPORT_FREE_MARGIN_BYTES = 2 * 1024**3
 
-# The scan streams the listing and must finish inside this budget
-# (#3284 review): without it, a max-ratio gzip bomb pins a worker
-# thread decompressing hundreds of GB of headers for many minutes —
-# tar lists only by decompressing everything.
-_SCAN_TIMEOUT_SECONDS = 30
+# Every tar invocation on the import path must finish inside this
+# budget (#3284): a per-line deadline cannot fire while the reader is
+# blocked on a pipe that never yields output (a bomb whose members do
+# not match home/ lists nothing, and tar -O extracts nothing until the
+# matching member), so a kill-watchdog enforces the budget on blocked
+# reads too. A legitimate 500 MB archive lists in a couple of seconds
+# — 30 is generous headroom.
+_TAR_TIMEOUT_SECONDS = 30
+
+
+def _arm_deadline_kill(
+    proc: subprocess.Popen, seconds: float
+) -> tuple[threading.Timer, list]:
+    """Kill *proc* after *seconds*; returns ``(timer, fired)`` —
+    cancel the timer when the reads finish, and treat a truthy *fired*
+    as the timeout (the killed pipe EOFs the blocked reader; #3284
+    review)."""
+    fired: list = []
+
+    def _kill():
+        fired.append(True)
+        proc.kill()
+
+    timer = threading.Timer(seconds, _kill)
+    timer.daemon = True
+    timer.start()
+    return timer, fired
+
 
 # One tzvf line is bounded: pax path records have no length cap, and a
 # member name is the one archive-controlled field that lands whole in
@@ -1688,7 +1722,7 @@ def _sum_listing(proc: subprocess.Popen, deadline: float) -> tuple[int, int]:
     while line := proc.stdout.readline(_LISTING_LINE_MAX):
         if time.monotonic() > deadline:
             raise subprocess.TimeoutExpired(
-                cmd="tar", timeout=_SCAN_TIMEOUT_SECONDS
+                cmd="tar", timeout=_TAR_TIMEOUT_SECONDS
             )
         total += _listing_line_size(line)
         count += 1
@@ -1718,14 +1752,21 @@ def _scan_home_uncompressed_bytes(
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
     ) as proc:
+        watchdog, fired = _arm_deadline_kill(proc, _TAR_TIMEOUT_SECONDS)
         try:
             total, count = _sum_listing(
-                proc, time.monotonic() + _SCAN_TIMEOUT_SECONDS
+                proc, time.monotonic() + _TAR_TIMEOUT_SECONDS
             )
-            proc.wait(timeout=_SCAN_TIMEOUT_SECONDS)
+            proc.wait(timeout=_TAR_TIMEOUT_SECONDS)
         except subprocess.TimeoutExpired:
             proc.kill()
             raise
+        finally:
+            watchdog.cancel()
+    if fired:
+        raise subprocess.TimeoutExpired(
+            cmd="tar", timeout=_TAR_TIMEOUT_SECONDS
+        )
     if proc.returncode != 0:
         return None
     return total, count
@@ -1739,7 +1780,11 @@ def _fs_stats(path) -> tuple[int, int]:
 
 
 def _gb(n: int) -> str:
-    return f"{n / 1024**3:.1f}"
+    """Human-size a byte count: MB below 1 GB, GB above (a sub-GB
+    overage must not read as "0.0 GB")."""
+    if n < 1024**3:
+        return f"{max(n, 0) / 1024**2:.0f} MB"
+    return f"{n / 1024**3:.1f} GB"
 
 
 def _assert_import_fits(home_dir, total: int, count: int, app) -> None:
@@ -1753,19 +1798,28 @@ def _assert_import_fits(home_dir, total: int, count: int, app) -> None:
         raise HTTPException(
             status_code=413,
             detail=(
-                f"Archive expands to {_gb(total)} GB; the import cap is "
+                f"Archive expands to {_gb(total)}; the import cap is "
                 f"{cap} MB (KLANGKD_IMPORT_MAX_UNCOMPRESSED_MB)"
             ),
         )
-    free, block = _fs_stats(home_dir)
+    try:
+        free, block = _fs_stats(home_dir)
+    except OSError as exc:
+        # Fail closed (500) with the row rolled back rather than an
+        # unbounded import (#3284 review: statvfs can fail when the
+        # workspace volume vanishes mid-request).
+        raise HTTPException(
+            status_code=500,
+            detail="Cannot verify free space on the workspace volume",
+        ) from exc
     demand = total + count * block
     avail = free - _IMPORT_FREE_MARGIN_BYTES
     if demand > avail:
         raise HTTPException(
             status_code=413,
             detail=(
-                f"Archive expands to {_gb(demand)} GB; only "
-                f"{_gb(max(avail, 0))} GB free on the workspace volume"
+                f"Archive expands to {_gb(demand)}; only "
+                f"{_gb(avail)} free on the workspace volume"
             ),
         )
 
