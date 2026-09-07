@@ -58,6 +58,17 @@ def notifier_spy(app):
     return spy
 
 
+def audit_wd(container_failures=0, audit_failures=0):
+    """A watchdog over an app state carrying audit-failure counters
+    (registry + model stubs), plus a notifier spy — the audit
+    surface's fixture shape (TestAuditSurface, TestSnapshot)."""
+    registry = types.SimpleNamespace(audit_write_failures=container_failures)
+    events = types.SimpleNamespace(write_failures=audit_failures)
+    model = types.SimpleNamespace(audit_events=events)
+    wd, app = make_wd(container_registry=registry, model=model)
+    return wd, notifier_spy(app), registry, events
+
+
 class FakeVfs:
     """A statvfs result with the fields usage_percent reads."""
 
@@ -591,13 +602,7 @@ class TestGraphRoot:
 
 class TestAuditSurface:
     def _wd(self, container_failures=0, audit_failures=0):
-        registry = types.SimpleNamespace(
-            audit_write_failures=container_failures
-        )
-        events = types.SimpleNamespace(write_failures=audit_failures)
-        model = types.SimpleNamespace(audit_events=events)
-        wd, app = make_wd(container_registry=registry, model=model)
-        return wd, notifier_spy(app), registry, events
+        return audit_wd(container_failures, audit_failures)
 
     def test_first_poll_is_a_baseline_no_event(self):
         wd, spy, _, _ = self._wd(container_failures=3)
@@ -720,7 +725,7 @@ class TestSnapshot:
         """The audit-degradation flag mirrors the poll window: new
         write failures set it, one clean window clears it (#3308
         acceptance — audit failures surface the same way)."""
-        wd, spy, registry, _ = TestAuditSurface()._wd(container_failures=1)
+        wd, spy, registry, _ = audit_wd(container_failures=1)
         wd.check_audit()  # baseline
         registry.audit_write_failures = 2
         wd.check_audit()  # growth -> episode
@@ -795,6 +800,32 @@ class TestSnapshot:
         snap = wd.snapshot()
         assert snap["filesystems"] == []
         assert snap["degraded"] is False
+
+    def test_path_set_reload_drops_disk_rows(self):
+        """Fresh-eyes review finding: a reload that removed a
+        monitored path must drop its row — a de-configured path must
+        not pin /health at degraded for the process lifetime."""
+        wd, _ = make_wd({"KLANGKD_DISK_WATCHDOG_PATHS": "/mnt/backup"})
+        wd.step_filesystem(7, "/mnt/backup", 91.0)
+        assert wd.snapshot()["degraded"] is True
+        _, other = make_wd()  # the extra path is gone
+        wd.reconfigure(other)
+        snap = wd.snapshot()
+        assert snap["filesystems"] == []
+        assert snap["degraded"] is False
+
+    def test_path_set_change_resets_disk_only(self):
+        """A path-set change resets the disk family alone — the host
+        metrics' rows survive it, exactly as for a threshold change."""
+        wd, _ = make_wd()
+        wd.step_filesystem(7, "/data", 91.0)
+        wd._states[MEMORY_KEY] = WARN
+        wd._last_usage[MEMORY_KEY] = 85.0
+        _, other = make_wd({"KLANGKD_DISK_WATCHDOG_PATHS": "/mnt/x"})
+        wd.reconfigure(other)
+        snap = wd.snapshot()
+        assert snap["filesystems"] == []
+        assert snap["memory"]["state"] == WARN
 
 
 # --- loop + guards ---

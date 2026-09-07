@@ -353,8 +353,11 @@ class ResourceWatchdog:
         changed podman configuration re-resolves immediately), and
         the unmeasurable-condition warnings re-arm. Each metric
         family's threshold states reset only when **that family's**
-        thresholds changed — an unrelated reload (or a threshold edit
-        for a different family) must not re-alert already-degraded
+        configuration changed — its thresholds, or (disk) its
+        monitored path set (#3308: a path removed from
+        ``KLANGKD_DISK_WATCHDOG_PATHS`` must not pin ``/health`` at
+        degraded forever) — an unrelated reload (or an edit for a
+        different family) must not re-alert already-degraded
         metrics (the notifier's throttle clocks reset on reload too,
         so nothing else would suppress the re-alert)."""
         old = self._thresholds
@@ -369,10 +372,11 @@ class ResourceWatchdog:
     def _reset_families_with_changed_thresholds(
         self, old: tuple, new: tuple
     ) -> None:
-        """Drop remembered states per metric family whose (warn,
-        critical) pair changed: disk (index 0), memory (1), CPU (2).
-        Memory/CPU hold one fixed key each; disk's are the int-keyed
-        (st_dev) entries."""
+        """Drop remembered states per metric family whose compared
+        configuration changed: disk (index 0 — thresholds or the
+        monitored path set), memory (1), CPU (2). Memory/CPU hold one
+        fixed key each; disk's are the int-keyed (``st_dev``)
+        entries."""
         if old[0] != new[0]:
             self._forget_disk_states()
         if old[1] != new[1]:
@@ -386,15 +390,23 @@ class ResourceWatchdog:
             self._forget(key)
 
     @staticmethod
-    def _thresholds_of(app) -> tuple[tuple[float, float], ...]:
-        """The (warn, critical) pair of every threshold-watched metric
-        off an app's live settings — the snapshot reconfigure compares
-        against (see ``__init__``)."""
+    def _thresholds_of(app) -> tuple:
+        """The compared configuration of every threshold-watched
+        metric off an app's live settings — the (warn, critical)
+        pair for memory and CPU, plus the monitored path set for disk
+        — the snapshot reconfigure compares against (see
+        ``__init__``)."""
         settings = app.state.settings
+        paths = (
+            settings.data_dir,
+            settings.state_dir,
+            *(settings.disk_watchdog_paths or []),
+        )
         return (
             (
                 settings.disk_watchdog_warn_percent,
                 settings.disk_watchdog_critical_percent,
+                frozenset(paths),
             ),
             (
                 settings.memory_watchdog_warn_percent,
@@ -469,10 +481,12 @@ class ResourceWatchdog:
         the audit-degradation flag (new audit-write failures in the
         most recent window — cleared by one clean window), and the
         wall-clock time of the last completed sweep (``None`` before
-        the first). ``degraded`` folds every row plus the audit flag —
-        the one bit ``/health`` keys on. A metric that goes
-        unmeasurable keeps its last row (the same retention the
-        event states have); ``last_poll`` carries the freshness.
+        the first — a sweep stamp, not a per-row freshness
+        guarantee). ``degraded`` folds every row plus the audit flag —
+        the one bit ``/health`` keys on. A path that goes
+        unmeasurable keeps its last row and state until it measures
+        again or a reload drops it (the same retention the event
+        states have).
         """
         filesystems = self._disk_rows()
         hosts = self._host_rows()
