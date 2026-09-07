@@ -30,10 +30,10 @@ The event names mirror the identity audit stream (``user.create``,
 notification with its ``audit_events`` row. ``user.disable`` /
 ``user.enable`` are notifier-only names (the audit stream records
 disable toggles under ``user.update``). The resource-watchdog names
-(``resource.disk.warn`` / ``resource.disk.critical`` /
-``resource.disk.recovered``, #3206) are transition-based — one event
-per threshold episode, per monitored filesystem (the throttle key
-includes the detail's ``path``).
+(``resource.disk.*``, #3206; ``resource.memory.*`` /
+``resource.cpu.*``, #3309) are transition-based — one event
+per threshold episode, per monitored metric (the throttle key
+includes the detail's ``path``/``metric``).
 """
 
 import asyncio
@@ -70,20 +70,33 @@ DEFAULT_NOTIFY_EVENTS = (
     "resource.disk.warn",
     "resource.disk.critical",
     "resource.disk.recovered",
+    "resource.memory.warn",
+    "resource.memory.critical",
+    "resource.memory.recovered",
+    "resource.cpu.warn",
+    "resource.cpu.critical",
+    "resource.cpu.recovered",
 )
 
 # Persistent conditions re-fire at the source on every occurrence (a
 # failed audit write, a refused start); notify at most once per window
 # per throttle key (see AdminNotifier.throttle_key) so the recipients
-# get one alert, not a storm (#3250). The disk transitions (#3206) are
-# edge-triggered already, but a deep usage oscillation across the
-# hysteresis band could still flap — the same window bounds it.
+# get one alert, not a storm (#3250). The resource-watchdog threshold
+# transitions (#3206, #3309) are edge-triggered already, but a deep
+# usage oscillation across the hysteresis band could still flap — the
+# same window bounds it.
 THROTTLE_SECONDS = {
     "audit.failure": 300,
     "resource.low": 300,
     "resource.disk.warn": 300,
     "resource.disk.critical": 300,
     "resource.disk.recovered": 300,
+    "resource.memory.warn": 300,
+    "resource.memory.critical": 300,
+    "resource.memory.recovered": 300,
+    "resource.cpu.warn": 300,
+    "resource.cpu.critical": 300,
+    "resource.cpu.recovered": 300,
 }
 
 # Fire-and-forget tasks are held here so the event loop cannot garbage
@@ -173,14 +186,17 @@ class AdminNotifier:
 
     def throttle_key(self, event: str, detail: dict | None) -> str:
         """One throttle bucket per event — and, when the detail names a
-        source ``table``, per table, or a monitored filesystem
-        ``path``, per path: a container_events write storm must not
-        mask the first audit_events degradation alert (and vice
-        versa), and one full filesystem must not mask another's first
-        alert under the shared window (#3250 review, #3206).
+        source ``table``, per table, a monitored filesystem ``path``
+        or host metric ``metric``, per path/metric: a container_events
+        write storm must not mask the first audit_events degradation
+        alert (and vice versa), and one full filesystem or pressed
+        metric must not mask another's first alert under the shared
+        window (#3250 review, #3206, #3309).
         """
         detail = detail or {}
-        scope = detail.get("table") or detail.get("path")
+        scope = (
+            detail.get("table") or detail.get("path") or detail.get("metric")
+        )
         if scope is None:
             return event
         return f"{event}:{scope}"

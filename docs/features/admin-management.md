@@ -84,6 +84,28 @@ audit log:
   not one per check, and no alert is permanently lost to the
   throttle. See `KLANGKD_DISK_WATCHDOG_*`
   ([Environment Variables](../reference/environment.md)).
+- **Host memory** (#3309) — the same loop watches the memory
+  utilization of the machine containers run on: `MemAvailable` from
+  `/proc/meminfo` on a Linux host (pressed by the cgroup limit when
+  klangkd itself runs memory-capped), and on macOS the podman machine
+  VM's own meminfo read via `podman machine ssh` — containers live in
+  that VM, so the Mac host's numbers are the wrong machine. Crossing
+  the thresholds (80% / 90% by default, the critical default aligned
+  with the eviction loop's availability floor) sends
+  `resource.memory.warn` / `resource.memory.critical` /
+  `resource.memory.recovered` with the same transition, hysteresis,
+  and refresh semantics as disk.
+- **CPU pressure** (#3309) — PSI `some avg60` from
+  `/proc/pressure/cpu` (inside the podman machine VM on macOS): the
+  share of time at least one task was stalled on CPU over the last
+  minute. Because `avg60` is already a 60-second average, a
+  single-poll threshold crossing (30% / 60% by default) is sustained
+  pressure, not a scheduler spike; a kernel or VM without PSI turns
+  the check off with one logged warning. Events
+  `resource.cpu.warn` / `resource.cpu.critical` /
+  `resource.cpu.recovered`. See `KLANGKD_MEMORY_WATCHDOG_*` and
+  `KLANGKD_CPU_WATCHDOG_*`
+  ([Environment Variables](../reference/environment.md)).
 
 Two delivery channels are available, and both can be on at once:
 
@@ -104,10 +126,12 @@ notification. A config-file `admin_notify_events: []` turns event
 notifications off while leaving the channels configured — the
 deliberate off switch (blanking the environment variable instead
 restores the default allowlist). Persistent conditions (`audit.failure`,
-`resource.low`, and the `resource.disk.*` transitions) notify at most
+`resource.low`, and the `resource.disk.*` / `resource.memory.*` /
+`resource.cpu.*` transitions) notify at most
 once every 5 minutes — `audit.failure` once per source table
-(`audit_events` and `container_events` alert independently) and the
-disk events once per filesystem — so a degraded audit table or a full
+(`audit_events` and `container_events` alert independently), the disk
+events once per filesystem, and the memory/CPU events once per metric —
+so a degraded audit table or a full
 host produces one alert per condition rather than a flood.
 
 The resource watchdog (#3206) adds a second detection layer over the

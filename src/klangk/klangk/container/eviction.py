@@ -46,22 +46,37 @@ logger = logging.getLogger(__name__)
 MIN_POLL_INTERVAL_SECONDS = 1.0
 
 
-def read_meminfo(path: str = "/proc/meminfo") -> dict[str, int]:
-    """Parse ``/proc/meminfo`` into a ``{field: bytes}`` mapping.
+def parse_meminfo(text: str) -> dict[str, int]:
+    """Parse ``/proc/meminfo`` **content** into a ``{field: bytes}``
+    mapping.
 
     Kernel values are in kB; converted to bytes here so callers never
-    mix units. Raises ``OSError`` if the file cannot be read (non-Linux
-    host, permission) — the eviction loop treats that as "cannot
-    measure" and skips the cycle.
+    mix units. Lines that do not match the ``Name: value kB`` shape
+    are skipped; a well-shaped line with a non-integer value raises
+    ``ValueError`` (callers treat that as unmeasurable). The shared
+    body of :func:`read_meminfo` (local file) and the remote path that
+    reads the file out of a podman machine VM (``podman machine ssh``
+    — the VM's meminfo is the gauge that matters on macOS, #3309).
     """
     values: dict[str, int] = {}
-    with open(path) as fh:
-        for line in fh:
-            # "MemTotal:       16384000 kB" → name, value, unit
-            parts = line.split()
-            if len(parts) == 3 and parts[2] == "kB":
-                values[parts[0].rstrip(":")] = int(parts[1]) * 1024
+    for line in text.splitlines():
+        # "MemTotal:       16384000 kB" → name, value, unit
+        parts = line.split()
+        if len(parts) == 3 and parts[2] == "kB":
+            values[parts[0].rstrip(":")] = int(parts[1]) * 1024
     return values
+
+
+def read_meminfo(path: str = "/proc/meminfo") -> dict[str, int]:
+    """Parse the local ``/proc/meminfo`` into a ``{field: bytes}``
+    mapping (see :func:`parse_meminfo`).
+
+    Raises ``OSError`` if the file cannot be read (non-Linux host,
+    permission) — callers treat that as "cannot measure" and skip the
+    cycle.
+    """
+    with open(path) as fh:
+        return parse_meminfo(fh.read())
 
 
 def available_fraction(meminfo: dict[str, int]) -> float:
