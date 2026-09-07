@@ -2,6 +2,7 @@
 
 import asyncio
 import contextlib
+import json
 import os
 import signal
 import sqlite3
@@ -2707,12 +2708,20 @@ class TestMainEntryCallback2910:
         mock_shutdown.assert_awaited_once()
         mock_remove.assert_called_once()
         # #3329: the stop row is written before the steps run, so a
-        # failing step cannot lose it.
-        stops = await app.state.model.audit_events.list_events(
-            event="app.stop"
-        )
-        assert len(stops) == 1
-        assert stops[0]["detail"]["reason"] == "lifespan-teardown"
+        # failing step cannot lose it. Read it synchronously from the
+        # DB file: the engine was disposed by process_shutdown, and a
+        # fresh async engine here was the test's last DB object alive
+        # at loop close — on slow machines its aiosqlite worker thread
+        # outlived the loop (the #1250 hazard) and failed CI. The
+        # stdlib connection has no event-loop involvement.
+        with sqlite3.connect(
+            f"file:{app.state.db.db_path}?mode=ro", uri=True
+        ) as raw:
+            row = raw.execute(
+                "SELECT detail FROM audit_events WHERE event = 'app.stop'"
+            ).fetchone()
+        assert row is not None
+        assert json.loads(row[0])["reason"] == "lifespan-teardown"
 
     @pytest.mark.parametrize(
         ("break_step", "expected_exc"),
