@@ -298,6 +298,15 @@ class TestHostInstanceFields:
         )
         assert payload["instance"] == "iid-1"
 
+    def test_instance_filename_matches_util_constant(self):
+        # Direct pin: logger and Util must resolve the same file — a drift
+        # in either constant would silently fork the identity (the
+        # end-to-end agreement test catches it transitively; this makes
+        # the pin explicit).
+        from klangk.util import Util
+
+        assert logger_mod.INSTANCE_ID_FILENAME == Util.INSTANCE_ID_FILENAME
+
     def test_hostname_resolution_degrades_on_oserror(self, monkeypatch):
         def boom():
             raise OSError("no hostname")

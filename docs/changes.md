@@ -828,9 +828,9 @@ sync` report a clear permission-denied error.
   JSON log line (console in `KLANGKD_LOG_FORMAT=json` and the
   `KLANGKD_LOG_FILE` sink) now carries `host` (the emitting machine's
   hostname) and `instance` (the per-data-dir klangk instance id from
-  `<data_dir>/instance-id` — the same id the audit trail's app lifecycle
-  rows key on), so SIEM streams from several hosts or instances are
-  distinguishable. The id is resolved once per configure, never per
+  `<data_dir>/instance-id` — the id the audit trail's app lifecycle rows
+  will key on (#3329)), so SIEM streams from several hosts or instances
+  are distinguishable. The id is resolved once per configure, never per
   record; a SIGHUP reload keeps the process's live instance id, and a
   `data_dir` change applies after the restart the reload warning already
   asks for.

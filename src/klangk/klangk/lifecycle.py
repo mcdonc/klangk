@@ -862,16 +862,24 @@ class Lifecycle:
         app = self.app
         old = app.state.settings
         self._warn_non_reloadable(old, new)
+        # Capture the process's live instance id BEFORE the swap: Util's lazy
+        # resolve reads app.state.settings.data_dir, and a reload naming a
+        # different (refused, non-reloadable) data_dir must not make the
+        # capture stamp — or create — an id in a dir the process doesn't use
+        # (#3330). Startup always resolves before SIGHUP registration, so this
+        # reads the cache; capturing before the swap makes that structural,
+        # not incidental.
+        live_instance_id = app.state.util.instance_id()
         app.state.settings = new
         # #1467: reconfigure global logging from the new settings *first*, so
         # any warnings the subsystem loop below emits (e.g. "ssl_trust
         # reconfigure failed") use the new KLANGKD_LOG_LEVEL. Logging is global
         # module state, reconfigured at this explicit seam (not an
-        # app.state.* subsystem). The instance id rides along from the
-        # process's live Util identity: ``data_dir`` is non-reloadable (warned
-        # above), so a refused change must not re-stamp the JSON log field
-        # with an id nothing else in the process uses (#3330).
-        configure_logging(new, app.state.util.instance_id())
+        # app.state.* subsystem). The instance id rides along as captured
+        # above: ``data_dir`` is non-reloadable (warned above), so a refused
+        # change must not re-stamp the JSON log field with an id nothing
+        # else in the process uses (#3330).
+        configure_logging(new, live_instance_id)
         await self._reconfigure_subsystems(app)
         await self._reapply_async_reconfigures(app)
         # #1610: remount frontend_dir if it changed.
