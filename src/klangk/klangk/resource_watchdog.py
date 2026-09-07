@@ -483,10 +483,12 @@ class ResourceWatchdog:
         wall-clock time of the last completed sweep (``None`` before
         the first — a sweep stamp, not a per-row freshness
         guarantee). ``degraded`` folds every row plus the audit flag —
-        the one bit ``/health`` keys on. A path that goes
-        unmeasurable keeps its last row and state until it measures
-        again or a reload drops it (the same retention the event
-        states have).
+        the one bit ``/health`` keys on. The rows mirror the last
+        completed disk pass: a path that went unmeasurable drops out
+        of the snapshot until it measures again (the condition is
+        logged; its threshold state survives, so it resumes where the
+        event layer is), and a path that moved to a new device drops
+        its old device's row.
         """
         filesystems = self._disk_rows()
         hosts = self._host_rows()
@@ -651,8 +653,30 @@ class ResourceWatchdog:
 
     async def check_disk(self) -> None:
         """One disk-capacity pass over every monitored filesystem."""
-        for device, path, usage in await self.monitored_filesystems():
+        entries = await self.monitored_filesystems()
+        self._prune_disk_rows({entry[0] for entry in entries})
+        for device, path, usage in entries:
             self.step_filesystem(device, path, usage)
+
+    def _prune_disk_rows(self, measured: set[int]) -> None:
+        """Drop the snapshot rows for devices this pass did not
+        measure (#3308 review: a replaced disk remounted on a new
+        device, a mount that went away, or a moved podman storage
+        root must not leave a stale degraded row pinning ``/health``
+        forever — the rows reflect what the last sweep could measure).
+        The threshold states, emission clocks, and pending retries
+        stay: a path that measures again resumes its classification
+        (#3206 retry semantics), and a reload that changed the
+        configured paths resets the whole family separately
+        (:meth:`reconfigure`)."""
+        stale = [
+            key
+            for key in self._last_usage
+            if isinstance(key, int) and key not in measured
+        ]
+        for key in stale:
+            self._last_usage.pop(key, None)
+            self._disk_paths.pop(key, None)
 
     async def monitored_filesystems(self) -> list[tuple[int, str, float]]:
         """``(device, path, usage%)`` for every monitored filesystem.

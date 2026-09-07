@@ -761,12 +761,17 @@ class TestSnapshot:
         assert snap["filesystems"] == []
         assert snap["degraded"] is False
 
-    async def test_unmeasurable_path_keeps_its_last_row(self, monkeypatch):
-        """A path that stops measuring keeps its last-known row (the
-        same retention the event states have) — the snapshot reports
-        the last state, not silence."""
+    async def test_unmeasurable_path_drops_its_row_until_measurable(
+        self, monkeypatch
+    ):
+        """The rows mirror the last completed pass: a path whose
+        measurement fails drops out of the snapshot (its condition is
+        logged, its threshold state survives), and measures again →
+        the row resumes at the retained state (#3308 review: an
+        unmeasurable path must not pin /health degraded forever)."""
         wd, _ = make_wd()
         wd.step_filesystem(7, "/data", 91.0)
+        assert wd.snapshot()["degraded"] is True
 
         def boom(path):
             raise OSError(5, "I/O error")
@@ -777,10 +782,64 @@ class TestSnapshot:
         )
         await wd.check_disk()
         snap = wd.snapshot()
+        assert snap["filesystems"] == []
+        assert snap["degraded"] is False
+
+        monkeypatch.setattr("os.stat", lambda path: FakeStat(7))
+        monkeypatch.setattr("os.statvfs", lambda path: FakeVfs(95.0))
+        await wd.check_disk()
+        snap = wd.snapshot()
         assert snap["filesystems"] == [
-            {"path": "/data", "usage_percent": 91.0, "state": CRITICAL}
+            {
+                "path": wd.app.state.settings.data_dir,
+                "usage_percent": 95.0,
+                "state": CRITICAL,
+            }
         ]
         assert snap["degraded"] is True
+
+    async def test_device_churn_drops_the_stale_device_row(self, monkeypatch):
+        """A path that comes back on a new device (disk replaced,
+        remount) leaves the old device's row behind — the snapshot
+        must not keep both (#3308 review)."""
+        wd, _ = make_wd()
+        monkeypatch.setattr("os.stat", lambda path: FakeStat(7))
+        monkeypatch.setattr("os.statvfs", lambda path: FakeVfs(91.0))
+        monkeypatch.setattr(
+            wd, "resolve_graph_root", AsyncMock(return_value=None)
+        )
+        await wd.check_disk()
+        assert wd.snapshot()["degraded"] is True
+
+        monkeypatch.setattr("os.stat", lambda path: FakeStat(8))
+        monkeypatch.setattr("os.statvfs", lambda path: FakeVfs(50.0))
+        await wd.check_disk()
+        snap = wd.snapshot()
+        assert snap["filesystems"] == [
+            {
+                "path": wd.app.state.settings.data_dir,
+                "usage_percent": 50.0,
+                "state": OK,
+            }
+        ]
+        assert snap["degraded"] is False
+
+    def test_equivalent_paths_reload_keeps_rows(self):
+        """The reconfigure comparison is order-insensitive and treats
+        an unset list like an empty one — a reorder-only or
+        unset→empty-list reload must not reset (and re-alert) the
+        disk family."""
+        wd, _ = make_wd({"KLANGKD_DISK_WATCHDOG_PATHS": "/a, /b"})
+        wd.step_filesystem(7, "/a", 91.0)
+        _, reordered = make_wd({"KLANGKD_DISK_WATCHDOG_PATHS": "/b,/a"})
+        wd.reconfigure(reordered)
+        assert wd.snapshot()["degraded"] is True  # reorder kept the rows
+        wd2, _ = make_wd()  # unset list (None)
+        wd2.step_filesystem(9, "/data", 91.0)
+        _, emptied = make_wd()
+        emptied.state.settings.disk_watchdog_paths = []  # explicit empty
+        wd2.reconfigure(emptied)
+        assert wd2._states[9] == CRITICAL  # None == [] → no reset
 
     def test_threshold_reload_resets_rows_unrelated_keeps_them(self):
         """The SIGHUP reload path (#3308 acceptance): a threshold
@@ -802,9 +861,9 @@ class TestSnapshot:
         assert snap["degraded"] is False
 
     def test_path_set_reload_drops_disk_rows(self):
-        """Fresh-eyes review finding: a reload that removed a
-        monitored path must drop its row — a de-configured path must
-        not pin /health at degraded for the process lifetime."""
+        """A reload that removed a monitored path must drop its row —
+        a de-configured path must not pin /health at degraded for the
+        process lifetime."""
         wd, _ = make_wd({"KLANGKD_DISK_WATCHDOG_PATHS": "/mnt/backup"})
         wd.step_filesystem(7, "/mnt/backup", 91.0)
         assert wd.snapshot()["degraded"] is True

@@ -2266,7 +2266,11 @@ wall-clock time of the last completed watchdog poll). A monitor that
 treats non-200 as "down" would page the wrong way for a host that is
 up but full, so the status code never changes. Recovery (usage back
 below the recovery floor, or one clean audit window) restores the
-plain `ok` payload. The
+plain `ok` payload. The filesystem rows mirror the last completed
+watchdog sweep: a path whose measurement fails (a lost mount) drops
+out of the detail block until it measures again — the watchdog logs
+the condition — and a filesystem that comes back on a new device
+(a replaced disk) drops its old device's row. The
 `instance` field identifies _this_ klangkd; see the resource
 watchdog settings
 ([Environment Variables](environment.md)) to tune the thresholds.
