@@ -110,12 +110,15 @@ def put_workspace(harness, ws_id: str, fields: dict) -> None:
 
 
 def get_workspace(harness, ws_id: str) -> dict:
+    """Fetch a single workspace by ID from the list endpoint.
+
+    There is no ``GET /workspaces/{id}`` route; the list endpoint
+    returns all owned workspaces and we filter client-side.
+    """
     token = owner_token(harness)
-    status, ws = http_api(
-        harness.backend.url, token, "GET", f"/api/v1/workspaces/{ws_id}"
-    )
-    assert status == 200, ws
-    return ws
+    status, mine = http_api(harness.backend.url, token, "GET", "/api/v1/workspaces")
+    assert status == 200, mine
+    return next(w for w in mine if w["id"] == ws_id)
 
 
 # --- scenarios ---------------------------------------------------------
@@ -127,12 +130,7 @@ def test_settings_save_round_trip(harness, app):
     the saved value persists."""
     ws_id = own_workspace_id(harness, "fmtk-verify")
     # capture original idle_timeout so we can restore it
-    token = owner_token(harness)
-    status, workspaces = http_api(
-        harness.backend.url, token, "GET", "/api/v1/workspaces"
-    )
-    assert status == 200
-    ws = next(w for w in workspaces if w["name"] == "fmtk-verify")
+    ws = get_workspace(harness, ws_id)
     orig_settings = (ws.get("settings") or {}).copy()
     orig_idle = orig_settings.get("idle_timeout")
 
@@ -159,10 +157,7 @@ def test_settings_save_round_trip(harness, app):
         # verify the value persisted via API (the field value is seeded
         # from the API-fetched workspace on panel mount, so checking the
         # API is the authoritative round-trip assertion)
-        status, updated = http_api(
-            harness.backend.url, token, "GET", f"/api/v1/workspaces/{ws_id}"
-        )
-        assert status == 200
+        updated = get_workspace(harness, ws_id)
         saved_idle = (updated.get("settings") or {}).get("idle_timeout")
         assert saved_idle == int(test_value), (
             f"idle_timeout did not round-trip: expected {test_value}, got {saved_idle}"
@@ -250,31 +245,13 @@ def test_marking_banner_workspace_override(harness, app):
 
         # verify it overrides the deploy default (the deploy text should
         # no longer appear as a banner — check the API)
-        status, ws = http_api(
-            harness.backend.url,
-            owner_token(harness),
-            "GET",
-            f"/api/v1/workspaces/{ws_id}",
-        )
-        assert status == 200
+        ws = get_workspace(harness, ws_id)
         assert ws["classification_banner"] == ws_marking
 
         app.logout()
     finally:
         # clear the per-workspace override via API PUT
-        token = owner_token(harness)
-        status, ws = http_api(
-            harness.backend.url, token, "GET", f"/api/v1/workspaces/{ws_id}"
-        )
-        if status == 200:
-            ws["classification_banner"] = ""
-            http_api(
-                harness.backend.url,
-                token,
-                "PUT",
-                f"/api/v1/workspaces/{ws_id}",
-                ws,
-            )
+        put_workspace(harness, ws_id, {"classification_banner": ""})
         # clear deploy default
         harness.backend.swap_settings(
             {"classification_banner": ""}, apply="sighup", verify=False
@@ -293,20 +270,9 @@ def test_marking_banner_absent_when_unconfigured(harness, app):
     )
     harness.backend.wait_config_value("default_classification_banner", "")
     # clear workspace override via API
-    token = owner_token(harness)
-    status, ws = http_api(
-        harness.backend.url, token, "GET", f"/api/v1/workspaces/{ws_id}"
-    )
-    assert status == 200
+    ws = get_workspace(harness, ws_id)
     if ws.get("classification_banner"):
-        ws["classification_banner"] = ""
-        http_api(
-            harness.backend.url,
-            token,
-            "PUT",
-            f"/api/v1/workspaces/{ws_id}",
-            ws,
-        )
+        put_workspace(harness, ws_id, {"classification_banner": ""})
 
     at_login(harness, app)
     app.login(ADMIN_EMAIL, FIXTURE_PASSWORD, expect_text="fmtk-verify")
