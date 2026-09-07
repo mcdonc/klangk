@@ -515,19 +515,13 @@ class _IdPHandler(http.server.BaseHTTPRequestHandler):
             self._send_html(page)
         elif url.path == "/decide":
             redirect, _ = idp.decide(urllib.parse.parse_qs(url.query))
-            self.send_response(302)
-            self.send_header("Location", redirect)
-            self.end_headers()
+            self._send_redirect(redirect)
         elif url.path == "/end_session":
             params = urllib.parse.parse_qs(url.query)
             idp.events.append(
                 ("end_session", params.get("post_logout_redirect_uri", [""])[0])
             )
-            self.send_response(302)
-            self.send_header(
-                "Location", params.get("post_logout_redirect_uri", ["/"])[0]
-            )
-            self.end_headers()
+            self._send_redirect(params.get("post_logout_redirect_uri", ["/"])[0])
         else:
             self._send_json(404, {"error": "not_found"})
 
@@ -542,6 +536,19 @@ class _IdPHandler(http.server.BaseHTTPRequestHandler):
             self._send_json(status, body)
         else:
             self._send_json(404, {"error": "not_found"})
+
+    def _send_redirect(self, location: str) -> None:
+        """302 with a hardened ``Location``. The value derives from
+        request parameters (the backend's own redirects in every real
+        leg, but the IdP cannot prove that), and a CR/LF in it would
+        split the response (CodeQL py/http-response-splitting) — a
+        malformed target is refused, not forwarded."""
+        if "\r" in location or "\n" in location:
+            self._send_json(400, {"error": "invalid_redirect_uri"})
+            return
+        self.send_response(302)
+        self.send_header("Location", location)
+        self.end_headers()
 
     def _send_json(self, status: int, body) -> None:
         payload = json.dumps(body).encode()
