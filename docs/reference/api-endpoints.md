@@ -239,7 +239,9 @@ Query parameters:
 - `q` — substring filter on name (matched literally — `%` and `_`
   are characters, not wildcards)
 - `source` — `manual` (hide the seeded per-workspace role groups) or
-  `workspace-role` (show only them); omitted shows all
+  `workspace-role` (show only them); omitted shows all rows only to
+  callers holding `manage-groups` — every other authenticated caller
+  gets the manual-only view (#3283)
 
 No request body.
 

@@ -641,8 +641,12 @@ class WorkspacesModel(Submodel):
                 (
                     group_id,
                     group_name,
-                    f"Workspace role group: {suffix} of workspace"
-                    f" {ws['name']}",
+                    # Id-only wording: the group name already carries
+                    # the workspace id, and the free-form workspace
+                    # name must not land in a description any
+                    # authenticated reader can page through
+                    # (GET /groups, #3283).
+                    f"Workspace role group: {suffix}",
                     GROUP_SOURCE_WORKSPACE_ROLE,
                 ),
             )
