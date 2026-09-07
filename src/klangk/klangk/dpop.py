@@ -41,12 +41,17 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec
 
 #: How far a proof's ``iat`` may sit from the server clock (seconds),
-#: in either direction (clock-skew allowance), and how long its ``jti``
-#: is remembered for replay blocking.
+#: in either direction (clock-skew allowance). A winning proof's
+#: ``jti`` is remembered until the last moment it could still pass
+#: this window — ``max(verify_time, iat) + PROOF_WINDOW_SECONDS``
+#: (#3272), so up to twice the window after verification for a
+#: maximally future-dated proof.
 PROOF_WINDOW_SECONDS = 300
 
 #: Cap on remembered proof JTIs; the map is purged of expired entries
-#: on every insert, so the cap only bounds a same-second flood.
+#: on every insert, so the cap only bounds a same-second flood. With
+#: future-dated proofs, worst-case occupancy spans up to 600 s of
+#: inserts rather than 300 s.
 REPLAY_CACHE_MAX = 10_000
 
 _EC_CURVE = "P-256"

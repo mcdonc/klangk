@@ -388,7 +388,7 @@ class TestVerifyProof:
             10**400,
         ],
     )
-    def test_non_finite_iat_refused(self, key, iat):
+    def test_unusable_iat_refused(self, key, iat):
         # json.loads decodes NaN/Infinity literals and parses integers
         # at arbitrary precision. NaN was the pre-fix bypass (every
         # comparison against it is False, so the window check never
