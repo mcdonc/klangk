@@ -271,18 +271,15 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
 
     String summary;
     if (fetchFailed) {
-      summary =
-          'Delete user "$email"? This will permanently delete all their '
+      summary = 'Delete user "$email"? This will permanently delete all their '
           'workspaces and data.';
     } else if (count == 0) {
       summary = 'Delete user "$email"? They own no workspaces.';
     } else if (hasMoreWorkspaces) {
-      summary =
-          'Delete user "$email"? This will permanently delete '
+      summary = 'Delete user "$email"? This will permanently delete '
           '100+ workspaces and all their data:';
     } else {
-      summary =
-          'Delete user "$email"? This will permanently delete '
+      summary = 'Delete user "$email"? This will permanently delete '
           '$count $word and all their data:';
     }
 
@@ -370,6 +367,7 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
           order: _usersOrder,
           onChangeSort: _changeSort,
           searchController: _searchController,
+          searchIdentifier: 'users-filter',
           page: _usersPage,
           pageSize: _usersPageSize,
           total: _usersTotal,
@@ -603,16 +601,17 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
         : '';
     return switch (currentType) {
       'users' => FloatingActionButton(
-        heroTag: 'add',
-        onPressed: _addUser,
-        tooltip: 'Add user',
-        child: const Icon(Icons.person_add, semanticLabel: 'Add user'),
-      ),
+          heroTag: 'add',
+          onPressed: _addUser,
+          tooltip: 'Add user',
+          child: const Icon(Icons.person_add, semanticLabel: 'Add user'),
+        ),
       'invitations' ||
       'groups' ||
       'server' ||
       'events' ||
-      'volumes' => null, // FABs inside tabs
+      'volumes' =>
+        null, // FABs inside tabs
       _ => null,
     };
   }
@@ -949,6 +948,7 @@ class _GroupsTabState extends State<_GroupsTab> {
             onChangeSort: _changeGroupsSort,
             searchController: _groupSearchController,
             searchHint: 'Filter by name…',
+            searchIdentifier: 'groups-filter',
             page: _groupsPage,
             pageSize: _groupsPageSize,
             total: _groupsTotal,
@@ -1038,14 +1038,13 @@ class _ManageMembersDialogState extends State<_ManageMembersDialog> {
     );
     if (!mounted || resp.statusCode != 200) return;
     final memberIds = _members.map((m) => m['id']).toSet();
-    final found =
-        List<Map<String, dynamic>>.from(
-              (jsonDecode(resp.body) as List).cast<Map<String, dynamic>>(),
-            )
-            .where((u) => !memberIds.contains(u['id']))
-            // The agent can never be a group member (the backend rejects
-            // making it an ACL principal), so don't offer it (#2892).
-            .where((u) => !isSystemAgent(u));
+    final found = List<Map<String, dynamic>>.from(
+      (jsonDecode(resp.body) as List).cast<Map<String, dynamic>>(),
+    )
+        .where((u) => !memberIds.contains(u['id']))
+        // The agent can never be a group member (the backend rejects
+        // making it an ACL principal), so don't offer it (#2892).
+        .where((u) => !isSystemAgent(u));
     setState(() => _results = found.toList());
   }
 
@@ -1222,8 +1221,7 @@ class _InvitationsTabState extends State<_InvitationsTab> {
     try {
       final auth = context.read<AuthService>();
       final q = _invitationsQuery.trim();
-      final query =
-          'page=$_invitationsPage'
+      final query = 'page=$_invitationsPage'
           '&page_size=$_invitationsPageSize'
           '&sort=${Uri.encodeQueryComponent(_invitationsSort)}'
           '&order=${Uri.encodeQueryComponent(_invitationsOrder)}'
@@ -1234,8 +1232,8 @@ class _InvitationsTabState extends State<_InvitationsTab> {
         if (mounted) {
           final pendingCount = (data['pending_count'] as num).toInt();
           setState(() {
-            _invitations = (data['invitations'] as List)
-                .cast<Map<String, dynamic>>();
+            _invitations =
+                (data['invitations'] as List).cast<Map<String, dynamic>>();
             _invitationsTotal = (data['total'] as num).toInt();
           });
           widget.onPendingCountChanged?.call(pendingCount);
@@ -1376,8 +1374,8 @@ class _InvitationsTabState extends State<_InvitationsTab> {
               backgroundColor: isPending
                   ? KColors.accentAmber
                   : status == 'accepted'
-                  ? KColors.accentGreen
-                  : KColors.textMuted,
+                      ? KColors.accentGreen
+                      : KColors.textMuted,
               child: Text(
                 initial,
                 style: const TextStyle(
@@ -1420,15 +1418,11 @@ class _InvitationsTabState extends State<_InvitationsTab> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      floatingActionButton: Semantics(
-        container: true,
-        identifier: 'invite-fab',
-        child: FloatingActionButton(
-          heroTag: 'invite',
-          onPressed: _inviteUser,
-          tooltip: 'Invite user',
-          child: const Icon(Icons.mail_outline),
-        ),
+      floatingActionButton: FloatingActionButton(
+        heroTag: 'invite',
+        onPressed: _inviteUser,
+        tooltip: 'Invite user',
+        child: const Icon(Icons.mail_outline, semanticLabel: 'Invite user'),
       ),
       body: Column(
         children: [
@@ -1443,6 +1437,7 @@ class _InvitationsTabState extends State<_InvitationsTab> {
             order: _invitationsOrder,
             onChangeSort: _changeInvitationsSort,
             searchController: _invitationsSearchController,
+            searchIdentifier: 'invitations-filter',
             page: _invitationsPage,
             pageSize: _invitationsPageSize,
             total: _invitationsTotal,
@@ -1637,9 +1632,8 @@ class _VolumesTabState extends State<_VolumesTab> {
         final volume = _volumes[i];
         final name = volume['name'] as String? ?? '';
         final createdRaw = volume['created'] as String? ?? '';
-        final created = createdRaw.length >= 10
-            ? createdRaw.substring(0, 10)
-            : createdRaw;
+        final created =
+            createdRaw.length >= 10 ? createdRaw.substring(0, 10) : createdRaw;
         // The owning workspace (#3153 — volumes are workspace-owned):
         // its name when the row still exists, else the label's id.
         final wsName = volume['workspace'] as String? ?? '';
@@ -1767,11 +1761,9 @@ class _AddUserDialogState extends State<_AddUserDialog> {
     final email = _emailController.text.trim();
     // Flag a malformed address as soon as it's typed, mirroring how the
     // password fields surface policy errors (blank stays quiet).
-    final emailError = email.isEmpty || isValidEmail(email)
-        ? null
-        : 'Enter a valid email';
-    final canAdd =
-        email.isNotEmpty &&
+    final emailError =
+        email.isEmpty || isValidEmail(email) ? null : 'Enter a valid email';
+    final canAdd = email.isNotEmpty &&
         emailError == null &&
         (_sendVerificationEmail || passwordValid);
     return AlertDialog(
@@ -1838,9 +1830,8 @@ class _AddUserDialogState extends State<_AddUserDialog> {
                   floatingLabelStyle: labelStyle,
                   floatingLabelBehavior: FloatingLabelBehavior.always,
                   border: const OutlineInputBorder(),
-                  errorText: passwordsMismatch
-                      ? 'Passwords do not match'
-                      : null,
+                  errorText:
+                      passwordsMismatch ? 'Passwords do not match' : null,
                   suffixIcon: KObscureToggle(
                     obscured: _obscureConfirm,
                     onToggle: () =>
@@ -1953,9 +1944,8 @@ class _EditUserDialogState extends State<_EditUserDialog> {
         !settingPassword || (policyError == null && password == confirm);
     final email = _emailController.text.trim();
     // Same as the add dialog: only flag a malformed address once typed.
-    final emailError = email.isEmpty || isValidEmail(email)
-        ? null
-        : 'Enter a valid email';
+    final emailError =
+        email.isEmpty || isValidEmail(email) ? null : 'Enter a valid email';
     final canSave = email.isNotEmpty && emailError == null && passwordValid;
     return AlertDialog(
       title: Text('Edit User', style: TextStyle(color: KColors.textPrimary)),
@@ -2021,9 +2011,8 @@ class _EditUserDialogState extends State<_EditUserDialog> {
                   floatingLabelStyle: labelStyle,
                   floatingLabelBehavior: FloatingLabelBehavior.always,
                   border: const OutlineInputBorder(),
-                  errorText: passwordsMismatch
-                      ? 'Passwords do not match'
-                      : null,
+                  errorText:
+                      passwordsMismatch ? 'Passwords do not match' : null,
                   suffixIcon: KObscureToggle(
                     obscured: _obscureConfirm,
                     onToggle: () =>
@@ -2103,9 +2092,8 @@ class _InviteUserDialogState extends State<_InviteUserDialog> {
       fontWeight: FontWeight.bold,
     );
     final email = _emailController.text.trim();
-    final emailError = email.isEmpty || isValidEmail(email)
-        ? null
-        : 'Enter a valid email';
+    final emailError =
+        email.isEmpty || isValidEmail(email) ? null : 'Enter a valid email';
     final canInvite = emailError == null && email.isNotEmpty;
     return AlertDialog(
       title: Text('Invite User', style: TextStyle(color: KColors.textPrimary)),
@@ -2119,7 +2107,6 @@ class _InviteUserDialogState extends State<_InviteUserDialog> {
             ),
             const SizedBox(height: 16),
             Semantics(
-              container: true,
               identifier: 'invite-email',
               child: TextField(
                 controller: _emailController,
@@ -2185,9 +2172,8 @@ class _UserAvatar extends StatelessWidget {
         children: [
           CircleAvatar(
             radius: 20,
-            backgroundColor: isAgent
-                ? KColors.accentAmber
-                : KColors.colorForString(email),
+            backgroundColor:
+                isAgent ? KColors.accentAmber : KColors.colorForString(email),
             child: isAgent
                 ? const Icon(Icons.smart_toy, color: Colors.white, size: 20)
                 : Text(
@@ -2268,13 +2254,15 @@ class _AclBrowserTabState extends State<_AclBrowserTab> {
   /// status derives from admins-group membership.
   static const _resourceHints = {
     '/': 'view — held by every authenticated user via the seed',
-    '/workspaces': 'create-workspace — workspace creation; per-workspace permissions live on each /workspaces/{id}',
+    '/workspaces':
+        'create-workspace — workspace creation; per-workspace permissions live on each /workspaces/{id}',
     '/users': 'manage-users; search-users — the member-picker type-ahead',
     '/groups': 'manage-groups (listing stays authenticated for pickers)',
     '/invitations': 'manage-invitations',
     '/server': 'manage-server-schedule',
     '/events': 'manage-events (read-only audit)',
-    '/volumes': 'view-volumes — the Volumes tab listing; manage-volumes — create/delete',
+    '/volumes':
+        'view-volumes — the Volumes tab listing; manage-volumes — create/delete',
     '/images': 'view-images — the image/capability listing',
     '/acl': 'manage-acls — root-equivalent, administrators only',
   };
@@ -2433,6 +2421,11 @@ class _AdminListToolbar extends StatelessWidget {
   final ValueChanged<String> onChangeSort;
   final TextEditingController searchController;
   final String searchHint;
+
+  /// Semantic identifier for the search field (#3240) — each admin tab
+  /// passes a unique value so the fmtk harness can disambiguate fields
+  /// across the IndexedStack (all tabs' fields coexist in the tree).
+  final String? searchIdentifier;
   final int page;
   final int pageSize;
   final int total;
@@ -2450,6 +2443,7 @@ class _AdminListToolbar extends StatelessWidget {
     required this.onChangeSort,
     required this.searchController,
     this.searchHint = 'Filter by email…',
+    this.searchIdentifier,
     required this.page,
     required this.pageSize,
     required this.total,
@@ -2463,10 +2457,27 @@ class _AdminListToolbar extends StatelessWidget {
     return ActionChip(
       label: Text(active ? '$label $arrow' : label),
       onPressed: () => onChangeSort(sortKey),
-      backgroundColor: active
-          ? KColors.accentBlue.withValues(alpha: 0.2)
-          : null,
+      backgroundColor:
+          active ? KColors.accentBlue.withValues(alpha: 0.2) : null,
     );
+  }
+
+  Widget _searchField() {
+    final field = TextField(
+      controller: searchController,
+      decoration: InputDecoration(
+        isDense: true,
+        hintText: searchHint,
+        prefixIcon: Icon(Icons.search, size: 18),
+        border: OutlineInputBorder(),
+        contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 0),
+      ),
+      onSubmitted: (_) => onPage(1),
+    );
+    if (searchIdentifier != null) {
+      return Semantics(identifier: searchIdentifier, child: field);
+    }
+    return field;
   }
 
   @override
@@ -2484,22 +2495,7 @@ class _AdminListToolbar extends StatelessWidget {
           const SizedBox(width: 12),
           SizedBox(
             width: 220,
-            child: TextField(
-              controller: searchController,
-              decoration: InputDecoration(
-                isDense: true,
-                hintText: searchHint,
-                prefixIcon: Icon(Icons.search, size: 18),
-                border: OutlineInputBorder(),
-                contentPadding: EdgeInsets.symmetric(
-                  horizontal: 8,
-                  vertical: 0,
-                ),
-              ),
-              // Enter submits immediately; the live debounce runs via the
-              // controller listener in the owning State.
-              onSubmitted: (_) => onPage(1),
-            ),
+            child: _searchField(),
           ),
           Row(
             mainAxisSize: MainAxisSize.min,
