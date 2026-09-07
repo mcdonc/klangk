@@ -29,11 +29,12 @@ module-level functions (no state object):
   (``KLANGKD_LOG_FILE``). Idempotent, so it is also the
   **SIGHUP reconfigure** path: :func:`klangk.main.Lifecycle.apply_reloaded_settings`
   calls it right after the settings swap (before the subsystem loop, so warnings
-  the loop emits use the new level/format/file). ``configure`` also resolves the
-  instance id for ``<data_dir>`` (read-or-create, #3330) and hands it to the JSON
-  formatters, so every JSON record carries ``host`` + ``instance`` and a SIGHUP
-  that changes the data dir swaps the ``instance`` field like every other
-  settings-derived value.
+  the loop emits use the new level/format/file). ``configure`` also supplies the
+  ``instance`` field of the JSON form (#3330): ``build_app`` resolves it from
+  ``<data_dir>`` (read-or-create), while the SIGHUP path carries the process's
+  live instance id — ``data_dir`` does not actually swap on reload (a change
+  draws a requires-restart warning), so the field keeps matching the audit
+  trail's identity until the next process start.
 
 Both reach the same private :func:`_apply`, which removes any prior
 klangk-tagged handler before adding the new one — so repeated calls (fresh
@@ -64,6 +65,8 @@ __all__ = [
     "DEFAULT_BACKUP_COUNT",
     "DEFAULT_FORMAT",
     "DEFAULT_LEVEL",
+    "HOSTNAME",
+    "INSTANCE_ID_FILENAME",
     "JsonFormatter",
     "ROTATE_WHENS",
     "RotationSafeFileHandler",
@@ -75,6 +78,10 @@ __all__ = [
     "level_to_int",
     "make_formatter",
     "next_rotate_boundary",
+    "read_instance_file",
+    "resolve_hostname",
+    "resolve_instance_id",
+    "write_instance_file",
 ]
 
 
@@ -217,10 +224,16 @@ HOSTNAME = resolve_hostname()
 
 def read_instance_file(path: Path) -> str | None:
     """The stripped contents of an instance-id file; ``None`` when absent,
-    unreadable, or blank."""
+    unreadable, or blank.
+
+    ``ValueError`` is caught alongside ``OSError`` because a non-UTF-8
+    file raises :class:`UnicodeDecodeError` (a ``ValueError``) from
+    ``read_text`` — a corrupt identity file must degrade, not take the
+    configure path down (same catch set as ``main._read_instance_id``).
+    """
     try:
         return path.read_text().strip() or None
-    except OSError:
+    except (OSError, ValueError):
         return None
 
 
@@ -229,7 +242,9 @@ def write_instance_file(path: Path) -> str:
 
     Same write shape as :meth:`klangk.util.Util.resolve_instance_id`
     (``instance-id.tmp`` then ``os.replace``) so a torn write never leaves
-    the identity file half-written.
+    the identity file half-written. ``ValueError`` joins ``OSError`` in
+    the catch set (an embedded NUL in the data dir raises it from the
+    path calls) — same degrade-not-raise posture as the reader.
     """
     fresh = str(uuid.uuid4())
     try:
@@ -237,7 +252,7 @@ def write_instance_file(path: Path) -> str:
         tmp = path.parent / f"{path.name}.tmp"
         tmp.write_text(fresh)
         os.replace(tmp, path)
-    except OSError:
+    except (OSError, ValueError):
         return ""
     return fresh
 
@@ -248,7 +263,8 @@ def resolve_instance_id(data_dir: str) -> str:
     Called once per :func:`configure` — never per record — so the
     filesystem is touched at configuration seams only (build_app, a SIGHUP
     reload). Degrades to ``""`` (the ``instance`` field is omitted) when
-    the data dir is not yet readable or writable.
+    the data dir is not yet readable or writable, or the identity file is
+    corrupt — never raises into the configure path.
     """
     path = Path(data_dir) / INSTANCE_ID_FILENAME
     resolved = read_instance_file(path)
@@ -607,7 +623,7 @@ def configure_defaults() -> None:
     _apply(DEFAULT_LEVEL, DEFAULT_FORMAT, "")
 
 
-def configure(settings) -> None:
+def configure(settings, instance_id: str = "") -> None:
     """Re-apply configuration from finalized settings.
 
     Called in :func:`klangk.main.build_app` (once settings are constructed) and
@@ -616,12 +632,22 @@ def configure(settings) -> None:
     ``KLANGKD_LOG_FILE``, and the rotation knobs
     (``KLANGKD_LOG_FILE_MAX_BYTES`` / ``KLANGKD_LOG_FILE_ROTATE`` /
     ``KLANGKD_LOG_FILE_BACKUP_COUNT``) take effect without a process
-    restart (#1587). Also resolves the instance id for ``data_dir``
-    (read-or-create, same file as ``Util.resolve_instance_id``) and hands
-    it to the JSON formatters, so every JSON record carries ``host`` +
-    ``instance`` (#3330) — and a SIGHUP that changes the data dir swaps
-    the ``instance`` field like every other settings-derived value.
-    Reads them live off the settings object; idempotent.
+    restart (#1587). Reads them live off the settings object; idempotent.
+
+    The ``instance`` field of the JSON form comes from ``instance_id`` when
+    handed one, else is resolved from ``<data_dir>`` (read-or-create, the
+    same file :meth:`klangk.util.Util.resolve_instance_id` owns) — resolved
+    once per call, never per record (#3330). The two callers split on
+    purpose: ``build_app`` resolves from the data dir (the first boot
+    creates the file; Util's later startup read agrees with it), while the
+    SIGHUP path passes ``app.state.util.instance_id()`` — the process's
+    live identity. ``data_dir`` is a non-reloadable setting (a change draws
+    a requires-restart warning and leaves the DB, pidfile, and container
+    labels on the old dir), so stamping the new dir's id would attribute
+    records to an instance that exists nowhere but the refused config;
+    carrying the live id keeps the log stream correlated with the audit
+    trail (app.start/app.stop ``target_id``, #3329) across the reload, and
+    the next process start re-resolves from the (then effective) data dir.
     """
     _apply(
         level_to_int(settings.log_level),
@@ -630,7 +656,7 @@ def configure(settings) -> None:
         settings.log_file_max_bytes,
         settings.log_file_rotate,
         settings.log_file_backup_count,
-        resolve_instance_id(settings.data_dir),
+        instance_id or resolve_instance_id(settings.data_dir),
     )
 
 

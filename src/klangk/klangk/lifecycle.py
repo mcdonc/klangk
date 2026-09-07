@@ -867,8 +867,11 @@ class Lifecycle:
         # any warnings the subsystem loop below emits (e.g. "ssl_trust
         # reconfigure failed") use the new KLANGKD_LOG_LEVEL. Logging is global
         # module state, reconfigured at this explicit seam (not an
-        # app.state.* subsystem).
-        configure_logging(new)
+        # app.state.* subsystem). The instance id rides along from the
+        # process's live Util identity: ``data_dir`` is non-reloadable (warned
+        # above), so a refused change must not re-stamp the JSON log field
+        # with an id nothing else in the process uses (#3330).
+        configure_logging(new, app.state.util.instance_id())
         await self._reconfigure_subsystems(app)
         await self._reapply_async_reconfigures(app)
         # #1610: remount frontend_dir if it changed.

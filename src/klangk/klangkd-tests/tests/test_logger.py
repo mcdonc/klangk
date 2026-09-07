@@ -322,6 +322,30 @@ class TestHostInstanceFields:
         blocker.write_text("not a dir")
         assert logger_mod.resolve_instance_id(str(blocker / "d")) == ""
 
+    def test_resolve_instance_degrades_on_nul_in_data_dir(self):
+        # An embedded NUL raises ValueError (not OSError) from the path
+        # calls — the catch set must cover it (fresh-eyes review #1).
+        assert logger_mod.resolve_instance_id("bad\0dir") == ""
+
+    def test_corrupt_instance_file_regenerates_not_raises(self, tmp_path):
+        # A non-UTF-8 identity file raises UnicodeDecodeError (a ValueError)
+        # from read_text — the reader degrades to None and the resolver
+        # regenerates the file instead of raising into configure
+        # (fresh-eyes review #1; Util's own resolver would raise here).
+        path = tmp_path / "instance-id"
+        path.write_bytes(b"\xff\xfe\x00bad")
+        resolved = logger_mod.resolve_instance_id(str(tmp_path))
+        assert resolved  # a fresh uuid
+        assert path.read_text().strip() == resolved  # rewritten, valid utf-8
+
+    def test_blank_instance_file_is_regenerated(self, tmp_path):
+        # Whitespace-only file: treated as missing, regenerated — the same
+        # semantics Util.resolve_instance_id promises for its file.
+        (tmp_path / "instance-id").write_text("   \n")
+        resolved = logger_mod.resolve_instance_id(str(tmp_path))
+        assert resolved
+        assert (tmp_path / "instance-id").read_text().strip() == resolved
+
     def test_read_instance_file_oserror_arm(self, tmp_path):
         # A directory at the instance-id path: the read fails -> None.
         d = tmp_path / "instance-id"
@@ -400,26 +424,55 @@ class TestHostInstanceFields:
         )
         assert util.resolve_instance_id() == payload["instance"]
 
-    def test_sighup_data_dir_swap_swaps_instance_field(
+    def test_sighup_carries_the_process_live_instance_across_a_data_dir_flip(
         self, clean_root, tmp_path, capsys
     ):
-        # A SIGHUP that changes the data dir updates the field like every
-        # other settings-derived value: the second configure re-resolves
-        # from the new dir's instance-id file.
+        # data_dir is a non-reloadable setting: a SIGHUP that changes it
+        # draws a requires-restart warning and leaves the DB, pidfile, and
+        # container labels on the old dir. The reload path therefore passes
+        # the process's live Util id into configure (lifecycle), so records
+        # keep the identity everything else in the process uses — not the
+        # refused config's phantom id (fresh-eyes review #2).
         old_data = tmp_path / "old"
         new_data = tmp_path / "new"
         old_data.mkdir()
         new_data.mkdir()
+        (old_data / "instance-id").write_text("live-iid")
+        (new_data / "instance-id").write_text("phantom-iid")
+        logger_mod.configure(
+            _make_settings(log_format="json", data_dir=old_data)
+        )
+        logging.getLogger("klangk.id.swap").info("before")
+        # The reload seam: new settings naming a different data dir, with
+        # the live instance id handed in (as apply_reloaded_settings does).
+        reloaded = _make_settings(log_format="json", data_dir=new_data)
+        logger_mod.configure(reloaded, "live-iid")
+        logging.getLogger("klangk.id.swap").info("after")
+        lines = [
+            json.loads(x) for x in capsys.readouterr().err.strip().splitlines()
+        ]
+        assert [p["instance"] for p in lines] == ["live-iid", "live-iid"]
+
+    def test_data_dir_change_applies_after_a_process_restart(
+        self, clean_root, tmp_path, capsys
+    ):
+        # A data-dir change takes effect the honest way: the next process
+        # start's build_app resolves from the (then effective) data dir.
+        old_data = tmp_path / "old"
+        new_data = tmp_path / "new"
+        for d in (old_data, new_data):
+            d.mkdir()
         (old_data / "instance-id").write_text("old-iid")
         (new_data / "instance-id").write_text("new-iid")
         logger_mod.configure(
             _make_settings(log_format="json", data_dir=old_data)
         )
-        logging.getLogger("klangk.id.swap").info("old")
+        logging.getLogger("klangk.id.restart").info("old process")
+        # Fresh process: plain configure(settings) — no id handed in.
         logger_mod.configure(
             _make_settings(log_format="json", data_dir=new_data)
         )
-        logging.getLogger("klangk.id.swap").info("new")
+        logging.getLogger("klangk.id.restart").info("new process")
         lines = [
             json.loads(x) for x in capsys.readouterr().err.strip().splitlines()
         ]

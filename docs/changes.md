@@ -830,8 +830,10 @@ sync` report a clear permission-denied error.
   hostname) and `instance` (the per-data-dir klangk instance id from
   `<data_dir>/instance-id` — the same id the audit trail's app lifecycle
   rows key on), so SIEM streams from several hosts or instances are
-  distinguishable. The id is re-resolved on every SIGHUP reload; a data
-  dir change updates the field.
+  distinguishable. The id is resolved once per configure, never per
+  record; a SIGHUP reload keeps the process's live instance id, and a
+  `data_dir` change applies after the restart the reload warning already
+  asks for.
 
 - **Air-gapped deployment guide (#2660).** New deployment chapter
   (`docs/deployment/airgapped.md`) covering offline image transport,
