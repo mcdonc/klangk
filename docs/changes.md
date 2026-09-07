@@ -2565,6 +2565,14 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **CIDR allow-list ports must be ASCII digits (#3274).** An
+  allow-list entry like `10.0.0.0/8:٤٤٣` (a port written in Unicode
+  digits) was accepted by the API, persisted, and then aborted the
+  network sidecar at workspace start: iptables rejects the port and
+  the sidecar exits before the workspace gets network. Such specs are
+  now rejected as invalid input at the API boundary, matching how
+  `host:port` specs were already treated.
+
 - **Terminal window names must start with a letter or digit (#3279).**
   Renaming a terminal tab to a name with a leading hyphen (e.g. `-dev`)
   failed as a server-side tmux error: the name is passed positionally to

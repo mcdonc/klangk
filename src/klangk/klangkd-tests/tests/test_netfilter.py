@@ -112,11 +112,27 @@ class TestParseAllowedDomains:
             "10.0.0.0/8:70000",  # CIDR with port > 65535
             "2001:db8::/32",  # IPv6 CIDR — v6 disabled in containers (#1936)
             "not.a.cidr/24",  # slash but the IP literal is garbage
+            # #3274: ports are ASCII digits only — Unicode digit forms
+            # (Arabic-Indic ٤٤٣, superscript ²) are rejected on both paths.
+            # The CIDR path used to accept them (isdigit() admits Unicode
+            # decimals), persist the spec, and kill the sidecar entrypoint
+            # at start (iptables rejects the port).
+            "a.com:٤٤٣",  # host path — regex already rejects it
+            "10.0.0.0/8:٤٤٣",  # CIDR path — accepted before #3274
+            "10.0.0.0/8:²",  # isdigit()-true but int() raises
         ],
     )
     def test_invalid_specs_rejected(self, spec):
         with pytest.raises(ValueError):
             nf.parse_allowed_domains([spec])
+
+    # #3274: the CIDR validator must answer False (not propagate int()'s
+    # ValueError) for digit forms where isdigit() is true but the string
+    # is not ASCII-decimal — parse_allowed_domains turns that False into
+    # the normal "invalid entry" error, exactly like the host:port path.
+    @pytest.mark.parametrize("spec", ["10.0.0.0/8:٤٤٣", "10.0.0.0/8:²"])
+    def test_cidr_unicode_port_returns_false_not_raise(self, spec):
+        assert nf.valid_cidr_spec(spec) is False
 
     def test_error_lists_every_invalid_entry(self):
         with pytest.raises(ValueError) as exc:
