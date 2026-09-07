@@ -300,9 +300,10 @@ class TestMonitoredFilesystems:
     async def test_deduplicates_paths_sharing_a_device(self, monkeypatch):
         wd, app = make_wd()
         data = app.state.settings.data_dir
+        state = app.state.settings.state_dir
         extra = "/srv/elsewhere"
         app.state.settings.disk_watchdog_paths = [extra]
-        patch_stat(monkeypatch, {data: 1, extra: 1})
+        patch_stat(monkeypatch, {data: 1, state: 1, extra: 1})
         monkeypatch.setattr(
             wd, "resolve_graph_root", AsyncMock(return_value=None)
         )
@@ -312,20 +313,97 @@ class TestMonitoredFilesystems:
     async def test_distinct_devices_are_separate(self, monkeypatch):
         wd, app = make_wd()
         data = app.state.settings.data_dir
+        state = app.state.settings.state_dir
         extra = "/srv/other"
         app.state.settings.disk_watchdog_paths = [extra]
-        patch_stat(monkeypatch, {data: 1, extra: 2})
+        patch_stat(monkeypatch, {data: 1, state: 1, extra: 2})
         monkeypatch.setattr(
             wd, "resolve_graph_root", AsyncMock(return_value=None)
         )
         result = await wd.monitored_filesystems()
         assert [entry[:2] for entry in result] == [(1, data), (2, extra)]
 
+    async def test_split_mount_state_dir_monitored_separately(
+        self, monkeypatch
+    ):
+        """#3310: a state_dir on its own filesystem is measured even
+        when data_dir lives on another device (split-mount
+        deployment)."""
+        wd, app = make_wd(
+            {
+                "KLANGKD_STATE_DIR": "/srv/state",
+                "KLANGKD_DATA_DIR": "/mnt/bigdata",
+            }
+        )
+        state = app.state.settings.state_dir
+        data = app.state.settings.data_dir
+        patch_stat(monkeypatch, {data: 1, state: 2})
+        monkeypatch.setattr(
+            wd, "resolve_graph_root", AsyncMock(return_value=None)
+        )
+        result = await wd.monitored_filesystems()
+        assert [entry[:2] for entry in result] == [(1, data), (2, state)]
+
+    async def test_same_mount_state_dir_deduplicates_under_data_dir(
+        self, monkeypatch
+    ):
+        """#3310: when state_dir shares data_dir's filesystem (the
+        default layout), the alert set is exactly as before — one
+        filesystem, reported under the data directory."""
+        wd, app = make_wd()
+        state = app.state.settings.state_dir
+        data = app.state.settings.data_dir
+        patch_stat(monkeypatch, {data: 1, state: 1})
+        monkeypatch.setattr(
+            wd, "resolve_graph_root", AsyncMock(return_value=None)
+        )
+        result = await wd.monitored_filesystems()
+        assert result == [(1, data, pytest.approx(80.0))]
+
+    async def test_split_mount_state_dir_alerts_under_its_own_path(
+        self, monkeypatch, caplog
+    ):
+        """#3310 acceptance: a split-mount state_dir crossing the warn
+        threshold emits ``resource.disk.warn`` reported under the
+        state_dir path — not silently unmonitored."""
+        wd, app = make_wd(
+            {
+                "KLANGKD_STATE_DIR": "/srv/state",
+                "KLANGKD_DATA_DIR": "/mnt/bigdata",
+            }
+        )
+        spy = notifier_spy(app)
+        state = app.state.settings.state_dir
+        data = app.state.settings.data_dir
+        patch_stat(monkeypatch, {data: 1, state: 2})
+
+        def vfs_by_path(path):
+            return FakeVfs(76.0 if path == state else 50.0)
+
+        monkeypatch.setattr("os.statvfs", vfs_by_path)
+        monkeypatch.setattr(
+            wd, "resolve_graph_root", AsyncMock(return_value=None)
+        )
+        with caplog.at_level(
+            logging.WARNING, logger="klangk.resource_watchdog"
+        ):
+            await wd.check_disk()
+        assert spy.notify_admins.call_count == 1
+        args, kwargs = spy.notify_admins.call_args
+        assert args[0] == "resource.disk.warn"
+        assert kwargs["detail"]["path"] == state
+        assert f"Disk usage 76.0% on {state}" in caplog.text
+
     async def test_unmeasurable_path_warned_once_then_skipped(
         self, monkeypatch, caplog, tmp_path
     ):
         wd, app = make_wd(
-            {"KLANGKD_DISK_WATCHDOG_PATHS": str(tmp_path / "missing")}
+            {
+                # A state_dir that exists on disk (the derived default
+                # is never created); it shares the data dir's device.
+                "KLANGKD_STATE_DIR": str(tmp_path),
+                "KLANGKD_DISK_WATCHDOG_PATHS": str(tmp_path / "missing"),
+            }
         )
         monkeypatch.setattr("os.statvfs", lambda path: FakeVfs(10.0))
         monkeypatch.setattr(
@@ -358,11 +436,16 @@ class TestMonitoredFilesystems:
         assert "cannot measure" in caplog.text
 
     async def test_recovered_measurement_rearms_warning(
-        self, monkeypatch, caplog
+        self, monkeypatch, caplog, tmp_path
     ):
-        wd, app = make_wd()
+        state = tmp_path / "state"
+        state.mkdir()
+        wd, app = make_wd({"KLANGKD_STATE_DIR": str(state)})
+        data = app.state.settings.data_dir
 
         def flaky(path, attempts=[0]):
+            if path != data:
+                return FakeVfs(10.0)
             attempts[0] += 1
             if attempts[0] % 2:  # fail, succeed, fail, ...
                 raise OSError(5, "I/O error")

@@ -6,8 +6,9 @@ surfaces, one poll loop:
 
 - **Disk capacity** (SV-222483 rule 96, SV-222668 rule 280) — every
   poll, ``statvfs`` the filesystems holding the data directory (the
-  audit records storage), the podman container-storage root, and any
-  operator-configured extra paths, deduplicated by device. Usage
+  audit records storage), the state directory, the podman
+  container-storage root, and any operator-configured extra paths,
+  deduplicated by device. Usage
   crossing the warn / critical thresholds emits
   ``resource.disk.warn`` / ``resource.disk.critical`` for the admin
   notifier; falling back below the recovery floor emits
@@ -554,17 +555,23 @@ class ResourceWatchdog:
         """``(device, path, usage%)`` for every monitored filesystem.
 
         Monitored: the data directory (the audit records storage),
-        any ``disk_watchdog_paths`` entries, and the podman
-        container-storage root. The configured paths are measured
-        first (synchronous statvfs, before the storage-root query's
-        await), the root last; the evaluation still runs over the full
-        set, so the first sweep waits out the root query (bounded by
-        its short timeout). Deduplicated by device — several paths on
-        one filesystem are one monitored filesystem, reported under
-        the first of them in that order (data directory, extras,
-        storage root).
+        the state directory, any ``disk_watchdog_paths`` entries, and
+        the podman container-storage root. The configured paths are
+        measured first (synchronous statvfs, before the storage-root
+        query's await), the root last; the evaluation still runs over
+        the full set, so the first sweep waits out the root query
+        (bounded by its short timeout). Deduplicated by device —
+        several paths on one filesystem are one monitored filesystem,
+        reported under the first of them in that order (data
+        directory, state directory, extras, storage root) — so a
+        split-mount deployment (#3310) sees the ``state_dir``
+        filesystem reported under its own path while the default
+        same-mount layout (``data_dir`` defaults to
+        ``<state_dir>/data``) reports exactly as before, under the
+        data directory.
         """
-        paths = [self.app.state.settings.data_dir, *self._extra_paths]
+        settings = self.app.state.settings
+        paths = [settings.data_dir, settings.state_dir, *self._extra_paths]
         entries = [e for e in map(self._measure, paths) if e is not None]
         root = await self.resolve_graph_root()
         if root:
