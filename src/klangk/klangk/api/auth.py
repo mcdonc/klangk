@@ -16,6 +16,7 @@ from fastapi import (
     Depends,
     HTTPException,
     Request,
+    Response,
 )
 from fastapi.responses import (
     JSONResponse,
@@ -1190,9 +1191,24 @@ async def _oidc_logout_url(request: Request, user: dict) -> str | None:
 @router.post("/auth/logout")
 async def logout(
     request: Request,
+    response: Response,
     user: dict | None = Depends(auth.get_current_user_lenient),
     credentials: HTTPAuthorizationCredentials | None = Depends(auth.security),
 ):
+    # #3328: tell the browser to wipe the origin's web storage
+    # (localStorage, sessionStorage, IndexedDB, cache storage, service
+    # worker registrations — in every same-origin tab) when the session
+    # ends, so session remnants are not left readable by the next user
+    # of the browser profile. Browsers honor the header only in secure
+    # contexts: an HTTPS listener (KLANGKD_TLS_HOSTNAME set) or a
+    # localhost bind. A plain-HTTP listener on a remote host is an
+    # insecure context, and the browser silently ignores the header
+    # there — no wipe happens. Non-browser clients ignore it either way.
+    # The "storage" directive alone is the right scope: session auth is
+    # a Bearer token revoked server-side, and the only cookie klangkd
+    # sets is the short-lived OIDC handshake cookie that expires on its
+    # own.
+    response.headers["Clear-Site-Data"] = '"storage"'
     # Logout only invalidates credentials -- it deliberately does NOT stop the
     # user's containers. Per #301/#1235 the idle timeout is the only thing
     # that stops containers (plus the explicit
