@@ -856,129 +856,6 @@ class TestResolveSocketAndPorts:
                 }
             )
 
-
-class TestListenGrammar:
-    """#3275: KLANGKD_LISTEN / KLANGKD_EGRESS_LISTEN accept a bare IP
-    literal or RFC 1123 host name only. Anything else is rendered
-    unquoted into a Caddyfile ``bind`` directive, where it wedges the
-    watchdog, silently misbinds, or injects directives — refuse it at
-    construction with the env var named."""
-
-    def _rejected(self, env_var, bad):
-        from pydantic import ValidationError
-
-        with pytest.raises(ValidationError) as exc_info:
-            KlangkSettings(
-                env={"KLANGKD_STATE_DIR": "/tmp/state", env_var: bad}
-            )
-        assert env_var in str(exc_info.value)
-
-    def test_listen_cidr_rejected(self):
-        """The #3275 repro: Caddy's provisioner rejects the address
-        ("unknown network") at POST /load on every respawn — an
-        infinite kill/respawn loop when accepted."""
-        self._rejected("KLANGKD_LISTEN", "0.0.0.0/24")
-
-    def test_egress_listen_cidr_rejected(self):
-        self._rejected("KLANGKD_EGRESS_LISTEN", "10.0.0.0/8")
-
-    def test_listen_with_port_rejected(self):
-        """nginx-style address: Caddy ignores the port in a bind address
-        and binds listen:KLANGKD_PORT — a silent misbind."""
-        self._rejected("KLANGKD_LISTEN", "127.0.0.1:8080")
-
-    def test_egress_listen_with_port_rejected(self):
-        self._rejected("KLANGKD_EGRESS_LISTEN", "192.168.1.5:8995")
-
-    def test_listen_newline_rejected(self):
-        """A newline injects arbitrary directives into the rendered
-        Caddyfile (caddy adapt happily accepts the injected site block)."""
-        self._rejected(
-            "KLANGKD_LISTEN",
-            "0.0.0.0\n}\nattacker.example {\n\treverse_proxy http://169.254.169.254\n",
-        )
-
-    def test_listen_url_rejected(self):
-        self._rejected("KLANGKD_LISTEN", "http://0.0.0.0")
-
-    def test_listen_bracketed_ipv6_normalized(self):
-        """Caddy's bind takes the bare literal; the URL-authority
-        spelling is accepted and normalized so downstream consumers
-        (loopback gate, authority checks) see a parseable address."""
-        s = KlangkSettings(
-            env={"KLANGKD_STATE_DIR": "/tmp/state", "KLANGKD_LISTEN": "[::1]"}
-        )
-        assert s.listen == "::1"
-
-    def test_listen_ipv6_zone_id_rejected(self):
-        self._rejected("KLANGKD_LISTEN", "fe80::1%eth0")
-
-    def test_listen_internal_space_rejected(self):
-        self._rejected("KLANGKD_LISTEN", "127.0.0.1 0.0.0.0")
-
-    def test_listen_empty_gets_default(self):
-        """An explicitly emptied env var means unset, like the port
-        fields (#3124)."""
-        s = KlangkSettings(
-            env={"KLANGKD_STATE_DIR": "/tmp/state", "KLANGKD_LISTEN": ""}
-        )
-        assert s.listen == "127.0.0.1"
-
-    def test_egress_listen_empty_gets_default(self):
-        s = KlangkSettings(
-            env={
-                "KLANGKD_STATE_DIR": "/tmp/state",
-                "KLANGKD_EGRESS_LISTEN": "",
-            }
-        )
-        assert s.egress_listen == "0.0.0.0"
-
-    def test_listen_ipv4_accepted(self):
-        s = KlangkSettings(
-            env={
-                "KLANGKD_STATE_DIR": "/tmp/state",
-                "KLANGKD_LISTEN": "0.0.0.0",
-            }
-        )
-        assert s.listen == "0.0.0.0"
-
-    def test_listen_ipv6_accepted(self):
-        s = KlangkSettings(
-            env={"KLANGKD_STATE_DIR": "/tmp/state", "KLANGKD_LISTEN": "::1"}
-        )
-        assert s.listen == "::1"
-
-    def test_listen_ipv6_mapped_v4_accepted(self):
-        s = KlangkSettings(
-            env={
-                "KLANGKD_STATE_DIR": "/tmp/state",
-                "KLANGKD_LISTEN": "::ffff:192.168.1.5",
-            }
-        )
-        assert s.listen == "::ffff:192.168.1.5"
-
-    def test_listen_hostname_accepted_and_normalized(self):
-        """A host name is legal (Caddy resolves it at bind time); the
-        stored value is stripped + lowercased so downstream checks
-        (e.g. the loopback-armed-TLS warning) compare canonically."""
-        s = KlangkSettings(
-            env={
-                "KLANGKD_STATE_DIR": "/tmp/state",
-                "KLANGKD_LISTEN": " Klangkd.Internal ",
-            }
-        )
-        assert s.listen == "klangkd.internal"
-
-    def test_listen_localhost_accepted(self):
-        """The no-auth bind-safety gate admits the bare hostname."""
-        s = KlangkSettings(
-            env={
-                "KLANGKD_STATE_DIR": "/tmp/state",
-                "KLANGKD_LISTEN": "localhost",
-            }
-        )
-        assert s.listen == "localhost"
-
     def test_port_empty_is_headless(self):
         """#3124: an explicitly emptied env var means unset, never an
         empty string that crashes int() callers."""
@@ -1154,6 +1031,165 @@ class TestListenGrammar:
             )
         msg = str(exc_info.value)
         assert "KLANGKD_CADDY_ADMIN_SOCKET" in msg
+
+
+class TestListenGrammar:
+    """#3275: KLANGKD_LISTEN / KLANGKD_EGRESS_LISTEN accept a bare IP
+    literal or RFC 1123 host name only. Anything else is rendered
+    unquoted into a Caddyfile ``bind`` directive, where it wedges the
+    watchdog, silently misbinds, or injects directives — refuse it at
+    construction with the env var named."""
+
+    def _rejected(self, env_var, bad):
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError) as exc_info:
+            KlangkSettings(
+                env={"KLANGKD_STATE_DIR": "/tmp/state", env_var: bad}
+            )
+        assert env_var in str(exc_info.value)
+
+    def test_listen_cidr_rejected(self):
+        """The #3275 repro: Caddy's provisioner rejects the address
+        ("unknown network") at POST /load on every respawn — an
+        infinite kill/respawn loop when accepted."""
+        self._rejected("KLANGKD_LISTEN", "0.0.0.0/24")
+
+    def test_egress_listen_cidr_rejected(self):
+        self._rejected("KLANGKD_EGRESS_LISTEN", "10.0.0.0/8")
+
+    def test_listen_with_port_rejected(self):
+        """nginx-style address: Caddy ignores the port in a bind address
+        and binds listen:KLANGKD_PORT — a silent misbind."""
+        self._rejected("KLANGKD_LISTEN", "127.0.0.1:8080")
+
+    def test_egress_listen_with_port_rejected(self):
+        self._rejected("KLANGKD_EGRESS_LISTEN", "192.168.1.5:8995")
+
+    def test_listen_newline_rejected(self):
+        """A newline injects arbitrary directives into the rendered
+        Caddyfile (caddy adapt happily accepts the injected site block)."""
+        self._rejected(
+            "KLANGKD_LISTEN",
+            "0.0.0.0\n}\nattacker.example {\n\treverse_proxy http://169.254.169.254\n",
+        )
+
+    def test_listen_url_rejected(self):
+        self._rejected("KLANGKD_LISTEN", "http://0.0.0.0")
+
+    def test_listen_bracketed_ipv6_normalized(self):
+        """Caddy's bind takes the bare literal; the URL-authority
+        spelling is accepted and normalized so downstream consumers
+        (loopback gate, authority checks) see a parseable address."""
+        s = KlangkSettings(
+            env={"KLANGKD_STATE_DIR": "/tmp/state", "KLANGKD_LISTEN": "[::1]"}
+        )
+        assert s.listen == "::1"
+
+    def test_listen_ipv6_zone_id_rejected(self):
+        self._rejected("KLANGKD_LISTEN", "fe80::1%eth0")
+
+    def test_listen_internal_space_rejected(self):
+        self._rejected("KLANGKD_LISTEN", "127.0.0.1 0.0.0.0")
+
+    def test_listen_empty_gets_default(self):
+        """An explicitly emptied env var means unset, like the port
+        fields (#3124)."""
+        s = KlangkSettings(
+            env={"KLANGKD_STATE_DIR": "/tmp/state", "KLANGKD_LISTEN": ""}
+        )
+        assert s.listen == "127.0.0.1"
+
+    def test_egress_listen_empty_gets_default(self):
+        s = KlangkSettings(
+            env={
+                "KLANGKD_STATE_DIR": "/tmp/state",
+                "KLANGKD_EGRESS_LISTEN": "",
+            }
+        )
+        assert s.egress_listen == "0.0.0.0"
+
+    def test_listen_ipv4_accepted(self):
+        s = KlangkSettings(
+            env={
+                "KLANGKD_STATE_DIR": "/tmp/state",
+                "KLANGKD_LISTEN": "0.0.0.0",
+            }
+        )
+        assert s.listen == "0.0.0.0"
+
+    def test_listen_ipv6_accepted(self):
+        s = KlangkSettings(
+            env={"KLANGKD_STATE_DIR": "/tmp/state", "KLANGKD_LISTEN": "::1"}
+        )
+        assert s.listen == "::1"
+
+    def test_listen_ipv6_mapped_v4_accepted(self):
+        s = KlangkSettings(
+            env={
+                "KLANGKD_STATE_DIR": "/tmp/state",
+                "KLANGKD_LISTEN": "::ffff:192.168.1.5",
+            }
+        )
+        assert s.listen == "::ffff:192.168.1.5"
+
+    def test_listen_hostname_accepted_and_normalized(self):
+        """A host name is legal (Caddy resolves it at bind time); the
+        stored value is stripped + lowercased so downstream checks
+        (e.g. the loopback-armed-TLS warning) compare canonically."""
+        s = KlangkSettings(
+            env={
+                "KLANGKD_STATE_DIR": "/tmp/state",
+                "KLANGKD_LISTEN": " Klangkd.Internal ",
+            }
+        )
+        assert s.listen == "klangkd.internal"
+
+    def test_listen_localhost_accepted(self):
+        """The no-auth bind-safety gate admits the bare hostname."""
+        s = KlangkSettings(
+            env={
+                "KLANGKD_STATE_DIR": "/tmp/state",
+                "KLANGKD_LISTEN": "localhost",
+            }
+        )
+        assert s.listen == "localhost"
+
+    def test_listen_trailing_root_dot_stripped(self):
+        """A trailing DNS root dot is legal spelling (Go/Caddy resolve
+        it); the same tolerance tls_hostname applies (#3192) drops it
+        before matching — a root-dot deployment upgrades cleanly."""
+        s = KlangkSettings(
+            env={
+                "KLANGKD_STATE_DIR": "/tmp/state",
+                "KLANGKD_LISTEN": "localhost.",
+            }
+        )
+        assert s.listen == "localhost"
+
+    def test_listen_bare_root_dot_rejected(self):
+        self._rejected("KLANGKD_LISTEN", ".")
+
+    def test_listen_stored_form_is_validated(self):
+        """The case-folded value is what gets validated: a dotted
+        capital İ (U+0130) passes the IGNORECASE hostname regex but
+        lowercases with a combining dot (U+0307) that no longer matches
+        the grammar — rejected, never stored."""
+        self._rejected("KLANGKD_LISTEN", "İxample")
+
+    def test_listen_hostname_shaped_interface_name_accepted(self):
+        """Interface names (eth0, docker0) are valid RFC 1123 host
+        names: validation accepts them, and the unresolvable bind is
+        caught at Caddy load time by the watchdog's fatal classification
+        (see test_caddy.TestIsBindError / TestNoteLoadFailure) instead of
+        a respawn loop."""
+        s = KlangkSettings(
+            env={
+                "KLANGKD_STATE_DIR": "/tmp/state",
+                "KLANGKD_LISTEN": "eth0",
+            }
+        )
+        assert s.listen == "eth0"
 
 
 class TestAutoHttpsSettings:

@@ -167,15 +167,14 @@ def _is_ipv4(value: str) -> bool:
 def _is_ipv6(value: str) -> bool:
     """True when *value* is a bare IPv6 literal (no zone id — a
     ``%scope`` suffix stays a hostname-shaped string Caddy would have
-    to resolve, not an address klangkd can render)."""
+    to resolve, not an address klangkd can render). Any ``:``-bearing
+    string ``ipaddress`` parses is IPv6; IPv4 literals never carry a
+    colon."""
     try:
-        return (
-            ":" in value
-            and "%" not in value
-            and ipaddress.ip_address(value).version == 6
-        )
+        ipaddress.ip_address(value)
     except ValueError:
         return False
+    return ":" in value and "%" not in value
 
 
 def _unbracketed(addr: str) -> str:
@@ -2108,25 +2107,28 @@ class KlangkSettings(BaseSettings):
     def _validated_listen(cls, env_var: str, value: str, default: str) -> str:
         """One bind address: empty → the field default; else an IPv4/IPv6
         literal or an RFC 1123 host name, returned stripped + lowercased
-        (both grammars are case-insensitive and Caddy accepts lowercase
-        IPv6 textual forms unchanged). A bracketed IPv6 literal
-        (``[::1]``, the URL-authority spelling operators copy-paste) is
-        normalized to the bare literal Caddy's ``bind`` takes."""
+        with a single trailing DNS root dot dropped (the same tolerance
+        ``tls_hostname`` applies) and a bracketed IPv6 literal
+        (``[::1]``, the URL-authority spelling operators copy-paste)
+        normalized to the bare literal Caddy's ``bind`` takes. The
+        **stored** value is what gets validated — a case-folded form
+        that no longer matches the grammar (a dotted capital İ lowering
+        with a combining dot) is rejected."""
         addr = (value or "").strip()
         if not addr:
             return default
-        bare = _unbracketed(addr)
+        bare = _unbracketed(addr).rstrip(".").lower()
         if _is_bind_address(bare):
-            return bare.lower()
+            return bare
         raise ValueError(
             f"{env_var}={value!r} is invalid. It must be a bare bind "
             "address — an IPv4 literal (0.0.0.0, 127.0.0.1), an IPv6 "
-            "literal (::1, fe80::1), or a host name (klangkd.internal) — "
-            "with no port (KLANGKD_PORT / KLANGKD_EGRESS_PORT own the "
-            "ports; Caddy ignores a port inside a bind address), no CIDR "
-            "suffix, no network interface name, and no embedded whitespace "
-            "or newline (the value is rendered verbatim into the Caddyfile "
-            "bind directive)."
+            "literal (::1, fe80::1), or a host name Caddy can resolve "
+            "and bind (klangkd.internal) — with no port (KLANGKD_PORT / "
+            "KLANGKD_EGRESS_PORT own the ports; Caddy ignores a port "
+            "inside a bind address), no CIDR suffix, and no embedded "
+            "whitespace or newline (the value is rendered verbatim into "
+            "the Caddyfile bind directive)."
         )
 
     def _normalize_port_fields(self) -> None:
