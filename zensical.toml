@@ -53,6 +53,7 @@ nav = [
     { "Hosting & Proxy" = "deployment/hosting.md" },
     { "Behind a Reverse Proxy" = "deployment/behind-a-proxy.md" },
     { "HTTPS Hosting" = "deployment/https-hosting.md" },
+    { "Air-Gapped Deployment" = "deployment/airgapped.md" },
     { "Customizing" = "deployment/customizing.md" },
     { "FIPS 140-3 Mode" = "deployment/fips.md" },
     { "Process Signals" = "deployment/signals.md" },
