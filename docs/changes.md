@@ -824,6 +824,12 @@ sync` report a clear permission-denied error.
 
 ### Added
 
+- **fmtk e2e: files browser, renderers, editor round-trip (#3236).**
+  Automated coverage for the Files tab: directory navigation with
+  breadcrumbs and up-button, markdown/code/raw-text renderers opening
+  seeded fixture files, code editor round-trip (API write + read-back),
+  and cache invalidation (terminal-created file appears after refresh).
+
 - **fmtk e2e: user Settings page, password change, branding, legal
   links (#3241).** Automated coverage for the user Settings page
   navigation, password change (wrong-current rejection and success

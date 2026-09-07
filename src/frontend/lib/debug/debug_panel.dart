@@ -55,56 +55,65 @@ class _DebugPanelState extends State<DebugPanel> {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      color: const Color(0xFF1A1A1A),
-      child: Column(
-        children: [
-          // Tab bar
-          Container(
-            height: 22,
-            color: const Color(0xFF2D2D2D),
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-            child: Row(
-              children: [
-                _tabButton('WebSocket', 0),
-                const SizedBox(width: 12),
-                _tabButton('System', 1),
-                const Spacer(),
-                if (_tabIndex == 0) ...[
-                  GestureDetector(
-                    onTap: () => setState(() => _autoScroll = !_autoScroll),
-                    child: Icon(
-                      _autoScroll ? Icons.vertical_align_bottom : Icons.pause,
-                      color: _autoScroll
-                          ? const Color(0xFF5B8C5A)
-                          : const Color(0xFF888888),
-                      size: 12,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  GestureDetector(
-                    onTap: () => setState(() => _entries.clear()),
-                    child: const Icon(Icons.delete_outline,
-                        color: Color(0xFF888888), size: 12),
-                  ),
-                ],
-              ],
-            ),
-          ),
-          // Content
-          Expanded(
-            child: IndexedStack(
-              index: _tabIndex,
-              children: [
-                _buildWsTab(),
-                SystemInfoTab(
-                  auth: Provider.of<AuthService>(context, listen: false),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // The panel's tab bar alone is 22px; if the available height is
+        // smaller there's nothing to render and the Column would overflow.
+        if (constraints.maxHeight < 30) return const SizedBox.shrink();
+        return Container(
+          color: const Color(0xFF1A1A1A),
+          child: Column(
+            children: [
+              // Tab bar
+              Container(
+                height: 22,
+                color: const Color(0xFF2D2D2D),
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                child: Row(
+                  children: [
+                    _tabButton('WebSocket', 0),
+                    const SizedBox(width: 12),
+                    _tabButton('System', 1),
+                    const Spacer(),
+                    if (_tabIndex == 0) ...[
+                      GestureDetector(
+                        onTap: () => setState(() => _autoScroll = !_autoScroll),
+                        child: Icon(
+                          _autoScroll
+                              ? Icons.vertical_align_bottom
+                              : Icons.pause,
+                          color: _autoScroll
+                              ? const Color(0xFF5B8C5A)
+                              : const Color(0xFF888888),
+                          size: 12,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      GestureDetector(
+                        onTap: () => setState(() => _entries.clear()),
+                        child: const Icon(Icons.delete_outline,
+                            color: Color(0xFF888888), size: 12),
+                      ),
+                    ],
+                  ],
                 ),
-              ],
-            ),
+              ),
+              // Content
+              Expanded(
+                child: IndexedStack(
+                  index: _tabIndex,
+                  children: [
+                    _buildWsTab(),
+                    SystemInfoTab(
+                      auth: Provider.of<AuthService>(context, listen: false),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 

@@ -417,6 +417,29 @@ def test_settings_suite_extensions():
     )
 
 
+def test_files_suite_extensions():
+    """The files suite (#3236) drives the file browser, renderers,
+    editor round-trip, and cache invalidation."""
+    suite = _REPO_ROOT / "src/frontend/e2e-tests/fmtk/test_files.py"
+    assert suite.is_file(), "the files suite (#3236) is missing"
+    assert_wired(
+        suite.read_text(),
+        (
+            '"file-browser-path"',
+            '"Up one directory"',
+            '"Refresh file list"',
+            "terminal_send",
+            "seed_fixture_files",
+            '"Test Heading"',
+            '"hello world"',
+            "files/upload",
+            "files/content",
+        ),
+        "the files suite (#3236) must drive the browser, renderers, "
+        "editor, and cache invalidation",
+    )
+
+
 def test_user_settings_suite_extensions():
     """The user-settings suite (#3241) drives the Settings page, password
     change, branding, and legal links."""
