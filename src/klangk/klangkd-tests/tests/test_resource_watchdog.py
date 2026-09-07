@@ -400,7 +400,9 @@ class TestMonitoredFilesystems:
         wd, app = make_wd(
             {
                 # A state_dir that exists on disk (the derived default
-                # is never created); it shares the data dir's device.
+                # is never created); the autouse fixture points
+                # KLANGKD_DATA_DIR at tmp_path itself, so state_dir and
+                # data_dir are the same path here.
                 "KLANGKD_STATE_DIR": str(tmp_path),
                 "KLANGKD_DISK_WATCHDOG_PATHS": str(tmp_path / "missing"),
             }
