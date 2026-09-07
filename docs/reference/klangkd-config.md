@@ -299,6 +299,7 @@ port: 8997
 | `password_require_digit`                  | `0`                          | `KLANGKD_PASSWORD_REQUIRE_DIGIT`                  |
 | `password_require_special`                | `0`                          | `KLANGKD_PASSWORD_REQUIRE_SPECIAL`                |
 | `password_history_count`                  | `0`                          | `KLANGKD_PASSWORD_HISTORY_COUNT`                  |
+| `password_min_changed`                    | `0`                          | `KLANGKD_PASSWORD_MIN_CHANGED`                    |
 | `password_min_age_hours`                  | `0`                          | `KLANGKD_PASSWORD_MIN_AGE_HOURS`                  |
 | `password_max_age_days`                   | `0`                          | `KLANGKD_PASSWORD_MAX_AGE_DAYS`                   |
 | `login_lockout_failures`                  | `5`                          | `KLANGKD_LOGIN_LOCKOUT_FAILURES`                  |
@@ -312,65 +313,10 @@ port: 8997
 | `invite_expire_hours`                     | `72`                         | `KLANGKD_INVITE_EXPIRE_HOURS`                     |
 | `allow_insecure_no_auth`                  |                              | `KLANGKD_ALLOW_INSECURE_NO_AUTH`                  |
 | `reject_proxy_headers`                    |                              | `KLANGKD_REJECT_PROXY_HEADERS`                    |
-| `trusted_proxy_cidrs`                     | `127.0.0.1,::1`              | `KLANGKD_TRUSTED_PROXY_CIDRS`                     |
-| Key                                       | Default                      | Env var                                           |
-| ------------------------------            | ------------------------     | --------------------------------------            |
-| `auth_modes`                              | `none`                       | `KLANGKD_AUTH_MODES`                              |
-| `jwt_secret`                              | _(insecure dev default)_     | `KLANGKD_JWT_SECRET`                              |
-| `prevent_insecure_jwt_secret`             |                              | `KLANGKD_PREVENT_INSECURE_JWT_SECRET`             |
-| `default_user`                            | `<unixuser>@example.com`     | `KLANGKD_DEFAULT_USER`                            |
-| `default_password`                        |                              | `KLANGKD_DEFAULT_PASSWORD`                        |
-| `access_token_hours`                      | `24`                         | `KLANGKD_ACCESS_TOKEN_HOURS`                      |
-| `workspace_token_hours`                   | `24`                         | `KLANGKD_WORKSPACE_TOKEN_HOURS`                   |
-| `min_password_length`                     | `8`                          | `KLANGKD_MIN_PASSWORD_LENGTH`                     |
-| `password_require_upper`                  | `0`                          | `KLANGKD_PASSWORD_REQUIRE_UPPER`                  |
-| `password_require_lower`                  | `0`                          | `KLANGKD_PASSWORD_REQUIRE_LOWER`                  |
-| `password_require_digit`                  | `0`                          | `KLANGKD_PASSWORD_REQUIRE_DIGIT`                  |
-| `password_require_special`                | `0`                          | `KLANGKD_PASSWORD_REQUIRE_SPECIAL`                |
-| `password_history_count`                  | `0`                          | `KLANGKD_PASSWORD_HISTORY_COUNT`                  |
-| `login_lockout_failures`                  | `5`                          | `KLANGKD_LOGIN_LOCKOUT_FAILURES`                  |
-| `login_lockout_duration`                  | `900`                        | `KLANGKD_LOGIN_LOCKOUT_DURATION`                  |
-| `login_lockout_window`                    | `300`                        | `KLANGKD_LOGIN_LOCKOUT_WINDOW`                    |
-| `max_sessions_per_user`                   | `0`                          | `KLANGKD_MAX_SESSIONS_PER_USER`                   |
-| `step_up_window_minutes`                  | `0`                          | `KLANGKD_STEP_UP_WINDOW_MINUTES`                  |
-| `inactivity_disable_days`                 | `35`                         | `KLANGKD_INACTIVITY_DISABLE_DAYS`                 |
-| `session_idle_timeout_minutes`            | `0`                          | `KLANGKD_SESSION_IDLE_TIMEOUT_MINUTES`            |
-| `session_workstation_binding`             | `off`                        | `KLANGKD_SESSION_WORKSTATION_BINDING`             |
-| `disable_registration`                    |                              | `KLANGKD_DISABLE_REGISTRATION`                    |
-| `disable_invites`                         |                              | `KLANGKD_DISABLE_INVITES`                         |
-| `invite_expire_hours`                     | `72`                         | `KLANGKD_INVITE_EXPIRE_HOURS`                     |
-| `allow_insecure_no_auth`                  |                              | `KLANGKD_ALLOW_INSECURE_NO_AUTH`                  |
-| `reject_proxy_headers`                    |                              | `KLANGKD_REJECT_PROXY_HEADERS`                    |
-| `trusted_proxy_cidrs`                     | `127.0.0.1,::1`              | `KLANGKD_TRUSTED_PROXY_CIDRS`                     |
-| Key                                       | Default                      | Env var                                           |
-| ----------------------------------------- | ------------------------     | ------------------------------------------------- |
-| `auth_modes`                              | `none`                       | `KLANGKD_AUTH_MODES`                              |
-| `jwt_secret`                              | _(insecure dev default)_     | `KLANGKD_JWT_SECRET`                              |
-| `prevent_insecure_jwt_secret`             |                              | `KLANGKD_PREVENT_INSECURE_JWT_SECRET`             |
-| `default_user`                            | `<unixuser>@example.com`     | `KLANGKD_DEFAULT_USER`                            |
-| `default_password`                        |                              | `KLANGKD_DEFAULT_PASSWORD`                        |
-| `access_token_hours`                      | `24`                         | `KLANGKD_ACCESS_TOKEN_HOURS`                      |
-| `workspace_token_hours`                   | `24`                         | `KLANGKD_WORKSPACE_TOKEN_HOURS`                   |
-| `min_password_length`                     | `8`                          | `KLANGKD_MIN_PASSWORD_LENGTH`                     |
-| `password_require_upper`                  | `0`                          | `KLANGKD_PASSWORD_REQUIRE_UPPER`                  |
-| `password_require_lower`                  | `0`                          | `KLANGKD_PASSWORD_REQUIRE_LOWER`                  |
-| `password_require_digit`                  | `0`                          | `KLANGKD_PASSWORD_REQUIRE_DIGIT`                  |
-| `password_require_special`                | `0`                          | `KLANGKD_PASSWORD_REQUIRE_SPECIAL`                |
-| `password_history_count`                  | `0`                          | `KLANGKD_PASSWORD_HISTORY_COUNT`                  |
-| `login_lockout_failures`                  | `5`                          | `KLANGKD_LOGIN_LOCKOUT_FAILURES`                  |
-| `login_lockout_duration`                  | `900`                        | `KLANGKD_LOGIN_LOCKOUT_DURATION`                  |
-| `login_lockout_window`                    | `300`                        | `KLANGKD_LOGIN_LOCKOUT_WINDOW`                    |
-| `max_sessions_per_user`                   | `0`                          | `KLANGKD_MAX_SESSIONS_PER_USER`                   |
-| `step_up_window_minutes`                  | `0`                          | `KLANGKD_STEP_UP_WINDOW_MINUTES`                  |
-| `inactivity_disable_days`                 | `35`                         | `KLANGKD_INACTIVITY_DISABLE_DAYS`                 |
 | `session_idle_timeout_minutes`            | `0`                          | `KLANGKD_SESSION_IDLE_TIMEOUT_MINUTES`            |
 | `privileged_session_idle_timeout_minutes` | `10`                         | `KLANGKD_PRIVILEGED_SESSION_IDLE_TIMEOUT_MINUTES` |
 | `session_workstation_binding`             | `off`                        | `KLANGKD_SESSION_WORKSTATION_BINDING`             |
-| `disable_registration`                    |                              | `KLANGKD_DISABLE_REGISTRATION`                    |
-| `disable_invites`                         |                              | `KLANGKD_DISABLE_INVITES`                         |
-| `invite_expire_hours`                     | `72`                         | `KLANGKD_INVITE_EXPIRE_HOURS`                     |
-| `allow_insecure_no_auth`                  |                              | `KLANGKD_ALLOW_INSECURE_NO_AUTH`                  |
-| `reject_proxy_headers`                    |                              | `KLANGKD_REJECT_PROXY_HEADERS`                    |
+| `web_bind_grace_seconds`                  | `300`                        | `KLANGKD_WEB_BIND_GRACE_SECONDS`                  |
 | `trusted_proxy_cidrs`                     | `127.0.0.1,::1`              | `KLANGKD_TRUSTED_PROXY_CIDRS`                     |
 
 ### Server / network
@@ -381,6 +327,9 @@ port: 8997
 | `port`                   | _(unset)_                        | `KLANGKD_PORT`                   |
 | `egress_port`            | `8995`                           | `KLANGKD_EGRESS_PORT`            |
 | `egress_listen`          | `0.0.0.0`                        | `KLANGKD_EGRESS_LISTEN`          |
+| `tls_hostname`           |                                  | `KLANGKD_TLS_HOSTNAME`           |
+| `tls_issuer`             |                                  | `KLANGKD_TLS_ISSUER`             |
+| `acme_email`             |                                  | `KLANGKD_ACME_EMAIL`             |
 | `proxy_port`             | _(deprecated)_                   | `KLANGKD_PROXY_PORT`             |
 | `socket`                 | `<state_dir>/klangk.sock`        | `KLANGKD_SOCKET`                 |
 | `caddy_admin_socket`     | `<state_dir>/caddy-admin.sock`   | `KLANGKD_CADDY_ADMIN_SOCKET`     |
