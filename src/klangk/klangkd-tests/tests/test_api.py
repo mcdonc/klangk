@@ -1321,6 +1321,9 @@ class TestAuthRoutes:
             resp = await client.post("/api/v1/auth/logout", headers=headers)
         assert resp.status_code == 200
         assert resp.json()["status"] == "ok"
+        # #3328: every logout response tells the browser to wipe the
+        # origin's web storage.
+        assert resp.headers["Clear-Site-Data"] == '"storage"'
         mock_stop.assert_not_called()
 
     async def test_logout_kicks_live_sockets(self, client, app, user):
@@ -1391,6 +1394,9 @@ class TestAuthRoutes:
         resp = await client.post("/api/v1/auth/logout")
         assert resp.status_code == 200
         assert resp.json()["status"] == "ok"
+        # #3328: the anonymous path carries the header too — the browser
+        # must clear storage even when there was no live token.
+        assert resp.headers["Clear-Site-Data"] == '"storage"'
 
     async def test_logout_idempotent_revoked_token(self, client, user):
         """Second logout with the already-blocklisted token: still 200
@@ -16837,6 +16843,10 @@ class TestOIDCLogout:
             resp.json()["oidc_logout_url"]
             == "https://idp.example.com/logout?x=1"
         )
+        # #3328: the OIDC logout-redirect path carries the header too. The
+        # response is same-origin JSON (the frontend performs the IdP
+        # redirect itself), so the header applies.
+        assert resp.headers["Clear-Site-Data"] == '"storage"'
 
     async def test_logout_no_redirect_for_local_user(self, client, user):
         """Local user gets no oidc_logout_url."""

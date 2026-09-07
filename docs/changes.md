@@ -835,6 +835,14 @@ sync` report a clear permission-denied error.
   `data_dir` change applies after the restart the reload warning already
   asks for.
 
+- **`Clear-Site-Data: "storage"` on logout (#3328).** The
+  `POST /api/v1/auth/logout` response now carries the header on every
+  path (live token, anonymous token, OIDC logout redirect), so the
+  browser wipes the origin's web storage — localStorage, IndexedDB,
+  cache storage, and service worker registrations — when a session ends.
+  Browsers apply it in secure contexts (HTTPS or localhost), where
+  klangkd serves the frontend.
+
 - **Air-gapped deployment guide (#2660).** New deployment chapter
   (`docs/deployment/airgapped.md`) covering offline image transport,
   DNS and LLM configuration for disconnected networks, workspace
