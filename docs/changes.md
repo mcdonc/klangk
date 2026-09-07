@@ -789,6 +789,12 @@ sync` report a clear permission-denied error.
 
 ### Added
 
+- **fmtk e2e: workspace Settings panel, marking + server-schedule
+  banners (#3239).** Automated coverage for the settings-panel save
+  round-trip, the classification marking banner under deploy-wide and
+  per-workspace configurations, and the server-schedule countdown
+  banner (publish → appears, cancel → clears).
+
 - **Falco exec audit guide (#2780).** New deployment chapter
   (`docs/deployment/falco.md`) documenting the verified procedure for
   running Falco 0.44.1 as a privileged container that captures every

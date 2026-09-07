@@ -396,6 +396,27 @@ def test_oidc_suite_extensions():
     )
 
 
+def test_settings_suite_extensions():
+    """The settings suite (#3239) drives the workspace settings panel,
+    the classification marking banner, and the server-schedule banner."""
+    suite = _REPO_ROOT / "src/frontend/e2e-tests/fmtk/test_settings.py"
+    assert suite.is_file(), "the settings suite (#3239) is missing"
+    assert_wired(
+        suite.read_text(),
+        (
+            "settings-idle-timeout",
+            "Classification Banner",
+            "Settings saved",
+            "Server stops at",
+            "Server recycles at",
+            "classification_banner",
+            "/api/v1/server/schedule",
+            "swap_settings",
+        ),
+        "the settings suite (#3239) must drive settings, markings, and schedules",
+    )
+
+
 def test_agents_documents_the_harness():
     agents = _AGENTS.read_text()
     assert "fmtk-up" in agents, "AGENTS.md must point at the fmtk-up harness"
