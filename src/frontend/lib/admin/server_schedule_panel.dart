@@ -214,7 +214,8 @@ class _ServerSchedulePanelState extends State<ServerSchedulePanel> {
         heroTag: 'schedule-server',
         onPressed: _scheduleAction,
         tooltip: 'Schedule server action',
-        child: const Icon(Icons.add_alarm),
+        child: const Icon(Icons.add_alarm,
+            semanticLabel: 'Schedule server action'),
       ),
       body: _buildList(sorted, hasLive: live != null),
     );

@@ -417,6 +417,36 @@ def test_settings_suite_extensions():
     )
 
 
+def test_admin_suite_extensions():
+    """The admin suite (#3240) drives the admin UI — users, groups,
+    invitations, events, and the server schedule panel."""
+    suite = _REPO_ROOT / "src/frontend/e2e-tests/fmtk/test_admin.py"
+    assert suite.is_file(), "the admin suite (#3240) is missing"
+    assert_wired(
+        suite.read_text(),
+        (
+            "tap_row_button",
+            '"Add user"',
+            '"Create group"',
+            '"Schedule server action"',
+            '"Add User"',
+            '"Edit User"',
+            '"Create Group"',
+            '"Members of"',
+            '"Invite user"',
+            '"Revoke Invitation"',
+            '"Schedule Server Action"',
+            '"users-filter"',
+            '"groups-filter"',
+            '"invitations-filter"',
+            '"Detail"',
+            "sweep_stale_admin_state",
+        ),
+        "the admin suite (#3240) must drive users, groups, invitations, "
+        "events, and schedules",
+    )
+
+
 def test_agents_documents_the_harness():
     agents = _AGENTS.read_text()
     assert "fmtk-up" in agents, "AGENTS.md must point at the fmtk-up harness"
