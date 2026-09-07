@@ -1617,6 +1617,42 @@ class TestIsBindError:
         line = '{"level":"error","logger":"admin"}'
         assert is_bind_error(line) is False
 
+    def test_listen_unknown_network_is_true(self):
+        """#3275: a bind address Go can't parse (a CIDR) fails every
+        respawn identically — fatal, not a respawn loop."""
+        line = (
+            '{"level":"error","logger":"http",'
+            '"msg":"provision: listening on 0.0.0.0/24:8443: '
+            'listen 0.0.0.0: unknown network 0.0.0.0"}'
+        )
+        assert is_bind_error(line) is True
+
+    def test_listen_no_such_host_is_true(self):
+        """#3275: an interface-name bind (``bind eth0``) fails DNS
+        lookup at listen time on every respawn."""
+        line = (
+            '{"level":"error","logger":"http",'
+            '"msg":"listen tcp: lookup eth0: no such host"}'
+        )
+        assert is_bind_error(line) is True
+
+    def test_dial_no_such_host_is_false(self):
+        """Upstream dial failures carry "dial", not "listen": they are
+        per-request (a workspace upstream briefly unresolvable), not a
+        wedged bind — must not trip the fatal flag."""
+        line = (
+            '{"level":"error","logger":"http.log.error",'
+            '"msg":"reverse_proxy: dial tcp: lookup '
+            'upstream.invalid: no such host"}'
+        )
+        assert is_bind_error(line) is False
+
+    def test_listener_closed_stays_false(self):
+        """ "listener closed" contains "listen" as a substring but no
+        address-class marker — regression guard for the #3275 gating."""
+        line = '{"level":"error","logger":"admin","msg":"listener closed"}'
+        assert is_bind_error(line) is False
+
 
 # ---------------------------------------------------------------------------
 # CaddyWatchdog._bind_fatal flag (#1917)

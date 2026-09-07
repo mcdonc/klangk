@@ -265,6 +265,9 @@ the combination can service** (the proxy is Caddy, the sole engine):
 # Set ⇒ full/browser mode (UI + API + hosted apps).
 port: 8997
 # listen is the browser interface address (rendered only when port is set).
+# A bare IP literal or host name — the port lives in `port`, never here
+# (Caddy ignores a port written inside a bind address); anything else
+# fails startup (#3275).
 # listen: "127.0.0.1"  # browser interface address (default loopback; set 0.0.0.0 for all interfaces)
 # egress_listen is the egress interface address. Defaults to 0.0.0.0 (all
 # interfaces) — the only portable default across podman network modes. The
@@ -272,6 +275,7 @@ port: 8997
 # 403 outside the container subnet, plus auth_request workspace-token → 401
 # without a valid JWT), so the all-interfaces bind is not a security hole.
 # Pin to a specific host IP if your container-facing interface is stable.
+# The address grammar matches `listen` (#3275).
 # egress_listen: "0.0.0.0"
 # auth_modes is the sole auth authority; unset defaults to none.
 # auth_modes: password  # or oidc / both / none

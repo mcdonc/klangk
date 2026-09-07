@@ -2565,6 +2565,19 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **`KLANGKD_LISTEN` / `KLANGKD_EGRESS_LISTEN` values are validated
+  (#3275).** Both settings now fail settings construction with the
+  setting named unless the value is a bare bind address — an IPv4/IPv6
+  literal or a host name (a bracketed IPv6 literal normalizes to the
+  bare form; the value is stored stripped + lowercased). A value
+  Caddy's provisioner rejects (a CIDR like `0.0.0.0/24`) used to wedge
+  the Caddy watchdog in an endless kill/respawn loop; a port inside
+  the address (`127.0.0.1:8080`) silently misbound (Caddy ignores it —
+  the port lives in `KLANGKD_PORT`/`KLANGKD_EGRESS_PORT`); a newline
+  could inject Caddyfile directives. The proxy watchdog additionally
+  aborts instead of respawning when Caddy logs a listener address it
+  cannot parse or resolve.
+
 - **Terminal window names must start with a letter or digit (#3279).**
   Renaming a terminal tab to a name with a leading hyphen (e.g. `-dev`)
   failed as a server-side tmux error: the name is passed positionally to

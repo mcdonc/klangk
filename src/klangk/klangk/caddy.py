@@ -463,15 +463,49 @@ def is_bind_error(line: str) -> bool:
     failures (ingress/egress ports) come from other loggers but contain
     the same bind-related keywords in the message. Detecting any of these
     lets the watchdog abort instead of respawning in a tight loop (#1917).
+    Address-class listener failures (a bind address Go's net package
+    can't parse or resolve) are fatal the same way: they fail identically
+    on every respawn, so the watchdog aborts instead of looping forever
+    (#3275).
     """
     try:
         obj = json.loads(line)
     except (json.JSONDecodeError, ValueError):
         return False
     msg = (obj.get("msg") or "").lower()
-    # Go's net package formats socket bind errors as
-    # "bind: address already in use" or "bind: permission denied".
-    return "address already in use" in msg or "bind: permission denied" in msg
+    if not msg:
+        return False
+    return _is_listener_fatal_msg(msg)
+
+
+#: Go's net package formats socket bind errors as
+#: "bind: address already in use" or "bind: permission denied" — fatal
+#: wherever they appear (both are permanent for a fixed config).
+_BIND_FATAL_MARKERS = (
+    "address already in use",
+    "bind: permission denied",
+)
+
+#: Address-class listener failures (#3275): a bind address Go can't
+#: parse ("unknown network", e.g. a CIDR in a bind directive) or can't
+#: resolve ("lookup eth0: no such host", an interface name in a bind).
+#: Matched only inside a message that also says "listen" — upstream
+#: dial failures carry "dial" instead and stay non-fatal (per-request,
+#: not a wedged bind).
+_LISTEN_ADDR_FATAL_MARKERS = (
+    "unknown network",
+    "no such host",
+)
+
+
+def _is_listener_fatal_msg(msg: str) -> bool:
+    """True when a lowered Caddy stderr *msg* marks a listener bind as
+    permanently fatal (#1917, #3275)."""
+    if any(marker in msg for marker in _BIND_FATAL_MARKERS):
+        return True
+    return "listen" in msg and any(
+        marker in msg for marker in _LISTEN_ADDR_FATAL_MARKERS
+    )
 
 
 # ---------------------------------------------------------------------------
