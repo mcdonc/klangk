@@ -35,6 +35,22 @@ operators or integrators to act when upgrading.
 
 ### Breaking
 
+- **`KLANGKD_LISTEN` / `KLANGKD_EGRESS_LISTEN` values are validated
+  (#3275).** Both settings now fail startup (and deny a SIGHUP reload)
+  with the setting named unless the value is a bare bind address — an
+  IPv4/IPv6 literal or a host name, stored stripped + lowercased (a
+  bracketed IPv6 literal normalizes to the bare form; a trailing DNS
+  root dot is dropped). A port inside the address (`127.0.0.1:8080`)
+  used to boot while silently binding `listen:KLANGKD_PORT` — move the
+  port to `KLANGKD_PORT` / `KLANGKD_EGRESS_PORT` on upgrade; CIDR and
+  newline values used to wedge the proxy watchdog in an endless
+  kill/respawn loop or inject Caddyfile directives. The proxy watchdog
+  now also aborts instead of respawning when Caddy rejects the config
+  because a configured listener address cannot be bound (unparsed,
+  unresolvable, non-local, or already taken) — e.g. an interface name
+  like `eth0`, which is a syntactically valid host name that passes
+  validation.
+
 - **Host-header validation changes URL derivation for name-accessed
   deployments (#3276).** A request's `Host` header now validates against
   klangkd's own configuration (loopback, the armed `KLANGKD_TLS_HOSTNAME`

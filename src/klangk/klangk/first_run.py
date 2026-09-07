@@ -97,7 +97,9 @@ def _render_config() -> str:
 # port: "8997"             # browser/UI port (loopback by default; enables
 #                          # the web UI at http://localhost:8997)
 # listen: "127.0.0.1"      # browser interface address (rendered when port
-#                          # is set; must be loopback unless you override)
+#                          # is set; must be loopback unless you override).
+#                          # Bare IP or host name only — the port lives in
+#                          # "port" above, not here
 # tls_hostname: klangk.example.com  # arms TLS: Caddy obtains and renews
 #                          # a CA cert for this FQDN and serves
 #                          # https://<fqdn>:<port> (needs a public DNS

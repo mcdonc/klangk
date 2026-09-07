@@ -1617,6 +1617,137 @@ class TestIsBindError:
         line = '{"level":"error","logger":"admin"}'
         assert is_bind_error(line) is False
 
+    def test_load_request_error_unknown_network_is_true(self):
+        """#3275: the shape Caddy actually emits for a failed
+        POST /load (verified against 2.11.4) — msg "request error",
+        the provisioner's text in the ``error`` field. A CIDR bind
+        address fails every respawn identically — fatal, not a respawn
+        loop."""
+        line = (
+            '{"level":"error","logger":"admin.api",'
+            '"msg":"request error","error":"loading config: loading '
+            "new config: http app module: start: listening on "
+            '0.0.0.0/24:8443: listen 0.0.0.0: unknown network 0.0.0.0",'
+            '"status_code":400}'
+        )
+        assert is_bind_error(line) is True
+
+    def test_load_request_error_no_such_host_is_true(self):
+        """#3275: an interface-name bind (``bind eth0``) — hostname-shaped
+        so it passes settings validation — fails DNS lookup at listen
+        time on every respawn (captured from 2.11.4)."""
+        line = (
+            '{"level":"error","logger":"admin.api",'
+            '"msg":"request error","error":"loading config: '
+            "listening on eth0:8997: listen tcp: lookup eth0: "
+            'no such host","status_code":400}'
+        )
+        assert is_bind_error(line) is True
+
+    def test_load_request_error_cannot_assign_is_true(self):
+        """#3275: a hostname resolving to a non-local address — the
+        natural failure of the sanctioned hostname grammar (captured
+        from 2.11.4)."""
+        line = (
+            '{"level":"error","logger":"admin.api",'
+            '"msg":"request error","error":"loading config: '
+            "listening on 10.99.99.99:8443: listen tcp 10.99.99.99:8443: "
+            'bind: cannot assign requested address","status_code":400}'
+        )
+        assert is_bind_error(line) is True
+
+    def test_load_request_error_in_use_is_true(self):
+        """#1917's marker works on the /load path too: the 400 error
+        field carries the address-in-use text (captured from 2.11.4)."""
+        line = (
+            '{"level":"error","logger":"admin.api",'
+            '"msg":"request error","error":"loading config: '
+            "listening on 127.0.0.1:8999: listen tcp 127.0.0.1:8999: "
+            'bind: address already in use","status_code":400}'
+        )
+        assert is_bind_error(line) is True
+
+    def test_listen_msg_unknown_network_is_true(self):
+        """#3275: the same address-class failure carried in ``msg``
+        (the shape caddy's own startup logs use for listener errors)."""
+        line = (
+            '{"level":"error","logger":"http",'
+            '"msg":"listen tcp 0.0.0.0/24:8443: '
+            'unknown network 0.0.0.0/24"}'
+        )
+        assert is_bind_error(line) is True
+
+    def test_dial_no_such_host_is_false(self):
+        """Upstream dial failures carry "dial", not "listen": they are
+        per-request (a workspace upstream briefly unresolvable), not a
+        wedged bind — must not trip the fatal flag, in msg or error."""
+        line = (
+            '{"level":"error","logger":"http.log.error",'
+            '"msg":"reverse_proxy: dial tcp: lookup '
+            'upstream.invalid: no such host"}'
+        )
+        assert is_bind_error(line) is False
+
+    def test_dial_error_field_no_such_host_is_false(self):
+        line = (
+            '{"level":"error","logger":"http.log.error",'
+            '"msg":"handler error",'
+            '"error":"dial tcp: lookup upstream.invalid: '
+            'no such host"}'
+        )
+        assert is_bind_error(line) is False
+
+    def test_listener_closed_stays_false(self):
+        """ "listener closed" contains "listen" as a substring but no
+        address-class marker — regression guard for the #3275 gating."""
+        line = '{"level":"error","logger":"admin","msg":"listener closed"}'
+        assert is_bind_error(line) is False
+
+
+class TestNoteLoadFailure:
+    """The watchdog arms _bind_fatal from a fatal /load 400 body
+    (#3275) — the race-free companion to the stderr classifier."""
+
+    def test_fatal_body_arms_flag(self, caplog):
+        import logging
+
+        import httpx
+
+        wd = _wd(make_settings())
+        resp = httpx.Response(
+            400,
+            request=httpx.Request("POST", "http://localhost/load"),
+            json={
+                "error": (
+                    "loading config: listening on eth0:8997: "
+                    "listen tcp: lookup eth0: no such host"
+                )
+            },
+        )
+        exc = httpx.HTTPStatusError("400", request=resp.request, response=resp)
+        with caplog.at_level(logging.ERROR):
+            wd._note_load_failure(exc)
+        assert wd._bind_fatal is True
+        assert "POST /load failed" in caplog.text
+
+    def test_non_fatal_body_keeps_flag(self):
+        import httpx
+
+        wd = _wd(make_settings())
+        resp = httpx.Response(
+            400,
+            request=httpx.Request("POST", "http://localhost/load"),
+            json={"error": "adapting config: Unexpected next token"},
+        )
+        exc = httpx.HTTPStatusError("400", request=resp.request, response=resp)
+        wd._note_load_failure(exc)
+        assert wd._bind_fatal is False
+
+    def test_transport_error_keeps_flag(self):
+        wd = _wd(make_settings())
+        wd._note_load_failure(RuntimeError("boom"))
+        assert wd._bind_fatal is False
+
 
 # ---------------------------------------------------------------------------
 # CaddyWatchdog._bind_fatal flag (#1917)

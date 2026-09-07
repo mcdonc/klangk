@@ -463,15 +463,63 @@ def is_bind_error(line: str) -> bool:
     failures (ingress/egress ports) come from other loggers but contain
     the same bind-related keywords in the message. Detecting any of these
     lets the watchdog abort instead of respawning in a tight loop (#1917).
+    Address-class listener failures (a bind address Go's net package
+    can't parse or resolve) are fatal the same way: they fail identically
+    on every respawn, so the watchdog aborts instead of looping forever
+    (#3275).
+
+    Caddy logs a failed ``POST /load`` (how the watchdog ships every
+    config) with ``msg: "request error"`` and the provisioner's text in
+    the ``error`` field — the markers are matched against both fields
+    concatenated (#3275, shapes verified against Caddy 2.11.4).
     """
     try:
         obj = json.loads(line)
     except (json.JSONDecodeError, ValueError):
         return False
-    msg = (obj.get("msg") or "").lower()
-    # Go's net package formats socket bind errors as
-    # "bind: address already in use" or "bind: permission denied".
-    return "address already in use" in msg or "bind: permission denied" in msg
+    msg = f"{obj.get('msg') or ''} {obj.get('error') or ''}".strip().lower()
+    if not msg:
+        return False
+    return _is_listener_fatal_msg(msg)
+
+
+#: Go's net package formats socket bind errors as
+#: "bind: address already in use" or "bind: permission denied" — fatal
+#: wherever they appear (both are permanent for a fixed config).
+_BIND_FATAL_MARKERS = (
+    "address already in use",
+    "bind: permission denied",
+)
+
+#: Address-class listener failures (#3275): a bind address Go can't
+#: parse ("unknown network", e.g. a CIDR in a bind directive), can't
+#: resolve ("lookup eth0: no such host", an interface name in a bind),
+#: or can't assign ("cannot assign requested address", a non-local
+#: address). Matched only inside a message that also says "listen" —
+#: upstream dial failures carry "dial" instead and stay non-fatal
+#: (per-request, not a wedged bind).
+_LISTEN_ADDR_FATAL_MARKERS = (
+    "unknown network",
+    "no such host",
+    "cannot assign requested address",
+)
+
+
+def _is_listener_fatal_msg(msg: str) -> bool:
+    """True when a lowered Caddy stderr/log *msg* marks a listener bind
+    as permanently fatal (#1917, #3275)."""
+    if any(marker in msg for marker in _BIND_FATAL_MARKERS):
+        return True
+    return "listen" in msg and any(
+        marker in msg for marker in _LISTEN_ADDR_FATAL_MARKERS
+    )
+
+
+def _response_text(exc: Exception) -> str:
+    """The response body of an HTTP status error ("" when *exc* carries
+    no response)."""
+    resp = getattr(exc, "response", None)
+    return resp.text if resp is not None else ""
 
 
 # ---------------------------------------------------------------------------
@@ -1608,16 +1656,29 @@ class CaddyWatchdog:
                 load_ok = True
                 self._log_listeners()
             except Exception as exc:  # noqa: BLE001
-                logger.error(
-                    "caddy POST /load failed (killing for respawn): %s",
-                    exc,
-                )
+                self._note_load_failure(exc)
         else:
             logger.error(
                 "caddy admin UDS never came up at %s", self.admin_socket
             )
         if not load_ok:
             self._terminate_live()
+
+    def _note_load_failure(self, exc: Exception) -> None:
+        """Log a failed ``POST /load`` and arm ``_bind_fatal`` when the
+        failure body marks a listener address Caddy cannot bind (#1917,
+        #3275).
+
+        A 400 from ``/load`` carries the provisioner's error text in the
+        response body (and in the ``admin.api`` stderr line's ``error``
+        field, which :func:`is_bind_error` also matches) — text like
+        ``listening on eth0:8997: listen tcp: lookup eth0: no such host``
+        fails identically on every respawn, so the watchdog must abort
+        instead of looping forever."""
+        logger.error("caddy POST /load failed (killing for respawn): %s", exc)
+        body = _response_text(exc)
+        if _is_listener_fatal_msg(body.lower()):
+            self._bind_fatal = True
 
     async def start(self) -> None:
         """Bootstrap Caddy (admin on a UDS, no config) and start the watchdog.

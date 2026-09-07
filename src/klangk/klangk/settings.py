@@ -164,6 +164,38 @@ def _is_ipv4(value: str) -> bool:
         return False
 
 
+def _is_ipv6(value: str) -> bool:
+    """True when *value* is a bare IPv6 literal (no zone id — a
+    ``%scope`` suffix stays a hostname-shaped string Caddy would have
+    to resolve, not an address klangkd can render). Any ``:``-bearing
+    string ``ipaddress`` parses is IPv6; IPv4 literals never carry a
+    colon."""
+    try:
+        ipaddress.ip_address(value)
+    except ValueError:
+        return False
+    return ":" in value and "%" not in value
+
+
+def _unbracketed(addr: str) -> str:
+    """*addr* with one outer ``[…]`` pair removed — the URL-authority
+    spelling of an IPv6 literal, stripped so bind-address consumers see
+    the bare literal."""
+    if len(addr) > 2 and addr.startswith("[") and addr.endswith("]"):
+        return addr[1:-1]
+    return addr
+
+
+def _is_bind_address(addr: str) -> bool:
+    """True when *addr* is a legal Caddy ``bind`` address for klangkd:
+    an IPv4/IPv6 literal or an RFC 1123 host name (#3275)."""
+    return (
+        _INTERNAL_TLS_NAME_RE.match(addr) is not None
+        or _is_ipv4(addr)
+        or _is_ipv6(addr)
+    )
+
+
 # The XDG "klangkd" subdir used by the default-roots (state + config). The
 # server's tree is ``klangkd`` (the binary name) — distinct from the CLI's
 # ``klangk`` tree. Different audiences, different shapes: server state is
@@ -1102,7 +1134,10 @@ class KlangkSettings(BaseSettings):
     # (loopback) keeps the browser listener reachable only from the operator's
     # machine unless an operator deliberately widens it (#1542). The
     # polymorphic socket-path meaning (#1422) never shipped in a release and
-    # is retired — the UDS path is now ``KLANGKD_SOCKET``.
+    # is retired — the UDS path is now ``KLANGKD_SOCKET``. Validated at
+    # construction: a bare IPv4/IPv6 literal or an RFC 1123 host name only —
+    # a port, CIDR suffix, or interface name would wedge the Caddy
+    # watchdog or silently misbind (#3275).
     listen: str = "127.0.0.1"
     # port: the proxy's **browser** port (e.g. ``8997``). **No default** — unset
     # ⇒ headless mode (no browser listener is rendered; only the container-
@@ -1127,7 +1162,8 @@ class KlangkSettings(BaseSettings):
     # ``CONTAINER_ACL`` allowlist + ``auth_request`` workspace-token gate, not
     # the bind address. An operator who knows their specific container-facing
     # host IP may set this to that IP to drop every other interface from the
-    # egress surface (#1542).
+    # egress surface (#1542). Validated at construction like ``listen`` —
+    # a bare IPv4/IPv6 literal or an RFC 1123 host name only (#3275).
     egress_listen: str = "0.0.0.0"
     # tls_hostname: the public FQDN klangkd serves, arming automatic
     # TLS on the built-in Caddy proxy (#3192). Unset (the default) keeps
@@ -1887,6 +1923,7 @@ class KlangkSettings(BaseSettings):
           the egress port + a loud deprecation warning.
         - both set → ``egress_port`` wins, ``proxy_port`` ignored + a warning.
         """
+        self._normalize_listen_fields()
         self._normalize_port_fields()
         self._fold_proxy_port()
         if self.egress_port is None:
@@ -2045,6 +2082,54 @@ class KlangkSettings(BaseSettings):
                 "is passed verbatim to the certificate authority), or "
                 "unset."
             )
+
+    def _normalize_listen_fields(self) -> None:
+        """Both bind addresses must be a bare address token (#3275).
+
+        ``listen`` and ``egress_listen`` are rendered **unquoted** into
+        Caddyfile ``bind`` directives, so a value Caddy cannot provision
+        either wedges its watchdog in a kill/respawn loop (a CIDR like
+        ``0.0.0.0/24`` fails ``POST /load`` identically on every respawn),
+        silently misbinds (nginx-style ``127.0.0.1:8080`` — Caddy ignores
+        a port inside a bind address), or injects directives into the
+        rendered Caddyfile (a newline). Both fields fail construction with
+        the env var named instead — the same fail-fast posture as
+        ``KLANGKD_ACME_EMAIL`` and the port coercers (#3124).
+        """
+        self.listen = self._validated_listen(
+            "KLANGKD_LISTEN", self.listen, "127.0.0.1"
+        )
+        self.egress_listen = self._validated_listen(
+            "KLANGKD_EGRESS_LISTEN", self.egress_listen, "0.0.0.0"
+        )
+
+    @classmethod
+    def _validated_listen(cls, env_var: str, value: str, default: str) -> str:
+        """One bind address: empty → the field default; else an IPv4/IPv6
+        literal or an RFC 1123 host name, returned stripped + lowercased
+        with a single trailing DNS root dot dropped (the same tolerance
+        ``tls_hostname`` applies) and a bracketed IPv6 literal
+        (``[::1]``, the URL-authority spelling operators copy-paste)
+        normalized to the bare literal Caddy's ``bind`` takes. The
+        **stored** value is what gets validated — a case-folded form
+        that no longer matches the grammar (a dotted capital İ lowering
+        with a combining dot) is rejected."""
+        addr = (value or "").strip()
+        if not addr:
+            return default
+        bare = _unbracketed(addr).rstrip(".").lower()
+        if _is_bind_address(bare):
+            return bare
+        raise ValueError(
+            f"{env_var}={value!r} is invalid. It must be a bare bind "
+            "address — an IPv4 literal (0.0.0.0, 127.0.0.1), an IPv6 "
+            "literal (::1, fe80::1), or a host name Caddy can resolve "
+            "and bind (klangkd.internal) — with no port (KLANGKD_PORT / "
+            "KLANGKD_EGRESS_PORT own the ports; Caddy ignores a port "
+            "inside a bind address), no CIDR suffix, and no embedded "
+            "whitespace or newline (the value is rendered verbatim into "
+            "the Caddyfile bind directive)."
+        )
 
     def _normalize_port_fields(self) -> None:
         """Empty-string port settings mean unset; a set value must be
