@@ -88,14 +88,10 @@ Inside `devenv shell`, these commands are available:
 | `pull-base-image`           | Pull the multi-arch workspace base image      |
 | `push-base-image`           | Publish the workspace base image              |
 | `build-host-image`          | Build host container image                    |
-| `run-host-container`        | Run host container locally                    |
 | `trivy-host`                | Scan host image for vulnerabilities           |
 | `trivy-workspace`           | Scan workspace image for vulnerabilities      |
 | `trivy-workspace-report`    | Scan + report no-fix CVEs (or render JSON)    |
 | `update-features`           | Fetch features from features.yaml             |
-| `kill-containers`           | Stop and remove all klangk containers         |
-| `restart`                   | Rebuild images and restart devenv processes   |
-| `rebuild`                   | Rebuild workspace image and Flutter web       |
 | `serve-docs`                | Serve docs locally for preview                |
 | `build-docs`                | Build docs for deployment                     |
 

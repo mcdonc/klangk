@@ -18,11 +18,11 @@ Python/FastAPI backend (UDS, serves API + frontend static files)
     ├── Terminal/exec session management
     ↕ podman exec subprocess
 Pi container per workspace (interactive terminal mode)
-    ├── Pi extensions (from features/*/extension.ts in the repo, baked into the workspace image)
+    ├── Pi extensions (from features/ in the repo, baked into the workspace image; see features.yaml)
     ├── AGENTS.md (dynamically generated on container start)
     ├── /tmp/klangk/workspace-token (per-workspace JWT, auto-renewed)
     ↕ bind mount
-$KLANGKD_DATA_DIR/workspaces/<user-id>/home/<workspace-id>/
+$KLANGKD_DATA_DIR/workspaces/<workspace-id>/home/
 ```
 
 ## Components
@@ -33,7 +33,7 @@ $KLANGKD_DATA_DIR/workspaces/<user-id>/home/<workspace-id>/
 
 ## Data
 
-- All data stored in `$KLANGKD_DATA_DIR` (defaults to `$DEVENV_STATE/klangk/data`)
+- All data stored in `$KLANGKD_DATA_DIR` (defaults to `$XDG_STATE_HOME/klangkd/data`, or `~/.local/state/klangkd/data` when `$XDG_STATE_HOME` is unset)
 - SQLite database: `klangk.db` (users, workspaces, groups, ACL entries, port allocations, token blocklist, login attempts, invitations)
-- Workspace home volume: `workspaces/<user-id>/home/<workspace-id>/` (mounted as `/home` — the shared home `klangk/` under the default shared layout, per-member `.users/<user-id>/` + `/home/<handle>` symlinks under per-handle)
+- Workspace home volume: `workspaces/<workspace-id>/home/` (mounted as `/home` — the shared home `klangk/` under the default shared layout, per-member `.users/<user-id>/` + `/home/<handle>` symlinks under per-handle)
 - Database persists across restarts and rebuilds
