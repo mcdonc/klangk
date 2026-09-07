@@ -9,12 +9,17 @@ unchanged except where noted inline (#2738 audit fixes). Owns:
 - :func:`lifespan` — the FastAPI lifespan context manager.
 - :func:`setup_logfire` — opt-in Logfire instrumentation (called from
   the lifespan, after SSL trust is applied).
+- The ``app.start`` / ``app.stop`` / ``app.reload`` audit rows (#3329)
+  — the daemon's own lifecycle in the structured audit stream, written
+  best-effort so an audit problem never blocks boot or exit.
 """
 
 import asyncio
+import json
 import logging
 import os
 import signal
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -105,6 +110,42 @@ _NON_RELOADABLE_SETTINGS: tuple[tuple[str, str], ...] = (
 )
 
 
+def _read_version_file(path: str) -> dict | None:
+    """The parsed version file, or ``None`` when it is absent,
+    unreadable, or not a JSON object."""
+    try:
+        with open(path) as f:
+            info = json.load(f)
+    except (OSError, ValueError):
+        return None
+    return info if isinstance(info, dict) else None
+
+
+def _app_version(settings) -> str:
+    """The running build's version string ("dev" until a version file
+    is configured and readable — the same source the ``/version``
+    endpoint reads)."""
+    path = settings.version_file
+    if not path:
+        return "dev"
+    info = _read_version_file(path)
+    if info is None:
+        return "dev"
+    return str(info.get("version") or "dev")
+
+
+def _stop_reason(lifecycle) -> str:
+    """The ``app.stop`` row's exit reason (#3329): the fail-secure
+    forced exit (a failed recycle recovery, #3176), the graceful
+    TERM/INT signal (a clean stop), or a plain lifespan teardown (the
+    listener exited without a signal — e.g. a test harness)."""
+    if lifecycle.forced_exit_status is not None:
+        return "forced-exit"
+    if lifecycle.shutdown_signal is not None:
+        return f"signal:{lifecycle.shutdown_signal}"
+    return "lifespan-teardown"
+
+
 def _password_policy_errors(settings, password: str) -> list[str]:
     """The password-policy violations of *password* (empty when it is
     compliant)."""
@@ -183,6 +224,10 @@ class Lifecycle:
         # the signal hook in main.py before graceful_shutdown runs) and
         # strong references to the hook task while it drains.
         self.shutting_down: bool = False
+        # #3329: the signal name of the shutdown in progress (set by
+        # graceful_shutdown, read by the lifespan's app.stop row so the
+        # audit trail distinguishes a clean TERM/INT from a forced exit).
+        self.shutdown_signal: str | None = None
         self._shutdown_tasks: set[asyncio.Task] = set()
         # Fail-secure (#3176): non-zero exit the GracefulExitServer must
         # translate after the teardown completes (set on the failed
@@ -672,7 +717,7 @@ class Lifecycle:
             return True
         return False
 
-    async def _apply_and_recycle(self, state, new_settings) -> None:
+    async def _apply_and_recycle(self, state, new_settings, source) -> None:
         """Phases 5–7 of the recycle: apply the reloaded config, recycle
         the runtime, and resume. The drain flag deliberately stays set
         through ``startup()``'s podman pre-warm and container reaps (so a
@@ -681,6 +726,11 @@ class Lifecycle:
         container destroyed by the reap); ``startup()`` clears it."""
         logger.info("SIGHUP: phase: apply (applying reloaded config)")
         await self.apply_reloaded_settings(new_settings)
+        # #3329: the settings swap is the auditable fact — the
+        # app.reload row goes in right after it, before the runtime
+        # recycle, so a recycle or recovery failure further down
+        # cannot lose it (the new settings are live either way).
+        await self._record_reload(source)
         state.sockets.notify_server_recycle("recycling")
         logger.info(
             "SIGHUP: phase: restart (recycling runtime; "
@@ -689,11 +739,12 @@ class Lifecycle:
         await self.runtime_shutdown()
         await self.startup()
 
-    async def recycle_runtime(self) -> None:
+    async def recycle_runtime(self, source: str | None = None) -> None:
         """Graceful runtime recycle: quiesce, drain, re-read config, recycle.
 
         Triggered by SIGHUP and by a scheduled recycle (#2661) — the
-        sequence is identical either way. Each phase is logged and (the
+        sequence is identical either way; *source* names the trigger in
+        the ``app.reload`` audit row. Each phase is logged and (the
         client-visible ones) announced as a ``server_recycle`` WebSocket
         event with a ``phase`` field; a final ``host_started`` broadcast
         closes the sequence. The HTTP listener and DB stay up the whole
@@ -750,7 +801,7 @@ class Lifecycle:
                 await self._quiesce_and_drain(state, registry, new_settings)
                 if self._shutdown_won_mid_recycle():
                     return
-                await self._apply_and_recycle(state, new_settings)
+                await self._apply_and_recycle(state, new_settings, source)
             finally:
                 # A failed restart must never leave the node refusing
                 # starts: the in-memory flag has no DB persistence an
@@ -762,6 +813,31 @@ class Lifecycle:
                     registry.draining = False
             logger.info("SIGHUP: restart complete (phase: resumed)")
             state.sockets.notify_host_started()
+
+    async def _record_reload(self, source: str | None) -> None:
+        """Write the ``app.reload`` audit row (#3329).
+
+        A SIGHUP / scheduled recycle swaps settings in-place — the
+        process never exits, so no ``app.stop``/``app.start`` pair
+        brackets it. The reload gets its own row (the decided answer to
+        the #3329 open question) because the alternative — a detail
+        field on the next ``app.start`` — would be delayed arbitrarily
+        (the next stop may be days away) and conflated with that boot.
+        Written right after the settings swap — the auditable fact —
+        so a later runtime-recycle or recovery failure cannot lose it;
+        a denied (invalid config) or aborted (shutdown raced) recycle
+        applies nothing and writes no row.
+        Best-effort like every audit write.
+        """
+        detail: dict = {"pid": os.getpid()}
+        if source is not None:
+            detail["source"] = source
+        await self.app.state.model.audit_events.record_best_effort(
+            "app.reload",
+            target_type="app",
+            target_id=self.app.state.util.instance_id(),
+            detail=detail,
+        )
 
     def reload_settings(
         self,
@@ -962,6 +1038,8 @@ class Lifecycle:
         state = self.app.state
         registry = state.container_registry
         name = signal.Signals(signal_num).name
+        # #3329: remembered for the app.stop row's exit reason.
+        self.shutdown_signal = name
         logger.info("%s: graceful shutdown beginning (phase: notify)", name)
         state.sockets.notify_host_shutdown()
         logger.info("%s: phase: draining (refusing new starts)", name)
@@ -1127,7 +1205,7 @@ class Lifecycle:
             loop = asyncio.get_running_loop()
         except RuntimeError:  # no running loop during shutdown
             return
-        task = loop.create_task(self.recycle_runtime())
+        task = loop.create_task(self.recycle_runtime(source))
         self._recycle_tasks.add(task)
         task.add_done_callback(self._on_recycle_task_done)
 
@@ -1410,10 +1488,47 @@ async def lifespan(app: FastAPI):
         signal.SIGHUP,
         app.state.lifecycle.on_sighup,
     )
+    # #3329: the daemon's own lifecycle joins the structured audit
+    # stream. The start row goes in at the moment the backend
+    # announces itself ready — the stop-row finally below runs only
+    # once the yield is reached, so writing any earlier would orphan
+    # the row on a pre-yield startup crash (one pair per process
+    # lifetime). Best-effort: an audit problem never blocks boot.
+    # ``started`` anchors the app.stop row's uptime.
+    started = time.monotonic()
+    settings = app.state.settings
+    await app.state.model.audit_events.record_best_effort(
+        "app.start",
+        target_type="app",
+        target_id=app.state.util.instance_id(),
+        detail={
+            "version": _app_version(settings),
+            "pid": os.getpid(),
+            "listen": settings.listen,
+            "port": settings.port,
+            "socket": settings.socket,
+        },
+    )
     try:
         yield
     finally:
         loop.remove_signal_handler(signal.SIGHUP)
+        # #3329: the stop row goes in before the teardown steps —
+        # process_shutdown disposes the DB engine, so the row must be
+        # written while it is still open. Written regardless of how the
+        # steps below fare (each is attempted, #3176); best-effort, so
+        # a dead DB loses the row (the next boot's app.start row
+        # brackets the outage).
+        await app.state.model.audit_events.record_best_effort(
+            "app.stop",
+            target_type="app",
+            target_id=app.state.util.instance_id(),
+            detail={
+                "pid": os.getpid(),
+                "reason": _stop_reason(app.state.lifecycle),
+                "uptime_seconds": round(time.monotonic() - started, 3),
+            },
+        )
         # Each teardown step is wrapped so one failure cannot skip the
         # rest — all steps always attempted, each failure logged
         # (fail to a secure state on shutdown failure, #3176).

@@ -1,6 +1,8 @@
 """Tests for main.py: lifespan, seed user, static files, logfire."""
 
 import asyncio
+import contextlib
+import json
 import os
 import signal
 import sqlite3
@@ -36,7 +38,7 @@ from klangk import (
 )
 from klangk.container import ContainerRegistry
 from klangk.exceptions import ConfigurationError, EX_CONFIG
-from klangk.lifecycle import broadcast_container_status
+from klangk.lifecycle import broadcast_container_status, _app_version
 from _helpers import make_settings
 from klangk.wshandler.session import WebSocketState
 
@@ -1203,6 +1205,263 @@ class TestLifespan:
             async with main.lifespan(app):
                 pass  # pragma: no cover
         assert app.state.startup_config_error == str(refusal)
+
+
+class TestAppLifecycleAudit:
+    """The app.start / app.stop / app.reload audit rows (#3329).
+
+    Each test boots (or recycles) the real lifespan against the
+    per-test DB, so the rows land in the same ``audit_events`` table
+    ``GET /events/audit`` serves and are read back through the same
+    model listing the endpoint uses.
+    """
+
+    @contextlib.contextmanager
+    def _boot_mocks(self, wired):
+        """The standard lifespan-boot mock stack (reaps, loops, pid
+        file)."""
+        registry = wired.state.container_registry
+        with (
+            patch.object(
+                registry,
+                "reap_instance_containers",
+                new_callable=AsyncMock,
+            ),
+            patch.object(
+                registry,
+                "reap_dead_owner_containers",
+                new_callable=AsyncMock,
+            ),
+            patch.object(registry, "start_cleanup_loop"),
+            patch.object(util_mod.Util, "check_pid_file", return_value=None),
+            patch.object(util_mod.Util, "write_pid_file"),
+            patch.object(util_mod.Util, "remove_pid_file"),
+        ):
+            yield
+
+    async def test_lifespan_writes_start_and_stop_rows(self, db, app_state):
+        app, wired = _lifespan_test_app()
+        with self._boot_mocks(wired):
+            async with main.lifespan(app):
+                pass
+        events = app.state.model.audit_events
+        starts = await events.list_events(event="app.start")
+        stops = await events.list_events(event="app.stop")
+        assert len(starts) == 1
+        assert len(stops) == 1
+        start, stop = starts[0], stops[0]
+        # System rows: no actor, the app itself (by instance id) as target.
+        for row in (start, stop):
+            assert row["actor_id"] is None
+            assert row["actor_email"] is None
+            assert row["target_type"] == "app"
+            assert row["target_id"] == app.state.util.instance_id()
+        assert start["detail"]["pid"] == os.getpid()
+        assert start["detail"]["version"] == "dev"
+        assert start["detail"]["listen"] == app.state.settings.listen
+        assert start["detail"]["port"] == app.state.settings.port
+        assert start["detail"]["socket"] == app.state.settings.socket
+        assert stop["detail"]["pid"] == os.getpid()
+        assert stop["detail"]["reason"] == "lifespan-teardown"
+        assert stop["detail"]["uptime_seconds"] >= 0
+        # The pair brackets the serving window, in order.
+        assert stop["created_at"] >= start["created_at"]
+
+    async def test_stop_row_names_the_graceful_signal(self, db, app_state):
+        app, wired = _lifespan_test_app()
+        lc = wired.state.lifecycle
+        registry = wired.state.container_registry
+        with (
+            self._boot_mocks(wired),
+            patch.object(wired.state.sockets, "notify_host_shutdown"),
+            patch.object(
+                wired.state.inflight_requests,
+                "wait_for_idle",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+            patch.object(registry, "tracked_container_count", return_value=0),
+            patch.object(
+                registry,
+                "drain_all_containers",
+                new_callable=AsyncMock,
+                return_value=0,
+            ),
+        ):
+            async with main.lifespan(app):
+                await lc.graceful_shutdown(signal_num=signal.SIGTERM)
+        assert lc.shutdown_signal == "SIGTERM"
+        stops = await app.state.model.audit_events.list_events(
+            event="app.stop"
+        )
+        assert stops[0]["detail"]["reason"] == "signal:SIGTERM"
+
+    async def test_stop_row_names_the_forced_exit(self, db, app_state):
+        app, wired = _lifespan_test_app()
+        with self._boot_mocks(wired):
+            async with main.lifespan(app):
+                # The failed-recycle recovery path (#3176) marks the
+                # exit before the teardown runs.
+                wired.state.lifecycle.forced_exit_status = 1
+        stops = await app.state.model.audit_events.list_events(
+            event="app.stop"
+        )
+        assert stops[0]["detail"]["reason"] == "forced-exit"
+
+    async def test_lifecycle_rows_carry_hmac_when_configured(
+        self, db, app_state
+    ):
+        app, wired = _lifespan_test_app()
+        app.state.settings.audit_hmac_key = "test-audit-key"
+        with self._boot_mocks(wired):
+            async with main.lifespan(app):
+                pass
+        for name in ("app.start", "app.stop"):
+            rows = await app.state.model.audit_events.list_events(event=name)
+            assert rows[0]["hmac"]
+
+    async def test_recycle_records_app_reload_row(self, db, app_state):
+        app_state = _make_app_state()
+        lc = app_state.state.lifecycle
+        lc._recycle_lock = None
+        registry = app_state.state.container_registry
+        new_settings = make_settings({"KLANGKD_DEFAULT_PASSWORD": "test"})
+        with (
+            patch.object(
+                lc, "reload_settings", return_value=(new_settings, None)
+            ),
+            patch.object(
+                lc, "apply_reloaded_settings", new_callable=AsyncMock
+            ),
+            patch.object(lc, "runtime_shutdown", new_callable=AsyncMock),
+            patch.object(lc, "startup", new_callable=AsyncMock),
+            patch.object(
+                registry,
+                "drain_all_containers",
+                new_callable=AsyncMock,
+                return_value=0,
+            ),
+            patch.object(
+                app_state.state.inflight_requests,
+                "wait_for_idle",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+        ):
+            await lc.recycle_runtime(source="SIGHUP")
+        rows = await app_state.state.model.audit_events.list_events(
+            event="app.reload"
+        )
+        assert len(rows) == 1
+        row = rows[0]
+        assert row["actor_id"] is None
+        assert row["target_type"] == "app"
+        assert row["target_id"] == app_state.state.util.instance_id()
+        assert row["detail"] == {"pid": os.getpid(), "source": "SIGHUP"}
+
+    async def test_denied_recycle_writes_no_reload_row(self, db, app_state):
+        app_state = _make_app_state()
+        lc = app_state.state.lifecycle
+        lc._recycle_lock = None
+        with patch.object(
+            lc, "reload_settings", return_value=(None, "bad config")
+        ):
+            await lc.recycle_runtime()
+        rows = await app_state.state.model.audit_events.list_events(
+            event="app.reload"
+        )
+        assert rows == []
+
+    async def test_reload_row_survives_a_failed_recycle(self, db, app_state):
+        """The row is written at the settings swap, so a recycle that
+        fails afterwards (and recovers) still leaves it — the audit
+        stream must not lose an applied config swap."""
+        app_state = _make_app_state()
+        lc = app_state.state.lifecycle
+        lc._recycle_lock = None
+        registry = app_state.state.container_registry
+
+        async def explode():
+            raise RuntimeError("recycle exploded")
+
+        with (
+            patch.object(
+                lc,
+                "reload_settings",
+                return_value=(
+                    make_settings({"KLANGKD_DEFAULT_PASSWORD": "test"}),
+                    None,
+                ),
+            ),
+            patch.object(
+                lc, "apply_reloaded_settings", new_callable=AsyncMock
+            ),
+            patch.object(lc, "runtime_shutdown", side_effect=explode),
+            patch.object(lc, "startup", new_callable=AsyncMock),
+            patch.object(
+                registry,
+                "drain_all_containers",
+                new_callable=AsyncMock,
+                return_value=0,
+            ),
+            patch.object(
+                app_state.state.inflight_requests,
+                "wait_for_idle",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+        ):
+            lc.request_recycle(source="SIGHUP")
+            # Let the recycle fail and the done-callback's recovery
+            # run to completion — each aiosqlite round-trip needs real
+            # wall time on its worker thread, so pump with small
+            # sleeps until both tasks drain (bounded: 200 × 10ms).
+            for _ in range(200):
+                if not lc._recycle_tasks:
+                    break
+                await asyncio.sleep(0.01)
+        rows = await app_state.state.model.audit_events.list_events(
+            event="app.reload"
+        )
+        assert len(rows) == 1
+        assert rows[0]["detail"]["source"] == "SIGHUP"
+
+    def test_app_version_dev_without_version_file(self):
+        assert _app_version(types.SimpleNamespace(version_file=None)) == "dev"
+
+    def test_app_version_reads_the_version_file(self, tmp_path):
+        path = tmp_path / "version.json"
+        path.write_text('{"version": "1.2.3", "commit": "abc"}')
+        assert (
+            _app_version(types.SimpleNamespace(version_file=str(path)))
+            == "1.2.3"
+        )
+
+    def test_app_version_missing_file_falls_back_to_dev(self, tmp_path):
+        path = tmp_path / "absent.json"
+        assert (
+            _app_version(types.SimpleNamespace(version_file=str(path)))
+            == "dev"
+        )
+
+    def test_app_version_unparseable_file_falls_back_to_dev(self, tmp_path):
+        path = tmp_path / "version.json"
+        path.write_text("{not json")
+        assert (
+            _app_version(types.SimpleNamespace(version_file=str(path)))
+            == "dev"
+        )
+
+    def test_app_version_non_dict_file_falls_back_to_dev(self, tmp_path):
+        # Valid JSON of the wrong shape must not raise out of the
+        # lifespan (the detail dict is built before record_best_effort
+        # can swallow anything — an exception here would block boot).
+        path = tmp_path / "version.json"
+        path.write_text('["1.2.3"]')
+        assert (
+            _app_version(types.SimpleNamespace(version_file=str(path)))
+            == "dev"
+        )
 
 
 class TestBroadcastContainerStatus:
@@ -2448,6 +2707,21 @@ class TestMainEntryCallback2910:
                 pass
         mock_shutdown.assert_awaited_once()
         mock_remove.assert_called_once()
+        # #3329: the stop row is written before the steps run, so a
+        # failing step cannot lose it. Read it synchronously from the
+        # DB file: the engine was disposed by process_shutdown, and a
+        # fresh async engine here was the test's last DB object alive
+        # at loop close — on slow machines its aiosqlite worker thread
+        # outlived the loop (the #1250 hazard) and failed CI. The
+        # stdlib connection has no event-loop involvement.
+        with sqlite3.connect(
+            f"file:{app.state.db.db_path}?mode=ro", uri=True
+        ) as raw:
+            row = raw.execute(
+                "SELECT detail FROM audit_events WHERE event = 'app.stop'"
+            ).fetchone()
+        assert row is not None
+        assert json.loads(row[0])["reason"] == "lifespan-teardown"
 
     @pytest.mark.parametrize(
         ("break_step", "expected_exc"),
@@ -2525,7 +2799,9 @@ class TestMainEntryCallback2910:
                     yielded = True
         assert not yielded
 
-    async def test_recycle_runtime_runs_shutdown_then_startup(self, app_state):
+    async def test_recycle_runtime_runs_shutdown_then_startup(
+        self, db, app_state
+    ):
         app_state = _make_app_state()
         lc = app_state.state.lifecycle
         lc._recycle_lock = None  # force fresh lock creation
@@ -2541,7 +2817,7 @@ class TestMainEntryCallback2910:
         # Lock was created and is now held-free.
         assert lc._recycle_lock is not None
 
-    async def test_recycle_runtime_reuses_existing_lock(self, app_state):
+    async def test_recycle_runtime_reuses_existing_lock(self, db, app_state):
         # Seed a lock explicitly; ``recycle_runtime`` must reuse it rather
         # than create a new one. The lock is now per-instance (#1571), so a
         # fresh Lifecycle starts at the pre-first-use floor without a
@@ -2558,7 +2834,9 @@ class TestMainEntryCallback2910:
         # Same lock object reused, not replaced.
         assert lc._recycle_lock is existing
 
-    async def test_recycle_lock_serializes_concurrent_calls(self, app_state):
+    async def test_recycle_lock_serializes_concurrent_calls(
+        self, db, app_state
+    ):
         """Two restarts kicked off together run strictly one-after-another."""
         app_state = _make_app_state()
         lc = app_state.state.lifecycle
@@ -2612,7 +2890,9 @@ class TestMainEntryCallback2910:
         mock_down.assert_not_awaited()
         mock_up.assert_not_awaited()
 
-    async def test_restart_reloads_then_applies_then_restarts(self, app_state):
+    async def test_restart_reloads_then_applies_then_restarts(
+        self, db, app_state
+    ):
         """Valid config: reload → apply → shutdown → startup."""
         app_state = _make_app_state()
         lc = app_state.state.lifecycle
@@ -2647,7 +2927,7 @@ class TestMainEntryCallback2910:
             await lc.recycle_runtime()
         assert order == ["apply", "shutdown", "startup"]
 
-    async def test_restart_graceful_sequence(self, app_state):
+    async def test_restart_graceful_sequence(self, db, app_state):
         """The full graceful-restart sequence, in order (#2527):
         broadcast draining → refuse starts → quiesce → drain containers
         → apply config → broadcast restarting → recycle → clear the
@@ -2724,7 +3004,9 @@ class TestMainEntryCallback2910:
         # The flag never survives the restart.
         assert registry.draining is False
 
-    async def test_restart_keeps_drain_flag_through_startup(self, app_state):
+    async def test_restart_keeps_drain_flag_through_startup(
+        self, db, app_state
+    ):
         """The drain flag is NOT cleared before startup() — startup clears
         it itself after the container reaps, so a client that reconnects
         and starts a workspace during the prewarm/reap window is refused
@@ -2821,7 +3103,9 @@ class TestMainEntryCallback2910:
             "autostart(draining=False)",
         ]
 
-    async def test_restart_quiesce_timeout_proceeds(self, app_state, caplog):
+    async def test_restart_quiesce_timeout_proceeds(
+        self, db, app_state, caplog
+    ):
         """Straggler requests at timeout expiry are logged; the restart
         proceeds anyway."""
         app_state = _make_app_state()
@@ -2891,13 +3175,14 @@ class TestMainEntryCallback2910:
         assert registry.draining is False
 
     async def test_restart_aborts_when_shutdown_arrives_mid_drain(
-        self, app_state
+        self, db, app_state
     ):
         """#2527 review: a TERM landing while the restart's drain is in
         flight aborts the restart after the drain — no settings apply,
         no runtime recycle — and never lifts the shutdown's drain flag
         (no auto-start resurrecting drained containers, no 503-lift
-        while exiting)."""
+        while exiting). The aborted recycle applies nothing, so no
+        app.reload row either (#3329)."""
         app_state = _make_app_state()
         lc = app_state.state.lifecycle
         lc._recycle_lock = None
@@ -2938,6 +3223,11 @@ class TestMainEntryCallback2910:
         mock_up.assert_not_awaited()  # no auto-start resurrect
         # The shutdown's flag was NOT lifted.
         assert registry.draining is True
+        # #3329: nothing was applied, so no reload row.
+        rows = await app_state.state.model.audit_events.list_events(
+            event="app.reload"
+        )
+        assert rows == []
 
     async def test_restart_aborts_before_starting_when_shutdown_precedes(
         self, app_state
@@ -3348,7 +3638,9 @@ class TestMainEntryCallback2910:
         )
 
     async def test_on_sighup_schedules_restart(self, app_state):
-        """on_sighup creates a task that runs recycle_runtime."""
+        """on_sighup creates a task that runs recycle_runtime, named
+        with its trigger source (#3329 — the source reaches the
+        app.reload audit row)."""
         app_state = _make_app_state()
         lc = app_state.state.lifecycle
         with patch.object(
@@ -3358,7 +3650,7 @@ class TestMainEntryCallback2910:
             # Let the scheduled task run.
             await asyncio.sleep(0)
             await asyncio.sleep(0)
-        mock_restart.assert_awaited_once()
+        mock_restart.assert_awaited_once_with("SIGHUP")
 
     async def test_on_sighup_keeps_strong_task_reference(self, app_state):
         """The restart task is held in _recycle_tasks (an unreferenced
@@ -4616,7 +4908,7 @@ class TestLifecycleBranchGaps2834:
     """#2834 branch gate: the shutdown-owned drain flag and the
     no-caddy-watchdog apply path."""
 
-    async def test_restart_during_shutdown_keeps_draining(self, app_state):
+    async def test_restart_during_shutdown_keeps_draining(self, db, app_state):
         # A shutdown owning the process when the restart's finally runs:
         # the drain flag must stay set (clearing it would lift the
         # shutdown's start-refusal while exiting, #2527 review).

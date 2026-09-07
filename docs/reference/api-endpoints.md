@@ -597,7 +597,7 @@ No request body.
 Paged identity/privilege audit history (#3205), newest first, from the
 `audit_events` table: account create/update/delete, group and ACL
 changes, workspace role assignments and transfers,
-login/logout/failed-login, session revocation, and the data-level
+login/logout/failed-login, session revocation, the data-level
 file events (#3257) — `file.download` (a workspace archive export, a
 per-file/directory download, or a text read via `/files/content`,
 marked `via: content`), `file.upload` (a workspace archive
@@ -605,7 +605,20 @@ import), `file.write` (an upload or rename through the files API),
 and `file.delete` (a delete through the files API) — each carrying
 the path and byte size in `detail` (the size is omitted where
 meaningless — rename, delete, directory downloads; an export's size
-is a pre-flight estimate). Query params:
+is a pre-flight estimate) — and the daemon's own lifecycle (#3329):
+`app.start` / `app.stop` (one pair per process lifetime; start when
+the backend announces itself ready, stop before the teardown steps so
+the row is written while the database is still open) and `app.reload`
+(a SIGHUP or scheduled recycle that swapped settings in place — the
+process keeps running, so the reload gets its own row instead of a
+field on the next `app.start`, written at the moment the new settings
+were applied). These are system rows: no actor, the
+target is the app itself (the instance id), and `detail` carries the
+build version, pid, and listener on start, and the pid, uptime, and
+exit reason (`signal:SIGTERM`/`signal:SIGINT` for a graceful stop,
+`forced-exit` for the fail-secure exit of #3176, `lifespan-teardown`
+when the listener exited without a signal) on stop.
+Query params:
 `limit` (1–200, default 50), `offset`, and optional `event`, `actor`
 (matches actor id or email), and `target` (target id) substring filters
 (matched literally — `%` and `_` are characters, not wildcards).

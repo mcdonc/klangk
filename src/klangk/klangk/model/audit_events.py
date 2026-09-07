@@ -17,6 +17,16 @@ and HTTP paths present identically.
 
 Event coverage (#3205):
 
+- **App lifecycle** (#3329) — ``app.start`` / ``app.stop`` (one pair
+  per process lifetime, written by the lifespan: start when the
+  backend announces itself ready, stop before the teardown steps so
+  the DB engine is still open) and ``app.reload`` (a SIGHUP or
+  scheduled recycle swapped settings in-place — the process never
+  exits, so the reload gets its own row rather than a detail field on
+  the next ``app.start``, written at the moment the new settings were
+  applied). System rows — no actor — targeting ``app`` (the
+  instance id), with version / pid / listener in the start ``detail``
+  and pid / uptime / exit reason in the stop's.
 - **Account CRUD** — ``user.register``, ``user.create`` (admin,
   invite-accept, OIDC JIT), ``user.update`` (admin — a disable/enable
   toggle records here, ``fields`` naming ``disabled``),

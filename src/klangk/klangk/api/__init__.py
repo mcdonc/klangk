@@ -151,11 +151,19 @@ async def empty():
 
 @router.get("/version")
 async def version(app=Depends(get_app_dep)):
-    """Return build version info, plus loaded feature metadata."""
+    """Return build version info, plus loaded feature metadata.
+
+    An unreadable or wrong-shaped version file falls through to the
+    dev block (the same tolerance the ``app.start`` audit row's
+    version field applies, #3329) instead of 500ing.
+    """
     if version_file := app.state.settings.version_file:
-        if os.path.isfile(version_file):
+        try:
             with open(version_file) as f:
                 info = json.load(f)
+        except (OSError, ValueError):
+            info = None
+        if isinstance(info, dict):
             info["features"] = app.state.features.feature_list()
             return info
     return {
