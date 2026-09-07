@@ -55,6 +55,12 @@ the loop — a watchdog that dies silently would disable the STIG
 alerting without a trace. All settings are read live off
 ``app.state.settings`` every poll, so a SIGHUP reload (#1587)
 re-arms the loop without a restart.
+
+The same state is queryable: :meth:`ResourceWatchdog.snapshot`
+(#3308) exposes the last-known rows — per-filesystem usage/state,
+the host metrics, the audit-degradation flag, the last poll's time —
+read lock-free for the ``/health`` degraded surface, so an external
+monitor sees a degraded host without parsing the journal.
 """
 
 import asyncio
@@ -122,6 +128,16 @@ CPU_EVENTS = ThresholdEvents(
 # host-level metrics by these fixed keys.
 MEMORY_KEY = "memory"
 CPU_KEY = "cpu-psi"
+
+# The snapshot rows for the two host-level metrics (#3308): state
+# key -> (payload key, usage field name). Memory reports a
+# utilization percent; CPU reports the PSI ``avg60`` percent it was
+# classified on — the same field names the notification details
+# carry.
+HOST_METRIC_FIELDS = {
+    MEMORY_KEY: ("memory", "usage_percent"),
+    CPU_KEY: ("cpu", "psi_avg60_percent"),
+}
 
 # Usage must fall this far below the warn threshold (percentage
 # points) before a degraded filesystem reports recovered — the
@@ -303,6 +319,15 @@ class ResourceWatchdog:
         self._states: dict[int | str, str] = {}
         self._emitted_at: dict[int | str, float] = {}
         self._pending: dict[int | str, str] = {}
+        # The snapshot surface's companions to _states (#3308): the
+        # last measured usage percent per metric key, and the
+        # representative path per disk device. Written by the poll
+        # loop alongside the states, read lock-free by snapshot().
+        self._last_usage: dict[int | str, float] = {}
+        self._disk_paths: dict[int, str] = {}
+        # Wall-clock time of the last completed sweep (None before
+        # the first) — the freshness stamp the snapshot carries.
+        self._last_poll: float | None = None
         # audit table -> last-seen failure count / alerted-this-episode.
         self._audit_counts: dict[str, int] = {}
         self._audit_alerted: dict[str, bool] = {}
@@ -430,6 +455,67 @@ class ResourceWatchdog:
     def _extra_paths(self) -> list[str]:
         return self.app.state.settings.disk_watchdog_paths or []
 
+    # --- snapshot surface (#3308) ---
+
+    def snapshot(self) -> dict:
+        """The last-known detection state for the ``/health`` degraded
+        surface (#3308), read lock-free off the poll loop's own
+        dicts (the loop and the HTTP handler share the event loop, so
+        a plain read cannot observe a torn state).
+
+        Rows: one per monitored filesystem (the deduplicated set the
+        poll measures, in measurement order), the host memory and
+        CPU metrics once their checks have measured at least once,
+        the audit-degradation flag (new audit-write failures in the
+        most recent window — cleared by one clean window), and the
+        wall-clock time of the last completed sweep (``None`` before
+        the first). ``degraded`` folds every row plus the audit flag —
+        the one bit ``/health`` keys on. A metric that goes
+        unmeasurable keeps its last row (the same retention the
+        event states have); ``last_poll`` carries the freshness.
+        """
+        filesystems = self._disk_rows()
+        hosts = self._host_rows()
+        audit_degraded = any(self._audit_alerted.values())
+        body: dict = {
+            "filesystems": filesystems,
+            "audit_degraded": audit_degraded,
+            "last_poll": self._last_poll,
+        }
+        body.update(hosts)
+        body["degraded"] = (
+            any(row["state"] != OK for row in filesystems)
+            or any(row["state"] != OK for row in hosts.values())
+            or audit_degraded
+        )
+        return body
+
+    def _disk_rows(self) -> list[dict]:
+        """One snapshot row per monitored filesystem, in the order
+        the poll measured them."""
+        return [
+            {
+                "path": self._disk_paths[key],
+                "usage_percent": round(self._last_usage[key], 1),
+                "state": self._states.get(key, OK),
+            }
+            for key in self._last_usage
+            if isinstance(key, int)
+        ]
+
+    def _host_rows(self) -> dict[str, dict]:
+        """The snapshot rows for the host memory / CPU metrics — each
+        present once its check has measured (a disabled or
+        never-run check leaves no row, not a bogus one)."""
+        rows: dict[str, dict] = {}
+        for key, (name, field) in HOST_METRIC_FIELDS.items():
+            if key in self._last_usage:
+                rows[name] = {
+                    field: round(self._last_usage[key], 1),
+                    "state": self._states.get(key, OK),
+                }
+        return rows
+
     # --- loop lifecycle (the eviction-loop pattern) ---
 
     def start(self) -> None:
@@ -512,6 +598,8 @@ class ResourceWatchdog:
         self._states.clear()
         self._emitted_at.clear()
         self._pending.clear()
+        self._last_usage.clear()
+        self._disk_paths.clear()
         self._audit_alerted.clear()
 
     async def sweep(self) -> None:
@@ -530,6 +618,7 @@ class ResourceWatchdog:
                     label,
                     exc_info=True,
                 )
+        self._last_poll = time.time()
 
     def _surfaces(self) -> list[tuple[str, Callable[[], object]]]:
         """The sweep's checks, in run order."""
@@ -615,6 +704,7 @@ class ResourceWatchdog:
     def step_filesystem(self, device: int, path: str, usage: float) -> None:
         """One disk threshold evaluation (see
         :meth:`_step_threshold`)."""
+        self._disk_paths[device] = path
         self._step_threshold(
             device,
             usage,
@@ -652,6 +742,7 @@ class ResourceWatchdog:
             critical - RECOVERY_GAP_PERCENT,
         )
         self._states[key] = new
+        self._last_usage[key] = usage
         if new != state or self.refresh_due(key, new):
             self._emitted_at[key] = time.monotonic()
             self._record_dispatch(key, new, emit(new, usage, False), events)
@@ -1005,6 +1096,8 @@ class ResourceWatchdog:
         self._states.pop(key, None)
         self._emitted_at.pop(key, None)
         self._pending.pop(key, None)
+        self._last_usage.pop(key, None)
+        self._disk_paths.pop(key, None)
 
     # --- audit pipeline surface ---
 

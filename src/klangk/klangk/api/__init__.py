@@ -96,10 +96,21 @@ async def health(app=Depends(get_app_dep)):
     # matching instance proves it is OURS (a concurrent run's proxy can
     # own the port and forward to its own server, which would otherwise
     # pass the readiness probe and receive this run's traffic).
-    return {
-        "status": "ok",
-        "instance": app.state.util.instance_id(),
-    }
+    body = {"status": "ok", "instance": app.state.util.instance_id()}
+    # #3308: a degraded host reports itself. The resource watchdog's
+    # last-known state (any filesystem or host metric at warn/critical,
+    # or the audit pipeline failing) flips the status and rides along
+    # as a detail block. The response stays 200 — liveness, not
+    # readiness: a monitor that treats non-200 as "down" would page
+    # the wrong way — and the healthy payload is unchanged from
+    # before, so the instance-id check keeps its shape.
+    watchdog = getattr(app.state, "resource_watchdog", None)
+    if watchdog is not None:
+        detail = watchdog.snapshot()
+        if detail["degraded"]:
+            body["status"] = "degraded"
+            body["degraded"] = detail
+    return body
 
 
 @root_router.get("/audit")

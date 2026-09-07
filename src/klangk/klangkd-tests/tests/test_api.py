@@ -24,6 +24,7 @@ from klangk import (
     terminal as terminal_mod,
     workspaces as ws_mod,
 )
+from klangk.resource_watchdog import ResourceWatchdog
 from klangk.container import ContainerRegistry
 from klangk import emailsvc as emailsvc_mod
 from klangk import util as util_mod
@@ -218,6 +219,69 @@ class TestHealth:
         assert isinstance(body["instance"], str) and body["instance"]
         # The audit status surface lives on /audit, not here (#3154).
         assert "audit" not in body
+        # No watchdog wired on this minimal app: healthy, no detail.
+        assert "degraded" not in body
+
+    async def test_health_reports_watchdog_degradation(self, client, app):
+        """#3308: a degraded resource-watchdog state flips /health to
+        "degraded" — still 200 (liveness, not readiness) — with the
+        snapshot as a detail block; recovery restores the plain ok
+        payload with the instance id intact."""
+        app.state.resource_watchdog = ResourceWatchdog(app)
+        wd = app.state.resource_watchdog
+        wd.step_filesystem(7, "/data", 91.0)
+        resp = await client.get("/health")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "degraded"
+        assert isinstance(body["instance"], str) and body["instance"]
+        assert body["degraded"]["degraded"] is True
+        assert body["degraded"]["filesystems"] == [
+            {"path": "/data", "usage_percent": 91.0, "state": "critical"}
+        ]
+        # Recovery restores the exact pre-degradation payload.
+        wd.step_filesystem(7, "/data", 50.0)
+        resp = await client.get("/health")
+        assert resp.status_code == 200
+        assert resp.json() == {"status": "ok", "instance": body["instance"]}
+
+    async def test_health_reports_audit_degradation(self, client, app):
+        """#3308: audit-write failures surface on /health the same
+        way, until one clean watchdog window re-arms."""
+        app.state.resource_watchdog = ResourceWatchdog(app)
+        wd = app.state.resource_watchdog
+        wd.check_audit()  # baseline
+        app.state.container_registry.audit_write_failures = 2
+        wd.check_audit()  # growth -> episode
+        body = (await client.get("/health")).json()
+        assert body["status"] == "degraded"
+        assert body["degraded"]["audit_degraded"] is True
+        wd.check_audit()  # clean window re-arms
+        body = (await client.get("/health")).json()
+        assert body == {
+            "status": "ok",
+            "instance": body["instance"],
+        }
+
+    async def test_health_recovers_after_threshold_reload(self, client, app):
+        """#3308, the SIGHUP reload path: a reload that moved the disk
+        thresholds resets the watchdog's rows, so /health recovers
+        even mid-degradation (the next poll re-classifies); an
+        unrelated reload keeps the degraded status."""
+        app.state.resource_watchdog = ResourceWatchdog(app)
+        wd = app.state.resource_watchdog
+        wd.step_filesystem(7, "/data", 91.0)
+        assert (await client.get("/health")).json()["status"] == "degraded"
+        # An unrelated reload (only the interval moved): still degraded.
+        app.state.settings.resource_watchdog_poll_interval = 30.0
+        wd.reconfigure(app)
+        assert (await client.get("/health")).json()["status"] == "degraded"
+        # A threshold change resets the rows.
+        app.state.settings.disk_watchdog_warn_percent = 80.0
+        wd.reconfigure(app)
+        body = (await client.get("/health")).json()
+        assert body["status"] == "ok"
+        assert "degraded" not in body
 
     async def test_audit_endpoint_reports_audit_state(self, client, app):
         """#3154: audit-write failures and the fail-closed

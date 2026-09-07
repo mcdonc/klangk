@@ -651,6 +651,152 @@ class TestAuditSurface:
         wd.check_audit()  # must not raise
 
 
+# --- snapshot surface (#3308) ---
+
+
+class TestSnapshot:
+    """The /health query surface: a lock-free read of the poll loop's
+    last-known state."""
+
+    def test_fresh_watchdog_reports_empty_and_healthy(self):
+        wd, _ = make_wd()
+        assert wd.snapshot() == {
+            "degraded": False,
+            "filesystems": [],
+            "audit_degraded": False,
+            "last_poll": None,
+        }
+
+    def test_disk_row_carries_path_usage_state(self):
+        wd, _ = make_wd()
+        wd.step_filesystem(7, "/data", 76.4)
+        snap = wd.snapshot()
+        assert snap["degraded"] is True
+        assert snap["filesystems"] == [
+            {"path": "/data", "usage_percent": 76.4, "state": WARN}
+        ]
+
+    def test_multiple_filesystems_in_measurement_order(self):
+        wd, _ = make_wd()
+        wd.step_filesystem(1, "/a", 50.0)
+        wd.step_filesystem(2, "/b", 95.0)
+        snap = wd.snapshot()
+        assert [row["path"] for row in snap["filesystems"]] == ["/a", "/b"]
+        assert snap["filesystems"][1]["state"] == CRITICAL
+        assert snap["degraded"] is True
+
+    def test_recovery_restores_healthy(self):
+        """Both directions of the transition (#3308 acceptance): the
+        flag clears when the filesystem recovers."""
+        wd, _ = make_wd()
+        wd.step_filesystem(7, "/data", 76.0)
+        assert wd.snapshot()["degraded"] is True
+        wd.step_filesystem(7, "/data", 65.0)
+        snap = wd.snapshot()
+        assert snap["degraded"] is False
+        assert snap["filesystems"][0]["state"] == OK
+
+    async def test_host_rows_when_measured(self, monkeypatch):
+        patch_memory_fraction(monkeypatch, 0.15)  # 85% used; warn at 80
+        patch_cpu_psi(monkeypatch, "some avg60=35.0\n")  # warn at 30
+        wd, _ = make_wd()
+        await wd.check_memory()
+        await wd.check_cpu()
+        snap = wd.snapshot()
+        assert snap["memory"] == {"usage_percent": 85.0, "state": WARN}
+        assert snap["cpu"] == {"psi_avg60_percent": 35.0, "state": WARN}
+        assert snap["degraded"] is True
+
+    async def test_disabled_host_check_leaves_no_row(self, monkeypatch):
+        patch_memory_fraction(monkeypatch, 0.05)
+        wd, _ = make_wd({"KLANGKD_MEMORY_WATCHDOG_ENABLED": "false"})
+        wd._states[MEMORY_KEY] = CRITICAL
+        wd._last_usage[MEMORY_KEY] = 95.0
+        await wd.check_memory()  # disabled -> forgets the metric
+        assert "memory" not in wd.snapshot()
+        assert wd.snapshot()["degraded"] is False
+
+    def test_audit_growth_degrades_until_a_clean_window(self):
+        """The audit-degradation flag mirrors the poll window: new
+        write failures set it, one clean window clears it (#3308
+        acceptance — audit failures surface the same way)."""
+        wd, spy, registry, _ = TestAuditSurface()._wd(container_failures=1)
+        wd.check_audit()  # baseline
+        registry.audit_write_failures = 2
+        wd.check_audit()  # growth -> episode
+        snap = wd.snapshot()
+        assert snap["audit_degraded"] is True
+        assert snap["degraded"] is True
+        wd.check_audit()  # clean window re-arms
+        snap = wd.snapshot()
+        assert snap["audit_degraded"] is False
+        assert snap["degraded"] is False
+
+    async def test_sweep_stamps_last_poll(self, monkeypatch):
+        wd, _ = make_wd()
+        monkeypatch.setattr(wd, "check_disk", AsyncMock())
+        monkeypatch.setattr(wd, "check_memory", AsyncMock())
+        monkeypatch.setattr(wd, "check_cpu", AsyncMock())
+        monkeypatch.setattr(wd, "check_audit", Mock())
+        before = time.time()
+        await wd.sweep()
+        assert before <= wd.snapshot()["last_poll"] <= time.time()
+
+    async def test_disabled_loop_clears_rows(self, monkeypatch):
+        """A disabled watchdog reports an empty, healthy snapshot —
+        disabled detection is an operator choice, not a degradation."""
+        wd, _ = make_wd({"KLANGKD_RESOURCE_WATCHDOG_ENABLED": "false"})
+        wd.step_filesystem(7, "/data", 91.0)
+        assert wd.snapshot()["degraded"] is True
+        monkeypatch.setattr(
+            "klangk.resource_watchdog.MIN_POLL_INTERVAL_SECONDS", 0.001
+        )
+        await run_briefly(wd, seconds=0.05)
+        snap = wd.snapshot()
+        assert snap["filesystems"] == []
+        assert snap["degraded"] is False
+
+    async def test_unmeasurable_path_keeps_its_last_row(self, monkeypatch):
+        """A path that stops measuring keeps its last-known row (the
+        same retention the event states have) — the snapshot reports
+        the last state, not silence."""
+        wd, _ = make_wd()
+        wd.step_filesystem(7, "/data", 91.0)
+
+        def boom(path):
+            raise OSError(5, "I/O error")
+
+        monkeypatch.setattr("os.statvfs", boom)
+        monkeypatch.setattr(
+            wd, "resolve_graph_root", AsyncMock(return_value=None)
+        )
+        await wd.check_disk()
+        snap = wd.snapshot()
+        assert snap["filesystems"] == [
+            {"path": "/data", "usage_percent": 91.0, "state": CRITICAL}
+        ]
+        assert snap["degraded"] is True
+
+    def test_threshold_reload_resets_rows_unrelated_keeps_them(self):
+        """The SIGHUP reload path (#3308 acceptance): a threshold
+        change resets the rows (fresh evaluation on the next poll);
+        an unrelated reload keeps them."""
+        wd, _ = make_wd()
+        wd.step_filesystem(7, "/data", 91.0)
+
+        def app_with(env=None):
+            return types.SimpleNamespace(
+                state=types.SimpleNamespace(settings=make_settings(env))
+            )
+
+        wd.reconfigure(app_with())  # unrelated reload
+        assert wd.snapshot()["degraded"] is True
+        wd.reconfigure(app_with({"KLANGKD_DISK_WATCHDOG_WARN_PERCENT": "80"}))
+        snap = wd.snapshot()
+        assert snap["filesystems"] == []
+        assert snap["degraded"] is False
+
+
 # --- loop + guards ---
 
 

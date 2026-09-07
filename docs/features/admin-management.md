@@ -137,6 +137,12 @@ layer, never both. Fail-closed audit refusals (`KLANGKD_AUDIT_FAIL_CLOSED`)
 pass the same counters, so a start or stop refused because its audit
 row could not be written is detected as well.
 
+The watchdog's state is also visible without any channel configured:
+`GET /health` reports `status: "degraded"` while any metric sits at
+warn/critical or the audit pipeline is failing, with a per-metric
+detail block naming the degraded condition (#3308) — see
+[API Endpoints](../reference/api-endpoints.md).
+
 Notification delivery is best-effort: a failed email or webhook call
 is logged as a warning and never fails or delays the action that
 triggered it.

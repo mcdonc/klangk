@@ -2254,15 +2254,62 @@ so the popup doesn't need to boot the Flutter SPA.
 
 ### GET `/health`
 
-Readiness check. Returns OK if the server is running.
+Readiness check. Returns `ok` while the server is running and its
+host resources are healthy (#3308): the resource watchdog's
+last-known state — any monitored filesystem or host metric at
+warn/critical, or new audit-write failures in the latest watchdog
+window — flips `status` to `degraded` and adds a `degraded` detail
+block naming the degraded metrics (per-filesystem path, usage
+percent, and state; the memory and CPU rows; the audit flag; and the
+wall-clock time of the last completed watchdog poll). The response
+stays HTTP 200 in both states: this is a liveness endpoint, not a
+readiness gate, and a monitor that treats non-200 as "down" would
+page the wrong way. Recovery (usage back below the recovery floor,
+or one clean audit window) restores the plain `ok` payload. The
+`instance` field identifies _this_ klangkd; see the resource
+watchdog settings
+([Environment Variables](environment.md)) to tune the thresholds.
+
+With `KLANGKD_RESOURCE_WATCHDOG_ENABLED` off (or before the first
+poll) `/health` reports `ok` — no detail block is added.
 
 **Auth:** None.
 
 No request body.
 
 ```json
-{ "status": "ok" }
+{
+  "status": "ok",
+  "instance": "b1c0ffee-0000-4000-8000-000000000000"
+}
 ```
+
+Degraded (a filesystem over the critical threshold):
+
+```json
+{
+  "status": "degraded",
+  "instance": "b1c0ffee-0000-4000-8000-000000000000",
+  "degraded": {
+    "degraded": true,
+    "filesystems": [
+      {
+        "path": "/var/lib/klangk/data",
+        "usage_percent": 91.7,
+        "state": "critical"
+      }
+    ],
+    "memory": { "usage_percent": 85.2, "state": "warn" },
+    "audit_degraded": false,
+    "last_poll": 1767225600.0
+  }
+}
+```
+
+The `memory` row carries host memory utilization; the `cpu` row (when
+CPU pressure was measured) carries the PSI `avg60` percent as
+`psi_avg60_percent`. Both use the same `state` vocabulary as the
+filesystem rows (`ok` / `warn` / `critical`).
 
 ---
 
