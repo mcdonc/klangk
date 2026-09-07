@@ -848,8 +848,10 @@ async def list_groups(
     Returns the paged envelope ``{groups, page, page_size, total}``
     (#2750). ``source=manual`` hides the seeded per-workspace role
     groups; ``source=workspace-role`` shows only them (served to any
-    authenticated caller — the descriptions carry the role only,
-    never a workspace name, #3283). The default (no ``source``)
+    authenticated caller — the seeded descriptions carry the role
+    only, never a workspace name, #3283; a description a
+    manage-groups holder writes into a role group after seeding is
+    served as written to those readers). The default (no ``source``)
     shows all rows only for callers holding ``manage-groups``;
     everyone else gets the manual-only view. Writes
     (create/edit/delete, members) on this tree are gated
