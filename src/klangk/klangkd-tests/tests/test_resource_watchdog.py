@@ -21,13 +21,18 @@ from _helpers import make_settings
 from klangk import lifecycle
 from klangk.notifier import DEFAULT_NOTIFY_EVENTS, THROTTLE_SECONDS
 from klangk.resource_watchdog import (
+    CPU_KEY,
     CRITICAL,
+    MEMORY_KEY,
     OK,
     RECOVERY_GAP_PERCENT,
     REFRESH_SECONDS,
     WARN,
     ResourceWatchdog,
     classify,
+    parse_cpu_psi,
+    psi_field,
+    read_local_text,
     usage_percent,
 )
 
@@ -588,7 +593,7 @@ class TestLoop:
         await wd.stop()  # must not raise
 
     async def test_disabled_resets_remembered_states(self, monkeypatch):
-        wd, app = make_wd({"KLANGKD_DISK_WATCHDOG_ENABLED": "false"})
+        wd, app = make_wd({"KLANGKD_RESOURCE_WATCHDOG_ENABLED": "false"})
         wd._states[1] = CRITICAL
         wd._emitted_at[1] = 123.0
         wd._audit_alerted["container_events"] = True
@@ -601,7 +606,7 @@ class TestLoop:
         assert wd._audit_alerted == {}
 
     async def test_enabled_loop_checks_disk(self, monkeypatch):
-        wd, app = make_wd({"KLANGKD_DISK_WATCHDOG_POLL_INTERVAL": "0.001"})
+        wd, app = make_wd({"KLANGKD_RESOURCE_WATCHDOG_POLL_INTERVAL": "0.001"})
         monkeypatch.setattr(
             "klangk.resource_watchdog.MIN_POLL_INTERVAL_SECONDS", 0.001
         )
@@ -611,21 +616,29 @@ class TestLoop:
         monkeypatch.setattr(
             wd, "resolve_graph_root", AsyncMock(return_value=None)
         )
+        # Hermetic: the host's real memory/CPU state must not add
+        # events to the disk assertion.
+        monkeypatch.setattr(wd, "check_memory", AsyncMock(), raising=True)
+        monkeypatch.setattr(wd, "check_cpu", AsyncMock())
         await run_briefly(wd, seconds=0.05)
         assert spy.notify_admins.call_count == 1  # one transition, then quiet
         assert kwargs_of(spy)["detail"]["state"] == CRITICAL
 
-    async def test_sweep_survives_a_disk_check_failure(self, caplog):
+    async def test_sweep_survives_a_surface_failure(self, caplog):
         wd, app = make_wd()
         spy = notifier_spy(app)
         wd.check_disk = AsyncMock(side_effect=RuntimeError("statvfs blew up"))
+        wd.check_memory = AsyncMock(
+            side_effect=RuntimeError("meminfo blew up")
+        )
+        wd.check_cpu = AsyncMock(side_effect=RuntimeError("psi blew up"))
         wd.check_audit = Mock(side_effect=RuntimeError("getattr blew up"))
         with caplog.at_level(
             logging.WARNING, logger="klangk.resource_watchdog"
         ):
             await wd.sweep()  # must not raise
-        assert "disk check failed" in caplog.text
-        assert "audit check failed" in caplog.text
+        for label in ("disk", "memory", "cpu", "audit"):
+            assert f"{label} check failed" in caplog.text
         spy.notify_admins.assert_not_called()
 
     async def test_guarded_cycle_propagates_cancellation(self):
@@ -643,7 +656,7 @@ class TestLoop:
     async def test_loop_survives_cycle_raise(self, monkeypatch, caplog):
         """A sweep that escapes its guards must not silently kill the
         loop — the next cycle still runs (the #2627 posture)."""
-        wd, app = make_wd({"KLANGKD_DISK_WATCHDOG_POLL_INTERVAL": "0.001"})
+        wd, app = make_wd({"KLANGKD_RESOURCE_WATCHDOG_POLL_INTERVAL": "0.001"})
         monkeypatch.setattr(
             "klangk.resource_watchdog.MIN_POLL_INTERVAL_SECONDS", 0.001
         )
@@ -832,7 +845,7 @@ class TestReconfigure:
         wd, _ = make_wd()
         wd._states[1] = CRITICAL
         wd._emitted_at[1] = 123.0
-        wd._warned_paths.add("/gone")
+        wd._unmeasurable.add("unmeasurable:disk usage of /gone")
         wd._audit_counts["container_events"] = 5
         return wd
 
@@ -851,7 +864,7 @@ class TestReconfigure:
         assert wd._states == {1: CRITICAL}
         assert wd._emitted_at == {1: 123.0}
         assert wd._pending == {1: CRITICAL}
-        assert wd._warned_paths == set()
+        assert wd._unmeasurable == set()
         assert wd._audit_counts == {"container_events": 5}
 
     def test_production_shape_reload_same_app(self):
@@ -873,7 +886,7 @@ class TestReconfigure:
         app.state.settings = make_settings(
             {
                 "KLANGKD_DISK_WATCHDOG_WARN_PERCENT": "80",
-                "KLANGKD_DISK_WATCHDOG_POLL_INTERVAL": "30",
+                "KLANGKD_RESOURCE_WATCHDOG_POLL_INTERVAL": "30",
             }
         )
         wd.reconfigure(app)
@@ -951,11 +964,17 @@ class TestLifecycleWiring:
 class TestSettings:
     def test_defaults(self):
         settings = make_settings({})
-        assert settings.disk_watchdog_enabled is True
+        assert settings.resource_watchdog_enabled is True
+        assert settings.resource_watchdog_poll_interval == 60.0
         assert settings.disk_watchdog_warn_percent == 75.0
         assert settings.disk_watchdog_critical_percent == 90.0
-        assert settings.disk_watchdog_poll_interval == 60.0
         assert settings.disk_watchdog_paths is None
+        assert settings.memory_watchdog_enabled is True
+        assert settings.memory_watchdog_warn_percent == 80.0
+        assert settings.memory_watchdog_critical_percent == 90.0
+        assert settings.cpu_watchdog_enabled is True
+        assert settings.cpu_watchdog_warn_percent == 30.0
+        assert settings.cpu_watchdog_critical_percent == 60.0
 
     def test_paths_comma_separated_env(self):
         settings = make_settings(
@@ -972,12 +991,12 @@ class TestSettings:
             {
                 "KLANGKD_DISK_WATCHDOG_WARN_PERCENT": "80",
                 "KLANGKD_DISK_WATCHDOG_CRITICAL_PERCENT": "95.5",
-                "KLANGKD_DISK_WATCHDOG_POLL_INTERVAL": "30",
+                "KLANGKD_RESOURCE_WATCHDOG_POLL_INTERVAL": "30",
             }
         )
         assert settings.disk_watchdog_warn_percent == 80.0
         assert settings.disk_watchdog_critical_percent == 95.5
-        assert settings.disk_watchdog_poll_interval == 30.0
+        assert settings.resource_watchdog_poll_interval == 30.0
 
     def test_equal_thresholds_are_tolerated(self):
         settings = make_settings(
@@ -1008,11 +1027,38 @@ class TestSettings:
             {"KLANGKD_DISK_WATCHDOG_WARN_PERCENT": "0"},
             {"KLANGKD_DISK_WATCHDOG_WARN_PERCENT": "101"},
             {"KLANGKD_DISK_WATCHDOG_CRITICAL_PERCENT": "101"},
+            # The same rules hold for the memory and CPU thresholds.
+            {
+                "KLANGKD_MEMORY_WATCHDOG_WARN_PERCENT": "90",
+                "KLANGKD_MEMORY_WATCHDOG_CRITICAL_PERCENT": "80",
+            },
+            {"KLANGKD_MEMORY_WATCHDOG_WARN_PERCENT": "3"},
+            {
+                "KLANGKD_CPU_WATCHDOG_WARN_PERCENT": "70",
+                "KLANGKD_CPU_WATCHDOG_CRITICAL_PERCENT": "50",
+            },
+            {"KLANGKD_CPU_WATCHDOG_CRITICAL_PERCENT": "101"},
         ],
     )
     def test_bad_thresholds_abort_startup(self, env):
         with pytest.raises(ValidationError):
             make_settings(env)
+
+    def test_memory_and_cpu_float_coercion_from_string(self):
+        settings = make_settings(
+            {
+                "KLANGKD_MEMORY_WATCHDOG_WARN_PERCENT": "85.5",
+                "KLANGKD_MEMORY_WATCHDOG_CRITICAL_PERCENT": "95",
+                "KLANGKD_CPU_WATCHDOG_WARN_PERCENT": "40",
+                "KLANGKD_CPU_WATCHDOG_CRITICAL_PERCENT": "75.5",
+                "KLANGKD_CPU_WATCHDOG_ENABLED": "false",
+            }
+        )
+        assert settings.memory_watchdog_warn_percent == 85.5
+        assert settings.memory_watchdog_critical_percent == 95.0
+        assert settings.cpu_watchdog_warn_percent == 40.0
+        assert settings.cpu_watchdog_critical_percent == 75.5
+        assert settings.cpu_watchdog_enabled is False
 
 
 class TestNotifierRegistration:
@@ -1020,6 +1066,18 @@ class TestNotifierRegistration:
         assert "resource.disk.warn" in DEFAULT_NOTIFY_EVENTS
         assert "resource.disk.critical" in DEFAULT_NOTIFY_EVENTS
         assert "resource.disk.recovered" in DEFAULT_NOTIFY_EVENTS
+
+    def test_memory_and_cpu_events_are_in_the_default_allowlist(self):
+        for name in (
+            "resource.memory.warn",
+            "resource.memory.critical",
+            "resource.memory.recovered",
+            "resource.cpu.warn",
+            "resource.cpu.critical",
+            "resource.cpu.recovered",
+        ):
+            assert name in DEFAULT_NOTIFY_EVENTS
+            assert THROTTLE_SECONDS[name] == 300
 
     def test_disk_events_are_throttled(self):
         for name in (
@@ -1031,3 +1089,373 @@ class TestNotifierRegistration:
 
     def test_audit_failure_event_name_registered(self):
         assert "audit.failure" in DEFAULT_NOTIFY_EVENTS
+
+
+# --- PSI parsing (#3309) ---
+
+
+class TestPsiParsing:
+    PSI_TEXT = (
+        "some avg10=0.00 avg60=1.25 avg300=0.10 total=123456789\n"
+        "full avg10=0.00 avg60=0.00 avg300=0.00 total=0\n"
+    )
+
+    def test_reads_some_avg60(self):
+        assert parse_cpu_psi(self.PSI_TEXT) == pytest.approx(1.25)
+
+    def test_missing_some_line_raises(self):
+        with pytest.raises(ValueError):
+            parse_cpu_psi("full avg10=0.00 avg60=0.00 avg300=0.00 total=0\n")
+
+    def test_unparseable_avg60_raises(self):
+        """A truncated or non-finite file must not read as zero
+        pressure (a nan would poison every comparison)."""
+        with pytest.raises(ValueError):
+            parse_cpu_psi("some avg10=0.00 avg60=nan avg300=0.00\n")
+        with pytest.raises(ValueError):
+            parse_cpu_psi("some avg10=0.00 avg60=inf avg300=0.00\n")
+
+    def test_field_found_and_missing(self):
+        assert psi_field("some avg60=42.5", "avg60") == pytest.approx(42.5)
+        assert psi_field("some avg60=42.5", "avg300") is None
+        assert psi_field("some avg60=bogus", "avg60") is None
+
+
+# --- memory surface (#3309) ---
+
+
+def patch_memory_fraction(monkeypatch, fraction_or_error):
+    """Script ResourceWatchdog._measure_memory_fraction: a float is
+    returned availability, an exception instance is raised."""
+    if isinstance(fraction_or_error, BaseException):
+        mock = AsyncMock(side_effect=fraction_or_error)
+    else:
+        mock = AsyncMock(return_value=fraction_or_error)
+    monkeypatch.setattr(
+        "klangk.resource_watchdog.ResourceWatchdog._measure_memory_fraction",
+        mock,
+    )
+    return mock
+
+
+class TestMemorySurface:
+    def _wd(self, env=None):
+        wd, app = make_wd(env)
+        return wd, notifier_spy(app)
+
+    async def test_ok_to_warn_emits_warn(self, monkeypatch, caplog):
+        patch_memory_fraction(monkeypatch, 0.15)  # 85% used; warn at 80
+        wd, spy = self._wd()
+        with caplog.at_level(
+            logging.WARNING, logger="klangk.resource_watchdog"
+        ):
+            await wd.check_memory()
+        assert spy.notify_admins.call_count == 1
+        args, kwargs = spy.notify_admins.call_args
+        assert args[0] == "resource.memory.warn"
+        assert kwargs["detail"]["metric"] == "memory"
+        assert kwargs["detail"]["usage_percent"] == 85.0
+        assert kwargs["detail"]["state"] == WARN
+        assert "Memory usage 85.0%: warn" in caplog.text
+
+    async def test_warn_to_critical_to_recovered(self, monkeypatch):
+        patch_memory_fraction(monkeypatch, 0.15)
+        wd, spy = self._wd()
+        await wd.check_memory()  # -> warn
+        patch_memory_fraction(monkeypatch, 0.05)  # 95% used -> critical
+        await wd.check_memory()
+        patch_memory_fraction(monkeypatch, 0.30)  # 70% -> recovered
+        await wd.check_memory()
+        events = [c.args[0] for c in spy.notify_admins.call_args_list]
+        assert events == [
+            "resource.memory.warn",
+            "resource.memory.critical",
+            "resource.memory.recovered",
+        ]
+
+    async def test_hovering_inside_the_band_is_quiet(self, monkeypatch):
+        patch_memory_fraction(monkeypatch, 0.15)
+        wd, spy = self._wd()
+        await wd.check_memory()  # -> warn
+        spy.notify_admins.reset_mock()
+        patch_memory_fraction(monkeypatch, 0.22)  # 78%: inside 75-80 band
+        await wd.check_memory()
+        spy.notify_admins.assert_not_called()
+        assert wd._states[MEMORY_KEY] == WARN
+
+    async def test_unmeasurable_warns_once_rearms_on_recovery(
+        self, monkeypatch, caplog
+    ):
+        wd, spy = self._wd()
+        with caplog.at_level(
+            logging.WARNING, logger="klangk.resource_watchdog"
+        ):
+            patch_memory_fraction(monkeypatch, OSError("no meminfo"))
+            await wd.check_memory()
+            await wd.check_memory()  # same condition: warned once
+        warnings = [
+            r
+            for r in caplog.records
+            if "cannot measure host memory" in r.message
+        ]
+        assert len(warnings) == 1
+        spy.notify_admins.assert_not_called()
+        # Measurable again: the warning re-arms (a later failure is a
+        # new episode).
+        patch_memory_fraction(monkeypatch, 0.05)
+        await wd.check_memory()
+        assert spy.notify_admins.call_count == 1  # critical transition
+        patch_memory_fraction(monkeypatch, OSError("gone again"))
+        with caplog.at_level(
+            logging.WARNING, logger="klangk.resource_watchdog"
+        ):
+            await wd.check_memory()
+        assert (
+            len(
+                [
+                    r
+                    for r in caplog.records
+                    if "cannot measure host memory" in r.message
+                ]
+            )
+            == 2
+        )
+
+    async def test_disabled_forgets_state_and_skips_measurement(
+        self, monkeypatch
+    ):
+        measure = patch_memory_fraction(monkeypatch, 0.05)
+        wd, spy = self._wd({"KLANGKD_MEMORY_WATCHDOG_ENABLED": "false"})
+        wd._states[MEMORY_KEY] = CRITICAL
+        await wd.check_memory()
+        measure.assert_not_called()
+        spy.notify_admins.assert_not_called()
+        assert MEMORY_KEY not in wd._states
+
+    async def test_live_thresholds_from_settings(self, monkeypatch):
+        patch_memory_fraction(monkeypatch, 0.15)
+        wd, spy = self._wd(
+            {
+                "KLANGKD_MEMORY_WATCHDOG_WARN_PERCENT": "95",
+                "KLANGKD_MEMORY_WATCHDOG_CRITICAL_PERCENT": "96",
+            }
+        )
+        await wd.check_memory()
+        spy.notify_admins.assert_not_called()  # 85% under a 95% warn
+
+
+# --- CPU surface (#3309) ---
+
+
+def patch_cpu_psi(monkeypatch, psi_or_error):
+    """Script ResourceWatchdog._read_cpu_psi: a str is the PSI file
+    content, an exception instance is raised."""
+    if isinstance(psi_or_error, BaseException):
+        mock = AsyncMock(side_effect=psi_or_error)
+    else:
+        mock = AsyncMock(return_value=psi_or_error)
+    monkeypatch.setattr(
+        "klangk.resource_watchdog.ResourceWatchdog._read_cpu_psi", mock
+    )
+    return mock
+
+
+class TestCpuSurface:
+    def _wd(self, env=None):
+        wd, app = make_wd(env)
+        return wd, notifier_spy(app)
+
+    async def test_warn_critical_recovered(self, monkeypatch, caplog):
+        wd, spy = self._wd()
+        with caplog.at_level(
+            logging.WARNING, logger="klangk.resource_watchdog"
+        ):
+            patch_cpu_psi(monkeypatch, "some avg60=35.0\n")
+            await wd.check_cpu()  # warn at 30
+            patch_cpu_psi(monkeypatch, "some avg60=65.0\n")
+            await wd.check_cpu()  # critical at 60
+            patch_cpu_psi(monkeypatch, "some avg60=10.0\n")
+            await wd.check_cpu()  # recovered (below 25)
+        events = [c.args[0] for c in spy.notify_admins.call_args_list]
+        assert events == [
+            "resource.cpu.warn",
+            "resource.cpu.critical",
+            "resource.cpu.recovered",
+        ]
+        assert "CPU pressure 35.0% (PSI some avg60): warn" in caplog.text
+        assert kwargs_of(spy, 1)["detail"]["psi_avg60_percent"] == 65.0
+
+    async def test_missing_psi_disables_loudly_once(self, monkeypatch, caplog):
+        """A kernel/VM without PSI disables the CPU check with one
+        logged warning — never a bogus zero-pressure read, never a
+        dead loop."""
+        wd, spy = self._wd()
+        with caplog.at_level(
+            logging.WARNING, logger="klangk.resource_watchdog"
+        ):
+            patch_cpu_psi(monkeypatch, OSError(2, "No such file"))
+            await wd.check_cpu()
+            await wd.check_cpu()
+        warnings = [
+            r
+            for r in caplog.records
+            if "cannot measure CPU pressure (PSI)" in r.message
+        ]
+        assert len(warnings) == 1
+        spy.notify_admins.assert_not_called()
+        assert CPU_KEY not in wd._states
+        # PSI appearing re-arms the check.
+        patch_cpu_psi(monkeypatch, "some avg60=70.0\n")
+        await wd.check_cpu()
+        assert wd._states[CPU_KEY] == CRITICAL
+
+    async def test_disabled_forgets_state_and_skips_read(self, monkeypatch):
+        read = patch_cpu_psi(monkeypatch, "some avg60=70.0\n")
+        wd, spy = self._wd({"KLANGKD_CPU_WATCHDOG_ENABLED": "false"})
+        wd._states[CPU_KEY] = WARN
+        await wd.check_cpu()
+        read.assert_not_called()
+        spy.notify_admins.assert_not_called()
+        assert CPU_KEY not in wd._states
+
+
+# --- macOS: the podman machine is where containers run (#3309) ---
+
+
+class FakePodman:
+    """A podman stub whose ``machine ssh -- cat /proc/<name>`` answers
+    from a scripted {name: (rc, stdout)} table."""
+
+    def __init__(self, answers):
+        self.answers = answers
+        self.calls = []
+
+    async def run(self, cmd, check=False, timeout=None):
+        self.calls.append(cmd)
+        name = cmd[cmd.index("cat") + 1].removeprefix("/proc/")
+        rc, out = self.answers.get(name, (125, ""))
+        return rc, out, ""
+
+
+MEMINFO_VM = "MemTotal:       2048000 kB\nMemAvailable:    204800 kB\n"
+PSI_VM = "some avg10=0.00 avg60=45.0 avg300=0.00 total=0\n"
+
+
+class TestPodmanMachinePath:
+    def _wd(self, answers):
+        podman = FakePodman(answers)
+        wd, app = make_wd(podman=podman)
+        notifier_spy(app)
+        return wd, podman
+
+    def _on_macos(self, monkeypatch):
+        monkeypatch.setattr(
+            "klangk.resource_watchdog.platform.system",
+            lambda: "Darwin",
+        )
+
+    async def test_memory_measures_the_vm_meminfo(self, monkeypatch, caplog):
+        self._on_macos(monkeypatch)
+        wd, podman = self._wd({"meminfo": (0, MEMINFO_VM)})
+        spy = wd.app.state.notifier
+        with caplog.at_level(
+            logging.WARNING, logger="klangk.resource_watchdog"
+        ):
+            await wd.check_memory()
+        # 10% available = 90% used: critical transition.
+        assert spy.notify_admins.call_count == 1
+        args, kwargs = spy.notify_admins.call_args
+        assert args[0] == "resource.memory.critical"
+        assert kwargs["detail"]["usage_percent"] == pytest.approx(90.0)
+        assert podman.calls == [
+            ["machine", "ssh", "--", "cat", "/proc/meminfo"]
+        ]
+        assert "Memory usage 90.0%: critical" in caplog.text
+
+    async def test_cpu_measures_the_vm_psi(self, monkeypatch):
+        self._on_macos(monkeypatch)
+        wd, podman = self._wd({"pressure/cpu": (0, PSI_VM)})
+        spy = wd.app.state.notifier
+        await wd.check_cpu()
+        assert spy.notify_admins.call_args.args[0] == "resource.cpu.warn"
+        assert podman.calls == [
+            ["machine", "ssh", "--", "cat", "/proc/pressure/cpu"]
+        ]
+
+    async def test_stopped_machine_warns_once_per_metric(
+        self, monkeypatch, caplog
+    ):
+        """A stopped podman machine (ssh exits non-zero) is
+        unmeasurable: one warning per metric, no events, and the loop
+        keeps running."""
+        self._on_macos(monkeypatch)
+        wd, podman = self._wd({})  # every cat fails
+        spy = wd.app.state.notifier
+        with caplog.at_level(
+            logging.WARNING, logger="klangk.resource_watchdog"
+        ):
+            await wd.check_memory()
+            await wd.check_cpu()
+            await wd.check_memory()
+        warnings = sorted(
+            r.message.split("cannot measure ")[1].split(" (")[0]
+            for r in caplog.records
+            if "cannot measure" in r.message
+        )
+        assert warnings == ["CPU pressure", "host memory"]
+        spy.notify_admins.assert_not_called()
+
+    async def test_no_podman_state_is_unmeasurable(self, monkeypatch, caplog):
+        self._on_macos(monkeypatch)
+        wd, _ = make_wd()  # no podman on the state
+        with caplog.at_level(
+            logging.WARNING, logger="klangk.resource_watchdog"
+        ):
+            await wd.check_memory()
+        assert "cannot measure host memory" in caplog.text
+
+    async def test_linux_memory_uses_the_local_measurement(self, monkeypatch):
+        """On a Linux host the local /proc measurement runs (the
+        eviction subsystem's function, imported at call time) — no
+        podman subprocess."""
+        monkeypatch.setattr(
+            "klangk.resource_watchdog.platform.system", lambda: "Linux"
+        )
+        monkeypatch.setattr(
+            "klangk.container.eviction.measure_available_fraction",
+            AsyncMock(return_value=0.05),
+        )
+        wd, app = make_wd(podman=FakePodman({}))
+        spy = notifier_spy(app)
+        await wd.check_memory()
+        assert spy.notify_admins.call_args.args[0] == (
+            "resource.memory.critical"
+        )
+        assert app.state.podman.calls == []
+
+    async def test_linux_cpu_reads_the_local_psi_file(
+        self, monkeypatch, tmp_path
+    ):
+        monkeypatch.setattr(
+            "klangk.resource_watchdog.platform.system", lambda: "Linux"
+        )
+        psi = tmp_path / "psi"
+        psi.write_text(PSI_VM)
+        monkeypatch.setattr(
+            "klangk.resource_watchdog.read_local_text",
+            lambda path: (
+                PSI_VM
+                if path == "/proc/pressure/cpu"
+                else read_local_text(path)
+            ),
+        )
+        wd, app = make_wd(podman=FakePodman({}))
+        spy = notifier_spy(app)
+        await wd.check_cpu()
+        assert spy.notify_admins.call_args.args[0] == "resource.cpu.warn"
+        assert app.state.podman.calls == []
+
+    def test_read_local_text_reads_a_file(self, tmp_path):
+        f = tmp_path / "f"
+        f.write_text("hello")
+        assert read_local_text(str(f)) == "hello"

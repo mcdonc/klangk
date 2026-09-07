@@ -824,6 +824,24 @@ sync` report a clear permission-denied error.
 
 ### Added
 
+- **Host memory and CPU-pressure alerting (#3309).** The resource
+  watchdog gained two surfaces beside disk capacity: memory
+  utilization of the machine containers run on (MemAvailable-based on
+  a Linux host, pressed by the cgroup limit when klangkd itself runs
+  memory-capped; on macOS the podman machine VM's own meminfo, read
+  via `podman machine ssh` — containers live in that VM) and CPU
+  pressure (PSI `some avg60`; no PSI on the kernel/VM disables that
+  check with one logged warning). Crossing the thresholds sends
+  `resource.memory.*` / `resource.cpu.*` notifications with the same
+  transition, hysteresis, and refresh semantics as the disk events.
+  The watchdog's master switch and poll interval are
+  `KLANGKD_RESOURCE_WATCHDOG_ENABLED` /
+  `KLANGKD_RESOURCE_WATCHDOG_POLL_INTERVAL` (the loop now covers four
+  surfaces), with per-surface `KLANGKD_MEMORY_WATCHDOG_*` and
+  `KLANGKD_CPU_WATCHDOG_*` thresholds beside the disk ones. All
+  reloadable on SIGHUP. See
+  [Notifications](features/admin-management.md#notifications).
+
 - **Falco exec audit guide (#2780).** New deployment chapter
   (`docs/deployment/falco.md`) documenting the verified procedure for
   running Falco 0.44.1 as a privileged container that captures every
@@ -869,8 +887,11 @@ sync` report a clear permission-denied error.
   also summarizes
   audit-write-failure growth as one `audit.failure` per table, and
   `GET /audit` reports the identity-audit counter as
-  `identity_write_failures`. Thresholds and interval are
-  `KLANGKD_DISK_WATCHDOG_*`, reloadable on SIGHUP.
+  `identity_write_failures`. Thresholds are
+  `KLANGKD_DISK_WATCHDOG_WARN_PERCENT` / `_CRITICAL_PERCENT`; the
+  master switch and poll interval are
+  `KLANGKD_RESOURCE_WATCHDOG_*` (#3309 extended the loop to four
+  surfaces). All reloadable on SIGHUP.
 - **Data-level file audit events (#3257).** Workspace archive
   exports/imports, file downloads and text reads, uploads, renames,
   and deletes through the files API now leave audit rows in the

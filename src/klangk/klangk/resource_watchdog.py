@@ -1,7 +1,7 @@
-"""Operational resource detection: disk capacity and audit degradation
-(#3206).
+"""Operational resource detection: disk capacity, host memory and
+CPU pressure, and audit degradation (#3206, #3309).
 
-The STIG detection layer on top of #3250's delivery layer. Two
+The STIG detection layer on top of #3250's delivery layer. Four
 surfaces, one poll loop:
 
 - **Disk capacity** (SV-222483 rule 96, SV-222668 rule 280) — every
@@ -19,6 +19,27 @@ surfaces, one poll loop:
   the allowlist there is nothing to wait for), a still-degraded
   filesystem refreshes its alert once per throttle window, so an
   episode edge is late in the worst case, never lost.
+- **Host memory** (#3309) — every poll, the memory utilization of
+  the machine where containers actually run, as ``100 × (1 −
+  availability)``. On a Linux host that is ``MemAvailable``/
+  ``MemTotal`` from ``/proc/meminfo`` (the more pressed of meminfo and
+  the cgroup limit when klangkd itself runs memory-capped, shared
+  with the eviction subsystem #2526). On macOS containers run inside
+  the podman machine Linux VM, so the VM's own ``/proc/meminfo`` is
+  read via ``podman machine ssh`` — the Mac host's numbers are the
+  wrong machine. Crossing ``memory_watchdog_warn_percent`` /
+  ``memory_watchdog_critical_percent`` emits ``resource.memory.warn``
+  / ``resource.memory.critical``; the same hysteresis and refresh
+  semantics as disk.
+- **CPU pressure** (#3309) — PSI ``some avg60`` from
+  ``/proc/pressure/cpu``: the share of time at least one task was
+  stalled on CPU over the last minute, already a 60-second average, so
+  a single-poll threshold crossing is signal, not a scheduler spike.
+  On macOS the file is read inside the podman machine VM the same
+  way. A kernel, container runtime, or VM without PSI disables the
+  check with one logged warning (re-armed if the file appears);
+  events ``resource.cpu.warn`` / ``resource.cpu.critical`` /
+  ``resource.cpu.recovered``.
 - **Audit pipeline degradation** (SV-222484 rule 97) — the
   audit-write-failure counters the write sites bump
   (``container_events`` on the container registry, ``audit_events``
@@ -37,25 +58,68 @@ re-arms the loop without a restart.
 
 import asyncio
 import logging
+import math
 import os
+import platform
 import time
+from typing import Callable, NamedTuple
 
 from .notifier import THROTTLE_SECONDS, notify_event
 
+# The eviction subsystem's measurement helpers (meminfo parsing,
+# availability, the cgroup-aware fraction) are imported *inside*
+# :meth:`ResourceWatchdog._measure_memory_fraction` (the
+# allow-deferred-import pattern, see llm_router): a module-level
+# import cycles — klangk.container.__init__ pulls the registry, which
+# pulls settings, which imports this module for RECOVERY_GAP_PERCENT.
+
 logger = logging.getLogger(__name__)
 
-# Threshold states for one monitored filesystem.
+# Threshold states for one monitored metric.
 OK = "ok"
 WARN = "warn"
 CRITICAL = "critical"
 
-# The notification event for each *entered* degraded state; entering
-# OK from either is the recovered event (emit_disk_event).
-EVENT_BY_STATE = {
-    WARN: "resource.disk.warn",
-    CRITICAL: "resource.disk.critical",
-}
-RECOVERED_EVENT = "resource.disk.recovered"
+
+class ThresholdEvents(NamedTuple):
+    """The notification events for one threshold-watched metric: the
+    event for entering ``warn`` / ``critical``, and the recovered
+    event for entering ``ok`` from either."""
+
+    warn: str
+    critical: str
+    recovered: str
+
+    def by_state(self, state: str) -> str:
+        """The event for one threshold state (``ok`` → recovered)."""
+        if state == CRITICAL:
+            return self.critical
+        if state == WARN:
+            return self.warn
+        return self.recovered
+
+
+DISK_EVENTS = ThresholdEvents(
+    warn="resource.disk.warn",
+    critical="resource.disk.critical",
+    recovered="resource.disk.recovered",
+)
+MEMORY_EVENTS = ThresholdEvents(
+    warn="resource.memory.warn",
+    critical="resource.memory.critical",
+    recovered="resource.memory.recovered",
+)
+CPU_EVENTS = ThresholdEvents(
+    warn="resource.cpu.warn",
+    critical="resource.cpu.critical",
+    recovered="resource.cpu.recovered",
+)
+
+# The threshold-state dicts hold one entry per monitored metric —
+# disk entries keyed by the filesystem's ``st_dev``, the two
+# host-level metrics by these fixed keys.
+MEMORY_KEY = "memory"
+CPU_KEY = "cpu-psi"
 
 # Usage must fall this far below the warn threshold (percentage
 # points) before a degraded filesystem reports recovered — the
@@ -65,13 +129,21 @@ RECOVERY_GAP_PERCENT = 5.0
 
 # A persisting warn/critical state re-notifies at most this often — the
 # same window the notifier throttles delivery to, so a still-degraded
-# filesystem refreshes its alert once per window instead of relying
+# metric refreshes its alert once per window instead of relying
 # solely on the edge transition (whose single dispatch the throttle
-# can swallow). The widest degraded-event window: a refresh must not
-# fire before the notifier's throttle would admit it.
+# can swallow). The widest degraded-event window across every
+# threshold-watched metric: a refresh must not fire before the
+# notifier's throttle would admit it.
 REFRESH_SECONDS = max(
     THROTTLE_SECONDS[name]
-    for name in ("resource.disk.warn", "resource.disk.critical")
+    for name in (
+        "resource.disk.warn",
+        "resource.disk.critical",
+        "resource.memory.warn",
+        "resource.memory.critical",
+        "resource.cpu.warn",
+        "resource.cpu.critical",
+    )
 )
 
 # After a failed storage-root query, wait this long before retrying
@@ -98,6 +170,50 @@ def usage_percent(path: str) -> float:
         raise ValueError(f"statvfs({path!r}) reports no capacity")
     available = vfs.f_bavail * vfs.f_frsize
     return (total - available) / total * 100.0
+
+
+def psi_field(line: str, name: str) -> float | None:
+    """One ``name=value`` field of a PSI line, or None when the line
+    does not carry it (a missing or non-finite ``value`` counts as
+    absent — a truncated or ``nan`` reading must not read as zero
+    pressure; a non-finite value would poison every threshold
+    comparison)."""
+    for token in line.split():
+        if token.startswith(f"{name}="):
+            try:
+                value = float(token.split("=", 1)[1])
+            except ValueError:
+                return None
+            return value if math.isfinite(value) else None
+    return None
+
+
+def read_local_text(path: str) -> str:
+    """One local file's content — the Linux-host ``/proc`` read
+    (a named helper so tests can intercept the path)."""
+    with open(path) as fh:
+        return fh.read()
+
+
+def parse_cpu_psi(text: str) -> float:
+    """The CPU ``some avg60`` PSI percentage (0..100) from
+    ``/proc/pressure/cpu`` **content**.
+
+    ``some`` — at least one task stalled — is the operator-relevant
+    line (``full`` counts only periods where *every* runnable task
+    stalled, which CPU PSI does not even report). ``avg60`` — a
+    60-second average — is the signal: short spikes average out, so a
+    threshold crossing is sustained pressure, not a scheduler burst.
+    Raises ``ValueError`` when the text carries no parseable ``some``
+    line — callers treat unmeasurable as "skip with one warning",
+    never as zero pressure.
+    """
+    for line in text.splitlines():
+        if line.startswith("some "):
+            value = psi_field(line, "avg60")
+            if value is not None:
+                return value
+    raise ValueError("no parseable `some avg60` PSI line")
 
 
 def classify(
@@ -177,19 +293,20 @@ class ResourceWatchdog:
     def __init__(self, app) -> None:
         self.app = app
         self._task: asyncio.Task | None = None
-        # st_dev -> threshold state (deduplicated by device) / the
-        # monotonic clock of the last event dispatch (transitions and
-        # persistence refreshes both stamp it) / the state of a
-        # transition whose dispatch the notifier throttled away,
-        # retried on later polls.
-        self._states: dict[int, str] = {}
-        self._emitted_at: dict[int, float] = {}
-        self._pending: dict[int, str] = {}
+        # metric key (st_dev for disk; MEMORY_KEY / CPU_KEY for the
+        # host metrics) -> threshold state / the monotonic clock of
+        # the last event dispatch (transitions and persistence
+        # refreshes both stamp it) / the state of a transition whose
+        # dispatch the notifier throttled away, retried on later polls.
+        self._states: dict[int | str, str] = {}
+        self._emitted_at: dict[int | str, float] = {}
+        self._pending: dict[int | str, str] = {}
         # audit table -> last-seen failure count / alerted-this-episode.
         self._audit_counts: dict[str, int] = {}
         self._audit_alerted: dict[str, bool] = {}
-        # Paths warned about as unmeasurable (re-armed on recovery).
-        self._warned_paths: set[str] = set()
+        # Conditions warned about as unmeasurable (disk paths and the
+        # memory/CPU metrics alike; re-armed on recovery).
+        self._unmeasurable: set[str] = set()
         # Podman container-storage root, resolved once and cached
         # (podman info is too slow to run every poll); a failed query
         # retries after a cooldown.
@@ -207,37 +324,48 @@ class ResourceWatchdog:
         """Swap the app reference (SIGHUP reload). The cached
         container-storage root and its cooldown always reset (a
         changed podman configuration re-resolves immediately), and
-        the unmeasurable-path warnings re-arm. The disk states reset
-        only when a threshold actually changed — an unrelated reload
-        must not re-alert already-degraded filesystems (the notifier's
-        throttle clocks reset on reload too, so nothing else would
-        suppress the re-alert)."""
+        the unmeasurable-condition warnings re-arm. The threshold
+        states reset only when a threshold actually changed — an
+        unrelated reload must not re-alert already-degraded metrics
+        (the notifier's throttle clocks reset on reload too, so
+        nothing else would suppress the re-alert)."""
         thresholds_changed = self._thresholds != self._thresholds_of(app)
         self.app = app
         self._thresholds = self._thresholds_of(app)
         self._graph_root = None
         self._graph_root_retry_at = 0.0
-        self._warned_paths.clear()
+        self._unmeasurable.clear()
         if thresholds_changed:
             self._states.clear()
             self._emitted_at.clear()
             self._pending.clear()
 
     @staticmethod
-    def _thresholds_of(app) -> tuple[float, float]:
-        """The (warn, critical) pair off an app's live settings — the
-        snapshot reconfigure compares against (see ``__init__``)."""
+    def _thresholds_of(app) -> tuple[tuple[float, float], ...]:
+        """The (warn, critical) pair of every threshold-watched metric
+        off an app's live settings — the snapshot reconfigure compares
+        against (see ``__init__``)."""
         settings = app.state.settings
         return (
-            settings.disk_watchdog_warn_percent,
-            settings.disk_watchdog_critical_percent,
+            (
+                settings.disk_watchdog_warn_percent,
+                settings.disk_watchdog_critical_percent,
+            ),
+            (
+                settings.memory_watchdog_warn_percent,
+                settings.memory_watchdog_critical_percent,
+            ),
+            (
+                settings.cpu_watchdog_warn_percent,
+                settings.cpu_watchdog_critical_percent,
+            ),
         )
 
     # --- settings (read live) ---
 
     @property
     def _enabled(self) -> bool:
-        return self.app.state.settings.disk_watchdog_enabled
+        return self.app.state.settings.resource_watchdog_enabled
 
     @property
     def _warn_percent(self) -> float:
@@ -248,22 +376,33 @@ class ResourceWatchdog:
         return self.app.state.settings.disk_watchdog_critical_percent
 
     @property
-    def _floor(self) -> float:
-        """Recovery floor: usage at or below this reports recovered.
-        The validator guarantees warn >= RECOVERY_GAP_PERCENT, so this
-        never goes below 0."""
-        return self._warn_percent - RECOVERY_GAP_PERCENT
+    def _memory_enabled(self) -> bool:
+        return self.app.state.settings.memory_watchdog_enabled
 
     @property
-    def _critical_floor(self) -> float:
-        """The critical→warn easing floor (same gap; the validator
-        guarantees critical >= warn >= the gap, so never below 0)."""
-        return self._critical_percent - RECOVERY_GAP_PERCENT
+    def _memory_warn_percent(self) -> float:
+        return self.app.state.settings.memory_watchdog_warn_percent
+
+    @property
+    def _memory_critical_percent(self) -> float:
+        return self.app.state.settings.memory_watchdog_critical_percent
+
+    @property
+    def _cpu_enabled(self) -> bool:
+        return self.app.state.settings.cpu_watchdog_enabled
+
+    @property
+    def _cpu_warn_percent(self) -> float:
+        return self.app.state.settings.cpu_watchdog_warn_percent
+
+    @property
+    def _cpu_critical_percent(self) -> float:
+        return self.app.state.settings.cpu_watchdog_critical_percent
 
     @property
     def _poll_interval(self) -> float:
         return max(
-            self.app.state.settings.disk_watchdog_poll_interval,
+            self.app.state.settings.resource_watchdog_poll_interval,
             MIN_POLL_INTERVAL_SECONDS,
         )
 
@@ -275,20 +414,26 @@ class ResourceWatchdog:
 
     def start(self) -> None:
         """Start the detection loop (idempotent). Sweeps once
-        immediately — a host restarted *because* its disk filled should
-        alert on the first poll, not one interval later."""
+        immediately — a host restarted *because* its resources filled
+        should alert on the first poll, not one interval later."""
         if self._task is None:
             settings = self.app.state.settings
             logger.info(
-                "Resource watchdog armed: disk warn %.1f%%, critical "
-                "%.1f%% (recovery below %.1f%%), interval %.1fs "
-                "(effective floor %.1fs), enabled=%s",
+                "Resource watchdog armed: disk warn %.1f%%/critical "
+                "%.1f%%, memory warn %.1f%%/critical %.1f%%, CPU "
+                "pressure warn %.1f%%/critical %.1f%% (recovery %d "
+                "points below each threshold), interval %.1fs (floor "
+                "%.1fs), enabled=%s",
                 settings.disk_watchdog_warn_percent,
                 settings.disk_watchdog_critical_percent,
-                settings.disk_watchdog_warn_percent - RECOVERY_GAP_PERCENT,
-                settings.disk_watchdog_poll_interval,
+                settings.memory_watchdog_warn_percent,
+                settings.memory_watchdog_critical_percent,
+                settings.cpu_watchdog_warn_percent,
+                settings.cpu_watchdog_critical_percent,
+                int(RECOVERY_GAP_PERCENT),
+                settings.resource_watchdog_poll_interval,
                 MIN_POLL_INTERVAL_SECONDS,
-                settings.disk_watchdog_enabled,
+                settings.resource_watchdog_enabled,
             )
             self._task = asyncio.create_task(self.run())
 
@@ -350,26 +495,34 @@ class ResourceWatchdog:
         self._audit_alerted.clear()
 
     async def sweep(self) -> None:
-        """One poll: disk thresholds, then audit counters. Each
-        surface's failure is logged and skipped — the other surface
-        still runs, and the loop never dies (#3206: detection failure
-        is loud but never blocks the monitored operation)."""
-        try:
-            await self.check_disk()
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.warning(
-                "Resource-watchdog disk check failed (skipped)",
-                exc_info=True,
-            )
-        try:
-            self.check_audit()
-        except Exception:
-            logger.warning(
-                "Resource-watchdog audit check failed (skipped)",
-                exc_info=True,
-            )
+        """One poll: disk thresholds, memory, CPU pressure, then audit
+        counters. Each surface's failure is logged and skipped — the
+        others still run, and the loop never dies (#3206: detection
+        failure is loud but never blocks the monitored operation)."""
+        for label, check in self._surfaces():
+            try:
+                await check()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.warning(
+                    "Resource-watchdog %s check failed (skipped)",
+                    label,
+                    exc_info=True,
+                )
+
+    def _surfaces(self) -> list[tuple[str, Callable[[], object]]]:
+        """The sweep's checks, in run order."""
+        return [
+            ("disk", self.check_disk),
+            ("memory", self.check_memory),
+            ("cpu", self.check_cpu),
+            ("audit", self._check_audit_surface),
+        ]
+
+    async def _check_audit_surface(self) -> None:
+        """Awaitable adapter: the audit check is synchronous."""
+        self.check_audit()
 
     # --- disk capacity surface ---
 
@@ -409,55 +562,92 @@ class ResourceWatchdog:
             device = os.stat(path).st_dev
             usage = usage_percent(path)
         except (OSError, ValueError) as e:
-            if path not in self._warned_paths:
-                self._warned_paths.add(path)
-                logger.warning(
-                    "Resource watchdog cannot measure disk usage of %s "
-                    "(%s); skipping it until it is measurable",
-                    path,
-                    e,
-                )
+            self._note_unmeasurable(f"disk usage of {path}", e)
             return None
-        self._warned_paths.discard(path)
+        self._rearm_unmeasurable(f"disk usage of {path}")
         return device, path, usage
 
+    def _note_unmeasurable(self, what: str, error: Exception) -> None:
+        """Warn once per condition that cannot be measured (re-armed
+        on recovery) — detection must be loud about its own blind
+        spots but not spam them every poll."""
+        key = f"unmeasurable:{what}"
+        if key not in self._unmeasurable:
+            self._unmeasurable.add(key)
+            logger.warning(
+                "Resource watchdog cannot measure %s (%s); skipping it "
+                "until it is measurable",
+                what,
+                error,
+            )
+
+    def _rearm_unmeasurable(self, what: str) -> None:
+        """Re-arm a condition's unmeasurable warning after a
+        successful measurement."""
+        self._unmeasurable.discard(f"unmeasurable:{what}")
+
     def step_filesystem(self, device: int, path: str, usage: float) -> None:
-        """One threshold evaluation; emits on a state transition, and
-        — while a degraded state persists — once per refresh window
-        (see :meth:`refresh_due`). A dispatch the notifier throttled
-        away is retried on later polls (:meth:`retry_pending`)."""
-        state = self._states.get(device, OK)
+        """One disk threshold evaluation (see
+        :meth:`_step_threshold`)."""
+        self._step_threshold(
+            device,
+            usage,
+            self._warn_percent,
+            self._critical_percent,
+            DISK_EVENTS,
+            lambda state, u, retry: self.emit_disk_event(
+                state, path, u, retry=retry
+            ),
+        )
+
+    def _step_threshold(
+        self,
+        key: int | str,
+        usage: float,
+        warn: float,
+        critical: float,
+        events: ThresholdEvents,
+        emit: Callable[[str, float, bool], bool],
+    ) -> None:
+        """One threshold evaluation for any metric; emits on a state
+        transition, and — while a degraded state persists — once per
+        refresh window (see :meth:`refresh_due`). A dispatch the
+        notifier throttled away is retried on later polls
+        (:meth:`retry_pending`). The recovery floors sit
+        :data:`RECOVERY_GAP_PERCENT` points below the thresholds — the
+        settings validator guarantees the band fits."""
+        state = self._states.get(key, OK)
         new = classify(
             usage,
             state,
-            self._warn_percent,
-            self._critical_percent,
-            self._floor,
-            self._critical_floor,
+            warn,
+            critical,
+            warn - RECOVERY_GAP_PERCENT,
+            critical - RECOVERY_GAP_PERCENT,
         )
-        self._states[device] = new
-        if new != state or self.refresh_due(device, new):
-            self._emitted_at[device] = time.monotonic()
-            self._record_dispatch(
-                device, new, self.emit_disk_event(new, path, usage)
-            )
+        self._states[key] = new
+        if new != state or self.refresh_due(key, new):
+            self._emitted_at[key] = time.monotonic()
+            self._record_dispatch(key, new, emit(new, usage, False), events)
             return
-        self.retry_pending(device, path, usage)
+        self.retry_pending(key, usage, events, emit)
 
     def _record_dispatch(
-        self, device: int, state: str, dispatched: bool
+        self,
+        key: int | str,
+        state: str,
+        dispatched: bool,
+        events: ThresholdEvents,
     ) -> None:
         """Track an undelivered transition for retry: episode edges
         must land — a swallowed warn entry is refreshed by persistence,
         but a swallowed recovery would otherwise never be re-sent. A
         dispatch that can never succeed (see :meth:`_event_dispatchable`)
         is treated as done — retrying it every poll would only log."""
-        if dispatched or not self._event_dispatchable(
-            EVENT_BY_STATE.get(state, RECOVERED_EVENT)
-        ):
-            self._pending.pop(device, None)
+        if dispatched or not self._event_dispatchable(events.by_state(state)):
+            self._pending.pop(key, None)
         else:
-            self._pending[device] = state
+            self._pending[key] = state
 
     def _event_dispatchable(self, event: str) -> bool:
         """True when a retry could ever land: the notifier is wired,
@@ -481,7 +671,13 @@ class ResourceWatchdog:
         except Exception:  # noqa: BLE001 — best-effort probe
             return False
 
-    def retry_pending(self, device: int, path: str, usage: float) -> None:
+    def retry_pending(
+        self,
+        key: int | str,
+        usage: float,
+        events: ThresholdEvents,
+        emit: Callable[[str, float, bool], bool],
+    ) -> None:
         """Re-dispatch a transition the notifier throttled away.
 
         The throttle admits at most one delivery per event per window,
@@ -492,29 +688,30 @@ class ResourceWatchdog:
         rewritten the pending entry, and an event that could never
         dispatch (allowlist/channels) is dropped rather than retried.
         """
-        pending = self._pending.get(device)
+        pending = self._pending.get(key)
         if pending is None:
             return
-        event = EVENT_BY_STATE.get(pending, RECOVERED_EVENT)
-        dispatched = self.emit_disk_event(pending, path, usage, retry=True)
-        if dispatched or not self._event_dispatchable(event):
-            self._pending.pop(device, None)
+        dispatched = emit(pending, usage, True)
+        if dispatched or not self._event_dispatchable(
+            events.by_state(pending)
+        ):
+            self._pending.pop(key, None)
         if dispatched:
-            self._emitted_at[device] = time.monotonic()
+            self._emitted_at[key] = time.monotonic()
 
-    def refresh_due(self, device: int, state: str) -> bool:
+    def refresh_due(self, key: int | str, state: str) -> bool:
         """True when a persisting degraded state should re-notify.
 
         Transitions are edge-triggered and the notifier throttles
         delivery with a stamp-at-dispatch window — a transition whose
         dispatch fell inside another episode's window is retried
-        (:meth:`retry_pending`), and a still-degraded filesystem
+        (:meth:`retry_pending`), and a still-degraded metric
         refreshes its alert once per window — the worst case is a late
         alert, never a permanently lost one.
         """
         if state == OK:
             return False
-        last = self._emitted_at.get(device, 0.0)
+        last = self._emitted_at.get(key, 0.0)
         return time.monotonic() - last >= REFRESH_SECONDS
 
     def emit_disk_event(
@@ -527,7 +724,7 @@ class ResourceWatchdog:
         an edge swallowed by the throttle retried at the poll floor
         would otherwise repeat the line hundreds of times inside one
         window."""
-        event = EVENT_BY_STATE.get(state, RECOVERED_EVENT)
+        event = DISK_EVENTS.by_state(state)
         self._log_disk_event(state, path, usage, retry)
         return notify_event(
             self.app,
@@ -544,28 +741,46 @@ class ResourceWatchdog:
     def _log_disk_event(
         self, state: str, path: str, usage: float, retry: bool
     ) -> None:
-        """The log line for one disk event — WARNING for degradations,
-        INFO for recoveries, DEBUG for retry attempts."""
+        """The disk event's log line (see :meth:`_log_metric_event`)."""
+        self._log_metric_event(
+            f"Disk usage {usage:.1f}% on {path}",
+            state,
+            retry,
+            self._warn_percent,
+            self._critical_percent,
+        )
+
+    def _log_metric_event(
+        self,
+        subject: str,
+        state: str,
+        retry: bool,
+        warn: float,
+        critical: float,
+    ) -> None:
+        """The log line for one threshold event — WARNING for
+        degradations, INFO for recoveries, DEBUG for retry attempts
+        (the transition already said it at WARNING, and an edge
+        swallowed by the throttle retried at the poll floor would
+        otherwise repeat the line hundreds of times inside one
+        window)."""
         if retry:
             logger.debug(
-                "Disk usage %.1f%% on %s: %s (retry; warn %.1f%%, "
-                "critical %.1f%%)",
-                usage,
-                path,
+                "%s: %s (retry; warn %.1f%%, critical %.1f%%)",
+                subject,
                 state,
-                self._warn_percent,
-                self._critical_percent,
+                warn,
+                critical,
             )
             return
         level = logging.INFO if state == OK else logging.WARNING
         logger.log(
             level,
-            "Disk usage %.1f%% on %s: %s (warn %.1f%%, critical %.1f%%)",
-            usage,
-            path,
+            "%s: %s (warn %.1f%%, critical %.1f%%)",
+            subject,
             "recovered" if state == OK else state,
-            self._warn_percent,
-            self._critical_percent,
+            warn,
+            critical,
         )
 
     async def resolve_graph_root(self) -> str | None:
@@ -621,6 +836,149 @@ class ResourceWatchdog:
         if rc != 0:
             return None
         return out.strip() or None
+
+    # --- host memory / CPU pressure surfaces (#3309) ---
+
+    async def check_memory(self) -> None:
+        """One memory pass: the utilization of the machine containers
+        run on, as ``100 × (1 − availability)`` (see the module
+        docstring for the macOS podman-machine path)."""
+        if not self._memory_enabled:
+            self._forget(MEMORY_KEY)
+            return
+        try:
+            fraction = await self._measure_memory_fraction()
+        except Exception as e:  # noqa: BLE001 — best-effort measurement
+            self._note_unmeasurable("host memory", e)
+            return
+        self._rearm_unmeasurable("host memory")
+        self._step_threshold(
+            MEMORY_KEY,
+            (1.0 - fraction) * 100.0,
+            self._memory_warn_percent,
+            self._memory_critical_percent,
+            MEMORY_EVENTS,
+            self._emit_memory,
+        )
+
+    async def _measure_memory_fraction(self) -> float:
+        """Memory availability (0..1) of the machine containers run
+        on. Linux host: the eviction subsystem's platform-aware
+        measurement (meminfo, pressed by the cgroup limit when klangkd
+        itself runs capped). macOS: the podman machine VM's own
+        meminfo, read over ``podman machine ssh``. Raises when
+        unmeasurable — the caller warns once and skips."""
+        # Deferred import (see the module top): breaks the
+        # settings → resource_watchdog → container.eviction cycle.
+        from .container.eviction import (  # allow-deferred-import (see module top)
+            available_fraction,
+            measure_available_fraction,
+            parse_meminfo,
+        )
+
+        if platform.system() != "Darwin":
+            return await measure_available_fraction()
+        meminfo = parse_meminfo(await self._read_machine_proc("meminfo"))
+        return available_fraction(meminfo)
+
+    async def _read_machine_proc(self, name: str) -> str:
+        """Read ``/proc/<name>`` from inside the podman machine VM
+        (macOS: containers live there, so its /proc is the gauge that
+        matters; the Mac host's is the wrong machine). Raises
+        ``OSError`` when the VM is unreachable — a stopped machine, no
+        podman subsystem, or a command failure."""
+        podman = getattr(self.app.state, "podman", None)
+        if podman is None:
+            raise OSError("no podman subsystem on the app state")
+        rc, out, _err = await podman.run(
+            ["machine", "ssh", "--", "cat", f"/proc/{name}"],
+            check=False,
+            timeout=5.0,
+        )
+        if rc != 0:
+            raise OSError(f"podman machine ssh cat /proc/{name} exited {rc}")
+        return out
+
+    def _emit_memory(self, state: str, usage: float, retry: bool) -> bool:
+        """Notify + log one memory event (see ``emit_disk_event`` for
+        the return/retry semantics)."""
+        self._log_metric_event(
+            f"Memory usage {usage:.1f}%",
+            state,
+            retry,
+            self._memory_warn_percent,
+            self._memory_critical_percent,
+        )
+        return notify_event(
+            self.app,
+            MEMORY_EVENTS.by_state(state),
+            detail={
+                "metric": "memory",
+                "usage_percent": round(usage, 1),
+                "state": state,
+                "warn_percent": self._memory_warn_percent,
+                "critical_percent": self._memory_critical_percent,
+            },
+        )
+
+    async def check_cpu(self) -> None:
+        """One CPU-pressure pass: PSI ``some avg60`` (see the module
+        docstring for the macOS podman-machine path)."""
+        if not self._cpu_enabled:
+            self._forget(CPU_KEY)
+            return
+        try:
+            psi = parse_cpu_psi(await self._read_cpu_psi())
+        except Exception as e:  # noqa: BLE001 — best-effort measurement
+            self._note_unmeasurable("CPU pressure (PSI)", e)
+            return
+        self._rearm_unmeasurable("CPU pressure (PSI)")
+        self._step_threshold(
+            CPU_KEY,
+            psi,
+            self._cpu_warn_percent,
+            self._cpu_critical_percent,
+            CPU_EVENTS,
+            self._emit_cpu,
+        )
+
+    async def _read_cpu_psi(self) -> str:
+        """``/proc/pressure/cpu`` content from where containers run:
+        directly on a Linux host, inside the podman machine VM on
+        macOS. Raises ``OSError`` when unmeasurable."""
+        if platform.system() == "Darwin":
+            return await self._read_machine_proc("pressure/cpu")
+        return read_local_text("/proc/pressure/cpu")
+
+    def _emit_cpu(self, state: str, psi: float, retry: bool) -> bool:
+        """Notify + log one CPU-pressure event (see ``emit_disk_event``
+        for the return/retry semantics)."""
+        self._log_metric_event(
+            f"CPU pressure {psi:.1f}% (PSI some avg60)",
+            state,
+            retry,
+            self._cpu_warn_percent,
+            self._cpu_critical_percent,
+        )
+        return notify_event(
+            self.app,
+            CPU_EVENTS.by_state(state),
+            detail={
+                "metric": "cpu",
+                "psi_avg60_percent": round(psi, 1),
+                "state": state,
+                "warn_percent": self._cpu_warn_percent,
+                "critical_percent": self._cpu_critical_percent,
+            },
+        )
+
+    def _forget(self, key: int | str) -> None:
+        """Drop every remembered condition for one metric, so a
+        re-enabled check evaluates fresh (a metric that degraded while
+        its check was off alerts on the first poll after)."""
+        self._states.pop(key, None)
+        self._emitted_at.pop(key, None)
+        self._pending.pop(key, None)
 
     # --- audit pipeline surface ---
 

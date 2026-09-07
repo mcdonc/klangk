@@ -1463,28 +1463,49 @@ class KlangkSettings(BaseSettings):
     memory_eviction_sustain_polls: int = 3
     memory_eviction_poll_interval: float = 10.0
     # --- Disk-capacity detection (#3206) ---
-    # disk_watchdog_*: the operational detection layer under #3250's
-    # admin notifications. Every disk_watchdog_poll_interval seconds,
-    # statvfs the filesystems holding the data directory (the audit
-    # records storage — SV-222483's alert surface), the podman
-    # container-storage root, and any disk_watchdog_paths entries,
-    # deduplicated by device. Usage crossing the thresholds emits
-    # resource.disk.warn / resource.disk.critical notifications on
-    # state transitions (recovery requires falling
-    # RECOVERY_GAP_PERCENT points below the threshold — bands below
-    # both — so a boundary-hovering usage level cannot flap alerts,
+    # resource_watchdog_*: the operational detection layer under #3250's
+    # admin notifications (#3206 disk+audit, #3309 memory+CPU). Every
+    # resource_watchdog_poll_interval seconds the loop checks four
+    # surfaces: (a) statvfs the filesystems holding the data directory
+    # (the audit records storage — SV-222483's alert surface), the
+    # podman container-storage root, and any disk_watchdog_paths
+    # entries, deduplicated by device; (b) the memory utilization of
+    # the machine containers run on — MemAvailable/MemTotal from
+    # /proc/meminfo on a Linux host (pressed by the cgroup limit when
+    # klangkd itself runs memory-capped), the podman machine VM's own
+    # meminfo read via `podman machine ssh` on macOS (containers live
+    # in that VM; the Mac host's numbers are the wrong machine); (c)
+    # CPU pressure — PSI `some avg60` from /proc/pressure/cpu, on
+    # macOS read inside the podman machine VM the same way (no PSI →
+    # the check disables itself with one logged warning); (d) the
+    # audit-write-failure counters, summarized as one audit.failure
+    # per table on growth (the write sites' own per-failure events
+    # still fire; see notifier.py).
+    # Threshold crossings emit resource.{disk,memory,cpu}.{warn,
+    # critical} notifications on state transitions (recovery requires
+    # falling RECOVERY_GAP_PERCENT points below the threshold — bands
+    # below both — so a boundary-hovering level cannot flap alerts,
     # and a persisting degraded state refreshes once per throttle
-    # window); crossing back emits resource.disk.recovered.
-    # disk_watchdog_enabled turns the whole watchdog off — the disk
-    # thresholds AND the audit-degradation summarizer (the write
-    # sites' own per-failure audit.failure events still fire; see
-    # notifier.py). Detection failure is loud in the log and never
-    # blocks anything. All fields read live off settings every poll:
-    # reloadable on SIGHUP (#1587).
-    disk_watchdog_enabled: bool = True
+    # window); crossing back emits resource.*.recovered.
+    # resource_watchdog_enabled turns the whole watchdog off — all
+    # four surfaces. Detection failure is loud in the log and never
+    # blocks anything. All fields are read live off settings every
+    # poll: reloadable on SIGHUP (#1587).
+    resource_watchdog_enabled: bool = True
+    resource_watchdog_poll_interval: float = 60.0
     disk_watchdog_warn_percent: float = 75.0
     disk_watchdog_critical_percent: float = 90.0
-    disk_watchdog_poll_interval: float = 60.0
+    # Memory thresholds: percent of the machine's memory in use (the
+    # critical default of 90 aligns with the eviction loop's 10%
+    # availability floor — the alert fires as eviction starts).
+    memory_watchdog_enabled: bool = True
+    memory_watchdog_warn_percent: float = 80.0
+    memory_watchdog_critical_percent: float = 90.0
+    # CPU thresholds: PSI `some avg60` percent — the share of time at
+    # least one task was stalled on CPU over the last minute.
+    cpu_watchdog_enabled: bool = True
+    cpu_watchdog_warn_percent: float = 30.0
+    cpu_watchdog_critical_percent: float = 60.0
     # Extra filesystems to monitor (any path on each filesystem
     # suffices — e.g. a backup mount). Comma-separated env var or YAML
     # list; a path on an already-monitored filesystem (same device) is
@@ -2332,33 +2353,36 @@ class KlangkSettings(BaseSettings):
         return self
 
     @model_validator(mode="after")
-    def _validate_disk_watchdog_thresholds(self) -> "KlangkSettings":
-        """Disk thresholds must be usable percentages in order (#3206).
+    def _validate_watchdog_thresholds(self) -> "KlangkSettings":
+        """Watchdog thresholds must be usable percentages in order
+        (#3206 disk, #3309 memory/CPU).
 
-        Both must sit in [RECOVERY_GAP_PERCENT, 100] — usage is a
+        Each warn must sit in [RECOVERY_GAP_PERCENT, 100] — usage is a
         percentage of capacity, and the warn threshold needs room for
         the hysteresis band below it: a warn smaller than the gap
         would push the recovery floor below 0%, where usage can never
-        reach, leaving a degraded filesystem stuck (an at/below-zero
-        warn would additionally alert on a healthy disk). Warn must
-        not exceed critical — an inverted pair would make the warn
-        state unreachable. Equal values are tolerated (operator
+        reach, leaving a degraded metric stuck (an at/below-zero warn
+        would additionally alert on a healthy metric). Warn must not
+        exceed critical — an inverted pair would make the warn state
+        unreachable. Equal values are tolerated (an operator
         explicitly chooses OK↔critical with no intermediate warn
         event).
         """
-        warn = self.disk_watchdog_warn_percent
-        critical = self.disk_watchdog_critical_percent
-        if not RECOVERY_GAP_PERCENT <= warn <= 100:
-            raise ValueError(
-                f"disk_watchdog_warn_percent={warn!r} must be in "
-                f"[{RECOVERY_GAP_PERCENT}, 100] — the recovery "
-                "hysteresis band needs room below the warn threshold."
-            )
-        if not warn <= critical <= 100:
-            raise ValueError(
-                f"disk_watchdog_critical_percent={critical!r} must be in "
-                f"[disk_watchdog_warn_percent={warn!r}, 100]."
-            )
+        for prefix in ("disk_watchdog", "memory_watchdog", "cpu_watchdog"):
+            warn = getattr(self, f"{prefix}_warn_percent")
+            critical = getattr(self, f"{prefix}_critical_percent")
+            if not RECOVERY_GAP_PERCENT <= warn <= 100:
+                raise ValueError(
+                    f"{prefix}_warn_percent={warn!r} must be in "
+                    f"[{RECOVERY_GAP_PERCENT}, 100] — the recovery "
+                    "hysteresis band needs room below the warn "
+                    "threshold."
+                )
+            if not warn <= critical <= 100:
+                raise ValueError(
+                    f"{prefix}_critical_percent={critical!r} must be in "
+                    f"[{prefix}_warn_percent={warn!r}, 100]."
+                )
         return self
 
     @field_validator("disk_watchdog_paths", mode="before")
@@ -2550,7 +2574,11 @@ class KlangkSettings(BaseSettings):
         "memory_eviction_poll_interval",
         "disk_watchdog_warn_percent",
         "disk_watchdog_critical_percent",
-        "disk_watchdog_poll_interval",
+        "resource_watchdog_poll_interval",
+        "memory_watchdog_warn_percent",
+        "memory_watchdog_critical_percent",
+        "cpu_watchdog_warn_percent",
+        "cpu_watchdog_critical_percent",
         "quiesce_timeout",
         mode="before",
     )
