@@ -417,6 +417,30 @@ def test_settings_suite_extensions():
     )
 
 
+def test_user_settings_suite_extensions():
+    """The user-settings suite (#3241) drives the Settings page, password
+    change, branding, and legal links."""
+    suite = _REPO_ROOT / "src/frontend/e2e-tests/fmtk/test_user_settings.py"
+    assert suite.is_file(), "the user-settings suite (#3241) is missing"
+    assert_wired(
+        suite.read_text(),
+        (
+            '"Change Password"',
+            '"Change Handle"',
+            '"Change Email"',
+            '"Update Password"',
+            "change-password",
+            '"product_name"',
+            '"terms_url"',
+            '"Terms"',
+            '"Privacy"',
+            "swap_settings",
+        ),
+        "the user-settings suite (#3241) must drive settings, password, "
+        "branding, and legal links",
+    )
+
+
 def test_admin_suite_extensions():
     """The admin suite (#3240) drives the admin UI — users, groups,
     invitations, events, and the server schedule panel."""
