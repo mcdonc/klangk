@@ -37,28 +37,13 @@ Open <http://localhost:8997> and log in with the `default_user` /
 
 The published host image uses **password auth** — the examples pin
 `auth_modes: password` in the mounted config, and that is the supported
-configuration for the image. The default mode for a local install is `none`
-(no-login, loopback-only), but **`none` is an unsupported configuration
-with the published Docker host image.** The image publishes its port
-(`-p 8997:8997`), making it network-reachable, while `none` mode is
-loopback-only by design — it freely issues an admin token with no
-password, so its entire security model is "only the operator's loopback
-can reach it." Two independent gates refuse it in Docker:
-
-1. **Bind-safety gate.** `none` mode won't boot on a non-loopback bind
-   (publishing the port requires binding a non-loopback address like
-   `0.0.0.0`). Setting `KLANGKD_ALLOW_INSECURE_NO_AUTH=1` overrides this —
-   but only to warn you and expose a free-admin-token endpoint to the
-   whole network.
-2. **Proxy `/auth/local` ACL.** Even past the bind gate, a host browser
-   reaching the container through the published port-forward appears at
-   the container as the Docker bridge/gateway IP (e.g. `172.17.0.1`),
-   not `127.0.0.1`, so the loopback-only ACL denies `/api/v1/auth/local`
-   with `403`.
-
-For a no-login single-user experience, run klangk locally (devenv, or
-the bare binary on your own machine) instead of the published image.
-See [Auth Modes](../features/auth-modes.md).
+configuration for the image. **`none` mode is unsupported with the
+published Docker host image** — it is loopback-only by design, and the
+image publishes its port, making it network-reachable. Two independent
+gates (bind-safety and the proxy ACL) refuse `none` in Docker. For a
+no-login single-user experience, run klangk locally (devenv, or the
+bare binary) instead of the published image. See
+[Auth Modes](../features/auth-modes.md) for the full explanation.
 
 ## What the flags do
 

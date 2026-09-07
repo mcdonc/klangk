@@ -6,15 +6,7 @@
 
 `$DEVENV_STATE` refers to `<project root>/.devenv/state` — this is where devenv stores runtime data.
 
-For local development, settings live in `klangkd.yaml` (gitignored; `devenv.nix` seeds it from `klangkd.yaml.devenv` on first shell entry). Environment variables override config-file values.
-
-**`file:` prefix:** Any env var can be prefixed with `file:` to read the value from a file (e.g. `KLANGKD_JWT_SECRET=file:/run/secrets/jwt`). The file contents are stripped of leading/trailing whitespace. This works with secret management tools like agenix/sops that write decrypted secrets to files. If the file cannot be read, construction **fails** with a `ValidationError` (fail-fast at boot, not silently at use time).
-
-**`cmd:` prefix:** Any env var can be prefixed with `cmd:` to resolve the value by running a shell command and using its stdout (e.g. `KLANGKD_JWT_SECRET=cmd:aws secretsmanager get-secret-value --secret-id klangk/jwt | jq -r .SecretString`). The stdout is stripped of leading/trailing whitespace. This lets values be fetched from external sources (vault CLIs, cloud secret managers, decryption tools) without materializing them to disk or a plain env var. The command runs via the shell (so pipes work) with a short timeout; only values an operator explicitly prefixes with `cmd:` are ever executed. If the command fails (non-zero exit, timeout, or execution error), construction **fails** with a `ValidationError` (fail-fast at boot).
-
-> **Note:** the prefixes are applied by the config resolver wherever a `KLANGK_*` value is read, including model entries in `KLANGKD_LLM_MODELS` (dict-format `api-key` and `api-base` values support `file:`/`cmd:` indirection). A small number of vars are read raw by design (e.g. `KLANGKD_TRUSTED_PROXY_CIDRS`, which is a public CIDR list, not a secret).
-
-**`file:`/`cmd:` resolution** happens **once, at construction** — `KlangkSettings` runs every string field through its resolver in a `model_validator(mode="after")` before the object leaves `__init__`. Every `settings.field` read thereafter returns the already-resolved value; there is no per-call resolver wrapper. A bad reference (`file:/nonexistent`, `cmd:false`) aborts boot with a `ValidationError` rather than silently degrading to `None`/empty at use time. The resolver itself is private (`_resolve_indirection`); the public `resolve_indirection` function was removed. Feature-declared config keys (the `KLANGKWS_FEATURE_*` keys the build emits into `features.json` — not `KlangkSettings` fields) are still resolved per-call by `resolve_dynamic_config`, since their names aren't known at settings construction.
+For local development, settings live in `klangkd.yaml` (gitignored; `devenv.nix` seeds it from `klangkd.yaml.devenv` on first shell entry). Environment variables override config-file values. Both env vars and config-file values support `file:` and `cmd:` prefixes for secret indirection — see [Configuration File — `file:` and `cmd:` resolution](klangkd-config.md#file-and-cmd-resolution) for the full precedence rules and resolution semantics.
 
 > **Removed in 2.X:** `KLANGKD_PROXY_ENGINE` is gone — Caddy is the
 > sole reverse-proxy engine. The env var is no longer recognized (silently

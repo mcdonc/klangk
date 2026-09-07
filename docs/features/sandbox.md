@@ -302,12 +302,9 @@ default — it is the ceiling that permits the opt-in) in the server's
 
 ### Where the service command runs (and how to install for it)
 
-A `service-command` does **not** run in the workspace owner's shell.
-It runs in a dedicated `service` tmux session whose `$HOME` is
-**always `/home/klangk`** — the shared home, under both home layouts
-(exposed as the constant `$KLANGKWS_AGENT_HOME`) — not the owner's
-per-handle home. The owner interacts with it through the **Service**
-terminal tab in the web UI.
+The [service command](service-command.md) runs in a dedicated `service`
+tmux session whose `$HOME` is **always `/home/klangk`** (exposed as
+`$KLANGKWS_AGENT_HOME`), not the owner's per-handle home.
 
 This matters for setup scripts: anything the service command needs at
 runtime — env exports in `~/.profile`, binaries installed under
