@@ -354,8 +354,10 @@ def test_sso_completes_under_every_visit_banner(harness, app, oidc_stack):
         approve_at_idp(oidc_stack, app, 0)
 
         # the callback reloads the app with the banner pending again —
-        # the code is redeemed anyway and the guards land on /consent
-        # (not /login): the session exists as soon as it is accepted
+        # the code is redeemed before the banner gate redirects. Both
+        # the fixed and the pre-fix flow land on /consent; what the fix
+        # changes is that the session survives the accept — the pre-fix
+        # code was dropped, so accepting led back to /login (the loop)
         wait_landed(app, "I Accept")
         app.tap_label("I Accept")
         app.wait_for_text("No workspaces yet")

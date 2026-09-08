@@ -9,8 +9,11 @@ import '../widgets/klangk_logo.dart';
 
 /// Landing page after OIDC callback. The backend redirected here with a
 /// one-time login code (#3201 — the session JWT never rides the URL);
-/// this page redeems the code for the token via POST, saves it, and the
-/// GoRouter redirect then navigates to /workspaces.
+/// this page redeems the code for the token via POST and saves it. The
+/// router's redirect then takes over: /workspaces directly, or /consent
+/// first while a login banner is pending (#3371 — the route is exempt
+/// from the banner gate while logged out precisely so this redemption
+/// can run).
 class OidcCompletePage extends StatefulWidget {
   final String code;
 
