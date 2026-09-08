@@ -3999,3 +3999,10 @@ users(id)`, so the decider handler passing the decider's email violated the
   notification past the frame whenever one is in its build/layout/paint
   phase; every other phase still notifies immediately. Found by the new
   fmtk workspace-lifecycle suite.
+
+- **FIPS host image builds again under `cryptography` 50 (#3350).** The
+  self-check `RUN` in the FIPS host Dockerfile read the OpenSSL binding
+  through a private module attribute that `cryptography` 50 no longer
+  exposes, which aborted the image build and stopped `klangk-host` and
+  `klangk-host-fips` from publishing. The probe now imports the backend
+  the same way the runtime verification in `klangk.fips` does.
