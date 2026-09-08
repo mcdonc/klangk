@@ -183,7 +183,11 @@ WORKDIR /home/klangk
 #      pinned to fips=yes (EVP_default_properties_enable_fips — the
 #      same call cryptography's own enable_fips makes; cryptography
 #      loads the default provider at import, so without the pin MD5
-#      is served from it), MD5 through cryptography must be refused;
+#      is served from it), MD5 through cryptography must be refused.
+#      The pin and the digest share ONE python process — the flag
+#      lives in that process's libcrypto and does not persist across
+#      commands — and a pin that cannot be set fails the check (a
+#      plain ! negation would misread it as refusal);
 #   7. end-to-end JWT: jose HS256 sign+verify works under the active
 #      provider (HMAC-SHA256 is approved);
 #   8. env-stripped activation (stock config path, no environment).
@@ -212,7 +216,10 @@ assert backend.openssl_version_text() == ssl.OPENSSL_VERSION, \
 lc = ctypes.CDLL(ctypes.util.find_library('crypto') or 'libcrypto.so.3'); \
 lc.EVP_default_properties_enable_fips.restype = ctypes.c_int; \
 assert lc.EVP_default_properties_enable_fips(None, 1) == 1" && \
-    ! python3 -c "import cryptography.hazmat.primitives.hashes as h; \
+    ! python3 -c "import ctypes, ctypes.util; \
+lc = ctypes.CDLL(ctypes.util.find_library('crypto') or 'libcrypto.so.3'); \
+assert lc.EVP_default_properties_enable_fips(None, 1) == 1; \
+import cryptography.hazmat.primitives.hashes as h; \
 d = h.Hash(h.MD5()); d.update(b'x'); d.finalize()" 2>/dev/null && \
     echo 'fips check 7/8: jose HS256 roundtrip' && \
     python3 -c "import ctypes, ctypes.util; \
