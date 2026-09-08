@@ -26,7 +26,10 @@ jobs:
 
       - uses: ./.github/actions/devenv-setup
         with:
-          build-tasks: klangk:build-workspace-image
+          # The sidecar image must be present too: workspace start/restart
+          # attaches it, and with the image missing podman tries to pull it
+          # from docker.io and the restart endpoint returns a raw 500 (#3368).
+          build-tasks: klangk:build-workspace-image klangk:build-network-sidecar
 
       - name: Run fuzzer (10 min)
         run: |
