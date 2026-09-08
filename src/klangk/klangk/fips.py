@@ -471,6 +471,28 @@ def _crypto_md5_refused() -> bool:
     return False
 
 
+def _load_fips_pin_symbols() -> tuple:
+    """Load libcrypto's FIPS pin entry points (#3350).
+
+    Returns ``(enable, provider_available, error)`` — the two ctypes
+    entry points on success, or the load failure detail.
+    """
+    import ctypes  # allow-deferred-import
+    import ctypes.util  # allow-deferred-import
+
+    try:
+        lib = ctypes.CDLL(
+            ctypes.util.find_library("crypto") or "libcrypto.so.3"
+        )
+        return (
+            lib.EVP_default_properties_enable_fips,
+            (lib.OSSL_PROVIDER_available),
+            None,
+        )
+    except (OSError, AttributeError) as exc:
+        return None, None, f"cannot pin fips fetch properties ({exc})"
+
+
 def _enable_fips_fetch_properties() -> tuple[bool, str]:
     """Pin ambient fetches to the fips provider (#3350).
 
@@ -484,24 +506,29 @@ def _enable_fips_fetch_properties() -> tuple[bool, str]:
     provider. The helper refuses to pin unless the fips provider is
     active in the default library context — pinning without it would
     fail every fetch in the process.
+
+    The pin is Linux-only (#3364): on macOS the ctypes load of the
+    system libcrypto aborts the process outright (Apple's load-time
+    check rejects ``dlopen``-loaded libcrypto), and every platform we
+    otherwise support reaches this helper only through OpenSSL 3 on
+    Linux hosts. ``sys.platform`` is read at call time so tests can
+    exercise the skip.
     """
     import ctypes  # allow-deferred-import
-    import ctypes.util  # allow-deferred-import
+    import sys  # allow-deferred-import
 
-    try:
-        lib = ctypes.CDLL(
-            ctypes.util.find_library("crypto") or "libcrypto.so.3"
-        )
-        enable = lib.EVP_default_properties_enable_fips
-        provider_active = lib.OSSL_PROVIDER_available
-    except (OSError, AttributeError) as exc:
-        return False, f"cannot pin fips fetch properties ({exc})"
+    if sys.platform != "linux":
+        return False, "fips fetch pin is Linux-only; pin skipped"
+
+    enable, provider_available, load_error = _load_fips_pin_symbols()
+    if load_error is not None:
+        return False, load_error
     # Never pin without the fips provider: the flag makes every fetch
     # require fips=yes, so on a process without it all ciphers and
     # digests would stop loading (poisoning the whole process).
-    provider_active.restype = ctypes.c_int
-    provider_active.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
-    if not provider_active(None, b"fips"):
+    provider_available.restype = ctypes.c_int
+    provider_available.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
+    if not provider_available(None, b"fips"):
         return False, "fips provider not active; pin skipped"
     enable.restype = ctypes.c_int
     enable.argtypes = [ctypes.c_void_p, ctypes.c_int]
