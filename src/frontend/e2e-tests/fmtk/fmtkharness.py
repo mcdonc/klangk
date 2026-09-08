@@ -1345,12 +1345,23 @@ class FmtkClient:
         self.wait_for_login_page()
 
     def _wait_logged_out(self, timeout: float = 10) -> None:
-        """Spin until the Dart AuthService has no token."""
+        """Spin until the Dart AuthService has no token, then pause for
+        the browser's ``Clear-Site-Data`` processing to settle.
+
+        The Dart in-memory token clears instantly on logout, but the
+        server's ``Clear-Site-Data: "storage"`` header (#3335) tells
+        the browser to wipe sessionStorage **asynchronously**.  If the
+        next login writes a new JWT before the wipe completes, the
+        deferred wipe destroys it.  After confirming the Dart state is
+        clear, a brief pause lets the browser finish the storage wipe."""
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             try:
                 result = self.auth_eval("return auth!.isLoggedIn.toString();")
                 if result == "false":
+                    # Give the browser time to finish Clear-Site-Data
+                    # processing before the next login writes to storage.
+                    time.sleep(5)
                     return
             except FmtkError:
                 pass  # evaluator may fail transiently during teardown
