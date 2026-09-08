@@ -733,9 +733,9 @@ def wait_for_server(uds_path: str, timeout: float = 120) -> None:
 
     The 120 s budget covers a cold CI runner: uvicorn boot (~8 s),
     migrations + seeding (~3 s), then ``prewarm_podman()`` (its first
-    ``podman create`` alone can take ~20–30 s). Warm runs finish in
-    ~23 s; the old 30 s deadline failed whenever the runner booted
-    slower than that (#3368).
+    ``podman create`` alone can take ~20–30 s). Good days land at
+    ~23 s total; the old 30 s deadline failed whenever the runner
+    booted slower than that (#3368).
     """
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
