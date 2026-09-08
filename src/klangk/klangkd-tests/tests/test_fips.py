@@ -365,6 +365,7 @@ class TestVerifyProcessFips:
     def test_on_verified(self, caplog):
         with (
             self._jose_ok(),
+            self._pin_ok(),
             self._linkage_ok(),
             patch.object(fips, "probe_process", return_value=(True, "x")),
             patch.object(fips, "running_in_container", return_value=False),
@@ -694,6 +695,12 @@ class TestEnableFipsFetchProperties:
     """The ambient fetch-property pin (#3350): ctypes plumbing around
     EVP_default_properties_enable_fips."""
 
+    @pytest.fixture(autouse=True)
+    def _linux_platform(self, monkeypatch):
+        """Force the Linux path: the pin helper skips non-Linux
+        platforms (#3364), and these tests exercise the ctypes path."""
+        monkeypatch.setattr(sys, "platform", "linux")
+
     def _lib(self, enable_result, provider=1):
         lib = MagicMock()
         lib.EVP_default_properties_enable_fips.return_value = enable_result
@@ -752,6 +759,27 @@ class TestEnableFipsFetchProperties:
             ok, detail = fips._enable_fips_fetch_properties()
         assert ok is False
         assert "cannot pin" in detail
+
+    def test_non_linux_platform_is_noop(self, monkeypatch):
+        """Non-Linux platforms skip the pin before any ctypes load
+        (#3364): on macOS the dlopen of system libcrypto aborts the
+        process, so the guard must fire before CDLL is ever touched.
+
+        Only ``ctypes.CDLL`` is patched: patching
+        ``ctypes.util.find_library`` would lazily import
+        ``ctypes.util`` while ``sys.platform`` is patched to "darwin",
+        and Python 3.14's ``ctypes/util.py`` resolves dyld symbols at
+        import time under that platform — an import error on Linux
+        (an order-dependent failure whenever no earlier test on the
+        same worker imported ``ctypes.util`` first).
+        """
+        cdll = MagicMock()
+        monkeypatch.setattr(sys, "platform", "darwin")
+        with patch("ctypes.CDLL", cdll):
+            ok, detail = fips._enable_fips_fetch_properties()
+        assert ok is False
+        assert "Linux-only" in detail
+        cdll.assert_not_called()
 
 
 class TestVerifyJoseCryptoLinkage:
