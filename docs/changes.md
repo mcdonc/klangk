@@ -33,6 +33,8 @@ operators or integrators to act when upgrading.
 
 ## \[Unreleased]
 
+## \[v2.0a2] - 2026-09-08
+
 ### Fixed
 
 - **FIPS fetch pin is Linux-only (#3364).** Under
