@@ -1,0 +1,2536 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Multi-User AI Sandboxing, Collaboration and Coding Platform">
+      
+      
+        <meta name="author" content="Chris McDonough">
+      
+      
+        <link rel="canonical" href="https://mcdonc.github.io/klangk/1.0.5/reference/environment/">
+      
+      
+        <link rel="prev" href="../api-endpoints/">
+      
+      
+        <link rel="next" href="../../development/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/favicon.png">
+      <meta name="generator" content="zensical-0.0.59">
+    
+    
+      
+        <title>Environment Variables - Klangk</title>
+      
+    
+    
+      
+        
+      
+      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.5da3a30f.min.css">
+      
+        
+          
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.812a03bb.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,500,500i,700,700i%7CJetBrains+Mono:400,400i,700,700i&amp;display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_scope.pathname.endsWith("/")||(__md_scope=new URL(__md_scope.pathname+"/",location)),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,_=__md_scope)=>JSON.parse(t.getItem(_.pathname+"."+e)),__md_set=(e,t,_=localStorage,a=__md_scope)=>{try{_.setItem(a.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="green" data-md-color-accent="green">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer" aria-label="Navigation"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#environment-variables" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Klangk" class="md-header__button md-logo" aria-label="Klangk" data-md-component="logo">
+      
+  <img src="../../assets/logo.svg" alt="Klangk">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer" aria-label="Navigation">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-menu" viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h16"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Klangk
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Environment Variables
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="none" data-md-color-scheme="slate" data-md-color-primary="green" data-md-color-accent="green"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="none" data-md-color-scheme="default" data-md-color-primary="green" data-md-color-accent="green"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-moon" viewBox="0 0 24 24"><path d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search" aria-label="Search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-search" viewBox="0 0 24 24"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog" aria-label="Search">
+  <button type="button" class="md-search__button">
+    Search
+  </button>
+</div>
+      
+    
+    <div class="md-header__source">
+      
+        <a href="https://github.com/mcdonc/klangk" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mcdonc/klangk
+  </div>
+</a>
+      
+    </div>
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Klangk" class="md-nav__button md-logo" aria-label="Klangk" data-md-component="logo">
+      
+  <img src="../../assets/logo.svg" alt="Klangk">
+
+    </a>
+    Klangk
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/mcdonc/klangk" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mcdonc/klangk
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Home
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Getting Started
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../features/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Features
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Features
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/authentication/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Authentication
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/authorization/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Authorization
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/handles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Handles
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/admin-management/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Admin Management
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/invitations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Invitations
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/workspaces/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Workspaces
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/terminal/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Terminal
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/the-shell/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The Shell
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/service-command/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Service Command
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/auto-start/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Auto-Start
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/health-check/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Health Check
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/sandbox/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Sandbox
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/chat/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Chat
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/file-viewer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  File Viewer
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/ai-coding-harnesses/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  AI Coding Harnesses
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/plugins/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Using Plugins
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/export-import/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Export & Import
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/hosted-apps/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Hosted Apps
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  CLI
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/ssh-agent-forwarding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  SSH Agent Forwarding
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/github-authentication/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  GitHub HTTPS Authentication
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/debug-panel/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Debug Panel
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../sandboxes/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Sandboxes
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Sandboxes
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../sandboxes/openclaw/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  OpenClaw
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../sandboxes/hermes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Hermes
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Deployment
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Deployment
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/docker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Running with Docker
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/hosting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Hosting & Nginx
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/customizing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Customizing
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/signals/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Process Signals
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../podman/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Podman
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../oidc/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  OIDC
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Reference
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Reference
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../acl/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  ACL System
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api-endpoints/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  API Endpoints
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+        
+      
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Environment Variables
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../development/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Klangk Development
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_7" id="__nav_7_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Klangk Development
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/ci/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  CI
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/pre-commit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Pre-commit Hooks
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/releasing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Releasing
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/building-images/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Building Images
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/creating-plugins/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Creating Plugins
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/stable-branches/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Stable Branches
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_8" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../architecture/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Architecture
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_8" id="__nav_8_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Architecture
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/llm-proxy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  LLM Proxy
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/browser-bridge/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Browser Bridge
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/workspace-jwt/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Workspace JWT
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  
+                    
+                    
+                    
+                      
+                    
+                    
+                  
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+                
+
+
+
+  
+
+
+  <nav class="md-path" aria-label="Navigation" >
+    <ol class="md-path__list">
+      
+        
+  
+  
+    <li class="md-path__item">
+      <a href="../.." class="md-path__link">
+        
+  
+  <span class="md-ellipsis">
+    Home
+  </span>
+
+      </a>
+    </li>
+  
+
+      
+      
+        
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+      <li class="md-path__item">
+        <a href="../acl/" class="md-path__link">
+          
+  
+  <span class="md-ellipsis">
+    Reference
+  </span>
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ol>
+  </nav>
+
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+  
+  
+
+
+<h1 id="environment-variables">Environment Variables<a class="headerlink" href="#environment-variables" title="Permanent link">&para;</a></h1>
+<p><code>$DEVENV_STATE</code> refers to <code>&lt;project root&gt;/.devenv/state</code> — this is where devenv stores runtime data.</p>
+<p>All settings can be overridden in <code>.env</code>. Defaults (where appropriate) are provided in <code>devenv.nix</code> at low priority so <code>.env</code> values take precedence.</p>
+<p><strong><code>file:</code> prefix:</strong> Any env var can be prefixed with <code>file:</code> to read the value from a file at runtime (e.g. <code>KLANGK_JWT_SECRET=file:/run/secrets/jwt</code>). The file contents are stripped of leading/trailing whitespace. This works with secret management tools like agenix/sops that write decrypted secrets to files. If the file cannot be read, an error is logged and the value is treated as unset.</p>
+<p><strong><code>cmd:</code> prefix:</strong> Any env var can be prefixed with <code>cmd:</code> to resolve the value by running a shell command at runtime and using its stdout (e.g. <code>KLANGK_JWT_SECRET=cmd:aws secretsmanager get-secret-value --secret-id klangk/jwt | jq -r .SecretString</code>). The stdout is stripped of leading/trailing whitespace. This lets values be fetched from external sources (vault CLIs, cloud secret managers, decryption tools) without materializing them to disk or a plain env var. The command runs via the shell (so pipes work) with a short timeout; only values an operator explicitly prefixes with <code>cmd:</code> are ever executed. If the command fails (non-zero exit, timeout, or execution error), an error is logged and the value is treated as unset.</p>
+<blockquote>
+<p><strong>Note:</strong> the prefixes are applied only where the backend reads a var through <code>resolve_env_value</code>/<code>resolve_file_value</code> (the vast majority of <code>KLANGK_*</code> vars). A couple of values are consumed out-of-band by <code>nginx.sh</code> via bash expansion (<code>KLANGK_LLM_BASE_URL</code>, <code>KLANGK_LLM_API_KEY</code>) — these are run through the <code>klangk-resolve-value</code> console script (see below) at nginx config generation time, so the prefixes work there too. A small number of vars are read raw by design (e.g. <code>KLANGK_TRUSTED_PROXY_CIDRS</code>, which is a public CIDR list, not a secret).</p>
+</blockquote>
+<p><strong><code>klangk-resolve-value</code> console script:</strong> a CLI twin of <code>resolve_file_value</code> (registered as <code>klangk-resolve-value = "klangk_backend._resolve_value:main"</code> in <code>src/backend/pyproject.toml</code>) that resolves a single prefixed value from its single argument and prints the result to stdout (<code>file:</code> → file contents; <code>cmd:</code> → command stdout; plain → verbatim; failure → empty + reason on stderr). It is the single source of truth consumed by <code>nginx.sh</code>; operators rarely need to call it directly, but it is available on the PATH wherever the backend is installed:</p>
+<div class="language-sh highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>klangk-resolve-value<span class="w"> </span><span class="s1">'file:/run/secrets/jwt'</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>klangk-resolve-value<span class="w"> </span><span class="s1">'cmd:aws secretsmanager ... | jq -r .SecretString'</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>klangk-resolve-value<span class="w"> </span><span class="s1">'plain-value'</span><span class="w">   </span><span class="c1"># -&gt; plain-value (verbatim)</span>
+</span></code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>KLANGK_NGINX_PORT</code></td>
+<td><code>8995</code></td>
+<td><strong>Primary access point</strong> — nginx reverse proxy port (UI, API, WebSocket, hosted apps)</td>
+</tr>
+<tr>
+<td><code>KLANGK_PORT</code></td>
+<td><code>8997</code></td>
+<td>Backend (FastAPI/uvicorn) port — proxied through nginx, not accessed directly</td>
+</tr>
+<tr>
+<td><code>KLANGK_DATA_DIR</code></td>
+<td><code>$DEVENV_STATE/klangk/data</code></td>
+<td>Database, workspaces, Pi sessions</td>
+</tr>
+<tr>
+<td><code>KLANGK_CUSTOMIZE_DIR</code></td>
+<td><code>~/.klangk/custom</code></td>
+<td>Root directory for deployment customization files. Subsystems look for well-known subdirectories (<code>certs/</code>, <code>branding/</code>, <code>email-templates/</code>) here when their per-feature env var is unset. Missing subdirectories are silently skipped. One mount point replaces three. See <a href="../../deployment/customizing/#runtime-customization">Customizing a Deployment</a>.</td>
+</tr>
+<tr>
+<td><code>KLANGK_PLUGINS_DIR</code></td>
+<td><code>$DEVENV_STATE/klangk/plugins</code></td>
+<td>Fetched plugins (outside repo for <code>execIfModified</code>)</td>
+</tr>
+<tr>
+<td><code>KLANGK_HOST_IMAGE</code></td>
+<td><code>klangk-host</code></td>
+<td>Docker image name for <code>run-host-container</code></td>
+</tr>
+<tr>
+<td><code>KLANGK_VARIANT</code></td>
+<td></td>
+<td>Identifies a custom build (a <strong>variant</strong>) of klangk, independent of the upstream klangk version. Baked into <code>version.json</code> as <code>variant</code> by <code>scripts/generate-version.sh</code> at build time; surfaced at <code>GET /api/v1/version</code> and the debug pane's <em>Variant</em> row. Empty/absent = stock klangk (no variant reported, output byte-identical to a non-customized build). See <a href="../../deployment/customizing/#variant">Customizing a Deployment</a>.</td>
+</tr>
+<tr>
+<td><code>KLANGK_IMAGE_NAME</code></td>
+<td><code>klangk-workspace</code></td>
+<td>Podman image name for workspace containers</td>
+</tr>
+<tr>
+<td><code>KLANGK_IMAGE_PULL_POLICY</code></td>
+<td><code>never</code></td>
+<td>Podman <code>--pull</code> policy for workspace containers (<code>never</code>, <code>missing</code>, <code>always</code>, <code>newer</code>). Default <code>never</code> requires the image to exist locally; <code>missing</code> pulls from a registry if not found</td>
+</tr>
+<tr>
+<td><code>KLANGK_USERNS</code></td>
+<td><code>keep-id:uid=1000,gid=1000</code></td>
+<td>Podman <code>--userns</code> mode for workspace containers. Maps the host user to uid/gid 1000 inside the container so bind-mounted files are owned correctly.</td>
+</tr>
+<tr>
+<td><code>KLANGK_PODMAN_BIN</code></td>
+<td><code>podman</code></td>
+<td>Path to the podman binary</td>
+</tr>
+<tr>
+<td><code>KLANGK_PORT_RANGE_START</code></td>
+<td><code>9000</code></td>
+<td>First host port for workspace app allocations. Each workspace gets 5 ports starting from this value. See <a href="../../features/hosted-apps/">Hosted Apps</a>.</td>
+</tr>
+<tr>
+<td><code>KLANGK_HOSTED_PORTS_PER_WORKSPACE</code></td>
+<td><code>5</code></td>
+<td>Server-wide ceiling on hosted-app ports per workspace. Set to <code>0</code> to <strong>disable hosted-app serving entirely</strong> — no ports are allocated, no hosting env is injected into containers, and <code>/hosted/...</code> returns 404. Any other value clamps each workspace down to this cap. See <a href="../../features/hosted-apps/">Hosted Apps</a>.</td>
+</tr>
+<tr>
+<td><code>KLANGK_ALLOWED_MOUNT_ROOTS</code></td>
+<td></td>
+<td>Comma-separated list of allowed host path prefixes for bind mounts (e.g., <code>/home,/data</code>). If unset, all bind mount paths are allowed. Protected paths are always blocked.</td>
+</tr>
+<tr>
+<td><code>KLANGK_DNS_SERVERS</code></td>
+<td></td>
+<td>Comma-separated DNS server IPs for containers (e.g., <code>100.100.100.100,8.8.8.8</code> for Tailscale MagicDNS). If unset, containers use podman's default DNS.</td>
+</tr>
+<tr>
+<td><code>KLANGK_HOSTING_HOSTNAME</code></td>
+<td>(auto-derived)</td>
+<td>URL authority (<code>host[:port]</code>) for hosted-app and user-facing URLs — <strong>the port lives here</strong>, it is never synthesized from <code>KLANGK_NGINX_PORT</code> (that is internal container wiring, not the public port). Auto-derived from <code>X-Forwarded-Host</code> or the <code>Host</code> header (used verbatim, including their port); set explicitly in production. Behind a real reverse proxy this must carry the public host and port.</td>
+</tr>
+<tr>
+<td><code>KLANGK_HOSTING_PROTO</code></td>
+<td>(auto-derived)</td>
+<td>Protocol for user-facing app URLs. Auto-derived from <code>X-Forwarded-Proto</code> or defaults to <code>http</code>.</td>
+</tr>
+<tr>
+<td><code>KLANGK_HOSTING_BASE_PATH</code></td>
+<td>(auto-derived)</td>
+<td>Base path prefix for user-facing app URLs (e.g., <code>/klangk</code>). Auto-derived from <code>X-Forwarded-Prefix</code>.</td>
+</tr>
+<tr>
+<td><code>KLANGK_TRUSTED_PROXY_CIDRS</code></td>
+<td><code>127.0.0.1,::1</code></td>
+<td>Comma-separated CIDRs/IPs whose connections are trusted to supply <code>X-Forwarded-Host/Proto/Prefix</code> headers. klangk's nginx proxies from loopback, so the default works out of the box; requests from peers outside this set have forwarded headers ignored (preventing host poisoning if the backend port is exposed).</td>
+</tr>
+<tr>
+<td><code>KLANGK_REJECT_PROXY_HEADERS</code></td>
+<td></td>
+<td>Set to <code>1</code> to ignore <code>X-Forwarded-Host/Proto/Prefix</code> headers unconditionally (hard override; back-compat with the old opt-out).</td>
+</tr>
+<tr>
+<td><code>KLANGK_IDLE_TIMEOUT_SECONDS</code></td>
+<td><code>1800</code></td>
+<td>Container idle timeout in seconds (check interval auto-computed as timeout/3, clamped 10-60s)</td>
+</tr>
+<tr>
+<td><code>KLANGK_LOGIN_LOCKOUT_WINDOW</code></td>
+<td><code>300</code></td>
+<td>Time window in seconds for counting failed login attempts.</td>
+</tr>
+<tr>
+<td><code>KLANGK_LOGIN_LOCKOUT_FAILURES</code></td>
+<td><code>5</code></td>
+<td>Number of failed login attempts before a lockout. Default <code>5</code> (enabled). Set to <code>0</code> to disable.</td>
+</tr>
+<tr>
+<td><code>KLANGK_LOGIN_LOCKOUT_DURATION</code></td>
+<td><code>900</code></td>
+<td>Duration of lockout in seconds (only relevant when <code>KLANGK_LOGIN_LOCKOUT_FAILURES</code> &gt; 0).</td>
+</tr>
+<tr>
+<td><code>KLANGK_LLM_API_KEY</code></td>
+<td></td>
+<td>LLM provider API key</td>
+</tr>
+<tr>
+<td><code>KLANGK_LLM_BASE_URL</code></td>
+<td></td>
+<td>LLM API URL — must use IP or public FQDN, not bare hostnames (see <a href="../../deployment/hosting/#tailscale-and-llm-proxy">Tailscale note</a>)</td>
+</tr>
+<tr>
+<td><code>KLANGK_LLM_MODEL</code></td>
+<td></td>
+<td>LLM model name</td>
+</tr>
+<tr>
+<td><code>KLANGK_AGENT_EMAIL</code></td>
+<td><code>clanker@example.com</code></td>
+<td>Email for the chat AI agent. Used for seeding — the agent user is created or updated in the DB on each startup.</td>
+</tr>
+<tr>
+<td><code>KLANGK_AGENT_HANDLE</code></td>
+<td><code>clanker</code></td>
+<td>@mention handle for the chat AI agent. Used for seeding — the agent user is created or updated in the DB on each startup.</td>
+</tr>
+<tr>
+<td><code>KLANGK_AGENT_DISABLED</code></td>
+<td></td>
+<td>Set to <code>1</code>/<code>true</code>/<code>yes</code> to disable the chat agent: the <code>pi --mode rpc</code> subprocess is not started, so the agent never comes online. Checked each time the subprocess would start. See <a href="../../features/chat/#disabling-the-agent">Chat</a>.</td>
+</tr>
+<tr>
+<td><code>KLANGK_JWT_SECRET</code></td>
+<td></td>
+<td>JWT signing secret. A warning is logged at startup if unset or left as the insecure dev default.</td>
+</tr>
+<tr>
+<td><code>KLANGK_PREVENT_INSECURE_JWT_SECRET</code></td>
+<td></td>
+<td>Set to <code>1</code> to fail at startup if <code>KLANGK_JWT_SECRET</code> is unset or insecure. Recommended for production.</td>
+</tr>
+<tr>
+<td><code>KLANGK_ACCESS_TOKEN_HOURS</code></td>
+<td><code>24</code></td>
+<td>Lifetime in hours for user session JWTs. Tokens are automatically refreshed before expiry.</td>
+</tr>
+<tr>
+<td><code>KLANGK_WORKSPACE_TOKEN_HOURS</code></td>
+<td><code>24</code></td>
+<td>Lifetime in hours for per-workspace JWTs. Tokens are automatically renewed at 80% of their lifetime.</td>
+</tr>
+<tr>
+<td><code>KLANGK_DEFAULT_USER</code></td>
+<td></td>
+<td>Auto-seeded admin email on startup</td>
+</tr>
+<tr>
+<td><code>KLANGK_DEFAULT_PASSWORD</code></td>
+<td></td>
+<td>Auto-seeded password on startup (omit to generate random; supports <code>file:</code>/<code>cmd:</code> prefix)</td>
+</tr>
+<tr>
+<td><code>KLANGK_MIN_PASSWORD_LENGTH</code></td>
+<td><code>8</code></td>
+<td>Minimum password length</td>
+</tr>
+<tr>
+<td><code>KLANGK_FILE_UPLOAD_SIZE_MAX</code></td>
+<td><code>524288000</code></td>
+<td>Maximum upload size in bytes for file uploads and workspace imports (default 500 MB)</td>
+</tr>
+<tr>
+<td><code>KLANGK_WS_MSG_SIZE_MAX</code></td>
+<td><code>16777216</code></td>
+<td>Maximum WebSocket message size in bytes (default 16 MB). Increase if syncing very large files via rsync over WebSocket.</td>
+</tr>
+<tr>
+<td><code>KLANGK_CORS_ORIGINS</code></td>
+<td></td>
+<td>Comma-separated list of allowed CORS origins (e.g., <code>https://klangk.example.com</code>). If unset, derived from <code>KLANGK_HOSTING_HOSTNAME</code>/<code>KLANGK_HOSTING_PROTO</code>, or defaults to <code>http://localhost:{KLANGK_NGINX_PORT}</code>. Set to <code>*</code> to allow all origins (not recommended for public deployments).</td>
+</tr>
+<tr>
+<td><code>KLANGK_TRUST_OUTER_PROXY</code></td>
+<td></td>
+<td>Set to <code>1</code> (or <code>true</code>/<code>yes</code>) to pass through <code>X-Forwarded-*</code> headers from a trusted outer reverse proxy in front of klangk's nginx. By default klangk's nginx overwrites these with authoritative values (<code>$http_host</code>, <code>$scheme</code>) to prevent host poisoning. Only enable if the outer proxy itself overwrites, not passes through, these headers.</td>
+</tr>
+<tr>
+<td><code>KLANGK_GITHUB_OAUTH_CLIENT_ID</code></td>
+<td></td>
+<td>GitHub OAuth App client ID for device-flow authentication. Injected into workspace containers by the git-credential plugin. When set, <code>git push</code> to github.com triggers the OAuth device flow automatically. No client secret needed. See <a href="../../features/github-authentication/">GitHub Authentication</a>.</td>
+</tr>
+<tr>
+<td><code>KLANGK_DISABLE_REGISTRATION</code></td>
+<td></td>
+<td>Set to any non-empty value to block new user signups and hide the registration link in the UI</td>
+</tr>
+<tr>
+<td><code>KLANGK_DISABLE_INVITES</code></td>
+<td></td>
+<td>Set to <code>1</code> to disable the invitation system</td>
+</tr>
+<tr>
+<td><code>KLANGK_INVITE_EXPIRE_HOURS</code></td>
+<td><code>72</code></td>
+<td>How long invitation links remain valid (hours)</td>
+</tr>
+<tr>
+<td><code>KLANGK_ALLOW_AUTOSTART</code></td>
+<td></td>
+<td>Set to <code>1</code>/<code>true</code>/<code>yes</code> to allow workspaces to be configured for auto-start on server boot. Default: disabled — the auto-start option is hidden in the UI, CLI, and API. See <a href="../../features/workspaces/#auto-start">Auto-start</a>.</td>
+</tr>
+<tr>
+<td><code>KLANGK_ALLOW_SUDO</code></td>
+<td></td>
+<td>Set to <code>1</code>/<code>true</code>/<code>yes</code> to grant passwordless sudo inside workspace containers. Default: disabled — an explicit deny rule (<code>!ALL</code>) is written so sudo is blocked even if a password is set on the klangk user. Configured at container start via <code>podman exec --user root</code>.</td>
+</tr>
+<tr>
+<td><code>KLANGK_DISABLE_TMUX</code></td>
+<td></td>
+<td>Set to <code>1</code>/<code>true</code>/<code>yes</code> to drop new terminals straight into a plain login shell instead of tmux. Only affects the default per-user terminal; shared/joined terminals always use tmux.</td>
+</tr>
+<tr>
+<td><code>KLANGK_OIDC_CONFIG</code></td>
+<td></td>
+<td>Path to OIDC provider config file (YAML or JSON). Enables OIDC authentication when set. See <a href="../../reference/oidc/">OIDC Configuration</a>.</td>
+</tr>
+<tr>
+<td><code>KLANGK_OIDC_LOGIN_HOOK</code></td>
+<td></td>
+<td>File path to a Python login hook script (e.g., <code>/etc/klangk/login_hook.py</code>). Optionally append <code>:func_name</code> (defaults to <code>on_login</code>). Called on each OIDC login to enforce custom policies. See <a href="../../reference/oidc/">OIDC Configuration</a>.</td>
+</tr>
+<tr>
+<td><code>KLANGK_AUTH_MODES</code></td>
+<td><code>both</code> (if OIDC configured)</td>
+<td>Auth modes: <code>password</code>, <code>oidc</code>, or <code>both</code>. Defaults to <code>password</code> when no OIDC config.</td>
+</tr>
+<tr>
+<td><code>KLANGK_SMTP_HOST</code></td>
+<td></td>
+<td>SMTP server hostname (if set, uses SMTP; otherwise uses sendmail)</td>
+</tr>
+<tr>
+<td><code>KLANGK_SMTP_PORT</code></td>
+<td><code>587</code></td>
+<td>SMTP server port</td>
+</tr>
+<tr>
+<td><code>KLANGK_SMTP_USER</code></td>
+<td></td>
+<td>SMTP auth username</td>
+</tr>
+<tr>
+<td><code>KLANGK_SMTP_PASSWORD</code></td>
+<td></td>
+<td>SMTP auth password</td>
+</tr>
+<tr>
+<td><code>KLANGK_SMTP_FROM</code></td>
+<td></td>
+<td>Email sender address (falls back to SMTP_USER, then noreply@localhost)</td>
+</tr>
+<tr>
+<td><code>KLANGK_SMTP_USE_TLS</code></td>
+<td><code>true</code></td>
+<td>Use STARTTLS for SMTP</td>
+</tr>
+<tr>
+<td><code>KLANGK_SENDMAIL_PATH</code></td>
+<td><code>sendmail</code></td>
+<td>Path to sendmail binary (used when KLANGK_SMTP_HOST is not set)</td>
+</tr>
+<tr>
+<td><code>KLANGK_SSL_CERT_DIR</code></td>
+<td></td>
+<td><strong>Deprecated</strong> — use <code>&lt;KLANGK_CUSTOMIZE_DIR&gt;/certs/</code> instead. Directory of <code>.pem</code>/<code>.crt</code> CA certificate files to trust at runtime. When unset, falls back to <code>&lt;KLANGK_CUSTOMIZE_DIR&gt;/certs/</code>. See <a href="../../deployment/customizing/#custom-ca-certificates">Custom CA Certificates</a>.</td>
+</tr>
+<tr>
+<td><code>KLANGK_EMAIL_TEMPLATES_DIR</code></td>
+<td></td>
+<td><strong>Deprecated</strong> — use <code>&lt;KLANGK_CUSTOMIZE_DIR&gt;/email-templates/</code> instead. Directory of Jinja2 email template overrides. When unset, falls back to <code>&lt;KLANGK_CUSTOMIZE_DIR&gt;/email-templates/</code>. See <a href="../../deployment/customizing/#email-templating">Email Templating</a>.</td>
+</tr>
+<tr>
+<td><code>KLANGK_PRODUCT_NAME</code></td>
+<td><code>Klangk</code></td>
+<td>White-label product name shown in the browser tab title, app-bar logo, and outgoing emails. Supports <code>file:</code>/<code>cmd:</code> prefix. See <a href="../../deployment/customizing/#product-name">Customizing a Deployment</a>.</td>
+</tr>
+<tr>
+<td><code>KLANGK_LOGIN_BANNER_TITLE</code></td>
+<td></td>
+<td>Title shown on the consent banner page (e.g., company name). If empty, no title is displayed.</td>
+</tr>
+<tr>
+<td><code>KLANGK_LOGIN_BANNER</code></td>
+<td></td>
+<td>Consent banner text shown before login. Blocks all access until accepted. Supports <code>file:</code>/<code>cmd:</code> prefix. If empty, no banner is shown.</td>
+</tr>
+<tr>
+<td><code>KLANGK_TERMS_URL</code></td>
+<td></td>
+<td>Terms of Service link rendered on the login/registration screens and in email footers. <strong>Plain value</strong> (no <code>file:</code>/<code>cmd:</code> resolution — it is public, shown pre-auth). Empty hides it. See <a href="https://github.com/mcdonc/klangk/issues/1177">#1177</a>.</td>
+</tr>
+<tr>
+<td><code>KLANGK_PRIVACY_URL</code></td>
+<td></td>
+<td>Privacy Policy link. Same semantics as <code>KLANGK_TERMS_URL</code> (plain value, hidden when empty).</td>
+</tr>
+<tr>
+<td><code>KLANGK_AUP_URL</code></td>
+<td></td>
+<td>Acceptable Use Policy link. Same semantics as <code>KLANGK_TERMS_URL</code>.</td>
+</tr>
+<tr>
+<td><code>KLANGK_SUPPORT_URL</code></td>
+<td></td>
+<td>Support/help link shown as a help icon in the app bar (authenticated) and on the auth screens. Plain value; hidden when empty and no <code>KLANGK_SUPPORT_EMAIL</code> is set.</td>
+</tr>
+<tr>
+<td><code>KLANGK_SUPPORT_EMAIL</code></td>
+<td></td>
+<td>Support email address; shown as a <code>mailto:</code> when <code>KLANGK_SUPPORT_URL</code> is unset. Plain value; hidden when empty.</td>
+</tr>
+<tr>
+<td><code>KLANGK_TERMINAL_BANNER</code></td>
+<td></td>
+<td>Text displayed in every terminal session on shell init. Supports <code>file:</code>/<code>cmd:</code> prefix. If empty (default), no banner is shown.</td>
+</tr>
+<tr>
+<td><code>KLANGKC_DEBUG_SSH_AGENT</code></td>
+<td></td>
+<td>Set to any non-empty value to enable verbose debug logging for SSH agent forwarding on both the backend and CLI side. Useful for diagnosing relay issues.</td>
+</tr>
+<tr>
+<td><code>KLANGK_WS_DEBUG</code></td>
+<td></td>
+<td>Set to any non-empty value to enable verbose WebSocket message logging on the backend. Useful for diagnosing connection issues.</td>
+</tr>
+<tr>
+<td><code>LOGFIRE_TOKEN</code></td>
+<td></td>
+<td>Pydantic Logfire write token (opt-in)</td>
+</tr>
+<tr>
+<td><code>LOGFIRE_BASE_URL</code></td>
+<td><code>https://logfire-api.pydantic.dev</code></td>
+<td>Logfire API base URL (for self-hosted instances)</td>
+</tr>
+<tr>
+<td><code>LOGFIRE_ENVIRONMENT</code></td>
+<td></td>
+<td>Logfire environment tag (e.g., <code>production</code>, <code>staging</code>) — filters traces in the dashboard.</td>
+</tr>
+</tbody>
+</table>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-circle-arrow-up" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="m16 12-4-4-4 4M12 16V8"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../api-endpoints/" class="md-footer__link md-footer__link--prev" aria-label="Previous: API Endpoints">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7M19 12H5"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                API Endpoints
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../../development/" class="md-footer__link md-footer__link--next" aria-label="Next: Overview">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                Overview
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-right" viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2026 Chris McDonough
+    </div>
+  
+  
+    Made with
+    <a href="https://zensical.org/" target="_blank" rel="noopener">
+      Zensical
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["content.code.copy","content.code.select","navigation.footer","navigation.indexes","navigation.instant","navigation.instant.prefetch","navigation.path","navigation.sections","navigation.top","navigation.tracking","search.highlight"],"search":"../../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"default":"latest","provider":"mike"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.6970bfe9.min.js"></script>
+      
+    
+  </body>
+</html>
