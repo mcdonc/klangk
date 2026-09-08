@@ -13,6 +13,11 @@ in an installed wheel:
   present, so it is always included -- it lets ``klangk-build-nix-seed`` build
   a seed from a wheel install (no source tree, no devenv).
 
+For the **sdist** target the hook force-includes the repo-root ``README.md``
+as a real file at ``README.md`` — the fallback source the metadata hook
+(``hatch_readme_metadata.py``) reads when a wheel is built from an sdist
+extraction with no surrounding repo (#3349).
+
 A plain static ``force-include`` would be strict for every build mode (breaking
 editable installs where the gitignored frontend is absent) and rejects paths
 above the project root. This hook force-includes via absolute paths in
@@ -37,13 +42,24 @@ class PackageDataHook(BuildHookInterface):
     PLUGIN_NAME = "package-data"
 
     def initialize(self, version: str, build_data: dict[str, Any]) -> None:
-        # Only the wheel ships this data; sdist is source-only.
-        if self.target_name != "wheel":
-            return
         force = build_data.setdefault("force_include", {})
         # ``self.root`` is the project dir (``src/klangk``); two levels up is
         # the repo root.
         repo = Path(self.root).resolve().parent.parent
+
+        if self.target_name == "sdist":
+            # Ship the repo-root README as a real file at README.md so a wheel
+            # built from an extracted sdist (what ``pip install <sdist>``
+            # does) can find it — hatch_readme_metadata.py falls back to this
+            # local copy when the surrounding repo is absent (#3349).
+            # (``readme`` is dynamic, so hatchling adds no readme entry of its
+            # own; this is the only one.)
+            force[str(repo / "README.md")] = "README.md"
+            return
+
+        # Only the wheel ships the rest of this data.
+        if self.target_name != "wheel":
+            return
 
         # --- nix-seed Dockerfile: committed source file, always included. ---
         nix_seed_df = repo / "src" / "containers" / "nix-seed" / "Dockerfile"
