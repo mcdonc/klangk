@@ -33,6 +33,8 @@ operators or integrators to act when upgrading.
 
 ## \[Unreleased]
 
+## \[v2.0a1] - 2026-09-07
+
 ### Breaking
 
 - **`KLANGKD_LISTEN` / `KLANGKD_EGRESS_LISTEN` values are validated
