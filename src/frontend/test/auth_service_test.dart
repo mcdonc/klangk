@@ -955,7 +955,7 @@ void main() {
     });
 
     test(
-      'clears pendingRedirect when a 401 clears the token (#2670)',
+      'preserves pendingRedirect when a 401 clears the token (#3321)',
       () async {
         testAuthHttpClientOverride = MockClient((request) async {
           if (request.url.path.contains('/api/v1/auth/logout')) {
@@ -971,7 +971,7 @@ void main() {
         pendingRedirect = '/admin/users';
         await service.authGet('/api/v1/workspaces');
         expect(service.isLoggedIn, isFalse);
-        expect(pendingRedirect, isNull);
+        expect(pendingRedirect, '/admin/users');
       },
     );
   });

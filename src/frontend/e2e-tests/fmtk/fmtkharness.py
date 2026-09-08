@@ -1335,7 +1335,14 @@ class FmtkClient:
     def logout(self) -> None:
         """Tap the app-bar logout icon (its tooltip is the semantic
         label; icon-only fallback: the rightmost button — logout is the
-        last app-bar action) and wait for the login surface."""
+        last app-bar action) and wait for the login surface.
+
+        After the login page appears, poll until the Dart AuthService
+        reports ``isLoggedIn == false``.  The server's ``Clear-Site-Data:
+        "storage"`` header (added in #3335) tells the browser to wipe
+        localStorage asynchronously — the login form can render before
+        the wipe completes, so a login fired immediately after the page
+        appears may lose its new JWT to the deferred wipe."""
         if self.has_text("Log In", 2000):
             return  # already logged out
         try:
@@ -1343,6 +1350,20 @@ class FmtkClient:
         except FmtkError:
             self.tap_rightmost_button()
         self.wait_for_login_page()
+        self._wait_logged_out()
+
+    def _wait_logged_out(self, timeout: float = 10) -> None:
+        """Spin until the Dart AuthService has no token."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                result = self.auth_eval("return auth!.isLoggedIn.toString();")
+                if result == "false":
+                    return
+            except FmtkError:
+                pass  # evaluator may fail transiently during teardown
+            time.sleep(0.5)
+        raise HarnessTimeout("AuthService still logged-in after logout")
 
     def tap_rightmost_button(self) -> None:
         """Tap the button with the greatest right edge (ties: topmost).

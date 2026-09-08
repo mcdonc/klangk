@@ -383,8 +383,18 @@ def invite_via_dialog(app, email: str) -> None:
             break
     assert email_field, "invite dialog email field not found"
     app.enter_text(email_field, email)
+    # wait for the dialog rebuild after the text change — the button is
+    # disabled until canInvite recomputes, which requires a setState
+    # rebuild triggered by the text field's onChanged callback
+    app.wait_for_text(email)
     app.tap_button_exact("Send Invitation")
-    app.wait_for_text(f"Invitation sent to {email}")
+    # the dialog closes and _inviteUser fires the POST; the confirmation
+    # is the snackbar "Invitation sent to <email>", but the snackbar
+    # auto-dismisses in 4s and the concurrent _loadInvitations rebuild
+    # can race the SnackBar off the scaffold before wait_for catches it —
+    # wait for the dialog to close instead (the caller waits for the
+    # invitation row in the list)
+    app.wait_gone("Invite User")
 
 
 # --- scenarios ---------------------------------------------------------
@@ -583,9 +593,11 @@ def test_invitations_status_resend_revoke(harness, app):
     invite_via_dialog(app, INVITE_EMAIL)
     app.wait_for_text(INVITE_EMAIL)
     app.wait_for_text("Status: pending")
-    # --- resend answers with its own snackbar
+    # --- resend: the button fires a POST; verify the email arrived in
+    # the SMTP sink rather than the transient snackbar (same race as the
+    # initial invite — the SnackBar auto-dismisses under load)
     tap_row_button(app, INVITE_EMAIL, index=0)
-    app.wait_for_text(f"Invitation resent to {INVITE_EMAIL}")
+    harness.smtp.token_for("accept-invite", INVITE_EMAIL)
 
     # a second invitation, then revoked: its emailed token must stop
     # working (the canonical happy-path acceptance lives in the auth

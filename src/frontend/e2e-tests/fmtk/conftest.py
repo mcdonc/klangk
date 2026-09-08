@@ -63,8 +63,27 @@ def app(harness: Harness):
 
 
 @pytest.fixture(autouse=True)
-def no_app_errors(app):
+def no_app_errors(app, request):
     """Every test must leave the app error-free (drained post-test)."""
     yield
+    if request.node.rep_call and request.node.rep_call.failed:
+        try:
+            from fmtkharness import find_nodes, node_labels
+
+            nodes = find_nodes(app.snapshot(), lambda n: True)
+            all_text = []
+            for n in nodes:
+                all_text.extend(node_labels(n))
+            unique = list(dict.fromkeys(all_text))[:60]
+            print(f"\n[SNAPSHOT on failure] visible text: {unique}")
+        except Exception as exc:
+            print(f"\n[SNAPSHOT failed] {exc}")
     errors = app.app_errors()
     assert not errors, f"uncaught app errors during test: {errors}"
+
+
+@pytest.hookimpl(tryfirst=True, hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    outcome = yield
+    rep = outcome.get_result()
+    setattr(item, f"rep_{rep.when}", rep)
