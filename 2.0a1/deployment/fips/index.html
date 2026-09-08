@@ -3217,17 +3217,29 @@ distro libcrypto</strong> — a PyPI manylinux wheel statically links a
 validated provider. This is the industry posture (Red Hat ships
 distro-linked <code>python3-cryptography</code>; Chainguard's FIPS images relink
 it; pyca's own docs direct FIPS users to <code>pip install --no-binary
-cryptography</code>). The relink is proven twice: at image build time
-(cryptography's OpenSSL version must equal the process's, MD5 through
-cryptography must be refused, and a jose HS256 sign/verify round-trip
-must succeed under the active provider), and at klangkd startup under
-<code>KLANGKD_FIPS_MODE</code> — klangkd verifies that python-jose binds its
-<code>cryptography</code> backend (a silent fallback to another backend would be
-an unprovisioned, unverified route and aborts the boot) and that
-cryptography's OpenSSL is the process's own provider-gated library
-(identity check + MD5 refusal; a mismatched linkage follows the same
-warn-on-host / abort-in-container posture as the process OpenSSL
-probe).</p>
+cryptography</code>). One wrinkle (#3350): <code>cryptography</code> unconditionally
+loads OpenSSL's <em>default</em> provider at import (its rust init calls
+<code>OSSL_PROVIDER_load(NULL, "default")</code>), so property-less fetches in
+any process that imported it — MD5 among them — are served from that
+unvalidated provider even under a fips-only activation config. The
+countermeasure is <code>EVP_default_properties_enable_fips</code> — the same
+call <code>cryptography</code>'s own <code>enable_fips</code> makes — which requires
+<code>fips=yes</code> on every subsequent fetch: MD5 is refused again while
+approved algorithms keep working through the fips provider. The
+relink and the pin are proven together: at image build time (each
+probe check prints a numbered marker; the cryptography checks pin
+fetches first — cryptography's OpenSSL version must equal the
+process's, MD5 through cryptography must be refused, and a jose HS256
+sign/verify round-trip must succeed under the active provider), and
+at klangkd startup under <code>KLANGKD_FIPS_MODE</code> — once the process
+posture probe confirms the fips provider is active, klangkd pins
+ambient fetches to <code>fips=yes</code> and then verifies that python-jose
+binds its <code>cryptography</code> backend (a silent fallback to another
+backend would be an unprovisioned, unverified route and aborts the
+boot) and that cryptography's OpenSSL is the process's own
+provider-gated library (identity check + MD5 refusal; a failed pin or
+mismatched linkage follows the same warn-on-host / abort-in-container
+posture as the process OpenSSL probe).</p>
 <p><strong>Outside the module:</strong> a <em>stock</em> host image (or any deployment using
 the PyPI <code>cryptography</code> wheel) signs JWTs on the wheel's private
 OpenSSL — outside every validated boundary, exactly like Caddy's
