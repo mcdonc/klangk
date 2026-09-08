@@ -94,11 +94,24 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install caddy + Python via apt
+      - uses: actions/setup-python@v6
+        with:
+          # The wheel's requires-python floor (>=3.14, #3349) — the apt
+          # python3 on ubuntu-latest (3.12) can no longer install it.
+          # setup-python's interpreter sits ahead of the system python on
+          # PATH, so the script's python3 calls (venv creation, the GHCR
+          # JSON parse) resolve to 3.14 while everything else stays
+          # stock-runner: no devenv, no nix — exactly what a pip user on a
+          # stock Ubuntu box with Python 3.14 installed would get.
+          python-version: "3.14"
+
+      - name: Install caddy via apt
         # Stock Ubuntu packages — no devenv, no nix. Caddy is klangkd's
         # default proxy engine child (KLANGK_PROXY_BIN overrides if needed,
         # but the default shutil.which("caddy") → /usr/bin/caddy path is
-        # exactly what apt installs). The Playwright browser runtime libs
+        # exactly what apt installs). Python comes from setup-python above
+        # (3.14, the wheel's requires-python floor — #3349), not apt. The
+        # Playwright browser runtime libs
         # (libnss3, libgbm1, libasound2t64, …) are NOT installed here —
         # scripts/dist-smoke-test.sh runs `npx playwright install --with-deps
         # chromium`, which resolves the correct package names per-OS. Hand-
@@ -117,7 +130,7 @@ jobs:
         # mode-2 still fails and is the open bug.)
         run: |
           sudo apt-get update
-          sudo apt-get install -y caddy curl python3 python3-venv
+          sudo apt-get install -y caddy curl
           sudo systemctl stop caddy.service 2>/dev/null || true
           sudo systemctl disable caddy.service 2>/dev/null || true
           sudo systemctl mask caddy.service

@@ -1,8 +1,17 @@
 [project]
 name = "klangk"
-dynamic = ["version"]
+# ``readme`` is populated at metadata-parse time by
+# hatch_readme_metadata.py from the repo-root README (two levels up —
+# hatchling refuses a static readme path that escapes the project dir), so
+# the wheel carries the long description PyPI renders on the project page
+# (#3349).
+dynamic = ["version", "readme"]
 description = "Klangk: multi-user Pi coding agent — server (klangkd) and client (klangk)"
-requires-python = ">=3.12"
+# The floor is the devenv toolchain's Python (pkgs.python314, #2844): the
+# wheel is built and tested on 3.14 only, so it must not claim compatibility
+# with older Pythons (#3349). scripts/tests/test_wheel_metadata.py pins this
+# to the devenv.nix toolchain so the two cannot drift apart again.
+requires-python = ">=3.14"
 # One unified wheel ships a single top-level package (klangk) with the CLI
 # folded in as klangk.cli.  One ``pip install klangk`` yields both the
 # ``klangkd`` server and ``klangk`` client binaries (#1606).
@@ -97,6 +106,12 @@ raw-options.git_describe_command = ["git", "describe", "--dirty", "--tags", "--l
 # only for a non-editable wheel build (the release guard).
 [tool.hatch.build.hooks.custom]
 path = "hatch_build_package_data.py"
+
+# Long description: hatch_readme_metadata.py reads the repo-root README and
+# injects it as project.readme at metadata-parse time (#3349) — hatchling
+# refuses a static readme path that escapes the project dir.
+[tool.hatch.metadata.hooks.custom]
+path = "hatch_readme_metadata.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["klangk"]

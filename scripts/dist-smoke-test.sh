@@ -4,8 +4,10 @@
 #
 # The whole point: prove a bare `pip install klangk && klangkd` works on a
 # stock Ubuntu runner. caddy is apt-installed (klangkd forks it as a child
-# via shutil.which); python3 + venv come from the runner; npm + Playwright
-# install their own Chromium. Nothing from devenv. This is the audience the
+# via shutil.which); the python3 that creates the venv is 3.14 (the wheel's
+# requires-python floor, #3349 — actions/setup-python in CI, any 3.14+
+# interpreter locally); npm + Playwright install their own Chromium. Nothing
+# from devenv. This is the audience the
 # #1607 / #1645 first-run story targets — if the wheel doesn't serve a
 # working login page in this environment, the release is broken.
 #
@@ -41,9 +43,11 @@
 # Usage:
 #   scripts/dist-smoke-test.sh <path/to/klangk-*.whl>
 #
-# Requires on PATH (apt-installable on Ubuntu): caddy, curl, python3,
-# python3-venv, npm, node. release.yml's dist-smoke-test job apt-installs
-# the first set; npm/node come from the GitHub Actions runner image.
+# Requires on PATH: caddy, curl, python3 (>= 3.14 — the wheel's
+# requires-python floor, #3349; pip refuses the install on anything older),
+# npm, node. In CI caddy + curl are apt-installed on ubuntu-latest and
+# python3.14 comes from actions/setup-python; npm/node come from the GitHub
+# Actions runner image.
 #
 # Running locally without cutting a release: build the wheel from your
 # current branch, then run the script directly (the script itself makes

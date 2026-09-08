@@ -370,6 +370,13 @@ operators or integrators to act when upgrading.
 - **OIDC settings no longer change the auth mode (#1419).** Set
   `KLANGKD_AUTH_MODES=oidc` (or `both`) explicitly.
 
+- **`pip install klangk` requires Python 3.14 (#3349).** The wheel's
+  `requires-python` floor is now the Python the project builds and tests
+  against; it previously claimed `>=3.12`, an untested compatibility claim.
+  Upgrade the interpreter (or stay on an older klangk release) — `pip`
+  refuses the install on Python 3.13 and older. The CLI docs' requirement
+  line moved with it.
+
 - **`klangk invite` → `klangk admin invitations send` (#1374).**
 
 ### Security
@@ -4037,3 +4044,9 @@ users(id)`, so the decider handler passing the decider's email violated the
   (`EVP_default_properties_enable_fips`, the same call
   `cryptography`'s own `enable_fips` makes) before the cryptography
   checks, keeping MD5 refused and approved algorithms working.
+
+- **`pip install klangk` wheel metadata (#3349).** The published wheel now
+  carries the repo's README as its long description, so the PyPI project
+  page renders the real description instead of the "author has not
+  provided" placeholder; its hero image uses an absolute URL so it renders
+  on PyPI too.
