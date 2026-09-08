@@ -2621,6 +2621,14 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **SSO login completes under an every-visit login banner
+  (#3371).** With `login_banner_every_visit` on, the browser's
+  return from the identity provider carried a one-time login code
+  that the banner gate discarded by redirecting to the consent page
+  first, so single sign-on could never finish (the code expires in 60
+  seconds and the redirect replaces the URL). The OIDC callback page
+  now redeems the code before the banner is shown, and the banner is
+  accepted on the next navigation as usual.
 - **FIPS images pin ambient OpenSSL fetches to `fips=yes` (#3359).**
   The activation config in the FIPS workspace and FIPS host images
   now sets `default_properties = fips=yes`, so every process in the
