@@ -35,6 +35,8 @@
 #   - Caddyfile render broken → caddy rejects the config
 #   - UDS upstream misconfigured → caddy 502s
 #   - Missing transitive dep in pyproject.toml → import fails fast
+#   - Published network sidecar image unpullable → the CLI-phase
+#     workspace start fails closed (the image is pulled from GHCR, #3343)
 #
 # Usage:
 #   scripts/dist-smoke-test.sh <path/to/klangk-*.whl>
@@ -214,11 +216,40 @@ fi
 #    podman is absent (e.g. lightweight CI runners that only test the
 #    frontend).
 #
+#    The start needs TWO images: the workspace image (built minimally
+#    below) and the network sidecar image. Fresh workspaces default to
+#    egress_mode=interactive, which makes the sidecar required and
+#    fail-closed (#3343), so the phase also provisions the sidecar from
+#    GHCR (pulled + retagged below; see the block itself for detail).
+#
 #    The CLI auto-discovers the co-located klangkd via the UDS socket
 #    when KLANGKD_STATE_DIR is set, and auto-logs in when the server is
 #    in "none" auth mode. But the running server uses "password" mode
 #    (for the Playwright login test above), so we restart with "none"
 #    mode for the CLI phase.
+
+# Newest published sidecar tag from GHCR's v2 API (anonymous pull token).
+# Tags are immutable calver-commit refs (YYYY.MM.DD-<shortsha>, #3140) —
+# :latest stays unpublished by the stock-image convention — so the
+# calver-filtered sort picks the newest publish. Prints the tag, or
+# returns nonzero with a message when the listing is unreachable or
+# carries no calver tag.
+newest_sidecar_tag() {
+  local name="$1" token tag
+  if ! token=$(curl -sf "https://ghcr.io/token?scope=repository:${name}:pull" |
+    python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])'); then
+    echo "error: could not obtain a GHCR pull token for $name — is ghcr.io reachable?" >&2
+    return 1
+  fi
+  tag=$(curl -sf -H "Authorization: Bearer $token" "https://ghcr.io/v2/${name}/tags/list" |
+    grep -oE '[0-9]{4}\.[0-9]{2}\.[0-9]{2}-[0-9a-f]+' | sort -V | tail -1) || true
+  if [ -z "$tag" ]; then
+    echo "error: no calver tag listed for ghcr.io/$name — ghcr.io unreachable, or nothing published yet (#3343)" >&2
+    return 1
+  fi
+  printf '%s\n' "$tag"
+}
+
 KLANGK="$VENV_DIR/bin/klangk"
 SKIP_CONTAINER_SMOKE="${SKIP_CONTAINER_SMOKE:-}"
 if [ -n "$SKIP_CONTAINER_SMOKE" ]; then
@@ -251,6 +282,33 @@ DOCKERFILE
   if [ -n "${SKIP_CONTAINER_SMOKE:-}" ]; then
     true # skip — message already printed above
   else
+    # Provision the network sidecar image the start below requires: the
+    # unqualified default (klangk-network-sidecar) resolves from local
+    # storage, so the published GHCR image is pulled and retagged to it.
+    # A local build from the devenv task (klangk:build-network-sidecar)
+    # already satisfies the image-exists check and skips the pull.
+    # KLANGKBUILD_SIDECAR_REF pins an exact published reference instead
+    # of the newest tag (validating a branch against a chosen image).
+    # Unlike the smoke workspace-image build above, a failure here is
+    # fatal: the start below fail-closes without the sidecar, and a
+    # silently skipped phase would report green without testing anything
+    # (#3343).
+    SIDECAR_IMAGE="${KLANGKD_NETWORK_SIDECAR_IMAGE:-klangk-network-sidecar}"
+    if ! podman image exists "localhost/$SIDECAR_IMAGE:latest" 2>/dev/null; then
+      SIDECAR_NAME="mcdonc/klangk/klangk-network-sidecar"
+      if [ -n "${KLANGKBUILD_SIDECAR_REF:-}" ]; then
+        SIDECAR_REF="${KLANGKBUILD_SIDECAR_REF}"
+      else
+        SIDECAR_REF="$(newest_sidecar_tag "$SIDECAR_NAME")" || exit 1
+      fi
+      echo "=== pulling network sidecar image ghcr.io/$SIDECAR_NAME:$SIDECAR_REF ==="
+      if ! podman pull "ghcr.io/$SIDECAR_NAME:$SIDECAR_REF"; then
+        echo "error: sidecar image pull failed — an egress-filtered workspace cannot start without it (#3343)" >&2
+        exit 1
+      fi
+      podman tag "ghcr.io/$SIDECAR_NAME:$SIDECAR_REF" "localhost/$SIDECAR_IMAGE:latest"
+    fi
+
     echo "=== restarting klangkd in none-auth mode for CLI smoke ==="
     # Stop the password-mode server
     kill "$KLANGKD_PID" 2>/dev/null || true
