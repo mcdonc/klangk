@@ -159,6 +159,33 @@ def return_tab_to_login(app) -> None:
     wait_for_app(app, "Email or handle")
 
 
+def hard_reload_login(app) -> None:
+    """Force a full page load of the app at /#/login.
+
+    A hash-only navigation from a running app is same-document — the
+    page keeps its boot-time config fetch, so a swapped-in banner (or a
+    swapped-out one) would never be seen. The about:blank detour makes
+    the return a real document load.
+    """
+    cdp_eval("location.href='about:blank'")
+    cdp_eval(f"location.href='{app_origin()}/#/login'")
+
+
+def wait_settled(app, timeout: float = 90) -> None:
+    """Wait for a settled app surface: the login form or the workspace
+    list (either may come out of a post-restore reload, depending on
+    whether a session survived the scenario)."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            if app.has_text("Log In", 3000) or app.has_text("Owned by Me", 3000):
+                return
+        except Exception:  # noqa: BLE001 — dwds re-attach races
+            pass
+        time.sleep(2)
+    raise AssertionError("the app settled on neither login form nor workspace list")
+
+
 def body_text() -> str:
     return str(cdp_eval("document.body.innerText"))
 
@@ -281,33 +308,6 @@ def test_sso_approve_provisions_and_lands(harness, app, oidc_stack):
     assert entry.get("provider") == "fmtk-idp", entry
     # the IdP saw the whole leg: authorize -> approve -> PKCE-checked token
     assert ("token", IDP_EMAIL) in oidc_stack.events, oidc_stack.events
-
-
-def hard_reload_login(app) -> None:
-    """Force a full page load of the app at /#/login.
-
-    A hash-only navigation from a running app is same-document — the
-    page keeps its boot-time config fetch, so a swapped-in banner (or a
-    swapped-out one) would never be seen. The about:blank detour makes
-    the return a real document load.
-    """
-    cdp_eval("location.href='about:blank'")
-    cdp_eval(f"location.href='{app_origin()}/#/login'")
-
-
-def wait_settled(app, timeout: float = 90) -> None:
-    """Wait for a settled app surface: the login form or the workspace
-    list (either may come out of a post-restore reload, depending on
-    whether a session survived the scenario)."""
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        try:
-            if app.has_text("Log In", 3000) or app.has_text("Owned by Me", 3000):
-                return
-        except Exception:  # noqa: BLE001 — dwds re-attach races
-            pass
-        time.sleep(2)
-    raise AssertionError("the app settled on neither login form nor workspace list")
 
 
 def test_sso_completes_under_every_visit_banner(harness, app, oidc_stack):

@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import 'auth_service.dart';
 import '../utils/page_title.dart';
@@ -65,6 +66,11 @@ class _OidcCompletePageState extends State<OidcCompletePage> {
   @override
   Widget build(BuildContext context) {
     if (_error != null) {
+      // Failed exchange (expired/replayed code, backend restart): the
+      // message stays visible and the button gives the recovery path —
+      // with a pending every-visit banner the login route bounces to
+      // /consent first, so the flow restarts cleanly instead of
+      // stranding the user here (#3371 review).
       return Scaffold(
         body: Center(
           child: Card(
@@ -76,9 +82,20 @@ class _OidcCompletePageState extends State<OidcCompletePage> {
                 children: [
                   const KlangkLogo(height: 80),
                   const SizedBox(height: 24),
-                  Text(_error!,
-                      style: TextStyle(
-                          color: Theme.of(context).colorScheme.error)),
+                  Text(
+                    _error!,
+                    textAlign: TextAlign.center,
+                    style:
+                        TextStyle(color: Theme.of(context).colorScheme.error),
+                  ),
+                  const SizedBox(height: 24),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton(
+                      onPressed: () => context.go('/login'),
+                      child: const Text('Go to Login'),
+                    ),
+                  ),
                 ],
               ),
             ),

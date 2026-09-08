@@ -2627,8 +2627,10 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   that the banner gate discarded by redirecting to the consent page
   first, so single sign-on could never finish (the code expires in 60
   seconds and the redirect replaces the URL). The OIDC callback page
-  now redeems the code before the banner is shown, and the banner is
-  accepted on the next navigation as usual.
+  now redeems the code before the banner is shown, and the user is
+  sent to the consent page on the next navigation as usual. A failed
+  code exchange shows the error with a “Go to Login” button instead
+  of stranding the browser on the callback page.
 - **FIPS images pin ambient OpenSSL fetches to `fips=yes` (#3359).**
   The activation config in the FIPS workspace and FIPS host images
   now sets `default_properties = fips=yes`, so every process in the
