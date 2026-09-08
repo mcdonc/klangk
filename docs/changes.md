@@ -4005,6 +4005,12 @@ users(id)`, so the decider handler passing the decider's email violated the
 - **FIPS host image builds again under `cryptography` 50 (#3350).** The
   self-check `RUN` in the FIPS host Dockerfile read the OpenSSL binding
   through a private module attribute that `cryptography` 50 no longer
-  exposes, which aborted the image build and stopped `klangk-host` and
-  `klangk-host-fips` from publishing. The probe now imports the backend
-  the same way the runtime verification in `klangk.fips` does.
+  exposes, aborting the build; it now imports the backend the same way
+  the runtime verification in `klangk.fips` does, and each check prints
+  a numbered marker so a failure names its check. `cryptography` also
+  loads OpenSSL's default provider at import, which kept MD5 fetchable
+  through it under the fips-only image config — the image probe and
+  the startup gate now pin ambient fetches to `fips=yes`
+  (`EVP_default_properties_enable_fips`, the same call
+  `cryptography`'s own `enable_fips` makes) before the cryptography
+  checks, keeping MD5 refused and approved algorithms working.

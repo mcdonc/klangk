@@ -179,8 +179,11 @@ WORKDIR /home/klangk
 #   4. the real auth KDF still works: hashlib.pbkdf2_hmac("sha512", ...);
 #   5. cryptography loads the SAME libcrypto as the process (a
 #      bundled-OpenSSL wheel would report its private version);
-#   6. the provider gates cryptography's fetches: MD5 through it must
-#      be refused;
+#   6. the provider gates cryptography's fetches: with ambient fetches
+#      pinned to fips=yes (EVP_default_properties_enable_fips — the
+#      same call cryptography's own enable_fips makes; cryptography
+#      loads the default provider at import, so without the pin MD5
+#      is served from it), MD5 through cryptography must be refused;
 #   7. end-to-end JWT: jose HS256 sign+verify works under the active
 #      provider (HMAC-SHA256 is approved);
 #   8. env-stripped activation (stock config path, no environment).
@@ -205,10 +208,17 @@ RUN echo 'fips check 1/8: FIPS provider active' && \
 assert backend.openssl_version_text() == ssl.OPENSSL_VERSION, \
 (backend.openssl_version_text(), ssl.OPENSSL_VERSION)" && \
     echo 'fips check 6/8: cryptography md5 refused' && \
+    python3 -c "import ctypes, ctypes.util; \
+lc = ctypes.CDLL(ctypes.util.find_library('crypto') or 'libcrypto.so.3'); \
+lc.EVP_default_properties_enable_fips.restype = ctypes.c_int; \
+assert lc.EVP_default_properties_enable_fips(None, 1) == 1" && \
     ! python3 -c "import cryptography.hazmat.primitives.hashes as h; \
 d = h.Hash(h.MD5()); d.update(b'x'); d.finalize()" 2>/dev/null && \
     echo 'fips check 7/8: jose HS256 roundtrip' && \
-    python3 -c "import jose.jwt as jwt; key = 'f' * 32; \
+    python3 -c "import ctypes, ctypes.util; \
+lc = ctypes.CDLL(ctypes.util.find_library('crypto') or 'libcrypto.so.3'); \
+assert lc.EVP_default_properties_enable_fips(None, 1) == 1; \
+import jose.jwt as jwt; key = 'f' * 32; \
 token = jwt.encode({'probe': 1}, key, algorithm='HS256'); \
 assert jwt.decode(token, key, algorithms=['HS256'])['probe'] == 1" && \
     echo 'fips check 8/8: env-stripped activation' && \

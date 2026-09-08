@@ -355,6 +355,13 @@ class TestVerifyProcessFips:
             return_value=(True, "linkage ok"),
         )
 
+    def _pin_ok(self):
+        return patch.object(
+            fips,
+            "_enable_fips_fetch_properties",
+            return_value=(True, "ambient fetches require fips=yes"),
+        )
+
     def test_on_verified(self, caplog):
         with (
             self._jose_ok(),
@@ -370,6 +377,7 @@ class TestVerifyProcessFips:
         """A passing probe boots fine inside a container too (#2628)."""
         with (
             self._jose_ok(),
+            self._pin_ok(),
             self._linkage_ok(),
             patch.object(fips, "probe_process", return_value=(True, "x")),
             patch.object(fips, "running_in_container", return_value=True),
@@ -382,6 +390,7 @@ class TestVerifyProcessFips:
         """Not containerized → warn-only posture (the operator's host)."""
         with (
             self._jose_ok(),
+            self._pin_ok(),
             self._linkage_ok(),
             patch.object(
                 fips, "probe_process", return_value=(False, "md5 not rejected")
@@ -403,6 +412,7 @@ class TestVerifyProcessFips:
         """
         with (
             self._jose_ok(),
+            self._pin_ok(),
             self._linkage_ok(),
             patch.object(
                 fips, "probe_process", return_value=(False, "md5 not rejected")
@@ -423,6 +433,7 @@ class TestVerifyProcessFips:
         probe = MagicMock(return_value=(True, "md5 rejected"))
         with (
             self._jose_ok(),
+            self._pin_ok(),
             patch.object(
                 fips,
                 "verify_jose_crypto_linkage",
@@ -440,11 +451,13 @@ class TestVerifyProcessFips:
 
     def test_linkage_failure_in_container_refuses_boot(self, caplog):
         """Inside an image we ship, an unlinked cryptography means the
-        JWT path would sign outside the validated module — abort before
-        the OpenSSL probe even runs."""
+        JWT path would sign outside the validated module — abort. The
+        process probe runs first (#3350): the fetch-property pin is only
+        safe once the fips provider is verified active."""
         probe = MagicMock(return_value=(True, "md5 rejected"))
         with (
             self._jose_ok(),
+            self._pin_ok(),
             patch.object(
                 fips,
                 "verify_jose_crypto_linkage",
@@ -459,7 +472,52 @@ class TestVerifyProcessFips:
                 ):
                     fips.verify_process_fips(self._settings(True))
         assert any("refusing to start" in r.message for r in caplog.records)
-        probe.assert_not_called()
+        probe.assert_called_once()
+
+    def test_pin_failure_warns_on_control_host(self, caplog):
+        """Cannot pin fetch properties on the operator's host — posture
+        warning, linkage checks skipped (they would observe the
+        default-provider pollution and misreport a healthy host)."""
+        with (
+            self._jose_ok(),
+            patch.object(
+                fips,
+                "_enable_fips_fetch_properties",
+                return_value=(False, "cannot pin fips fetch properties"),
+            ),
+            patch.object(fips, "probe_process", return_value=(True, "x")),
+            patch.object(fips, "running_in_container", return_value=False),
+        ):
+            with caplog.at_level(logging.WARNING):
+                fips.verify_process_fips(self._settings(True))
+        assert any(
+            "cannot pin fips fetch properties" in r.message
+            for r in caplog.records
+        )
+
+    def test_pin_failure_in_container_refuses_boot(self, caplog):
+        link = MagicMock(return_value=(True, "linkage ok"))
+        with (
+            self._jose_ok(),
+            patch.object(
+                fips,
+                "_enable_fips_fetch_properties",
+                return_value=(
+                    False,
+                    "EVP_default_properties_enable_fips failed",
+                ),
+            ),
+            patch.object(fips, "verify_jose_crypto_linkage", link),
+            patch.object(fips, "probe_process", return_value=(True, "x")),
+            patch.object(fips, "running_in_container", return_value=True),
+        ):
+            with caplog.at_level(logging.ERROR):
+                with pytest.raises(
+                    ConfigurationError, match="cryptography linkage"
+                ):
+                    fips.verify_process_fips(self._settings(True))
+        assert any("refusing to start" in r.message for r in caplog.records)
+        link.assert_not_called()
 
 
 class TestRunningInContainer:
@@ -619,6 +677,104 @@ class TestVerifyProcessFipsJoseGate:
             "jose backend verified" in r.message for r in caplog.records
         )
         assert any("FIPS mode enabled" in r.message for r in caplog.records)
+
+
+class TestEnableFipsFetchProperties:
+    """The ambient fetch-property pin (#3350): ctypes plumbing around
+    EVP_default_properties_enable_fips."""
+
+    def _lib(self, enable_result, provider=1):
+        lib = MagicMock()
+        lib.EVP_default_properties_enable_fips.return_value = enable_result
+        lib.OSSL_PROVIDER_available.return_value = provider
+        return lib
+
+    def test_pin_skipped_without_fips_provider(self):
+        """No fips provider active -> refuse to pin: the flag would make
+        every fetch in the process fail (#3350)."""
+        lib = self._lib(1, provider=0)
+        with (
+            patch("ctypes.util.find_library", return_value="libcrypto.so.3"),
+            patch("ctypes.CDLL", return_value=lib),
+        ):
+            ok, detail = fips._enable_fips_fetch_properties()
+        assert ok is False
+        assert "not active" in detail
+        lib.EVP_default_properties_enable_fips.assert_not_called()
+
+    def test_pin_succeeds(self):
+        lib = self._lib(1)
+        with (
+            patch("ctypes.util.find_library", return_value="libcrypto.so.3"),
+            patch("ctypes.CDLL", return_value=lib),
+        ):
+            ok, detail = fips._enable_fips_fetch_properties()
+        assert ok is True
+        assert "fips=yes" in detail
+        lib.EVP_default_properties_enable_fips.assert_called_once()
+
+    def test_enable_returns_zero_is_failure(self):
+        lib = self._lib(0)
+        with (
+            patch("ctypes.util.find_library", return_value="libcrypto.so.3"),
+            patch("ctypes.CDLL", return_value=lib),
+        ):
+            ok, detail = fips._enable_fips_fetch_properties()
+        assert ok is False
+        assert "failed" in detail
+
+    def test_missing_library_is_failure(self):
+        with (
+            patch("ctypes.util.find_library", return_value=None),
+            patch("ctypes.CDLL", side_effect=OSError("no libcrypto")),
+        ):
+            ok, detail = fips._enable_fips_fetch_properties()
+        assert ok is False
+        assert "cannot pin" in detail
+
+    def test_missing_symbol_is_failure(self):
+        lib = MagicMock(spec=[])  # no EVP_default_properties_enable_fips
+        with (
+            patch("ctypes.util.find_library", return_value="libcrypto.so.3"),
+            patch("ctypes.CDLL", return_value=lib),
+        ):
+            ok, detail = fips._enable_fips_fetch_properties()
+        assert ok is False
+        assert "cannot pin" in detail
+
+
+class TestPinnedJoseLinkage:
+    def test_pin_failure_short_circuits(self):
+        link = MagicMock(return_value=(True, "linked"))
+        with (
+            patch.object(
+                fips,
+                "_enable_fips_fetch_properties",
+                return_value=(False, "cannot pin"),
+            ),
+            patch.object(fips, "verify_jose_crypto_linkage", link),
+        ):
+            ok, detail = fips._pinned_jose_linkage()
+        assert ok is False
+        assert detail == "cannot pin"
+        link.assert_not_called()
+
+    def test_pin_then_linkage(self):
+        with (
+            patch.object(
+                fips,
+                "_enable_fips_fetch_properties",
+                return_value=(True, "ambient fetches require fips=yes"),
+            ),
+            patch.object(
+                fips,
+                "verify_jose_crypto_linkage",
+                return_value=(True, "linkage ok"),
+            ),
+        ):
+            ok, detail = fips._pinned_jose_linkage()
+        assert ok is True
+        assert detail == "linkage ok"
 
 
 class TestVerifyJoseCryptoLinkage:
