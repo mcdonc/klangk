@@ -2612,11 +2612,10 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 - **FIPS fetch pin is Linux-only (#3364).** Under
   `KLANGKD_FIPS_MODE`, the startup step that pins ambient OpenSSL
   fetches to `fips=yes` (#3350) now runs only on Linux, where
-  OpenSSL's FIPS provider exists. On macOS it previously loaded the
-  system libcrypto through ctypes, which aborts the whole process at
-  load time on current macOS; the backend now logs a skip notice
-  instead. This is also what unblocks the macOS test job, whose
-  worker was killed by the same load.
+  OpenSSL's FIPS provider exists. On other platforms the step is
+  skipped and the regular process-posture check still governs
+  startup; on macOS the previous ctypes load of the system libcrypto
+  aborted the whole process at load time.
 - **Environment-variable reference page (#3339).** The table on
   `docs/reference/environment.md` listed every variable twice: a stale
   copy of the table (missing five variables added since, carrying an

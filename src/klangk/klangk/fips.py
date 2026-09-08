@@ -56,7 +56,9 @@ klangkd therefore pins ambient fetches to ``fips=yes`` first
 (``EVP_default_properties_enable_fips`` — the same call
 cryptography's own ``enable_fips`` makes; #3350) once the process
 posture probe confirms the fips provider is active, and only then
-runs the cryptography linkage checks.
+runs the cryptography linkage checks. The pin itself is Linux-only
+(#3364): off Linux the step is skipped before any libcrypto is
+touched.
 
 **Dual-maintenance note** (#2626 review): :data:`PROBE_SCRIPT` (the
 self-contained snippet run inside containers via ``python3 -c``)
@@ -486,7 +488,7 @@ def _load_fips_pin_symbols() -> tuple:
         )
         return (
             lib.EVP_default_properties_enable_fips,
-            (lib.OSSL_PROVIDER_available),
+            lib.OSSL_PROVIDER_available,
             None,
         )
     except (OSError, AttributeError) as exc:
@@ -514,11 +516,12 @@ def _enable_fips_fetch_properties() -> tuple[bool, str]:
     Linux hosts. ``sys.platform`` is read at call time so tests can
     exercise the skip.
     """
-    import ctypes  # allow-deferred-import
     import sys  # allow-deferred-import
 
     if sys.platform != "linux":
         return False, "fips fetch pin is Linux-only; pin skipped"
+
+    import ctypes  # allow-deferred-import
 
     enable, provider_available, load_error = _load_fips_pin_symbols()
     if load_error is not None:
@@ -619,7 +622,8 @@ def verify_process_fips(settings) -> None:
     deployment-dependent and follows the same warn/abort posture as
     the process probe. Ambient fetches are pinned to ``fips=yes``
     before any of it (#3350) — the pin's no-fips-provider guard keeps
-    it a no-op where it would not hold.
+    it a no-op where it would not hold, and the step is skipped
+    entirely off Linux (#3364).
     """
     if not getattr(settings, "fips_mode", False):
         return
@@ -628,7 +632,8 @@ def verify_process_fips(settings) -> None:
     # every property-less fetch — the _hashlib MD5 probe included — is
     # served from it. The pin's internal guard makes this a no-op
     # wherever the fips provider is not active, so pinning before the
-    # posture probes is safe on control hosts too.
+    # posture probes is safe on control hosts too; off Linux the
+    # guard skips the step before any libcrypto load (#3364).
     pin_ok, pin_detail = _enable_fips_fetch_properties()
     if pin_ok:
         logger.info("FIPS fetch properties pinned: %s", pin_detail)

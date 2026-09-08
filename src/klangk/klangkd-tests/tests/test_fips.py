@@ -763,13 +763,19 @@ class TestEnableFipsFetchProperties:
     def test_non_linux_platform_is_noop(self, monkeypatch):
         """Non-Linux platforms skip the pin before any ctypes load
         (#3364): on macOS the dlopen of system libcrypto aborts the
-        process, so the guard must fire before CDLL is ever touched."""
+        process, so the guard must fire before CDLL is ever touched.
+
+        Only ``ctypes.CDLL`` is patched: patching
+        ``ctypes.util.find_library`` would lazily import
+        ``ctypes.util`` while ``sys.platform`` is patched to "darwin",
+        and Python 3.14's ``ctypes/util.py`` resolves dyld symbols at
+        import time under that platform — an import error on Linux
+        (an order-dependent failure whenever no earlier test on the
+        same worker imported ``ctypes.util`` first).
+        """
         cdll = MagicMock()
         monkeypatch.setattr(sys, "platform", "darwin")
-        with (
-            patch("ctypes.util.find_library", return_value="libcrypto.so.3"),
-            patch("ctypes.CDLL", cdll),
-        ):
+        with patch("ctypes.CDLL", cdll):
             ok, detail = fips._enable_fips_fetch_properties()
         assert ok is False
         assert "Linux-only" in detail
