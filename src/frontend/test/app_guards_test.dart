@@ -16,29 +16,65 @@ void main() {
   group('guardBanner', () {
     test('forces /consent when a banner is required', () {
       expect(
-        guardBanner(bannerRequired: true, loc: '/workspaces'),
+        guardBanner(
+            bannerRequired: true, isLoggedIn: false, loc: '/workspaces'),
         '/consent',
       );
       expect(
-        guardBanner(bannerRequired: true, loc: '/workspace/x'),
+        guardBanner(
+            bannerRequired: true, isLoggedIn: true, loc: '/workspace/x'),
         '/consent',
       );
     });
 
     test('allows /consent itself when a banner is required', () {
-      expect(guardBanner(bannerRequired: true, loc: '/consent'), isNull);
+      expect(
+        guardBanner(bannerRequired: true, isLoggedIn: false, loc: '/consent'),
+        isNull,
+      );
+    });
+
+    test('allows /oidc-complete when a banner is required, logged out (#3371)',
+        () {
+      // The OIDC callback carries a one-time login code in the URL; a
+      // redirect here destroys it (and the IdP round-trip cannot be
+      // replayed), so the code must be redeemed before the banner gate
+      // takes over.
+      expect(
+        guardBanner(
+            bannerRequired: true, isLoggedIn: false, loc: '/oidc-complete'),
+        isNull,
+      );
+    });
+
+    test('no /oidc-complete exemption once logged in (#3371)', () {
+      // After the code is redeemed the session is live; the banner gate
+      // reclaims the route so the guards cannot strand the user on the
+      // (spinner-only) complete page.
+      expect(
+        guardBanner(
+            bannerRequired: true, isLoggedIn: true, loc: '/oidc-complete'),
+        '/consent',
+      );
     });
 
     test('bounces /consent to /login when no banner is pending', () {
-      expect(guardBanner(bannerRequired: false, loc: '/consent'), '/login');
+      expect(
+        guardBanner(bannerRequired: false, isLoggedIn: false, loc: '/consent'),
+        '/login',
+      );
     });
 
     test('allows other routes when no banner is pending', () {
       expect(
-        guardBanner(bannerRequired: false, loc: '/workspaces'),
+        guardBanner(
+            bannerRequired: false, isLoggedIn: false, loc: '/workspaces'),
         isNull,
       );
-      expect(guardBanner(bannerRequired: false, loc: '/login'), isNull);
+      expect(
+        guardBanner(bannerRequired: false, isLoggedIn: false, loc: '/login'),
+        isNull,
+      );
     });
   });
 
@@ -456,6 +492,46 @@ void main() {
           bannerRequired: true,
           loc: '/workspaces',
           currentUri: '/workspaces',
+          publicRoutes: routes,
+          featurePaths: featurePaths,
+          canAccessAdmin: false,
+        ),
+        '/consent',
+      );
+    });
+
+    test('banner gate exempts the logged-out OIDC callback (#3371)', () {
+      // Logged-out landing on /oidc-complete?code=... with an every-visit
+      // banner: the page must mount and redeem the one-time code — not be
+      // bounced to /consent, which would drop the code and loop the SSO
+      // flow forever.
+      expect(
+        evaluateGuards(
+          mustChangePassword: false,
+          isLoggedIn: false,
+          bannerRequired: true,
+          loc: '/oidc-complete',
+          currentUri: '/oidc-complete?code=abc',
+          publicRoutes: routes,
+          featurePaths: featurePaths,
+          canAccessAdmin: false,
+        ),
+        isNull,
+      );
+    });
+
+    test('banner gate reclaims /oidc-complete once logged in (#3371)', () {
+      // After the exchange mints the session, the guards re-run with
+      // isLoggedIn true and the banner gate sends the user to /consent
+      // before any app route loads — the page is never stranded on the
+      // spinner.
+      expect(
+        evaluateGuards(
+          mustChangePassword: false,
+          isLoggedIn: true,
+          bannerRequired: true,
+          loc: '/oidc-complete',
+          currentUri: '/oidc-complete?code=abc',
           publicRoutes: routes,
           featurePaths: featurePaths,
           canAccessAdmin: false,

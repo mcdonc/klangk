@@ -25,17 +25,37 @@ const Set<String> publicRoutes = {
   '/consent',
 };
 
+/// Routes allowed through while a banner is pending.
+///
+/// `/consent` is the banner page itself. `/oidc-complete` is exempt
+/// for logged-out users only (#3371): the OIDC callback lands there
+/// with a one-time login code in the URL (60s TTL), and a redirect
+/// would replace the URL and destroy the code — making SSO login an
+/// endless loop (consent → login → IdP → consent) whenever
+/// `login_banner_every_visit` is set. `OidcCompletePage` redeems the
+/// code first; the minted session flips `isLoggedIn`, the guards
+/// re-run, and the banner gate then sends the now-logged-in user to
+/// `/consent` before any app route loads. A logged-in user hitting
+/// `/oidc-complete` gets no exemption — the code is redundant next to
+/// the live session, and the banner must come first.
+bool bannerExempt({required bool isLoggedIn, required String loc}) =>
+    loc == '/consent' || (!isLoggedIn && loc == '/oidc-complete');
+
 /// Banner gate.
 ///
 /// When a banner must be accepted, force every route to `/consent`
-/// (allowing `/consent` itself). When no banner is pending, a visit to
-/// `/consent` bounces to `/login` — the consent page is only meaningful
-/// while a banner is required.
+/// (allowing the exemptions in [bannerExempt]). When no banner is
+/// pending, a visit to `/consent` bounces to `/login` — the consent
+/// page is only meaningful while a banner is required.
 ///
 /// Returns the redirect target, or null to allow.
-String? guardBanner({required bool bannerRequired, required String loc}) {
+String? guardBanner({
+  required bool bannerRequired,
+  required bool isLoggedIn,
+  required String loc,
+}) {
   if (bannerRequired) {
-    return loc == '/consent' ? null : '/consent';
+    return bannerExempt(isLoggedIn: isLoggedIn, loc: loc) ? null : '/consent';
   }
   if (loc == '/consent') {
     return '/login';
@@ -168,7 +188,8 @@ String? guardRoot({required bool isLoggedIn, required String loc}) {
 /// is passed separately so [guardLoggedInPublicRoute] can exclude them.
 ///
 /// While a banner is pending, the banner gate is **terminal**: `/consent`
-/// is the only legal location, for logged-out and logged-in users alike.
+/// is the only legal location (plus the `/oidc-complete` exemption, see
+/// [bannerExempt]), for logged-out and logged-in users alike.
 /// Falling through to the guards below would let [guardLoggedInPublicRoute]
 /// bounce a logged-in user off `/consent` (a public route) straight back
 /// into the banner gate — the `/consent => /workspaces => /consent`
@@ -185,9 +206,9 @@ String? evaluateGuards({
   required bool canAccessAdmin,
 }) {
   if (bannerRequired) {
-    return guardBanner(bannerRequired: true, loc: loc);
+    return guardBanner(bannerRequired: true, isLoggedIn: isLoggedIn, loc: loc);
   }
-  return guardBanner(bannerRequired: false, loc: loc) ??
+  return guardBanner(bannerRequired: false, isLoggedIn: isLoggedIn, loc: loc) ??
       guardAuth(
         isLoggedIn: isLoggedIn,
         loc: loc,
