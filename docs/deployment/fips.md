@@ -39,7 +39,14 @@ workspace image and
    module's self-tests and writes the module MAC data;
 4. writes an activation config that loads the `fips` and `base`
    providers and **not** the `default` provider — so non-approved
-   algorithms (MD5, DES, …) are rejected rather than silently available;
+   algorithms (MD5, DES, …) are rejected rather than silently
+   available — and pins ambient fetches to `fips=yes`
+   (`default_properties` in the `alg_section`), the config-level form
+   of the countermeasure klangkd applies in its own process (#3350).
+   The pin also makes Node's `crypto.getFips()` report `1`, so
+   FIPS-aware libraries select approved algorithms — without it,
+   jiti (pi's TypeScript extension loader) computed its cache-key
+   hash with MD5 and every pi extension failed to load (#3359);
 5. exports `OPENSSL_CONF` (and `OPENSSL_MODULES`, needed by Node.js)
    image-wide and in `/etc/profile.d/` so login shells reached through
    `sudo -i` / `su` are covered too;
@@ -132,12 +139,12 @@ workspace containers are gated. Boundary notes for this deployment:
 
 Inside the workspace container:
 
-| Component                                                         | Covered?           | Why                                                                                                                                                                                                                                                                                                                                                                  |
-| ----------------------------------------------------------------- | ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `openssl` CLI, curl, git (https), distro python `_ssl`/`_hashlib` | **Yes**            | Dynamically link the distro `libcrypto.so.3`, which loads the FIPS provider via `OPENSSL_CONF`.                                                                                                                                                                                                                                                                      |
-| Node.js `crypto`/`tls` (including the pi coding agent)            | **Yes**            | Node's bundled libcrypto reads the `nodejs_conf` config section (the image aliases it) and loads the validated `fips.so` via `OPENSSL_MODULES`. Verified: `createHash('md5')` is rejected, TLS and approved digests route through the provider. No Node rebuild is involved — provider-based FIPS is a runtime configuration of the OpenSSL that Node already links. |
-| CPython's `hashlib.md5()`                                         | **No — by design** | CPython falls back to its built-in `_md5` module when the provider refuses; that code never touches OpenSSL and no provider can gate it. This is PEP 452's `usedforsecurity` behavior: legacy non-security MD5 (etags, cache keys) keeps working. Klangk itself does not call MD5 anywhere.                                                                          |
-| Statically-linked crypto in third-party tooling users install     | **No**             | Outside the provider model entirely; such tools bring their own crypto.                                                                                                                                                                                                                                                                                              |
+| Component                                                         | Covered?           | Why                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ----------------------------------------------------------------- | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `openssl` CLI, curl, git (https), distro python `_ssl`/`_hashlib` | **Yes**            | Dynamically link the distro `libcrypto.so.3`, which loads the FIPS provider via `OPENSSL_CONF`.                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| Node.js `crypto`/`tls` (including the pi coding agent)            | **Yes**            | Node's bundled libcrypto reads the `nodejs_conf` config section (the image aliases it) and loads the validated `fips.so` via `OPENSSL_MODULES`. Verified: `createHash('md5')` is rejected, TLS and approved digests route through the provider, and the config-level fetch pin makes `crypto.getFips()` report `1` — jiti (pi's TS extension loader) relies on that to pick SHA-256 for its cache-key hash (#3359). No Node rebuild is involved — provider-based FIPS is a runtime configuration of the OpenSSL that Node already links. |
+| CPython's `hashlib.md5()`                                         | **No — by design** | CPython falls back to its built-in `_md5` module when the provider refuses; that code never touches OpenSSL and no provider can gate it. This is PEP 452's `usedforsecurity` behavior: legacy non-security MD5 (etags, cache keys) keeps working. Klangk itself does not call MD5 anywhere.                                                                                                                                                                                                                                              |
+| Statically-linked crypto in third-party tooling users install     | **No**             | Outside the provider model entirely; such tools bring their own crypto.                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 
 **Out of scope (the deploying organization's responsibility):** TLS
 termination at the reverse proxy, kernel crypto (dm-crypt, IPsec), key
@@ -264,7 +271,12 @@ unvalidated provider even under a fips-only activation config. The
 countermeasure is `EVP_default_properties_enable_fips` — the same
 call `cryptography`'s own `enable_fips` makes — which requires
 `fips=yes` on every subsequent fetch: MD5 is refused again while
-approved algorithms keep working through the fips provider. The
+approved algorithms keep working through the fips provider. The FIPS
+images set the same pin config-wide since #3359
+(`default_properties = fips=yes` in the activation config), so every
+process in the container starts with ambient fetches already pinned;
+klangkd's runtime pin stays in place as the control-host path and is
+idempotent under the image pin. The
 relink and the pin are proven together: at image build time (each
 probe check prints a numbered marker; the cryptography checks pin
 fetches first — cryptography's OpenSSL version must equal the
