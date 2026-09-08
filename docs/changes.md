@@ -33,6 +33,13 @@ operators or integrators to act when upgrading.
 
 ## \[Unreleased]
 
+### Added
+
+- **PyPI project links (#3369).** The `klangk` wheel now carries
+  `project.urls` — Homepage, Documentation, Repository, Issues, and
+  Changelog — so the PyPI project and release pages show the sidebar
+  links. Changelog points at the docs-rendered changelog page.
+
 ## \[v2.0a2] - 2026-09-08
 
 ### Fixed
