@@ -126,12 +126,16 @@ COPY --from=fips-builder /opt/ossl-fips/lib/ossl-modules/fips.so \
 RUN openssl fipsinstall -module /usr/lib/x86_64-linux-gnu/ossl-modules/fips.so \
       -out /etc/ssl/fipsmodule.cnf
 
-# Activation config: fips + base, no default provider, written directly
-# to the STOCK path (/etc/ssl/openssl.cnf, replacing the distro file) so
-# environment-less lookups still activate FIPS (supervisord does not
-# strip the environment, but be robust to env_reset-style launchers).
-# No nodejs_conf alias: the host image has no node (see the workspace
-# variant for why that one needs it).
+# Activation config: fips + base, no default provider, and ambient
+# fetches pinned to fips=yes (alg_section/default_properties),
+# written directly to the STOCK path (/etc/ssl/openssl.cnf, replacing
+# the distro file) so environment-less lookups still activate FIPS
+# (supervisord does not strip the environment, but be robust to
+# env_reset-style launchers). The pin requires fips=yes on every
+# property-less algorithm fetch image-wide — the config-level form
+# of the countermeasure klangkd applies in its own process (#3350,
+# where the rationale lives). No nodejs_conf alias: the host image
+# has no node (see the workspace variant for why that one needs it).
 RUN printf '%s\n' \
       'openssl_conf = openssl_init' \
       '' \
@@ -139,6 +143,7 @@ RUN printf '%s\n' \
       '' \
       '[openssl_init]' \
       'providers = provider_sect' \
+      'alg_section = algorithm_sect' \
       '' \
       '[provider_sect]' \
       'fips = fips_sect' \
@@ -146,6 +151,9 @@ RUN printf '%s\n' \
       '' \
       '[base_sect]' \
       'activate = 1' \
+      '' \
+      '[algorithm_sect]' \
+      'default_properties = fips=yes' \
       > /etc/ssl/openssl.cnf
 
 # Image-wide activation. Reaches klangkd (supervisord child), podman

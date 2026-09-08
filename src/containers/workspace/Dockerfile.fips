@@ -97,13 +97,22 @@ COPY --from=fips-builder /opt/ossl-fips/lib/ossl-modules/fips.so \
 RUN openssl fipsinstall -module /usr/lib/x86_64-linux-gnu/ossl-modules/fips.so \
       -out /etc/ssl/fipsmodule.cnf
 
-# Activation config: fips + base, no default provider. The include
-# references the fipsinstall-generated section — redefining [fips_sect]
-# here would clobber the module MAC and silently fall back to default.
-# nodejs_conf alias: node ignores `openssl_conf` and reads only the
-# section named `nodejs_conf` (BUILDING.md, --openssl-conf-name); both
-# keys point at the same section so one config serves system OpenSSL
-# and node's bundled libcrypto.
+# Activation config: fips + base, no default provider, and ambient
+# fetches pinned to fips=yes (alg_section/default_properties, #3359).
+# The include references the fipsinstall-generated section — redefining
+# [fips_sect] here would clobber the module MAC and silently fall back
+# to default. nodejs_conf alias: node ignores `openssl_conf` and reads
+# only the section named `nodejs_conf` (BUILDING.md,
+# --openssl-conf-name); both keys point at the same section so one
+# config serves system OpenSSL and node's bundled libcrypto.
+#
+# The default_properties pin does two things. (1) It makes
+# `crypto.getFips()` report 1 in node — jiti (pi's TS extension
+# loader) chooses its cache-key hash that way and falls back to MD5
+# when it sees 0, which the fips provider refuses, so every pi
+# extension failed to load (#3359). (2) It requires fips=yes on every
+# property-less algorithm fetch image-wide — the same countermeasure
+# klangkd applies in its own process (#3350), here at config level.
 #
 # The config is written directly to the STOCK path (/etc/ssl/openssl.cnf,
 # replacing the distro file) so that environment-less lookups —
@@ -119,6 +128,7 @@ RUN printf '%s\n' \
       '' \
       '[openssl_init]' \
       'providers = provider_sect' \
+      'alg_section = algorithm_sect' \
       '' \
       '[provider_sect]' \
       'fips = fips_sect' \
@@ -126,6 +136,9 @@ RUN printf '%s\n' \
       '' \
       '[base_sect]' \
       'activate = 1' \
+      '' \
+      '[algorithm_sect]' \
+      'default_properties = fips=yes' \
       > /etc/ssl/openssl.cnf
 
 # Image-wide activation. Docker/podman ENV reaches the entrypoint and
@@ -153,4 +166,7 @@ RUN openssl list -providers | grep -q 'OpenSSL FIPS Provider' && \
       > /dev/null 2>&1 && \
     env -i /usr/bin/openssl list -providers \
       | grep -q 'OpenSSL FIPS Provider' && \
-    ! env -i /usr/bin/sh -c 'echo hello | openssl md5' > /dev/null 2>&1
+    ! env -i /usr/bin/sh -c 'echo hello | openssl md5' > /dev/null 2>&1 && \
+    node -e "require('crypto').createHash('sha256').update('x').digest('hex')" \
+      > /dev/null 2>&1 && \
+    node -e "process.exit(require('crypto').getFips() ? 0 : 1)"

@@ -2609,6 +2609,16 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **FIPS images pin ambient OpenSSL fetches to `fips=yes` (#3359).**
+  The activation config in the FIPS workspace and FIPS host images
+  now sets `default_properties = fips=yes`, so every process in the
+  container requires the fips property on provider-less algorithm
+  fetches, and Node's `crypto.getFips()` reports FIPS mode as active.
+  In the FIPS workspace image this un-breaks the pi coding agent:
+  jiti (its TypeScript extension loader) chooses its cache-key hash
+  from `crypto.getFips()` and previously picked MD5 — refused by the
+  fips provider — which failed every extension load with
+  `error:0308010C` until `pi -ne` was used.
 - **FIPS fetch pin is Linux-only (#3364).** Under
   `KLANGKD_FIPS_MODE`, the startup step that pins ambient OpenSSL
   fetches to `fips=yes` (#3350) now runs only on Linux, where
