@@ -76,15 +76,17 @@ jobs:
   #   - Caddyfile render broken → caddy rejects the config
   #   - UDS upstream misconfigured → caddy 502s
   #   - Missing transitive dep in pyproject.toml → import fails fast
+  #   - Published network sidecar image unpullable → workspace start
+  #     fails closed (pulled from GHCR by the container phase, #3343)
   #
-  # NOTE: currently expected to FAIL until #1709 (klangkd's caddy child
-  # can't coexist with another caddy on the host / bootstrap binds 2019
-  # instead of the UDS) is fixed. The dist-smoke gate is intentionally
-  # decoupled from release.yml — release.yml publishes without waiting
-  # on this workflow so the release pipeline isn't held hostage to the
-  # smoke being green. A maintainer runs this against a release-candidate
-  # branch before tagging; if it fails on a non-#1709 cause, that's a
-  # real release-blocker worth investigating before tagging.
+  # NOTE: the container phase provisions the network sidecar image from
+  # GHCR (newest published calver tag) — fresh workspaces default to
+  # egress_mode=interactive and fail closed without it (#3343). The
+  # dist-smoke gate is intentionally decoupled from release.yml —
+  # release.yml publishes without waiting on this workflow so the release
+  # pipeline isn't held hostage to the smoke being green. A maintainer runs
+  # this against a release-candidate branch before tagging; any failure is
+  # a real release-blocker worth investigating before tagging.
   dist-smoke-test:
     runs-on: ubuntu-latest
     timeout-minutes: 15
