@@ -239,15 +239,15 @@ Complete list of cryptographic operations klangkd performs, the module
 each routes through, and the FIPS validation status under the FIPS
 image:
 
-| Operation                     | Algorithm                            | Code path                                                                                       | Module                                                                   | FIPS-validated?                                 |
-| ----------------------------- | ------------------------------------ | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ | ----------------------------------------------- |
-| Password hashing              | PBKDF2-HMAC-SHA512 (600k iterations) | `hashlib.pbkdf2_hmac` (`auth.py`)                                                               | OpenSSL `_hashlib` → libcrypto → FIPS provider                           | Yes (CMVP #4985)                                |
-| JWT signing/verification      | HMAC-SHA256 (HS256)                  | `python-jose` → `cryptography` backend → `cryptography.hazmat.primitives.hmac.HMAC` (`auth.py`) | distro libcrypto, via the FIPS image's `cryptography` relink (see below) | Yes (CMVP #4985)                                |
-| DPoP proof verification      | ECDSA P-256 (ES256) + SHA-256        | `cryptography` directly — `ec.EllipticCurvePublicNumbers.verify` + `hashlib.sha256` (`dpop.py`, #3218; deliberately not jose's EC route, which could bind to the pure-Python `ecdsa` package) | distro libcrypto, via the FIPS image's `cryptography` relink (see below) | Yes (CMVP #4985)                                |
-| Outbound TLS                  | TLS 1.2/1.3                          | `ssl` module / `httpx` (LLM proxy, OIDC, SMTP)                                                  | OpenSSL `_ssl` → libcrypto → FIPS provider                               | Yes (CMVP #4985)                                |
-| CA fingerprinting (allowlist) | SHA-256 (cert DER)                   | `cryptography` `Certificate.fingerprint` (`ssl_trust.py`, #3198)                                | distro libcrypto, via the FIPS image's `cryptography` relink (see below) | Yes (CMVP #4985)                                |
-| Password timing equalization  | HMAC comparison                      | `hmac.compare_digest` (`auth.py`)                                                               | C-level constant-time compare (no crypto module)                         | N/A (comparison only)                           |
-| Token identifiers             | UUID4                                | `uuid.uuid4` / `secrets.token_bytes`                                                            | OS `urandom`                                                             | N/A (randomness source, not a crypto algorithm) |
+| Operation                     | Algorithm                            | Code path                                                                                                                                                                                     | Module                                                                   | FIPS-validated?                                 |
+| ----------------------------- | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ | ----------------------------------------------- |
+| Password hashing              | PBKDF2-HMAC-SHA512 (600k iterations) | `hashlib.pbkdf2_hmac` (`auth.py`)                                                                                                                                                             | OpenSSL `_hashlib` → libcrypto → FIPS provider                           | Yes (CMVP #4985)                                |
+| JWT signing/verification      | HMAC-SHA256 (HS256)                  | `python-jose` → `cryptography` backend → `cryptography.hazmat.primitives.hmac.HMAC` (`auth.py`)                                                                                               | distro libcrypto, via the FIPS image's `cryptography` relink (see below) | Yes (CMVP #4985)                                |
+| DPoP proof verification       | ECDSA P-256 (ES256) + SHA-256        | `cryptography` directly — `ec.EllipticCurvePublicNumbers.verify` + `hashlib.sha256` (`dpop.py`, #3218; deliberately not jose's EC route, which could bind to the pure-Python `ecdsa` package) | distro libcrypto, via the FIPS image's `cryptography` relink (see below) | Yes (CMVP #4985)                                |
+| Outbound TLS                  | TLS 1.2/1.3                          | `ssl` module / `httpx` (LLM proxy, OIDC, SMTP)                                                                                                                                                | OpenSSL `_ssl` → libcrypto → FIPS provider                               | Yes (CMVP #4985)                                |
+| CA fingerprinting (allowlist) | SHA-256 (cert DER)                   | `cryptography` `Certificate.fingerprint` (`ssl_trust.py`, #3198)                                                                                                                              | distro libcrypto, via the FIPS image's `cryptography` relink (see below) | Yes (CMVP #4985)                                |
+| Password timing equalization  | HMAC comparison                      | `hmac.compare_digest` (`auth.py`)                                                                                                                                                             | C-level constant-time compare (no crypto module)                         | N/A (comparison only)                           |
+| Token identifiers             | UUID4                                | `uuid.uuid4` / `secrets.token_bytes`                                                                                                                                                          | OS `urandom`                                                             | N/A (randomness source, not a crypto algorithm) |
 
 **JWT module boundary (#3175):** the JWT row above holds because the
 FIPS host image **rebuilds `cryptography` from source against the
@@ -256,17 +256,29 @@ _private_ OpenSSL that never reads `OPENSSL_CONF` and cannot load the
 validated provider. This is the industry posture (Red Hat ships
 distro-linked `python3-cryptography`; Chainguard's FIPS images relink
 it; pyca's own docs direct FIPS users to `pip install --no-binary
-cryptography`). The relink is proven twice: at image build time
-(cryptography's OpenSSL version must equal the process's, MD5 through
-cryptography must be refused, and a jose HS256 sign/verify round-trip
-must succeed under the active provider), and at klangkd startup under
-`KLANGKD_FIPS_MODE` — klangkd verifies that python-jose binds its
-`cryptography` backend (a silent fallback to another backend would be
-an unprovisioned, unverified route and aborts the boot) and that
-cryptography's OpenSSL is the process's own provider-gated library
-(identity check + MD5 refusal; a mismatched linkage follows the same
-warn-on-host / abort-in-container posture as the process OpenSSL
-probe).
+cryptography`). One wrinkle (#3350): `cryptography` unconditionally
+loads OpenSSL's _default_ provider at import (its rust init calls
+`OSSL_PROVIDER_load(NULL, "default")`), so property-less fetches in
+any process that imported it — MD5 among them — are served from that
+unvalidated provider even under a fips-only activation config. The
+countermeasure is `EVP_default_properties_enable_fips` — the same
+call `cryptography`'s own `enable_fips` makes — which requires
+`fips=yes` on every subsequent fetch: MD5 is refused again while
+approved algorithms keep working through the fips provider. The
+relink and the pin are proven together: at image build time (each
+probe check prints a numbered marker; the cryptography checks pin
+fetches first — cryptography's OpenSSL version must equal the
+process's, MD5 through cryptography must be refused, and a jose HS256
+sign/verify round-trip must succeed under the active provider), and
+at klangkd startup under `KLANGKD_FIPS_MODE` — once the process
+posture probe confirms the fips provider is active, klangkd pins
+ambient fetches to `fips=yes` and then verifies that python-jose
+binds its `cryptography` backend (a silent fallback to another
+backend would be an unprovisioned, unverified route and aborts the
+boot) and that cryptography's OpenSSL is the process's own
+provider-gated library (identity check + MD5 refusal; a failed pin or
+mismatched linkage follows the same warn-on-host / abort-in-container
+posture as the process OpenSSL probe).
 
 **Outside the module:** a _stock_ host image (or any deployment using
 the PyPI `cryptography` wheel) signs JWTs on the wheel's private

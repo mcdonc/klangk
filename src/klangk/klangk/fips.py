@@ -47,6 +47,16 @@ linkage to the process's own provider-gated OpenSSL
 asserts *equality* of two version texts (same library loaded), never
 a specific version, so the genericity rule above still holds. These
 checks are host-side only — workspace containers run no jose.
+Because ``cryptography`` unconditionally loads OpenSSL's *default*
+provider at import (its rust init calls ``OSSL_PROVIDER_load(NULL,
+"default")``), property-less fetches in any process that imported it
+— MD5 among them — are served from that unvalidated provider even
+under a fips-only activation config. Under ``KLANGKD_FIPS_MODE``
+klangkd therefore pins ambient fetches to ``fips=yes`` first
+(``EVP_default_properties_enable_fips`` — the same call
+cryptography's own ``enable_fips`` makes; #3350) once the process
+posture probe confirms the fips provider is active, and only then
+runs the cryptography linkage checks.
 
 **Dual-maintenance note** (#2626 review): :data:`PROBE_SCRIPT` (the
 self-contained snippet run inside containers via ``python3 -c``)
@@ -461,6 +471,59 @@ def _crypto_md5_refused() -> bool:
     return False
 
 
+def _enable_fips_fetch_properties() -> tuple[bool, str]:
+    """Pin ambient fetches to the fips provider (#3350).
+
+    ``cryptography`` loads OpenSSL's default provider at import, so
+    property-less fetches — MD5 among them — are served from the
+    unvalidated default provider even under a fips-only activation
+    config. ``EVP_default_properties_enable_fips`` (the same call
+    cryptography's own ``enable_fips`` makes) requires ``fips=yes``
+    on every subsequent fetch, restoring refusal of non-approved
+    algorithms while approved ones keep working through the fips
+    provider. The helper refuses to pin unless the fips provider is
+    active in the default library context — pinning without it would
+    fail every fetch in the process.
+    """
+    import ctypes  # allow-deferred-import
+    import ctypes.util  # allow-deferred-import
+
+    try:
+        lib = ctypes.CDLL(
+            ctypes.util.find_library("crypto") or "libcrypto.so.3"
+        )
+        enable = lib.EVP_default_properties_enable_fips
+        provider_active = lib.OSSL_PROVIDER_available
+    except (OSError, AttributeError) as exc:
+        return False, f"cannot pin fips fetch properties ({exc})"
+    # Never pin without the fips provider: the flag makes every fetch
+    # require fips=yes, so on a process without it all ciphers and
+    # digests would stop loading (poisoning the whole process).
+    provider_active.restype = ctypes.c_int
+    provider_active.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
+    if not provider_active(None, b"fips"):
+        return False, "fips provider not active; pin skipped"
+    enable.restype = ctypes.c_int
+    enable.argtypes = [ctypes.c_void_p, ctypes.c_int]
+    if not enable(None, 1):
+        return False, "EVP_default_properties_enable_fips failed"
+    return True, "ambient fetches require fips=yes"
+
+
+def _pinned_jose_linkage() -> tuple[bool, str]:
+    """Pin fetches to fips=yes, then verify jose's crypto linkage.
+
+    Order matters (#3350): without the pin, ``cryptography``'s
+    default-provider load makes the MD5-refusal half of the linkage
+    check observe the unvalidated provider and fail on a healthy
+    image.
+    """
+    pin_ok, pin_detail = _enable_fips_fetch_properties()
+    if not pin_ok:
+        return False, pin_detail
+    return verify_jose_crypto_linkage()
+
+
 def verify_jose_crypto_linkage() -> tuple[bool, str]:
     """Prove jose's HS256 route stays inside the validated OpenSSL.
 
@@ -541,7 +604,9 @@ def verify_process_fips(settings) -> None:
     backend = an unprovisioned crypto route) and aborts
     unconditionally; the cryptography↔libcrypto linkage is
     deployment-dependent and follows the same warn/abort posture as
-    the process probe.
+    the process probe, and runs after it — ambient fetches are pinned
+    to ``fips=yes`` in between (#3350), which is only safe once the
+    fips provider is verified active.
     """
     if not getattr(settings, "fips_mode", False):
         return
@@ -554,19 +619,22 @@ def verify_process_fips(settings) -> None:
         logger.info("FIPS jose backend verified: %s", jose_detail)
     else:
         raise ConfigurationError(f"KLANGKD_FIPS_MODE: {jose_detail}")
-    link_ok, link_detail = verify_jose_crypto_linkage()
+    # Posture before linkage (#3350): the fetch-property pin (and the
+    # linkage MD5 check behind it) is only safe to apply once the fips
+    # provider is verified active — pinning without it would fail every
+    # fetch in the process.
+    version = ssl.OPENSSL_VERSION
+    ok, detail = probe_process()
+    if not ok:
+        _posture_failure("process OpenSSL FIPS enforcement", detail)
+        return
+    logger.info(
+        "FIPS mode enabled: OpenSSL %s, provider enforcement verified (%s)",
+        version,
+        detail,
+    )
+    link_ok, link_detail = _pinned_jose_linkage()
     if link_ok:
         logger.info("FIPS jose crypto linkage verified: %s", link_detail)
     else:
         _posture_failure("jose cryptography linkage", link_detail)
-    version = ssl.OPENSSL_VERSION
-    ok, detail = probe_process()
-    if ok:
-        logger.info(
-            "FIPS mode enabled: OpenSSL %s, provider enforcement verified "
-            "(%s)",
-            version,
-            detail,
-        )
-        return
-    _posture_failure("process OpenSSL FIPS enforcement", detail)
