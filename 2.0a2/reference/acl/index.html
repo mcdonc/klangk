@@ -1,0 +1,3655 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Multi-User AI Sandboxing, Collaboration and Coding Platform">
+      
+      
+        <meta name="author" content="Chris McDonough">
+      
+      
+        <link rel="canonical" href="https://mcdonc.github.io/klangk/2.0a2/reference/acl/">
+      
+      
+        <link rel="prev" href="../audit-integrity/">
+      
+      
+        <link rel="next" href="../api-endpoints/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/favicon.png">
+      <meta name="generator" content="zensical-0.0.59">
+    
+    
+      
+        <title>ACL System - Klangk</title>
+      
+    
+    
+      
+        
+      
+      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.5da3a30f.min.css">
+      
+        
+          
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.812a03bb.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,500,500i,700,700i%7CJetBrains+Mono:400,400i,700,700i&amp;display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_scope.pathname.endsWith("/")||(__md_scope=new URL(__md_scope.pathname+"/",location)),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,_=__md_scope)=>JSON.parse(t.getItem(_.pathname+"."+e)),__md_set=(e,t,_=localStorage,a=__md_scope)=>{try{_.setItem(a.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="green" data-md-color-accent="green">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer" aria-label="Navigation"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#acl-system" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Klangk" class="md-header__button md-logo" aria-label="Klangk" data-md-component="logo">
+      
+  <img src="../../assets/logo.svg" alt="Klangk">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer" aria-label="Navigation">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-menu" viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h16"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Klangk
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              ACL System
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="none" data-md-color-scheme="slate" data-md-color-primary="green" data-md-color-accent="green"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="none" data-md-color-scheme="default" data-md-color-primary="green" data-md-color-accent="green"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-moon" viewBox="0 0 24 24"><path d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search" aria-label="Search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-search" viewBox="0 0 24 24"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog" aria-label="Search">
+  <button type="button" class="md-search__button">
+    Search
+  </button>
+</div>
+      
+    
+    <div class="md-header__source">
+      
+        <a href="https://github.com/mcdonc/klangk" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mcdonc/klangk
+  </div>
+</a>
+      
+    </div>
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Klangk" class="md-nav__button md-logo" aria-label="Klangk" data-md-component="logo">
+      
+  <img src="../../assets/logo.svg" alt="Klangk">
+
+    </a>
+    Klangk
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/mcdonc/klangk" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mcdonc/klangk
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Home
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Getting Started
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../features/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Features
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Features
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/authentication/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Authentication
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/auth-modes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Auth Modes
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/authorization/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Authorization
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/handles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Handles
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/admin-management/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Admin Management
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/invitations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Invitations
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/workspaces/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Workspaces
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/terminal/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Terminal
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/the-shell/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The Shell
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/service-command/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Service Command
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/auto-start/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Auto-Start
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/health-check/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Health Check
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/egress-filtering/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Egress Filtering
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/sandbox/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Sandbox
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/file-viewer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  File Viewer
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/ai-coding-harnesses/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  AI Coding Harnesses
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/features/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Feature Activation
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/export-import/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Export & Import
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/hosted-apps/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Hosted Apps
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  CLI
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/ssh-agent-forwarding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  SSH Agent Forwarding
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/github-authentication/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  GitHub HTTPS Authentication
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/debug-panel/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Debug Panel
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/logging/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Logging
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/admission/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Workspace Admission
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/crash-recovery/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Crash Recovery
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/server-scheduling/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Server Scheduling
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/nix/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Nix
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../sandboxes/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Sandboxes
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Sandboxes
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../sandboxes/openclaw/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  OpenClaw
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../sandboxes/hermes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Hermes
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Deployment
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Deployment
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/docker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Running with Docker
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/packaged/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Packaged klangkd
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/hosting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Hosting & Proxy
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/behind-a-proxy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Behind a Reverse Proxy
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/https-hosting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  HTTPS Hosting
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/airgapped/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Air-Gapped Deployment
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/customizing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Customizing
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/fips/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  FIPS 140-3 Mode
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/signals/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Process Signals
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/decommissioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Decommissioning
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/falco/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Falco Exec Audit
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../podman/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Podman
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../oidc/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  OIDC
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../backup-restore/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Backup and Restore
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../audit-integrity/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Audit Record Integrity
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Reference
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Reference
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  ACL System
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  ACL System
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#core-concepts" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Core Concepts
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#resource-tree" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Resource Tree
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#default-aces-seeded-on-first-startup" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Default ACEs (seeded on first startup)
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Default ACEs (seeded on first startup)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#workspace-creation-default-self-service-deny-to-restrict" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Workspace creation: default self-service, deny to restrict
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#groups" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Groups
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Groups">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#per-workspace-role-groups" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Per-workspace role groups
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#workspace-permissions" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Workspace Permissions
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Workspace Permissions">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#first-class-resource-permissions" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        First-class resource permissions
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#websocket-gates" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        WebSocket gates
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#checking-your-permissions" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Checking Your Permissions
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#troubleshooting-why-cant-i-access-this-workspace" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Troubleshooting: "Why can't I access this workspace?"
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api-endpoints/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  API Endpoints
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../klangkd-config/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Configuration File
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../environment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Environment Variables
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../development/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Klangk Development
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_7" id="__nav_7_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Klangk Development
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/ci/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  CI
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/pre-commit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Pre-commit Hooks
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/schema-migrations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Database Schema Changes
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/releasing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Releasing
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/building-images/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Building Images
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/stable-branches/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Stable Branches
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/super-e2e/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Super-E2E
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../changes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Changelog
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_9" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../architecture/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Architecture
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_9" id="__nav_9_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_9_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_9">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Architecture
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/llm-proxy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  LLM Proxy
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/browser-bridge/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Browser Bridge
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/workspace-jwt/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Workspace JWT
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/egress-flow/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Egress Request Flow
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  
+                    
+                    
+                    
+                      
+                    
+                    
+                      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+                      <div class="md-sidebar-button__wrapper">
+                        <label class="md-sidebar-button" for="__toc"></label>
+                      </div>
+                    
+                  
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#core-concepts" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Core Concepts
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#resource-tree" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Resource Tree
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#default-aces-seeded-on-first-startup" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Default ACEs (seeded on first startup)
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Default ACEs (seeded on first startup)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#workspace-creation-default-self-service-deny-to-restrict" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Workspace creation: default self-service, deny to restrict
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#groups" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Groups
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Groups">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#per-workspace-role-groups" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Per-workspace role groups
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#workspace-permissions" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Workspace Permissions
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Workspace Permissions">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#first-class-resource-permissions" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        First-class resource permissions
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#websocket-gates" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        WebSocket gates
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#checking-your-permissions" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Checking Your Permissions
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#troubleshooting-why-cant-i-access-this-workspace" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Troubleshooting: "Why can't I access this workspace?"
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+                
+
+
+
+  
+
+
+  <nav class="md-path" aria-label="Navigation" >
+    <ol class="md-path__list">
+      
+        
+  
+  
+    <li class="md-path__item">
+      <a href="../.." class="md-path__link">
+        
+  
+  <span class="md-ellipsis">
+    Home
+  </span>
+
+      </a>
+    </li>
+  
+
+      
+      
+        
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+      <li class="md-path__item">
+        <a href="././" class="md-path__link">
+          
+  
+  <span class="md-ellipsis">
+    Reference
+  </span>
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ol>
+  </nav>
+
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+  
+  
+
+
+<h1 id="acl-system">ACL System<a class="headerlink" href="#acl-system" title="Permanent link">&para;</a></h1>
+<p>Klangk uses an Access Control List (ACL) system to manage permissions. Instead of simple admin/non-admin roles, permissions are defined as ACL entries (ACEs) attached to resources in a tree hierarchy. This allows fine-grained control over who can do what, without code changes.</p>
+<h2 id="core-concepts">Core Concepts<a class="headerlink" href="#core-concepts" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Resources</strong>: paths in a tree that mirror the URL structure (<code>/</code>, <code>/workspaces</code>, <code>/workspaces/{id}</code>, <code>/users</code>, <code>/groups</code>, etc.)</li>
+<li><strong>Principals</strong>: who the ACE applies to — a specific user, a group, or a system principal (<code>Everyone</code> or <code>Authenticated</code>)</li>
+<li><strong>Permissions</strong>: what action is allowed or denied — specific,
+  self-describing names (<code>view</code>, <code>create-workspace</code>, <code>edit-workspace</code>,
+  <code>terminal</code>, <code>files-view</code>, <code>share-workspace</code>, <code>*</code>)</li>
+<li><strong>ACEs</strong>: <code>(Allow/Deny, principal, permission)</code> entries ordered by position on a resource</li>
+<li><strong>ACL walk</strong>: when checking permission, the system walks from the target resource up to <code>/</code>, checking each node's ACEs in order. First match wins. If no match after reaching root, access is denied.</li>
+</ul>
+<h2 id="resource-tree">Resource Tree<a class="headerlink" href="#resource-tree" title="Permanent link">&para;</a></h2>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>/                              (root)
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>├── /workspaces                (workspace collection)
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>│   └── /workspaces/{id}       (specific workspace)
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>├── /users                     (flat — no per-id nodes)
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>├── /groups                    (flat)
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>├── /invitations               (flat)
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>├── /server                    (flat — lifecycle schedules)
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>├── /events                    (flat — read-only audit)
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>├── /acl                       (flat — the ACL editor itself)
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>├── /volumes                   (flat — the admin volume inventory)
+</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>└── /admin                     (marker only — nothing checks here)
+</span></code></pre></div>
+<h2 id="default-aces-seeded-on-first-startup">Default ACEs (seeded on first startup)<a class="headerlink" href="#default-aces-seeded-on-first-startup" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Resource</th>
+<th>Action</th>
+<th>Principal</th>
+<th>Permission</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>/</code></td>
+<td>Allow</td>
+<td>Authenticated</td>
+<td><code>view</code></td>
+</tr>
+<tr>
+<td><code>/</code></td>
+<td>Deny</td>
+<td>Everyone</td>
+<td><code>*</code></td>
+</tr>
+<tr>
+<td><code>/workspaces</code></td>
+<td>Allow</td>
+<td>group:admins</td>
+<td><code>create-workspace</code></td>
+</tr>
+<tr>
+<td><code>/workspaces</code></td>
+<td>Allow</td>
+<td>group:members</td>
+<td><code>create-workspace</code></td>
+</tr>
+<tr>
+<td><code>/users</code></td>
+<td>Allow</td>
+<td>group:admins</td>
+<td><code>manage-users</code></td>
+</tr>
+<tr>
+<td><code>/users</code></td>
+<td>Allow</td>
+<td>Authenticated</td>
+<td><code>search-users</code></td>
+</tr>
+<tr>
+<td><code>/users</code></td>
+<td>Deny</td>
+<td>Everyone</td>
+<td><code>*</code></td>
+</tr>
+<tr>
+<td><code>/groups</code></td>
+<td>Allow</td>
+<td>group:admins</td>
+<td><code>manage-groups</code></td>
+</tr>
+<tr>
+<td><code>/groups</code></td>
+<td>Deny</td>
+<td>Everyone</td>
+<td><code>*</code></td>
+</tr>
+<tr>
+<td><code>/invitations</code></td>
+<td>Allow</td>
+<td>group:admins</td>
+<td><code>manage-invitations</code></td>
+</tr>
+<tr>
+<td><code>/invitations</code></td>
+<td>Deny</td>
+<td>Everyone</td>
+<td><code>*</code></td>
+</tr>
+<tr>
+<td><code>/server</code></td>
+<td>Allow</td>
+<td>group:admins</td>
+<td><code>manage-server-schedule</code></td>
+</tr>
+<tr>
+<td><code>/server</code></td>
+<td>Deny</td>
+<td>Everyone</td>
+<td><code>*</code></td>
+</tr>
+<tr>
+<td><code>/events</code></td>
+<td>Allow</td>
+<td>group:admins</td>
+<td><code>manage-events</code></td>
+</tr>
+<tr>
+<td><code>/events</code></td>
+<td>Deny</td>
+<td>Everyone</td>
+<td><code>*</code></td>
+</tr>
+<tr>
+<td><code>/acl</code></td>
+<td>Allow</td>
+<td>group:admins</td>
+<td><code>manage-acls</code></td>
+</tr>
+<tr>
+<td><code>/acl</code></td>
+<td>Deny</td>
+<td>Everyone</td>
+<td><code>*</code></td>
+</tr>
+<tr>
+<td><code>/volumes</code></td>
+<td>Allow</td>
+<td>group:admins</td>
+<td><code>view-volumes</code></td>
+</tr>
+<tr>
+<td><code>/volumes</code></td>
+<td>Allow</td>
+<td>group:admins</td>
+<td><code>manage-volumes</code></td>
+</tr>
+<tr>
+<td><code>/images</code></td>
+<td>Allow</td>
+<td>Authenticated</td>
+<td><code>view-images</code></td>
+</tr>
+<tr>
+<td><code>/images</code></td>
+<td>Deny</td>
+<td>Everyone</td>
+<td><code>*</code></td>
+</tr>
+</tbody>
+</table>
+<p>These defaults mean: any logged-in user can view pages; every
+member of the <code>members</code> group (i.e. every user — see below) can
+create workspaces (#3137); only members of the <code>admins</code> group hold a
+<code>manage-*</code> permission; unauthenticated users are denied everything.
+There is no <code>/admin</code> resource — it is neither seeded nor checked by any
+endpoint; instance-admin status derives from <code>admins</code>-group membership,
+surfaced as the <code>is_admin</code> flag on <code>/api/v1/my-permissions</code>. The
+<code>admins</code> group itself cannot be renamed or deleted.</p>
+<p>The <code>/images</code> Allow Authenticated row is the deliberate exception to
+the admin-default convention: the listing's consumers are the
+workspace create/edit UIs, which non-admins reach with
+<code>create-workspace</code>/<code>edit-workspace</code>. It is still an operator choice —
+delete the row (default-deny then takes over) or scope it to a group in
+the ACL editor. No trailing Deny Everyone row is seeded: no <code>/images</code>
+route checks a permission other than <code>view-images</code>, and unauthenticated
+requests are rejected by the JWT middleware before any ACL check.
+(Side effect: without the row, authenticated users' effective
+permissions on <code>/images</code> include the <code>view</code> inherited from <code>/</code> —
+visible in <code>/my-permissions</code>; nothing checks it.)</p>
+<p><code>/volumes</code> is the one <code>manage-*</code> resource whose read side is split
+out: the admin Volumes tab lists and deletes volumes, and a
+read-only "volumes auditor" delegation makes sense, so
+<code>GET /volumes</code> checks <code>view-volumes</code> while <code>POST</code>/<code>DELETE</code> check
+<code>manage-volumes</code> — the action-specific naming pattern of
+<code>/acl</code>+<code>manage-acls</code>, <code>/server</code>+<code>manage-server-schedule</code>, and
+<code>/images</code>+<code>view-images</code>. The volume listing shows the deployment's
+whole instance-managed inventory (the per-user creator label is
+provenance, not an access filter). Deploys that want self-service
+volumes back grant <code>manage-volumes</code> to <code>Authenticated</code> or a group via
+the ACL editor. No trailing Deny Everyone row is seeded on <code>/volumes</code> either,
+for the same reason.</p>
+<h3 id="workspace-creation-default-self-service-deny-to-restrict">Workspace creation: default self-service, deny to restrict<a class="headerlink" href="#workspace-creation-default-self-service-deny-to-restrict" title="Permanent link">&para;</a></h3>
+<p>By default every authenticated member can create workspaces (#3137):
+the <code>members</code> group — which every new user joins automatically — holds
+the seeded <code>create-workspace</code> Allow on <code>/workspaces</code>. Member footprint
+is bounded by the admission and quota controls (admission memory
+margin, <code>max_running_workspaces_per_user</code>, <code>volume_quota_per_workspace</code>),
+and what a member-created workspace can run is constrained by
+<code>allowed_images</code> / <code>allowed_mount_roots</code> / egress filtering.</p>
+<p>A deployment that wants the pre-#3137 admin-only posture adds one
+explicit Deny via the ACL editor (first-match-wins: position it ahead
+of the members Allow):</p>
+<ol>
+<li>Navigate to <strong>Admin → ACL</strong> (or the Advanced ACL editor).</li>
+<li>Select the <code>/workspaces</code> resource.</li>
+<li>Add a <strong>Deny</strong> entry for the <code>create-workspace</code> permission, targeting
+   the <strong><code>members</code></strong> group (or the <strong>Authenticated</strong> system principal —
+   this also covers users created outside the group), at a position
+   <strong>lower than</strong> the members Allow row (lower position = checked
+   first).</li>
+</ol>
+<p>Alternatively grant creation to a narrower set: delete the members
+Allow row, then add an <strong>Allow</strong> entry for <code>create-workspace</code> targeting
+a specific <strong>group</strong> (e.g. a "developers" group you've created) or the
+<strong>Authenticated</strong> system principal, positioned ahead of any Deny. The
+create and import buttons in the web UI automatically appear/disappear
+based on the user's effective <code>create-workspace</code> permission on
+<code>/workspaces</code>.</p>
+<h2 id="groups">Groups<a class="headerlink" href="#groups" title="Permanent link">&para;</a></h2>
+<p>Groups replace the old role system. A group is a named collection of users. Two built-in groups are created automatically on first startup:</p>
+<ul>
+<li><strong><code>admins</code></strong> — the default admin user is added to it; members can create workspaces and access admin functions.</li>
+<li><strong><code>members</code></strong> — every new user (registration, invitation, OIDC first login, admin-created) is added automatically. Holds the seeded <code>create-workspace</code> Allow on <code>/workspaces</code> (#3137); a deploy that wants admin-only creation stages an explicit Deny ahead of it (see above).</li>
+</ul>
+<p><strong>Admin UI</strong>: Admin &gt; Groups tab — create/delete groups, add/remove members.</p>
+<p><strong>API endpoints</strong>:</p>
+<ul>
+<li><code>GET /api/v1/groups</code> — list all groups (authenticated)</li>
+<li><code>POST /api/v1/groups</code> — create group <code>{"name": "...", "description": "..."}</code> (manage-groups)</li>
+<li><code>DELETE /api/v1/groups/{id}</code> — delete group (cascades: removes all ACEs referencing it)</li>
+<li><code>POST /api/v1/groups/{id}/members</code> — add user <code>{"user_id": "..."}</code></li>
+<li><code>DELETE /api/v1/groups/{id}/members/{user_id}</code> — remove user</li>
+</ul>
+<h3 id="per-workspace-role-groups">Per-workspace role groups<a class="headerlink" href="#per-workspace-role-groups" title="Permanent link">&para;</a></h3>
+<p>Every workspace also seeds four <strong>role groups</strong> — <code>owners-&lt;workspace_id&gt;</code>,
+<code>coders-&lt;workspace_id&gt;</code>, <code>collaborators-&lt;workspace_id&gt;</code>, and
+<code>spectators-&lt;workspace_id&gt;</code> — that carry its sharing roles. They live in
+the same <code>groups</code> table but are marked with <code>source = "workspace-role"</code>
+(rows for human-managed groups carry <code>source = "manual"</code>). Both list
+endpoints accept a <code>source</code> query filter, so group pickers can ask for
+<code>?source=manual</code> and hide the machine-generated names; per-workspace
+roles remain available via <code>GET /api/v1/workspaces/{id}/roles</code>.</p>
+<p>A role group is grantable <strong>only on its own workspace's resource</strong>:
+APIs that would grant workspace B's role group on workspace A (or on any
+other resource) are rejected with a 400 error.</p>
+<h2 id="workspace-permissions">Workspace Permissions<a class="headerlink" href="#workspace-permissions" title="Permanent link">&para;</a></h2>
+<p>When a workspace is created, the owner gets a <code>(Allow, user:{id}, *)</code> ACE on <code>/workspaces/{id}</code>. This grants full access — every permission, including <code>share-advanced</code> and <code>transfer-workspace</code>.</p>
+<p><strong>Sharing</strong>: the owner can share a workspace with users or groups. The simple sharing UI (Sharing tab) assigns the four role buckets — <code>owners</code>, <code>collaborators</code>, <code>coders</code>, <code>spectators</code> — which seed per-workspace role groups carrying: <strong>coders</strong> <code>monitor-workspace</code>, <code>join-workspace</code>, <code>terminal</code>, the lifecycle trio <code>start-workspace</code>/<code>stop-workspace</code>/<code>restart-workspace</code>, <code>egress-consent</code>, <code>code-in-isolation</code>, <code>exec-and-sync</code>, <code>spectate-on-shared-terminals</code>, <code>files-view</code>, <code>files-download</code>, <code>files-write</code>; <strong>collaborators</strong> the same plus <code>code-in-shared-terminals</code> and <code>share-terminals</code>; <strong>spectators</strong> <code>monitor-workspace</code>, <code>join-workspace</code>, <code>terminal</code> (the Terminal tab — it hosts the shared terminals they watch), and <code>spectate-on-shared-terminals</code>
+(watch-only — no lifecycle control; the connect gate is split off <code>terminal</code> into <code>join-workspace</code>). For finer control, the Advanced ACL editor lets you add/remove/reorder individual ACEs — gated on <code>share-advanced</code>, a separate power from <code>share-workspace</code>: rewriting the raw ACE list can grant <code>*</code> and add Deny entries, so a member who can invite collaborators does not thereby gain raw ACL editing or role assignment. Role-group writes (<code>POST</code>/<code>DELETE</code>/<code>PATCH /workspaces/{id}/roles*</code>) require <code>share-workspace</code> <strong>and</strong> <code>share-advanced</code> — the <code>owners-{id}</code> group holds the <code>*</code> wildcard, so assigning roles is an ACL change in effect. Owners hold <code>share-advanced</code> through their <code>*</code> wildcard ACE.</p>
+<p><strong>Permissions checked on workspace resources</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Permission</th>
+<th>Controls</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>view</code></td>
+<td>Can see the workspace exists</td>
+</tr>
+<tr>
+<td><code>monitor-workspace</code></td>
+<td>Can observe health/status: <code>GET /workspaces/{id}/status</code> and the <code>container_status</code> / <code>service_health</code> WebSocket frames</td>
+</tr>
+<tr>
+<td><code>join-workspace</code></td>
+<td>Can open the workspace at all: the <code>workspace_connect</code> gate — without it the page never renders</td>
+</tr>
+<tr>
+<td><code>start-workspace</code></td>
+<td>Can start a stopped workspace container</td>
+</tr>
+<tr>
+<td><code>stop-workspace</code></td>
+<td>Can stop a running workspace container</td>
+</tr>
+<tr>
+<td><code>restart-workspace</code></td>
+<td>Can restart the container (HTTP route and the WS <code>restart_container</code> command)</td>
+</tr>
+<tr>
+<td><code>terminal</code></td>
+<td>Terminal tab visibility — without it the workspace renders with no Terminal tab (e.g. a files-only member); own terminals inside the tab still need <code>code-in-isolation</code></td>
+</tr>
+<tr>
+<td><code>code-in-isolation</code></td>
+<td>Own terminal windows (the "+" tab in the web terminal and new <code>klangk shell</code> windows) — spectators get none</td>
+</tr>
+<tr>
+<td><code>code-in-shared-terminals</code></td>
+<td>Can type into a shared terminal someone else started</td>
+</tr>
+<tr>
+<td><code>spectate-on-shared-terminals</code></td>
+<td>Can watch (read-only) shared terminals</td>
+</tr>
+<tr>
+<td><code>share-terminals</code></td>
+<td>Can share one of their terminals with workspace members (the <code>klangk terminal share</code> command / web UI toggle)</td>
+</tr>
+<tr>
+<td><code>egress-consent</code></td>
+<td>Can decide held egress requests in interactive mode: register a decider (web Network tab, consent banner, <code>klangk consent-decide</code>), send verdicts, revoke, and pause prompting — owners/coders/collaborators by default, spectators never</td>
+</tr>
+<tr>
+<td><code>files-view</code></td>
+<td>Can browse file listings (metadata) and gets the Files tab; reading file bodies additionally needs <code>files-download</code></td>
+</tr>
+<tr>
+<td><code>files-download</code></td>
+<td>Can fetch file bytes: <code>/files/download</code> (raw stream/tar) and <code>/files/content</code> (text reader) — needs <code>files-view</code> too</td>
+</tr>
+<tr>
+<td><code>files-write</code></td>
+<td>Can mutate files: upload, rename, delete (needs <code>files-view</code> too)</td>
+</tr>
+<tr>
+<td><code>exec-and-sync</code></td>
+<td>Can run one-shot commands (<code>klangk exec</code>) and sync (<code>klangk sync</code>) against the workspace</td>
+</tr>
+<tr>
+<td><code>edit-workspace</code></td>
+<td>Can change workspace settings (name, image, command, mounts, env)</td>
+</tr>
+<tr>
+<td><code>share-workspace</code></td>
+<td>Can manage who has access (Sharing tab: member and group shares)</td>
+</tr>
+<tr>
+<td><code>share-advanced</code></td>
+<td>Can rewrite the raw ACE list (<code>GET</code>/<code>PUT /workspaces/{id}/acl</code>, the Advanced ACL editor) and assign roles; owners hold it via <code>*</code></td>
+</tr>
+<tr>
+<td><code>delete-workspace</code></td>
+<td>Can delete the workspace</td>
+</tr>
+<tr>
+<td><code>export-workspace</code></td>
+<td>Can export the workspace as a <code>.tar.gz</code> archive</td>
+</tr>
+<tr>
+<td><code>duplicate-workspace</code></td>
+<td>Can duplicate the workspace</td>
+</tr>
+<tr>
+<td><code>transfer-workspace</code></td>
+<td>Can transfer ownership to another user</td>
+</tr>
+<tr>
+<td><code>*</code></td>
+<td>All of the above</td>
+</tr>
+</tbody>
+</table>
+<p>Withholding <code>files-download</code> hides every download affordance and returns
+403 from both byte-moving endpoints: <code>/files/download</code> (raw stream or
+tar.gz) and <code>/files/content</code> (the viewer's text reader). The file
+list itself keeps working — names, sizes, and mtimes stay visible — but
+no file body can be read: text renderers show a permission-denied state
+and binary renderers (image, PDF, video, spreadsheet), which fetch raw
+bytes through the download endpoint, cannot render.</p>
+<p>Withholding <code>files-write</code> disables every mutating route — upload
+(<code>/files/upload</code>), rename (<code>/files/rename</code>), and delete (<code>DELETE
+/files</code>) — so a <code>files-view</code>-only member can browse listings but not read
+file bodies or modify the workspace. In the file viewer the matching affordances disappear: the
+drag-and-drop zone and upload hints are hidden, Rename/Delete drop out of
+the context menu,
+and text-editor renderers go read-only (their Save uploads through that
+endpoint).</p>
+<p>The download gate covers every files endpoint that moves file bytes
+out of the workspace — byte-perfect, unbounded export (any file size,
+whole directories as tar.gz) via <code>/files/download</code>, and lossy text
+reads (up to 1 MB per file) via <code>/files/content</code>. A member with <code>files-view</code>
+but not
+<code>files-download</code> can browse listings and metadata only. To grant viewing
+without bulk export there is no longer a middle setting: grant both
+<code>files</code> + <code>files-download</code> (viewer fully works) or withhold <code>files</code>
+(browsing itself is denied — the web UI's Files tab does not mount at all).</p>
+<p><code>export-workspace</code> is a workspace permission checked on <code>/workspaces/{id}</code>: the owner's wildcard ACE and the seeded <code>owners-&lt;id&gt;</code> role group both cover it, so owners can export their own workspaces without any extra grant, and a <strong>Deny</strong> <code>export-workspace</code> ACE for <strong>Everyone</strong> on the workspace resource (positioned ahead of the wildcards) revokes it per workspace. Admins do <strong>not</strong> get export implicitly — they must be an owner or hold an explicit grant. See <a href="../../features/export-import/#export">Export &amp; Import</a>.</p>
+<h3 id="first-class-resource-permissions">First-class resource permissions<a class="headerlink" href="#first-class-resource-permissions" title="Permanent link">&para;</a></h3>
+<p>Every governed surface is a first-class top-level resource;
+each carries a flat <code>manage-*</code> permission covering its actions. The
+one split: <code>/volumes</code> also has a read-side <code>view-volumes</code> —
+the listing gate of its admin tab, separate from <code>manage-volumes</code> so
+a read-only volumes auditor can be delegated:</p>
+<table>
+<thead>
+<tr>
+<th>Permission</th>
+<th>Where it is checked</th>
+<th>Controls</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>create-workspace</code></td>
+<td><code>/workspaces</code></td>
+<td>Create/import workspaces</td>
+</tr>
+<tr>
+<td><code>manage-users</code></td>
+<td><code>/users</code></td>
+<td>The whole Users surface: list users and their workspaces, create, edit, unlock, delete, read active login sessions. <code>GET /users/search</code> stays authenticated (pickers)</td>
+</tr>
+<tr>
+<td><code>manage-groups</code></td>
+<td><code>/groups</code></td>
+<td>The whole Groups surface: create, edit, delete, manage members. <code>GET /groups</code> stays authenticated (pickers)</td>
+</tr>
+<tr>
+<td><code>manage-invitations</code></td>
+<td><code>/invitations</code></td>
+<td>List, send, resend, revoke invitations</td>
+</tr>
+<tr>
+<td><code>manage-server-schedule</code></td>
+<td><code>/server</code></td>
+<td>Server stop/recycle schedules: list, create, cancel</td>
+</tr>
+<tr>
+<td><code>manage-events</code></td>
+<td><code>/events</code></td>
+<td>Read every audit stream: the time-correlated merge of all three tables (<code>GET /events</code>, #3251), container start/stop (<code>GET /events/containers</code>) and the identity/privilege stream (<code>GET /events/audit</code>, #3205) — read-only audit</td>
+</tr>
+<tr>
+<td><code>manage-acls</code></td>
+<td><code>/acl</code></td>
+<td>The Access Control browser: read and rewrite ACL entries on <strong>any</strong> resource via <code>GET/PUT /acl/*</code> — root-equivalent, see below</td>
+</tr>
+<tr>
+<td><code>view-volumes</code></td>
+<td><code>/volumes</code></td>
+<td>The volume inventory listing (<code>GET /volumes</code>) — the admin Volumes tab's gate; Allow group:admins by default</td>
+</tr>
+<tr>
+<td><code>manage-volumes</code></td>
+<td><code>/volumes</code></td>
+<td>Create/delete instance-managed volumes (<code>POST /volumes</code>, <code>DELETE /volumes/{name}</code>) — Allow group:admins by default; the CLI's volume commands use it too</td>
+</tr>
+<tr>
+<td><code>view-images</code></td>
+<td><code>/images</code></td>
+<td>The image listing the create/edit UIs read (Allow Authenticated by default — the deliberate, ACL-editor-modifiable exception)</td>
+</tr>
+<tr>
+<td><code>search-users</code></td>
+<td><code>/users</code></td>
+<td>The member-picker type-ahead (<code>GET /users/search</code>) — Allow Authenticated by default</td>
+</tr>
+<tr>
+<td><code>admin</code></td>
+<td><code>/admin</code></td>
+<td>The instance-administrator <strong>marker</strong> only (<code>*</code> row); nothing checks it anywhere anymore (the transfer gate now checks <code>transfer-workspace</code>)</td>
+</tr>
+</tbody>
+</table>
+<p><code>PUT /acl/resource</code> additionally requires <code>share-advanced</code> on the target
+when that target is an individual workspace (<code>/workspaces/{id}</code>) — the
+same resource-level gate as <code>PUT /workspaces/{id}/acl</code>, so a raw ACE
+rewrite of a workspace always carries the workspace's own grant.</p>
+<p><strong><code>manage-acls</code> is root-equivalent.</strong> A holder can rewrite ACLs on any
+resource — including <code>/</code> and the other first-class trees — so granting
+it to a principal is granting instance-wide control, exactly like
+adding them to the admins group. Grant it only to administrators.
+(<code>share-advanced</code> on a workspace resource is the workspace-level gate;
+<code>manage-acls</code> is the global editor — two different names, two
+different resources.)</p>
+<p>Delegation is per-resource (the same recipe as the Events auditor): the admin group holds each <code>manage-*</code> via its seeded
+Allow row.
+To delegate a whole surface to a non-admin, add an <code>Allow</code> ACE for the
+permission on that resource (Admin → Access Control) — it wins the ACL
+walk ahead of the resource's Deny-everyone row. A delegated user then
+gets the app-bar admin icon and the admin section showing exactly the
+tabs their ACEs grant (e.g. <code>manage-users</code> on <code>/users</code>: the Users tab,
+all of it). <code>GET /groups</code> and <code>GET /users/search</code> remain
+authenticated-user reads (pickers, share dialogs).</p>
+<p>Upgrading from an older deployment: migration 0021 inserts the six
+Allow/Deny pairs for the admins group. If you had pre-staged rows on
+one of those resources, the migration leaves it untouched. Migration
+0029 appends the #3137 members <code>create-workspace</code> Allow after any
+existing <code>/workspaces</code> rows — a <strong>stock deployment (admins Allow
+only) flips to self-service on upgrade</strong>; a deployment with a staged
+Deny keeps first-match-wins priority, so its admin-only posture
+survives (the appended row is inert).</p>
+<h2 id="websocket-gates">WebSocket gates<a class="headerlink" href="#websocket-gates" title="Permanent link">&para;</a></h2>
+<p>The WebSocket layer enforces its own gates, separate from the REST
+endpoints' <code>has_permission</code> dependencies. Full matrix — every WS
+trigger, the permission it checks, the resource, who holds it by
+default (the seeded role groups; owners hold <code>*</code>), and when it is
+re-checked:</p>
+<table>
+<thead>
+<tr>
+<th>WS trigger</th>
+<th>Permission</th>
+<th>Resource</th>
+<th>Default holders (besides owner)</th>
+<th>Re-checked</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>workspace_connect</code> handshake (open workspace)</td>
+<td><code>join-workspace</code></td>
+<td><code>/workspaces/{id}</code></td>
+<td>coders, collaborators, spectators</td>
+<td>once per connect; revocation answers the next connect with machine-readable <code>forbidden</code></td>
+</tr>
+<tr>
+<td><code>restart_container</code> message</td>
+<td><code>restart-workspace</code></td>
+<td><code>/workspaces/{id}</code></td>
+<td>coders, collaborators</td>
+<td>live, per message</td>
+</tr>
+<tr>
+<td>exec channel (<code>klangk exec</code> / sync)</td>
+<td><code>exec-and-sync</code></td>
+<td><code>/workspaces/{id}</code></td>
+<td>coders, collaborators</td>
+<td>live per <code>exec_start</code>; input into an in-flight session is not re-checked (one-shot channel)</td>
+</tr>
+<tr>
+<td>own terminal creation</td>
+<td><code>code-in-isolation</code></td>
+<td><code>/workspaces/{id}</code></td>
+<td>coders, collaborators</td>
+<td>live, per message</td>
+</tr>
+<tr>
+<td>own-window management (<code>terminal_new/select/close/rename/list_windows</code>)</td>
+<td><code>code-in-isolation</code></td>
+<td><code>/workspaces/{id}</code></td>
+<td>coders, collaborators</td>
+<td>live, per message; plain code-less refusal for join-only members and spectators</td>
+</tr>
+<tr>
+<td>ssh-agent relay (<code>ssh_agent_start</code>)</td>
+<td><code>code-in-isolation</code> <strong>or</strong> <code>exec-and-sync</code></td>
+<td><code>/workspaces/{id}</code></td>
+<td>coders, collaborators</td>
+<td>live, per message; both session kinds wire <code>SSH_AUTH_SOCK</code> to the relay socket</td>
+</tr>
+<tr>
+<td><code>share_window</code> (share an own terminal)</td>
+<td><code>share-terminals</code></td>
+<td><code>/workspaces/{id}</code></td>
+<td>collaborators</td>
+<td>live, per message; unsharing needs no permission</td>
+</tr>
+<tr>
+<td><code>join_shared_terminal</code> / <code>list_shared_terminals</code></td>
+<td><code>spectate-on-shared-terminals</code></td>
+<td><code>/workspaces/{id}</code></td>
+<td>coders, collaborators, spectators</td>
+<td>live, per message</td>
+</tr>
+<tr>
+<td>typing into a shared terminal</td>
+<td><code>code-in-shared-terminals</code> <strong>or</strong> <code>share-terminals</code></td>
+<td><code>/workspaces/{id}</code></td>
+<td>collaborators</td>
+<td>once at join — frozen into the session's read-only flag, enforced per keystroke until detach/rejoin</td>
+</tr>
+<tr>
+<td>creating/targeting/closing shared terminals (incl. one's own)</td>
+<td><code>share-terminals</code></td>
+<td><code>/workspaces/{id}</code></td>
+<td>collaborators</td>
+<td>live, per message</td>
+</tr>
+<tr>
+<td>service-health fan-out (per transition)</td>
+<td><code>monitor-workspace</code></td>
+<td><code>/workspaces/{id}</code></td>
+<td>coders, collaborators, spectators</td>
+<td>per fan-out (revocation stops delivery on the next frame)</td>
+</tr>
+<tr>
+<td>service-health snapshot at registration</td>
+<td><code>monitor-workspace</code></td>
+<td><code>/workspaces/{id}</code></td>
+<td>coders, collaborators, spectators</td>
+<td>per snapshot</td>
+</tr>
+<tr>
+<td>consent-decider WS, workspace-scoped</td>
+<td><code>egress-consent</code></td>
+<td><code>/workspaces/{id}</code></td>
+<td>coders, collaborators</td>
+<td>once at registration (handshake)</td>
+</tr>
+</tbody>
+</table>
+<p>There is no deploy-wide consent-decider handshake (decision A):
+consent authority is strictly per-workspace (<code>egress-consent</code> on
+<code>/workspaces/{id}</code>), and a handshake without a <code>workspace</code> param is
+refused. The deploy-wide flavor was an instance-administrator override
+standing in for absent workspace members — an operator escape hatch, not
+a consent concept — and it was gated by <code>manage-server-schedule</code>, which
+has nothing to do with consent. Removed rather than renamed: with no
+admin backstop, a workspace is interactive exactly while one of its own
+members (a client of the <code>klangk shell</code> popup decider or the web
+workspace page, both of which register whenever the member holds
+<code>egress-consent</code>) is connected; with none, it reverts to the static
+allow-list (the documented fallback).</p>
+<p>Audit conclusions: all 34 permission names in the vocabulary
+are enforced somewhere (no dead names); every WS gate's permission
+matches a seeded grant path. Revocation timing differs per row: the
+"live, per message" rows re-resolve principals on every message, so
+mid-session revocation bites at the next message (revoking
+<code>exec-and-sync</code> mid-session is e2e-tested); the once-per-
+handshake rows (connect, deciders) take effect on the next
+connection; the shared-terminal write gate takes effect on the next
+join. The UI-side counterpart: affordances for WS-gated actions
+(share/spectate buttons, the restart button) follow the same
+permissions via the workspace's <code>my-permissions</code> set.</p>
+<h2 id="checking-your-permissions">Checking Your Permissions<a class="headerlink" href="#checking-your-permissions" title="Permanent link">&para;</a></h2>
+<p><strong>Web UI</strong>: the UI automatically shows/hides elements based on your permissions (admin button, workspace tabs, create button, etc.).</p>
+<p><strong>API</strong>: <code>GET /api/v1/my-permissions</code> returns your effective permissions on all static resources, plus an <code>is_admin</code> flag (true for members of the <code>admins</code> group). Add <code>?resource=/workspaces/{id}</code> to check a specific resource.</p>
+<p><strong>CLI</strong>: <code>klangk ls --shared</code> shows workspaces shared with you.</p>
+<h2 id="troubleshooting-why-cant-i-access-this-workspace">Troubleshooting: "Why can't I access this workspace?"<a class="headerlink" href="#troubleshooting-why-cant-i-access-this-workspace" title="Permanent link">&para;</a></h2>
+<ol>
+<li><strong>Check your permissions</strong>: <code>GET /api/v1/my-permissions?resource=/workspaces/{id}</code> — does it include the permission you need?</li>
+<li><strong>Check the workspace ACL</strong>: in the Sharing tab, expand "Advanced: Access Control" to see the ACE list.</li>
+<li><strong>Check group membership</strong>: are you in the right group? Admin &gt; Groups tab shows group members.</li>
+<li><strong>Check the ACL walk</strong>: permissions are inherited from parent resources. An ACE on <code>/</code> applies to everything below it unless overridden. A <code>Deny</code> ACE at a higher level blocks access even if a lower-level <code>Allow</code> exists, if the <code>Deny</code> has a lower position number.</li>
+<li><strong>Position matters</strong>: ACEs are checked in position order (lowest first). If a <code>Deny</code> on position 0 matches before an <code>Allow</code> on position 1, access is denied. Use the ACL editor to reorder entries.</li>
+</ol>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-circle-arrow-up" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="m16 12-4-4-4 4M12 16V8"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../audit-integrity/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Audit Record Integrity">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7M19 12H5"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                Audit Record Integrity
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../api-endpoints/" class="md-footer__link md-footer__link--next" aria-label="Next: API Endpoints">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                API Endpoints
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-right" viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2026 Chris McDonough
+    </div>
+  
+  
+    Made with
+    <a href="https://zensical.org/" target="_blank" rel="noopener">
+      Zensical
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["content.code.copy","content.code.select","navigation.footer","navigation.indexes","navigation.instant","navigation.instant.prefetch","navigation.path","navigation.sections","navigation.top","navigation.tracking","search.highlight"],"search":"../../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"default":"latest","provider":"mike"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.6970bfe9.min.js"></script>
+      
+    
+  </body>
+</html>
