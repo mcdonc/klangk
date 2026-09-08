@@ -655,7 +655,16 @@ operators or integrators to act when upgrading.
   backend directly — including anonymously through the browser
   listener's `/llm-proxy/` pass-through. User login tokens are rejected;
   the proxy is usable only from inside workspace containers.
-- **Image builds verify third-party inputs (#2063).** Base images (workspace base, python host, Alpine sidecar, Debian FIPS builders + nix-seed sandbox) are now pulled by immutable `@sha256:` digest, with the base-image workflow's auto-PR pinning the digest. The uv and process-compose release tarballs are SHA-256-verified per architecture before extraction (no more `curl | sh` / `curl | tar` pipes), the Pi agent npm tarball is fetched directly and SHA-512-verified, and the NodeSource / GitHub CLI / Caddy apt repo keys are hash-verified before entering a keyring (Caddy's sources list is written inline). Pins live in the Dockerfiles; rotation procedures and known residuals are documented in [Building Images](development/building-images.md).
+- **Image builds verify third-party inputs (#2063).** Base images (workspace
+  base, python host, Alpine sidecar, Debian FIPS builders + nix-seed sandbox)
+  are now pulled by immutable `@sha256:` digest, with the base-image workflow's
+  auto-PR pinning the digest. The uv and process-compose release tarballs are
+  SHA-256-verified per architecture before extraction (no more `curl | sh` /
+  `curl | tar` pipes), the Pi agent npm tarball is fetched directly and
+  SHA-512-verified, and the NodeSource / GitHub CLI / Caddy apt repo keys are
+  hash-verified before entering a keyring (Caddy's sources list is written
+  inline). Pins live in the Dockerfiles; rotation procedures and known residuals
+  are documented in [Building Images](development/building-images.md).
 
 - **Browser-delegate requests are bound to the caller's workspace
   (#1715).** `/api/v1/browser-delegate` and `/api/v1/browser-delegate/stream`
@@ -1087,8 +1096,9 @@ sync` report a clear permission-denied error.
   [Environment Variables](reference/environment.md).
 - **`KLANGKD_PASSWORD_MIN_CHANGED` (#3173).** Minimum number of
   characters (edit distance) a self-service password change must alter
-  from the current password. Enforced on `POST /auth/change-password`; forgot-password resets and
-  admin-set passwords are exempt (no old plaintext is presented).
+  from the current password. Enforced on `POST /auth/change-password`;
+  forgot-password resets and admin-set passwords are exempt (no old
+  plaintext is presented).
   `0` (the default) disables the gate. Reloadable on SIGHUP; advertised
   via `/api/v1/config` so the web and CLI change-password forms
   pre-check inline.
@@ -1326,9 +1336,10 @@ sync` report a clear permission-denied error.
   default) = unlimited. Reloadable on SIGHUP.
 - **`KLANGKD_CLASSIFICATION_BANNER` (#2768).** Deploy-wide default
   classification marking (free text) for the always-visible marking banner
-  (markings pinned at the top and the bottom of screens). Per-workspace override via the
-  `classification_banner` field on `POST`/`PUT /api/v1/workspaces`, `klangk
-create`/`edit --classification-banner`, and the create/edit UIs; the
+  (markings pinned at the top and the bottom of screens).
+  Per-workspace override via the `classification_banner` field on
+  `POST`/`PUT /api/v1/workspaces`, `klangk create`/`edit
+--classification-banner`, and the create/edit UIs; the
   workspace-created hook can set it like any other attribute. Markings are
   validated (one line, printable, ≤120 chars — control and invisible format
   characters rejected); a malformed `KLANGKD_CLASSIFICATION_BANNER` aborts
@@ -1977,9 +1988,10 @@ stop)`) and a `server: stop at 23:00 (in 1h 12m)` status line in the
     default 120s) and `KLANGKNETWORK_EGRESS_REJECT_TTL` (how long a deny keeps its
     REJECT tcp-reset rule so the connection fails fast, default 10s).
     `KLANGKNETWORK_EGRESS_HOLD_LIMIT` is removed (the DNS-path hold bound; the SYN
-    path is bounded by the iptables rate-limit). The proxy is asyncio + the sidecar image gains the `websockets`
-    dependency; the legacy fire-and-forget POST endpoint is superseded (recording
-    happens on the WS path, removal tracked in #2318).
+    path is bounded by the iptables rate-limit). The proxy is
+    asyncio + the sidecar image gains the `websockets` dependency;
+    the legacy fire-and-forget POST endpoint is superseded
+    (recording happens on the WS path, removal tracked in #2318).
 - **FQDN egress allow-list wildcards, per-domain port scoping, and learned-IP
   TTL (#2256).** `allowed_domains` now accepts `*.domain[:port]` wildcards
   (subdomains only — distinct from a bare `domain`, which also matches the
@@ -2328,16 +2340,18 @@ recycle`, and the Flutter notice reads "Server recycling…" — matching
 - **Restyled pause option buttons (#2502).** The Network tab's pause
   controls (Unpause / Pause 15m / 1h / 1d) now share one pill-shaped
   option-button look with equal sizing, pause/play icons, and tooltips;
-  the active choice keeps the amber fill. Purely presentational — keys and behavior unchanged.
+  the active choice keeps the amber fill. Purely presentational —
+  keys and behavior unchanged.
 - **Consent banner per-row duration menus (#2499).** Each row of the
   egress-consent banner has a split Allow/Deny button: a bare click sends
   the verdict with the default duration (until restart), and the attached
   ▾ menu sends it with any other duration (just once, 5 minutes, …,
   forever) in one step. The duration is chosen with the click, never armed
   beforehand, and no longer takes up a button row of its own.
-- **`KLANGKD_IDLE_TIMEOUT_SECONDS` default 30m → 60m (#2480).** The workspace container idle timeout now defaults to 3600s (was 1800s). Existing
-  deployments get a longer idle window on upgrade unless the env var is already
-  set; set `KLANGKD_IDLE_TIMEOUT_SECONDS=1800` to keep the old 30-minute default.
+- **`KLANGKD_IDLE_TIMEOUT_SECONDS` default 30m → 60m (#2480).** The
+  workspace container idle timeout now defaults to 3600s (was 1800s).
+  Existing deployments get a longer idle window on upgrade unless the
+  env var is already set; set `KLANGKD_IDLE_TIMEOUT_SECONDS=1800` to keep the old 30-minute default.
   The auto-computed idle-check interval (`timeout/3`, clamped 10–60s) follows.
 
 - **`klangk sandbox` drops to interactive egress after install, where safe (#2404).**
@@ -2375,8 +2389,9 @@ recycle`, and the Flutter notice reads "Server recycling…" — matching
 - **Revoking a `forever` verdict retracts its durable list entry (#2370,
   #2339).** Revoking a `forever` allow/deny now removes the host from
   `allowed_domains`/`rejected_domains` (not just the in-memory sidecar rule),
-  and the sidecar clears its in-session `_SESSION_HOST_ALLOWS`/`_VERDICT_CACHE` for
-  the host -- so the verdict stops taking effect immediately and no longer
+  and the sidecar clears its in-session
+  `_SESSION_HOST_ALLOWS`/`_VERDICT_CACHE` for the host -- so the verdict
+  stops taking effect immediately and no longer
   re-applies on the next sidecar restart. The retract is best-effort (failures
   logged + swallowed); the verdict row is marked revoked regardless. A
   statically-configured list entry (set via the API, not a verdict) is only
@@ -3373,20 +3388,22 @@ send` rejects a malformed address locally the same way.
   default worker group, which cancelled the just-started status-WS and
   token-refresh loops on every startup — the TUI received no live
   events at all (reachability signals, workspace status changes, and
-  the host-shutdown countdown). It now runs in its own worker group.- **TUI status line was invisible on the workspaces screen (#2661).**
   the host-shutdown countdown). It now runs in its own worker group.
+
 - **TUI countdown was truncated off the right edge (#2661).** The
   scheduled stop/recycle countdown is appended to the status line as
   its last segment — past `server`/`user`/`last login` (~76 columns),
   it fell off the right edge of a typical terminal and was invisible.
   The live segment (countdown, host notices) now renders first; the
   static segments follow it.
-- **TUI status line was invisible on the workspaces screen (#2661).** The status bar (server, user, live state) has been painted underneath
+
+- **TUI status line was invisible on the workspaces screen (#2661).**
+  The status bar (server, user, live state) has been painted underneath
   the keybind footer since the screens refactor (#1875) — two
   bottom-docked Textual widgets fully overlap, and the later-mounted
   footer wins the row. It now stacks in its own docked container above
   the footer, which also makes the scheduled-host-action countdown
-  (`host: shutdown at 23:00 (in 1h 12m)`) visible.(fix(tui): stack the status bar above the keybind footer)
+  (`host: shutdown at 23:00 (in 1h 12m)`) visible.
 
 - **Restart button with a still-running container (#2676).** Pressing
   Restart after an unclean host shutdown/restart no longer fails with a
@@ -3395,7 +3412,9 @@ send` rejects a malformed address locally the same way.
   live container is reused, like a reconnect does), a create-path start
   whose lingering network sidecar is pinned by a dependent removes the
   dependent first, and any remaining start failure is reported as an
-  error frame with a clear message while the session stays connected.- **Workspace Restart button after a server restart (#2674).** Clicking
+  error frame with a clear message while the session stays connected.
+
+- **Workspace Restart button after a server restart (#2674).** Clicking
   Restart while the browser sat on the container-stopped overlay during a
   host shutdown/restart used to spin forever: the WebSocket had given up
   auto-reconnecting while the server was down, so the restart command was
@@ -3946,7 +3965,7 @@ users(id)`, so the decider handler passing the decider's email violated the
 
 - **Sharing controls name themselves for screen readers (#3238).** The
   role buckets' add-user buttons ("Add to collaborators", …), each
-  member chip's delete affordance ("Remove user@example.com"), and every
+  member chip's delete affordance ("Remove `user@example.com`"), and every
   ACL entry row's remove icon now expose semantic labels, and the
   Add-ACE dialog's user/group pickers carry a placeholder ("Select
   user") while empty — assistive tech announces every sharing control
@@ -3980,3 +3999,10 @@ users(id)`, so the decider handler passing the decider's email violated the
   notification past the frame whenever one is in its build/layout/paint
   phase; every other phase still notifies immediately. Found by the new
   fmtk workspace-lifecycle suite.
+
+- **FIPS host image builds again under `cryptography` 50 (#3350).** The
+  self-check `RUN` in the FIPS host Dockerfile read the OpenSSL binding
+  through a private module attribute that `cryptography` 50 no longer
+  exposes, which aborted the image build and stopped `klangk-host` and
+  `klangk-host-fips` from publishing. The probe now imports the backend
+  the same way the runtime verification in `klangk.fips` does.

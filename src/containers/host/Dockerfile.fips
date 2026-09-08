@@ -190,10 +190,9 @@ RUN openssl list -providers | grep -q 'OpenSSL FIPS Provider' && \
       > /dev/null 2>&1 && \
     python3 -c \
       "import hashlib; hashlib.pbkdf2_hmac('sha512', b'x', b'y', 10)" && \
-    python3 -c "import ssl; \
-import cryptography.hazmat.backends.openssl.backend as m; \
-assert m.backend.openssl_version_text() == ssl.OPENSSL_VERSION, \
-(m.backend.openssl_version_text(), ssl.OPENSSL_VERSION)" && \
+    python3 -c "import ssl; from cryptography.hazmat.backends.openssl.backend import backend; \
+assert backend.openssl_version_text() == ssl.OPENSSL_VERSION, \
+(backend.openssl_version_text(), ssl.OPENSSL_VERSION)" && \
     ! python3 -c "import cryptography.hazmat.primitives.hashes as h; \
 d = h.Hash(h.MD5()); d.update(b'x'); d.finalize()" \
       > /dev/null 2>&1 && \
