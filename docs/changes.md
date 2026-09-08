@@ -840,6 +840,11 @@ sync` report a clear permission-denied error.
 
 ### Added
 
+- **PyPI project links (#3369).** The `klangk` wheel now carries
+  `project.urls` — Homepage, Documentation, Repository, Issues, and
+  Changelog — so the PyPI project and release pages show the sidebar
+  links. Changelog points at the docs-rendered changelog page.
+
 - **`host` and `instance` fields on JSON log records (#3330).** Every
   JSON log line (console in `KLANGKD_LOG_FORMAT=json` and the
   `KLANGKD_LOG_FILE` sink) now carries `host` (the emitting machine's
