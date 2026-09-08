@@ -184,21 +184,35 @@ WORKDIR /home/klangk
 #   7. end-to-end JWT: jose HS256 sign+verify works under the active
 #      provider (HMAC-SHA256 is approved);
 #   8. env-stripped activation (stock config path, no environment).
-RUN openssl list -providers | grep -q 'OpenSSL FIPS Provider' && \
-    ! echo hello | openssl md5 > /dev/null 2>&1 && \
-    ! python3 -c "import _hashlib; _hashlib.openssl_md5(b'x')" \
-      > /dev/null 2>&1 && \
+#
+#   Each check echoes a numbered marker BEFORE it runs (#3350): the
+#   two silent CI failures of 2026-09-08 died with no output because
+#   the expected-failure links redirect everything to /dev/null —
+#   the last marker printed names the failing check. Expected-failure
+#   links keep stderr quiet (refusal noise) but let stdout through,
+#   so an unexpectedly succeeding MD5 prints its digest as evidence.
+RUN echo 'fips check 1/8: FIPS provider active' && \
+    openssl list -providers | grep -q 'OpenSSL FIPS Provider' && \
+    echo 'fips check 2/8: CLI md5 refused' && \
+    ! echo hello | openssl md5 2>/dev/null && \
+    echo 'fips check 3/8: _hashlib md5 refused' && \
+    ! python3 -c "import _hashlib; _hashlib.openssl_md5(b'x')" 2>/dev/null && \
+    echo 'fips check 4/8: pbkdf2 sha512 works' && \
     python3 -c \
       "import hashlib; hashlib.pbkdf2_hmac('sha512', b'x', b'y', 10)" && \
+    echo 'fips check 5/8: cryptography same libcrypto' && \
     python3 -c "import ssl; from cryptography.hazmat.backends.openssl.backend import backend; \
 assert backend.openssl_version_text() == ssl.OPENSSL_VERSION, \
 (backend.openssl_version_text(), ssl.OPENSSL_VERSION)" && \
+    echo 'fips check 6/8: cryptography md5 refused' && \
     ! python3 -c "import cryptography.hazmat.primitives.hashes as h; \
-d = h.Hash(h.MD5()); d.update(b'x'); d.finalize()" \
-      > /dev/null 2>&1 && \
+d = h.Hash(h.MD5()); d.update(b'x'); d.finalize()" 2>/dev/null && \
+    echo 'fips check 7/8: jose HS256 roundtrip' && \
     python3 -c "import jose.jwt as jwt; key = 'f' * 32; \
 token = jwt.encode({'probe': 1}, key, algorithm='HS256'); \
 assert jwt.decode(token, key, algorithms=['HS256'])['probe'] == 1" && \
+    echo 'fips check 8/8: env-stripped activation' && \
     env -i /usr/bin/openssl list -providers \
       | grep -q 'OpenSSL FIPS Provider' && \
-    ! env -i /bin/sh -c 'echo hello | openssl md5' > /dev/null 2>&1
+    ! env -i /bin/sh -c 'echo hello | openssl md5' 2>/dev/null && \
+    echo 'fips probe: all 8 checks passed'
