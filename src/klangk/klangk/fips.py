@@ -510,20 +510,6 @@ def _enable_fips_fetch_properties() -> tuple[bool, str]:
     return True, "ambient fetches require fips=yes"
 
 
-def _pinned_jose_linkage() -> tuple[bool, str]:
-    """Pin fetches to fips=yes, then verify jose's crypto linkage.
-
-    Order matters (#3350): without the pin, ``cryptography``'s
-    default-provider load makes the MD5-refusal half of the linkage
-    check observe the unvalidated provider and fail on a healthy
-    image.
-    """
-    pin_ok, pin_detail = _enable_fips_fetch_properties()
-    if not pin_ok:
-        return False, pin_detail
-    return verify_jose_crypto_linkage()
-
-
 def verify_jose_crypto_linkage() -> tuple[bool, str]:
     """Prove jose's HS256 route stays inside the validated OpenSSL.
 
@@ -604,25 +590,41 @@ def verify_process_fips(settings) -> None:
     backend = an unprovisioned crypto route) and aborts
     unconditionally; the cryptography↔libcrypto linkage is
     deployment-dependent and follows the same warn/abort posture as
-    the process probe, and runs after it — ambient fetches are pinned
-    to ``fips=yes`` in between (#3350), which is only safe once the
-    fips provider is verified active.
+    the process probe. Ambient fetches are pinned to ``fips=yes``
+    before any of it (#3350) — the pin's no-fips-provider guard keeps
+    it a no-op where it would not hold.
     """
     if not getattr(settings, "fips_mode", False):
         return
-    # Verify the JWT signing path before anything else — this is a
-    # code-level invariant (wrong backend = wrong crypto boundary),
-    # not a deployment-dependent OpenSSL posture, so it aborts
-    # unconditionally (#3175 Gap 2).
+    # Pin ambient fetches FIRST (#3350): importing cryptography (jose
+    # pulls it in below) loads OpenSSL's default provider, after which
+    # every property-less fetch — the _hashlib MD5 probe included — is
+    # served from it. The pin's internal guard makes this a no-op
+    # wherever the fips provider is not active, so pinning before the
+    # posture probes is safe on control hosts too.
+    pin_ok, pin_detail = _enable_fips_fetch_properties()
+    if pin_ok:
+        logger.info("FIPS fetch properties pinned: %s", pin_detail)
+    else:
+        logger.debug("FIPS fetch properties not pinned: %s", pin_detail)
+    _verify_jwt_route()
+
+
+def _verify_jwt_route() -> None:
+    """Verify the JWT signing route after the pin is in place.
+
+    Order (#3175, #3350): the jose backend binding is a code-level
+    invariant (wrong backend = wrong crypto boundary) and aborts
+    unconditionally; the process posture probe and the cryptography
+    linkage follow the warn-on-host / abort-in-container posture —
+    both must run with the fetch-property pin already set, because
+    the jose import below is what loads the default provider.
+    """
     jose_ok, jose_detail = verify_jose_backend()
     if jose_ok:
         logger.info("FIPS jose backend verified: %s", jose_detail)
     else:
         raise ConfigurationError(f"KLANGKD_FIPS_MODE: {jose_detail}")
-    # Posture before linkage (#3350): the fetch-property pin (and the
-    # linkage MD5 check behind it) is only safe to apply once the fips
-    # provider is verified active — pinning without it would fail every
-    # fetch in the process.
     version = ssl.OPENSSL_VERSION
     ok, detail = probe_process()
     if not ok:
@@ -633,7 +635,7 @@ def verify_process_fips(settings) -> None:
         version,
         detail,
     )
-    link_ok, link_detail = _pinned_jose_linkage()
+    link_ok, link_detail = verify_jose_crypto_linkage()
     if link_ok:
         logger.info("FIPS jose crypto linkage verified: %s", link_detail)
     else:
