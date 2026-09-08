@@ -124,6 +124,11 @@ trap cleanup EXIT INT TERM
 echo "=== starting klangkd from installed wheel ==="
 # Min env: password auth (so the login form is the rendered route), test
 # mode (skips the workspace-image presence check), no logfire, no banner.
+# The seeded password must clear the boot-time policy gate (#2581): the
+# daemon refuses to start when KLANGKD_DEFAULT_PASSWORD is shorter than
+# KLANGKD_MIN_PASSWORD_LENGTH (default 8) — "Admin123!" clears the length
+# minimum and all four character classes, same value the Playwright e2e
+# harness seeds (e2e-env.ts ADMIN_PASSWORD, #3341).
 # --config=none opts out of the config file (post-#1607 / #1645 first-run
 # generation) so the server runs from env + defaults alone.
 #
@@ -148,7 +153,7 @@ env -u KLANGKD_FRONTEND_DIR \
   KLANGKD_STATE_DIR="$STATE_DIR" \
   KLANGKD_AUTH_MODES=password \
   KLANGKD_DEFAULT_USER=admin@example.com \
-  KLANGKD_DEFAULT_PASSWORD=admin \
+  KLANGKD_DEFAULT_PASSWORD='Admin123!' \
   KLANGKD_JWT_SECRET=smoke-test-secret \
   KLANGKD_TEST_MODE=1 \
   LOGFIRE_TOKEN='' \
