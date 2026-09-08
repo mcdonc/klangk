@@ -728,8 +728,15 @@ def start_server(data_dir: str) -> tuple[subprocess.Popen, TeeReader, str]:
     return proc, tee, uds_path
 
 
-def wait_for_server(uds_path: str, timeout: float = 30) -> None:
-    """Poll /health until the server is up (over the UDS)."""
+def wait_for_server(uds_path: str, timeout: float = 120) -> None:
+    """Poll /health until the server is up (over the UDS).
+
+    The 120 s budget covers a cold CI runner: uvicorn boot (~8 s),
+    migrations + seeding (~3 s), then ``prewarm_podman()`` (its first
+    ``podman create`` alone can take ~20–30 s). Warm runs finish in
+    ~23 s; the old 30 s deadline failed whenever the runner booted
+    slower than that (#3368).
+    """
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
