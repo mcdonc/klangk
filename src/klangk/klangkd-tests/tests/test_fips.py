@@ -474,50 +474,51 @@ class TestVerifyProcessFips:
         assert any("refusing to start" in r.message for r in caplog.records)
         probe.assert_called_once()
 
-    def test_pin_failure_warns_on_control_host(self, caplog):
-        """Cannot pin fetch properties on the operator's host — posture
-        warning, linkage checks skipped (they would observe the
-        default-provider pollution and misreport a healthy host)."""
-        with (
-            self._jose_ok(),
-            patch.object(
-                fips,
-                "_enable_fips_fetch_properties",
-                return_value=(False, "cannot pin fips fetch properties"),
-            ),
-            patch.object(fips, "probe_process", return_value=(True, "x")),
-            patch.object(fips, "running_in_container", return_value=False),
-        ):
-            with caplog.at_level(logging.WARNING):
-                fips.verify_process_fips(self._settings(True))
-        assert any(
-            "cannot pin fips fetch properties" in r.message
-            for r in caplog.records
-        )
-
-    def test_pin_failure_in_container_refuses_boot(self, caplog):
+    def test_pin_skip_is_debug_not_posture(self, caplog):
+        """A skipped pin (no fips provider — the guard) is not itself a
+        posture failure: the process probe decides that afterwards."""
         link = MagicMock(return_value=(True, "linkage ok"))
         with (
             self._jose_ok(),
             patch.object(
                 fips,
                 "_enable_fips_fetch_properties",
-                return_value=(
-                    False,
-                    "EVP_default_properties_enable_fips failed",
-                ),
+                return_value=(False, "fips provider not active; pin skipped"),
             ),
             patch.object(fips, "verify_jose_crypto_linkage", link),
             patch.object(fips, "probe_process", return_value=(True, "x")),
-            patch.object(fips, "running_in_container", return_value=True),
+            patch.object(fips, "running_in_container", return_value=False),
         ):
-            with caplog.at_level(logging.ERROR):
-                with pytest.raises(
-                    ConfigurationError, match="cryptography linkage"
-                ):
-                    fips.verify_process_fips(self._settings(True))
-        assert any("refusing to start" in r.message for r in caplog.records)
-        link.assert_not_called()
+            with caplog.at_level(logging.DEBUG):
+                fips.verify_process_fips(self._settings(True))
+        assert any("pin skipped" in r.message for r in caplog.records)
+        link.assert_called_once()
+
+    def test_pin_runs_before_jose_import(self):
+        """The pin must precede verify_jose_backend — jose's
+        cryptography import loads the default provider (#3350)."""
+        calls = []
+        with (
+            patch.object(
+                fips,
+                "_enable_fips_fetch_properties",
+                side_effect=lambda: (calls.append("pin"), (True, "pinned"))[1],
+            ),
+            patch.object(
+                fips,
+                "verify_jose_backend",
+                side_effect=lambda: (calls.append("jose"), (True, "jose ok"))[
+                    1
+                ],
+            ),
+            patch.object(fips, "probe_process", return_value=(True, "x")),
+            patch.object(
+                fips, "verify_jose_crypto_linkage", return_value=(True, "l")
+            ),
+            patch.object(fips, "running_in_container", return_value=False),
+        ):
+            fips.verify_process_fips(self._settings(True))
+        assert calls == ["pin", "jose"]
 
 
 class TestRunningInContainer:
@@ -647,6 +648,11 @@ class TestVerifyProcessFipsJoseGate:
         with (
             patch.object(
                 fips,
+                "_enable_fips_fetch_properties",
+                return_value=(True, "pinned"),
+            ),
+            patch.object(
+                fips,
                 "verify_jose_backend",
                 return_value=(False, "wrong backend"),
             ),
@@ -661,6 +667,11 @@ class TestVerifyProcessFipsJoseGate:
     def test_jose_passes_then_process_probe_runs(self, caplog):
         linkage = MagicMock(return_value=(True, "linkage ok"))
         with (
+            patch.object(
+                fips,
+                "_enable_fips_fetch_properties",
+                return_value=(True, "pinned"),
+            ),
             patch.object(
                 fips,
                 "verify_jose_backend",
@@ -741,40 +752,6 @@ class TestEnableFipsFetchProperties:
             ok, detail = fips._enable_fips_fetch_properties()
         assert ok is False
         assert "cannot pin" in detail
-
-
-class TestPinnedJoseLinkage:
-    def test_pin_failure_short_circuits(self):
-        link = MagicMock(return_value=(True, "linked"))
-        with (
-            patch.object(
-                fips,
-                "_enable_fips_fetch_properties",
-                return_value=(False, "cannot pin"),
-            ),
-            patch.object(fips, "verify_jose_crypto_linkage", link),
-        ):
-            ok, detail = fips._pinned_jose_linkage()
-        assert ok is False
-        assert detail == "cannot pin"
-        link.assert_not_called()
-
-    def test_pin_then_linkage(self):
-        with (
-            patch.object(
-                fips,
-                "_enable_fips_fetch_properties",
-                return_value=(True, "ambient fetches require fips=yes"),
-            ),
-            patch.object(
-                fips,
-                "verify_jose_crypto_linkage",
-                return_value=(True, "linkage ok"),
-            ),
-        ):
-            ok, detail = fips._pinned_jose_linkage()
-        assert ok is True
-        assert detail == "linkage ok"
 
 
 class TestVerifyJoseCryptoLinkage:
