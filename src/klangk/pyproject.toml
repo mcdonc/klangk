@@ -36,6 +36,18 @@ dependencies = [
     "litellm>=1.60.0",
 ]
 
+# PyPI sidebar links ("Project links" on the project page and each
+# release page). The keys map to the sidebar labels PyPI renders:
+# Repository -> "Source", Issues -> "Bug Tracker". Changelog points at
+# the docs-rendered /changes/ page (docs/changes.md, the single source
+# of truth for release notes) rather than a raw GitHub blob.
+[project.urls]
+Homepage = "https://github.com/mcdonc/klangk"
+Documentation = "https://mcdonc.github.io/klangk/"
+Repository = "https://github.com/mcdonc/klangk"
+Issues = "https://github.com/mcdonc/klangk/issues"
+Changelog = "https://mcdonc.github.io/klangk/changes/"
+
 # Test toolchain — opt in via `pip install klangk[test]` or
 # `uv sync --extra test`. Kept out of the runtime ``dependencies`` so a
 # production ``pip install klangk`` doesn't pull pytest + its transitive
