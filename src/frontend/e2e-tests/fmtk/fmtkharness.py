@@ -1335,14 +1335,7 @@ class FmtkClient:
     def logout(self) -> None:
         """Tap the app-bar logout icon (its tooltip is the semantic
         label; icon-only fallback: the rightmost button — logout is the
-        last app-bar action) and wait for the login surface.
-
-        After the login page appears, poll until the Dart AuthService
-        reports ``isLoggedIn == false``.  The server's ``Clear-Site-Data:
-        "storage"`` header (added in #3335) tells the browser to wipe
-        localStorage asynchronously — the login form can render before
-        the wipe completes, so a login fired immediately after the page
-        appears may lose its new JWT to the deferred wipe."""
+        last app-bar action) and wait for the login surface."""
         if self.has_text("Log In", 2000):
             return  # already logged out
         try:
@@ -1350,7 +1343,6 @@ class FmtkClient:
         except FmtkError:
             self.tap_rightmost_button()
         self.wait_for_login_page()
-        self._wait_logged_out()
 
     def _wait_logged_out(self, timeout: float = 10) -> None:
         """Spin until the Dart AuthService has no token."""
@@ -1648,12 +1640,18 @@ class FmtkClient:
             self.tap_label("I Accept")
 
     def wait_for_login_page(self, timeout_ms: int = 90000) -> None:
-        """The login surface: the form, or the banner dialog covering it."""
+        """The login surface: the form, or the banner dialog covering it.
+
+        After the page appears, confirm the Dart AuthService has finished
+        clearing its token — the server's ``Clear-Site-Data: "storage"``
+        header (#3335) can race the page render, and a login attempt that
+        fires before the wipe completes may lose its new JWT (#3321)."""
         deadline = time.monotonic() + timeout_ms / 1000
         while time.monotonic() < deadline:
             if self.has_text("Log In", 2000) or self.has_text(
                 "Sign in to continue", 2000
             ):
+                self._wait_logged_out()
                 return
             time.sleep(1)
         raise HarnessTimeout("login page never appeared")
