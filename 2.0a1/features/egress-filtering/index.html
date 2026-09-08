@@ -1,0 +1,4820 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Multi-User AI Sandboxing, Collaboration and Coding Platform">
+      
+      
+        <meta name="author" content="Chris McDonough">
+      
+      
+        <link rel="canonical" href="https://mcdonc.github.io/klangk/2.0a1/features/egress-filtering/">
+      
+      
+        <link rel="prev" href="../health-check/">
+      
+      
+        <link rel="next" href="../sandbox/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/favicon.png">
+      <meta name="generator" content="zensical-0.0.59">
+    
+    
+      
+        <title>Egress Filtering - Klangk</title>
+      
+    
+    
+      
+        
+      
+      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.5da3a30f.min.css">
+      
+        
+          
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.812a03bb.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,500,500i,700,700i%7CJetBrains+Mono:400,400i,700,700i&amp;display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_scope.pathname.endsWith("/")||(__md_scope=new URL(__md_scope.pathname+"/",location)),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,_=__md_scope)=>JSON.parse(t.getItem(_.pathname+"."+e)),__md_set=(e,t,_=localStorage,a=__md_scope)=>{try{_.setItem(a.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="green" data-md-color-accent="green">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer" aria-label="Navigation"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#per-workspace-network-egress-filtering" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Klangk" class="md-header__button md-logo" aria-label="Klangk" data-md-component="logo">
+      
+  <img src="../../assets/logo.svg" alt="Klangk">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer" aria-label="Navigation">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-menu" viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h16"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Klangk
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Egress Filtering
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="none" data-md-color-scheme="slate" data-md-color-primary="green" data-md-color-accent="green"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="none" data-md-color-scheme="default" data-md-color-primary="green" data-md-color-accent="green"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-moon" viewBox="0 0 24 24"><path d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search" aria-label="Search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-search" viewBox="0 0 24 24"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog" aria-label="Search">
+  <button type="button" class="md-search__button">
+    Search
+  </button>
+</div>
+      
+    
+    <div class="md-header__source">
+      
+        <a href="https://github.com/mcdonc/klangk" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mcdonc/klangk
+  </div>
+</a>
+      
+    </div>
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Klangk" class="md-nav__button md-logo" aria-label="Klangk" data-md-component="logo">
+      
+  <img src="../../assets/logo.svg" alt="Klangk">
+
+    </a>
+    Klangk
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/mcdonc/klangk" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mcdonc/klangk
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Home
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Getting Started
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Features
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Features
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../authentication/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Authentication
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../auth-modes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Auth Modes
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../authorization/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Authorization
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../handles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Handles
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../admin-management/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Admin Management
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../invitations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Invitations
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../workspaces/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Workspaces
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../terminal/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Terminal
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../the-shell/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The Shell
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../service-command/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Service Command
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../auto-start/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Auto-Start
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../health-check/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Health Check
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Egress Filtering
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Egress Filtering
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#how-it-works" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        How it works
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#consent-recording-all-modes" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Consent recording (all modes)
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#interactive-egress-consent" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Interactive egress consent
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Interactive egress consent">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#a-workspace-is-interactive-only-while-a-decider-is-connected" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        A workspace is interactive only while a decider is connected
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#how-a-hold-works" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        How a hold works
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#deciding" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Deciding
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#decision-durations" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Decision durations
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pause" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Pause
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rules-view-revoke-audit" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Rules view, revoke, audit
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#operator-notes" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Operator notes
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#security-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Security model
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#enabling-it-operator" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Enabling it (operator)
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Enabling it (operator)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#deploy-wide-default-allow-list" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Deploy-wide default allow-list
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuring-a-workspace" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Configuring a workspace
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Configuring a workspace">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#cli" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        CLI
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#api" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        API
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fail-closed-behavior" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Fail-closed behavior
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#common-service-domain-lists" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Common service domain lists
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Common service domain lists">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#github-ssh-git-operations" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        GitHub (SSH git operations)
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#github-https-git-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        GitHub (HTTPS git + API)
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#github-full-development" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        GitHub (full development)
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#debian-ubuntu-apt" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Debian / Ubuntu (apt)
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pypi" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        PyPI
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#npm" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        npm
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nix" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Nix
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#gitlab" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        GitLab
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#bitbucket" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Bitbucket
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#codeberg" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Codeberg
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#canonical-launchpad" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Canonical Launchpad
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#anthropic-api-claude-code" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Anthropic API (Claude Code)
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#openai-api-codex-chatgpt" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        OpenAI API (Codex, ChatGPT)
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#zencoder-zai" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Zencoder (z.ai)
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#openrouter" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        OpenRouter
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ollama" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Ollama
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#bare-domain-shortcut" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Bare-domain shortcut
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#deploy-wide-default-all-common-services" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Deploy-wide default: all common services
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#caveats" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Caveats
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../sandbox/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Sandbox
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../file-viewer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  File Viewer
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../ai-coding-harnesses/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  AI Coding Harnesses
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../features/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Feature Activation
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../export-import/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Export & Import
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../hosted-apps/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Hosted Apps
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  CLI
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../ssh-agent-forwarding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  SSH Agent Forwarding
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../github-authentication/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  GitHub HTTPS Authentication
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../debug-panel/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Debug Panel
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../logging/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Logging
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../admission/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Workspace Admission
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../crash-recovery/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Crash Recovery
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../server-scheduling/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Server Scheduling
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../nix/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Nix
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../sandboxes/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Sandboxes
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Sandboxes
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../sandboxes/openclaw/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  OpenClaw
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../sandboxes/hermes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Hermes
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Deployment
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Deployment
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/docker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Running with Docker
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/packaged/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Packaged klangkd
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/hosting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Hosting & Proxy
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/behind-a-proxy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Behind a Reverse Proxy
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/https-hosting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  HTTPS Hosting
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/airgapped/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Air-Gapped Deployment
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/customizing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Customizing
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/fips/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  FIPS 140-3 Mode
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/signals/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Process Signals
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/decommissioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Decommissioning
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/falco/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Falco Exec Audit
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/podman/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Podman
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/oidc/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  OIDC
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/backup-restore/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Backup and Restore
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/audit-integrity/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Audit Record Integrity
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Reference
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Reference
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/acl/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  ACL System
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/api-endpoints/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  API Endpoints
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/klangkd-config/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Configuration File
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/environment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Environment Variables
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../development/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Klangk Development
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_7" id="__nav_7_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Klangk Development
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/ci/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  CI
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/pre-commit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Pre-commit Hooks
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/schema-migrations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Database Schema Changes
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/releasing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Releasing
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/building-images/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Building Images
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/stable-branches/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Stable Branches
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/super-e2e/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Super-E2E
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../changes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Changelog
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_9" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../architecture/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Architecture
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_9" id="__nav_9_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_9_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_9">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Architecture
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/llm-proxy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  LLM Proxy
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/browser-bridge/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Browser Bridge
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/workspace-jwt/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Workspace JWT
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/egress-flow/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Egress Request Flow
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  
+                    
+                    
+                    
+                      
+                    
+                    
+                      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+                      <div class="md-sidebar-button__wrapper">
+                        <label class="md-sidebar-button" for="__toc"></label>
+                      </div>
+                    
+                  
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#how-it-works" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        How it works
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#consent-recording-all-modes" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Consent recording (all modes)
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#interactive-egress-consent" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Interactive egress consent
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Interactive egress consent">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#a-workspace-is-interactive-only-while-a-decider-is-connected" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        A workspace is interactive only while a decider is connected
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#how-a-hold-works" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        How a hold works
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#deciding" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Deciding
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#decision-durations" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Decision durations
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pause" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Pause
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rules-view-revoke-audit" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Rules view, revoke, audit
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#operator-notes" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Operator notes
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#security-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Security model
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#enabling-it-operator" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Enabling it (operator)
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Enabling it (operator)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#deploy-wide-default-allow-list" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Deploy-wide default allow-list
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuring-a-workspace" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Configuring a workspace
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Configuring a workspace">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#cli" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        CLI
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#api" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        API
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fail-closed-behavior" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Fail-closed behavior
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#common-service-domain-lists" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Common service domain lists
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Common service domain lists">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#github-ssh-git-operations" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        GitHub (SSH git operations)
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#github-https-git-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        GitHub (HTTPS git + API)
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#github-full-development" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        GitHub (full development)
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#debian-ubuntu-apt" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Debian / Ubuntu (apt)
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pypi" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        PyPI
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#npm" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        npm
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nix" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Nix
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#gitlab" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        GitLab
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#bitbucket" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Bitbucket
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#codeberg" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Codeberg
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#canonical-launchpad" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Canonical Launchpad
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#anthropic-api-claude-code" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Anthropic API (Claude Code)
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#openai-api-codex-chatgpt" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        OpenAI API (Codex, ChatGPT)
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#zencoder-zai" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Zencoder (z.ai)
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#openrouter" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        OpenRouter
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ollama" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Ollama
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#bare-domain-shortcut" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Bare-domain shortcut
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#deploy-wide-default-all-common-services" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Deploy-wide default: all common services
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#caveats" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Caveats
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+                
+
+
+
+  
+
+
+  <nav class="md-path" aria-label="Navigation" >
+    <ol class="md-path__list">
+      
+        
+  
+  
+    <li class="md-path__item">
+      <a href="../.." class="md-path__link">
+        
+  
+  <span class="md-ellipsis">
+    Home
+  </span>
+
+      </a>
+    </li>
+  
+
+      
+      
+        
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+      <li class="md-path__item">
+        <a href="../" class="md-path__link">
+          
+  
+  <span class="md-ellipsis">
+    Features
+  </span>
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ol>
+  </nav>
+
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+  
+  
+
+
+<h1 id="per-workspace-network-egress-filtering">Per-workspace network egress filtering<a class="headerlink" href="#per-workspace-network-egress-filtering" title="Permanent link">&para;</a></h1>
+<p>Klangk can restrict which external hosts a workspace container may reach,
+so a deployment running AI agents or untrusted code isn't an open
+exfiltration vector. Each workspace picks its posture with an <strong>egress
+mode</strong> (<code>egress_mode</code>, default <code>interactive</code> for new workspaces):</p>
+<ul>
+<li><strong><code>interactive</code></strong> — start closed and consent as the workspace works:
+  each first-time destination is <strong>held</strong> for a human allow/deny decision
+  (Little-Snitch style), with <code>allowed_domains</code> entries acting as
+  pre-approvals that skip the prompt. See
+  <a href="#interactive-egress-consent">Interactive egress consent</a>.</li>
+<li><strong><code>static</code></strong> — the classic allow-list: declare <code>allowed_domains</code> up
+  front; everything else is denied and recorded for audit. No prompting,
+  ever. Off-list DNS names return NXDOMAIN — the query never reaches an
+  upstream resolver, so there is no resolution oracle and no DNS
+  exfiltration channel; denied attempts recorded in the audit log are the
+  connects that were dialed directly by IP. The mode is fixed at sidecar
+  start — flipping a running workspace <code>interactive</code>→<code>static</code> keeps the old
+  DNS behavior until its next container start, like allow-list edits.</li>
+<li><strong><code>allow</code></strong> — default-permit with a deny-list: every host is reachable
+  except names in <code>rejected_domains</code>; off-list egress is recorded and
+  auto-allowed with no prompt.</li>
+</ul>
+<p>A <code>static</code> workspace with no <code>allowed_domains</code> (and no deploy-wide
+default) keeps unrestricted outbound networking exactly as before; an
+<code>interactive</code> workspace is always filtered, even with empty lists.</p>
+<p>The mechanism uses a <strong>network sidecar</strong> — a small NET_ADMIN container
+that shares the filtered workspace's network namespace and owns its
+egress ruleset. Every filtered workspace (interactive mode, or any mode
+declaring <code>allowed_domains</code>/<code>rejected_domains</code>) runs behind the sidecar,
+which default-denies outbound traffic and allow-lists only the approved
+destinations (resolved at runtime by a DNS proxy, so DNS round-robin is
+handled).</p>
+<p>A step-by-step diagram of a single egressing request — DNS gate, SYN
+gate at NFQUEUE, the consent loop, and the verdict — is in
+<a href="../../architecture/egress-flow/">Anatomy of an egressing request</a>.</p>
+<h2 id="how-it-works">How it works<a class="headerlink" href="#how-it-works" title="Permanent link">&para;</a></h2>
+<ol>
+<li>A workspace carries an <code>allowed_domains</code> list (<code>host</code>, <code>host:port</code>,
+   <code>.host</code>/<code>*.domain</code> wildcards, or IPv4 CIDR specs — see the <a href="#api">API</a>
+   section for the full grammar).</li>
+<li>On container start, if the workspace is filtered (<code>egress_mode</code> is
+   <code>interactive</code>, or any mode declares <code>allowed_domains</code>/
+   <code>rejected_domains</code>), the backend starts a <strong>network sidecar</strong> container
+   (<code>klangk-net-&lt;ws-id&gt;</code>,
+   from the <code>network_sidecar_image</code> image, which defaults to
+   <code>klangk-network-sidecar</code>) with <code>--cap-add NET_ADMIN</code> and
+   <code>--dns 1.1.1.1</code>, then starts the workspace with
+   <code>--network container:&lt;sidecar&gt;</code> so the two share a network namespace.
+   The workspace container itself is unprivileged.</li>
+<li>The sidecar's entrypoint installs the egress ruleset in the shared
+   netns: a default <code>DROP</code> OUTPUT policy, loopback (by destination),
+   established connections, a mark-scoped allow for the DNS proxy's
+   upstream forwards, static CIDR allows, and the backend gateway
+   (<code>host.containers.internal</code> on the klangkd port — a <code>/etc/hosts</code> entry
+   the FQDN proxy can't learn, so it's allow-listed statically).</li>
+<li>DNS is redirected: a <code>nat OUTPUT REDIRECT</code> sends all <code>:53</code> traffic
+   (except the proxy's own marked forwards) to the sidecar's FQDN DNS
+   proxy. The proxy resolves each query against a real upstream, and
+   <strong>allow-lists resolved IPs at runtime</strong> — so a domain whose IPs rotate
+   (CDN, DNS round-robin) stays reachable without a container restart,
+   and a denied domain returns NXDOMAIN in <code>static</code> mode (the
+   query is refused locally — it is never forwarded, so there is no
+   resolution oracle and no DNS exfiltration channel). In <code>interactive</code>
+   and <code>allow</code> modes an off-list name resolves normally, but the proxy
+   records the IP-to-name mapping and installs no allow rule —
+   resolution succeeding does <em>not</em> mean egress is permitted; the gate is
+   the SYN. This replaces the create-time
+   IP-pinning the old OCI hook model used. A resolved IP is allowed
+   <strong>only for the DNS response's TTL</strong>; the proxy re-resolves on the next
+   query and a background sweep removes the allow-rule once the TTL
+   elapses, so stale IPs do not linger. The workspace is told
+   its resolver is <code>1.1.1.1</code> (a placeholder) — the <code>:53</code> traffic is
+   <code>REDIRECT</code>ed to the proxy before it ever leaves, so <code>1.1.1.1</code> is never
+   actually reached; the proxy forwards to a <em>different</em> detected upstream
+   (loop avoidance).</li>
+<li><strong>IPv6 egress is default-denied</strong> — the sidecar sets
+   <code>ip6tables -P OUTPUT DROP</code>, so the v4 allow-list cannot be bypassed
+   over IPv6. <code>allowed_domains</code> therefore accepts only hostnames
+   and IPv4 addresses (no <code>[ipv6]</code> literals), and AAAA records returned by
+   DNS are ignored.</li>
+<li>In interactive mode the ruleset additionally queues every non-approved
+   outbound TCP SYN to the sidecar's own NFQUEUE, where it is <strong>held
+   pending a consent verdict</strong> — the full loop is in
+   <a href="#interactive-egress-consent">Interactive egress consent</a>. The queue is
+   rate-limited (<code>--limit 5/sec --limit-burst 20</code>); SYNs past the limit
+   are REJECTed (fast refusal) rather than queued.</li>
+</ol>
+<p>The ruleset is in place before the workspace process starts, and the
+workspace lacks <code>CAP_NET_ADMIN</code> so it cannot flush the ruleset.</p>
+<h2 id="consent-recording-all-modes">Consent recording (all modes)<a class="headerlink" href="#consent-recording-all-modes" title="Permanent link">&para;</a></h2>
+<p>Every blocked or off-list destination is recorded to the <code>egress_consent</code>
+table, regardless of <code>egress_mode</code>:</p>
+<ul>
+<li><strong>static</strong> -&gt; recorded <code>denied</code> immediately, <code>decided_by</code> NULL (policy,
+  no human). Static mode is strictly better than silent deny: every
+  denied attempt is logged for audit/review (<code>scripts/consent-watch.py</code>
+  shows a live view on the server host). One row per (workspace, host,
+  port); repeats don't spam.</li>
+<li><strong>interactive</strong> -&gt; recorded <code>pending</code>, then decided by a human (below),
+  or auto-expired (<code>expired</code> — deliberately distinct from a human deny)
+  when no decider answers within <code>egress_consent_timeout</code>.</li>
+<li><strong>allow</strong> -&gt; off-list destinations recorded <code>allowed</code>, <code>decided_by</code>
+  NULL — a log of everything the workspace actually reached.</li>
+</ul>
+<p>The table is bounded: a retention window
+(<code>KLANGKD_EGRESS_CONSENT_RETENTION_DAYS</code>, default 30 days) deletes
+terminal rows older than it, and a per-workspace cap
+(<code>KLANGKD_EGRESS_CONSENT_ROW_CAP</code>, default 2000) trims the oldest rows
+when a workspace floods decided requests past the cap. Verdicts still
+in effect (<code>forever</code>, <code>tilrestart</code>, or a timed window not yet elapsed)
+are enforcement state and are never pruned — they leave via workspace
+deletion or the <code>tilrestart</code> reap. The consent monitor sweeps at
+startup and then hourly on a wall-clock deadline (event traffic never
+postpones it); both settings are SIGHUP-reloadable — a reload applies on
+the next sweep.</p>
+<h2 id="interactive-egress-consent">Interactive egress consent<a class="headerlink" href="#interactive-egress-consent" title="Permanent link">&para;</a></h2>
+<p>Instead of declaring the full allow-list up front, an interactive
+workspace <strong>starts closed and prompts on each new destination</strong>: the
+first connection to a host nobody has approved yet is held mid-<code>connect()</code>
+and surfaces as a consent request a human can allow or deny for a chosen
+duration. The allow-list is built interactively as the workspace actually
+reaches out; <code>allowed_domains</code> entries (and a deploy-wide default) act as
+pre-approvals that skip the prompt. Requests are per-workspace —
+there is no per-process attribution.</p>
+<h3 id="a-workspace-is-interactive-only-while-a-decider-is-connected">A workspace is interactive only while a decider is connected<a class="headerlink" href="#a-workspace-is-interactive-only-while-a-decider-is-connected" title="Permanent link">&para;</a></h3>
+<p><code>egress_mode = "interactive"</code> is the opt-in, but interactivity is
+<strong>runtime state</strong>: a workspace's off-list egress is actually held
+only while <strong>at least one live consent decider</strong> is connected for it. A
+decider is a connected client — the <code>klangk
+consent-decide</code> TUI, the consent popup inside <code>klangk shell</code>, or the web
+UI — and its WebSocket connection <em>is</em> the registration; liveness is
+driven by client pings, and a decider silent for
+<code>KLANGKD_CONSENT_DECIDER_TIMEOUT</code> (default 45s) is reaped. The moment the
+last decider disconnects, the workspace reverts to deny-and-record: with
+nobody to ask, off-list connections fail fast (an immediate TCP refusal,
+not a hang) and are recorded.</p>
+<p>A <code>static</code> workspace refuses decider registration outright, so the
+static/interactive boundary is structural, not just behavioral.</p>
+<h3 id="how-a-hold-works">How a hold works<a class="headerlink" href="#how-a-hold-works" title="Permanent link">&para;</a></h3>
+<ol>
+<li>The sidecar's DNS proxy resolves every query. Allow-listed names (and
+   names covered by an in-effect verdict) resolve and have their IPs
+   learned as usual; <code>rejected_domains</code> names get NXDOMAIN. Any <strong>other</strong>
+   name resolves normally, but the proxy records the IP-to-name mapping
+   and installs no allow rule — resolution succeeding does <em>not</em>
+   mean egress is permitted.</li>
+<li>The first packet (the TCP SYN) to a non-approved IP is queued to the
+   sidecar's NFQUEUE. The connection now <strong>stalls inside <code>connect()</code></strong> —
+   that stall is the hold, and the decision window it affords the human
+   is the kernel's connect timeout (~127s).</li>
+<li>The sidecar relays the destination to klangkd over its
+   <code>/ws/egress-sidecar</code> WebSocket — the hostname, when DNS taught it one —
+   and klangkd persists a pending request and fans it out to every live
+   decider as an <code>egress_request</code> frame.</li>
+<li>The first verdict (or the timeout) resolves the hold. <strong>Allow</strong>
+   accepts the SYN and learns the IP for the verdict's duration;
+   <strong>deny / timeout / error</strong> forges a TCP RST so <code>connect()</code> fails at
+   once (<code>ECONNREFUSED</code>), with a short-lived REJECT rule as backstop.</li>
+</ol>
+<p>The hold is bounded server-side by <code>KLANGKD_EGRESS_CONSENT_TIMEOUT</code>
+(default 120s, sized to the kernel's connect timeout): a request no
+decider answers expires to a deny. If the sidecar's WebSocket to klangkd
+is down, off-list connects fail fast rather than hang. Nothing is ever
+left pending forever.</p>
+<h3 id="deciding">Deciding<a class="headerlink" href="#deciding" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong><code>klangk consent-decide &lt;workspace&gt;</code></strong> — a standalone TUI decider:
+  a live queue of held requests (host:port and a countdown),
+  allow/deny per row with the duration chosen at the action — bare
+  <code>a</code>/<code>d</code> (or the row buttons) send the default <code>tilrestart</code>, <code>A</code>/<code>D</code>
+  open a duration picker first — a rules screen (<code>r</code>) with revoke
+  (<code>x</code>), and pause controls.</li>
+<li><strong><code>klangk shell</code></strong> — shelling into an interactive workspace wraps the
+  shell in a local tmux that floats the decider over it as a popup: a
+  held request pops up without leaving the shell (<code>C-a p</code> reopens it;
+  skip the wrapper with <code>--no-consent-popup</code>). Disconnect with
+  the SSH-style escape — press <strong>Enter</strong>, then <strong>~</strong>, then <strong>.</strong> — after
+  which the CLI prints <code>Disconnected from &lt;workspace&gt;.</code> and the wrapper
+  cleans up; the <code>[exited]</code> line that may follow is tmux confirming the
+  outer session ended, not an error.</li>
+<li><strong>Web UI</strong> — the workspace page shows a consent banner with per-row
+  allow/deny split buttons: a bare click uses the default duration
+  (until restart), and the attached ▾ menu sends the verdict with any
+  other duration, plus a <strong>Network</strong> tab
+  listing the in-effect rules with revoke actions.</li>
+</ul>
+<p>Several deciders may be connected at once (two CLI sessions and the web
+UI, say): each pending request is fanned out to all of them and the first
+decision wins. Deciders are strictly workspace-scoped:
+there is no deploy-wide flavor — a decider handshake without a workspace
+param is refused.</p>
+<p><strong>Authorization.</strong> A decider needs the <code>egress-consent</code> permission on
+the workspace (owner, coder, or collaborator;
+spectators are watch-only and never see the Network tab or the consent
+banner). A verdict can only decide a
+request inside the decider's own workspace. Pausing prompting (below)
+shares the same single gate — anyone who may register a decider may
+also pause.</p>
+<h3 id="decision-durations">Decision durations<a class="headerlink" href="#decision-durations" title="Permanent link">&para;</a></h3>
+<p>A verdict carries a duration, chosen with the allow/deny action (default
+<code>tilrestart</code>): bare <code>a</code>/<code>d</code> in the TUI — or a plain button click
+on the web banner — send the default; the TUI's <code>A</code>/<code>D</code> picker
+chooses any other duration in the same step.</p>
+<table>
+<thead>
+<tr>
+<th>Duration</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>once</code></td>
+<td>This one connection only; the next connection to the same host:port prompts again.</td>
+</tr>
+<tr>
+<td><code>5m</code> / <code>15m</code> / <code>1h</code> / <code>1d</code> / <code>1w</code></td>
+<td>Timed: allowed (or denied) for the window, then the destination re-prompts.</td>
+</tr>
+<tr>
+<td><code>tilrestart</code></td>
+<td>The workspace container's lifetime — the sidecar's in-memory rules; cleared on restart.</td>
+</tr>
+<tr>
+<td><code>forever</code></td>
+<td>The workspace's lifetime: an <strong>allow</strong> is appended to <code>allowed_domains</code> as <code>host:port</code>; a <strong>deny</strong> to <code>rejected_domains</code>. The sidecar re-reads both lists on start, so the verdict survives container restarts.</td>
+</tr>
+</tbody>
+</table>
+<p>A timed or <code>forever</code> verdict is <strong>host-scoped, not IP-scoped</strong>: every IP
+the host resolves to — including CDN rotations — is covered for the
+duration, so a user is not re-prompted for a domain they already decided.
+Decisions persist to the workspace only; there is
+currently no promotion of a verdict to a deploy-wide list.</p>
+<h3 id="pause">Pause<a class="headerlink" href="#pause" title="Permanent link">&para;</a></h3>
+<p>A decider can pause prompting workspace-wide for 15m / 1h / 1d:
+while paused, off-list egress is auto-allowed per-connection with no
+prompt and no hold — a relief valve for a build or crawl that would
+otherwise flood the queue. A recorded deny still blocks while paused.
+The pause self-expires; the decider shows the remaining window.</p>
+<h3 id="rules-view-revoke-audit">Rules view, revoke, audit<a class="headerlink" href="#rules-view-revoke-audit" title="Permanent link">&para;</a></h3>
+<p>Every request and verdict is recorded in the <code>egress_consent</code> table:
+destination (host, port), <code>requested_at</code>, the <code>decision</code>, its <code>duration</code>,
+<code>decided_at</code>/<code>decided_by</code> (the deciding user; NULL means policy decided,
+not a person), and — for a revoke — <code>revoked_at</code>/<code>revoked_by</code>. A timeout
+is recorded <code>expired</code>, distinguishable from a human deny.</p>
+<p>The rules view (the <code>r</code> screen of <code>consent-decide</code>, the web UI's Net
+Rules tab) shows this live over the <code>egress_rules</code> stream: the
+static allow-list and reject-list, every in-effect verdict with its
+remaining window, and the pause state. An in-effect verdict can be
+<strong>revoked</strong> from there: the sidecar drops its rule at
+once, the row is marked revoked, and a <code>forever</code> verdict's durable list
+entry is retracted so it does not re-apply on the next restart.
+<code>scripts/consent-watch.py</code> renders the raw table live on the server host.</p>
+<h3 id="operator-notes">Operator notes<a class="headerlink" href="#operator-notes" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Interactive mode lives entirely inside the workspace's network
+  namespace.</strong> The sidecar consumes its own NFQUEUE there and klangkd
+  coordinates everything over authenticated WebSockets, so the host side
+  needs no kernel logging, <code>/dev/kmsg</code> access, host iptables, or
+  <code>nsenter</code>. (An earlier design tailed kernel LOG lines; NFQUEUE
+  replaced it — blocked packets generate no kernel log volume at all.)</li>
+<li><strong>Settings</strong> (all SIGHUP-reloadable): <code>KLANGKD_EGRESS_CONSENT_TIMEOUT</code>
+  (default 120s — how long a request stays pending before auto-deny),
+  <code>KLANGKD_EGRESS_CONSENT_RATE_LIMIT</code> (default 50 pending requests per
+  workspace — at the cap, new holds are denied at once),
+  <code>KLANGKD_CONSENT_DECIDER_TIMEOUT</code> (default 45s — decider liveness; a
+  crashed or half-open decider is reaped within roughly 1.5x that,
+  reverting its workspaces to deny-and-record), and the table-bounding
+  pair <code>KLANGKD_EGRESS_CONSENT_RETENTION_DAYS</code> (default 30) /
+  <code>KLANGKD_EGRESS_CONSENT_ROW_CAP</code> (default 2000) — see
+  <a href="#consent-recording-all-modes">Consent recording</a>; a reload applies on
+  the next sweep.</li>
+<li><strong>Flood bounds.</strong> The consent queue is rate-limited in the ruleset
+  (5 SYNs/sec, burst 20) — packets past the limit are REJECTed, never
+  queued — and request rows are deduplicated per destination, so a
+  flooding workload cannot overwhelm the decider or spam the table.</li>
+<li><strong>klangkd restart</strong> denies every in-flight hold and expires orphaned
+  pending rows at startup; a <strong>sidecar-to-klangkd outage</strong> makes off-list
+  connects fail fast. Both are fail-closed.</li>
+<li><strong>Idle timeout.</strong> Egress activity (DNS queries, consented SYNs, byte
+  counts) bumps the workspace idle timer, so an egress-only workload is
+  not reaped mid-transfer.</li>
+<li><strong><code>egress_mode</code> changes apply at the next container start</strong>.</li>
+<li><strong><code>klangk sandbox</code></strong> runs its automated install in <code>allow</code> mode (no
+  decider is watching), then resets the workspace to <code>interactive</code>.</li>
+</ul>
+<h3 id="security-model">Security model<a class="headerlink" href="#security-model" title="Permanent link">&para;</a></h3>
+<ul>
+<li>The workspace container stays unprivileged: no <code>NET_ADMIN</code>, no
+  <code>NET_RAW</code>. It cannot flush the ruleset, cannot forge the packet mark
+  that exempts the DNS proxy's upstream forwards, and cannot reach the
+  sidecar's queue or control socket.</li>
+<li>All enforcement — the default-DROP policy, the DNS redirect, the
+  consent queue — lives in the sidecar's own network namespace, installed
+  by the sidecar itself. Nothing egress-related executes on the host or
+  in a privileged context beyond the sidecar's existing <code>NET_ADMIN</code>.</li>
+<li><strong>Authentication.</strong> The sidecar authenticates to klangkd with the
+  workspace's own JWT (bind-mounted read-only and re-read on rotation);
+  the token is workspace-scoped, so a workspace cannot forge events for
+  another workspace. Deciders authenticate with a user JWT and are
+  authorization-checked per scope (terminal access / admin).</li>
+<li><strong>Fail-closed throughout.</strong> No decider -&gt; fast deny. Decider too slow
+  -&gt; timeout deny. klangkd restart -&gt; all holds denied. Sidecar link
+  down -&gt; fast deny. Queue overflow -&gt; reject. Internal error -&gt; deny.
+  No code path silently allows.</li>
+<li>The <a href="#caveats">DNS caveats</a> below still apply: this is an egress
+  allow-list, not a complete anti-exfiltration guarantee (DNS tunneling
+  through the proxy remains possible).</li>
+</ul>
+<h2 id="enabling-it-operator">Enabling it (operator)<a class="headerlink" href="#enabling-it-operator" title="Permanent link">&para;</a></h2>
+<p>Egress filtering is <strong>available by default</strong>: <code>network_sidecar_image</code>
+ships with a default (<code>klangk-network-sidecar</code>), so a filtered
+workspace — one declaring <code>allowed_domains</code>/<code>rejected_domains</code>, or in
+<code>interactive</code> mode — is filtered out of the box; no configuration is
+required for the common case.</p>
+<ol>
+<li>Make the sidecar image available to podman:</li>
+<li><strong>All-in-one host image</strong> (<code>scripts/build-host-image.sh</code>): nothing to
+     do — the sidecar image is embedded as a tarball in the host image and
+     <code>podman load</code>ed on first startup.</li>
+<li><strong>Published image</strong>: pull <code>ghcr.io/mcdonc/klangk/klangk-network-sidecar</code>
+     (immutable <code>vX.Y.Z</code> release tags, or <code>&lt;calver&gt;-&lt;commit&gt;</code> tags from the
+     continuous <code>image-network-sidecar.yml</code> builds) and retag it to the
+     default local name — <code>podman pull ... ; podman tag ... klangk-network-sidecar</code>.</li>
+<li><strong>Dev</strong>: the <code>klangk:build-network-sidecar</code> devenv task builds it from
+     <code>src/containers/network/</code>.</li>
+<li><strong>Other deploys</strong>: publish the image to your registry and point
+     <code>KLANGKD_NETWORK_SIDECAR_IMAGE</code> at it if you don't use the default name.</li>
+<li>Restart klangkd. A filtered workspace (<code>egress_mode: interactive</code>, or
+   one declaring <code>allowed_domains</code>/<code>rejected_domains</code>) now starts behind
+   the sidecar.</li>
+</ol>
+<p>To <strong>disable</strong> egress filtering entirely, set
+<code>KLANGKD_NETFILTER_ENABLED=false</code> (or YAML <code>netfilter_enabled: false</code>).
+When disabled, a filtered workspace (<code>egress_mode: interactive</code>, or one
+declaring <code>allowed_domains</code>/<code>rejected_domains</code>) <strong>fails to
+start</strong> (fail-closed) rather than running unrestricted — see
+<a href="#fail-closed-behavior">Fail-closed behavior</a>.</p>
+<h3 id="deploy-wide-default-allow-list">Deploy-wide default allow-list<a class="headerlink" href="#deploy-wide-default-allow-list" title="Permanent link">&para;</a></h3>
+<p>Set a deploy-wide allow-list applied to <strong>every workspace that doesn't
+declare its own</strong> <code>allowed_domains</code> — e.g. to permit a curated
+set (package registries, a git host) by default across the whole deploy:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nb">export</span><span class="w"> </span><span class="nv">KLANGKD_NETFILTER_DEFAULT_DOMAINS</span><span class="o">=</span>github.com:443,pypi.org,registry.npmjs.org
+</span></code></pre></div>
+<p>…or, durably in the YAML config file (<code>klangkd --config</code>):</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">netfilter_default_domains</span><span class="p">:</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">github.com:443</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">pypi.org</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">registry.npmjs.org</span>
+</span></code></pre></div>
+<p>Entries use the same grammar as a workspace allow-list (<code>host</code> /
+<code>.domain</code> / <code>*.domain</code> / <code>host:port</code> / IPv4 CIDR — see the <a href="#api">API</a>
+section) and are validated server-side at startup.
+A malformed value <strong>aborts startup</strong> rather than silently disabling the
+default (reversing the fall-back); a SIGHUP reload with a bad
+value is denied and keeps the old config. Read at boot and on SIGHUP
+(reloadable).</p>
+<p><strong>Application.</strong> The default is a <strong>pre-fill, not a server-side
+merge</strong>: the browser's create-workspace dialog (and any client reading
+it from the authenticated <code>/config</code> payload) starts its Netfilter list
+from this default, and the workspace persists whatever the creator
+submits. A workspace's own <code>allowed_domains</code> — pre-filled or hand-
+written — is exactly what is enforced; an empty list in <code>interactive</code>
+mode means "prompt for everything". (The TUI create form does not
+pre-fill yet.)</p>
+<h2 id="configuring-a-workspace">Configuring a workspace<a class="headerlink" href="#configuring-a-workspace" title="Permanent link">&para;</a></h2>
+<p>Set <code>allowed_domains</code> via the workspace <strong>Settings</strong> panel (an
+"Allowed Domains" list editor under Mounts / Environment Variables), the
+CLI, or the API. The <strong>egress mode</strong> is set alongside it: an "Egress
+mode" selector in the Netfilter pane of the <code>klangk create</code> / <code>klangk
+edit</code> TUI forms (<code>interactive (ask first)</code> / <code>static (deny + record)</code> /
+<code>allow (default-permit)</code>), the same selector in the browser's
+create-workspace dialog and settings panel, or <code>"egress_mode"</code> in the
+API body below. There is no flags-mode CLI option for it — use the
+interactive form or the API. A mode change takes effect at the next
+container start.</p>
+<h3 id="cli">CLI<a class="headerlink" href="#cli" title="Permanent link">&para;</a></h3>
+<p>Use the <code>--allow</code> flag (repeatable) on <code>klangk create</code> or <code>klangk edit</code>:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1"># At creation time</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>klangk<span class="w"> </span>create<span class="w"> </span>my-project<span class="w"> </span>--allow<span class="w"> </span>github.com:443<span class="w"> </span>--allow<span class="w"> </span>pypi.org
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="c1"># On an existing workspace (flags mode)</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>klangk<span class="w"> </span>edit<span class="w"> </span>my-project<span class="w"> </span>--allow<span class="w"> </span>github.com:443<span class="w"> </span>--allow<span class="w"> </span>registry.npmjs.org
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="c1"># Interactive mode — prompts to add/remove domains one at a time</span>
+</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>klangk<span class="w"> </span>edit<span class="w"> </span>my-project
+</span></code></pre></div>
+<p>In interactive mode, <code>klangk edit</code> shows the current allowlist (if any),
+then prompts to add or remove entries. Domains are validated before they
+are accepted.</p>
+<h3 id="api">API<a class="headerlink" href="#api" title="Permanent link">&para;</a></h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>PUT<span class="w"> </span>https://klangkd/api/v1/workspaces/&lt;id&gt;<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer &lt;token&gt;"</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Content-Type: application/json"</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"allowed_domains": ["github.com:443", "pypi.org", "registry.npmjs.org"],</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="s1">       "egress_mode": "interactive"}'</span>
+</span></code></pre></div>
+<p><code>egress_mode</code> is <code>"static"</code>, <code>"interactive"</code> (the default for new
+workspaces), or <code>"allow"</code>; like <code>allowed_domains</code>, it
+applies at the next container start.</p>
+<ul>
+<li><code>host</code> allows all ports to that host <strong>only</strong> — the apex, exactly
+  (<code>github.com</code> does not cover <code>api.github.com</code>).</li>
+<li><code>.host</code> allows all ports to that host <strong>and its subdomains</strong>
+  (<code>.github.com</code> covers both <code>github.com</code> and <code>api.github.com</code>).</li>
+<li><code>host:port</code> / <code>.host:port</code> allow a single TCP port (1–65535) with the
+  same apex-only / apex-plus-subdomains distinction.</li>
+<li><code>*.domain</code> allows <strong>subdomains only, not the apex</strong> — <code>*.pypi.org</code>
+  matches <code>downloads.pypi.org</code>-style subdomains but not <code>pypi.org</code>
+  itself. Append a port to scope it (<code>*.pypi.org:443</code>). The three forms
+  (bare, leading dot, <code>*.</code>) let you allow the apex only, apex plus
+  subdomains, or subdomains without the apex.
+  Matching always respects the dot boundary, so <code>evilexample.com</code> never
+  matches an <code>example.com</code> spec.</li>
+<li><code>10.0.0.0/8</code> allows an entire IPv4 subnet (CIDR notation); append a
+  port to scope it, e.g. <code>10.0.0.0/8:443</code>. A CIDR is installed as a
+  single iptables <code>-d &lt;ip&gt;/&lt;plen&gt;</code> rule and is <strong>not</strong> DNS-resolved, so
+  it is the stable choice for a private range whose individual hosts you
+  don't want to enumerate.</li>
+<li>Resolved IPs (for <code>host</code>/<code>*.domain</code> specs) are allowed <strong>only for the
+  DNS response's TTL</strong>; the sidecar's proxy re-resolves on each query and
+  drops the allow-rule once the TTL elapses, so a stale IP is not reachable
+  indefinitely.</li>
+<li>IPv6 literals and IPv6 CIDRs (e.g. <code>[::1]</code>, <code>[2001:db8::1]:443</code>,
+  <code>2001:db8::/32</code>) are <strong>not</strong> accepted — IPv6 egress is default-denied
+  inside filtered containers, so a v6 destination is neither reachable
+  nor enforceable.</li>
+<li>Each entry is validated server-side; malformed entries are rejected with
+  HTTP 400.</li>
+<li>An empty list (or <code>null</code>) means "no pre-approvals": in <code>interactive</code>
+  mode every new destination prompts; in <code>static</code> mode the workspace is
+  <strong>unrestricted</strong> (nothing to filter on); in <code>allow</code> mode everything
+  except <code>rejected_domains</code> is permitted. The deploy-wide default
+  (<code>KLANGKD_NETFILTER_DEFAULT_DOMAINS</code>) is only a create-dialog pre-fill
+  — see above.</li>
+</ul>
+<p>A restart of the workspace container applies the change to a running
+workspace (the ruleset is set at create time).</p>
+<h2 id="fail-closed-behavior">Fail-closed behavior<a class="headerlink" href="#fail-closed-behavior" title="Permanent link">&para;</a></h2>
+<p>If a workspace is filtered — it declares <code>allowed_domains</code>/
+<code>rejected_domains</code>, <strong>or</strong> its <code>egress_mode</code> is <code>interactive</code> — but
+egress filtering is <strong>not available</strong> on the server (disabled via
+<code>KLANGKD_NETFILTER_ENABLED=false</code>, or the sidecar image unset/cleared),
+the workspace <strong>refuses to start</strong> rather than running unrestricted.
+Silently ignoring an allow-list (or the interactive opt-in) would
+disable a security control the user explicitly requested. The settings are still persisted, so they take effect the
+moment filtering is re-enabled.</p>
+<p>An <code>allow</code>-mode workspace with no lists degrades to unrestricted
+instead of failing to start — it asked for permissiveness, not
+lockdown. A <code>static</code> workspace <strong>without</strong> lists always starts
+unrestricted, regardless of the filtering setting.</p>
+<h2 id="common-service-domain-lists">Common service domain lists<a class="headerlink" href="#common-service-domain-lists" title="Permanent link">&para;</a></h2>
+<p>When building an <code>allowed_domains</code> list, you need to know which hosts and
+ports a service requires. The tables below cover the most-requested
+services; the same research pattern (check the provider's firewall /
+proxy docs, then test) works for any service.</p>
+<blockquote>
+<p><strong>Note:</strong> Hostnames are resolved to IPs <strong>at runtime</strong> by the sidecar's
+DNS proxy, so a service whose IPs change (common with CDN-fronted domains)
+stays reachable without restarting the container. See the
+<a href="#caveats">Caveats</a> section.</p>
+</blockquote>
+<h3 id="github-ssh-git-operations">GitHub (SSH git operations)<a class="headerlink" href="#github-ssh-git-operations" title="Permanent link">&para;</a></h3>
+<p>For <code>git clone git@github.com:…</code> / <code>git push</code> over SSH:</p>
+<table>
+<thead>
+<tr>
+<th>Entry</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>github.com:22</code></td>
+<td>Standard SSH transport</td>
+</tr>
+</tbody>
+</table>
+<p>If upstream firewalls block port 22, GitHub offers an SSH-over-HTTPS
+fallback on <code>ssh.github.com:443</code> (requires <code>~/.ssh/config</code> stanza —
+see <a href="https://docs.github.com/en/authentication/troubleshooting-ssh/using-ssh-over-the-https-port">Using SSH over the HTTPS port</a>).</p>
+<h3 id="github-https-git-api">GitHub (HTTPS git + API)<a class="headerlink" href="#github-https-git-api" title="Permanent link">&para;</a></h3>
+<p>For <code>git clone https://github.com/…</code> and the <code>gh</code> CLI:</p>
+<table>
+<thead>
+<tr>
+<th>Entry</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>github.com:443</code></td>
+<td>HTTPS clone / push / pull, web UI</td>
+</tr>
+<tr>
+<td><code>api.github.com:443</code></td>
+<td>REST &amp; GraphQL API (<code>gh</code> CLI, credential helpers)</td>
+</tr>
+</tbody>
+</table>
+<p>If you also need raw file views, release-asset downloads, or Git LFS:</p>
+<table>
+<thead>
+<tr>
+<th>Entry</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>raw.githubusercontent.com:443</code></td>
+<td>Raw file content</td>
+</tr>
+<tr>
+<td><code>objects.githubusercontent.com:443</code></td>
+<td>Git LFS objects</td>
+</tr>
+<tr>
+<td><code>github-releases.githubusercontent.com:443</code></td>
+<td>Release-asset downloads</td>
+</tr>
+<tr>
+<td><code>codeload.github.com:443</code></td>
+<td>Archive / tarball downloads</td>
+</tr>
+</tbody>
+</table>
+<h3 id="github-full-development">GitHub (full development)<a class="headerlink" href="#github-full-development" title="Permanent link">&para;</a></h3>
+<p>A workspace that uses the web UI, GitHub Packages, or Copilot in
+addition to git typically needs a broader set. Because host matching is
+exact by default, use <code>.github.com</code>-style leading-dot entries
+(apex + subdomains) or list the specific subdomains you use:</p>
+<table>
+<thead>
+<tr>
+<th>Entry</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>github.com:22</code></td>
+<td>SSH git</td>
+</tr>
+<tr>
+<td><code>github.com:443</code></td>
+<td>HTTPS git, web UI</td>
+</tr>
+<tr>
+<td><code>api.github.com:443</code></td>
+<td>API</td>
+</tr>
+<tr>
+<td><code>ssh.github.com:443</code></td>
+<td>SSH-over-HTTPS fallback</td>
+</tr>
+<tr>
+<td><code>raw.githubusercontent.com:443</code></td>
+<td>Raw file views</td>
+</tr>
+<tr>
+<td><code>objects.githubusercontent.com:443</code></td>
+<td>LFS objects</td>
+</tr>
+<tr>
+<td><code>github-releases.githubusercontent.com:443</code></td>
+<td>Release assets</td>
+</tr>
+<tr>
+<td><code>codeload.github.com:443</code></td>
+<td>Archives</td>
+</tr>
+<tr>
+<td><code>ghcr.io:443</code></td>
+<td>Container registry</td>
+</tr>
+<tr>
+<td><code>npm.pkg.github.com:443</code></td>
+<td>npm packages</td>
+</tr>
+<tr>
+<td><code>pypi.pkg.github.com:443</code></td>
+<td>PyPI packages</td>
+</tr>
+</tbody>
+</table>
+<p>GitHub warns that their domain list is not comprehensive and IP ranges
+change over time — see <a href="https://docs.github.com/en/get-started/using-github/allowing-access-to-githubs-services-from-a-restricted-network">Allowing access to GitHub's services from a
+restricted network</a> and the live
+<a href="https://api.github.com/meta"><code>/meta</code> API endpoint</a>.</p>
+<h3 id="debian-ubuntu-apt">Debian / Ubuntu (apt)<a class="headerlink" href="#debian-ubuntu-apt" title="Permanent link">&para;</a></h3>
+<p>The default klangk workspace image is Debian Trixie. For <code>apt update</code>
+and <code>apt install</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Entry</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>deb.debian.org:80</code></td>
+<td>Main Debian archive (Fastly CDN)</td>
+</tr>
+<tr>
+<td><code>deb.debian.org:443</code></td>
+<td>Main archive over HTTPS</td>
+</tr>
+<tr>
+<td><code>security.debian.org:80</code></td>
+<td>Security updates</td>
+</tr>
+<tr>
+<td><code>security.debian.org:443</code></td>
+<td>Security updates over HTTPS</td>
+</tr>
+<tr>
+<td><code>cdn-fastly.deb.debian.org:80</code></td>
+<td>Fastly CDN backend (CNAME target)</td>
+</tr>
+<tr>
+<td><code>cdn-fastly.deb.debian.org:443</code></td>
+<td>Fastly CDN backend over HTTPS</td>
+</tr>
+<tr>
+<td><code>cdn-aws.deb.debian.org:443</code></td>
+<td>CloudFront CDN backend</td>
+</tr>
+</tbody>
+</table>
+<p>For GPG key operations (<code>apt-key</code>, <code>gpg --recv-keys</code>):</p>
+<table>
+<thead>
+<tr>
+<th>Entry</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>keyserver.ubuntu.com:80</code></td>
+<td>Primary keyserver (HTTP)</td>
+</tr>
+<tr>
+<td><code>keyserver.ubuntu.com:443</code></td>
+<td>Primary keyserver (HTTPS)</td>
+</tr>
+<tr>
+<td><code>keyserver.ubuntu.com:11371</code></td>
+<td>HKP (HTTP Keyserver Protocol)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Ubuntu</strong> workspaces replace the Debian entries with:</p>
+<table>
+<thead>
+<tr>
+<th>Entry</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>archive.ubuntu.com:80</code></td>
+<td>Main Ubuntu archive</td>
+</tr>
+<tr>
+<td><code>archive.ubuntu.com:443</code></td>
+<td>Main archive over HTTPS</td>
+</tr>
+<tr>
+<td><code>security.ubuntu.com:80</code></td>
+<td>Security updates</td>
+</tr>
+<tr>
+<td><code>security.ubuntu.com:443</code></td>
+<td>Security updates over HTTPS</td>
+</tr>
+<tr>
+<td><code>ppa.launchpadcontent.net:443</code></td>
+<td>PPA downloads (if using PPAs)</td>
+</tr>
+</tbody>
+</table>
+<p>Port 80 is important — apt's default Debian/Ubuntu configuration
+uses HTTP. The packages themselves are GPG-verified regardless of
+transport.</p>
+<h3 id="pypi">PyPI<a class="headerlink" href="#pypi" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Entry</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>pypi.org:443</code></td>
+<td>Package index</td>
+</tr>
+<tr>
+<td><code>files.pythonhosted.org:443</code></td>
+<td>Package downloads</td>
+</tr>
+</tbody>
+</table>
+<h3 id="npm">npm<a class="headerlink" href="#npm" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Entry</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>registry.npmjs.org:443</code></td>
+<td>Package index + tarballs</td>
+</tr>
+</tbody>
+</table>
+<h3 id="nix">Nix<a class="headerlink" href="#nix" title="Permanent link">&para;</a></h3>
+<p>For <code>nix build</code>, <code>nix develop</code>, <code>nix-shell</code>, and <code>nix-env -i</code> (the
+binary cache, channels, and source tarballs):</p>
+<table>
+<thead>
+<tr>
+<th>Entry</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>cache.nixos.org:443</code></td>
+<td>Default binary cache (Fastly CDN → S3)</td>
+</tr>
+<tr>
+<td><code>channels.nixos.org:443</code></td>
+<td>Channel metadata, flake registry</td>
+</tr>
+<tr>
+<td><code>releases.nixos.org:443</code></td>
+<td>Nix release tarballs, installer scripts</td>
+</tr>
+<tr>
+<td><code>tarballs.nixos.org:443</code></td>
+<td>Source tarballs for packages (fetchurl)</td>
+</tr>
+</tbody>
+</table>
+<p>Nix flakes typically pull inputs from GitHub, so the GitHub HTTPS
+entries above are needed too (<code>github.com:443</code>, <code>api.github.com:443</code>,
+<code>codeload.github.com:443</code>, <code>raw.githubusercontent.com:443</code>).</p>
+<p>The CDN backends behind <code>*.nixos.org</code> are Fastly and S3. If your
+firewall resolves CNAMEs or inspects SNI you may also need:</p>
+<table>
+<thead>
+<tr>
+<th>Entry</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>nix-cache.s3.amazonaws.com:443</code></td>
+<td>S3 origin for cache.nixos.org</td>
+</tr>
+</tbody>
+</table>
+<p>If using <a href="https://cachix.org">Cachix</a> binary caches, add each cache
+you use:</p>
+<table>
+<thead>
+<tr>
+<th>Entry</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>cachix.org:443</code></td>
+<td>Main service</td>
+</tr>
+<tr>
+<td><code>devenv.cachix.org:443</code></td>
+<td>devenv cache (example)</td>
+</tr>
+<tr>
+<td><code>nix-community.cachix.org:443</code></td>
+<td>nix-community cache (example)</td>
+</tr>
+</tbody>
+</table>
+<p>All Nix traffic is HTTPS (port 443). No HTTP or non-standard ports
+are required.</p>
+<h3 id="gitlab">GitLab<a class="headerlink" href="#gitlab" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Entry</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>gitlab.com:22</code></td>
+<td>SSH git</td>
+</tr>
+<tr>
+<td><code>gitlab.com:443</code></td>
+<td>HTTPS git, web UI</td>
+</tr>
+<tr>
+<td><code>registry.gitlab.com:443</code></td>
+<td>Container registry</td>
+</tr>
+</tbody>
+</table>
+<p>Self-managed GitLab instances use their own hostname instead of
+<code>gitlab.com</code>.</p>
+<h3 id="bitbucket">Bitbucket<a class="headerlink" href="#bitbucket" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Entry</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>bitbucket.org:22</code></td>
+<td>SSH git</td>
+</tr>
+<tr>
+<td><code>bitbucket.org:443</code></td>
+<td>HTTPS git, web UI</td>
+</tr>
+<tr>
+<td><code>api.bitbucket.org:443</code></td>
+<td>REST API</td>
+</tr>
+</tbody>
+</table>
+<h3 id="codeberg">Codeberg<a class="headerlink" href="#codeberg" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Entry</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>codeberg.org:22</code></td>
+<td>SSH git</td>
+</tr>
+<tr>
+<td><code>codeberg.org:443</code></td>
+<td>HTTPS git, web UI</td>
+</tr>
+</tbody>
+</table>
+<h3 id="canonical-launchpad">Canonical Launchpad<a class="headerlink" href="#canonical-launchpad" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Entry</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>launchpad.net:443</code></td>
+<td>Web UI, API</td>
+</tr>
+<tr>
+<td><code>git.launchpad.net:22</code></td>
+<td>Git over SSH</td>
+</tr>
+<tr>
+<td><code>git.launchpad.net:443</code></td>
+<td>Git over HTTPS</td>
+</tr>
+<tr>
+<td><code>ppa.launchpadcontent.net:443</code></td>
+<td>PPA package downloads</td>
+</tr>
+</tbody>
+</table>
+<h3 id="anthropic-api-claude-code">Anthropic API (Claude Code)<a class="headerlink" href="#anthropic-api-claude-code" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Entry</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>api.anthropic.com:443</code></td>
+<td>Claude API (chat, completions)</td>
+</tr>
+<tr>
+<td><code>statsig.anthropic.com:443</code></td>
+<td>Feature flags / telemetry</td>
+</tr>
+<tr>
+<td><code>sentry.io:443</code></td>
+<td>Error reporting</td>
+</tr>
+</tbody>
+</table>
+<h3 id="openai-api-codex-chatgpt">OpenAI API (Codex, ChatGPT)<a class="headerlink" href="#openai-api-codex-chatgpt" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Entry</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>api.openai.com:443</code></td>
+<td>Chat, completions, Codex API</td>
+</tr>
+<tr>
+<td><code>cdn.openai.com:443</code></td>
+<td>Static assets</td>
+</tr>
+<tr>
+<td><code>openaiapi-site.azureedge.net:443</code></td>
+<td>CDN edge (Azure)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="zencoder-zai">Zencoder (z.ai)<a class="headerlink" href="#zencoder-zai" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Entry</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>api.z.ai:443</code></td>
+<td>LLM API (<code>/api/coding/paas/v4</code> base path)</td>
+</tr>
+<tr>
+<td><code>auth.zencoder.ai:443</code></td>
+<td>Authentication</td>
+</tr>
+</tbody>
+</table>
+<h3 id="openrouter">OpenRouter<a class="headerlink" href="#openrouter" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Entry</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>openrouter.ai:443</code></td>
+<td>LLM API (<code>/api/v1</code> base path), web UI</td>
+</tr>
+</tbody>
+</table>
+<h3 id="ollama">Ollama<a class="headerlink" href="#ollama" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Entry</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>cloud.ollama.com:443</code></td>
+<td>Ollama cloud API (direct from container)</td>
+</tr>
+</tbody>
+</table>
+<p>A self-hosted Ollama configured in <code>KLANGKD_LLM_MODELS</code> is proxied
+through the backend's <code>/llm-proxy/</code> endpoint and needs no netfilter
+entry. <code>cloud.ollama.com</code> is for workspaces that contact the Ollama
+cloud service directly (e.g. from user code or an agent).</p>
+<h3 id="bare-domain-shortcut">Bare-domain shortcut<a class="headerlink" href="#bare-domain-shortcut" title="Permanent link">&para;</a></h3>
+<p>A domain without a port (e.g. <code>github.com</code>) allows <strong>all</strong> ports to that
+exact host (and <code>.github.com</code> all ports to it and its subdomains). This
+is convenient for quick iteration but less restrictive than pinning
+individual ports.</p>
+<h3 id="deploy-wide-default-all-common-services">Deploy-wide default: all common services<a class="headerlink" href="#deploy-wide-default-all-common-services" title="Permanent link">&para;</a></h3>
+<p>The following <code>klangkd.yaml</code> snippet sets the deploy-wide default to
+the union of every service listed above. Workspaces created from the
+browser's create dialog (which pre-fills its Netfilter list with this
+default) start with all of them as pre-approvals; the creator trims the
+list from there.</p>
+<p>Remove services you don't need — the tighter the list, the smaller the
+attack surface.</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="c1"># Deploy-wide egress allow-list (union of all common services).</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="c1"># Each workspace that does NOT set its own allowed_domains inherits this.</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="c1"># A workspace with its own list overrides it completely.</span>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="nt">netfilter_default_domains</span><span class="p">:</span>
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">  </span><span class="c1"># --- GitHub (SSH + HTTPS + API + assets) ---</span>
+</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">github.com:22</span>
+</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">github.com:443</span>
+</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">api.github.com:443</span>
+</span><span id="__span-4-9"><a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ssh.github.com:443</span>
+</span><span id="__span-4-10"><a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">codeload.github.com:443</span>
+</span><span id="__span-4-11"><a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">raw.githubusercontent.com:443</span>
+</span><span id="__span-4-12"><a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">objects.githubusercontent.com:443</span>
+</span><span id="__span-4-13"><a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">github-releases.githubusercontent.com:443</span>
+</span><span id="__span-4-14"><a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ghcr.io:443</span>
+</span><span id="__span-4-15"><a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">npm.pkg.github.com:443</span>
+</span><span id="__span-4-16"><a id="__codelineno-4-16" name="__codelineno-4-16" href="#__codelineno-4-16"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">pypi.pkg.github.com:443</span>
+</span><span id="__span-4-17"><a id="__codelineno-4-17" name="__codelineno-4-17" href="#__codelineno-4-17"></a><span class="w">  </span><span class="c1"># --- GitLab ---</span>
+</span><span id="__span-4-18"><a id="__codelineno-4-18" name="__codelineno-4-18" href="#__codelineno-4-18"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">gitlab.com:22</span>
+</span><span id="__span-4-19"><a id="__codelineno-4-19" name="__codelineno-4-19" href="#__codelineno-4-19"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">gitlab.com:443</span>
+</span><span id="__span-4-20"><a id="__codelineno-4-20" name="__codelineno-4-20" href="#__codelineno-4-20"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">registry.gitlab.com:443</span>
+</span><span id="__span-4-21"><a id="__codelineno-4-21" name="__codelineno-4-21" href="#__codelineno-4-21"></a><span class="w">  </span><span class="c1"># --- Bitbucket ---</span>
+</span><span id="__span-4-22"><a id="__codelineno-4-22" name="__codelineno-4-22" href="#__codelineno-4-22"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">bitbucket.org:22</span>
+</span><span id="__span-4-23"><a id="__codelineno-4-23" name="__codelineno-4-23" href="#__codelineno-4-23"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">bitbucket.org:443</span>
+</span><span id="__span-4-24"><a id="__codelineno-4-24" name="__codelineno-4-24" href="#__codelineno-4-24"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">api.bitbucket.org:443</span>
+</span><span id="__span-4-25"><a id="__codelineno-4-25" name="__codelineno-4-25" href="#__codelineno-4-25"></a><span class="w">  </span><span class="c1"># --- Codeberg ---</span>
+</span><span id="__span-4-26"><a id="__codelineno-4-26" name="__codelineno-4-26" href="#__codelineno-4-26"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">codeberg.org:22</span>
+</span><span id="__span-4-27"><a id="__codelineno-4-27" name="__codelineno-4-27" href="#__codelineno-4-27"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">codeberg.org:443</span>
+</span><span id="__span-4-28"><a id="__codelineno-4-28" name="__codelineno-4-28" href="#__codelineno-4-28"></a><span class="w">  </span><span class="c1"># --- Canonical Launchpad ---</span>
+</span><span id="__span-4-29"><a id="__codelineno-4-29" name="__codelineno-4-29" href="#__codelineno-4-29"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">launchpad.net:443</span>
+</span><span id="__span-4-30"><a id="__codelineno-4-30" name="__codelineno-4-30" href="#__codelineno-4-30"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">git.launchpad.net:22</span>
+</span><span id="__span-4-31"><a id="__codelineno-4-31" name="__codelineno-4-31" href="#__codelineno-4-31"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">git.launchpad.net:443</span>
+</span><span id="__span-4-32"><a id="__codelineno-4-32" name="__codelineno-4-32" href="#__codelineno-4-32"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ppa.launchpadcontent.net:443</span>
+</span><span id="__span-4-33"><a id="__codelineno-4-33" name="__codelineno-4-33" href="#__codelineno-4-33"></a><span class="w">  </span><span class="c1"># --- Debian apt ---</span>
+</span><span id="__span-4-34"><a id="__codelineno-4-34" name="__codelineno-4-34" href="#__codelineno-4-34"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">deb.debian.org:80</span>
+</span><span id="__span-4-35"><a id="__codelineno-4-35" name="__codelineno-4-35" href="#__codelineno-4-35"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">deb.debian.org:443</span>
+</span><span id="__span-4-36"><a id="__codelineno-4-36" name="__codelineno-4-36" href="#__codelineno-4-36"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">security.debian.org:80</span>
+</span><span id="__span-4-37"><a id="__codelineno-4-37" name="__codelineno-4-37" href="#__codelineno-4-37"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">security.debian.org:443</span>
+</span><span id="__span-4-38"><a id="__codelineno-4-38" name="__codelineno-4-38" href="#__codelineno-4-38"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">cdn-fastly.deb.debian.org:80</span>
+</span><span id="__span-4-39"><a id="__codelineno-4-39" name="__codelineno-4-39" href="#__codelineno-4-39"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">cdn-fastly.deb.debian.org:443</span>
+</span><span id="__span-4-40"><a id="__codelineno-4-40" name="__codelineno-4-40" href="#__codelineno-4-40"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">cdn-aws.deb.debian.org:443</span>
+</span><span id="__span-4-41"><a id="__codelineno-4-41" name="__codelineno-4-41" href="#__codelineno-4-41"></a><span class="w">  </span><span class="c1"># --- Ubuntu apt ---</span>
+</span><span id="__span-4-42"><a id="__codelineno-4-42" name="__codelineno-4-42" href="#__codelineno-4-42"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">archive.ubuntu.com:80</span>
+</span><span id="__span-4-43"><a id="__codelineno-4-43" name="__codelineno-4-43" href="#__codelineno-4-43"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">archive.ubuntu.com:443</span>
+</span><span id="__span-4-44"><a id="__codelineno-4-44" name="__codelineno-4-44" href="#__codelineno-4-44"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">security.ubuntu.com:80</span>
+</span><span id="__span-4-45"><a id="__codelineno-4-45" name="__codelineno-4-45" href="#__codelineno-4-45"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">security.ubuntu.com:443</span>
+</span><span id="__span-4-46"><a id="__codelineno-4-46" name="__codelineno-4-46" href="#__codelineno-4-46"></a><span class="w">  </span><span class="c1"># --- GPG keyservers ---</span>
+</span><span id="__span-4-47"><a id="__codelineno-4-47" name="__codelineno-4-47" href="#__codelineno-4-47"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">keyserver.ubuntu.com:80</span>
+</span><span id="__span-4-48"><a id="__codelineno-4-48" name="__codelineno-4-48" href="#__codelineno-4-48"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">keyserver.ubuntu.com:443</span>
+</span><span id="__span-4-49"><a id="__codelineno-4-49" name="__codelineno-4-49" href="#__codelineno-4-49"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">keyserver.ubuntu.com:11371</span>
+</span><span id="__span-4-50"><a id="__codelineno-4-50" name="__codelineno-4-50" href="#__codelineno-4-50"></a><span class="w">  </span><span class="c1"># --- PyPI ---</span>
+</span><span id="__span-4-51"><a id="__codelineno-4-51" name="__codelineno-4-51" href="#__codelineno-4-51"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">pypi.org:443</span>
+</span><span id="__span-4-52"><a id="__codelineno-4-52" name="__codelineno-4-52" href="#__codelineno-4-52"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">files.pythonhosted.org:443</span>
+</span><span id="__span-4-53"><a id="__codelineno-4-53" name="__codelineno-4-53" href="#__codelineno-4-53"></a><span class="w">  </span><span class="c1"># --- npm ---</span>
+</span><span id="__span-4-54"><a id="__codelineno-4-54" name="__codelineno-4-54" href="#__codelineno-4-54"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">registry.npmjs.org:443</span>
+</span><span id="__span-4-55"><a id="__codelineno-4-55" name="__codelineno-4-55" href="#__codelineno-4-55"></a><span class="w">  </span><span class="c1"># --- Nix ---</span>
+</span><span id="__span-4-56"><a id="__codelineno-4-56" name="__codelineno-4-56" href="#__codelineno-4-56"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">cache.nixos.org:443</span>
+</span><span id="__span-4-57"><a id="__codelineno-4-57" name="__codelineno-4-57" href="#__codelineno-4-57"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">channels.nixos.org:443</span>
+</span><span id="__span-4-58"><a id="__codelineno-4-58" name="__codelineno-4-58" href="#__codelineno-4-58"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">releases.nixos.org:443</span>
+</span><span id="__span-4-59"><a id="__codelineno-4-59" name="__codelineno-4-59" href="#__codelineno-4-59"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">tarballs.nixos.org:443</span>
+</span><span id="__span-4-60"><a id="__codelineno-4-60" name="__codelineno-4-60" href="#__codelineno-4-60"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">nix-cache.s3.amazonaws.com:443</span>
+</span><span id="__span-4-61"><a id="__codelineno-4-61" name="__codelineno-4-61" href="#__codelineno-4-61"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">cachix.org:443</span>
+</span><span id="__span-4-62"><a id="__codelineno-4-62" name="__codelineno-4-62" href="#__codelineno-4-62"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">devenv.cachix.org:443</span>
+</span><span id="__span-4-63"><a id="__codelineno-4-63" name="__codelineno-4-63" href="#__codelineno-4-63"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">nix-community.cachix.org:443</span>
+</span><span id="__span-4-64"><a id="__codelineno-4-64" name="__codelineno-4-64" href="#__codelineno-4-64"></a><span class="w">  </span><span class="c1"># --- LLM providers ---</span>
+</span><span id="__span-4-65"><a id="__codelineno-4-65" name="__codelineno-4-65" href="#__codelineno-4-65"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">api.anthropic.com:443</span>
+</span><span id="__span-4-66"><a id="__codelineno-4-66" name="__codelineno-4-66" href="#__codelineno-4-66"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">statsig.anthropic.com:443</span>
+</span><span id="__span-4-67"><a id="__codelineno-4-67" name="__codelineno-4-67" href="#__codelineno-4-67"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">sentry.io:443</span>
+</span><span id="__span-4-68"><a id="__codelineno-4-68" name="__codelineno-4-68" href="#__codelineno-4-68"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">api.openai.com:443</span>
+</span><span id="__span-4-69"><a id="__codelineno-4-69" name="__codelineno-4-69" href="#__codelineno-4-69"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">cdn.openai.com:443</span>
+</span><span id="__span-4-70"><a id="__codelineno-4-70" name="__codelineno-4-70" href="#__codelineno-4-70"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">openaiapi-site.azureedge.net:443</span>
+</span><span id="__span-4-71"><a id="__codelineno-4-71" name="__codelineno-4-71" href="#__codelineno-4-71"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">api.z.ai:443</span>
+</span><span id="__span-4-72"><a id="__codelineno-4-72" name="__codelineno-4-72" href="#__codelineno-4-72"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">auth.zencoder.ai:443</span>
+</span><span id="__span-4-73"><a id="__codelineno-4-73" name="__codelineno-4-73" href="#__codelineno-4-73"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">openrouter.ai:443</span>
+</span><span id="__span-4-74"><a id="__codelineno-4-74" name="__codelineno-4-74" href="#__codelineno-4-74"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">cloud.ollama.com:443</span>
+</span></code></pre></div>
+<h2 id="caveats">Caveats<a class="headerlink" href="#caveats" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>IPv6 egress is default-denied — IPv4 egress only.</strong> The sidecar sets
+  <code>ip6tables -P OUTPUT DROP</code>, so the allow-list can't be bypassed over v6.
+  Hostnames resolve to IPv4 only (AAAA records are ignored), and
+  <code>[ipv6]:port</code> literals are rejected by the validator. Trade-off: a
+  workspace that genuinely needs IPv6 egress cannot use the filter —
+  clear <code>allowed_domains</code> (and the deploy-wide default) and set
+  <code>egress_mode</code> to <code>static</code> or <code>allow</code> to run it unrestricted.</li>
+<li><strong><code>0.0.0.0/0</code> matches all IPv4 — don't use it to "disable" the
+  filter.</strong> A <code>/0</code> CIDR (e.g. <code>0.0.0.0/0</code>) is a valid spec but the
+  ACCEPT rule it emits matches the entire IPv4 space, so it effectively
+  runs the workspace unrestricted while looking like a real rule. The
+  server logs a loud warning whenever a <code>/0</code> CIDR appears in an allow-list
+  (workspace or deploy default). If you genuinely want unrestricted
+  egress, set <code>egress_mode</code> to <code>static</code> or <code>allow</code> with an empty list (or
+  set <code>KLANGKD_NETFILTER_ENABLED=false</code>) — those are the documented,
+  obvious ways to opt out.</li>
+<li><strong>Hostnames resolve at runtime — no restart needed on IP change.</strong> The
+  sidecar's DNS proxy resolves each query against a real upstream and
+  allow-lists the IP at runtime, so a service that rotates IPs (CDNs like
+  Fastly, CloudFront, Cloudflare) stays reachable without restarting the
+  container. Static CIDR ranges (<code>10.0.0.0/8</code>) are installed as a single
+  stable <code>-d &lt;ip&gt;/&lt;plen&gt;</code> rule with no resolution.</li>
+<li><strong>A CNAME can widen egress to an attacker-steerable IP.</strong>
+  The proxy allow-lists every A record in a response, including those reached
+  via a CNAME chain. A <code>host:port</code> spec scopes a learned IP to that one TCP
+  port; a bare <code>host</code> allows all ports; and a learned IP expires with the DNS
+  response's TTL. But within that port/TTL window, if an allowed
+  domain CNAMEs to a host an attacker controls (or to a shared CDN frontend
+  IP), that IP becomes reachable for the spec's ports. Prefer <code>host:port</code>
+  specs and avoid allow-listing domains whose CNAME targets you don't control.</li>
+<li><strong>Dropping a domain from a running workspace does not revoke already-
+  resolved IPs.</strong> A resolved IP is allow-listed for the DNS response's TTL
+  and the sidecar's proxy drops the rule once the TTL elapses, so stale IPs
+  do not persist indefinitely. But the allow-list a running sidecar
+  enforces is fixed at start — removing a domain from <code>allowed_domains</code> does
+  not revoke egress to IPs the workspace already resolved; recreate the
+  workspace (or wait for TTL expiry) to fully revoke.</li>
+<li><strong>DNS is redirected to the sidecar's proxy, not blocked.</strong> Outbound
+  <code>:53</code> is <code>REDIRECT</code>ed to the sidecar's FQDN DNS proxy, which resolves
+  against a real upstream and allow-lists the IPs at runtime; a denied
+  domain returns NXDOMAIN (<code>static</code> refuses the query locally;
+  <code>interactive</code>/<code>allow</code> resolve it but gate the connection). This does
+  <strong>not</strong> prevent DNS tunneling through the proxy to attacker-controlled
+  <strong>allow-listed</strong> domains or in <code>interactive</code>/<code>allow</code> mode (data can still
+  be encoded in DNS queries). Treat the filter as an egress allow-list,
+  not a complete
+  anti-exfiltration guarantee against DNS-based channels.</li>
+<li><strong>Ruleset immutability depends on the runtime capability set.</strong> The
+  sidecar installs the iptables rules in the shared netns, and the
+  workspace container is unprivileged (no <code>NET_ADMIN</code>). It is <strong>not</strong> a
+  hard guarantee: running the workspace <code>--privileged</code>, adding
+  <code>--cap-add NET_ADMIN</code>, or a permissive seccomp profile hands the
+  entrypoint <code>iptables -F OUTPUT</code>, which flushes the ruleset and lets it
+  exfiltrate freely. Do not run filtered workspaces privileged or grant
+  <code>NET_ADMIN</code>.</li>
+<li><strong>Port granularity.</strong> A spec allows either all ports (<code>host</code>, or a
+  CIDR like <code>10.0.0.0/8</code>) or a single TCP port (<code>host:port</code>, CIDR with
+  <code>:port</code>). Port-only rules (allow a port to any host) are not
+  supported — that would be an exfiltration channel.</li>
+<li><strong>macOS hosts.</strong> On macOS, podman runs inside a CoreOS VM via
+  <code>podman machine</code>. The network sidecar runs as a normal container in
+  that VM (it owns its netns + iptables), so egress filtering works the
+  same way as on Linux — no host <code>iptables</code>/<code>nsenter</code> is needed.</li>
+<li><strong>Interactive mode denies off-list egress with no decider connected.</strong>
+  Interactivity is runtime state: headless or agent-driven
+  workspaces (auto-started services, CI jobs) that must egress
+  unattended need a connected decider — or <code>static</code>/<code>allow</code> mode.</li>
+<li><strong>A held connection blocks until decided (or it times out).</strong> The hold
+  window is <code>KLANGKD_EGRESS_CONSENT_TIMEOUT</code> (default 120s, sized to the
+  kernel's connect timeout); tools with their own shorter connect
+  timeouts may give up before a human answers.</li>
+<li><strong>Off-list names resolve in interactive mode.</strong> The consent gate is the
+  connection SYN, not the DNS query, so a successful
+  <code>getaddrinfo</code> does not mean the connection is permitted.</li>
+<li><strong>Only <code>forever</code> verdicts survive a restart.</strong> <code>tilrestart</code> and timed
+  verdicts live in the sidecar's in-memory rules and die with the
+  container; <code>once</code> is per-connection by definition.</li>
+<li><strong>Pausing consent auto-allows.</strong> While a pause window is open,
+  every destination without a recorded deny is permitted
+  per-connection — treat a pause as a temporary hole, not a hardening
+  step.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-circle-arrow-up" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="m16 12-4-4-4 4M12 16V8"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../health-check/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Health Check">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7M19 12H5"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                Health Check
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../sandbox/" class="md-footer__link md-footer__link--next" aria-label="Next: Sandbox">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                Sandbox
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-right" viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2026 Chris McDonough
+    </div>
+  
+  
+    Made with
+    <a href="https://zensical.org/" target="_blank" rel="noopener">
+      Zensical
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["content.code.copy","content.code.select","navigation.footer","navigation.indexes","navigation.instant","navigation.instant.prefetch","navigation.path","navigation.sections","navigation.top","navigation.tracking","search.highlight"],"search":"../../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"default":"latest","provider":"mike"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.6970bfe9.min.js"></script>
+      
+    
+  </body>
+</html>

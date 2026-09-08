@@ -1,0 +1,3580 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Multi-User AI Sandboxing, Collaboration and Coding Platform">
+      
+      
+        <meta name="author" content="Chris McDonough">
+      
+      
+        <link rel="canonical" href="https://mcdonc.github.io/klangk/2.0a1/reference/environment/">
+      
+      
+        <link rel="prev" href="../klangkd-config/">
+      
+      
+        <link rel="next" href="../../development/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/favicon.png">
+      <meta name="generator" content="zensical-0.0.59">
+    
+    
+      
+        <title>Environment Variables - Klangk</title>
+      
+    
+    
+      
+        
+      
+      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.5da3a30f.min.css">
+      
+        
+          
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.812a03bb.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,500,500i,700,700i%7CJetBrains+Mono:400,400i,700,700i&amp;display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_scope.pathname.endsWith("/")||(__md_scope=new URL(__md_scope.pathname+"/",location)),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,_=__md_scope)=>JSON.parse(t.getItem(_.pathname+"."+e)),__md_set=(e,t,_=localStorage,a=__md_scope)=>{try{_.setItem(a.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="green" data-md-color-accent="green">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer" aria-label="Navigation"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#environment-variables" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Klangk" class="md-header__button md-logo" aria-label="Klangk" data-md-component="logo">
+      
+  <img src="../../assets/logo.svg" alt="Klangk">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer" aria-label="Navigation">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-menu" viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h16"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Klangk
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Environment Variables
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="none" data-md-color-scheme="slate" data-md-color-primary="green" data-md-color-accent="green"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="none" data-md-color-scheme="default" data-md-color-primary="green" data-md-color-accent="green"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-moon" viewBox="0 0 24 24"><path d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search" aria-label="Search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-search" viewBox="0 0 24 24"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog" aria-label="Search">
+  <button type="button" class="md-search__button">
+    Search
+  </button>
+</div>
+      
+    
+    <div class="md-header__source">
+      
+        <a href="https://github.com/mcdonc/klangk" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mcdonc/klangk
+  </div>
+</a>
+      
+    </div>
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Klangk" class="md-nav__button md-logo" aria-label="Klangk" data-md-component="logo">
+      
+  <img src="../../assets/logo.svg" alt="Klangk">
+
+    </a>
+    Klangk
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/mcdonc/klangk" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mcdonc/klangk
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Home
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Getting Started
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../features/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Features
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Features
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/authentication/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Authentication
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/auth-modes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Auth Modes
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/authorization/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Authorization
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/handles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Handles
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/admin-management/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Admin Management
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/invitations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Invitations
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/workspaces/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Workspaces
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/terminal/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Terminal
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/the-shell/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The Shell
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/service-command/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Service Command
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/auto-start/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Auto-Start
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/health-check/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Health Check
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/egress-filtering/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Egress Filtering
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/sandbox/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Sandbox
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/file-viewer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  File Viewer
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/ai-coding-harnesses/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  AI Coding Harnesses
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/features/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Feature Activation
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/export-import/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Export & Import
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/hosted-apps/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Hosted Apps
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  CLI
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/ssh-agent-forwarding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  SSH Agent Forwarding
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/github-authentication/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  GitHub HTTPS Authentication
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/debug-panel/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Debug Panel
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/logging/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Logging
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/admission/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Workspace Admission
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/crash-recovery/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Crash Recovery
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/server-scheduling/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Server Scheduling
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/nix/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Nix
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../sandboxes/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Sandboxes
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Sandboxes
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../sandboxes/openclaw/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  OpenClaw
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../sandboxes/hermes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Hermes
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Deployment
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Deployment
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/docker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Running with Docker
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/packaged/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Packaged klangkd
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/hosting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Hosting & Proxy
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/behind-a-proxy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Behind a Reverse Proxy
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/https-hosting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  HTTPS Hosting
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/airgapped/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Air-Gapped Deployment
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/customizing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Customizing
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/fips/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  FIPS 140-3 Mode
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/signals/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Process Signals
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/decommissioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Decommissioning
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/falco/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Falco Exec Audit
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../podman/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Podman
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../oidc/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  OIDC
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../backup-restore/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Backup and Restore
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../audit-integrity/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Audit Record Integrity
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Reference
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Reference
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../acl/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  ACL System
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api-endpoints/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  API Endpoints
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../klangkd-config/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Configuration File
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+        
+      
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Environment Variables
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../development/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Klangk Development
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_7" id="__nav_7_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Klangk Development
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/ci/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  CI
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/pre-commit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Pre-commit Hooks
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/schema-migrations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Database Schema Changes
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/releasing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Releasing
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/building-images/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Building Images
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/stable-branches/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Stable Branches
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/super-e2e/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Super-E2E
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../changes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Changelog
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_9" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../architecture/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Architecture
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_9" id="__nav_9_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_9_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_9">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Architecture
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/llm-proxy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  LLM Proxy
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/browser-bridge/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Browser Bridge
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/workspace-jwt/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Workspace JWT
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/egress-flow/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Egress Request Flow
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  
+                    
+                    
+                    
+                      
+                    
+                    
+                  
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+                
+
+
+
+  
+
+
+  <nav class="md-path" aria-label="Navigation" >
+    <ol class="md-path__list">
+      
+        
+  
+  
+    <li class="md-path__item">
+      <a href="../.." class="md-path__link">
+        
+  
+  <span class="md-ellipsis">
+    Home
+  </span>
+
+      </a>
+    </li>
+  
+
+      
+      
+        
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+      <li class="md-path__item">
+        <a href="../acl/" class="md-path__link">
+          
+  
+  <span class="md-ellipsis">
+    Reference
+  </span>
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ol>
+  </nav>
+
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+  
+  
+
+
+<h1 id="environment-variables">Environment Variables<a class="headerlink" href="#environment-variables" title="Permanent link">&para;</a></h1>
+<blockquote>
+<p><strong>Config file alternative:</strong> All <code>KLANGK_*</code> settings below can also be set in a YAML config file via <code>klangkd --config</code>. The config file is the recommended substrate for production deployments; env vars override file values. See <a href="../klangkd-config/">Configuration File</a>.</p>
+<p><strong>Applying configuration changes:</strong> After editing <code>KLANGK_*</code> env vars or the YAML config file, send <code>SIGHUP</code> to the <code>klangkd</code> process to reload and apply the new values without a full process restart. The HTTP listener and DB stay up; WebSocket clients reconnect automatically. A small set of settings (<code>KLANGKD_PORT</code>, <code>KLANGKD_LISTEN</code>, <code>KLANGKD_DATA_DIR</code>, <code>KLANGKD_STATE_DIR</code>) are bound for the life of the process and require a full restart — SIGHUP logs a warning if one of these changed. An invalid configuration denies the reload (runtime left on last-known-good config, reason logged at <code>ERROR</code>). See <a href="../../deployment/signals/#sighup-graceful-runtime-recycle">Process Signals</a>.</p>
+</blockquote>
+<p><code>$DEVENV_STATE</code> refers to <code>&lt;project root&gt;/.devenv/state</code> — this is where devenv stores runtime data.</p>
+<p>For local development, settings live in <code>klangkd.yaml</code> (gitignored; <code>devenv.nix</code> seeds it from <code>klangkd.yaml.devenv</code> on first shell entry). Environment variables override config-file values. Both env vars and config-file values support <code>file:</code> and <code>cmd:</code> prefixes for secret indirection — see <a href="../klangkd-config/#file-and-cmd-resolution">Configuration File — <code>file:</code> and <code>cmd:</code> resolution</a> for the full precedence rules and resolution semantics.</p>
+<blockquote>
+<p><strong>Removed in 2.X:</strong> <code>KLANGKD_PROXY_ENGINE</code> is gone — Caddy is the
+sole reverse-proxy engine. The env var is no longer recognized (silently
+ignored); remove it from your config.</p>
+</blockquote>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>KLANGKD_PROXY_PORT</code></td>
+<td><strong>deprecated</strong></td>
+<td><strong>Deprecated alias for <code>KLANGKD_EGRESS_PORT</code></strong>. If <code>KLANGKD_EGRESS_PORT</code> is unset, this value is used as the egress port and a deprecation warning is logged; if both are set, this is ignored (<code>KLANGKD_EGRESS_PORT</code> wins) and a warning is logged. A future release will stop recognizing it — rename to <code>KLANGKD_EGRESS_PORT</code>. Renamed from <code>KLANGKD_NGINX_PORT</code>; the old <code>KLANGKD_NGINX_PORT</code> name is no longer recognized.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_EGRESS_PORT</code></td>
+<td><code>8995</code></td>
+<td>Container-egress port — the proxy listener for container→backend traffic. Three locations are served on it: <code>/llm-proxy/*</code>, <code>/api/v1/browser-delegate</code>, and <code>/ws/egress-sidecar</code> (the network sidecar's blocked-egress event channel). (Two more, <code>/api/v1/auth/verify-workspace-token</code> and <code>@token_auth_failed</code>, live on the same listener but are internal — reachable only as <code>forward_auth</code> subrequests, never callable directly.) Served in both headless and full/browser modes. Must differ from <code>KLANGKD_PORT</code> so ingress vs egress can be firewalled separately.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_EGRESS_LISTEN</code></td>
+<td><code>0.0.0.0</code></td>
+<td>Interface the proxy binds for the <strong>egress</strong> listener (<code>{KLANGKD_EGRESS_LISTEN}:{KLANGKD_EGRESS_PORT}</code>). Defaults to <code>0.0.0.0</code> (all interfaces) because the host interface container traffic arrives on is environment-specific (<code>host.containers.internal</code> resolves to a netavark/pasta virtual gateway that isn't bindable; the real interface traffic lands on varies by podman network mode and host IP) and cannot be detected reliably at render time. The all-interfaces bind is <strong>not</strong> a security hole: every one of the served locations is double-gated — <code>CONTAINER_ACL</code> (a container-source allowlist that returns <strong>403</strong> for any IP outside the container subnet set) <strong>plus</strong> <code>forward_auth</code> to <code>/api/v1/auth/verify-workspace-token</code> (→ <strong>401</strong> without a valid workspace JWT, even from an allowed container IP). So the network sees 403 on every location; a container IP without a token sees 401. Pin to a specific host IP (e.g. <code>192.168.1.5</code>) to drop every other interface from the egress surface if your deployment's container-facing IP is stable. The browser listener (<code>KLANGKD_LISTEN</code>/<code>KLANGKD_PORT</code>, default loopback) is a separate server block and is <strong>not</strong> affected. Accepts a bare bind address only — an IPv4/IPv6 literal or a host name (a bracketed IPv6 literal normalizes to the bare form); a value carrying a port, CIDR suffix, or embedded whitespace fails startup with the setting named, because the value renders verbatim into the Caddyfile <code>bind</code> directive (#3275). A host name must be resolvable and bindable by Caddy: an interface name (<code>eth0</code>) is a valid host name that passes validation, and Caddy refusing to bind it aborts the proxy with Caddy's error instead of an endless restart loop.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_PORT</code></td>
+<td><strong>unset</strong></td>
+<td><strong>Browser/proxy port</strong> (UI, API, WebSocket, hosted apps). <strong>Unset ⇒ headless mode</strong> (no browser listener rendered; only the container-egress listener on <code>KLANGKD_EGRESS_PORT</code> is served). Set ⇒ full/browser mode. Suggested <code>8997</code>.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_LISTEN</code></td>
+<td><code>127.0.0.1</code></td>
+<td>Address the proxy binds for the <strong>browser</strong> listener (<code>{KLANGKD_LISTEN}:{KLANGKD_PORT}</code>). Rendered only when <code>KLANGKD_PORT</code> is set (full/browser mode). Default <code>127.0.0.1</code> (loopback); set to <code>0.0.0.0</code> to expose the browser listener on all interfaces. Accepts a bare bind address only — an IPv4/IPv6 literal or a host name (a bracketed IPv6 literal normalizes to the bare form); the port lives in <code>KLANGKD_PORT</code> (Caddy ignores a port written inside a bind address), and a CIDR suffix or embedded whitespace fails startup with the setting named, because the value renders verbatim into the Caddyfile <code>bind</code> directive (#3275). A host name must be resolvable and bindable by Caddy; an unbindable one aborts the proxy with Caddy's error instead of an endless restart loop.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_TLS_HOSTNAME</code></td>
+<td></td>
+<td>The public FQDN klangkd serves, <strong>arming automatic TLS</strong> on the built-in Caddy proxy (#3192). Unset (the default) keeps plain HTTP with <code>auto_https off</code> — the outer-proxy model, byte-identical to before. Set to a public DNS name (e.g. <code>klangk.example.com</code>) and the browser listener is rendered as <code>https://&lt;fqdn&gt;:&lt;KLANGKD_PORT&gt;</code> with a CA-issued, auto-renewed certificate (ACME HTTP-01 / TLS-ALPN via Let's Encrypt + ZeroSSL) and an HTTP→HTTPS redirect on port 80. Requires <code>KLANGKD_PORT</code> set (arming without it refuses to boot), a public DNS record pointing at the host, and ports 80/443 reachable from the internet. Validated at construction: with the default <code>acme</code> issuer it must be a syntactically valid public FQDN (not an IP, URL, or single-label name); with <code>KLANGKD_TLS_ISSUER=internal</code> any RFC 1123 host name or IPv4 literal is accepted. Certificate material persists under <code>&lt;state_dir&gt;/caddy-storage</code> so restarts do not re-issue. Reloadable on SIGHUP (the re-rendered config is pushed to the running Caddy). See <a href="../../deployment/https-hosting/">HTTPS Hosting</a>.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_TLS_ISSUER</code></td>
+<td><code>acme</code></td>
+<td>How the armed listener's certificate is obtained (#3192). <code>acme</code> (the default, also when unset): ACME issuance (Let's Encrypt + ZeroSSL) for the public FQDN. <code>internal</code>: a self-generated certificate from the built-in proxy's internal CA — the TLS hop behind an outer proxy. Any host name or IPv4 literal arms (<code>klangkd.internal</code>, <code>localhost</code>, <code>10.0.0.5</code>). The certificate is generated on the host: klangkd contacts no certificate authority and needs no public DNS record. The HTTPS listener binds <code>KLANGKD_LISTEN:KLANGKD_PORT</code>, and that is the only port the TLS setup involves; the automatic HTTP→HTTPS redirect stays off because the outer proxy already sends browsers to HTTPS (an enabled redirect would try to bind port 80). Certificates renew automatically and are stored in <code>&lt;state_dir&gt;/caddy-storage</code> — back that directory up (a lost root means a new CA the outer proxy must re-trust). Setting it without <code>KLANGKD_TLS_HOSTNAME</code> logs a warning (inert). Reloadable on SIGHUP. See <a href="../../deployment/https-hosting/">HTTPS Hosting</a>.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_ACME_EMAIL</code></td>
+<td></td>
+<td>The ACME account email (certificate expiry / renewal-failure notices, CA account registration) used when <code>KLANGKD_TLS_HOSTNAME</code> arms automatic TLS (#3192). Rendered as Caddy's global <code>email</code> directive — must be a plain address like <code>ops@example.com</code> (a display-name form is rejected at construction, since the value is passed verbatim into the proxy config). Strongly recommended whenever automatic TLS is armed. Reloadable on SIGHUP.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_SOCKET</code></td>
+<td><code>&lt;state_dir&gt;/klangk.sock</code></td>
+<td>Backend UDS path that <code>klangkd</code> binds. Override when the default overflows the <code>AF_UNIX</code> <code>sun_path</code> limit (≤104 chars). Resolved paths exceeding the limit fail at construction with a diagnostic directing the deployer to shorten <code>KLANGKD_SOCKET</code> or move <code>KLANGKD_STATE_DIR</code> shallower.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_CADDY_ADMIN_SOCKET</code></td>
+<td><code>&lt;state_dir&gt;/caddy-admin.sock</code></td>
+<td>The admin-API Unix domain socket for the Caddy engine. Same length-limit story as <code>KLANGKD_SOCKET</code>: a deep <code>KLANGKD_STATE_DIR</code> can push the default path over the portable <code>AF_UNIX</code> <code>sun_path</code> bound (≤104 chars), and since the admin UDS is the Caddy engine's only config-delivery path, a too-long path makes the engine unstartable. Override to a shorter absolute path when that happens; resolved paths exceeding the limit fail at construction (regardless of engine) with a diagnostic naming <code>KLANGKD_CADDY_ADMIN_SOCKET</code>.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_PROXY_BIN</code></td>
+<td></td>
+<td>Path to the proxy (Caddy) executable the renderer spawns; renamed from <code>KLANGKD_NGINX_BIN</code> (the old name is no longer recognized). Unset → <code>shutil.which("caddy")</code>, then <code>/usr/bin/caddy</code> at render time.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_DATA_DIR</code></td>
+<td><code>&lt;state_dir&gt;/data</code></td>
+<td>Database, workspaces, Pi sessions. Defaults to <code>&lt;state_dir&gt;/data</code> (so it tracks the <code>KLANGKD_STATE_DIR</code> default); an explicit value always wins. In dev it resolves to <code>$DEVENV_STATE/klangk/data</code> via <code>klangkd.yaml</code>; the host container sets it to <code>/home/klangk/data</code>.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_STATE_DIR</code></td>
+<td><code>$XDG_STATE_HOME/klangkd</code></td>
+<td>Runtime state — the UDS socket (<code>&lt;state_dir&gt;/klangk.sock</code>), rendered proxy config, pid file, SSL trust bundle (<code>&lt;state_dir&gt;/ssl/ca-bundle.crt</code> when custom CAs are configured). Defaults to <code>$XDG_STATE_HOME/klangkd</code> (→ <code>~/.local/state/klangkd</code> when the var is unset, incl. macOS) when no explicit value is supplied; explicit <code>KLANGKD_STATE_DIR</code> / config-file values still win. Construction fails fast only in the genuinely-unconfigured case (neither <code>$XDG_STATE_HOME</code> nor <code>$HOME</code> set), preserving the intent. In dev it resolves to <code>$DEVENV_STATE/klangk</code> via <code>klangkd.yaml</code>; the host container sets it to <code>/tmp/klangk-state</code>. <code>klangkd</code> no longer mutates <code>os.environ</code> to inject a default. The server's XDG subdir is <code>klangkd</code> (the binary name); the CLI's is <code>klangk</code> — different audiences, different trees.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_CONFIG_DIR</code></td>
+<td><code>$XDG_CONFIG_HOME/klangkd</code></td>
+<td>The config-tree root for user-edited, durable intent — the config-tree analogue of <code>KLANGKD_STATE_DIR</code>. Defaults to <code>$XDG_CONFIG_HOME/klangkd</code> (→ <code>~/.config/klangkd</code>, incl. macOS when the var is unset) when no explicit value is supplied; <code>KLANGKD_CUSTOMIZE_DIR</code> derives from the resolved <code>config_dir</code> (like <code>KLANGKD_DATA_DIR</code> derives from <code>state_dir</code>). Set this to relocate the config tree with one knob; <code>KLANGKD_CUSTOMIZE_DIR</code> still wins over the derivation. Read at boot and on SIGHUP (reloadable).</td>
+</tr>
+<tr>
+<td><code>KLANGKD_CUSTOMIZE_DIR</code></td>
+<td><code>&lt;config_dir&gt;/custom</code></td>
+<td>Root directory for deployment customization files (branding, email templates, certs). User-edited, durable intent — so it's <strong>config</strong>, not state: defaults to <code>&lt;config_dir&gt;/custom</code> (→ <code>~/.config/klangkd/custom</code>) when unset, deriving from <code>KLANGKD_CONFIG_DIR</code>. Subsystems look for well-known subdirectories (<code>certs/</code>, <code>branding/</code>, <code>email-templates/</code>) here when their per-feature env var is unset; missing subdirectories are silently skipped. An explicit <code>KLANGKD_CUSTOMIZE_DIR</code> always wins. See <a href="../../deployment/customizing/#runtime-customization">Customizing a Deployment</a>.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_TRUSTED_CA_DIR</code></td>
+<td></td>
+<td>Operator-managed <strong>approved CA baseline</strong> restricting which custom CAs are trusted (#3198). When set (a non-empty path; an explicitly empty value behaves as unset), only CAs whose SHA-256 fingerprint appears among the <code>.pem</code>/<code>.crt</code> certs in this directory are trusted — by the backend's outbound TLS <em>and</em> every workspace container. klangkd stages the approved certs (one canonical PEM per unique parseable cert) under <code>&lt;state_dir&gt;/ssl/approved</code> and that staged copy — not the raw directories — is what both trust scopes consume, so a file the strict parser rejects is never trusted even if a lenient consumer might accept its raw bytes. Each cert dropped into <code>&lt;KLANGKD_CUSTOMIZE_DIR&gt;/certs</code> is audited against the baseline: approved ones log at debug with subject/issuer, non-approved or unparseable ones are <strong>refused</strong> with a warning and never reach a trust bundle. Lets locked-down deployments (e.g. a DoD-approved CA baseline) enforce a defined CA set. Unset (default) = no restriction (every cert in the customize certs dir is trusted). A missing, unreadable, or cert-less baseline fails <strong>closed</strong> — no custom CAs trusted, error logged; trust applied earlier in the process is revoked on reload. Read live on every resolution: reloadable on SIGHUP (backend trust re-applies — or revokes — on reload; containers started afterwards pick up the new baseline). See <a href="../../deployment/customizing/#custom-ca-certificates">Customizing a Deployment</a>. Also accepted via its field-name form <code>KLANGKD_APPROVED_CA_DIR</code> (same setting; when both are set, <code>KLANGKD_TRUSTED_CA_DIR</code> wins).</td>
+</tr>
+<tr>
+<td><code>KLANGKBUILD_VARIANT</code></td>
+<td></td>
+<td>Identifies a custom build (a <strong>variant</strong>) of klangk, independent of the upstream klangk version. Baked into <code>version.json</code> as <code>variant</code> by <code>scripts/generate-version.sh</code> at build time; surfaced at <code>GET /api/v1/version</code> and the debug pane's <em>Variant</em> row. Empty/absent = stock klangk (no variant reported, output byte-identical to a non-customized build). See <a href="../../deployment/customizing/#build-variant">Customizing a Deployment</a>.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_IMAGE_NAME</code></td>
+<td><code>klangk-workspace</code></td>
+<td>Podman image name for workspace containers</td>
+</tr>
+<tr>
+<td><code>KLANGKD_IMAGE_PULL_POLICY</code></td>
+<td><code>never</code></td>
+<td>Podman <code>--pull</code> policy for workspace containers (<code>never</code>, <code>missing</code>, <code>always</code>, <code>newer</code>). Default <code>never</code> requires the image to exist locally; <code>missing</code> pulls from a registry if not found</td>
+</tr>
+<tr>
+<td><code>KLANGKD_ALLOWED_IMAGES</code></td>
+<td></td>
+<td>Comma-separated allowlist of container images users may pick when creating a workspace (in addition to <code>KLANGKD_IMAGE_NAME</code>). Unset → only <code>KLANGKD_IMAGE_NAME</code> is allowed.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_USERNS</code></td>
+<td><code>keep-id:uid=1000,gid=1000</code></td>
+<td>Podman <code>--userns</code> mode for workspace containers. Maps the host user to uid/gid 1000 inside the container so bind-mounted files are owned correctly.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_PODMAN_BIN</code></td>
+<td><code>podman</code></td>
+<td>Path to the podman binary</td>
+</tr>
+<tr>
+<td><code>KLANGKD_PORT_RANGE_START</code></td>
+<td><code>9000</code></td>
+<td>First host port for workspace app allocations. Each workspace gets 5 ports starting from this value. See <a href="../../features/hosted-apps/">Hosted Apps</a>.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_HOSTED_PORTS_PER_WORKSPACE</code></td>
+<td><code>5</code></td>
+<td>Server-wide ceiling on hosted-app ports per workspace. Set to <code>0</code> to <strong>disable hosted-app serving entirely</strong> — klangkd stops allocating ports and injecting the hosting env into containers, and <code>/hosted/...</code> returns 404. Any other value clamps each workspace down to this cap. See <a href="../../features/hosted-apps/">Hosted Apps</a>.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_ALLOWED_MOUNT_ROOTS</code></td>
+<td></td>
+<td>Comma-separated list of allowed host path prefixes for user bind mounts (e.g., <code>/home,/data</code>). <strong>Unset (the default) disables user bind mounts entirely</strong> (#3153) — only named volumes may be mounted; a mount with a host-path source is rejected at workspace create/edit and re-validated at container start (#3278). klangkd's own mounts (home, config, SSL, nix) are internal and unaffected. Protected paths are always blocked regardless. Reloadable on SIGHUP.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_DNS_SERVERS</code></td>
+<td></td>
+<td>Comma-separated DNS server IPs for containers (e.g., <code>100.100.100.100,8.8.8.8</code> for Tailscale MagicDNS). If unset, containers use podman's default DNS.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_DNS_SEARCH</code></td>
+<td></td>
+<td>Comma-separated DNS search domains for containers (e.g., <code>corp.example,svc.example</code> for short-name resolution). Passed to podman <code>--dns-search</code>; unset → podman's default search behavior. Applies to newly-created containers.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_HOSTING_HOSTNAME</code></td>
+<td>(auto-derived)</td>
+<td>URL authority (<code>host[:port]</code>) for hosted-app and user-facing URLs — <strong>the port lives here</strong>, it is never synthesized from <code>KLANGKD_EGRESS_PORT</code> (that is internal container wiring, not the public port). Set explicitly in production; behind a real reverse proxy it must carry the public host and port. When unset, klangkd derives the authority from a trusted <code>X-Forwarded-Host</code>, or from the request's <code>Host</code> header when that Host names the deployment's own address — loopback, the <code>KLANGKD_TLS_HOSTNAME</code> name, or the <code>KLANGKD_LISTEN</code> IP-literal address on the browser port; any other Host value falls back to <code>localhost</code> (<code>localhost:&lt;KLANGKD_PORT&gt;</code> when the browser listener is armed), so a client-chosen Host never lands in a reset/verify/invite link or the OIDC redirect (#3276). A deployment whose browsers reach klangkd by any other name (e.g. <code>KLANGKD_LISTEN=0.0.0.0</code> with a DNS name) must pin this value for correct links.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_HOSTING_PROTO</code></td>
+<td>(auto-derived)</td>
+<td>Protocol for user-facing app URLs. Auto-derived from <code>X-Forwarded-Proto</code> or defaults to <code>http</code>.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_HOSTING_BASE_PATH</code></td>
+<td>(auto-derived)</td>
+<td>Base path prefix for user-facing app URLs (e.g., <code>/klangk</code>). Auto-derived from <code>X-Forwarded-Prefix</code>.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_TRUSTED_PROXY_CIDRS</code></td>
+<td><code>127.0.0.1,::1</code></td>
+<td>Comma-separated CIDRs/IPs whose connections are trusted to supply <code>X-Forwarded-Host/Proto/Prefix</code> headers. klangk's proxy runs on loopback, so the default works out of the box; requests from peers outside this set have forwarded headers ignored (preventing host poisoning if the backend port is exposed), and the managed Caddy drops the <code>X-Forwarded-Host</code> it would otherwise derive from a client-chosen <code>Host</code> for such peers, so a direct request with a forged Host reaches the backend with no forwarded host at all (#3276).</td>
+</tr>
+<tr>
+<td><code>KLANGKD_CONTAINER_SUBNETS</code></td>
+<td>(auto-derived)</td>
+<td>Container source IPs/CIDRs (pasta NAT → host's own IPs). Allowlist for the three container endpoints AND denylist for the catch-all <code>location /</code> (deny-by-default from containers). Unset → auto-detect host IPv4s.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_REJECT_PROXY_HEADERS</code></td>
+<td></td>
+<td>Set to <code>1</code> to ignore <code>X-Forwarded-Host/Proto/Prefix</code> headers unconditionally (hard override; back-compat with the old opt-out).</td>
+</tr>
+<tr>
+<td><code>KLANGKD_IDLE_TIMEOUT_SECONDS</code></td>
+<td><code>3600</code></td>
+<td>Container idle timeout in seconds (check interval auto-computed as timeout/3, clamped 10-60s)</td>
+</tr>
+<tr>
+<td><code>KLANGKD_QUIESCE_TIMEOUT</code></td>
+<td><code>15</code></td>
+<td>Seconds the graceful stop (TERM/INT), graceful restart (SIGHUP), and scheduled server stop/recycle wait for in-flight HTTP requests before draining workspaces. Stragglers at expiry are logged (WARNING) and left to finish against the exiting/recycling process. Keep the quiesce + drain budget inside your service manager’s stop deadline — under systemd’s default 90s <code>TimeoutStopSec</code>, values above ~85s are cut off. See <a href="../../deployment/signals/">Process Signals</a>.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_LOGIN_LOCKOUT_WINDOW</code></td>
+<td><code>300</code></td>
+<td>Time window in seconds for counting failed login attempts.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_LOGIN_LOCKOUT_FAILURES</code></td>
+<td><code>5</code></td>
+<td>Number of failed login attempts before a lockout. Default <code>5</code> (enabled). Set to <code>0</code> to disable.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_LOGIN_LOCKOUT_DURATION</code></td>
+<td><code>900</code></td>
+<td>Duration of lockout in seconds (only relevant when <code>KLANGKD_LOGIN_LOCKOUT_FAILURES</code> &gt; 0).</td>
+</tr>
+<tr>
+<td><code>KLANGKD_MAX_SESSIONS_PER_USER</code></td>
+<td><code>0</code></td>
+<td>Concurrent login-session cap per user. <code>0</code> (the default) = no limit. Each login (password, OIDC, verification, reset, invite acceptance) counts as one session; token refresh keeps the same slot. When a new login pushes the user past the cap, the oldest session is revoked via the token blocklist — its next HTTP request gets 401 and its next WebSocket connect is rejected with 4001. Sessions whose token already expired are purged and never count. Reloadable on SIGHUP.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_SESSION_WORKSTATION_BINDING</code></td>
+<td><code>off</code></td>
+<td>Session workstation binding: replay protection for bearer JWTs. <code>off</code> (the default) = any token holder can use it until expiry. <code>ip</code> = every authenticated HTTP request, token refresh, and WebSocket connect must come from the same network the session was established from (the effective client IP; two IPv6 addresses inside one /64 count as the same). <code>strict</code> = additionally require the same <code>User-Agent</code>. A token presented from a different workstation is rejected (401 / WS close 4001) and its session revoked, with an audit record naming both workstations; the legitimate client shares the token, so it is logged out too and must re-login. Sessions with an unknown recorded IP (pre-feature rows) are never rejected. Reloadable on SIGHUP.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_STEP_UP_WINDOW_MINUTES</code></td>
+<td><code>0</code></td>
+<td>Step-up (sudo-mode) reauthentication window in minutes. When armed, privileged admin writes (user/group/invitation management, admin ACL rewrites, server schedules, volume deletes, and takeover-class writes on a workspace you do not own: delete, raw ACL rewrite, ownership transfer, role assignments) are refused with a machine-readable <code>403 step_up_required</code> until the session's owner confirms their password via <code>POST /api/v1/auth/step-up</code>; the confirmation is stamped on that session's row and honored for this many minutes. Per session (not per user): it survives token refresh, dies with logout/revocation, and never unlocks a second session. The confirmation endpoint has login-grade lockout accounting. OIDC-managed accounts (no klangk password) are exempt; each exempt pass is audit-logged. <code>0</code> (the default) disables the gate; <code>15</code> is the recommended hardening value. The web client prompts and retries automatically; the CLI prompts once. Reloadable on SIGHUP.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_WEB_BIND_GRACE_SECONDS</code></td>
+<td><code>300</code></td>
+<td>The DPoP bind grace window for web-client sessions, in seconds — the backstop behind born-bound web mints. Sessions minted for the web app are born DPoP-bound: the SPA's minting requests carry its public binding JWK (<code>Klangk-Binding-Jwk</code>; an OIDC login URL carries it into the state cookie, and an OIDC web flow arriving without it is refused at the callback unless it explicitly rode <code>none</code> from a key-less build), so the token carries <code>cnf.jkt</code> from mint and no unbound window exists. A token that nonetheless mints unbound carries a signed bind deadline: mint time plus this many seconds. Still unbound past the deadline, the session is refused — every API request, token refresh, bind call, and WebSocket connect answers 401 until the user logs in again, and an established WebSocket (main or consent-decider) closes at the deadline rather than the token's natural expiry. The deadline survives token refresh and bind swaps unchanged (a rotation re-arms the live sockets for the replacement token), so a rotation can never reset it; the web client retries a transiently failed bind every 30 seconds inside the window. CLI/TUI sessions are unmarked and stay unbound indefinitely. <code>0</code> drops the deadline (born-bound minting stays on). Reloadable on SIGHUP; the deadline is read at mint time.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_INACTIVITY_DISABLE_DAYS</code></td>
+<td><code>35</code></td>
+<td>Dormant-account auto-disable window in days. Accounts (except the system agent and <code>admin</code>-group members) whose newest activity signal — last authenticated API access, last login, or creation — is older than the window are disabled by an hourly sweep; their logins, token refreshes, and authenticated requests then fail with <code>403 Account disabled</code> and their live WebSocket connections are closed (4001 → client logout) until an admin re-enables them. <code>0</code> disables the sweep. Reloadable on SIGHUP.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_SESSION_IDLE_TIMEOUT_MINUTES</code></td>
+<td><code>0</code></td>
+<td>Idle session timeout in minutes. Minutes of inactivity — no authenticated HTTP request and no WebSocket frame; a token refresh does <strong>not</strong> count — after which a login session terminates: the next token refresh is refused with 401 (and the token blocklisted), and a quiet WebSocket is closed by the server (4001 → client logout). <code>admins</code>-group members get the shorter window of this setting and <code>KLANGKD_PRIVILEGED_SESSION_IDLE_TIMEOUT_MINUTES</code>. When armed, access-token lifetimes are capped at the window so an idle client surfaces at its next refresh within the window plus one refresh interval. Any WebSocket message (including the frontend's 60-second heartbeat) keeps a watched session alive. <code>0</code> (the default) restores age-only expiry exactly. Reloadable on SIGHUP.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_PRIVILEGED_SESSION_IDLE_TIMEOUT_MINUTES</code></td>
+<td><code>10</code></td>
+<td>The privileged (admins-group) idle window in minutes: <code>admins</code>-group members terminate after the lesser of this and <code>KLANGKD_SESSION_IDLE_TIMEOUT_MINUTES</code>. <code>0</code> turns the privileged split off (admins then use the general window). Read live, so a SIGHUP reload applies at the next issue/refresh/sweep. Reloadable on SIGHUP.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_LLM_API_KEY</code></td>
+<td></td>
+<td>Default LLM API key for models that don't specify their own (supports <code>file:</code>/<code>cmd:</code> prefix)</td>
+</tr>
+<tr>
+<td><code>KLANGKD_LLM_MODELS</code></td>
+<td></td>
+<td>Comma-separated list of <code>provider/model:api_base:api_key</code> entries for the in-process LLM router (see <a href="../../architecture/llm-proxy/">LLM proxy</a>)</td>
+</tr>
+<tr>
+<td><code>KLANGKD_JWT_SECRET</code></td>
+<td></td>
+<td>JWT signing secret. A warning is logged at startup if unset or left as the insecure dev default.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_AUDIT_HMAC_KEY</code></td>
+<td></td>
+<td>HMAC-SHA256 key used to tag audit rows (<code>container_events</code>, <code>egress_consent</code>, <code>audit_events</code>) at insert time (#3174, #3205). <strong>Opt-in:</strong> when unset (the default), no tag is computed or stored. There is deliberately no derivation from <code>KLANGKD_JWT_SECRET</code>: that secret ships a known insecure dev default, and audit integrity should not silently ride on it. klangkd only writes tags — verification (re-computing tags against the key) is an external consumer's job, e.g. an off-host audit backup. <strong>Rotation:</strong> changing the key invalidates every tag written under the old key; export rows before rotating. Reloadable on SIGHUP.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_PREVENT_INSECURE_JWT_SECRET</code></td>
+<td></td>
+<td>Set to <code>1</code> to fail at startup if <code>KLANGKD_JWT_SECRET</code> is unset or insecure. Recommended for production.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_ACCESS_TOKEN_HOURS</code></td>
+<td><code>24</code></td>
+<td>Lifetime in hours for user session JWTs. Tokens are automatically refreshed before expiry.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_WORKSPACE_TOKEN_HOURS</code></td>
+<td><code>24</code></td>
+<td>Lifetime in hours for per-workspace JWTs. Tokens are automatically renewed at 80% of their lifetime.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_DEFAULT_USER</code></td>
+<td></td>
+<td>Auto-seeded admin email on startup</td>
+</tr>
+<tr>
+<td><code>KLANGKD_DEFAULT_PASSWORD</code></td>
+<td></td>
+<td>Auto-seeded password on startup (omit to generate random; supports <code>file:</code>/<code>cmd:</code> prefix)</td>
+</tr>
+<tr>
+<td><code>KLANGKD_MIN_PASSWORD_LENGTH</code></td>
+<td><code>8</code></td>
+<td>Minimum password length</td>
+</tr>
+<tr>
+<td><code>KLANGKD_PASSWORD_HISTORY_COUNT</code></td>
+<td><code>0</code></td>
+<td>Number of <strong>previous</strong> passwords remembered per user (max <code>24</code>); a new password matching the current or any remembered one is rejected with <code>400</code>. <code>0</code> disables reuse checking.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_PASSWORD_MIN_CHANGED</code></td>
+<td><code>0</code></td>
+<td>Minimum number of characters (edit distance, max <code>72</code> — substitutions, insertions, and deletions each count) that a self-service password change must alter from the current password. Rejected with <code>400</code> otherwise. Enforced only on <code>POST /auth/change-password</code>, where the current password is re-authenticated — forgot-password resets and admin-set passwords never present the old plaintext, so the rule cannot apply there (password-history reuse still does). <code>0</code> (the default) disables the gate. Reloadable on SIGHUP. Advertised via <code>/api/v1/config</code> (<code>password_min_changed</code>) so change-password forms pre-check inline.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_PASSWORD_MIN_AGE_HOURS</code></td>
+<td><code>0</code></td>
+<td>Minimum password age in hours (#3177). Self-service password changes and forgot-password resets made inside the window are rejected with <code>400</code>; admin-forced resets bypass it. <code>0</code> (the default) disables the check; <code>24</code> hours is the recommended hardening value (max <code>8760</code>). Passwords set before the column existed are dated from account creation. Reloadable on SIGHUP.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_PASSWORD_MAX_AGE_DAYS</code></td>
+<td><code>0</code></td>
+<td>Maximum password age in days (#3177). Login, token refresh, and the next authenticated request / WS connect refuse a session for an expired password with a machine-readable <code>403</code> (<code>detail.error = "password_expired"</code>); the CLI/TUI then prompt for a new password via <code>POST /auth/change-expired-password</code>. Local password accounts only — OIDC logins are unaffected. <code>0</code> (the default) disables expiry; <code>60</code> days is the recommended hardening value (max <code>3650</code>). Reloadable on SIGHUP.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_FILE_UPLOAD_SIZE_MAX</code></td>
+<td><code>524288000</code></td>
+<td>Maximum upload size in bytes for file uploads and workspace imports (default 500 MB)</td>
+</tr>
+<tr>
+<td><code>KLANGKD_WEBSOCKET_MSG_SIZE_MAX</code></td>
+<td><code>16777216</code></td>
+<td>Maximum WebSocket message size in bytes (default 16 MB). Increase if syncing very large files via rsync over WebSocket.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_API_RATE_LIMIT</code></td>
+<td><code>0</code></td>
+<td>Per-client-IP <code>/api/*</code> request budget (fixed 60s window, 429 + <code>Retry-After</code>) enforced in the backend. <strong>Default 0 = off</strong> (opt-in; 300 is the documented example budget). The client IP resolves through <code>KLANGKD_TRUSTED_PROXY_CIDRS</code> — behind an outer proxy not in that set, all forwarded clients share the proxy's single bucket. Static assets, <code>/ws</code> upgrades, <code>/hosted/*</code>, and <code>/health</code> never count. Reloadable on SIGHUP.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_FRONTEND_DIR</code></td>
+<td><em>(in-package <code>klangk/frontend</code>)</em></td>
+<td>Directory the built Flutter Web UI is served from. Defaults to the in-package location (<code>klangk/frontend/</code>, shipped in the wheel) so a <code>pip install klangk</code> deployment serves the UI out of the box; source-tree deployments (devenv, host container) set this to the repo's <code>src/frontend/build/web</code>. The UI is mounted only when the directory exists; <code>klangkd</code> logs a warning otherwise.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_FEATURES_ENABLE</code></td>
+<td><em>(unset → manifest defaults)</em></td>
+<td>The deploy's chosen active-feature list (canonical semantics). Comma-separated feature names; any explicit value → <strong>exactly</strong> that list, nothing implied (no <code>*</code> form). Unset → the manifest's <code>defaults</code> list (the stock known-good set: <code>beep, bobdobbs, browser-fetch, celebrate, git-credential</code>). The frontend reads its sibling <code>features.json</code> for per-feature metadata + the defaults list, and this value (forwarded via <code>/api/config</code>) for the deploy's chosen set; filtering happens in <code>main.dart</code> before feature registration. Distinct from the build-time declaration: "what's compiled in" is build-time; "what's turned on" is deploy-time. When the defaults change upstream, a pinned list doesn't pick up the change — re-pin deliberately. Read at boot and on SIGHUP (reloadable).</td>
+</tr>
+<tr>
+<td><code>KLANGKD_PASSWORD_REQUIRE_UPPER</code></td>
+<td><code>0</code></td>
+<td>Minimum number of uppercase characters required in new passwords. <code>0</code> (default) = no requirement.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_PASSWORD_REQUIRE_LOWER</code></td>
+<td><code>0</code></td>
+<td>Minimum number of lowercase characters required in new passwords. <code>0</code> (default) = no requirement.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_PASSWORD_REQUIRE_DIGIT</code></td>
+<td><code>0</code></td>
+<td>Minimum number of digits required in new passwords. <code>0</code> (default) = no requirement.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_PASSWORD_REQUIRE_SPECIAL</code></td>
+<td><code>0</code></td>
+<td>Minimum number of special characters required in new passwords. <code>0</code> (default) = no requirement.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_CORS_ORIGINS</code></td>
+<td></td>
+<td>Comma-separated list of allowed CORS origins (e.g., <code>https://klangk.example.com</code>). If unset, derived from <code>KLANGKD_HOSTING_HOSTNAME</code>/<code>KLANGKD_HOSTING_PROTO</code>, or defaults to <code>http://localhost</code>. Set to <code>*</code> to allow all origins (not recommended for public deployments).</td>
+</tr>
+<tr>
+<td><code>KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID</code></td>
+<td></td>
+<td>GitHub OAuth App client ID for device-flow authentication. Injected into workspace containers by the git-credential feature. When set, <code>git push</code> to github.com triggers the OAuth device flow automatically. No client secret needed. May also be set (durable, deploy-wide) under the <code>features_config:</code> block of the YAML config file (as <code>github_oauth_client_id</code>) — env still wins per key; see <a href="../klangkd-config/#feature-configuration-features_config">Configuration File</a>. See <a href="../../features/github-authentication/">GitHub Authentication</a>.</td>
+</tr>
+<tr>
+<td><code>KLANGKWS_FEATURE_GITLAB_OAUTH_CLIENT_ID</code></td>
+<td></td>
+<td>GitLab OAuth application client ID — the git-credential device-flow shorthand for <code>gitlab.com</code> (same role as <code>KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID</code> for GitHub). Needs GitLab 17.1+ with the device flow enabled on the app; requests <code>read_repository write_repository</code> and reports username <code>oauth2</code>. Self-hosted GitLab uses <code>KLANGKWS_FEATURE_OAUTH_PROVIDERS</code> (its host is not gitlab.com). Also settable under <code>features_config:</code> (as <code>gitlab_oauth_client_id</code>); env wins per key. See <a href="../../features/github-authentication/">GitHub Authentication</a>.</td>
+</tr>
+<tr>
+<td><code>KLANGKWS_FEATURE_OAUTH_PROVIDERS</code></td>
+<td></td>
+<td>JSON list of OAuth device-flow providers for the git-credential feature (<code>[{host, client_id, device_code_url, token_url, scope, username}]</code>) — activates the RFC 8628 device flow for any git host (GitLab, Gitea, self-hosted), not just GitHub. An entry whose <code>host</code> matches the remote wins over the <code>KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID</code> shorthand. Host matching ignores case, explicit port, trailing dot, and a <code>www.</code> prefix. <code>scope</code> (omitted when empty) and <code>username</code> (default <code>oauth2</code>) are optional. Malformed JSON disables the whole map (PAT dialog fallback). Also settable under <code>features_config:</code> (as <code>oauth_providers</code>); env wins per key. See <a href="../../features/github-authentication/">GitHub Authentication</a>.</td>
+</tr>
+<tr>
+<td><code>KLANGKWS_FEATURE_SOLIPLEX_URL</code></td>
+<td></td>
+<td>Soliplex RAG server endpoint URL. Declared by the (vendored) soliplex feature (<code>features/soliplex/</code>); resolved server-side and surfaced to the UI as <code>soliplex_url</code> via <code>GET /api/v1/config</code> when the feature is active. Set via the env var, or under the <code>features_config:</code> block as <code>soliplex_url</code> (see <a href="../klangkd-config/#feature-configuration-features_config">Configuration File</a>); env wins per key. Renamed from <code>SOLIPLEX_URL</code> to the <code>KLANGKWS_FEATURE_</code> namespace.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_DISABLE_REGISTRATION</code></td>
+<td></td>
+<td>Set to <code>1</code>/<code>true</code>/<code>yes</code> to block new user signups and hide the registration link in the UI (any other value, including empty, leaves registration open)</td>
+</tr>
+<tr>
+<td><code>KLANGKD_DISABLE_INVITES</code></td>
+<td></td>
+<td>Set to <code>1</code>/<code>true</code>/<code>yes</code> to disable the invitation system (any other value, including empty, leaves invitations enabled)</td>
+</tr>
+<tr>
+<td><code>KLANGKD_INVITE_EXPIRE_HOURS</code></td>
+<td><code>72</code></td>
+<td>How long invitation links remain valid (hours)</td>
+</tr>
+<tr>
+<td><code>KLANGKD_ALLOW_AUTOSTART</code></td>
+<td></td>
+<td>Set to <code>1</code>/<code>true</code>/<code>yes</code> to allow workspaces to be configured for auto-start on server boot. Default: disabled — the auto-start option is hidden in the UI, CLI, and API. See <a href="../../features/workspaces/#auto-start">Auto-start</a>.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_ALLOW_SUDO</code></td>
+<td><code>true</code></td>
+<td>Ceiling for per-workspace sudo: permits a workspace to opt in to passwordless sudo (<code>allow_sudo: true</code> in its settings bag) but grants nothing by itself — sudo is <strong>off</strong> for a workspace unless it opts in. Default: <strong>enabled</strong> (<code>1</code>/<code>true</code>/<code>yes</code>); set <code>0</code>/<code>false</code>/<code>no</code> to forbid the opt-in entirely — an explicit deny rule (<code>!ALL</code>) is then written even for opted-in workspaces. Configured at container start via <code>podman exec --user root</code>. Applies to containers started after the change.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_PER_HANDLE_HOME</code></td>
+<td><code>false</code></td>
+<td>Ceiling for per-workspace per-handle homes: <code>true</code> permits workspaces to choose the per-handle layout (each connecting user gets a private <code>/home/.users/{id}</code> directory with a <code>/home/{handle}</code> symlink); <code>false</code> — the default — gives <strong>every</strong> workspace the shared klangk home, regardless of the per-workspace <code>per_handle_home</code> value (<code>POST /workspaces</code> / <code>PUT /workspaces/{id}</code>): a stored <code>true</code> is inert while the ceiling is off, clamped at the next connect/start (no DB rewrite, no 400 — the same shape <code>KLANGKD_ALLOW_SUDO</code> got in #3047). With the ceiling on, an omitted create field still stores this flag's value, so an untouched create gets per-handle homes. Reloadable on SIGHUP (applies to containers started after the reload). Hardened deploys (e.g. FIPS hosts that need one auditable home) leave it off.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_CLASSIFICATION_BANNER</code></td>
+<td></td>
+<td>Deploy-wide default classification marking shown as a persistent banner at the top and bottom of the web workspace page and as a status line in the TUI (marking sensitive/classified output). Free text (e.g. <code>UNCLASSIFIED</code>, <code>CUI</code>, <code>SECRET</code>). A workspace overrides it via <code>classification_banner</code> on <code>POST /workspaces</code> / <code>PUT /workspaces/{id}</code> (<code>klangk create</code>/<code>edit --classification-banner</code>, or the create/edit UIs); workspaces without their own marking inherit this value at display time. Empty/unset (the default) renders no banner and reserves no screen space. Reloadable on SIGHUP. Downloaded/exported files are not marked — the screen banner is the scope.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_DISABLE_TMUX</code></td>
+<td></td>
+<td>Set to <code>1</code>/<code>true</code>/<code>yes</code> to drop new terminals straight into a plain login shell instead of tmux. Only affects the default per-user terminal; shared/joined terminals always use tmux.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_BROWSER_DELEGATE_ENABLED</code></td>
+<td><code>true</code></td>
+<td>Master switch for the browser-delegate bridge — the workspace-token-gated <code>/api/v1/browser-delegate{,/stream}</code> endpoints that let a container drive the user's browser tab (fetch with the user's cookies, clipboard, feature actions) and read back everything it renders: a workspace-data read channel that bypasses file permissions entirely. Defaults to <code>true</code> (the bridge ships on); set <code>false</code> for hardened deploys to: return <strong>403</strong> from both endpoints, stop registering browser tabs for bridge routing, and stop attaching a browser ID into terminals started after the change — an already-running terminal keeps its previously attached ID (<code>klangk-browser-id</code> still prints it), but its bridge POSTs get the same 403. Also advertises <code>browser_delegate_enabled: false</code> via <code>/api/v1/config</code> so the web UI stops answering bridge requests. Reloadable on SIGHUP (a disable 403s new requests immediately — a stream already past the gate streams to its idle timeout; a re-enable arms the server from the next <code>terminal_start</code>, and browser tabs resume answering after a page reload). See <a href="../../architecture/browser-bridge/">Browser Bridge</a>.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_BRIDGE_TIMEOUT_SECONDS</code></td>
+<td></td>
+<td>Idle timeout (seconds) for browser-delegate bridge streams (<a href="../../architecture/browser-bridge/">Browser Bridge</a>). Precedence: per-workspace <code>bridge_timeout</code> setting &gt; this deploy default &gt; 30s. Reloadable on SIGHUP.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_HEALTH_CHECK_INTERVAL</code></td>
+<td><code>30</code></td>
+<td>Seconds between workspace container health checks (<a href="../../features/health-check/">Health check</a>). Unset → 30s. Reloadable on SIGHUP.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_HEALTH_CHECK_TIMEOUT</code></td>
+<td><code>10</code></td>
+<td>Seconds a single health-check probe may run before it counts as failed (<a href="../../features/health-check/">Health check</a>). Unset → 10s. Reloadable on SIGHUP.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_HEALTH_CHECK_STARTUP_GRACE</code></td>
+<td><code>30</code></td>
+<td>Grace window (seconds) after container start during which failed health checks don't count toward unhealthy (<a href="../../features/health-check/">Health check</a>). Unset → 30s. Reloadable on SIGHUP.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_NETFILTER_ENABLED</code></td>
+<td><code>true</code></td>
+<td>Master on/off switch for per-workspace egress filtering. Defaults to <code>true</code>. A workspace that declares <code>allowed_domains</code> is filtered via the <a href="../../features/egress-filtering/">network sidecar</a> (<code>network_sidecar_image</code>); set <code>false</code> to disable the feature entirely. When disabled, a workspace with <code>allowed_domains</code> <strong>fails to start</strong> (fail-closed) rather than running unrestricted. This is the operator <em>intent</em>; the <code>/api/v1/config</code> field of the same name is the resolved <em>armed status</em> (intent AND <code>network_sidecar_image</code> set). Reloadable on SIGHUP. See <a href="../../features/egress-filtering/">Egress Filtering</a>.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_NETFILTER_DEFAULT_DOMAINS</code></td>
+<td><em>(unset)</em></td>
+<td>Deploy-wide egress allow-list applied to every workspace that doesn't declare its own. A workspace with a non-empty <code>allowed_domains</code> <strong>overrides</strong> (replaces) this default; one with none inherits it. Unset preserves the per-workspace-only behavior (empty = unrestricted). Comma-separated <code>host</code> / <code>host:port</code> / IPv4 CIDR specs (e.g. <code>10.0.0.0/8</code>, <code>10.0.0.0/8:443</code>) (env var) or a YAML list (<code>netfilter_default_domains</code>); validated server-side, and a malformed value <strong>aborts startup</strong> (a SIGHUP reload with a bad value is denied, leaving the runtime on last-known-good config — reversing the fall-back). Read at boot and on SIGHUP (reloadable). See <a href="../../features/egress-filtering/">Egress Filtering</a>.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_NIX_ENABLED</code></td>
+<td><code>false</code></td>
+<td>Master on/off switch for the per-workspace <code>/nix</code> feature. Defaults to <code>false</code>: the nix toggle is absent from every create/edit surface (web, TUI, CLI — they read the resolved armed status from the authenticated-only <code>/api/v1/config</code> field <code>nix_available</code>), the API rejects a new <code>nix: true</code> opt-in with a clear error (an edit echoing an already-stored value is tolerated), and a workspace start with a stored nix flag proceeds without the <code>/nix</code> mount (logged once at info; re-enabling resumes it — the per-workspace layers persist, and workspace delete still tears them down while off). Set <code>true</code> (together with a <code>nix_seed</code> block, <a href="../../features/nix/">Nix workspaces</a>) to arm the feature. Reloadable on SIGHUP.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_EGRESS_CONSENT_RETENTION_DAYS</code></td>
+<td><code>30</code></td>
+<td>Retention window for the <code>egress_consent</code> table: terminal rows (static policy records, expired, revoked, elapsed timed verdicts, stale pendings) older than this many days are deleted by the consent monitor's sweep (at startup, then hourly on a wall-clock deadline — event traffic never postpones it). Verdicts still in effect (<code>forever</code>/<code>tilrestart</code>, or a timed window not yet elapsed) are enforcement state and are never pruned — they leave via workspace deletion or the <code>tilrestart</code> reap. <code>0</code> disables retention. Reloadable on SIGHUP (applies on the next sweep). See <a href="../../features/egress-filtering/#consent-recording-all-modes">Egress Filtering</a>.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_EGRESS_CONSENT_ROW_CAP</code></td>
+<td><code>2000</code></td>
+<td>Per-workspace cap on total <code>egress_consent</code> rows: when a workspace exceeds it, the oldest prunable rows (never in-effect verdicts, never live pendings) are trimmed down to the cap by the same sweep — belt-and-suspenders against a flood of decided requests outpacing age-based retention. <code>0</code> disables the cap. Reloadable on SIGHUP (applies on the next sweep). See <a href="../../features/egress-filtering/#consent-recording-all-modes">Egress Filtering</a>.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_NETWORK_SIDECAR_IMAGE</code></td>
+<td><code>klangk-network-sidecar</code></td>
+<td>Container image for the FQDN network sidecar: filtered workspaces run two containers sharing a netns — this sidecar (NET_ADMIN, runs the DNS proxy) plus the workspace (<code>--network container:&lt;sidecar&gt;</code>). Set to an empty value to disable egress filtering entirely. Reloadable on SIGHUP. See <a href="../../features/egress-filtering/">Egress Filtering</a>.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_CONTAINER_CPU_LIMIT</code></td>
+<td><code>2.0</code></td>
+<td>Deploy-wide CPU cap applied to every workspace container via podman <code>--cpus</code>. Non-empty default: a fresh deployment caps each container at 2 CPUs. A finite positive float (number of CPUs, e.g. <code>1.5</code> = one and a half cores). Explicitly emptied = no flag = unbounded. A malformed value (non-numeric, non-finite, or <code>&lt;= 0</code>) <strong>aborts startup</strong> — a safety control that silently disables itself on a typo is worse than none — and a malformed SIGHUP reload is denied, leaving the runtime on the last-good config. Applies to containers started after the change; an existing container keeps its original cgroup limit for the rest of its life. Reloadable on SIGHUP.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_EGRESS_CONSENT_RATE_LIMIT</code></td>
+<td><code>50</code></td>
+<td>Interactive-mode consent monitor tuning: cap on pending egress-consent requests per workspace — an anti attention-flood bound against adversarial containers. Reloadable on SIGHUP. See <a href="../../features/egress-filtering/">Egress Filtering</a>.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_NIX_SEED</code></td>
+<td><em>(nested)</em></td>
+<td>Seed configuration for the per-workspace <code>/nix</code> feature (<a href="../../features/nix/">Nix workspaces</a>): a nested block with <code>type</code> and <code>path</code> (env form <code>KLANGKD_NIX_SEED__TYPE</code> / <code>KLANGKD_NIX_SEED__PATH</code>, config-file form <code>nix_seed:</code>). Omit the block or leave <code>path</code> unset to disable the feature; <code>nix_enabled</code> must also be <code>true</code>.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_EGRESS_CONSENT_TIMEOUT</code></td>
+<td><code>120</code></td>
+<td>How long (seconds) an egress-consent request stays pending before the monitor auto-expires it (<code>DECISION_EXPIRED</code>). The default (120s) matches the kernel's ~127s connect timeout now that consent gates the connection SYN. Reloadable on SIGHUP. See <a href="../../features/egress-filtering/">Egress Filtering</a>.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_CONSENT_DECIDER_TIMEOUT</code></td>
+<td><code>45</code></td>
+<td>Consent-decider liveness window: a decider (live client that can approve/deny held egress) whose last ping is older than this many seconds is reaped, so an unclean disconnect can't leave a workspace falsely "interactive". Reloadable on SIGHUP. See <a href="../../features/egress-filtering/">Egress Filtering</a>.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_CONTAINER_MEMORY_LIMIT</code></td>
+<td><code>8g</code></td>
+<td>Deploy-wide RAM cap applied to every workspace container via podman <code>--memory</code>. A positive size matching docker/go-units ParseSize grammar: a number with an optional unit suffix — a single base unit <code>b</code>/<code>k</code>/<code>m</code>/<code>g</code>/<code>t</code>/<code>p</code> (case-insensitive) plus an optional trailing <code>b</code>, so <code>2g</code>, <code>2gb</code>, <code>512m</code>, <code>512mb</code>, <code>2t</code>, <code>1024</code> (bare bytes), <code>1.5g</code> all pass; the IEC i-forms (<code>kib</code>/<code>gib</code>/…) are not accepted. <code>0</code> is rejected (podman treats <code>--memory=0</code> as “no limit”; unset the var instead). Non-empty default: a fresh deployment caps each container at 8 GB; explicitly emptied = no flag = unbounded. A malformed value <strong>aborts startup</strong> (and is denied on SIGHUP); the runtime check is a syntax guard only — podman remains the authority on what cgroups can actually apply (no cgroups v2, rootless without delegation, etc.) and fails loudly at workspace-start if it can't honour the value. Applies to containers started after the change. Reloadable on SIGHUP.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_CONTAINER_PIDS_LIMIT</code></td>
+<td><code>16384</code></td>
+<td>Deploy-wide process-count cap applied to every workspace container via podman <code>--pids-limit</code> — the best fork-bomb defense for the effort. Non-empty default: a fresh deployment caps each container at 16384 processes. A positive integer (e.g. <code>512</code>). Explicitly emptied = no flag = unbounded. A malformed value (non-integer, or <code>&lt;= 0</code>) <strong>aborts startup</strong> (and is denied on SIGHUP). Applies to containers started after the change. Reloadable on SIGHUP.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_CONTAINER_RESTART_ENABLED</code></td>
+<td><code>false</code></td>
+<td>Opt-in crash recovery: auto-restart a workspace whose container died unexpectedly (OOM kill, non-zero exit, external removal) after an exponential backoff, with a bounded retry count. Death events/logs carry the classified cause either way — an OOM kill names the workspace's effective memory limit. Expected stops (user stop, idle stop, delete, logout) never restart. Default <code>false</code>: recovery stays manual. Reloadable on SIGHUP; a pending restart re-checks the flag when it fires. See <a href="../../features/crash-recovery/">Crash recovery</a>.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_CONTAINER_RESTART_MAX_RETRIES</code></td>
+<td><code>5</code></td>
+<td>Bound on restart attempts per crash episode. Exhausting the budget leaves the workspace stopped in a visible <code>crash-loop</code> state (surfaced on <code>GET /workspaces/&lt;id&gt;/status</code> as <code>restart.state</code>) instead of spinning forever. The counter resets after the container stays up 10 minutes, or on any user-driven start/stop. Positive integer; a malformed value aborts startup.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_CONTAINER_TMP_SIZE</code></td>
+<td><code>2g</code></td>
+<td>Per-workspace <code>/tmp</code> tmpfs size via podman <code>--tmpfs /tmp:...,size=&lt;n&gt;</code>. Default <code>2g</code> preserves the previous hardcoded mount size; a workspace may override it via its settings bag (<code>tmp_size</code>). Applies to containers started after the change. Reloadable on SIGHUP.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_CONTAINER_EVENTS_RETENTION_DAYS</code></td>
+<td><code>90</code></td>
+<td>Retention window for the <code>container_events</code> audit table: rows older than this many days are deleted by the retention sweep (at startup, then hourly on a wall-clock deadline) — an upgrade over a bloated table trims on the first sweep. Every row is history, so unlike <code>egress_consent</code> there is no in-effect exemption. <code>0</code> disables retention. Reloadable on SIGHUP (applies on the next sweep).</td>
+</tr>
+<tr>
+<td><code>KLANGKD_CONTAINER_EVENTS_ROW_CAP</code></td>
+<td><code>10000</code></td>
+<td>Deploy-wide cap on total <code>container_events</code> rows: when the table exceeds it, the oldest rows are trimmed down to the cap keeping the newest (same <code>created_at DESC, id DESC</code> ordering the events API uses), belt-and-suspenders against a flood of lifecycle events outpacing age-based retention. The cap is deploy-wide, not per-workspace — an audit log bounds the whole table. <code>0</code> disables the cap. Reloadable on SIGHUP (applies on the next sweep).</td>
+</tr>
+<tr>
+<td><code>KLANGKD_AUDIT_EVENTS_RETENTION_DAYS</code></td>
+<td><code>365</code></td>
+<td>Retention window for the <code>audit_events</code> identity/privilege audit table (#3205): rows older than this many days are deleted by the retention sweep (at startup, then hourly). The table records account create/update/delete, group/ACL/workspace-role changes, login/logout/failed-login, session revocation, and the data-level file events (#3257: workspace archive export/import, downloads and text reads, uploads, renames, and deletes through the files API, each with the path and byte size — the export's size is a pre-flight estimate) — every row with actor, target, and the request's source IP, user agent, HTTP method, and Referer (#3255). Login events are lower-volume than container transitions but are where an incident review starts, so the default is longer than <code>container_events</code>'. File events are the highest-frequency class and are bounded by their own row-cap bucket (see <code>KLANGKD_AUDIT_EVENTS_ROW_CAP</code>). <code>0</code> disables retention. Reloadable on SIGHUP (applies on the next sweep).</td>
+</tr>
+<tr>
+<td><code>KLANGKD_AUDIT_EVENTS_ROW_CAP</code></td>
+<td><code>100000</code></td>
+<td>Deploy-wide cap on <code>audit_events</code> rows, applied <strong>per class</strong>: unauthenticated <code>login.failed</code> rows (the only class an anonymous caller can mint) and the high-frequency <code>file.*</code> rows (#3257) each get their own bucket, so a spray of failed logins or a burst of file traffic evicts at most its own class — never the account/privilege history. When a bucket exceeds the cap, the oldest rows are trimmed keeping the newest (same ordering the <code>/events/audit</code> API uses) — so the table can hold up to three caps' worth of rows, one per bucket. <code>0</code> disables the cap. Reloadable on SIGHUP (applies on the next sweep).</td>
+</tr>
+<tr>
+<td><code>KLANGKD_AUDIT_FAIL_CLOSED</code></td>
+<td><code>false</code></td>
+<td>Fail-closed container auditing (#3154, security finding): when <code>true</code>, the interactive API container transitions — POST start/stop/restart and delete's stop — write their <code>container_events</code> audit row <em>before</em> acting and refuse the request with a 503 when it cannot be written — never start-then-rollback. Create's eager start is skipped instead (the workspace row is already committed, so it is left created-not-started with a warning — the same shape as a drain/capacity refusal there). WS-connect starts and autonomous transitions (idle timeout, eviction, logout, drain, shutdown sweep, crash teardown, boot reaps, crash-monitor restarts) are never gated: refusing those would keep containers running <em>and</em> lose the record. Default <code>false</code> keeps the best-effort behavior; every audit-write failure is counted either way and surfaced as <code>write_failures</code> on the <code>/audit</code> endpoint (an in-memory counter, zeroed on restart). Reloadable on SIGHUP (applies to transitions started after the reload).</td>
+</tr>
+<tr>
+<td><code>KLANGKD_AUDIT_FORWARD_URL</code></td>
+<td></td>
+<td>Opt-in native forwarding of the audit records themselves (#3252; STIG SV-222481/482). When set, klangkd ships every new row of the three audit tables — <code>audit_events</code> (identity/privilege events), <code>container_events</code> (container lifecycle), <code>egress_consent</code> (egress verdicts) — to this endpoint as JSON POST bodies (<code>{"records": [...]}</code>, one batch per few seconds, in-order per table, at-least-once; an <code>egress_consent</code> row ships once, at creation — typically as a pending request — and a later decision on the row is an update, not a new row, so it does not forward again). Use an <code>https://</code> URL for any endpoint off the host — records name users and actions; <code>http://</code> is accepted for loopback collectors. Validated at startup (a malformed URL aborts boot). A down target delays delivery (rows stay queued, retried with exponential backoff) and surfaces on <code>/audit</code> under <code>forwarding</code>. Delivery is bounded by the table's own retention and row cap: rows past <code>KLANGKD_AUDIT_EVENTS_RETENTION_DAYS</code>/<code>_ROW_CAP</code> (or the <code>container_events</code>/<code>egress_consent</code> equivalents) are pruned even if a down target has not delivered them yet — size the caps to your worst-case outage. Reloadable on SIGHUP. See <a href="../../features/logging/#built-in-audit-record-forwarding">Logging</a>. Empty (the default) leaves the forwarder off.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_AUDIT_FORWARD_SYSLOG</code></td>
+<td></td>
+<td>Second target family for #3252: an RFC 5424 receiver as <code>tcp://host[:port]</code> or <code>tls://host[:port]</code> (a bare <code>host[:port]</code> means tcp; ports default to 514/6514). Each record ships as one syslog line (facility <code>audit</code>, severity <code>info</code>, the source table as MSGID, the full record as the JSON message, newline-framed per the common TCP convention). <code>tls://</code> verifies the server certificate against the system trust store (put a private CA in the approved baseline via <code>KLANGKD_TRUSTED_CA_DIR</code>). Both target families may be configured — each receives every record. Keeps its own delivery cursor, so a down URL target does not delay it; same queueing/backoff/<code>/audit</code> behavior as the URL target; empty (the default) leaves the syslog channel off. Reloadable on SIGHUP.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_AUDIT_FORWARD_HEADER</code></td>
+<td></td>
+<td>One optional HTTP header sent with every URL-target POST (#3252), as <code>Name: value</code> — the auth a collector typically requires (Splunk HEC: <code>Authorization: Splunk &lt;token&gt;</code>; bearer collectors: <code>Authorization: Bearer &lt;token&gt;</code>). Applies to the URL target only. Validated at startup (a malformed header aborts boot). Reloadable on SIGHUP. Empty (the default) sends no extra header.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_CONTAINER_RESTART_BACKOFF_SECONDS</code></td>
+<td><code>5.0</code></td>
+<td>Base delay for the restart backoff: attempt <em>n</em> waits <code>base * 2^(n-1)</code> seconds, capped at 60s (5s → 10s → 20s → 40s → 60s …). Positive float; a malformed value aborts startup. Reloadable on SIGHUP.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_FIPS_MODE</code></td>
+<td><code>false</code></td>
+<td>FIPS enforcement: when on, every workspace container must prove an actively-enforcing OpenSSL FIPS provider at start (distro-agnostic probe — a non-approved digest rejected on the OpenSSL fetch path, or an SHA-2-only <code>fips=yes</code> approved set via the openssl CLI); failure or non-verifiability fails closed (container removed, start refused). The klangkd process's own OpenSSL is probed once at startup: on a control host the result is logged (warning on failure); inside a container (docker host-container deployment) a failed probe aborts the boot. Use with the FIPS workspace image (<code>klangk:build-fips-image</code>) and, when containerized, the FIPS host image (<code>klangk:build-fips-host-image</code>). See <a href="../../deployment/fips/">FIPS 140-3 Mode</a>.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_MEMORY_EVICTION_ENABLED</code></td>
+<td><code>true</code></td>
+<td>Host memory-pressure eviction: when availability stays below <code>KLANGKD_MEMORY_EVICTION_THRESHOLD_PERCENT</code> for <code>KLANGKD_MEMORY_EVICTION_SUSTAIN_POLLS</code> consecutive polls, gracefully stop the least-recently-active workspace with no connected clients (one per poll) until availability recovers to the recovery threshold. Workspaces with live clients and workspaces pinned never-stop (<code>idle_timeout</code> 0, e.g. auto-started boot services) are never chosen. Reloadable on SIGHUP.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_MEMORY_EVICTION_THRESHOLD_PERCENT</code></td>
+<td><code>10.0</code></td>
+<td>Pressure threshold (percent of total memory) that opens an eviction episode; availability below this for <code>SUSTAIN_POLLS</code> consecutive polls starts evictions. Platform-aware measurement: <code>MemAvailable</code>/<code>MemTotal</code> on Linux, the more-pressured of meminfo and cgroup headroom inside a memory-limited container (Docker <code>-m</code>), <code>vm_stat</code>+<code>sysctl</code> on macOS — capped there by the podman machine's configured memory (<code>podman machine ls</code>, cached 5 minutes), because containers run in that VM and its default 2048 MiB is far below the Mac's RAM. The percent scales with RAM: 10% of a 256 GB server is 25.6 GB (effectively never triggers — fine, the OOM killer is not near), while 10% of a 4 GB dev laptop is ~400 MB and may trigger during heavy local use — tune up or set <code>KLANGKD_MEMORY_EVICTION_ENABLED=false</code> on small dev machines. Positive float; recovery must be &gt;= threshold. Reloadable on SIGHUP.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_MEMORY_EVICTION_RECOVERY_PERCENT</code></td>
+<td><code>15.0</code></td>
+<td>Availability an eviction episode must see (percent of total memory) before it ends — the gap to the threshold is the hysteresis that prevents flap-eviction at the boundary. Must be &gt;= the threshold; equal values mean no gap (operator's explicit choice). Reloadable on SIGHUP.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_MEMORY_EVICTION_SUSTAIN_POLLS</code></td>
+<td><code>3</code></td>
+<td>Consecutive below-threshold polls before the first eviction; a transient spike never evicts. Integer &gt;= 1. Reloadable on SIGHUP.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_MEMORY_EVICTION_POLL_INTERVAL</code></td>
+<td><code>10.0</code></td>
+<td>Seconds between availability measurements; floored at 1s — smaller configured values are clamped. Positive float. Reloadable on SIGHUP.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_RESOURCE_WATCHDOG_ENABLED</code></td>
+<td><code>true</code></td>
+<td>Resource detection (#3206, #3309): every <code>KLANGKD_RESOURCE_WATCHDOG_POLL_INTERVAL</code> seconds the loop checks four surfaces — <code>statvfs</code> the filesystems holding the data directory (where the audit records live), the state directory, the podman container-storage root, and any <code>KLANGKD_DISK_WATCHDOG_PATHS</code> entries, deduplicated by device; the memory utilization of the machine containers run on (see <code>KLANGKD_MEMORY_WATCHDOG_WARN_PERCENT</code>); CPU pressure (see <code>KLANGKD_CPU_WATCHDOG_WARN_PERCENT</code>); and the audit-write-failure counters. Threshold crossings send <code>resource.disk.*</code> / <code>resource.memory.*</code> / <code>resource.cpu.*</code> notifications to the admin channels (<a href="../../features/admin-management/#notifications">Notifications</a>) on state transitions — usage hovering at a boundary holds its state (hysteresis bands below both thresholds), a metric that stays degraded refreshes its alert once per 5 minutes so a swallowed transition dispatch is late, never lost, and a measurement that cannot be taken is logged at WARNING and skipped, never blocking anything. Turning this off stops all four surfaces (the write sites' own per-failure <code>audit.failure</code> events keep firing). With no notification channel configured the watchdog only logs. The same last-known state drives <code>GET /health</code> (#3308): any warn/critical metric or an audit-write-failure episode in the latest window flips the status to <code>degraded</code> (HTTP stays 200) with a per-metric detail block. Reloadable on SIGHUP.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_DISK_WATCHDOG_WARN_PERCENT</code></td>
+<td><code>75.0</code></td>
+<td>Filesystem usage (percent) that enters the warn state — 75% mirrors the ASD STIG storage-capacity warning allocation (SV-222483). Recovery requires usage to fall to 5 percentage points below this threshold (the fixed hysteresis gap), so a boundary-hovering level sends one alert per episode rather than one per poll. Values below 5 are rejected — the gap needs room below the threshold, and a smaller warn would leave the recovery floor beneath 0% where usage can never reach. Must be ≤ the critical threshold. Reloadable on SIGHUP.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_DISK_WATCHDOG_CRITICAL_PERCENT</code></td>
+<td><code>90.0</code></td>
+<td>Filesystem usage (percent) that enters the critical state (SV-222668 low-resource alerting). A critical filesystem eases back to warn at 5 percentage points below this threshold (the same hysteresis gap), so usage hovering at the critical boundary holds the critical state. Must be in [<code>KLANGKD_DISK_WATCHDOG_WARN_PERCENT</code>, 100]; equal values mean the warn state is skipped (OK↔critical only). Reloadable on SIGHUP.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_DISK_WATCHDOG_PATHS</code></td>
+<td></td>
+<td>Extra filesystems to monitor — any path on each filesystem suffices (e.g. a backup mount). Comma-separated env var or YAML list; a path on an already-monitored filesystem (same device) is ignored, as is a path that cannot be statvfs'd (warned once). Empty (the default) monitors the data directory and container storage only. Reloadable on SIGHUP.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_MEMORY_WATCHDOG_ENABLED</code></td>
+<td><code>true</code></td>
+<td>Turns the resource watchdog's memory surface on and off (<code>KLANGKD_RESOURCE_WATCHDOG_ENABLED</code> stays the master switch for the whole loop). While off, remembered memory state is dropped, so re-enabling evaluates fresh: memory that filled while the surface was off alerts on the first poll after. Reloadable on SIGHUP.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_MEMORY_WATCHDOG_WARN_PERCENT</code></td>
+<td><code>80.0</code></td>
+<td>Memory utilization (percent) of the machine containers run on that enters the warn state. Measured as <code>100 × (1 − availability)</code> from <code>MemAvailable</code>/<code>MemTotal</code> on a Linux host (pressed by the cgroup limit when klangkd itself runs memory-capped); on macOS the podman machine VM's own <code>/proc/meminfo</code> is read via <code>podman machine ssh</code>, because containers live in that VM — the Mac host's numbers are the wrong machine. Recovery requires utilization to fall 5 percentage points below the threshold (the shared hysteresis gap). Values below 5 are rejected; must be ≤ the critical threshold. Reloadable on SIGHUP.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_MEMORY_WATCHDOG_CRITICAL_PERCENT</code></td>
+<td><code>90.0</code></td>
+<td>Memory utilization (percent) that enters the critical state. The default 90 aligns with the eviction loop's availability floor (<code>KLANGKD_MEMORY_EVICTION_THRESHOLD_PERCENT</code>, default 10%): the critical alert fires as eviction starts. A critical reading eases back to warn 5 percentage points below this threshold. Must be in [<code>KLANGKD_MEMORY_WATCHDOG_WARN_PERCENT</code>, 100]. Reloadable on SIGHUP.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_CPU_WATCHDOG_ENABLED</code></td>
+<td><code>true</code></td>
+<td>Turns the resource watchdog's CPU-pressure surface on and off (<code>KLANGKD_RESOURCE_WATCHDOG_ENABLED</code> stays the master switch). While off, remembered CPU state is dropped, so re-enabling evaluates fresh. Reloadable on SIGHUP.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_CPU_WATCHDOG_WARN_PERCENT</code></td>
+<td><code>30.0</code></td>
+<td>CPU pressure (PSI <code>some avg60</code> percent — the share of time at least one task was stalled on CPU over the last minute) that enters the warn state. PSI is read from <code>/proc/pressure/cpu</code> on a Linux host and inside the podman machine VM on macOS (<code>podman machine ssh</code>); a kernel or VM without PSI disables the CPU check with one logged warning (re-armed if the file appears). <code>avg60</code> is already a 60-second average, so a single-poll crossing is sustained pressure, not a scheduler spike. Recovery requires the reading to fall 5 percentage points below the threshold. Values below 5 are rejected; must be ≤ the critical threshold. Reloadable on SIGHUP.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_CPU_WATCHDOG_CRITICAL_PERCENT</code></td>
+<td><code>60.0</code></td>
+<td>CPU pressure (PSI <code>some avg60</code> percent) that enters the critical state. Eases back to warn 5 percentage points below this threshold. Must be in [<code>KLANGKD_CPU_WATCHDOG_WARN_PERCENT</code>, 100]. Reloadable on SIGHUP.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_RESOURCE_WATCHDOG_POLL_INTERVAL</code></td>
+<td><code>60.0</code></td>
+<td>Seconds between watchdog polls — all four surfaces share the one loop; floored at 1s (smaller configured values are clamped). The first sweep runs at startup, so a host restarted because a resource filled alerts immediately. Positive float. Reloadable on SIGHUP.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_ADMISSION_MEMORY_ENABLED</code></td>
+<td><code>false</code></td>
+<td>Admission control: before creating a workspace container, check that available host memory fits the workspace's resolved <code>KLANGKD_CONTAINER_MEMORY_LIMIT</code> (per-workspace <code>memory_limit</code> override wins) plus <code>KLANGKD_ADMISSION_MEMORY_MARGIN</code>. A start that does not fit fails fast with a clear 503 / WebSocket error ("host at capacity: 1.2 GB available, workspace wants 4 GB") instead of deferring the failure to the kernel OOM killer. Runs at the single start choke point, so every path is covered (API start/restart, WS connect, create's eager start, boot auto-start, crash-recovery restart); a reconnect to an already-running workspace is never re-admitted. Skipped when no memory limit is configured; fails open (start allowed, one-time warning) when memory cannot be measured. Concurrent sibling starts have their resolved limits subtracted from the measured availability, so N simultaneous starts cannot each fit against the same stale reading. WebSocket refusals carry the machine-readable error code <code>capacity</code>. Caveat: when klangkd itself runs under a cgroup memory limit (Docker <code>-m</code>, a systemd slice <code>MemoryMax</code>), the measurement reads that cgroup's headroom — a slice tighter than the workspaces' needs systematically refuses starts; size the slice or disable the check. Default <code>false</code> because the check is advisory against the <em>limit</em> — with the default 8g limit, small dev/CI hosts would be refused every start; multi-user deployments should enable it with limits sized to the host. Reloadable on SIGHUP. See <a href="../../features/admission/">Workspace Admission</a>.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_ADMISSION_MEMORY_MARGIN</code></td>
+<td><code>1g</code></td>
+<td>Reserve kept for the server itself (klangkd, the proxy, page cache) when fitting a workspace's memory limit against available host memory. Podman size-string grammar (same as <code>KLANGKD_CONTAINER_MEMORY_LIMIT</code>: <code>1g</code>, <code>512m</code>, <code>1024</code>, <code>1.5g</code> …); unset/empty = no reserve (fit against the bare limit). Malformed or <code>0</code> aborts startup (and is denied on SIGHUP). Reloadable on SIGHUP.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_MAX_RUNNING_WORKSPACES_PER_USER</code></td>
+<td><code>0</code></td>
+<td>Per-user cap on concurrently <em>running</em> workspaces, the k8s ResourceQuota analogue: checked at start time; a user at the cap gets a clear "stop a workspace first" 503 / WebSocket error instead of an overloaded host. Counts the owner's workspaces that are running or mid-start/stop (which closes the two-workspaces-starting-at-once race); a workspace being restarted by its owner is not double-counted. <code>0</code> (the default) = unlimited. Reloadable on SIGHUP. See <a href="../../features/admission/">Workspace Admission</a>.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_VOLUME_QUOTA_PER_WORKSPACE</code></td>
+<td><code>0</code></td>
+<td>Per-workspace cap on instance-managed named volumes (#3153 — volumes are workspace-owned): each volume is a directory tree on the host's storage, so without a cap a workspace's editors can consume unbounded disk via mounts. Enforced at BOTH doors that mint volumes — <code>POST /api/v1/volumes</code> and the workspace-start auto-create of mounted named volumes (<code>mounts:</code> entries) — and a create past the cap returns <code>429</code> (start: a clear start error) with a message naming this setting. A per-workspace lock spans count+create, so concurrent creates (API or start) cannot jointly exceed the cap. Counts the workspace's volumes carrying this instance's <code>klangk.instance</code> label and its <code>klangk.workspace-id</code> label; other workspaces' and other instances' volumes never count. <code>0</code> (the default) = unlimited, and the create path makes no extra podman call. Reloadable on SIGHUP.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_OIDC_CONFIG</code></td>
+<td></td>
+<td>Path to OIDC provider config file (YAML or JSON). Enables OIDC authentication when set. See <a href="../../reference/oidc/">OIDC Configuration</a>.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_OIDC_LOGIN_HOOK</code></td>
+<td></td>
+<td>File path to a Python login hook script (e.g., <code>/etc/klangk/login_hook.py</code>). Optionally append <code>:func_name</code> (defaults to <code>on_login</code>). Called on each OIDC login to enforce custom policies. See <a href="../../reference/oidc/">OIDC Configuration</a>.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_WORKSPACE_CREATED_HOOK</code></td>
+<td></td>
+<td>File path to a Python workspace-created hook script (e.g., <code>/etc/klangk/workspace_created.py</code>). Optionally append <code>:func_name</code> (defaults to <code>on_workspace_created</code>). Called after every workspace creation (create, import, duplicate) to mutate the workspace and/or rewrite its ACL; failures are logged, never fatal. Reloaded on SIGHUP. See <a href="../../deployment/customizing/">Customizing a Deployment</a>.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_AUTH_MODES</code></td>
+<td><code>none</code></td>
+<td>Auth modes: <code>password</code>, <code>oidc</code>, <code>both</code>, or <code>none</code>. <strong>Defaults to <code>none</code></strong> (no-login single-user, loopback-bound) — OIDC settings (<code>KLANGKD_OIDC_*</code>) never change the mode; a fresh install "just works" locally with no password. Set explicitly to pin a mode; see <a href="../../features/auth-modes/">Auth Modes</a>.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_ALLOW_INSECURE_NO_AUTH</code></td>
+<td></td>
+<td>Set to <code>1</code> to allow <code>KLANGKD_AUTH_MODES=none</code> on a non-loopback browser bind (<code>KLANGKD_LISTEN</code>). By default <code>none</code> mode refuses to start unless <code>KLANGKD_LISTEN</code> is loopback (IPv4 <code>127.0.0.0/8</code>, IPv6 <code>::1</code>, or <code>localhost</code>). See <a href="../../features/auth-modes/">Auth Modes</a>.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_SMTP_HOST</code></td>
+<td></td>
+<td>SMTP server hostname (if set, uses SMTP; otherwise uses sendmail)</td>
+</tr>
+<tr>
+<td><code>KLANGKD_SMTP_PORT</code></td>
+<td><code>587</code></td>
+<td>SMTP server port</td>
+</tr>
+<tr>
+<td><code>KLANGKD_SMTP_USER</code></td>
+<td></td>
+<td>SMTP auth username</td>
+</tr>
+<tr>
+<td><code>KLANGKD_SMTP_PASSWORD</code></td>
+<td></td>
+<td>SMTP auth password</td>
+</tr>
+<tr>
+<td><code>KLANGKD_SMTP_FROM</code></td>
+<td></td>
+<td>Email sender address (falls back to SMTP_USER, then noreply@localhost)</td>
+</tr>
+<tr>
+<td><code>KLANGKD_SMTP_USE_TLS</code></td>
+<td><code>true</code></td>
+<td>Use STARTTLS for SMTP</td>
+</tr>
+<tr>
+<td><code>KLANGKD_SMTP_REPLY_TO</code></td>
+<td></td>
+<td>Reply-To address on outgoing email; unset uses the From address.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_SENDMAIL_PATH</code></td>
+<td><code>sendmail</code></td>
+<td>Path to sendmail binary (used when KLANGKD_SMTP_HOST is not set)</td>
+</tr>
+<tr>
+<td><code>KLANGKD_EMAIL_TEMPLATES_DIR</code></td>
+<td></td>
+<td><strong>Deprecated</strong> — use <code>&lt;KLANGKD_CUSTOMIZE_DIR&gt;/email-templates/</code> instead. Directory of Jinja2 email template overrides. When unset, falls back to <code>&lt;KLANGKD_CUSTOMIZE_DIR&gt;/email-templates/</code>. See <a href="../../deployment/customizing/#email-templating">Email Templating</a>.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_ADMIN_NOTIFICATION_EMAILS</code></td>
+<td></td>
+<td>Comma-separated SA/ISSO email addresses receiving security-relevant notifications (#3250): account lifecycle events (<code>user.create</code>, <code>user.register</code>, <code>user.update</code>, <code>user.delete</code>, <code>user.unlock</code>, <code>user.disable</code>, <code>user.enable</code>), credential and email/handle changes, group membership changes, audit-write failures, and memory-capacity start refusals. Delivery uses the same SMTP/sendmail transport as the auth emails (<code>KLANGKD_SMTP_HOST</code> / <code>KLANGKD_SENDMAIL_PATH</code>). Empty (the default) leaves the email channel off. Reloadable on SIGHUP.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_ADMIN_NOTIFICATION_WEBHOOK_URL</code></td>
+<td></td>
+<td>URL of the endpoint that receives one JSON POST per notification (#3250; body: event name, timestamp, actor, target, detail, source IP). Use an <code>https://</code> URL for any endpoint that leaves the host — the notification body names users and actions. Sends use a short timeout with no retries; a failed delivery is logged at WARNING and never blocks the action it annotates. Empty (the default) leaves the webhook channel off. Reloadable on SIGHUP.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_ADMIN_NOTIFY_EVENTS</code></td>
+<td>every supported event</td>
+<td>Allowlist of event types that trigger notifications, comma-separated (#3250). The default is every supported event; the persistent conditions <code>audit.failure</code> and <code>resource.low</code> notify at most once per 5 minutes — <code>audit.failure</code> per source table (<code>audit_events</code> vs <code>container_events</code>) — so a degraded state alerts once, not on every occurrence. An unknown event name aborts startup (a typo would silently disable a security notification); blanking the variable restores the default allowlist, while a config-file <code>admin_notify_events: []</code> explicitly turns event notifications off (the channels stay configured). Reloadable on SIGHUP.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_PRODUCT_NAME</code></td>
+<td><code>Klangk</code></td>
+<td>White-label product name shown in the browser tab title, app-bar logo, and outgoing emails. Supports <code>file:</code>/<code>cmd:</code> prefix. See <a href="../../deployment/customizing/#product-name">Customizing a Deployment</a>.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_LOGIN_BANNER_TITLE</code></td>
+<td></td>
+<td>Title shown on the consent banner page (e.g., company name). If empty, no title is displayed.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_LOGO_URL</code></td>
+<td></td>
+<td>URL of the deployment logo shown in the browser UI (empty = built-in mark). See <a href="../../deployment/customizing/">Customizing a Deployment</a>.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_BRAND_COLOR</code></td>
+<td><code>#E65100</code></td>
+<td>Theme accent color for the browser UI (hex form). See <a href="../../deployment/customizing/">Customizing a Deployment</a>.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_LOGIN_BANNER</code></td>
+<td></td>
+<td>Consent banner text shown before login. Blocks all access until accepted. Supports <code>file:</code>/<code>cmd:</code> prefix. If empty, no banner is shown.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_LOGIN_BANNER_EVERY_VISIT</code></td>
+<td><code>false</code></td>
+<td>When <code>true</code>, the consent banner must be re-accepted on every fresh app load / login (acceptance is tracked for the session only, never persisted). When <code>false</code> (default), acceptance is cached permanently against the banner text hash. See <a href="../../deployment/customizing/#consent-banner">Consent Banner</a>.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_TERMS_URL</code></td>
+<td></td>
+<td>Terms of Service link rendered on the login/registration screens and in email footers. <strong>Plain value</strong> (no <code>file:</code>/<code>cmd:</code> resolution — it is public, shown pre-auth). Empty hides it.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_PRIVACY_URL</code></td>
+<td></td>
+<td>Privacy Policy link. Same semantics as <code>KLANGKD_TERMS_URL</code> (plain value, hidden when empty).</td>
+</tr>
+<tr>
+<td><code>KLANGKD_AUP_URL</code></td>
+<td></td>
+<td>Acceptable Use Policy link. Same semantics as <code>KLANGKD_TERMS_URL</code>.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_SUPPORT_URL</code></td>
+<td></td>
+<td>Support/help link shown as a help icon in the app bar (authenticated) and on the auth screens. Plain value; hidden when empty and no <code>KLANGKD_SUPPORT_EMAIL</code> is set.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_SUPPORT_EMAIL</code></td>
+<td></td>
+<td>Support email address; shown as a <code>mailto:</code> when <code>KLANGKD_SUPPORT_URL</code> is unset. Plain value; hidden when empty.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_TERMINAL_BANNER</code></td>
+<td></td>
+<td>Text displayed in every terminal session on shell init. Supports <code>file:</code>/<code>cmd:</code> prefix. If empty (default), no banner is shown.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_WEBSOCKET_DEBUG</code></td>
+<td></td>
+<td>Set to any non-empty value to enable verbose WebSocket message logging on the backend. Useful for diagnosing connection issues.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_LOG_LEVEL</code></td>
+<td><code>INFO</code></td>
+<td>Root logger level for the klangkd backend — a level name (<code>DEBUG</code>/<code>INFO</code>/<code>WARNING</code>/<code>ERROR</code>/<code>CRITICAL</code>, any case) or a numeric string. Applied at boot and re-applied on every SIGHUP reload, so the level can be changed without a restart. A malformed value aborts startup (fail-fast).</td>
+</tr>
+<tr>
+<td><code>KLANGKD_LOG_FORMAT</code></td>
+<td><code>text</code></td>
+<td>Root logger output format for the klangkd backend — <code>text</code> (colored console format) or <code>json</code> (one JSON object per line: ISO-8601 UTC <code>timestamp</code>, <code>level</code>, <code>logger</code>, <code>message</code>, <code>host</code> (the emitting machine's hostname), and <code>instance</code> (the per-data-dir klangk instance id from <code>&lt;data_dir&gt;/instance-id</code>, the id the audit trail's app lifecycle rows will key on (#3329)) — plus <code>exc_info</code> when present) for SIEM/central-log ingestion. Applies to the whole stream — klangk, uvicorn (startup/error/access), and other third-party records alike — and contains no ANSI codes. Applied at boot and re-applied on every SIGHUP reload; a malformed value aborts startup (fail-fast). Lines emitted before settings load (early boot) are always <code>text</code>.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_LOG_FILE</code></td>
+<td></td>
+<td>Optional path to an always-JSON log sink: when set, every record at or above <code>KLANGKD_LOG_LEVEL</code> is additionally written to this file as one JSON object per line (same payload as <code>KLANGKD_LOG_FORMAT=json</code>), while the console keeps <code>KLANGKD_LOG_FORMAT</code> — so stdout can stay human-readable text while the file feeds a SIEM via rsyslog <code>imfile</code>/fluent-bit. <code>~</code> is expanded; relative paths resolve against the process working directory (the systemd unit's). The path is probed for writability at construction (a bad path aborts startup, fail-fast). The sink follows external rotation (logrotate rename) by reopening on inode change. Reloadable on SIGHUP — a path change closes the old sink and opens the new one; a path that breaks between validation and use is logged at warning (or suspends the sink with one warning, leaving the console stream live).</td>
+</tr>
+<tr>
+<td><code>KLANGKD_LOG_FILE_MAX_BYTES</code></td>
+<td><code>0</code></td>
+<td>Size trigger for in-app rotation of the <code>KLANGKD_LOG_FILE</code> sink: once the file reaches this many bytes it is rolled over to <code>&lt;path&gt;.1</code> (existing <code>.N</code> shift up; oldest deleted per <code>KLANGKD_LOG_FILE_BACKUP_COUNT</code>). A file may overshoot by one record (checked before each write). <code>0</code> (the default) = never self-rotate — external rotation (logrotate/rsyslog) stays the mechanism. With any rotation trigger set the app owns rotation; keep external rotators off the same path. Reloadable on SIGHUP; a negative or non-integer value aborts startup (fail-fast). Only meaningful with <code>KLANGKD_LOG_FILE</code> set.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_LOG_FILE_ROTATE</code></td>
+<td></td>
+<td>Time trigger for in-app rotation of the <code>KLANGKD_LOG_FILE</code> sink: <code>hourly</code>, <code>daily</code>, <code>weekly</code>, or <code>monthly</code> (case-insensitive), rolled at UTC boundaries (weekly = Monday). Empty (the default) = no time trigger; size and time triggers can be combined (either fires). Reloadable on SIGHUP; anything else aborts startup (fail-fast). Only meaningful with <code>KLANGKD_LOG_FILE</code> set.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_LOG_FILE_BACKUP_COUNT</code></td>
+<td><code>3</code></td>
+<td>How many rotated <code>&lt;path&gt;.N</code> files to keep when a rotation trigger fires (oldest deleted first). <code>0</code> discards the rotated file outright. Reloadable on SIGHUP; a negative value aborts startup (fail-fast). Only meaningful with a rotation trigger set.</td>
+</tr>
+<tr>
+<td><code>KLANGKD_TEST_MODE</code></td>
+<td></td>
+<td>Internal/test-harness flag: when truthy, registration auto-verifies so E2E tests get immediate access. Not for production use.</td>
+</tr>
+<tr>
+<td><code>LOGFIRE_TOKEN</code></td>
+<td></td>
+<td>Pydantic Logfire write token (opt-in)</td>
+</tr>
+<tr>
+<td><code>KLANGKD_VERSION_FILE</code></td>
+<td></td>
+<td>Path to a <code>version.json</code> served from <code>GET /api/v1/version</code> instead of the packaged one (dev/CI override).</td>
+</tr>
+<tr>
+<td><code>LOGFIRE_BASE_URL</code></td>
+<td><code>https://logfire-api.pydantic.dev</code></td>
+<td>Logfire API base URL (for self-hosted instances)</td>
+</tr>
+<tr>
+<td><code>LOGFIRE_ENVIRONMENT</code></td>
+<td></td>
+<td>Logfire environment tag (e.g., <code>production</code>, <code>staging</code>) — filters traces in the dashboard.</td>
+</tr>
+</tbody>
+</table>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-circle-arrow-up" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="m16 12-4-4-4 4M12 16V8"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../klangkd-config/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Configuration File">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7M19 12H5"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                Configuration File
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../../development/" class="md-footer__link md-footer__link--next" aria-label="Next: Overview">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                Overview
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-right" viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2026 Chris McDonough
+    </div>
+  
+  
+    Made with
+    <a href="https://zensical.org/" target="_blank" rel="noopener">
+      Zensical
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["content.code.copy","content.code.select","navigation.footer","navigation.indexes","navigation.instant","navigation.instant.prefetch","navigation.path","navigation.sections","navigation.top","navigation.tracking","search.highlight"],"search":"../../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"default":"latest","provider":"mike"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.6970bfe9.min.js"></script>
+      
+    
+  </body>
+</html>

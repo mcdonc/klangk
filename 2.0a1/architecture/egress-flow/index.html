@@ -1,0 +1,3140 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Multi-User AI Sandboxing, Collaboration and Coding Platform">
+      
+      
+        <meta name="author" content="Chris McDonough">
+      
+      
+        <link rel="canonical" href="https://mcdonc.github.io/klangk/2.0a1/architecture/egress-flow/">
+      
+      
+        <link rel="prev" href="../workspace-jwt/">
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/favicon.png">
+      <meta name="generator" content="zensical-0.0.59">
+    
+    
+      
+        <title>Egress Request Flow - Klangk</title>
+      
+    
+    
+      
+        
+      
+      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.5da3a30f.min.css">
+      
+        
+          
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.812a03bb.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,500,500i,700,700i%7CJetBrains+Mono:400,400i,700,700i&amp;display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_scope.pathname.endsWith("/")||(__md_scope=new URL(__md_scope.pathname+"/",location)),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,_=__md_scope)=>JSON.parse(t.getItem(_.pathname+"."+e)),__md_set=(e,t,_=localStorage,a=__md_scope)=>{try{_.setItem(a.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="green" data-md-color-accent="green">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer" aria-label="Navigation"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#anatomy-of-an-egressing-request" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Klangk" class="md-header__button md-logo" aria-label="Klangk" data-md-component="logo">
+      
+  <img src="../../assets/logo.svg" alt="Klangk">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer" aria-label="Navigation">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-menu" viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h16"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Klangk
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Egress Request Flow
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="none" data-md-color-scheme="slate" data-md-color-primary="green" data-md-color-accent="green"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="none" data-md-color-scheme="default" data-md-color-primary="green" data-md-color-accent="green"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-moon" viewBox="0 0 24 24"><path d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search" aria-label="Search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-search" viewBox="0 0 24 24"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog" aria-label="Search">
+  <button type="button" class="md-search__button">
+    Search
+  </button>
+</div>
+      
+    
+    <div class="md-header__source">
+      
+        <a href="https://github.com/mcdonc/klangk" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mcdonc/klangk
+  </div>
+</a>
+      
+    </div>
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Klangk" class="md-nav__button md-logo" aria-label="Klangk" data-md-component="logo">
+      
+  <img src="../../assets/logo.svg" alt="Klangk">
+
+    </a>
+    Klangk
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/mcdonc/klangk" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mcdonc/klangk
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Home
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Getting Started
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../features/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Features
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Features
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/authentication/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Authentication
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/auth-modes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Auth Modes
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/authorization/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Authorization
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/handles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Handles
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/admin-management/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Admin Management
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/invitations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Invitations
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/workspaces/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Workspaces
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/terminal/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Terminal
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/the-shell/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The Shell
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/service-command/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Service Command
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/auto-start/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Auto-Start
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/health-check/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Health Check
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/egress-filtering/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Egress Filtering
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/sandbox/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Sandbox
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/file-viewer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  File Viewer
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/ai-coding-harnesses/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  AI Coding Harnesses
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/features/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Feature Activation
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/export-import/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Export & Import
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/hosted-apps/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Hosted Apps
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  CLI
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/ssh-agent-forwarding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  SSH Agent Forwarding
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/github-authentication/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  GitHub HTTPS Authentication
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/debug-panel/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Debug Panel
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/logging/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Logging
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/admission/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Workspace Admission
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/crash-recovery/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Crash Recovery
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/server-scheduling/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Server Scheduling
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/nix/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Nix
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../sandboxes/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Sandboxes
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Sandboxes
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../sandboxes/openclaw/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  OpenClaw
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../sandboxes/hermes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Hermes
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Deployment
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Deployment
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/docker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Running with Docker
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/packaged/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Packaged klangkd
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/hosting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Hosting & Proxy
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/behind-a-proxy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Behind a Reverse Proxy
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/https-hosting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  HTTPS Hosting
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/airgapped/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Air-Gapped Deployment
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/customizing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Customizing
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/fips/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  FIPS 140-3 Mode
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/signals/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Process Signals
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/decommissioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Decommissioning
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/falco/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Falco Exec Audit
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/podman/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Podman
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/oidc/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  OIDC
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/backup-restore/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Backup and Restore
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/audit-integrity/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Audit Record Integrity
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Reference
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Reference
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/acl/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  ACL System
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/api-endpoints/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  API Endpoints
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/klangkd-config/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Configuration File
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/environment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Environment Variables
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../development/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Klangk Development
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_7" id="__nav_7_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Klangk Development
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/ci/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  CI
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/pre-commit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Pre-commit Hooks
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/schema-migrations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Database Schema Changes
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/releasing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Releasing
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/building-images/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Building Images
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/stable-branches/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Stable Branches
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/super-e2e/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Super-E2E
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../changes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Changelog
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_9" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Architecture
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_9" id="__nav_9_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_9_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_9">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Architecture
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../llm-proxy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  LLM Proxy
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../browser-bridge/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Browser Bridge
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../workspace-jwt/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Workspace JWT
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Egress Request Flow
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Egress Request Flow
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-short-version" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The short version
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The flow
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-matching-model-one-grammar-both-gates" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The matching model (one grammar, both gates)
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#allow-model-vs-deny-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Allow model vs deny model
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#persistence-boundaries" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Persistence boundaries
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#revocation-and-failure-behavior" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Revocation and failure behavior
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  
+                    
+                    
+                    
+                      
+                    
+                    
+                      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+                      <div class="md-sidebar-button__wrapper">
+                        <label class="md-sidebar-button" for="__toc"></label>
+                      </div>
+                    
+                  
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-short-version" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The short version
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The flow
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-matching-model-one-grammar-both-gates" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The matching model (one grammar, both gates)
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#allow-model-vs-deny-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Allow model vs deny model
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#persistence-boundaries" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Persistence boundaries
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#revocation-and-failure-behavior" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Revocation and failure behavior
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+                
+
+
+
+  
+
+
+  <nav class="md-path" aria-label="Navigation" >
+    <ol class="md-path__list">
+      
+        
+  
+  
+    <li class="md-path__item">
+      <a href="../.." class="md-path__link">
+        
+  
+  <span class="md-ellipsis">
+    Home
+  </span>
+
+      </a>
+    </li>
+  
+
+      
+      
+        
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+      <li class="md-path__item">
+        <a href="../" class="md-path__link">
+          
+  
+  <span class="md-ellipsis">
+    Architecture
+  </span>
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ol>
+  </nav>
+
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+  
+  
+
+
+<h1 id="anatomy-of-an-egressing-request">Anatomy of an egressing request<a class="headerlink" href="#anatomy-of-an-egressing-request" title="Permanent link">&para;</a></h1>
+<p>This page traces a single outbound connection from inside a filtered
+workspace — <code>curl https://example.com</code> — from the application's
+<code>connect()</code> to the verdict and the learned ACCEPT/REJECT. The egress path
+has <strong>two gates</strong> (a DNS gate and a connection-SYN gate), an async consent
+loop, and <strong>two different allow/deny models</strong>; a diagram keeps the whole
+model in one place.</p>
+<p>For operator-facing configuration (enablement, <code>allowed_domains</code> grammar
+by example, service lists) see <a href="../../features/egress-filtering/">Egress Filtering</a>. This page
+is about what happens at runtime, inside the <a href="../../features/egress-filtering/">network sidecar</a>.</p>
+<h2 id="the-short-version">The short version<a class="headerlink" href="#the-short-version" title="Permanent link">&para;</a></h2>
+<ol>
+<li><strong>DNS resolution is gate 1.</strong> All <code>:53</code> traffic is <code>REDIRECT</code>ed to the
+   sidecar's FQDN proxy. A name that matches the static allow-list
+   (<code>allowed_domains</code>) or an in-effect consent allow resolves normally and
+   each resolved IP gets a port-scoped <code>ACCEPT</code> rule — no consent involved.
+   A name on the reject-list (<code>rejected_domains</code>) gets <code>NXDOMAIN</code>
+   unconditionally. An off-list name in <code>interactive</code>/<code>allow</code> mode <strong>still
+   resolves</strong> (the workspace gets the IP), but the proxy only records the
+   IP→host mapping — the connection itself is gated next. In <code>static</code> mode
+   the off-list name gets <code>NXDOMAIN</code> locally — the query is never forwarded,
+   so there is no resolution oracle and no DNS exfiltration
+   channel.</li>
+<li><strong>The connection SYN is gate 2.</strong> The kernel <code>OUTPUT</code> chain walks its
+   rules top-down: learned <code>ACCEPT</code>/<code>REJECT</code> rules (inserted at the top at
+   runtime) first, then the static startup rules (loopback, established,
+   the proxy's own marked DNS, CIDR specs, the klangkd gateway). Anything
+   still unmatched lands in the sidecar's <code>NFQUEUE</code> consumer.</li>
+<li><strong>The consumer checks its memories, then holds.</strong> A per-connection
+   verdict cache answers SYN retransmits; an in-session allow or deny that
+   still covers the host:port answers without prompting (this is what keeps
+   CDN-rotated IPs from re-prompting). Otherwise the SYN is <strong>held</strong> and a
+   consent request travels over the sidecar WebSocket to klangkd.</li>
+<li><strong>klangkd gates too, then asks a human.</strong> <code>egress_mode: allow</code> and
+   paused-prompting answer at once; static mode records a denial and
+   answers deny; interactive mode creates a pending <code>egress_consent</code> row
+   and fans out to the connected deciders (CLI TUI / browser). A hold
+   times out fail-closed (<code>egress_consent_timeout</code>, default 120 s).</li>
+<li><strong>The verdict is applied where the SYN is held.</strong> Allow → an in-session
+   host:port memory (unless <code>once</code>) plus an all-ports <code>ACCEPT</code> for the
+   resolved IP, then <code>pkt.accept()</code>. Deny → an in-session deny memory, a
+   forged RST so <code>connect()</code> fails with <code>ECONNREFUSED</code> immediately, and a
+   temporary <code>REJECT</code> rule. <code>forever</code> verdicts additionally mutate the
+   workspace's persisted <code>allowed_domains</code> / <code>rejected_domains</code>.</li>
+</ol>
+<h2 id="the-flow">The flow<a class="headerlink" href="#the-flow" title="Permanent link">&para;</a></h2>
+<pre class="mermaid"><code>flowchart TD
+    APP["Workspace process&lt;br/&gt;connect(host:port)"]
+    APP --&gt;|"1. resolver: A? host to :53"| REDIR
+    subgraph K1["Kernel nat OUTPUT"]
+        REDIR["all :53 REDIRECT to the sidecar FQDN proxy&lt;br/&gt;(the proxy's own marked upstream forwards are exempt)"]
+    end
+
+    subgraph G1["GATE 1 - sidecar FQDN DNS proxy"]
+        direction TB
+        RJ{"rejected_for(host)?"}
+        PF{"ports_for(host)?&lt;br/&gt;static allowed_domains +&lt;br/&gt;in-session consent allows"}
+        LRN["forward upstream, answer the client,&lt;br/&gt;install port-scoped ACCEPT rules for each&lt;br/&gt;resolved IP (lifetime: DNS TTL, capped at a&lt;br/&gt;timed allow's remaining window)"]
+        REC["forward upstream, answer the client,&lt;br/&gt;record the IP-to-host mapping only - NO ACCEPT"]
+        NXD["NXDOMAIN"]
+        MODE{"KLANGKNETWORK_EGRESS_MODE&lt;br/&gt;+ consent wiring?"}
+        RJ --&gt;|"match - unconditional, every mode"| NXD
+        RJ --&gt;|no| PF
+        PF --&gt;|match| LRN
+        PF --&gt;|no| MODE
+        MODE --&gt;|"interactive/allow (consent wired)"| REC
+        MODE --&gt;|"static - refused locally, never forwarded&lt;br/&gt;or no consent wiring"| NXD
+    end
+    REDIR --&gt; RJ
+
+    subgraph K2["Kernel filter OUTPUT chain - first match wins"]
+        direction TB
+        W1{"1. learned ACCEPT / temporary REJECT&lt;br/&gt;(inserted at the top at runtime)"}
+        W2{"2. startup rules: loopback, established,&lt;br/&gt;marked DNS upstream, CIDR specs, klangkd gateway"}
+        W3{"3. NFQUEUE (rate-limited)&lt;br/&gt;- consent gate"}
+        FALL["REJECT tcp-reset fallback,&lt;br/&gt;then the DROP policy"]
+        W1 --&gt;|miss| W2
+        W2 --&gt;|miss| W3
+        W3 --&gt;|miss| FALL
+    end
+    LRN -.-&gt;|"2. the SYN hits its ACCEPT"| OK["connected - no consent involved"]
+    REC -.-&gt;|"2. no rule matches the SYN;&lt;br/&gt;the packet is queued"| W1
+
+    subgraph G2["GATE 2 - sidecar NFQUEUE consumer"]
+        direction TB
+        WSD{"consent WebSocket up?"}
+        VC{"verdict cache has&lt;br/&gt;this connection tuple?"}
+        INF{"same connection&lt;br/&gt;already held?"}
+        SA{"in-session allow still&lt;br/&gt;covers host:port?"}
+        SD{"in-session deny still&lt;br/&gt;covers host:port?"}
+        FASTRST["fail-fast deny: forged RST + short REJECT,&lt;br/&gt;connect() gets ECONNREFUSED at once"]
+        ACC2["pkt.accept"]
+        RSTC["RST + pkt.drop"]
+        DRP["pkt.drop - the existing hold resolves it"]
+        AA["learn a port-scoped ACCEPT for the allow's&lt;br/&gt;remaining window, pkt.accept, cache the verdict"]
+        AD["forged RST + REJECT for the deny's remaining&lt;br/&gt;window, pkt.drop, cache the verdict"]
+        HOLD["retain the packet, start a verdict task:&lt;br/&gt;request(host, port) over the sidecar WebSocket"]
+        WSD --&gt;|"down (fail-close)"| FASTRST
+        WSD --&gt;|up| VC
+        VC --&gt;|"allow - a SYN retransmit"| ACC2
+        VC --&gt;|"deny - a SYN retransmit"| RSTC
+        VC --&gt;|miss| INF
+        INF --&gt;|yes| DRP
+        INF --&gt;|no| SA
+        SA --&gt;|"yes - covers CDN-rotated IPs too"| AA
+        SA --&gt;|no| SD
+        SD --&gt;|yes| AD
+        SD --&gt;|no| HOLD
+    end
+    W3 --&gt; WSD
+
+    subgraph KD["klangkd ConsentCoordinator.hold"]
+        direction TB
+        HM{"egress_mode is allow?"}
+        HP{"prompting paused?"}
+        HI{"workspace interactive AND&lt;br/&gt;a decider is connected?"}
+        HR{"under the per-workspace&lt;br/&gt;rate limit, not a duplicate?"}
+        ALW["record the destination,&lt;br/&gt;answer allow at once"]
+        STA["record a static denial row,&lt;br/&gt;answer deny at once"]
+        PND["create a pending egress_consent row,&lt;br/&gt;arm the hold timeout&lt;br/&gt;(egress_consent_timeout, default 120 s)"]
+        HM --&gt;|yes| ALW
+        HM --&gt;|no| HP
+        HP --&gt;|"yes - auto-allow&lt;br/&gt;(a recorded deny still blocks)"| ALW
+        HP --&gt;|no| HI
+        HI --&gt;|no| STA
+        HI --&gt;|yes| HR
+        HR --&gt;|no| STA
+        HR --&gt;|yes| PND
+    end
+    HOLD ==&gt;|"3. egress frame"| HM
+
+    DEC["Deciders - CLI TUI consent screen / browser&lt;br/&gt;(first decision wins)"]
+    PND --&gt; DEC
+
+    subgraph V["Verdict - sidecar applies it to the held SYN"]
+        direction TB
+        VA["ALLOW&lt;br/&gt;unless once: remember host:port in the in-session&lt;br/&gt;allow list, install an all-ports ACCEPT for the IP&lt;br/&gt;for the duration. pkt.accept, cache the verdict.&lt;br/&gt;forever: klangkd also appends host:port to the&lt;br/&gt;persisted allowed_domains"]
+        VD["DENY (verdict, timeout, or lost WS - fail-close)&lt;br/&gt;unless once: remember host:port in the in-session&lt;br/&gt;deny list. Forge an RST so connect() fails at once,&lt;br/&gt;install a REJECT (once: this connection only, ~10 s;&lt;br/&gt;timed/forever: the destination, for the duration).&lt;br/&gt;pkt.drop, cache the verdict. forever: klangkd also&lt;br/&gt;appends to the persisted rejected_domains"]
+    end
+    DEC ==&gt;|"allow + duration&lt;br/&gt;(once / 5s / 5m / 15m / 1h / 1d / 1w / tilrestart / forever)"| VA
+    DEC ==&gt;|deny| VD
+    PND -.-&gt;|"hold timeout expires"| VD
+    VA ==&gt;|"4. the held SYN is released"| OK
+    VD ==&gt;|RST| ECO["connect() fails: ECONNREFUSED"]</code></pre>
+<p>Two details the diagram compresses:</p>
+<ul>
+<li>Every DNS query and every queued SYN also bumps klangkd's idle-activity
+  timer for the workspace, so an egress-only workload is not reaped.</li>
+<li>A <code>once</code> verdict is <strong>per connection</strong>: the verdict cache is keyed by
+  the full connection tuple (source port included), so a <em>new</em> connection
+  to the same host:port is a cache miss and prompts again. SYN
+  <em>retransmits</em> of the decided connection reuse the cached verdict.</li>
+</ul>
+<h2 id="the-matching-model-one-grammar-both-gates">The matching model (one grammar, both gates)<a class="headerlink" href="#the-matching-model-one-grammar-both-gates" title="Permanent link">&para;</a></h2>
+<p>Both gates — <code>ports_for</code> / <code>rejected_for</code> at DNS, the in-session
+allow/deny lookups at the SYN — share one host matcher with nginx-style
+scopes:</p>
+<table>
+<thead>
+<tr>
+<th>Spec form</th>
+<th>Scope</th>
+<th><code>example.com</code> spec matches</th>
+<th>…and not</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>example.com</code></td>
+<td>exact (apex only)</td>
+<td><code>example.com</code></td>
+<td><code>api.example.com</code></td>
+</tr>
+<tr>
+<td><code>.example.com</code></td>
+<td>inclusive (apex + subdomains)</td>
+<td><code>example.com</code>, <code>api.example.com</code></td>
+<td><code>evilexample.com</code></td>
+</tr>
+<tr>
+<td><code>*.example.com</code></td>
+<td>subdomains only</td>
+<td><code>api.example.com</code></td>
+<td><code>example.com</code> itself</td>
+</tr>
+</tbody>
+</table>
+<p>The suffix check requires a label boundary, so <code>evilexample.com</code> never
+matches <code>example.com</code> under any form.</p>
+<p>In-session entries a verdict installs are always <strong>exact</strong> — the decider
+approved or denied the specific <code>host:port</code> shown, not its subdomains. A
+bare-host spec in <code>allowed_domains</code> is likewise apex-only; use the
+leading-dot form to cover subdomains.</p>
+<h2 id="allow-model-vs-deny-model">Allow model vs deny model<a class="headerlink" href="#allow-model-vs-deny-model" title="Permanent link">&para;</a></h2>
+<p>The two sides of a verdict are deliberately asymmetric:</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>Allow</th>
+<th>Deny</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Fast path</td>
+<td>learned <code>ACCEPT</code> rule (per-IP) + hostname memory</td>
+<td>forged RST (immediate <code>ECONNREFUSED</code>) + temporary <code>REJECT</code> rule (per-IP)</td>
+</tr>
+<tr>
+<td>Memory scope</td>
+<td>hostname:port in the in-session allow list; future DNS lookups of the host allow-learn automatically</td>
+<td>hostname:port in the in-session deny list — covers CDN-rotated IPs the per-IP REJECT misses</td>
+</tr>
+<tr>
+<td>Lifetime</td>
+<td>the verdict's duration (<code>once</code> learns nothing)</td>
+<td>the verdict's duration (<code>once</code> rejects only that connection)</td>
+</tr>
+<tr>
+<td>Across restarts</td>
+<td><code>forever</code> → appended to <code>allowed_domains</code> (persisted, re-read at sidecar start)</td>
+<td><code>forever</code> → appended to <code>rejected_domains</code> (persisted)</td>
+</tr>
+<tr>
+<td>Static complement</td>
+<td>a name off the allow-list is denied at gate 1 (<code>static</code> NXDOMAINs it; <code>interactive</code>/<code>allow</code> resolve it and deny at the SYN)</td>
+<td>a name on the reject-list never resolves (<code>NXDOMAIN</code>)</td>
+</tr>
+</tbody>
+</table>
+<p>An allow is hostname-shaped and forward-looking (the next DNS query
+re-learns fresh IPs); a deny is IP-shaped at the kernel (REJECT on the
+resolved IP, TTL-bounded) but hostname-shaped in the consumer's memory,
+so neither side leaks on DNS rotation.</p>
+<h2 id="persistence-boundaries">Persistence boundaries<a class="headerlink" href="#persistence-boundaries" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>State</th>
+<th>Lives in</th>
+<th>Survives a sidecar restart?</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>In-session allow/deny lists, verdict cache, in-flight set</td>
+<td>sidecar memory</td>
+<td>no — fresh session</td>
+</tr>
+<tr>
+<td>Learned <code>ACCEPT</code> / temporary <code>REJECT</code> rules</td>
+<td>netns iptables</td>
+<td>no — re-learned on demand</td>
+</tr>
+<tr>
+<td><code>egress_consent</code> audit rows (pending/allowed/denied/expired)</td>
+<td>klangkd database</td>
+<td>yes</td>
+</tr>
+<tr>
+<td><code>allowed_domains</code> / <code>rejected_domains</code> (incl. <code>forever</code> appends)</td>
+<td>klangkd database</td>
+<td>yes — re-read at start</td>
+</tr>
+</tbody>
+</table>
+<h2 id="revocation-and-failure-behavior">Revocation and failure behavior<a class="headerlink" href="#revocation-and-failure-behavior" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Revoking</strong> a recorded verdict (decider UI) marks the row revoked and
+  sends a <code>drop_rule</code> frame to the sidecar, which clears the host's
+  in-session memory, kernel rules, and cached verdicts, then acks. A
+  revoked <code>forever</code> allow also removes the appended <code>allowed_domains</code>
+  entry.</li>
+<li><strong>Everything fails closed.</strong> A lost consent WebSocket, a missing
+  decider, a hold timeout, or a klangkd restart each resolve held or
+  future SYNs to a deny (forged RST — a clean <code>ECONNREFUSED</code>, never a
+  ~127 s kernel retransmit hang). On-list egress is unaffected: learned
+  <code>ACCEPT</code> rules sit above the NFQUEUE gate.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-circle-arrow-up" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="m16 12-4-4-4 4M12 16V8"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../workspace-jwt/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Workspace JWT">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7M19 12H5"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                Workspace JWT
+              </div>
+            </div>
+          </a>
+        
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2026 Chris McDonough
+    </div>
+  
+  
+    Made with
+    <a href="https://zensical.org/" target="_blank" rel="noopener">
+      Zensical
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["content.code.copy","content.code.select","navigation.footer","navigation.indexes","navigation.instant","navigation.instant.prefetch","navigation.path","navigation.sections","navigation.top","navigation.tracking","search.highlight"],"search":"../../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"default":"latest","provider":"mike"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.6970bfe9.min.js"></script>
+      
+    
+  </body>
+</html>
