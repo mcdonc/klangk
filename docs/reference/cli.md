@@ -19,7 +19,7 @@ Install `klangk` from PyPI:
 pip install klangk
 ```
 
-Requires Python 3.12+.
+Requires Python 3.14+.
 
 ## Configuration
 
