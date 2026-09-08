@@ -55,6 +55,19 @@ operators or integrators to act when upgrading.
   with tests), and the five files that were off-canonical at the pinned
   language version were reformatted.
 
+### Fixed
+
+- **SSO login completes under an every-visit login banner
+  (#3371).** With `login_banner_every_visit` on, the browser's
+  return from the identity provider carried a one-time login code
+  that the banner gate discarded by redirecting to the consent page
+  first, so single sign-on could never finish (the code expires in 60
+  seconds and the redirect replaces the URL). The OIDC callback page
+  now redeems the code before the banner is shown, and the user is
+  sent to the consent page on the next navigation as usual. A failed
+  code exchange shows the error with a “Go to Login” button instead
+  of stranding the browser on the callback page.
+
 ## \[v2.0a2] - 2026-09-08
 
 ### Fixed

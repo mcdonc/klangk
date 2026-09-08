@@ -159,6 +159,33 @@ def return_tab_to_login(app) -> None:
     wait_for_app(app, "Email or handle")
 
 
+def hard_reload_login(app) -> None:
+    """Force a full page load of the app at /#/login.
+
+    A hash-only navigation from a running app is same-document — the
+    page keeps its boot-time config fetch, so a swapped-in banner (or a
+    swapped-out one) would never be seen. The about:blank detour makes
+    the return a real document load.
+    """
+    cdp_eval("location.href='about:blank'")
+    cdp_eval(f"location.href='{app_origin()}/#/login'")
+
+
+def wait_settled(app, timeout: float = 90) -> None:
+    """Wait for a settled app surface: the login form or the workspace
+    list (either may come out of a post-restore reload, depending on
+    whether a session survived the scenario)."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            if app.has_text("Log In", 3000) or app.has_text("Owned by Me", 3000):
+                return
+        except Exception:  # noqa: BLE001 — dwds re-attach races
+            pass
+        time.sleep(2)
+    raise AssertionError("the app settled on neither login form nor workspace list")
+
+
 def body_text() -> str:
     return str(cdp_eval("document.body.innerText"))
 
@@ -281,6 +308,67 @@ def test_sso_approve_provisions_and_lands(harness, app, oidc_stack):
     assert entry.get("provider") == "fmtk-idp", entry
     # the IdP saw the whole leg: authorize -> approve -> PKCE-checked token
     assert ("token", IDP_EMAIL) in oidc_stack.events, oidc_stack.events
+
+
+def test_sso_completes_under_every_visit_banner(harness, app, oidc_stack):
+    """#3371: an every-visit banner must not turn SSO into a loop.
+
+    The callback lands on a fresh app load at #/oidc-complete?code=...
+    with the banner required again; the one-time code must be redeemed
+    despite that (the banner gate exempts the route while logged out),
+    the banner accepted on landing, and the login then completes —
+    instead of the pre-fix loop where the guard dropped the code and
+    bounced back to /consent, then /login, then the IdP again.
+    """
+    original = {
+        key: harness.config.get(key, default)
+        for key, default in (
+            ("login_banner", ""),
+            ("login_banner_title", ""),
+            ("login_banner_every_visit", "false"),
+        )
+    }
+    try:
+        harness.backend.swap_settings(
+            {
+                "auth_modes": "both",
+                "oidc_providers": [oidc_stack.provider_entry()],
+                "login_banner": "fmtk every-visit banner text",
+                "login_banner_title": "Fmtk Notice",
+                "login_banner_every_visit": "true",
+            },
+            apply="restart",
+            verify=False,
+        )
+        harness.backend.wait_config_value("auth_modes", "both")
+        harness.backend.wait_config_value("login_banner_every_visit", True)
+
+        # fresh load: the banner gate forces /consent before the login
+        # form; accept, then the SSO button is on the re-mounted form
+        hard_reload_login(app)
+        wait_for_app(app, "I Accept")
+        app.tap_label("I Accept")
+        wait_for_app(app, PROVIDER_LABEL)
+
+        tap_sso(app, oidc_stack)
+        approve_at_idp(oidc_stack, app, 0)
+
+        # the callback reloads the app with the banner pending again —
+        # the code is redeemed before the banner gate redirects. Both
+        # the fixed and the pre-fix flow land on /consent; what the fix
+        # changes is that the session survives the accept — the pre-fix
+        # code was dropped, so accepting led back to /login (the loop)
+        wait_landed(app, "I Accept")
+        app.tap_label("I Accept")
+        app.wait_for_text("No workspaces yet")
+        assert app.has_text(IDP_EMAIL, 10000), "the SSO user's email chip"
+        app.logout()
+    finally:
+        harness.backend.swap_settings(original, apply="restart", verify=False)
+        # leave the tab on a clean surface for the next scenario — the
+        # running app's in-memory config is stale until a real reload
+        hard_reload_login(app)
+        wait_settled(app)
 
 
 def test_sso_deny_keeps_login_page_and_no_user(harness, app, oidc_stack):
