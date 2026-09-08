@@ -2618,7 +2618,10 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   jiti (its TypeScript extension loader) chooses its cache-key hash
   from `crypto.getFips()` and previously picked MD5 — refused by the
   fips provider — which failed every extension load with
-  `error:0308010C` until `pi -ne` was used.
+  `error:0308010C` until `pi -ne` was used. The configs also set
+  `config_diagnostics = 1`: a config that fails to parse now aborts
+  the process instead of silently falling back to the default
+  provider.
 - **FIPS fetch pin is Linux-only (#3364).** Under
   `KLANGKD_FIPS_MODE`, the startup step that pins ambient OpenSSL
   fetches to `fips=yes` (#3350) now runs only on Linux, where

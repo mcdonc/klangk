@@ -114,6 +114,11 @@ RUN openssl fipsinstall -module /usr/lib/x86_64-linux-gnu/ossl-modules/fips.so \
 # property-less algorithm fetch image-wide — the same countermeasure
 # klangkd applies in its own process (#3350), here at config level.
 #
+# config_diagnostics = 1 (the upstream README-FIPS belt): a config
+# that fails to parse aborts the process instead of libcrypto
+# silently proceeding on the implicitly-activated default provider —
+# non-FIPS crypto with no error.
+#
 # The config is written directly to the STOCK path (/etc/ssl/openssl.cnf,
 # replacing the distro file) so that environment-less lookups —
 # sudoers env_reset strips OPENSSL_CONF for non-login `sudo <cmd>`
@@ -121,6 +126,7 @@ RUN openssl fipsinstall -module /usr/lib/x86_64-linux-gnu/ossl-modules/fips.so \
 # there) — still activate FIPS instead of silently falling back to
 # the default provider.
 RUN printf '%s\n' \
+      'config_diagnostics = 1' \
       'openssl_conf = openssl_init' \
       'nodejs_conf = openssl_init' \
       '' \
@@ -160,13 +166,25 @@ RUN printf '%s\n' \
 # system CLI and node (nodejs_conf section + OPENSSL_MODULES), plus
 # the env-stripped case (env -i simulates sudo env_reset — the stock
 # config path must keep FIPS active with no environment at all).
-RUN openssl list -providers | grep -q 'OpenSSL FIPS Provider' && \
-    ! echo hello | openssl md5 > /dev/null 2>&1 && \
+# Mirrors the host image's #3350 discipline: each check echoes a
+# numbered marker BEFORE it runs, so the last marker printed names
+# the failing check, and expected-failure links keep stderr quiet
+# (refusal noise) but let stdout through — an unexpectedly-fetchable
+# MD5 prints its digest as evidence.
+RUN echo 'fips check 1/7: FIPS provider active' && \
+    openssl list -providers | grep -q 'OpenSSL FIPS Provider' && \
+    echo 'fips check 2/7: CLI md5 refused' && \
+    ! echo hello | openssl md5 2>/dev/null && \
+    echo 'fips check 3/7: node md5 refused' && \
     ! node -e "require('crypto').createHash('md5').update('x').digest('hex')" \
-      > /dev/null 2>&1 && \
+      2>/dev/null && \
+    echo 'fips check 4/7: env-stripped provider activation' && \
     env -i /usr/bin/openssl list -providers \
       | grep -q 'OpenSSL FIPS Provider' && \
-    ! env -i /usr/bin/sh -c 'echo hello | openssl md5' > /dev/null 2>&1 && \
+    echo 'fips check 5/7: env-stripped md5 refused' && \
+    ! env -i /usr/bin/sh -c 'echo hello | openssl md5' 2>/dev/null && \
+    echo 'fips check 6/7: sha256 fetch works' && \
     node -e "require('crypto').createHash('sha256').update('x').digest('hex')" \
-      > /dev/null 2>&1 && \
+      > /dev/null && \
+    echo 'fips check 7/7: node getFips reports fips mode' && \
     node -e "process.exit(require('crypto').getFips() ? 0 : 1)"

@@ -134,9 +134,13 @@ RUN openssl fipsinstall -module /usr/lib/x86_64-linux-gnu/ossl-modules/fips.so \
 # env_reset-style launchers). The pin requires fips=yes on every
 # property-less algorithm fetch image-wide — the config-level form
 # of the countermeasure klangkd applies in its own process (#3350,
-# where the rationale lives). No nodejs_conf alias: the host image
+# where the rationale lives). config_diagnostics = 1 aborts a
+# process on a config that fails to parse instead of silently
+# proceeding on the implicitly-activated default provider (the
+# upstream README-FIPS belt). No nodejs_conf alias: the host image
 # has no node (see the workspace variant for why that one needs it).
 RUN printf '%s\n' \
+      'config_diagnostics = 1' \
       'openssl_conf = openssl_init' \
       '' \
       '.include /etc/ssl/fipsmodule.cnf' \
