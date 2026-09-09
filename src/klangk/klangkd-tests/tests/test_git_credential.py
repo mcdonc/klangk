@@ -1334,28 +1334,30 @@ def _pkce_providers_env(base, **overrides):
     return json.dumps([entry])
 
 
-def _auth_code_discovery(base):
-    """A Gitea-shaped discovery document: no device endpoint, S256
-    supported."""
+def _auth_code_discovery(base, token_endpoint=None):
+    """A Gitea-shaped discovery document: no device grant, S256
+    supported. ``token_endpoint`` defaults to the Gitea path; pass the
+    entry's token URL to make the document describe that server."""
     return json.dumps(
         {
             "issuer": base,
             "authorization_endpoint": f"{base}/login/oauth/authorize",
-            "token_endpoint": f"{base}/login/oauth/access_token",
+            "token_endpoint": token_endpoint
+            or f"{base}/login/oauth/access_token",
             "grant_types_supported": ["authorization_code", "refresh_token"],
             "code_challenge_methods_supported": ["plain", "S256"],
         }
     ).encode()
 
 
-def _device_discovery(base):
+def _device_discovery(base, token_endpoint=None):
     """A GitLab-shaped device-capable document: the device grant listed
     in grant_types_supported with no device_authorization_endpoint (that
     key is an OIDC extension GitLab does not emit)."""
     return json.dumps(
         {
             "issuer": base,
-            "token_endpoint": f"{base}/oauth/token",
+            "token_endpoint": token_endpoint or f"{base}/oauth/token",
             "grant_types_supported": [
                 "authorization_code",
                 "refresh_token",
@@ -1545,7 +1547,11 @@ class TestFlowSelectionMatrix:
                 }
             ).encode(),
             "/oauth/token": json.dumps(
-                {"access_token": "tok", "token_type": "bearer"}
+                {
+                    "access_token": "tok",
+                    "token_type": "bearer",
+                    "expires_in": 3600,
+                }
             ).encode(),
         }
         result = self._run(
@@ -1553,19 +1559,25 @@ class TestFlowSelectionMatrix:
         )
         assert result.returncode == 0
         assert "password=tok" in result.stdout
+        # the token response rides through: expiry rides along for
+        # git >= 2.46
+        assert "password_expiry_utc=" in result.stdout
         ops = [r["operation"] for r in _BridgeHandler.requests]
         assert "device_flow_show" in ops
 
     def test_discovery_overrides_a_stale_entry(
         self, bridge_server, fake_browser_id
     ):
-        """The entry says device_code but the server advertises
+        """The entry says device_code but the server (a trusted document
+        — its token_endpoint names the entry's token URL) advertises
         authorization_code only: the document wins, and (phase 1) the PAT
         dialog follows."""
         server, port = bridge_server
         base = f"http://127.0.0.1:{port}"
         _BridgeHandler.routes = {
-            "/.well-known/openid-configuration": _auth_code_discovery(base),
+            "/.well-known/openid-configuration": _auth_code_discovery(
+                base, token_endpoint=f"{base}/oauth/token"
+            ),
             "/oauth/authorize_device": json.dumps(
                 {
                     "device_code": "dc",
@@ -1586,6 +1598,70 @@ class TestFlowSelectionMatrix:
         ops = [r["operation"] for r in _BridgeHandler.requests]
         assert "device_flow_show" not in ops
         assert "get" in ops
+
+    def test_foreign_discovery_document_does_not_override(
+        self, bridge_server, fake_browser_id
+    ):
+        """A document whose token_endpoint names a different server (a
+        path-prefixed provider reading the outer origin's document) is
+        foreign: the entry's flow stands."""
+        server, port = bridge_server
+        base = f"http://127.0.0.1:{port}"
+        _BridgeHandler.routes = {
+            # auth_code-only doc for some OTHER app on this origin
+            "/.well-known/openid-configuration": _auth_code_discovery(base),
+            "/oauth/authorize_device": json.dumps(
+                {
+                    "device_code": "dc",
+                    "user_code": "UC-1",
+                    "verification_uri": f"{base}/verify",
+                    "interval": 0,
+                    "expires_in": 60,
+                }
+            ).encode(),
+            "/oauth/token": json.dumps(
+                {"access_token": "tok", "token_type": "bearer"}
+            ).encode(),
+        }
+        result = self._run(
+            bridge_server, fake_browser_id, _device_providers_env
+        )
+        assert result.returncode == 0
+        assert "password=tok" in result.stdout  # device flow ran
+
+    def test_pkce_entry_flipped_to_device_falls_back_not_crash(
+        self, bridge_server, fake_browser_id
+    ):
+        """A trusted document advertising the device grant (GitLab's
+        shape) flips a PKCE entry — which carries no device_code_url — to
+        the device flow. The helper must fall back to the PAT dialog, not
+        crash (round-2 review: KeyError device_code_url)."""
+        server, port = bridge_server
+        base = f"http://127.0.0.1:{port}"
+        _BridgeHandler.routes = {
+            "/.well-known/openid-configuration": _device_discovery(
+                base, token_endpoint=f"{base}/login/oauth/access_token"
+            )
+        }
+        result = self._run(bridge_server, fake_browser_id, _pkce_providers_env)
+        assert result.returncode == 0
+        assert "Traceback" not in result.stderr
+        ops = [r["operation"] for r in _BridgeHandler.requests]
+        assert "device_flow_show" not in ops
+        assert "get" in ops
+
+    def test_pkce_entry_with_no_document_uses_pat_dialog(
+        self, bridge_server, fake_browser_id
+    ):
+        """No discovery answer (404): the PKCE entry's flow stands, and
+        phase 1's stub answers with the PAT dialog."""
+        server, port = bridge_server
+        _BridgeHandler.routes = {}  # every discovery GET answers 404
+        result = self._run(bridge_server, fake_browser_id, _pkce_providers_env)
+        assert result.returncode == 0
+        ops = [r["operation"] for r in _BridgeHandler.requests]
+        assert "get" in ops
+        assert "device_flow_show" not in ops
 
     def test_discovery_advertising_neither_grant_uses_pat_dialog(
         self, bridge_server, fake_browser_id
@@ -1693,6 +1769,34 @@ class TestFlowSelectionMatrix:
             "",
         ]
         assert helper.is_gitea_family(cred)
+
+
+class TestDevicePollSteps:
+    """The poll loop's wait/stop ladder (RFC 8628 section 3.5)."""
+
+    def test_pending_waits_and_slow_down_backs_off(self):
+        assert helper._poll_failure_step(
+            {"error": "authorization_pending"}, 5
+        ) == ("wait", 5)
+        assert helper._poll_failure_step({"error": "slow_down"}, 5) == (
+            "wait",
+            10,
+        )
+
+    def test_terminal_errors_stop_with_named_texts(self):
+        kind, resp = helper._poll_failure_step({"error": "expired_token"}, 5)
+        assert kind == "stop"
+        assert (
+            helper._poll_error_text(resp) == "Code expired. Please try again."
+        )
+        kind, resp = helper._poll_failure_step({"error": "access_denied"}, 5)
+        assert kind == "stop"
+        assert helper._poll_error_text(resp) == "Authorization denied."
+        kind, resp = helper._poll_failure_step(
+            {"error": "server_error", "error_description": "boom"}, 5
+        )
+        assert kind == "stop"
+        assert helper._poll_error_text(resp) == "boom"
 
 
 class TestTokenRequestShapes:

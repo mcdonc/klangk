@@ -251,7 +251,9 @@ Each entry:
   `device_code_url`, and a public — non-confidential — OAuth
   application). The browser relay completing the authorization-code
   flow ships next; until it lands, the PAT dialog answers for these
-  hosts.
+  hosts. The host's OIDC discovery document overrides `flow` when its
+  `token_endpoint` names the entry's `token_url` — the document
+  describes the grant the server implements.
 - **`client_id`** (required) — the OAuth application's client ID (public
   clients need no secret, same as GitHub).
 - **`device_code_url`** / **`token_url`** (required for `device_code`) —
