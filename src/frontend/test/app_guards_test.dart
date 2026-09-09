@@ -47,6 +47,19 @@ void main() {
       );
     });
 
+    test('allows /git-auth-callback while a banner is required (#3385)', () {
+      // The OAuth authorize popup lands on the callback with a one-shot
+      // code in the URL; a banner redirect would destroy it.
+      expect(
+        guardBanner(
+          bannerRequired: true,
+          isLoggedIn: true,
+          loc: '/git-auth-callback',
+        ),
+        isNull,
+      );
+    });
+
     test('no /oidc-complete exemption once logged in (#3371)', () {
       // After the code is redeemed the session is live; the banner gate
       // reclaims the route so the guards cannot strand the user on the

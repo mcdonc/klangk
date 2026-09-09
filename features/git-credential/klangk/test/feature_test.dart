@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:klangk_feature_git_credential/feature.dart';
+import 'package:klangk_feature_git_credential/git_auth_callback_page.dart';
 
 void main() {
   late GitCredentialFeature feature;
@@ -127,18 +128,22 @@ void main() {
         'password': 'gl-token',
       });
 
-      final gh = jsonDecode(await feature.handlers['git_credential']!({
-        'operation': 'get',
-        'protocol': 'https',
-        'host': 'github.com',
-      }));
+      final gh = jsonDecode(
+        await feature.handlers['git_credential']!({
+          'operation': 'get',
+          'protocol': 'https',
+          'host': 'github.com',
+        }),
+      );
       expect(gh['username'], 'gh-user');
 
-      final gl = jsonDecode(await feature.handlers['git_credential']!({
-        'operation': 'get',
-        'protocol': 'https',
-        'host': 'gitlab.com',
-      }));
+      final gl = jsonDecode(
+        await feature.handlers['git_credential']!({
+          'operation': 'get',
+          'protocol': 'https',
+          'host': 'gitlab.com',
+        }),
+      );
       expect(gl['username'], 'gl-user');
     });
 
@@ -184,11 +189,13 @@ void main() {
         'password': 'new-token',
       });
 
-      final result = jsonDecode(await feature.handlers['git_credential']!({
-        'operation': 'get',
-        'protocol': 'https',
-        'host': 'github.com',
-      }));
+      final result = jsonDecode(
+        await feature.handlers['git_credential']!({
+          'operation': 'get',
+          'protocol': 'https',
+          'host': 'github.com',
+        }),
+      );
       expect(result['username'], 'new-user');
       expect(result['password'], 'new-token');
     });
@@ -204,21 +211,25 @@ void main() {
         'password': 'gho_abc123',
       });
 
-      final result = jsonDecode(await feature.handlers['git_credential']!({
-        'operation': 'peek',
-        'protocol': 'https',
-        'host': 'github.com',
-      }));
+      final result = jsonDecode(
+        await feature.handlers['git_credential']!({
+          'operation': 'peek',
+          'protocol': 'https',
+          'host': 'github.com',
+        }),
+      );
       expect(result['username'], 'x-access-token');
       expect(result['password'], 'gho_abc123');
     });
 
     test('returns miss immediately on empty cache', () async {
-      final result = jsonDecode(await feature.handlers['git_credential']!({
-        'operation': 'peek',
-        'protocol': 'https',
-        'host': 'github.com',
-      }));
+      final result = jsonDecode(
+        await feature.handlers['git_credential']!({
+          'operation': 'peek',
+          'protocol': 'https',
+          'host': 'github.com',
+        }),
+      );
       expect(result['error'], 'miss');
     });
 
@@ -236,11 +247,13 @@ void main() {
         'host': 'github.com',
       });
 
-      final result = jsonDecode(await feature.handlers['git_credential']!({
-        'operation': 'peek',
-        'protocol': 'https',
-        'host': 'github.com',
-      }));
+      final result = jsonDecode(
+        await feature.handlers['git_credential']!({
+          'operation': 'peek',
+          'protocol': 'https',
+          'host': 'github.com',
+        }),
+      );
       expect(result['error'], 'miss');
     });
 
@@ -252,8 +265,11 @@ void main() {
         'host': 'github.com',
       })
           .then((_) => completed = true);
-      expect(completed, isTrue,
-          reason: 'peek must resolve without waiting for a dialog');
+      expect(
+        completed,
+        isTrue,
+        reason: 'peek must resolve without waiting for a dialog',
+      );
     });
   });
 
@@ -325,9 +341,8 @@ void main() {
     Widget overlayHost(GitCredentialFeature feature) => MaterialApp(
           home: Scaffold(
             body: Builder(
-              builder: (context) => Stack(
-                children: [feature.buildOverlay(context)!],
-              ),
+              builder: (context) =>
+                  Stack(children: [feature.buildOverlay(context)!]),
             ),
           ),
         );
@@ -368,8 +383,9 @@ void main() {
       expect(find.text('Enter this code at github.com:'), findsOneWidget);
     });
 
-    testWidgets('shows the error message from device_flow_error',
-        (tester) async {
+    testWidgets('shows the error message from device_flow_error', (
+      tester,
+    ) async {
       await feature.handlers['git_credential']!({
         'operation': 'device_flow_error',
         'protocol': 'https',
@@ -388,15 +404,19 @@ void main() {
 
   group('verification URI auto-open gate', () {
     test('https URIs are auto-open candidates', () {
-      expect(shouldAutoOpenVerificationUri('https://gitlab.com/oauth/device'),
-          isTrue);
+      expect(
+        shouldAutoOpenVerificationUri('https://gitlab.com/oauth/device'),
+        isTrue,
+      );
     });
 
     test('non-https URIs are never auto-opened', () {
       // The provider map is ad-hoc settable from a workspace shell; a
       // hostile entry must not be able to pop arbitrary pages.
-      expect(shouldAutoOpenVerificationUri('http://gitlab.com/oauth/device'),
-          isFalse);
+      expect(
+        shouldAutoOpenVerificationUri('http://gitlab.com/oauth/device'),
+        isFalse,
+      );
       expect(shouldAutoOpenVerificationUri('javascript:alert(1)'), isFalse);
       expect(shouldAutoOpenVerificationUri('data:text/html,x'), isFalse);
       expect(shouldAutoOpenVerificationUri(''), isFalse);
@@ -407,9 +427,8 @@ void main() {
     Widget overlayHost(GitCredentialFeature feature) => MaterialApp(
           home: Scaffold(
             body: Builder(
-              builder: (context) => Stack(
-                children: [feature.buildOverlay(context)!],
-              ),
+              builder: (context) =>
+                  Stack(children: [feature.buildOverlay(context)!]),
             ),
           ),
         );
@@ -420,18 +439,21 @@ void main() {
       String host,
     ) async {
       // Cache-miss get blocks on the dialog completer; do not await it.
-      unawaited(feature.handlers['git_credential']!({
-        'operation': 'get',
-        'protocol': 'https',
-        'host': host,
-      }));
+      unawaited(
+        feature.handlers['git_credential']!({
+          'operation': 'get',
+          'protocol': 'https',
+          'host': host,
+        }),
+      );
       await tester.pumpWidget(overlayHost(feature));
       await tester.pump();
     }
 
     String? hintOf(WidgetTester tester, int textFieldIndex) {
-      final field =
-          tester.widget<TextField>(find.byType(TextField).at(textFieldIndex));
+      final field = tester.widget<TextField>(
+        find.byType(TextField).at(textFieldIndex),
+      );
       return field.decoration?.hintText;
     }
 
@@ -449,22 +471,25 @@ void main() {
       expect(hintOf(tester, 1), 'ghp_... or github_pat_...');
     });
 
-    testWidgets('uppercase GitHub.com host keeps the GitHub hints',
-        (tester) async {
+    testWidgets('uppercase GitHub.com host keeps the GitHub hints', (
+      tester,
+    ) async {
       await pumpWithPendingGet(tester, feature, 'GitHub.com');
       expect(hintOf(tester, 0), 'GitHub username');
       expect(hintOf(tester, 1), 'ghp_... or github_pat_...');
     });
 
-    testWidgets('github.com with explicit port keeps the GitHub hints',
-        (tester) async {
+    testWidgets('github.com with explicit port keeps the GitHub hints', (
+      tester,
+    ) async {
       await pumpWithPendingGet(tester, feature, 'github.com:443');
       expect(hintOf(tester, 0), 'GitHub username');
       expect(hintOf(tester, 1), 'ghp_... or github_pat_...');
     });
 
-    testWidgets('github.com with trailing dot keeps the GitHub hints',
-        (tester) async {
+    testWidgets('github.com with trailing dot keeps the GitHub hints', (
+      tester,
+    ) async {
       await pumpWithPendingGet(tester, feature, 'github.com.');
       expect(hintOf(tester, 0), 'GitHub username');
       expect(hintOf(tester, 1), 'ghp_... or github_pat_...');
@@ -489,6 +514,207 @@ void main() {
     test('registers git_credential handler', () {
       expect(feature.handlers, contains('git_credential'));
       expect(feature.handlers.length, 1);
+    });
+  });
+
+  group('auth flow operations', () {
+    Widget overlayHost(GitCredentialFeature feature) => MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (context) =>
+                  Stack(children: [feature.buildOverlay(context)!]),
+            ),
+          ),
+        );
+
+    late StreamController<Map<String, String>> messages;
+
+    setUp(() {
+      messages = StreamController<Map<String, String>>.broadcast();
+      feature = GitCredentialFeature(authMessages: messages.stream);
+    });
+
+    tearDown(() async {
+      // The outer tearDown disposes `feature`; close the stream only.
+      await messages.close();
+    });
+
+    Future<String> startFlow() {
+      return feature.handlers['git_credential']!({
+        'operation': 'auth_flow_start',
+        'protocol': 'https',
+        'host': 'git.example.com',
+        'authorize_url': 'https://git.example.com/login/oauth/authorize',
+        'state': 'state-1',
+      });
+    }
+
+    test('delivers the code when the popup message matches state', () async {
+      final pending = startFlow();
+      await Future<void>.delayed(Duration.zero);
+      messages.add({'code': 'auth-code-1', 'state': 'state-1'});
+      expect(jsonDecode(await pending), {
+        'code': 'auth-code-1',
+        'state': 'state-1',
+      });
+    });
+
+    test('ignores a message with a mismatched state', () async {
+      final pending = startFlow();
+      await Future<void>.delayed(Duration.zero);
+      messages.add({'code': 'evil', 'state': 'other-state'});
+      messages.add({'code': 'auth-code-2', 'state': 'state-1'});
+      expect(jsonDecode(await pending)['code'], 'auth-code-2');
+    });
+
+    test('ignores messages when no flow is pending', () async {
+      messages.add({'code': 'unsolicited', 'state': 'state-1'});
+      await Future<void>.delayed(Duration.zero);
+      final result = await feature.handlers['git_credential']!({
+        'operation': 'peek',
+        'protocol': 'https',
+        'host': 'git.example.com',
+      });
+      expect(jsonDecode(result), {'error': 'miss'});
+    });
+
+    test('a denial message (error + state) cancels the flow', () async {
+      final pending = startFlow();
+      await Future<void>.delayed(Duration.zero);
+      messages.add({'error': 'access_denied', 'state': 'state-1'});
+      expect(jsonDecode(await pending), {'error': 'cancelled'});
+    });
+
+    test('a second flow displaces the first with a cancellation', () async {
+      final first = startFlow();
+      await Future<void>.delayed(Duration.zero);
+      final second = startFlow();
+      await Future<void>.delayed(Duration.zero);
+      messages.add({'code': 'second-code', 'state': 'state-1'});
+      expect(jsonDecode(await first), {'error': 'cancelled'});
+      expect(jsonDecode(await second)['code'], 'second-code');
+    });
+
+    test('a duplicate delivery does not double-complete', () async {
+      final pending = startFlow();
+      await Future<void>.delayed(Duration.zero);
+      messages.add({'code': 'once', 'state': 'state-1'});
+      await Future<void>.delayed(Duration.zero);
+      messages.add({'code': 'again', 'state': 'state-1'});
+      expect(jsonDecode(await pending)['code'], 'once');
+    });
+
+    testWidgets('cancel answers with an error and clears the dialog', (
+      tester,
+    ) async {
+      final pending = startFlow();
+      await tester.pumpWidget(overlayHost(feature));
+      await tester.pump();
+      expect(find.textContaining('Waiting for authorization'), findsOneWidget);
+      expect(feature.routes.map((r) => r.path), contains('/git-auth-callback'));
+      // The overlay dialog shows the authorize host.
+      expect(find.textContaining('Sign in to git.example.com'), findsOneWidget);
+      // Cancel via the dialog button.
+      await tester.tap(find.text('Cancel'));
+      await tester.pump();
+      expect(jsonDecode(await pending), {'error': 'cancelled'});
+      await tester.pump();
+      expect(find.textContaining('Waiting for authorization'), findsNothing);
+    });
+  });
+
+  group('OAuth credential cache (#3385)', () {
+    test('peek returns refresh fields for an OAuth credential', () async {
+      await feature.handlers['git_credential']!({
+        'operation': 'store',
+        'protocol': 'https',
+        'host': 'git.example.com',
+        'username': 'oauth2',
+        'password': 'tok',
+        'refresh_token': 'rt-1',
+        'expires_at': 4102444800,
+      });
+      final result = await feature.handlers['git_credential']!({
+        'operation': 'peek',
+        'protocol': 'https',
+        'host': 'git.example.com',
+      });
+      final decoded = jsonDecode(result) as Map<String, dynamic>;
+      expect(decoded['refresh_token'], 'rt-1');
+      expect(decoded['expires_at'], 4102444800);
+    });
+
+    test('git store without refresh fields keeps the cached ones', () async {
+      await feature.handlers['git_credential']!({
+        'operation': 'store',
+        'protocol': 'https',
+        'host': 'git.example.com',
+        'username': 'oauth2',
+        'password': 'tok',
+        'refresh_token': 'rt-1',
+        'expires_at': 4102444800,
+      });
+      // git's own store call after a successful push carries u/p only.
+      await feature.handlers['git_credential']!({
+        'operation': 'store',
+        'protocol': 'https',
+        'host': 'git.example.com',
+        'username': 'oauth2',
+        'password': 'tok',
+      });
+      final result = await feature.handlers['git_credential']!({
+        'operation': 'peek',
+        'protocol': 'https',
+        'host': 'git.example.com',
+      });
+      final decoded = jsonDecode(result) as Map<String, dynamic>;
+      expect(decoded['refresh_token'], 'rt-1');
+    });
+
+    test('a plain PAT credential peeks without refresh fields', () async {
+      await feature.handlers['git_credential']!({
+        'operation': 'store',
+        'protocol': 'https',
+        'host': 'github.com',
+        'username': 'octocat',
+        'password': 'ghp_x',
+      });
+      final result = await feature.handlers['git_credential']!({
+        'operation': 'peek',
+        'protocol': 'https',
+        'host': 'github.com',
+      });
+      expect(jsonDecode(result).containsKey('refresh_token'), isFalse);
+    });
+  });
+
+  group('callback page', () {
+    testWidgets('approval state posts the code to the opener', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: GitAuthCallbackPage(state: 's-1', code: 'c-1'),
+        ),
+      );
+      await tester.pump();
+      expect(find.text('Authorization received'), findsOneWidget);
+    });
+
+    testWidgets('denial state renders the denied message', (tester) async {
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: GitAuthCallbackPage(state: 's-1', error: 'access_denied'),
+        ),
+      );
+      await tester.pump();
+      expect(find.text('Authorization denied'), findsOneWidget);
+    });
+  });
+
+  group('callback route', () {
+    test('registers the popup callback page', () {
+      expect(feature.routes.map((r) => r.path), contains('/git-auth-callback'));
     });
   });
 }

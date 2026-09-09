@@ -77,8 +77,9 @@ def test_default_redirect_targets_the_fmtk_proxy_origin():
     (same-origin frontend), so the OAuth app's default redirect must be
     that origin's /oauth/callback — and per-seed overridable."""
     up = _UP.read_text()
-    assert "http://127.0.0.1:8124/oauth/callback" in up, (
-        "the default OAuth redirect must be the fmtk proxy origin"
+    assert 'DEFAULT_REDIRECT_URI="http://127.0.0.1:8124/"' in up, (
+        "the default OAuth redirect must be the fmtk proxy origin ROOT "
+        "(the SPA boots at /?code=.. and redirects, #3385)"
     )
     assert "--redirect-uri" in up, "redirect must be overridable per seed"
 
