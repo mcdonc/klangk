@@ -130,6 +130,46 @@ def clear_must_change(base: str, token: str, user_id: str, email: str) -> None:
         sys.exit(f"clear must-change for {email} failed ({status}): {body}")
 
 
+def reenable_user(base: str, token: str, user_id: str, email: str) -> None:
+    """Heal a fixture left disabled by a hard-killed earlier run (#3345).
+
+    A disabled fixture fails every login with 403, and the sharing
+    suite's API helpers then cascade — the seed re-enables it instead
+    of letting the rot persist on a kept stack.
+    """
+    status, body = api(
+        base, token, "PATCH", f"/api/v1/users/{user_id}", {"disabled": False}
+    )
+    if status != 200:
+        sys.exit(f"re-enable {email} failed ({status}): {body}")
+    print(f"re-enabled user {email}")
+
+
+def ensure_fixture_user(base: str, token: str, name: str, row: dict) -> str:
+    """One fixture user: create when missing, heal its row, return id."""
+    email = f"{name}@example.com"
+    user_id = (row or {}).get("id") or create_fixture_user(base, token, email)
+    heal_fixture_row(base, token, name, row, user_id, email)
+    return user_id
+
+
+def heal_fixture_row(
+    base: str, token: str, name: str, row: dict, user_id: str, email: str
+) -> None:
+    """Repair what a hard-killed earlier run can leave on a kept stack.
+
+    A disabled fixture fails every login with 403 and the sharing
+    suite's API helpers cascade (#3345), so the row is re-enabled; the
+    must-change flag is cleared for every fixture that does not keep
+    it by design (admin-created users carry it, #3172, and it would
+    refuse every API call but the change-password flow).
+    """
+    if row and row.get("disabled"):
+        reenable_user(base, token, user_id, email)
+    if name not in KEEP_MUST_CHANGE:
+        clear_must_change(base, token, user_id, email)
+
+
 def ensure_users(base: str, token: str) -> dict[str, str]:
     """Create missing fixture users; returns email -> user_id.
 
@@ -142,13 +182,11 @@ def ensure_users(base: str, token: str) -> dict[str, str]:
     # page_size covers the fixture set (the bare listing defaults to a
     # small page — fixtures falling off page 1 would 400 on re-create)
     _, listing = api(base, token, "GET", "/api/v1/users?page_size=100")
-    ids = {u["email"]: u["id"] for u in listing["users"]}
+    rows = {u["email"]: u for u in listing["users"]}
+    ids = {}
     for name in FIXTURES:
         email = f"{name}@example.com"
-        user_id = ids.get(email) or create_fixture_user(base, token, email)
-        if name not in KEEP_MUST_CHANGE:
-            clear_must_change(base, token, user_id, email)
-        ids[email] = user_id
+        ids[email] = ensure_fixture_user(base, token, name, rows.get(email))
     return ids
 
 
