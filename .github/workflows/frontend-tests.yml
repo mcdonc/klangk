@@ -69,6 +69,15 @@ jobs:
         # own real pub gets.
         run: flutter pub get
 
+      # Dart formatting is enforced by CI (#3376): the pre-commit hook only
+      # verifies (and skips unresolved packages), so this check — run after
+      # pub get, when the resolved language version drives the formatter —
+      # is the authoritative gate.
+      - name: Check Dart formatting
+        if: steps.filter.outputs.frontend == 'true'
+        working-directory: src/frontend
+        run: dart format --output=none --set-exit-if-changed lib test
+
       - name: Run tests with coverage
         if: steps.filter.outputs.frontend == 'true'
         working-directory: src/frontend
@@ -93,6 +102,7 @@ jobs:
               echo "=== Testing $dir ==="
               cd "$dir"
               flutter pub get
+              dart format --output=none --set-exit-if-changed lib test
               flutter test
               cd "$GITHUB_WORKSPACE"
             fi

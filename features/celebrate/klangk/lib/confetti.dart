@@ -75,15 +75,15 @@ class _Particle {
   final double rotation;
 
   _Particle(Random r)
-    : x = r.nextDouble(),
-      startY = -r.nextDouble() * 0.3,
-      speed = 0.5 + r.nextDouble() * 0.8,
-      wobbleSpeed = 2 + r.nextDouble() * 6,
-      wobbleAmount = 10 + r.nextDouble() * 20,
-      size = 4 + r.nextDouble() * 8,
-      color = _ConfettiOverlayState
-          ._colors[r.nextInt(_ConfettiOverlayState._colors.length)],
-      rotation = r.nextDouble() * pi * 2;
+      : x = r.nextDouble(),
+        startY = -r.nextDouble() * 0.3,
+        speed = 0.5 + r.nextDouble() * 0.8,
+        wobbleSpeed = 2 + r.nextDouble() * 6,
+        wobbleAmount = 10 + r.nextDouble() * 20,
+        size = 4 + r.nextDouble() * 8,
+        color = _ConfettiOverlayState
+            ._colors[r.nextInt(_ConfettiOverlayState._colors.length)],
+        rotation = r.nextDouble() * pi * 2;
 }
 
 class _ConfettiPainter extends CustomPainter {

@@ -808,10 +808,16 @@ in
       pass_filenames = false;
     };
     # Dart
+    # Dart — verify only, never rewrite mid-commit. A rewrite-mode dart
+    # format silently flipped short→tall in fresh worktrees (no .dart_tool
+    # → the toolchain's latest language version wins) and wedged prek's
+    # stash rollback during cherry-picks (#3376). The wrapper skips files
+    # whose package is not yet resolved; CI runs the check after pub get.
+    # Format with `dart format` yourself before committing.
     dart-format = {
       enable = true;
-      name = "dart format";
-      entry = "dart format";
+      name = "dart format (verify)";
+      entry = "scripts/dart-format-verify.sh";
       files = "\\.dart$";
       language = "system";
       pass_filenames = true;
