@@ -13,7 +13,7 @@
         "scope": "container"
       },
       "KLANGKWS_FEATURE_OAUTH_PROVIDERS": {
-        "description": "JSON list of OAuth device-flow providers: [{host, client_id, device_code_url, token_url, scope, username}] — activates the device flow for any git host (GitLab, Gitea, self-hosted)",
+        "description": "JSON list of OAuth providers: [{host, flow, client_id, token_url, scope, username}]. flow is device_code (default; requires device_code_url) or authorization_code_pkce (requires authorize_url + redirect_uri; PKCE S256 public client, for hosts like Gitea that implement no device flow). Activates the matching flow for any git host (GitLab, Gitea, self-hosted)",
         "scope": "container"
       }
     }
