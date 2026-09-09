@@ -73,10 +73,11 @@ SPECTATOR_EMAIL = "fmtk-spectator@example.com"
 def at_login(harness, app) -> None:
     """Land on the usable login form (dead sessions are ended, a dead
     app restarted), then dismiss any leftover login-banner dialog."""
+    app.ensure_tab_at_app()
     app.navigate("/login")
-    if not app.has_text("Log In", 10000):
+    if not app.has_text("Log In", 5000):
         try:
-            app.auth_eval("auth!.logout(); return 'ok';")
+            app.dart_logout()
         except FmtkError:
             harness.restart_app()
     app.wait_for_login_page()
