@@ -39,7 +39,9 @@ const Set<String> publicRoutes = {
 /// `/oidc-complete` gets no exemption — the code is redundant next to
 /// the live session, and the banner must come first.
 bool bannerExempt({required bool isLoggedIn, required String loc}) =>
-    loc == '/consent' || (!isLoggedIn && loc == '/oidc-complete');
+    loc == '/consent' ||
+    loc == '/git-auth-callback' ||
+    (!isLoggedIn && loc == '/oidc-complete');
 
 /// Banner gate.
 ///

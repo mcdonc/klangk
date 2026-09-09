@@ -127,11 +127,28 @@ class _BridgeHandler(BaseHTTPRequestHandler):
     response_status = 200
     routes = {}
     op_bodies = {}
+    # Per-operation callables: op_handlers[op](payload) -> response dict.
+    # Needed where the answer depends on the request (the auth flow
+    # echoes back the state the helper generated, #3385).
+    op_handlers = {}
+    # Per-path callables for the faked provider endpoints:
+    # route_handlers[path](form) -> response dict, where form is this
+    # request's parsed body — for endpoints whose answer depends on the
+    # grant_type (a rejected refresh followed by a code exchange).
+    route_handlers = {}
 
     def _response_for(self, path, body_json):
+        handler = self.__class__.route_handlers.get(path)
+        if handler is not None:
+            form = self.__class__.forms[-1] if self.__class__.forms else {}
+            return json.dumps(handler(form)).encode()
         if path in self.__class__.routes:
             return self.__class__.routes[path]
         op = body_json.get("operation", "")
+        if op in self.__class__.op_handlers:
+            return json.dumps(
+                self.__class__.op_handlers[op](body_json)
+            ).encode()
         if op in self.__class__.op_bodies:
             return self.__class__.op_bodies[op]
         return self.__class__.response_body
@@ -184,6 +201,8 @@ def bridge_server():
     _BridgeHandler.response_status = 200
     _BridgeHandler.routes = {}
     _BridgeHandler.op_bodies = {}
+    _BridgeHandler.op_handlers = {}
+    _BridgeHandler.route_handlers = {}
 
     server = HTTPServer(("127.0.0.1", 0), _BridgeHandler)
     port = server.server_address[1]
@@ -1328,7 +1347,7 @@ def _pkce_providers_env(base, **overrides):
         "client_id": "cid-e2e",
         "authorize_url": f"{base}/login/oauth/authorize",
         "token_url": f"{base}/login/oauth/access_token",
-        "redirect_uri": "http://127.0.0.1:8124/oauth/callback",
+        "redirect_uri": "http://127.0.0.1:8124/",
     }
     entry.update(overrides)
     return json.dumps([entry])
@@ -1448,7 +1467,7 @@ class TestAuthorizeUrl:
         provider = {
             "client_id": "cid",
             "authorize_url": "https://h/login/oauth/authorize",
-            "redirect_uri": "http://127.0.0.1:8124/oauth/callback",
+            "redirect_uri": "http://127.0.0.1:8124/",
             "scope": "",
         }
         url = helper.authorize_url(provider, "the-challenge", "the-state")
@@ -1460,9 +1479,7 @@ class TestAuthorizeUrl:
         assert params["code_challenge"] == ["the-challenge"]
         assert params["code_challenge_method"] == ["S256"]
         assert params["state"] == ["the-state"]
-        assert params["redirect_uri"] == [
-            "http://127.0.0.1:8124/oauth/callback"
-        ]
+        assert params["redirect_uri"] == ["http://127.0.0.1:8124/"]
         assert "scope" not in params  # omitted when the entry sets none
 
     def test_scope_sent_when_entry_sets_one(self):
@@ -1810,7 +1827,7 @@ class TestTokenRequestShapes:
             "flow": "authorization_code_pkce",
             "authorize_url": f"{base}/login/oauth/authorize",
             "token_url": f"{base}/login/oauth/access_token",
-            "redirect_uri": "http://127.0.0.1:8124/oauth/callback",
+            "redirect_uri": "http://127.0.0.1:8124/",
             "scope": "",
             "username": "oauth2",
         }
@@ -1836,7 +1853,7 @@ class TestTokenRequestShapes:
         assert form["code"] == "the-code"
         assert form["code_verifier"] == "the-verifier"
         assert form["client_id"] == "cid-e2e"
-        assert form["redirect_uri"] == "http://127.0.0.1:8124/oauth/callback"
+        assert form["redirect_uri"] == "http://127.0.0.1:8124/"
         assert "client_secret" not in form
 
     def test_refresh_posts_expected_fields(self, bridge_server):
@@ -1883,3 +1900,304 @@ class TestCredentialOutput:
         assert (
             helper.credential_output("u", "p", {}) == "username=u\npassword=p"
         )
+
+
+class TestAuthorizationCodeFlow:
+    """The end-to-end browser flow (#3385): the helper relays the
+    authorize URL, the bridge answers with the code (echoing the helper's
+    state), the exchange runs container-side, and the OAuth credential
+    (with its refresh token) lands in the tab cache immediately."""
+
+    def _setup(
+        self,
+        bridge_server,
+        code="the-code",
+        state_transform=lambda s: s,
+        token_body=None,
+    ):
+        server, port = bridge_server
+        base = f"http://127.0.0.1:{port}"
+        _BridgeHandler.op_bodies = {
+            "peek": json.dumps({"error": "miss"}).encode(),
+        }
+        _BridgeHandler.op_handlers = {
+            "auth_flow_start": lambda p: {
+                "code": code,
+                "state": state_transform(p["state"]),
+            },
+        }
+        _BridgeHandler.routes = {
+            "/.well-known/openid-configuration": _auth_code_discovery(
+                base, token_endpoint=f"{base}/login/oauth/access_token"
+            ),
+            "/login/oauth/access_token": json.dumps(
+                token_body
+                or {
+                    "access_token": "tok-live",
+                    "refresh_token": "rt-live",
+                    "expires_in": 3600,
+                }
+            ).encode(),
+        }
+        return base
+
+    def _run(self, bridge_server, fake_browser_id, base):
+        return run_helper(
+            "get",
+            "protocol=https\nhost=git.example.com\n\n",
+            env_override={
+                "KLANGKWS_BRIDGE_URL": base,
+                "KLANGKWS_FEATURE_OAUTH_PROVIDERS": _pkce_providers_env(base),
+            },
+            extra_path=str(fake_browser_id),
+        )
+
+    def test_full_flow_exchanges_and_caches(
+        self, bridge_server, fake_browser_id
+    ):
+        base = self._setup(bridge_server)
+        result = self._run(bridge_server, fake_browser_id, base)
+        assert result.returncode == 0
+        assert "username=oauth2" in result.stdout
+        assert "password=tok-live" in result.stdout
+        assert "oauth_refresh_token=rt-live" in result.stdout
+        assert "password_expiry_utc=" in result.stdout
+        # The authorize URL carried PKCE + the registered redirect.
+        start = next(
+            r
+            for r in _BridgeHandler.requests
+            if r["operation"] == "auth_flow_start"
+        )
+        assert start["host"] == "git.example.com"
+        assert "code_challenge_method=S256" in start["authorize_url"]
+        # The registered redirect is the klangk origin root.
+        assert (
+            "redirect_uri=http%3A%2F%2F127.0.0.1%3A8124%2F"
+            in start["authorize_url"]
+        )
+        # The PKCE verifier and any secret never enter the relay.
+        assert "code_verifier" not in start
+        assert "client_secret" not in start
+        # The exchange posted the verifier container-side.
+        exchange = _BridgeHandler.forms[0]
+        assert exchange["grant_type"] == "authorization_code"
+        assert exchange["code"] == "the-code"
+        assert "code_verifier" in exchange
+        assert "client_secret" not in exchange
+        # The OAuth credential (with refresh fields) was stored in the
+        # tab immediately — git's own store cannot carry them.
+        store = next(
+            r
+            for r in _BridgeHandler.requests
+            if r["operation"] == "store"
+            and r.get("refresh_token") == "rt-live"
+        )
+        assert store["password"] == "tok-live"
+        assert store["expires_at"] > 0
+
+    def test_state_mismatch_falls_back_to_pat_dialog(
+        self, bridge_server, fake_browser_id
+    ):
+        base = self._setup(bridge_server, state_transform=lambda s: "not-" + s)
+        _BridgeHandler.op_bodies["get"] = json.dumps(
+            {"username": "u", "password": "p"}
+        ).encode()
+        result = self._run(bridge_server, fake_browser_id, base)
+        assert result.returncode == 0
+        ops = [r["operation"] for r in _BridgeHandler.requests]
+        assert "get" in ops  # PAT dialog answered
+        # No exchange happened: the mismatched code was discarded.
+        assert _BridgeHandler.forms == []
+
+    def test_user_cancel_falls_back_to_pat_dialog(
+        self, bridge_server, fake_browser_id
+    ):
+        base = self._setup(bridge_server)
+        _BridgeHandler.op_handlers = {
+            "auth_flow_start": lambda p: {"error": "cancelled"},
+        }
+        _BridgeHandler.op_bodies["get"] = json.dumps(
+            {"username": "u", "password": "p"}
+        ).encode()
+        result = self._run(bridge_server, fake_browser_id, base)
+        assert result.returncode == 0
+        assert "username=u" in result.stdout
+        assert _BridgeHandler.forms == []
+
+
+class TestRefreshFirst:
+    """A cached OAuth token inside the skew window refreshes headlessly
+    (#3385): no browser flow, no PAT dialog."""
+
+    def _run_with_cache(self, bridge_server, fake_browser_id, cached, base):
+        _BridgeHandler.op_bodies = {
+            "peek": json.dumps(cached).encode(),
+        }
+        _BridgeHandler.routes = {
+            "/.well-known/openid-configuration": _auth_code_discovery(
+                base, token_endpoint=f"{base}/login/oauth/access_token"
+            ),
+            "/login/oauth/access_token": json.dumps(
+                {"access_token": "tok-fresh", "refresh_token": "rt2"}
+            ).encode(),
+        }
+        return run_helper(
+            "get",
+            "protocol=https\nhost=git.example.com\n\n",
+            env_override={
+                "KLANGKWS_BRIDGE_URL": base,
+                "KLANGKWS_FEATURE_OAUTH_PROVIDERS": _pkce_providers_env(base),
+            },
+            extra_path=str(fake_browser_id),
+        )
+
+    def test_expiring_token_refreshes_headlessly(
+        self, bridge_server, fake_browser_id
+    ):
+        import time as _time
+
+        server, port = bridge_server
+        base = f"http://127.0.0.1:{port}"
+        result = self._run_with_cache(
+            bridge_server,
+            fake_browser_id,
+            cached={
+                "username": "oauth2",
+                "password": "tok-stale",
+                "refresh_token": "rt-1",
+                "expires_at": int(_time.time()) + 30,
+            },
+            base=base,
+        )
+        assert result.returncode == 0
+        assert "password=tok-fresh" in result.stdout
+        # The refresh grant ran container-side...
+        assert _BridgeHandler.forms[0]["grant_type"] == "refresh_token"
+        assert _BridgeHandler.forms[0]["refresh_token"] == "rt-1"
+        # ...and the refreshed credential was pushed back to the cache.
+        store = next(
+            r
+            for r in _BridgeHandler.requests
+            if r["operation"] == "store" and r.get("password") == "tok-fresh"
+        )
+        assert store["refresh_token"] == "rt2"
+        # No browser flow, no PAT dialog.
+        ops = [r["operation"] for r in _BridgeHandler.requests]
+        assert "auth_flow_start" not in ops
+        assert "get" not in ops
+
+    def test_fresh_token_is_used_as_is(self, bridge_server, fake_browser_id):
+        import time as _time
+
+        server, port = bridge_server
+        base = f"http://127.0.0.1:{port}"
+        result = self._run_with_cache(
+            bridge_server,
+            fake_browser_id,
+            cached={
+                "username": "oauth2",
+                "password": "tok-good",
+                "refresh_token": "rt-1",
+                "expires_at": int(_time.time()) + 3600,
+            },
+            base=base,
+        )
+        assert result.returncode == 0
+        assert "password=tok-good" in result.stdout
+        assert _BridgeHandler.forms == []
+
+    def test_rejected_refresh_runs_a_fresh_flow(
+        self, bridge_server, fake_browser_id
+    ):
+        """A rejected refresh grant must not serve the stale token: the
+        dead entry is erased and a fresh browser flow starts (#3385
+        review round 1)."""
+        import time as _time
+
+        server, port = bridge_server
+        base = f"http://127.0.0.1:{port}"
+        _BridgeHandler.op_bodies = {
+            "peek": json.dumps(
+                {
+                    "username": "oauth2",
+                    "password": "tok-stale",
+                    "refresh_token": "rt-dead",
+                    "expires_at": int(_time.time()) - 10,
+                }
+            ).encode(),
+        }
+        _BridgeHandler.op_handlers = {
+            "auth_flow_start": lambda p: {
+                "code": "fresh-code",
+                "state": p["state"],
+            },
+        }
+        _BridgeHandler.routes = {
+            "/.well-known/openid-configuration": _auth_code_discovery(
+                base, token_endpoint=f"{base}/login/oauth/access_token"
+            ),
+        }
+        _BridgeHandler.route_handlers = {
+            "/login/oauth/access_token": lambda form: (
+                {"error": "invalid_grant"}
+                if form.get("grant_type") == "refresh_token"
+                else {"access_token": "tok-new"}
+            ),
+        }
+        result = run_helper(
+            "get",
+            "protocol=https\nhost=git.example.com\n\n",
+            env_override={
+                "KLANGKWS_BRIDGE_URL": base,
+                "KLANGKWS_FEATURE_OAUTH_PROVIDERS": _pkce_providers_env(base),
+            },
+            extra_path=str(fake_browser_id),
+        )
+        assert result.returncode == 0
+        assert "password=tok-new" in result.stdout  # fresh flow ran
+        ops = [r["operation"] for r in _BridgeHandler.requests]
+        assert "erase" in ops  # the dead entry was dropped
+        assert "auth_flow_start" in ops
+
+    def test_unreachable_refresh_keeps_the_cached_credential(
+        self, bridge_server, fake_browser_id
+    ):
+        """A transient refresh failure (endpoint down / garbage) keeps
+        the cached credential instead of erasing it — a network blip
+        must not force re-authorization (#3385 review round 2)."""
+        import time as _time
+
+        server, port = bridge_server
+        base = f"http://127.0.0.1:{port}"
+        _BridgeHandler.op_bodies = {
+            "peek": json.dumps(
+                {
+                    "username": "oauth2",
+                    "password": "tok-maybe-good",
+                    "refresh_token": "rt-1",
+                    "expires_at": int(_time.time()) + 30,
+                }
+            ).encode(),
+        }
+        _BridgeHandler.routes = {
+            "/.well-known/openid-configuration": _auth_code_discovery(
+                base, token_endpoint=f"{base}/login/oauth/access_token"
+            ),
+            # The token endpoint answers unparseable bytes: unreachable
+            # in helper terms (not a rejected grant).
+            "/login/oauth/access_token": b"gateway garbage",
+        }
+        result = run_helper(
+            "get",
+            "protocol=https\nhost=git.example.com\n\n",
+            env_override={
+                "KLANGKWS_BRIDGE_URL": base,
+                "KLANGKWS_FEATURE_OAUTH_PROVIDERS": _pkce_providers_env(base),
+            },
+            extra_path=str(fake_browser_id),
+        )
+        assert result.returncode == 0
+        assert "password=tok-maybe-good" in result.stdout
+        ops = [r["operation"] for r in _BridgeHandler.requests]
+        assert "erase" not in ops
+        assert "auth_flow_start" not in ops

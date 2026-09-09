@@ -7,6 +7,8 @@ import 'package:flutter/services.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 
 import 'open_url.dart';
+import 'git_auth_callback_page.dart';
+import 'window_messaging.dart';
 
 /// Only https verification URIs are auto-opened: the provider map is
 /// ad-hoc settable from a workspace shell, so a hostile entry must not be
@@ -18,9 +20,11 @@ bool shouldAutoOpenVerificationUri(String uri) => uri.startsWith('https://');
 /// git-credential-klangk helper. Shows a PAT dialog when git needs auth,
 /// caches credentials in memory for the session. The GitHub OAuth device
 /// flow is driven by the container-side helper; this feature only displays
-/// the code and verification link.
+/// the code and verification link. The authorization-code + PKCE flow
+/// (#3385) opens the authorize popup and answers the helper when the
+/// popup's callback page delivers the code.
 class GitCredentialFeature extends ToolPlugin with ChangeNotifier {
-  /// In-memory credential cache: "protocol://host" -> {username, password}.
+  /// In-memory credential cache: "protocol://host" -> credential.
   final Map<String, _Credential> _cache = {};
 
   /// Pending credential request (set by get handler, resolved by dialog).
@@ -29,8 +33,59 @@ class GitCredentialFeature extends ToolPlugin with ChangeNotifier {
   /// Device flow display state (set by device_flow_show, cleared by done/error).
   _DeviceFlowState? _deviceFlow;
 
+  /// Authorization-code flow state (#3385): the authorize popup is open
+  /// (or a link is showing) until the callback page delivers the code or
+  /// the user cancels.
+  _PendingAuthFlow? _pendingAuth;
+
+  /// Authorization results arriving from the callback popup. Injectable
+  /// for tests; on the web this is the same-origin postMessage stream.
+  final Stream<Map<String, String>> _authMessages;
+
+  StreamSubscription<Map<String, String>>? _authSub;
+
+  GitCredentialFeature({Stream<Map<String, String>>? authMessages})
+      : _authMessages = authMessages ?? gitAuthMessages();
+
+  @override
+  void dispose() {
+    _authSub?.cancel();
+    super.dispose();
+  }
+
+  void _listenForAuthMessages() {
+    _authSub ??= _authMessages.listen(_deliverAuthMessage);
+  }
+
+  /// One result from the callback popup: matched against the pending
+  /// flow's state; unsolicited or mismatched messages are ignored. A
+  /// code completes the flow; a provider error (denial) cancels it.
+  void _deliverAuthMessage(Map<String, String> message) {
+    final pending = _pendingAuth;
+    if (pending == null || pending.completer.isCompleted) return;
+    if (message['state'] != pending.state) return;
+    final code = message['code'];
+    if (code != null && code.isNotEmpty) {
+      pending.completer.complete(code);
+    } else if (message['error'] != null) {
+      pending.completer.complete(null);
+    }
+  }
+
   @override
   Map<String, ToolHandler> get handlers => {'git_credential': _handle};
+
+  @override
+  List<PluginRoute> get routes => [
+        PluginRoute(
+          path: '/git-auth-callback',
+          builder: (context, pathParams, queryParams) => GitAuthCallbackPage(
+            state: queryParams['state'] ?? '',
+            code: queryParams['code'],
+            error: queryParams['error'],
+          ),
+        ),
+      ];
 
   Future<String> _handle(Map<String, dynamic> request) async {
     final operation = request['operation'] as String? ?? '';
@@ -44,12 +99,17 @@ class GitCredentialFeature extends ToolPlugin with ChangeNotifier {
       case 'peek':
         // Cache-only lookup: answer immediately with a miss when empty —
         // never show a dialog. The container helper peeks before starting
-        // a GitHub device flow so a cached token is reused.
+        // a flow so a cached token is reused; the refresh fields ride
+        // along so the helper can refresh an expiring token headlessly
+        // (#3385).
         final cached = _cache[key];
         if (cached != null) {
           return jsonEncode({
             'username': cached.username,
             'password': cached.password,
+            if (cached.refreshToken != null)
+              'refresh_token': cached.refreshToken,
+            if (cached.expiresAt != null) 'expires_at': cached.expiresAt,
           });
         }
         return jsonEncode({'error': 'miss'});
@@ -57,7 +117,17 @@ class GitCredentialFeature extends ToolPlugin with ChangeNotifier {
         final username = request['username'] as String? ?? '';
         final password = request['password'] as String? ?? '';
         if (username.isNotEmpty && password.isNotEmpty) {
-          _cache[key] = _Credential(username, password);
+          // Merge (#3385): git's own store carries only username/password,
+          // so keep the cached refresh fields when the new entry omits
+          // them (the helper stores them explicitly right after a flow).
+          final old = _cache[key];
+          _cache[key] = _Credential(
+            username,
+            password,
+            refreshToken:
+                request['refresh_token'] as String? ?? old?.refreshToken,
+            expiresAt: request['expires_at'] as int? ?? old?.expiresAt,
+          );
         }
         return jsonEncode({'status': 'ok'});
       case 'erase':
@@ -87,8 +157,58 @@ class GitCredentialFeature extends ToolPlugin with ChangeNotifier {
         );
         notifyListeners();
         return jsonEncode({'status': 'ok'});
+      case 'auth_flow_start':
+        return _handleAuthFlowStart(host, request);
       default:
         return jsonEncode({'error': 'unknown operation: $operation'});
+    }
+  }
+
+  /// Serve an auth_flow_start (#3385): show the authorization dialog,
+  /// open the authorize popup, and hold the bridge request open until the
+  /// popup's callback page delivers the code (matching state) or the
+  /// user cancels.
+  Future<String> _handleAuthFlowStart(
+    String host,
+    Map<String, dynamic> request,
+  ) async {
+    final authorizeUrl = request['authorize_url'] as String? ?? '';
+    final state = request['state'] as String? ?? '';
+    _cancelPendingAuth();
+    final flow = _PendingAuthFlow(
+      host: host,
+      authorizeUrl: authorizeUrl,
+      state: state,
+      completer: Completer<String?>(),
+    );
+    _pendingAuth = flow;
+    _listenForAuthMessages();
+    notifyListeners();
+    if (authorizeUrl.isNotEmpty &&
+        shouldAutoOpenVerificationUri(authorizeUrl)) {
+      openUrl(authorizeUrl);
+    }
+
+    final code = await flow.completer.future;
+    // Clear only when this flow still owns the slot: a displaced flow's
+    // cleanup must not wipe its successor's pending state.
+    if (identical(_pendingAuth, flow)) {
+      _pendingAuth = null;
+      notifyListeners();
+    }
+    if (code == null || code.isEmpty) {
+      return jsonEncode({'error': 'cancelled'});
+    }
+    return jsonEncode({'code': code, 'state': state});
+  }
+
+  /// Answer a displaced flow (a second auth_flow_start while one was
+  /// pending) with a cancellation instead of stranding its bridge
+  /// request (#3385 review).
+  void _cancelPendingAuth() {
+    final previous = _pendingAuth;
+    if (previous != null && !previous.completer.isCompleted) {
+      previous.completer.complete(null);
     }
   }
 
@@ -131,7 +251,31 @@ class GitCredentialFeature extends ToolPlugin with ChangeNotifier {
 class _Credential {
   final String username;
   final String password;
-  _Credential(this.username, this.password);
+
+  /// Refresh token + absolute expiry (epoch seconds) when the credential
+  /// came from an OAuth flow (#3385); the helper refreshes headlessly
+  /// before the access token expires.
+  final String? refreshToken;
+  final int? expiresAt;
+  _Credential(
+    this.username,
+    this.password, {
+    this.refreshToken,
+    this.expiresAt,
+  });
+}
+
+class _PendingAuthFlow {
+  final String host;
+  final String authorizeUrl;
+  final String state;
+  final Completer<String?> completer;
+  _PendingAuthFlow({
+    required this.host,
+    required this.authorizeUrl,
+    required this.state,
+    required this.completer,
+  });
 }
 
 class _PendingRequest {
@@ -196,6 +340,20 @@ class _CredentialOverlayState extends State<_CredentialOverlay> {
       return Positioned.fill(child: _DeviceFlowDialog(state: deviceFlow));
     }
 
+    final authFlow = widget.feature._pendingAuth;
+    if (authFlow != null) {
+      return Positioned.fill(
+        child: _AuthFlowDialog(
+          flow: authFlow,
+          onCancel: () {
+            if (!authFlow.completer.isCompleted) {
+              authFlow.completer.complete(null);
+            }
+          },
+        ),
+      );
+    }
+
     if (pending == null) return const SizedBox.shrink();
 
     return Positioned.fill(
@@ -239,8 +397,11 @@ class _DeviceFlowDialog extends StatelessWidget {
               children: [
                 Row(
                   children: [
-                    const Icon(Icons.lock_outline,
-                        color: Colors.white70, size: 20),
+                    const Icon(
+                      Icons.lock_outline,
+                      color: Colors.white70,
+                      size: 20,
+                    ),
                     const SizedBox(width: 8),
                     Text(
                       'Sign in to ${state.displayHost}',
@@ -256,8 +417,10 @@ class _DeviceFlowDialog extends StatelessWidget {
                 if (state.error != null) ...[
                   Text(
                     state.error!,
-                    style:
-                        const TextStyle(color: Colors.redAccent, fontSize: 13),
+                    style: const TextStyle(
+                      color: Colors.redAccent,
+                      fontSize: 13,
+                    ),
                   ),
                   const SizedBox(height: 8),
                   const Center(
@@ -276,8 +439,10 @@ class _DeviceFlowDialog extends StatelessWidget {
                         Flexible(
                           child: Text(
                             'Falling back to manual auth...',
-                            style:
-                                TextStyle(color: Colors.white38, fontSize: 13),
+                            style: TextStyle(
+                              color: Colors.white38,
+                              fontSize: 13,
+                            ),
                             overflow: TextOverflow.ellipsis,
                           ),
                         ),
@@ -293,7 +458,9 @@ class _DeviceFlowDialog extends StatelessWidget {
                   Center(
                     child: Container(
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 16, vertical: 10),
+                        horizontal: 16,
+                        vertical: 10,
+                      ),
                       decoration: BoxDecoration(
                         color: Colors.black38,
                         borderRadius: BorderRadius.circular(8),
@@ -327,8 +494,10 @@ class _DeviceFlowDialog extends StatelessWidget {
                         children: [
                           const TextSpan(
                             text: 'Open ',
-                            style:
-                                TextStyle(color: Colors.white70, fontSize: 13),
+                            style: TextStyle(
+                              color: Colors.white70,
+                              fontSize: 13,
+                            ),
                           ),
                           TextSpan(
                             text: state.verificationUri,
@@ -361,8 +530,10 @@ class _DeviceFlowDialog extends StatelessWidget {
                         Flexible(
                           child: Text(
                             'Waiting for authorization...',
-                            style:
-                                TextStyle(color: Colors.white38, fontSize: 13),
+                            style: TextStyle(
+                              color: Colors.white38,
+                              fontSize: 13,
+                            ),
                             overflow: TextOverflow.ellipsis,
                           ),
                         ),
@@ -472,8 +643,11 @@ class _CredentialDialogState extends State<_CredentialDialog> {
                 children: [
                   Row(
                     children: [
-                      const Icon(Icons.lock_outline,
-                          color: Colors.white70, size: 20),
+                      const Icon(
+                        Icons.lock_outline,
+                        color: Colors.white70,
+                        size: 20,
+                      ),
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
@@ -620,6 +794,130 @@ class _CopyButtonState extends State<_CopyButton> {
       tooltip: _copied ? 'Copied!' : 'Copy code',
       padding: EdgeInsets.zero,
       constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+    );
+  }
+}
+
+// --- Authorization-code flow dialog (helper drives, popup delivers) ---
+
+class _AuthFlowDialog extends StatelessWidget {
+  final _PendingAuthFlow flow;
+  final VoidCallback onCancel;
+
+  const _AuthFlowDialog({required this.flow, required this.onCancel});
+
+  @override
+  Widget build(BuildContext context) {
+    final uri = Uri.tryParse(flow.authorizeUrl);
+    final displayHost = uri?.host.isNotEmpty == true ? uri!.host : flow.host;
+    return ColoredBox(
+      color: Colors.black54,
+      child: Center(
+        child: GestureDetector(
+          onTap: () {}, // absorb taps
+          child: Container(
+            width: 420,
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              color: const Color(0xFF1E1E2E),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.white24),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Icon(
+                      Icons.lock_outline,
+                      color: Colors.white70,
+                      size: 20,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Sign in to $displayHost',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                const Text(
+                  'An authorization window opened. Approve the request '
+                  'there; this dialog closes on its own.',
+                  style: TextStyle(color: Colors.white70, fontSize: 13),
+                ),
+                const SizedBox(height: 8),
+                Center(
+                  child: RichText(
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    text: TextSpan(
+                      children: [
+                        const TextSpan(
+                          text: 'Reopen ',
+                          style: TextStyle(color: Colors.white70, fontSize: 13),
+                        ),
+                        TextSpan(
+                          text: flow.authorizeUrl,
+                          style: const TextStyle(
+                            color: Colors.blueAccent,
+                            fontSize: 13,
+                            decoration: TextDecoration.underline,
+                          ),
+                          recognizer: TapGestureRecognizer()
+                            ..onTap = () => openUrl(flow.authorizeUrl),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                const Center(
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white38,
+                        ),
+                      ),
+                      SizedBox(width: 8),
+                      Flexible(
+                        child: Text(
+                          'Waiting for authorization...',
+                          style: TextStyle(color: Colors.white38, fontSize: 13),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton(
+                    onPressed: onCancel,
+                    child: const Text(
+                      'Cancel',
+                      style: TextStyle(color: Colors.white54),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

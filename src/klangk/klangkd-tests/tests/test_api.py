@@ -8080,6 +8080,44 @@ class TestBrowserBridge:
         finally:
             registry.revoke_workspace_browsers("ws-conn")
 
+    async def test_credential_wait_ops_get_the_long_timeout(
+        self, client, app, user, registry, sockets
+    ):
+        """Credential ops that wait on the user (PAT dialog get, browser
+        authorization flow) dispatch with the 15-minute budget; every
+        other op keeps the 30-second default (#3385)."""
+        mock_sock = MagicMock()
+        registry.register_browser("bid-cred", "ws-cred", mock_sock)
+        mock_session = AsyncMock()
+        mock_session.browser_subscribers = {mock_sock}
+        mock_session.dispatch_browser_request_to = AsyncMock(
+            return_value={"status": "ok"},
+        )
+        try:
+            with patch.object(
+                sockets, "get_session", return_value=mock_session
+            ):
+                for operation in ("get", "auth_flow_start"):
+                    await client.post(
+                        "/api/v1/browser-delegate",
+                        json={
+                            "action": "git_credential",
+                            "operation": operation,
+                            "browser_id": "bid-cred",
+                        },
+                        headers=self._ws_token_headers("ws-cred"),
+                    )
+                    mock_session.dispatch_browser_request_to.assert_awaited_with(
+                        mock_sock,
+                        {
+                            "action": "git_credential",
+                            "operation": operation,
+                        },
+                        timeout=900.0,
+                    )
+        finally:
+            registry.revoke_workspace_browsers("ws-cred")
+
     async def test_browser_not_subscribed_returns_502(
         self, client, app, user, registry, sockets
     ):

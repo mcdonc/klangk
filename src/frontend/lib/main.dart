@@ -13,6 +13,7 @@ import 'auth/auth_service.dart';
 import 'workspace/host_services.dart';
 import 'workspace_tab_filter.dart';
 import 'ws/ws_client.dart';
+import 'utils/boot_redirect.dart';
 import 'utils/web_helpers_stub.dart'
     if (dart.library.js_interop) 'utils/web_helpers_web.dart';
 
@@ -84,7 +85,14 @@ Future<void> main() async {
   // app so feature callback routes can read them.
   final hash = getLocationHash();
   capturePageQuery();
-  final initialLocation = (hash.length > 1) ? hash.substring(1) : '/';
+  var initialLocation = (hash.length > 1) ? hash.substring(1) : '/';
+  // An OAuth authorize popup boots at the origin root with ?code=..&state=..
+  // and no hash (#3385) — route it to the git-credential callback page so
+  // the result reaches the workspace tab that opened it.
+  final callback = gitAuthCallbackLocation(capturedPageQuery);
+  if (callback != null && initialLocation == '/') {
+    initialLocation = callback;
+  }
   runApp(
     MultiProvider(
       providers: [
