@@ -71,15 +71,12 @@ def app_origin() -> str:
 
 
 def at_login(harness, app) -> None:
-    """Land on the usable login form. A parked-away tab (a failed SSO
-    leg leaves it at the IdP or a backend error page) is brought back
-    via CDP first — the page load re-attaches the VM service."""
-    try:
-        app.has_text("Log In", 5000)
-    except Exception:  # noqa: BLE001 — the isolate is gone; tab is away
-        cdp_eval(f"location.href='{app_origin()}/#/login'")
-        wait_for_app(app, "Email or handle")
-    if not app.has_text("Log In", 10000):
+    """Land on the usable login form, ending any session an earlier
+    scenario left live (a leftover token guards /login away — the
+    router bounces a normal session to /workspaces). A tab parked away
+    by a failed SSO leg returns to the app first."""
+    app.ensure_tab_at_app()
+    if not app.has_text("Log In", 5000):
         app.logout()
     app.wait_for_login_page()
     app.dismiss_login_banner()
@@ -453,6 +450,7 @@ def test_logout_routes_through_idp_when_configured(harness, app, oidc_stack):
     # recorded event (with the redirect target it was handed) is the
     # proof the browser went through it; the landing completes the pair.
     app.tap_label("Logout")
+    app.arm_storage_wipe()  # the logout POST's response started the wipe
     cdp_wait_tab_url((f"{app_origin()}/#/login",), timeout=60)
     app.wait_for_login_page(timeout_ms=90000)
     end_session = [e for e in oidc_stack.events if e[0] == "end_session"]

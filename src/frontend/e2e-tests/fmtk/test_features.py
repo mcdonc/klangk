@@ -33,10 +33,11 @@ from fmtkharness import (
 
 
 def at_login(harness, app) -> None:
+    app.ensure_tab_at_app()
     app.navigate("/login")
-    if not app.has_text("Log In", 10000):
+    if not app.has_text("Log In", 5000):
         try:
-            app.auth_eval("auth!.logout(); return 'ok';")
+            app.dart_logout()
         except FmtkError:
             harness.restart_app()
     app.wait_for_login_page()
