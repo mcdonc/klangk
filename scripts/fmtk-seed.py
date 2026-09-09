@@ -279,7 +279,8 @@ def main() -> None:
     print(
         f"\nfixture ready on {args.url} — workspace {WORKSPACE_NAME} "
         f"({ws_id[:8]}…)\n"
-        f"logins (password {FIXTURE_PASSWORD} for all):\n"
+        "logins (password: the FIXTURE_PASSWORD constant in this"
+        " script; fmtk-up prints it ready to paste):\n"
         "  fmtk-admin@example.com          -> admins group + owner:"
         " everything\n"
         "  fmtk-collaborator@example.com   -> collaborators bucket\n"
