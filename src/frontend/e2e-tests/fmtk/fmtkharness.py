@@ -38,11 +38,13 @@ import secrets
 import shutil
 import signal
 import subprocess
+import sys
 import threading
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from pathlib import Path
 
 import yaml
@@ -93,6 +95,37 @@ DEFAULT_CONFIG = {
 # klangkd.yaml key -> /api/v1/config key is identity for every key the
 # harness swaps today (login_banner_title etc.); wait_config_reflects
 # relies on that identity and refuses keys /config does not expose.
+
+# Config keys the e2e suites swap via swap_settings() and restore in
+# finally blocks — a hard-killed run (Ctrl-C, CI timeout, SIGKILL)
+# skips the restore and the next boot on a kept stack inherits the
+# swapped value: a left-behind disable_registration arms the SMTP
+# delivery probe with a 403, an armed step_up_window_minutes 403s the
+# seed's admin writes, a swapped auth_modes breaks password login.
+# boot() resets every key in this set to its deploy default (keys the
+# default config leaves unset are deleted outright) before the
+# boot-time SIGHUP, so a kept stack starts from the same config a
+# fresh one would (#3345).
+SUITE_SWAPPED_KEYS = frozenset(
+    {
+        "access_token_hours",
+        "allow_sudo",
+        "auth_modes",
+        "classification_banner",
+        "disable_registration",
+        "features_enable",
+        "image_name",
+        "jwt_secret",
+        "login_banner",
+        "login_banner_every_visit",
+        "login_banner_title",
+        "oidc_providers",
+        "per_handle_home",
+        "product_name",
+        "step_up_window_minutes",
+        "terms_url",
+    }
+)
 
 VM_URI_TIMEOUT = 600
 HTTP_TIMEOUT = 15
@@ -219,6 +252,13 @@ class SmtpSink:
         self._thread.start()
         if not started.wait(10):
             raise FmtkError("SMTP sink did not start within 10s")
+        assert self._server is not None
+        return self.port
+
+    @property
+    def port(self) -> int:
+        """The listening port (the boot barrier reports it against the
+        config's ``smtp_port`` when a delivery never lands, #3345)."""
         assert self._server is not None
         return self._server.sockets[0].getsockname()[1]
 
@@ -941,12 +981,28 @@ class Proxy:
 
 
 def seed(url: str) -> None:
-    """Idempotently apply the fmtk fixture (users + fmtk-verify workspace)."""
-    subprocess.run(
+    """Idempotently apply the fmtk fixture (users + fmtk-verify workspace).
+
+    The script's own failure output (a drifted fixture password, a
+    locked-out admin, …) is folded into the raised error — a bare
+    CalledProcessError would hide the actionable message and the
+    suite would later fail as an opaque 401 cascade instead (#3345).
+    """
+    proc = subprocess.run(
         [str(VENV_PYTHON), str(REPO_ROOT / "scripts/fmtk-seed.py"), "--url", url],
         cwd=REPO_ROOT,
-        check=True,
+        capture_output=True,
+        text=True,
     )
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, file=sys.stderr, end="")
+    if proc.returncode != 0:
+        raise FmtkError(
+            f"fixture seed failed (rc={proc.returncode}): "
+            f"{(proc.stdout + proc.stderr).strip()[-800:]}"
+        )
 
 
 def headless_requested() -> bool:
@@ -1878,9 +1934,13 @@ class Harness:
         if fresh:
             self.wipe()
         self.backend.ensure()
+        self.heal_swapped_settings()
         # The sink's port is ephemeral, so the SMTP settings are rewritten
-        # on every boot and reloaded over SIGHUP (emailsvc reads live off
-        # settings — no restart needed, adopted or fresh).
+        # on every boot and applied over SIGHUP. The reload is an async
+        # recycle (quiesce/drain/apply), so a healthy /api/v1/config says
+        # nothing about the new port being live yet — the delivery barrier
+        # below rides the recycle out before any test can send mail
+        # (#3345).
         self.config["smtp_port"] = str(self.smtp.start())
         # Same for the lockout disable when adopting a backend whose yaml
         # predates it (fresh stacks get it via DEFAULT_CONFIG): a locked
@@ -1891,6 +1951,7 @@ class Harness:
         self.backend.wait_healthy()
         self.proxy.ensure()
         seed(self.backend.url)
+        self.verify_smtp_delivery()
         # Adopt a healthy app from a previous run (FMTK_E2E_KEEP_APP=1
         # skips stopping it in teardown) — re-runs then skip the ~90s
         # flutter boot entirely. Anything stale falls back to a fresh
@@ -1898,6 +1959,80 @@ class Harness:
         if not self.flutter.adopt():
             self.flutter.stop()
             self.flutter.launch()
+
+    def heal_swapped_settings(self) -> None:
+        """Reset every suite-swapped config key to its deploy default.
+
+        Keys the default config leaves unset are deleted (the backend
+        then applies the built-in default); keys it sets are restored
+        verbatim. Only the swapped set is touched — structural keys
+        (ports, state_dir, the stack's own paths) stay as the adopted
+        yaml wrote them.
+        """
+        for key in SUITE_SWAPPED_KEYS:
+            if key in DEFAULT_CONFIG:
+                self.config[key] = DEFAULT_CONFIG[key]
+            else:
+                self.config.pop(key, None)
+
+    def verify_smtp_delivery(self, timeout: float = 180) -> None:
+        """Block until the backend delivers a synchronous email to this
+        run's sink (#3345).
+
+        Until the SIGHUP recycle's apply phase lands, the emailsvc still
+        reads the previous port — the previous run's sink, dead with its
+        process — and the registration path (which awaits the send) returns
+        503. One real registration is the barrier: it exercises the exact
+        synchronous path the suites depend on, retries through the recycle
+        window (the 503 rolls the user insert back, so the same email
+        retries cleanly), and on timeout fails loudly with the config port
+        vs the live sink port instead of letting the first register-driven
+        test eat the 503 and cascade.
+        """
+        email = f"fmtk-smtp-probe-{uuid.uuid4().hex[:8]}@example.com"
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            status, body = http_api(
+                self.backend.url,
+                "",
+                "POST",
+                "/api/v1/auth/register",
+                {"email": email, "password": "fmtk-Smtp123!Probe"},
+            )
+            if status == 200:
+                self.delete_probe_user(email)
+                return
+            if status != 503:
+                raise FmtkError(
+                    f"smtp delivery probe: registration as {email} "
+                    f"returned {status}: {body} — this is not the "
+                    "SMTP-port race; a swapped config key survived a "
+                    "hard-killed run (boot resets the suite-swapped "
+                    "set; compare klangkd.yaml against DEFAULT_CONFIG)"
+                )
+            time.sleep(1)
+        raise HarnessTimeout(
+            "the backend never delivered a registration email to this "
+            f"run's sink (smtp_port={self.config.get('smtp_port')}, "
+            f"sink port={self.smtp.port}); the SIGHUP reload may have "
+            f"been denied — check {self.backend.log_path} for "
+            "'SIGHUP: denying restart' or a failed send"
+        )
+
+    def delete_probe_user(self, email: str) -> None:
+        """Remove the barrier's unverified probe user (kept stacks must
+        not accumulate one row per run). A user that vanished between
+        the listing and the delete (a concurrent sweep, a fresh DB)
+        is fine."""
+        status, listing = self.admin_api("GET", f"/api/v1/users?page_size=10&q={email}")
+        if status != 200:
+            raise FmtkError(f"probe user lookup failed ({status}): {listing}")
+        for user in listing["users"]:
+            if user["email"] != email:
+                continue
+            status, body = self.admin_api("DELETE", f"/api/v1/users/{user['id']}")
+            if status not in (200, 204, 404):
+                raise FmtkError(f"probe user delete failed: {status} {body}")
 
     @property
     def config(self) -> dict:
